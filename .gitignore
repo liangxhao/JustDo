@@ -1,0 +1,53 @@
+build/*
+!build/entitlements.mac.plist
+!build/icons/
+!build/icons/**
+release/
+node_modules
+dist
+dist-electron
+.DS_Store
+.env 
+.claude/
+__pycache__/
+.codebuddy/
+.work/
+.idea/
+vendor/openclaw-runtime/
+vendor/openclaw-plugins/
+
+# Tar archives generated during Windows packaging
+build-tar/
+
+# Bundled PortableGit for Windows builds (downloaded via scripts/setup-mingit.js)
+resources/mingit/
+resources/MinGit-*.zip
+resources/PortableGit-*.7z.exe
+resources/python-win/
+resources/python-*.zip
+
+# SKILLs runtime files
+SKILLs/**/.connection
+SKILLs/**/.server.log
+SKILLs/**/.server.pid
+SKILLs/**/.venv/
+
+package-lock.json
+
+nul
+.work.env
+
+.playwright-mcp/
+.cowork-temp/
+.sisyphus/
+.idea/
+
+# editorconfig files
+.vscode/
+
+sandbox/
+
+# Accidentally committed git hook files outside git-hooks/
+**/**/post-commit
+openspec/
+.superpowers/

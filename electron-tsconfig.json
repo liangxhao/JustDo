@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "CommonJS",
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "noImplicitAny": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "outDir": "dist-electron",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "paths": {
+      "@shared/*": ["src/shared/*"],
+      "*": ["node_modules/*"]
+    }
+  },
+  "include": ["src/main", "src/common", "src/shared"],
+  "exclude": ["src/**/*.test.*", "src/**/*.spec.*"]
+}
