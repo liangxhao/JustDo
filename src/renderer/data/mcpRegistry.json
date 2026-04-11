@@ -1,0 +1,40 @@
+{
+  "categories": [
+    { "id": "all", "name_zh": "全部", "name_en": "All" },
+    { "id": "search", "name_zh": "搜索", "name_en": "Search" },
+    { "id": "productivity", "name_zh": "效率工具", "name_en": "Productivity" }
+  ],
+  "servers": [
+    {
+      "id": "tavily",
+      "name": "Tavily",
+      "description_zh": "实时网页搜索、智能数据提取和网站爬取",
+      "description_en": "Real-time web search, intelligent data extraction and web crawling",
+      "category": "search",
+      "transportType": "stdio",
+      "command": "npx",
+      "defaultArgs": ["-y", "tavily-mcp@latest"],
+      "requiredEnvKeys": ["TAVILY_API_KEY"]
+    },
+    {
+      "id": "context7",
+      "name": "Context7",
+      "description_zh": "为 AI 编程提供最新的库文档和代码示例",
+      "description_en": "Up-to-date library documentation and code examples for AI coding",
+      "category": "productivity",
+      "transportType": "stdio",
+      "command": "npx",
+      "defaultArgs": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch",
+      "description_zh": "网页内容抓取和 HTML 转 Markdown，适合 LLM 消费",
+      "description_en": "Web content fetching and HTML-to-markdown conversion for LLM consumption",
+      "category": "search",
+      "transportType": "stdio",
+      "command": "npx",
+      "defaultArgs": ["-y", "@modelcontextprotocol/server-fetch"]
+    }
+  ]
+}

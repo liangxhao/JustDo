@@ -1,0 +1,253 @@
+/* Theme system: CSS variable definitions for all 12 themes */
+@import './theme/css/themes.css';
+@import './theme/css/base.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* KaTeX styles */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1em 0;
+  margin: 1em 0;
+}
+
+.katex {
+  color: inherit;
+}
+
+.dark .katex {
+  color: var(--gucciai-text-primary);
+}
+
+/* Improve code block styles */
+pre {
+  background-color: var(--gucciai-surface-raised);
+  border-radius: 0.75rem !important;
+  padding: 1em !important;
+  margin: 1em 0 !important;
+  overflow-x: auto !important;
+}
+
+code {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace;
+}
+
+/* Improve table styles */
+table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+}
+
+th, td {
+  border-color: var(--gucciai-border);
+  padding: 0.5em;
+}
+
+th {
+  background-color: var(--gucciai-surface-raised);
+  opacity: 0.8;
+  font-weight: bold;
+}
+
+/* Style for blockquotes */
+blockquote {
+  border-left-color: var(--gucciai-primary);
+  color: var(--gucciai-text-secondary);
+  border-left-width: 3px;
+  padding-left: 1em;
+  font-style: italic;
+  margin: 1em 0;
+}
+
+.chat-message {
+  content-visibility: auto;
+  contain-intrinsic-size: 500px;
+}
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Theme colors are driven by CSS variables from themes.css.
+ * color-scheme is set by the [data-theme] selectors. */
+body, #root, .App, main {
+  background-color: var(--gucciai-background);
+  color: var(--gucciai-foreground);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  height: 100vh;
+}
+
+/* Custom scrollbar styles - cold modern */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--gucciai-scroll-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--gucciai-scroll-thumb-hover);
+}
+
+/* Style for select options to match theme */
+option {
+  background-color: var(--gucciai-surface);
+  color: var(--gucciai-foreground);
+}
+
+/* Ensure select elements have proper styling in Firefox */
+select {
+  -moz-appearance: none;
+  appearance: none;
+}
+
+select::-ms-expand {
+  display: none;
+}
+
+.draggable {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.non-draggable {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.non-draggable * {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.window-controls-floating {
+  user-select: none;
+}
+
+/* Focus ring */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2;
+  --tw-ring-offset-color: var(--gucciai-background);
+}
+
+/* Button styles */
+.btn-primary {
+  @apply bg-primary hover:bg-primary-hover text-white font-medium py-2 px-4 rounded-lg transition-colors;
+}
+
+.btn-secondary {
+  background-color: var(--gucciai-surface);
+  color: var(--gucciai-text-primary);
+  border: 1px solid var(--gucciai-border);
+  @apply font-medium py-2 px-4 rounded-lg transition-colors;
+}
+.btn-secondary:hover {
+  background-color: var(--gucciai-surface-raised);
+}
+
+/* Sidebar width transition - instant toggle, no animation */
+.sidebar-transition {
+  transition: none;
+}
+
+/* Subtle separator line */
+.separator {
+  border-color: var(--gucciai-border-subtle);
+  border-top-width: 1px;
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  @apply bg-black/40 backdrop-blur-sm;
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Modal content entrance */
+.modal-content {
+  animation: scale-in 0.2s ease-out;
+}
+
+/* Popover entrance */
+.popover-enter {
+  animation: fade-in-down 0.2s ease-out;
+}
+
+/* Skeleton loading */
+.skeleton {
+  background-color: var(--gucciai-surface-raised);
+  @apply rounded;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+  animation: shimmer 1.5s infinite;
+}
+
+/* Streaming activity bar */
+.streaming-bar {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: rgba(59,130,246,0.1);
+}
+.streaming-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 40%;
+  border-radius: 1px;
+  background: linear-gradient(90deg, rgba(59,130,246,0.3) 0%, rgba(59,130,246,0.8) 50%, rgba(59,130,246,0.3) 100%);
+  animation: streaming-slide 1.5s ease-in-out infinite;
+}
+/* Streaming bar glow uses primary color */
+.streaming-bar::before {
+  box-shadow: 0 0 6px var(--gucciai-primary-muted);
+}
+@keyframes streaming-slide {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+
+/* Sub-task drawer slide-in animation */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.2s ease-out;
+}
