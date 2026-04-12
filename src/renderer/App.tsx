@@ -10,9 +10,7 @@ import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
 import WindowTitleBar from './components/window/WindowTitleBar';
 import { CoworkView } from './components/cowork';
-import { SkillsView } from './components/skills';
 import { ScheduledTasksView } from './components/scheduledTasks';
-import { McpView } from './components/mcp';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
@@ -24,7 +22,6 @@ import { scheduledTaskService } from './services/scheduledTask';
 import { defaultConfig, getProviderDisplayName } from './config';
 import { setAvailableModels, setSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
-import { setDraftPrompt } from './store/slices/coworkSlice';
 import type { ApiConfig } from './services/api';
 import type { CoworkPermissionResult } from './types/cowork';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
@@ -34,9 +31,7 @@ import { matchesShortcut } from './services/shortcuts';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'mcp'>(
-    'cowork',
-  );
+  const [mainView, setMainView] = useState<'cowork' | 'scheduledTasks'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -257,20 +252,12 @@ const App: React.FC = () => {
     setShowSettings(true);
   }, []);
 
-  const handleShowSkills = useCallback(() => {
-    setMainView('skills');
-  }, []);
-
   const handleShowCowork = useCallback(() => {
     setMainView('cowork');
   }, []);
 
   const handleShowScheduledTasks = useCallback(() => {
     setMainView('scheduledTasks');
-  }, []);
-
-  const handleShowMcp = useCallback(() => {
-    setMainView('mcp');
   }, []);
 
   const handleToggleSidebar = useCallback(() => {
@@ -290,13 +277,6 @@ const App: React.FC = () => {
       );
     }, 0);
   }, [dispatch, mainView, currentSessionId]);
-
-  const handleCreateSkillByChat = useCallback(() => {
-    dispatch(setDraftPrompt({ sessionId: '__home__', draft: i18nService.t('skillCreatorPrompt') }));
-    coworkService.clearSession();
-    dispatch(clearSelection());
-    setMainView('cowork');
-  }, [dispatch]);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -515,10 +495,8 @@ const App: React.FC = () => {
         <Sidebar
           onShowSettings={handleShowSettings}
           activeView={mainView}
-          onShowSkills={handleShowSkills}
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
-          onShowMcp={handleShowMcp}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
@@ -526,22 +504,8 @@ const App: React.FC = () => {
         <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
           <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
             <EngineStartupOverlay />
-            {mainView === 'skills' ? (
-              <SkillsView
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-                onCreateSkillByChat={handleCreateSkillByChat}
-                readOnly={enterpriseConfig?.ui?.skills === 'readonly'}
-              />
-            ) : mainView === 'scheduledTasks' ? (
+            {mainView === 'scheduledTasks' ? (
               <ScheduledTasksView
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-              />
-            ) : mainView === 'mcp' ? (
-              <McpView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
@@ -549,7 +513,6 @@ const App: React.FC = () => {
             ) : (
               <CoworkView
                 onRequestAppSettings={handleShowSettings}
-                onShowSkills={handleShowSkills}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}

@@ -7,21 +7,17 @@ import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
 import ComposeIcon from './icons/ComposeIcon';
-import ConnectorIcon from './icons/ConnectorIcon';
 import SearchIcon from './icons/SearchIcon';
 import ClockIcon from './icons/ClockIcon';
-import PuzzleIcon from './icons/PuzzleIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import TrashIcon from './icons/TrashIcon';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 interface SidebarProps {
   onShowSettings: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'mcp';
-  onShowSkills: () => void;
+  activeView: 'cowork' | 'scheduledTasks';
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
-  onShowMcp: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -30,10 +26,8 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
   activeView,
-  onShowSkills,
   onShowCowork,
   onShowScheduledTasks,
-  onShowMcp,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
@@ -183,36 +177,6 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <ClockIcon className="h-4 w-4" />
             {i18nService.t('scheduledTasks')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsSearchOpen(false);
-              onShowSkills();
-            }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'skills'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
-          >
-            <PuzzleIcon className="h-4 w-4" />
-            {i18nService.t('skills')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsSearchOpen(false);
-              onShowMcp();
-            }}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'mcp'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-            }`}
-          >
-            <ConnectorIcon className="h-4 w-4" />
-            {i18nService.t('mcpServers')}
           </button>
         </div>
       </div>
