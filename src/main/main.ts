@@ -2437,6 +2437,21 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:session:remoteManaged', async (_event, sessionId: string) => {
+    try {
+      const session = getCoworkStore().getSession(sessionId);
+      // A session is remote-managed if its agentId is not the default 'main'
+      const remoteManaged = session?.agentId && session.agentId !== 'main';
+      return { success: true, remoteManaged: !!remoteManaged };
+    } catch (error) {
+      return {
+        success: false,
+        remoteManaged: false,
+        error: error instanceof Error ? error.message : 'Failed to check remote managed status',
+      };
+    }
+  });
+
   // ========== Sub-task IPC Handlers ==========
 
   ipcMain.handle('cowork:subTask:status', async (_event, sessionId?: string) => {

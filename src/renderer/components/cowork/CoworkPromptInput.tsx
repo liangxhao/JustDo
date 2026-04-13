@@ -14,7 +14,7 @@ import { configService } from '../../services/config';
 import { i18nService } from '../../services/i18n';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
-import { selectDraftPrompts } from '../../store/selectors/coworkSelectors';
+import { selectDraftPrompts, selectDraftAttachments } from '../../store/selectors/coworkSelectors';
 import {
   addDraftAttachment,
   clearDraftAttachments,
@@ -167,8 +167,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const draftPrompt = useSelector(
       (state: RootState) => selectDraftPrompts(state)[draftKey] || '',
     );
-    const attachments = useSelector(
-      (state: RootState) => state.cowork.draftAttachments[draftKey] || [],
+    const attachments = useSelector((state: RootState) =>
+      selectDraftAttachments(state, draftKey),
     ) as CoworkAttachment[];
     const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
     const agents = useSelector((state: RootState) => state.agent.agents);

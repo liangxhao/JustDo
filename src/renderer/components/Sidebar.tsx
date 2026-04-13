@@ -128,6 +128,18 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleOpenChatWeb = async () => {
     try {
+      // Defensive check: ensure openclaw engine API is available
+      if (
+        !window.electron?.openclaw?.engine?.getPort ||
+        !window.electron?.openclaw?.engine?.getToken
+      ) {
+        console.warn('[Sidebar] OpenClaw engine API not available');
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: i18nService.t('coworkErrorEngineNotReady') }),
+        );
+        return;
+      }
+
       const portResult = await window.electron.openclaw.engine.getPort();
       const tokenResult = await window.electron.openclaw.engine.getToken();
 
