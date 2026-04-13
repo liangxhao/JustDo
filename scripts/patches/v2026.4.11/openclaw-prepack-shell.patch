@@ -1,0 +1,12 @@
+diff --git a/scripts/openclaw-prepack.ts b/scripts/openclaw-prepack.ts
+index c125d65..5ad1172 100644
+--- a/scripts/openclaw-prepack.ts
++++ b/scripts/openclaw-prepack.ts
+@@ -105,6 +105,7 @@ function run(command: string, args: string[]): void {
+   const result = spawnSync(command, args, {
+     stdio: "inherit",
+     env: process.env,
++    shell: true,
+   });
+   if (result.status === 0) {
+     return;

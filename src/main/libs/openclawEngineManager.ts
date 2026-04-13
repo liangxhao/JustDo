@@ -1019,8 +1019,38 @@ export class OpenClawEngineManager extends EventEmitter {
         .readdirSync(distRoot)
         .filter(name => /^client(?:-.*)?\.js$/i.test(name))
         .sort();
-      if (candidates.length > 0) {
-        return path.join(distRoot, candidates[0]);
+
+      // v2026.4.11+ bundles multiple client modules (Slack, Gateway, etc.)
+      // with hashed filenames. We need to find the one that actually exports
+      // GatewayClient by checking each candidate's exports.
+      for (const candidate of candidates) {
+        const fullPath = path.join(distRoot, candidate);
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const loaded = require(fullPath) as Record<string, unknown>;
+          // Check if GatewayClient is directly exported or exported as 't' (minified)
+          if (typeof loaded.GatewayClient === 'function') {
+            return fullPath;
+          }
+          // In minified builds, GatewayClient might be exported as 't'
+          const ctor = loaded.t;
+          if (typeof ctor === 'function' && ctor.name === 'GatewayClient') {
+            return fullPath;
+          }
+          // Fallback: check prototype methods
+          if (
+            typeof ctor === 'function' &&
+            ctor.prototype &&
+            typeof ctor.prototype.start === 'function' &&
+            typeof ctor.prototype.stop === 'function' &&
+            typeof ctor.prototype.request === 'function'
+          ) {
+            return fullPath;
+          }
+        } catch {
+          // Skip modules that fail to load
+          continue;
+        }
       }
     } catch {
       // ignore

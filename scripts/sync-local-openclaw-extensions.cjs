@@ -11,11 +11,14 @@ function syncLocalOpenClawExtensions(runtimeRoot) {
     : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
   const targetExtensionsDir = path.join(targetRoot, 'extensions');
 
+  // If no local extensions to sync, return early without checking target.
   if (!fs.existsSync(sourceDir)) {
     return { sourceDir, targetRoot, copied: [] };
   }
+
+  // Create extensions directory if it doesn't exist.
   if (!fs.existsSync(targetExtensionsDir)) {
-    throw new Error(`Runtime extensions directory does not exist: ${targetExtensionsDir}`);
+    fs.mkdirSync(targetExtensionsDir, { recursive: true });
   }
 
   const copied = [];

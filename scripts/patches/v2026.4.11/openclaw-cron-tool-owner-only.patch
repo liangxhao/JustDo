@@ -1,0 +1,14 @@
+diff --git a/src/agents/tools/cron-tool.ts b/src/agents/tools/cron-tool.ts
+index 14df690102..c36714ece6 100644
+--- a/src/agents/tools/cron-tool.ts
++++ b/src/agents/tools/cron-tool.ts
+@@ -389,7 +389,7 @@ export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): Any
+   return {
+     label: "Cron",
+     name: "cron",
+-    ownerOnly: isOpenClawOwnerOnlyCoreToolName("cron"),
++    ownerOnly: false,
+     displaySummary: CRON_TOOL_DISPLAY_SUMMARY,
+     description: `Manage Gateway cron jobs (status/list/add/update/remove/run/runs) and send wake events. Use this for reminders, "check back later" requests, delayed follow-ups, and recurring tasks. Do not emulate scheduling with exec sleep or process polling.
+
+ACTIONS:

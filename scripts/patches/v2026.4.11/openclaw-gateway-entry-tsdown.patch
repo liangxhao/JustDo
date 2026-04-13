@@ -1,0 +1,12 @@
+diff --git a/tsdown.config.ts b/tsdown.config.ts
+index b4c9d97b4..d4d6e7ca7 100644
+--- a/tsdown.config.ts
++++ b/tsdown.config.ts
+@@ -138,6 +138,7 @@ function buildCoreDistEntries(): Record<string, string> {
+   return {
+     index: "src/index.ts",
+     entry: "src/entry.ts",
++    "gateway-entry": "src/gateway-entry.ts",
+     // Ensure this module is bundled as an entry so legacy CLI shims can resolve its exports.
+     "cli/daemon-cli": "src/cli/daemon-cli.ts",
+     // Keep long-lived lazy runtime boundaries on stable filenames so rebuilt

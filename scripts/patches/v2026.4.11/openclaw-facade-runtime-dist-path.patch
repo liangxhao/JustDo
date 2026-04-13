@@ -1,0 +1,14 @@
+diff --git a/src/plugin-sdk/facade-runtime.ts b/src/plugin-sdk/facade-runtime.ts
+index 2ecef96..44554c8 100644
+--- a/src/plugin-sdk/facade-runtime.ts
++++ b/src/plugin-sdk/facade-runtime.ts
+@@ -171,6 +171,9 @@ type JitiLoader = ReturnType<(typeof import("jiti"))["createJiti"]>;
+ 
+ const nodeRequire = createRequire(import.meta.url);
+ const FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES = [
++  "./dist/facade-activation-check.runtime.js",
++  "./dist/facade-activation-check.runtime.ts",
++  // Fallback to root for bundled mode (when dist is flattened)
+   "./facade-activation-check.runtime.js",
+   "./facade-activation-check.runtime.ts",
+ ] as const;

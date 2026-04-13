@@ -80,3 +80,8 @@ if (fs.existsSync(gatewayAsarPath) && !fs.existsSync(bareEntryPath)) {
     console.warn(`[sync-openclaw-runtime-current] Could not extract from gateway.asar: ${err.message}`);
   }
 }
+
+// NOTE: facade-activation-check.runtime.js and its dependencies are NOT copied to root.
+// The openclaw-facade-runtime-dist-path.patch modifies facade-runtime.ts to load from
+// ./dist/facade-activation-check.runtime.js directly, where all dependencies exist.
+// This avoids copying ~1610 dependency files to maintain the import chain.

@@ -1,0 +1,13 @@
+diff --git a/src/config/types.cron.ts b/src/config/types.cron.ts
+index 0d3ee66..98bb5f0 100644
+--- a/src/config/types.cron.ts
++++ b/src/config/types.cron.ts
+@@ -29,6 +29,8 @@ export type CronFailureDestinationConfig = {
+ 
+ export type CronConfig = {
+   enabled?: boolean;
++  /** Skip running missed jobs on cron service startup (default: false). */
++  skipMissedJobs?: boolean;
+   store?: string;
+   maxConcurrentRuns?: number;
+   /** Override default retry policy for one-shot jobs on transient errors. */

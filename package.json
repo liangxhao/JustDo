@@ -6,9 +6,9 @@
     "email": "gucciai.project@rd.netease.com"
   },
   "license": "MIT",
-  "version": "2026.4.10",
+  "version": "2026.4.12",
   "openclaw": {
-    "version": "v2026.3.2",
+    "version": "v2026.4.11",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   },
