@@ -154,6 +154,7 @@ contextBridge.exposeInMainWorld('electron', {
       retryInstall: () => ipcRenderer.invoke('openclaw:engine:retryInstall'),
       restartGateway: () => ipcRenderer.invoke('openclaw:engine:restartGateway'),
       getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
+      getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),
       setPort: (port: number) => ipcRenderer.invoke('openclaw:engine:setPort', port),
       onProgress: (callback: (status: any) => void) => {
         const handler = (_event: any, status: any) => callback(status);

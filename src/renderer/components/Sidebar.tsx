@@ -1,7 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Modal from './common/Modal';
 import { useSelector } from 'react-redux';
-import { selectCoworkSessions, selectCurrentSessionId } from '../store/selectors/coworkSelectors';
+import {
+  selectCoworkSessions,
+  selectCurrentSessionId,
+  selectIsOpenClawEngine,
+} from '../store/selectors/coworkSelectors';
 import { coworkService } from '../services/cowork';
 import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
@@ -11,6 +15,7 @@ import SearchIcon from './icons/SearchIcon';
 import ClockIcon from './icons/ClockIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import TrashIcon from './icons/TrashIcon';
+import ArrowUpRightIcon from './icons/ArrowUpRightIcon';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 interface SidebarProps {
@@ -34,6 +39,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const sessions = useSelector(selectCoworkSessions);
   const currentSessionId = useSelector(selectCurrentSessionId);
+  const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -120,6 +126,38 @@ const Sidebar: React.FC<SidebarProps> = ({
     handleExitBatchMode();
   }, [selectedIds, handleExitBatchMode]);
 
+  const handleOpenChatWeb = async () => {
+    try {
+      const portResult = await window.electron.openclaw.engine.getPort();
+      const tokenResult = await window.electron.openclaw.engine.getToken();
+
+      const port = portResult.success ? portResult.port : null;
+      const token = tokenResult.success ? tokenResult.token : null;
+
+      if (!port) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: i18nService.t('chatWebPortError') }),
+        );
+        return;
+      }
+
+      if (!token) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: i18nService.t('chatWebTokenError') }),
+        );
+        return;
+      }
+
+      const url = `http://127.0.0.1:${port}/#token=${token}`;
+      await window.electron.shell.openExternal(url);
+    } catch (error) {
+      console.error('[Sidebar] Failed to open ChatWeb:', error);
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: i18nService.t('coworkErrorEngineNotReady') }),
+      );
+    }
+  };
+
   return (
     <aside
       className={`shrink-0 bg-surface-raised flex flex-col sidebar-transition overflow-hidden ${
@@ -141,14 +179,27 @@ const Sidebar: React.FC<SidebarProps> = ({
               <SearchIcon className="h-4 w-4" />
             </button>
           </div>
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-            aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
-          >
-            <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
-          </button>
+          <div className="flex items-center gap-1">
+            {isOpenClawEngine && (
+              <button
+                type="button"
+                onClick={handleOpenChatWeb}
+                className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+                aria-label={i18nService.t('openChatWeb')}
+                title={i18nService.t('openChatWeb')}
+              >
+                <ArrowUpRightIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+              aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
+            >
+              <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
+            </button>
+          </div>
         </div>
         <div className="mt-3 space-y-1 px-3">
           <button

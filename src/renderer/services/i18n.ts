@@ -454,6 +454,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuestionWizardAnswerRequired: '请选择或输入答案',
     coworkWelcome: '开始协作',
     coworkDescription: '7×24 小时帮你干活的硬件场景个人助理 Agent',
+    openChatWeb: '打开 ChatWeb',
+    chatWebTokenError: '无法获取访问令牌，请尝试重启 AI 引擎',
+    chatWebPortError: '无法获取服务端口',
+    chatWebNotRunning: 'AI 引擎未运行',
 
     // Multi-Agent 管理
     createAgent: '创建 Agent',
@@ -1503,6 +1507,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuestionWizardAnswerRequired: 'Please select or enter an answer',
     coworkWelcome: 'Start Collaborating',
     coworkDescription: 'A 24/7 hardware-focused personal assistant agent',
+    openChatWeb: 'Open ChatWeb',
+    chatWebTokenError: 'Unable to get access token, please try restarting the AI engine',
+    chatWebPortError: 'Unable to get service port',
+    chatWebNotRunning: 'AI engine is not running',
 
     // Multi-Agent management
     createAgent: 'Create Agent',

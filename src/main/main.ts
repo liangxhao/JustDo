@@ -1949,6 +1949,50 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('openclaw:engine:getToken', () => {
+    try {
+      const manager = getOpenClawEngineManager();
+      let token = manager.getGatewayToken();
+      const status = manager.getStatus();
+
+      // If gateway is running but token is null, try to ensure it exists
+      if (token === null && status.phase === 'running') {
+        console.log('[Main] Gateway running but token is null, checking token file...');
+        // Gateway should have created the token during startup
+        // If missing, the gateway process might have failed to write it
+        // Try one more time to read it (could be a timing issue)
+        const connectionInfo = manager.getGatewayConnectionInfo();
+        if (connectionInfo.token) {
+          token = connectionInfo.token;
+          console.log('[Main] Got token from connection info');
+        }
+      }
+
+      if (token === null) {
+        if (status.phase !== 'running') {
+          return {
+            success: false,
+            error: 'Gateway not running',
+          };
+        }
+        // Gateway is running but token is unavailable - unusual state
+        console.warn('[Main] Gateway is running but token is unavailable');
+        return {
+          success: false,
+          error: 'Gateway token not available. Try restarting the gateway.',
+        };
+      }
+
+      return { success: true, token };
+    } catch (error) {
+      console.error('[Main] Error getting gateway token:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get OpenClaw gateway token',
+      };
+    }
+  });
+
   ipcMain.handle('openclaw:engine:setPort', (_event, port: number) => {
     try {
       const result = getOpenClawEngineManager().setGatewayPort(port);
