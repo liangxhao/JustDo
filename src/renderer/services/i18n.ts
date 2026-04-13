@@ -262,8 +262,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // GucciAI
     cowork: 'GucciAI',
     coworkSettings: 'GucciAI 设置',
-    coworkHistory: '历史对话',
-    coworkNoSessions: '暂无历史对话',
+    coworkHistory: '最近对话',
+    coworkNoSessions: '暂无最近对话',
     coworkNoSessionsHint: '在右侧输入框中开始你的第一个对话',
     orchLogSpawning: '执行中...',
     orchLogDone: '任务完成',
@@ -1297,7 +1297,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // GucciAI
     cowork: 'GucciAI',
     coworkSettings: 'GucciAI Settings',
-    coworkHistory: 'Chat History',
+    coworkHistory: 'Recent Chats',
     coworkNoSessions: 'No chats yet',
     coworkNoSessionsHint: 'Start your first conversation in the input box',
     orchLogSpawning: 'Running...',

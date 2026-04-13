@@ -20,6 +20,7 @@ import {
   setStreaming,
   updateSessionStatus,
 } from '../../store/slices/coworkSlice';
+import { setSelectedModel } from '../../store/slices/modelSlice';
 import { clearSelection, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills } from '../../store/slices/skillSlice';
 import type {
@@ -526,17 +527,17 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           </div>
         )}
         <ModelSelector
-          value={isOpenClawEngine ? headerSelectedModel : undefined}
-          onChange={
-            isOpenClawEngine
-              ? async nextModel => {
-                  if (!currentAgent || !nextModel) return;
-                  await agentService.updateAgent(currentAgent.id, {
-                    model: toOpenClawModelRef(nextModel),
-                  });
-                }
-              : undefined
-          }
+          value={isOpenClawEngine ? headerSelectedModel : globalSelectedModel}
+          onChange={async nextModel => {
+            if (!nextModel) return;
+            if (isOpenClawEngine && currentAgent) {
+              await agentService.updateAgent(currentAgent.id, {
+                model: toOpenClawModelRef(nextModel),
+              });
+            }
+            // Always update global state so the selection is persisted
+            dispatch(setSelectedModel(nextModel));
+          }}
         />
       </div>
       <div className="non-draggable flex items-center">
