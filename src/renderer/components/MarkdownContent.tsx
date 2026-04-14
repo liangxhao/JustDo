@@ -225,11 +225,13 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
           background: '#282c34',
           padding: '4px 8px',
           margin: 0,
+          fontSize: '13px',
         },
         'code[class*="language-"]': {
           ...(oneDark as Record<string, React.CSSProperties>)['code[class*="language-"]'],
           background: '#282c34',
           padding: 0,
+          fontSize: '13px',
         },
       }
     : {
@@ -239,11 +241,13 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
           background: '#f0f2f5',
           padding: '4px 8px',
           margin: 0,
+          fontSize: '13px',
         },
         'code[class*="language-"]': {
           ...(oneLight as Record<string, React.CSSProperties>)['code[class*="language-"]'],
           background: '#f0f2f5',
           padding: 0,
+          fontSize: '13px',
         },
       };
 
@@ -325,6 +329,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
               background: isDark ? '#282c34' : '#f0f2f5',
               padding: '4px 8px',
               margin: 0,
+              fontSize: '13px',
             }}
           >
             {trimmedCodeText}

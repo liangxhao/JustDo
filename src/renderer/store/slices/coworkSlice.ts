@@ -29,6 +29,8 @@ interface CoworkState {
   remoteManaged: boolean;
   pendingPermissions: CoworkPermissionRequest[];
   config: CoworkConfig;
+  /** Global toggle for thinking content visibility - true = expanded, false = collapsed */
+  thinkingExpanded: boolean;
 }
 
 const initialState: CoworkState = {
@@ -54,6 +56,7 @@ const initialState: CoworkState = {
     memoryUserMemoriesMaxItems: 12,
     skipMissedJobs: false,
   },
+  thinkingExpanded: true, // Default to expanded (浅蓝色)
 };
 
 const markSessionRead = (state: CoworkState, sessionId: string | null) => {
@@ -395,6 +398,10 @@ const coworkSlice = createSlice({
     clearDraftAttachments(state, action: PayloadAction<string>) {
       delete state.draftAttachments[action.payload];
     },
+
+    toggleThinkingExpanded(state) {
+      state.thinkingExpanded = !state.thinkingExpanded;
+    },
   },
 });
 
@@ -425,6 +432,7 @@ export const {
   setConfig,
   updateConfig,
   clearCurrentSession,
+  toggleThinkingExpanded,
 } = coworkSlice.actions;
 
 export default coworkSlice.reducer;

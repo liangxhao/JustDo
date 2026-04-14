@@ -15,6 +15,7 @@ export const selectCoworkConfig = (state: RootState) => state.cowork.config;
 export const selectDraftPrompts = (state: RootState) => state.cowork.draftPrompts;
 export const selectPendingPermissions = (state: RootState) => state.cowork.pendingPermissions;
 export const selectUnreadSessionIds = (state: RootState) => state.cowork.unreadSessionIds;
+export const selectThinkingExpanded = (state: RootState) => state.cowork.thinkingExpanded;
 
 // --- Derived (memoized) selectors ---
 // These compute new values from the store and use createSelector to avoid

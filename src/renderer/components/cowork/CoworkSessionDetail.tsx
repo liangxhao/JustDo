@@ -23,12 +23,14 @@ import {
   selectRemoteManaged,
   selectLastMessageContent,
   selectCurrentMessagesLength,
+  selectThinkingExpanded,
 } from '../../store/selectors/coworkSelectors';
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
 import { setActiveSkillIds } from '../../store/slices/skillSlice';
+import { toggleThinkingExpanded } from '../../store/slices/coworkSlice';
 import type {
   CoworkMessage,
   CoworkMessageMetadata,
@@ -37,6 +39,7 @@ import type {
 import type { Skill } from '../../types/skill';
 import { getCompactFolderName } from '../../utils/path';
 import Modal from '../common/Modal';
+import BrainIcon from '../icons/BrainIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
@@ -1378,24 +1381,31 @@ const TypingDots: React.FC = () => (
 const ThinkingStreamBlock: React.FC<{
   messageId: string;
 }> = ({ messageId }) => {
-  // Track collapsed state - default to expanded (false)
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  // Local collapsed state - can be toggled independently per block
+  const [localCollapsed, setLocalCollapsed] = useState(false);
+  // Track previous global state to detect global toggle changes
+  const prevGlobalExpandedRef = useRef<boolean>(true);
 
   // Cache the snapshot result to avoid infinite loops
-  // useSyncExternalStore requires getSnapshot to return the same reference if data hasn't changed
-  const snapshotCacheRef = useRef<{ content: string; isStreaming: boolean }>({
+  const snapshotCacheRef = useRef<{
+    content: string;
+    isStreaming: boolean;
+    globalExpanded: boolean;
+  }>({
     content: '',
     isStreaming: true,
+    globalExpanded: true,
   });
 
   // Subscribe directly to Redux store for real-time thinking content and status updates
   // This bypasses the useMemo caching in parent components
   const thinkingState = useSyncExternalStore(
-    // Subscribe function: called when component mounts/unmounts
+    // subscribe function: called when component mounts/unmounts
     onStoreChange => {
       return store.subscribe(() => {
         const state = store.getState();
         const session = state.cowork.currentSession;
+        const globalExpanded = state.cowork.thinkingExpanded;
         if (session) {
           const msg = session.messages.find(m => m.id === messageId);
           const newContent = msg?.thinkingContent || '';
@@ -1403,7 +1413,8 @@ const ThinkingStreamBlock: React.FC<{
           // Check if the snapshot would change
           if (
             newContent !== snapshotCacheRef.current.content ||
-            newIsStreaming !== snapshotCacheRef.current.isStreaming
+            newIsStreaming !== snapshotCacheRef.current.isStreaming ||
+            globalExpanded !== snapshotCacheRef.current.globalExpanded
           ) {
             onStoreChange();
           }
@@ -1415,6 +1426,7 @@ const ThinkingStreamBlock: React.FC<{
     () => {
       const state = store.getState();
       const session = state.cowork.currentSession;
+      const globalExpanded = state.cowork.thinkingExpanded;
       if (session) {
         const msg = session.messages.find(m => m.id === messageId);
         const content = msg?.thinkingContent || '';
@@ -1423,9 +1435,10 @@ const ThinkingStreamBlock: React.FC<{
         // Only create new object if values actually changed
         if (
           content !== snapshotCacheRef.current.content ||
-          isStreaming !== snapshotCacheRef.current.isStreaming
+          isStreaming !== snapshotCacheRef.current.isStreaming ||
+          globalExpanded !== snapshotCacheRef.current.globalExpanded
         ) {
-          snapshotCacheRef.current = { content, isStreaming };
+          snapshotCacheRef.current = { content, isStreaming, globalExpanded };
         }
         return snapshotCacheRef.current;
       }
@@ -1436,6 +1449,22 @@ const ThinkingStreamBlock: React.FC<{
 
   const thinkingContent = thinkingState.content;
   const isStreaming = thinkingState.isStreaming;
+  const globalExpanded = thinkingState.globalExpanded;
+
+  // Sync local state with global state when global changes
+  // This ensures clicking the global button updates all blocks
+  useEffect(() => {
+    if (globalExpanded !== prevGlobalExpandedRef.current) {
+      // Global state changed, sync local state
+      setLocalCollapsed(!globalExpanded);
+      prevGlobalExpandedRef.current = globalExpanded;
+    }
+  }, [globalExpanded]);
+
+  // Initialize ref on first render
+  useEffect(() => {
+    prevGlobalExpandedRef.current = globalExpanded;
+  }, []);
 
   if (!thinkingContent || thinkingContent.length === 0) return null;
 
@@ -1444,9 +1473,9 @@ const ThinkingStreamBlock: React.FC<{
     ? i18nService.t('thinkingInProgress')
     : i18nService.t('thoughtComplete');
 
-  // Toggle collapse/expand on click
+  // Local toggle handler - only affects this block
   const handleToggle = () => {
-    setIsCollapsed(prev => !prev);
+    setLocalCollapsed(prev => !prev);
   };
 
   return (
@@ -1456,7 +1485,7 @@ const ThinkingStreamBlock: React.FC<{
         onClick={handleToggle}
       >
         <ChevronRightIcon
-          className={`h-3 w-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+          className={`h-3 w-3 flex-shrink-0 transition-transform ${localCollapsed ? '' : 'rotate-90'}`}
         />
         <span>{statusText}</span>
         {isStreaming && (
@@ -1465,7 +1494,7 @@ const ThinkingStreamBlock: React.FC<{
           </span>
         )}
       </div>
-      {!isCollapsed && (
+      {!localCollapsed && (
         <div className="mt-1.5 ml-4 p-2.5 rounded-md bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100/50 dark:border-blue-900/30 max-h-64 overflow-y-auto">
           <div className="text-xs [&_.markdown-content]:text-xs [&_.markdown-content]:text-muted-foreground [&_p]:my-0 [&_p]:leading-5 [&_div.my-0.5]:my-0 [&_div.my-0.5]:mt-0.5 [&_code]:text-[0.85em] [&_pre]:my-0 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0">
             <MarkdownContent content={thinkingContent} className="max-w-none" />
@@ -1643,6 +1672,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const remoteManaged = useSelector(selectRemoteManaged);
   const lastMessageContent = useSelector(selectLastMessageContent);
   const messagesLength = useSelector(selectCurrentMessagesLength);
+  const thinkingExpanded = useSelector(selectThinkingExpanded);
   const skills = useSelector((state: RootState) => state.skill.skills);
   const detailRootRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -2549,6 +2579,25 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             <span className="max-w-[120px] truncate text-xs">
               {truncatePath(currentSession.cwd)}
             </span>
+          </button>
+
+          {/* Thinking toggle button */}
+          <button
+            type="button"
+            onClick={() => dispatch(toggleThinkingExpanded())}
+            className={`p-1.5 rounded-lg transition-colors ${
+              thinkingExpanded
+                ? 'text-blue-400 hover:bg-blue-400/10'
+                : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+            }`}
+            aria-label={
+              thinkingExpanded ? i18nService.t('collapseThinking') : i18nService.t('expandThinking')
+            }
+            title={
+              thinkingExpanded ? i18nService.t('collapseThinking') : i18nService.t('expandThinking')
+            }
+          >
+            <BrainIcon className="h-4 w-4" />
           </button>
 
           {/* Menu button */}
