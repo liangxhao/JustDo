@@ -314,6 +314,30 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:stream:messageUpdate', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageUpdate', handler);
     },
+    onStreamThinkingUpdate: (
+      callback: (data: { sessionId: string; messageId: string; thinkingDelta: string }) => void,
+    ) => {
+      const handler = (
+        _event: any,
+        data: { sessionId: string; messageId: string; thinkingDelta: string },
+      ) => callback(data);
+      ipcRenderer.on('cowork:stream:thinkingUpdate', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:thinkingUpdate', handler);
+    },
+    onStreamMessageMetadataUpdate: (
+      callback: (data: {
+        sessionId: string;
+        messageId: string;
+        metadata: Record<string, unknown>;
+      }) => void,
+    ) => {
+      const handler = (
+        _event: any,
+        data: { sessionId: string; messageId: string; metadata: Record<string, unknown> },
+      ) => callback(data);
+      ipcRenderer.on('cowork:stream:messageMetadataUpdate', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:messageMetadataUpdate', handler);
+    },
     onStreamPermission: (callback: (data: { sessionId: string; request: any }) => void) => {
       const handler = (_event: any, data: { sessionId: string; request: any }) => callback(data);
       ipcRenderer.on('cowork:stream:permission', handler);

@@ -26,7 +26,7 @@ export interface CoworkMessageMetadata {
   isStreaming?: boolean;
   isFinal?: boolean;
   isThinking?: boolean;
-  skillIds?: string[];  // Skills used for this message
+  skillIds?: string[]; // Skills used for this message
   [key: string]: unknown;
 }
 
@@ -37,6 +37,7 @@ export interface CoworkMessage {
   content: string;
   timestamp: number;
   metadata?: CoworkMessageMetadata;
+  thinkingContent?: string; // Accumulated thinking content during streaming
 }
 
 // Cowork session
@@ -70,18 +71,20 @@ export interface CoworkConfig {
   skipMissedJobs: boolean;
 }
 
-export type CoworkConfigUpdate = Partial<Pick<
-  CoworkConfig,
-  | 'workingDirectory'
-  | 'executionMode'
-  | 'agentEngine'
-  | 'memoryEnabled'
-  | 'memoryImplicitUpdateEnabled'
-  | 'memoryLlmJudgeEnabled'
-  | 'memoryGuardLevel'
-  | 'memoryUserMemoriesMaxItems'
-  | 'skipMissedJobs'
->>;
+export type CoworkConfigUpdate = Partial<
+  Pick<
+    CoworkConfig,
+    | 'workingDirectory'
+    | 'executionMode'
+    | 'agentEngine'
+    | 'memoryEnabled'
+    | 'memoryImplicitUpdateEnabled'
+    | 'memoryLlmJudgeEnabled'
+    | 'memoryGuardLevel'
+    | 'memoryUserMemoriesMaxItems'
+    | 'skipMissedJobs'
+  >
+>;
 
 export interface CoworkApiConfig {
   apiKey: string;

@@ -15,6 +15,12 @@ export interface PermissionRequest {
 export interface CoworkRuntimeEvents {
   message: (sessionId: string, message: CoworkMessage) => void;
   messageUpdate: (sessionId: string, messageId: string, content: string) => void;
+  messageMetadataUpdate: (
+    sessionId: string,
+    messageId: string,
+    metadata: Partial<CoworkMessage['metadata']>,
+  ) => void;
+  thinkingUpdate: (sessionId: string, messageId: string, thinkingDelta: string) => void;
   permissionRequest: (sessionId: string, request: PermissionRequest) => void;
   complete: (sessionId: string, claudeSessionId: string | null) => void;
   error: (sessionId: string, error: string) => void;
@@ -45,16 +51,14 @@ export type CoworkContinueOptions = {
 };
 
 export interface CoworkRuntime {
-  on<U extends keyof CoworkRuntimeEvents>(
-    event: U,
-    listener: CoworkRuntimeEvents[U],
-  ): this;
-  off<U extends keyof CoworkRuntimeEvents>(
-    event: U,
-    listener: CoworkRuntimeEvents[U],
-  ): this;
+  on<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
+  off<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   startSession(sessionId: string, prompt: string, options?: CoworkStartOptions): Promise<void>;
-  continueSession(sessionId: string, prompt: string, options?: CoworkContinueOptions): Promise<void>;
+  continueSession(
+    sessionId: string,
+    prompt: string,
+    options?: CoworkContinueOptions,
+  ): Promise<void>;
   stopSession(sessionId: string): void;
   stopAllSessions(): void;
   respondToPermission(requestId: string, result: PermissionResult): void;

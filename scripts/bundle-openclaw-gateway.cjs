@@ -108,7 +108,11 @@ esbuild
           `const __dirname = __bundleFileURLToPath(new URL('.', import.meta.url));\n`,
     },
     // Silence warnings about __dirname/__filename in ESM (they're polyfilled above).
+    // Also silence the "ignored-bare-import" warning for packages like zod with sideEffects:false.
     logLevel: 'warning',
+    logOverride: {
+      'ignored-bare-import': 'silent',
+    },
   })
   .then((result) => {
     const elapsed = Date.now() - t0;

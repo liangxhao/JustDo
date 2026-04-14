@@ -1,0 +1,69 @@
+diff --git a/src/agents/pi-embedded-subscribe.ts b/src/agents/pi-embedded-subscribe.ts
+index c960572..3d5c19a 100644
+--- a/src/agents/pi-embedded-subscribe.ts
++++ b/src/agents/pi-embedded-subscribe.ts
+@@ -84,7 +84,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
+     reasoningMode,
+     includeReasoning: reasoningMode === "on",
+     shouldEmitPartialReplies: !(reasoningMode === "on" && !params.onBlockReply),
+-    streamReasoning: reasoningMode === "stream" && typeof params.onReasoningStream === "function",
++    streamReasoning: reasoningMode === "stream",
+     deltaBuffer: "",
+     blockBuffer: "",
+     // Track if a streamed chunk opened a <think> block (stateful across chunks).
+@@ -647,35 +647,44 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
+     if (params.silentExpected) {
+       return;
+     }
+-    if (!state.streamReasoning || !params.onReasoningStream) {
++    if (!state.streamReasoning) {
+       return;
+     }
+-    const formatted = formatReasoningMessage(text);
+-    if (!formatted) {
++    // Use raw text for delta calculation and WebSocket broadcast
++    // Keep lastStreamedReasoning as raw text for accurate delta computation
++    const rawText = text.trim();
++    if (!rawText) {
+       return;
+     }
+-    if (formatted === state.lastStreamedReasoning) {
++    if (rawText === state.lastStreamedReasoning) {
+       return;
+     }
+     // Compute delta: new text since the last emitted reasoning.
+-    // Guard against non-prefix changes (e.g. trim/format altering earlier content).
+     const prior = state.lastStreamedReasoning ?? "";
+-    const delta = formatted.startsWith(prior) ? formatted.slice(prior.length) : formatted;
+-    state.lastStreamedReasoning = formatted;
++    const delta = rawText.startsWith(prior) ? rawText.slice(prior.length) : rawText;
++    state.lastStreamedReasoning = rawText;
+ 
+     // Broadcast thinking event to WebSocket clients in real-time
++    // Send raw text without formatting - frontend will format on display
+     emitAgentEvent({
+       runId: params.runId,
+       stream: "thinking",
++      ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+       data: {
+-        text: formatted,
++        text: rawText,
+         delta,
+       },
+     });
+ 
+-    void params.onReasoningStream({
+-      text: formatted,
+-    });
++    // Call the callback if provided (for message channels that need formatted output)
++    if (params.onReasoningStream) {
++      const formatted = formatReasoningMessage(rawText);
++      if (formatted) {
++        void params.onReasoningStream({
++          text: formatted,
++        });
++      }
++    }
+   };
+ 
+   const resetForCompactionRetry = () => {

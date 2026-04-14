@@ -336,7 +336,11 @@ const sanitizeCoworkMessageForIpc = (message: unknown): unknown => {
   if (!message || typeof message !== 'object') {
     return message;
   }
-  const messageRecord = message as { metadata?: unknown; content?: unknown };
+  const messageRecord = message as {
+    metadata?: unknown;
+    content?: unknown;
+    thinkingContent?: unknown;
+  };
 
   // Preserve imageAttachments in metadata as-is (base64 data can be very large
   // and must not be truncated by the generic sanitizer).
@@ -354,6 +358,12 @@ const sanitizeCoworkMessageForIpc = (message: unknown): unknown => {
     sanitizedMetadata = undefined;
   }
 
+  // Preserve thinkingContent (truncate if needed for IPC safety)
+  const sanitizedThinkingContent =
+    typeof messageRecord.thinkingContent === 'string'
+      ? truncateIpcString(messageRecord.thinkingContent, IPC_MESSAGE_CONTENT_MAX_CHARS)
+      : undefined;
+
   return {
     ...message,
     content:
@@ -361,6 +371,7 @@ const sanitizeCoworkMessageForIpc = (message: unknown): unknown => {
         ? truncateIpcString(messageRecord.content, IPC_MESSAGE_CONTENT_MAX_CHARS)
         : '',
     metadata: sanitizedMetadata,
+    ...(sanitizedThinkingContent ? { thinkingContent: sanitizedThinkingContent } : {}),
   };
 };
 
@@ -1150,6 +1161,42 @@ const bindCoworkRuntimeForwarder = (): void => {
       }
     });
   });
+
+  runtime.on('thinkingUpdate', (sessionId: string, messageId: string, thinkingDelta: string) => {
+    const safeDelta = truncateIpcString(thinkingDelta, IPC_UPDATE_CONTENT_MAX_CHARS);
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach(win => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:stream:thinkingUpdate', {
+          sessionId,
+          messageId,
+          thinkingDelta: safeDelta,
+        });
+      } catch (error) {
+        console.error('Failed to forward cowork thinking update:', error);
+      }
+    });
+  });
+
+  runtime.on(
+    'messageMetadataUpdate',
+    (sessionId: string, messageId: string, metadata: Record<string, unknown>) => {
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach(win => {
+        if (win.isDestroyed()) return;
+        try {
+          win.webContents.send('cowork:stream:messageMetadataUpdate', {
+            sessionId,
+            messageId,
+            metadata,
+          });
+        } catch (error) {
+          console.error('Failed to forward cowork message metadata update:', error);
+        }
+      });
+    },
+  );
 
   runtime.on('permissionRequest', (sessionId: string, request: unknown) => {
     if (runtime.getSessionConfirmationMode(sessionId) === 'text') {

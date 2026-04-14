@@ -383,6 +383,7 @@ export interface CoworkMessage {
   content: string;
   timestamp: number;
   metadata?: CoworkMessageMetadata;
+  thinkingContent?: string; // Accumulated thinking content during streaming
 }
 
 export interface CoworkSession {
@@ -892,6 +893,8 @@ export class CoworkStore {
       content: message.content,
       timestamp: now,
       metadata: message.metadata,
+      // Include thinkingContent if provided (used for streaming thinking display)
+      ...(message.thinkingContent ? { thinkingContent: message.thinkingContent } : {}),
     };
   }
 
@@ -954,6 +957,8 @@ export class CoworkStore {
       content: message.content,
       timestamp: now,
       metadata: message.metadata,
+      // Include thinkingContent if provided (used for streaming thinking display)
+      ...(message.thinkingContent ? { thinkingContent: message.thinkingContent } : {}),
     };
   }
 

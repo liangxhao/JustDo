@@ -1,4 +1,11 @@
-import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import React, {
+  useRef,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useSyncExternalStore,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { ShareIcon } from '@heroicons/react/20/solid';
@@ -9,6 +16,7 @@ import {
   PhotoIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
+import { store } from '../../store';
 import {
   selectCurrentSession,
   selectIsStreaming,
@@ -1274,20 +1282,29 @@ const AssistantMessageItem: React.FC<{
   const [isHovered, setIsHovered] = useState(false);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
 
+  // Check if thinking content exists
+  const hasThinking = message.thinkingContent && message.thinkingContent.length > 0;
+
   return (
     <div
       className="relative"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="text-foreground">
-        <MarkdownContent
-          content={displayContent}
-          className="prose dark:prose-invert max-w-none"
-          resolveLocalFilePath={resolveLocalFilePath}
-          showRevealInFolderAction
-        />
-      </div>
+      {/* Thinking block - use direct Redux subscription for real-time updates */}
+      {hasThinking && <ThinkingStreamBlock messageId={message.id} />}
+
+      {/* Normal content */}
+      {message.content && (
+        <div className="text-foreground">
+          <MarkdownContent
+            content={displayContent}
+            className="prose dark:prose-invert max-w-none"
+            resolveLocalFilePath={resolveLocalFilePath}
+            showRevealInFolderAction
+          />
+        </div>
+      )}
       {showCopyButton && (
         <div className="flex items-center gap-1.5 mt-1">
           <CopyButton content={displayContent} visible={isHovered} />
@@ -1356,44 +1373,101 @@ const TypingDots: React.FC = () => (
   </div>
 );
 
-const ThinkingBlock: React.FC<{
-  message: CoworkMessage;
-  mapDisplayText?: (value: string) => string;
-}> = ({ message, mapDisplayText }) => {
-  const isCurrentlyStreaming = Boolean(message.metadata?.isStreaming);
-  const [isExpanded, setIsExpanded] = useState(isCurrentlyStreaming);
-  const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
+// Embedded thinking block for displaying thinking content at top of assistant message
+// Uses useSyncExternalStore to bypass React-Redux batching and get real-time updates
+const ThinkingStreamBlock: React.FC<{
+  messageId: string;
+}> = ({ messageId }) => {
+  // Track collapsed state - default to expanded (false)
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
-  // Auto-expand while streaming, auto-collapse when streaming completes
-  useEffect(() => {
-    if (isCurrentlyStreaming) {
-      setIsExpanded(true);
-    } else {
-      setIsExpanded(false);
-    }
-  }, [isCurrentlyStreaming]);
+  // Cache the snapshot result to avoid infinite loops
+  // useSyncExternalStore requires getSnapshot to return the same reference if data hasn't changed
+  const snapshotCacheRef = useRef<{ content: string; isStreaming: boolean }>({
+    content: '',
+    isStreaming: true,
+  });
+
+  // Subscribe directly to Redux store for real-time thinking content and status updates
+  // This bypasses the useMemo caching in parent components
+  const thinkingState = useSyncExternalStore(
+    // Subscribe function: called when component mounts/unmounts
+    onStoreChange => {
+      return store.subscribe(() => {
+        const state = store.getState();
+        const session = state.cowork.currentSession;
+        if (session) {
+          const msg = session.messages.find(m => m.id === messageId);
+          const newContent = msg?.thinkingContent || '';
+          const newIsStreaming = msg?.metadata?.isStreaming ?? true;
+          // Check if the snapshot would change
+          if (
+            newContent !== snapshotCacheRef.current.content ||
+            newIsStreaming !== snapshotCacheRef.current.isStreaming
+          ) {
+            onStoreChange();
+          }
+        }
+      });
+    },
+    // Get snapshot: returns cached thinking content and streaming status
+    // Must return the same object reference if data hasn't changed
+    () => {
+      const state = store.getState();
+      const session = state.cowork.currentSession;
+      if (session) {
+        const msg = session.messages.find(m => m.id === messageId);
+        const content = msg?.thinkingContent || '';
+        const isStreaming = msg?.metadata?.isStreaming ?? true;
+
+        // Only create new object if values actually changed
+        if (
+          content !== snapshotCacheRef.current.content ||
+          isStreaming !== snapshotCacheRef.current.isStreaming
+        ) {
+          snapshotCacheRef.current = { content, isStreaming };
+        }
+        return snapshotCacheRef.current;
+      }
+      // Return cached empty state (don't create new object)
+      return snapshotCacheRef.current;
+    },
+  );
+
+  const thinkingContent = thinkingState.content;
+  const isStreaming = thinkingState.isStreaming;
+
+  if (!thinkingContent || thinkingContent.length === 0) return null;
+
+  // Determine status text: "正在思考..." when streaming, "思考完成" when complete
+  const statusText = isStreaming
+    ? i18nService.t('thinkingInProgress')
+    : i18nService.t('thoughtComplete');
+
+  // Toggle collapse/expand on click
+  const handleToggle = () => {
+    setIsCollapsed(prev => !prev);
+  };
 
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-raised transition-colors"
+    <div className="mb-2">
+      <div
+        className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
+        onClick={handleToggle}
       >
         <ChevronRightIcon
-          className={`h-3.5 w-3.5 text-secondary flex-shrink-0 transition-transform duration-200 ${
-            isExpanded ? 'rotate-90' : ''
-          }`}
+          className={`h-3 w-3 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
         />
-        <span className="text-xs font-medium text-secondary">{i18nService.t('reasoning')}</span>
-        {isCurrentlyStreaming && (
-          <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+        <span>{statusText}</span>
+        {isStreaming && (
+          <span className="flex items-center gap-1 ml-1">
+            <span className="w-1 h-1 rounded-full bg-primary animate-pulse" />
+          </span>
         )}
-      </button>
-      {isExpanded && (
-        <div className="px-3 pb-3 max-h-64 overflow-y-auto">
-          <div className="text-xs leading-relaxed text-muted whitespace-pre-wrap">
-            {displayContent}
-          </div>
+      </div>
+      {!isCollapsed && (
+        <div className="mt-1.5 pl-4 text-xs text-muted-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
+          {thinkingContent}
         </div>
       )}
     </div>
@@ -1501,20 +1575,13 @@ export const AssistantTurnBlock: React.FC<{
           <div className="flex-1 min-w-0 px-4 py-3 space-y-3">
             {visibleAssistantItems.map((item, index) => {
               if (item.type === 'assistant') {
-                if (item.message.metadata?.isThinking) {
-                  return (
-                    <ThinkingBlock
-                      key={item.message.id}
-                      message={item.message}
-                      mapDisplayText={mapDisplayText}
-                    />
-                  );
-                }
                 // Check if there are any tool_group items after this assistant message
                 const hasToolGroupAfter = visibleAssistantItems
                   .slice(index + 1)
                   .some(laterItem => laterItem.type === 'tool_group');
 
+                // Use AssistantMessageItem which handles both thinking and response content
+                // It internally decides whether to use ThinkingStreamBlock or static display
                 return (
                   <AssistantMessageItem
                     key={item.message.id}

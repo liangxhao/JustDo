@@ -1238,6 +1238,8 @@ export class OpenClawConfigSync {
             model: {
               primary: defaultPrimaryModel,
             },
+            // Enable reasoning stream so thinking events are emitted via WebSocket
+            reasoningDefault: 'stream',
           },
       ...buildManagedAgentEntries({
         agents,

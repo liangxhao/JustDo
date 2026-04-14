@@ -1,3 +1,4 @@
+import { flushSync } from 'react-dom';
 import { store } from '../store';
 import {
   setSessions,
@@ -8,6 +9,8 @@ import {
   deleteSessions as deleteSessionsAction,
   addMessage,
   updateMessageContent,
+  updateMessageThinkingContent,
+  updateMessageMetadata,
   setStreaming,
   setRemoteManaged,
   updateSessionPinned,
@@ -82,22 +85,40 @@ class CoworkService {
           messageId: message.id,
           hasMetadata: !!meta,
           metadataKeys: meta ? Object.keys(meta) : [],
-          hasImageAttachments: !!(meta?.imageAttachments),
-          imageAttachmentsCount: Array.isArray(meta?.imageAttachments) ? (meta.imageAttachments as unknown[]).length : 0,
+          hasImageAttachments: !!meta?.imageAttachments,
+          imageAttachmentsCount: Array.isArray(meta?.imageAttachments)
+            ? (meta.imageAttachments as unknown[]).length
+            : 0,
         });
       }
       // Check if session exists in current list
       const state = store.getState().cowork;
       const sessionExists = state.sessions.some(s => s.id === sessionId);
 
-      console.log('[CoworkService] onStreamMessage: sessionId=', sessionId, 'type=', message.type, 'sessionExists=', sessionExists, 'totalSessions=', state.sessions.length);
+      console.log(
+        '[CoworkService] onStreamMessage: sessionId=',
+        sessionId,
+        'type=',
+        message.type,
+        'sessionExists=',
+        sessionExists,
+        'totalSessions=',
+        state.sessions.length,
+      );
       if (!sessionExists) {
         // Session was created by IM or another source, refresh the session list
-        console.log('[CoworkService] onStreamMessage: session NOT found in Redux, calling loadSessions...');
+        console.log(
+          '[CoworkService] onStreamMessage: session NOT found in Redux, calling loadSessions...',
+        );
         await this.loadSessions();
         const newState = store.getState().cowork;
         const nowExists = newState.sessions.some(s => s.id === sessionId);
-        console.log('[CoworkService] onStreamMessage: after loadSessions, sessionExists=', nowExists, 'totalSessions=', newState.sessions.length);
+        console.log(
+          '[CoworkService] onStreamMessage: after loadSessions, sessionExists=',
+          nowExists,
+          'totalSessions=',
+          newState.sessions.length,
+        );
       }
 
       // A new user turn means this session is actively running again
@@ -113,20 +134,47 @@ class CoworkService {
     this.streamListenerCleanups.push(messageCleanup);
 
     // Message update listener (for streaming content updates)
-    const messageUpdateCleanup = cowork.onStreamMessageUpdate(({ sessionId, messageId, content }) => {
-      store.dispatch(updateMessageContent({ sessionId, messageId, content }));
-    });
+    const messageUpdateCleanup = cowork.onStreamMessageUpdate(
+      ({ sessionId, messageId, content }) => {
+        store.dispatch(updateMessageContent({ sessionId, messageId, content }));
+      },
+    );
     this.streamListenerCleanups.push(messageUpdateCleanup);
+
+    // Thinking update listener (for streaming thinking content)
+    // Use flushSync to force immediate rendering for each delta update
+    // This ensures the user sees the thinking content stream in real-time
+    const thinkingUpdateCleanup = cowork.onStreamThinkingUpdate(
+      ({ sessionId, messageId, thinkingDelta }) => {
+        // Use flushSync to bypass React's automatic batching and render immediately
+        flushSync(() => {
+          store.dispatch(updateMessageThinkingContent({ sessionId, messageId, thinkingDelta }));
+        });
+      },
+    );
+    this.streamListenerCleanups.push(thinkingUpdateCleanup);
+
+    // Message metadata update listener (for status changes like isStreaming)
+    const messageMetadataUpdateCleanup = cowork.onStreamMessageMetadataUpdate(
+      ({ sessionId, messageId, metadata }) => {
+        flushSync(() => {
+          store.dispatch(updateMessageMetadata({ sessionId, messageId, metadata }));
+        });
+      },
+    );
+    this.streamListenerCleanups.push(messageMetadataUpdateCleanup);
 
     // Permission request listener
     const permissionCleanup = cowork.onStreamPermission(({ sessionId, request }) => {
-      store.dispatch(enqueuePendingPermission({
-        sessionId,
-        toolName: request.toolName,
-        toolInput: request.toolInput,
-        requestId: request.requestId,
-        toolUseId: request.toolUseId ?? null,
-      }));
+      store.dispatch(
+        enqueuePendingPermission({
+          sessionId,
+          toolName: request.toolName,
+          toolInput: request.toolInput,
+          requestId: request.requestId,
+          toolUseId: request.toolUseId ?? null,
+        }),
+      );
     });
     this.streamListenerCleanups.push(permissionCleanup);
 
@@ -147,15 +195,17 @@ class CoworkService {
       store.dispatch(updateSessionStatus({ sessionId, status: 'error' }));
       // Surface the error as a visible message so the user knows what happened.
       if (error) {
-        store.dispatch(addMessage({
-          sessionId,
-          message: {
-            id: `error-${Date.now()}`,
-            type: 'system',
-            content: classifyError(error),
-            timestamp: Date.now(),
-          },
-        }));
+        store.dispatch(
+          addMessage({
+            sessionId,
+            message: {
+              id: `error-${Date.now()}`,
+              type: 'system',
+              content: classifyError(error),
+              timestamp: Date.now(),
+            },
+          }),
+        );
       }
     });
     this.streamListenerCleanups.push(errorCleanup);
@@ -163,13 +213,25 @@ class CoworkService {
     // Sessions changed listener (new channel sessions discovered by polling)
     const sessionsChangedCleanup = cowork.onSessionsChanged(() => {
       const beforeState = store.getState().cowork;
-      console.log('[CoworkService] onSessionsChanged: received IPC event, before sessions:', beforeState.sessions.length, 'sessionIds:', beforeState.sessions.map(s => s.id).slice(0, 5));
-      void this.loadSessions().then(() => {
-        const state = store.getState().cowork;
-        console.log('[CoworkService] onSessionsChanged: loadSessions complete, total sessions:', state.sessions.length, 'sessionIds:', state.sessions.map(s => s.id).slice(0, 5));
-      }).catch((err) => {
-        console.error('[CoworkService] onSessionsChanged: loadSessions FAILED:', err);
-      });
+      console.log(
+        '[CoworkService] onSessionsChanged: received IPC event, before sessions:',
+        beforeState.sessions.length,
+        'sessionIds:',
+        beforeState.sessions.map(s => s.id).slice(0, 5),
+      );
+      void this.loadSessions()
+        .then(() => {
+          const state = store.getState().cowork;
+          console.log(
+            '[CoworkService] onSessionsChanged: loadSessions complete, total sessions:',
+            state.sessions.length,
+            'sessionIds:',
+            state.sessions.map(s => s.id).slice(0, 5),
+          );
+        })
+        .catch(err => {
+          console.error('[CoworkService] onSessionsChanged: loadSessions FAILED:', err);
+        });
     });
     this.streamListenerCleanups.push(sessionsChangedCleanup);
   }
@@ -179,7 +241,7 @@ class CoworkService {
     const engineApi = window.electron?.openclaw?.engine;
     if (!engineApi?.onProgress) return;
 
-    const statusCleanup = engineApi.onProgress((status) => {
+    const statusCleanup = engineApi.onProgress(status => {
       this.notifyOpenClawStatus(status);
     });
     this.streamListenerCleanups.push(statusCleanup);
@@ -188,7 +250,7 @@ class CoworkService {
 
   private notifyOpenClawStatus(status: OpenClawEngineStatus): void {
     this.openClawStatus = status;
-    this.openClawStatusListeners.forEach((listener) => {
+    this.openClawStatusListeners.forEach(listener => {
       listener(status);
     });
   }
@@ -233,7 +295,9 @@ class CoworkService {
     return this.openClawStatus;
   }
 
-  async startSession(options: CoworkStartOptions): Promise<{ session: CoworkSession | null; error?: string }> {
+  async startSession(
+    options: CoworkStartOptions,
+  ): Promise<{ session: CoworkSession | null; error?: string }> {
     const cowork = window.electron?.cowork;
     if (!cowork) {
       console.error('Cowork API not available');
@@ -257,9 +321,10 @@ class CoworkService {
 
     // Show a user-visible error when session start fails
     if (result.error) {
-      const errorContent = result.code === 'ENGINE_NOT_READY'
-        ? i18nService.t('coworkErrorEngineNotReady')
-        : classifyError(result.error);
+      const errorContent =
+        result.code === 'ENGINE_NOT_READY'
+          ? i18nService.t('coworkErrorEngineNotReady')
+          : classifyError(result.error);
       window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
     }
 
@@ -293,31 +358,38 @@ class CoworkService {
       if (result.code !== 'ENGINE_NOT_READY') {
         store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'error' }));
         if (result.error) {
-          store.dispatch(addMessage({
-            sessionId: options.sessionId,
-            message: {
-              id: `error-${Date.now()}`,
-              type: 'system',
-              content: i18nService.t('coworkErrorSessionContinueFailed').replace('{error}', result.error),
-              timestamp: Date.now(),
-            },
-          }));
+          store.dispatch(
+            addMessage({
+              sessionId: options.sessionId,
+              message: {
+                id: `error-${Date.now()}`,
+                type: 'system',
+                content: i18nService
+                  .t('coworkErrorSessionContinueFailed')
+                  .replace('{error}', result.error),
+                timestamp: Date.now(),
+              },
+            }),
+          );
         }
       }
       // Show a user-visible error message in the session
       if (result.error) {
-        const errorContent = result.code === 'ENGINE_NOT_READY'
-          ? i18nService.t('coworkErrorEngineNotReady')
-          : classifyError(result.error);
-        store.dispatch(addMessage({
-          sessionId: options.sessionId,
-          message: {
-            id: `error-${Date.now()}`,
-            type: 'system',
-            content: errorContent,
-            timestamp: Date.now(),
-          },
-        }));
+        const errorContent =
+          result.code === 'ENGINE_NOT_READY'
+            ? i18nService.t('coworkErrorEngineNotReady')
+            : classifyError(result.error);
+        store.dispatch(
+          addMessage({
+            sessionId: options.sessionId,
+            message: {
+              id: `error-${Date.now()}`,
+              type: 'system',
+              content: errorContent,
+              timestamp: Date.now(),
+            },
+          }),
+        );
       }
       console.error('Failed to continue session:', result.error);
       return false;
@@ -422,7 +494,13 @@ class CoworkService {
 
   async captureSessionImageChunk(options: {
     rect: { x: number; y: number; width: number; height: number };
-  }): Promise<{ success: boolean; width?: number; height?: number; pngBase64?: string; error?: string }> {
+  }): Promise<{
+    success: boolean;
+    width?: number;
+    height?: number;
+    pngBase64?: string;
+    error?: string;
+  }> {
     const cowork = window.electron?.cowork;
     if (!cowork?.captureImageChunk) {
       return { success: false, error: 'Cowork capture API not available' };
@@ -504,8 +582,8 @@ class CoworkService {
     if (!cowork) return false;
 
     const currentConfig = store.getState().cowork.config;
-    const engineChanged = config.agentEngine !== undefined
-      && config.agentEngine !== currentConfig.agentEngine;
+    const engineChanged =
+      config.agentEngine !== undefined && config.agentEngine !== currentConfig.agentEngine;
     const result = await cowork.setConfig(config);
     if (result.success) {
       store.dispatch(setConfig({ ...currentConfig, ...config }));
@@ -527,14 +605,18 @@ class CoworkService {
     return window.electron.getApiConfig();
   }
 
-  async checkApiConfig(options?: { probeModel?: boolean }): Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string } | null> {
+  async checkApiConfig(options?: {
+    probeModel?: boolean;
+  }): Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string } | null> {
     if (!window.electron?.checkApiConfig) {
       return null;
     }
     return window.electron.checkApiConfig(options);
   }
 
-  async saveApiConfig(config: CoworkApiConfig): Promise<{ success: boolean; error?: string } | null> {
+  async saveApiConfig(
+    config: CoworkApiConfig,
+  ): Promise<{ success: boolean; error?: string } | null> {
     if (!window.electron?.saveApiConfig) {
       return null;
     }
@@ -553,9 +635,7 @@ class CoworkService {
     return result.entries;
   }
 
-  async createMemoryEntry(input: {
-    text: string;
-  }): Promise<CoworkUserMemoryEntry | null> {
+  async createMemoryEntry(input: { text: string }): Promise<CoworkUserMemoryEntry | null> {
     const api = window.electron?.cowork?.createMemoryEntry;
     if (!api) return null;
     const result = await api(input);

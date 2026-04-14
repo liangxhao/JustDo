@@ -466,6 +466,16 @@ interface IElectronAPI {
     onStreamMessageUpdate: (
       callback: (data: { sessionId: string; messageId: string; content: string }) => void,
     ) => () => void;
+    onStreamThinkingUpdate: (
+      callback: (data: { sessionId: string; messageId: string; thinkingDelta: string }) => void,
+    ) => () => void;
+    onStreamMessageMetadataUpdate: (
+      callback: (data: {
+        sessionId: string;
+        messageId: string;
+        metadata: Record<string, unknown>;
+      }) => void,
+    ) => () => void;
     onStreamPermission: (
       callback: (data: { sessionId: string; request: CoworkPermissionRequest }) => void,
     ) => () => void;

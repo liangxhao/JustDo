@@ -130,6 +130,12 @@ type ActiveTurn = {
   bufferedAgentPayloads: BufferedAgentEvent[];
   /** Client-side timeout watchdog timer (fallback for missing gateway abort events). */
   timeoutTimer?: ReturnType<typeof setTimeout>;
+  /** Message ID for current thinking stream (created on first thinking event). */
+  currentThinkingMessageId: string | null;
+  /** Accumulated thinking content for current stream. */
+  currentThinkingContent: string;
+  /** True when thinking stream has ended (first text or non-thinking event received). */
+  thinkingStreamEnded: boolean;
 };
 
 type BufferedChatEvent = {
@@ -1308,6 +1314,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       pendingUserSync: false,
       bufferedChatPayloads: [],
       bufferedAgentPayloads: [],
+      currentThinkingMessageId: null,
+      currentThinkingContent: '',
+      thinkingStreamEnded: false,
     });
     this.sessionIdByRunId.set(runId, sessionId);
 
@@ -1325,6 +1334,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         messageLength: outboundMessage.length,
         runId,
       });
+      console.log(
+        '[OpenClawRuntime] chat.send message content (first 500 chars):',
+        outboundMessage.slice(0, 500),
+      );
       const attachments = options.imageAttachments?.length
         ? options.imageAttachments.map(img => ({
             type: 'image',
@@ -1415,6 +1428,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     this.bridgedSessions.add(sessionId);
+
+    // Enable reasoning stream so thinking events are emitted via WebSocket
+    // OpenClaw parses /reasoning directive and sets session.reasoningLevel
+    // Must include this for every turn, not just new sessions, to ensure thinking events are sent
+    sections.push('/reasoning stream');
 
     if (!hasHistory) {
       const session = this.store.getSession(sessionId);
@@ -2059,9 +2077,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (event.event === 'agent') {
-      // Process assistant text updates here (before handleAgentEvent) because
-      // handleAgentEvent may enqueue events when sessionId mapping isn't ready.
+      // Process thinking events first (before assistant text) to ensure correct display order.
+      // Thinking should appear in UI before or alongside the reply text.
+      this.processAgentThinkingEvent(event.payload);
+      // Process assistant text updates (may be enqueued if session not ready).
       this.processAgentAssistantText(event.payload);
+      // Handle other agent events (tool, lifecycle, etc.)
       this.handleAgentEvent(event.payload, event.seq);
       return;
     }
@@ -2306,6 +2327,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const stream = typeof agentPayload.stream === 'string' ? agentPayload.stream.trim() : '';
     const hasToolShape =
       isRecord(agentPayload.data) && typeof agentPayload.data.toolCallId === 'string';
+
+    // End thinking stream when we receive non-thinking streams (tool/lifecycle)
+    if (stream !== 'thinking' && !turn.thinkingStreamEnded && turn.currentThinkingMessageId) {
+      turn.thinkingStreamEnded = true;
+      // Update thinking message metadata to mark streaming as ended
+      this.finalizeThinkingMessage(sessionId, turn.currentThinkingMessageId);
+    }
+
+    // Skip thinking events - they are processed earlier in processAgentThinkingEvent
+    if (stream === 'thinking') {
+      return;
+    }
+
     if (stream === 'tool' || stream === 'tools' || (!stream && hasToolShape)) {
       if (Array.isArray(agentPayload.data)) {
         for (const entry of agentPayload.data) {
@@ -2331,6 +2365,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       stream === 'tool' ||
       stream === 'tools' ||
       stream === 'lifecycle' ||
+      stream === 'thinking' ||
       (!stream && hasToolShape);
     if (!isSupportedStream) return;
 
@@ -2468,6 +2503,95 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (phase === 'start') {
       this.store.updateSession(sessionId, { status: 'running' });
+    }
+  }
+
+  /**
+   * Finalize a thinking message when the thinking stream ends.
+   * Updates metadata to mark streaming as complete while preserving isThinking flag
+   * so the message remains visible in the UI.
+   */
+  private finalizeThinkingMessage(sessionId: string, messageId: string): void {
+    const session = this.store.getSession(sessionId);
+    const message = session?.messages.find(m => m.id === messageId);
+    if (!message) return;
+
+    // Preserve isThinking but mark streaming as ended
+    const isThinking = message.metadata?.isThinking ?? true;
+    const newMetadata = { isStreaming: false, isFinal: true, isThinking };
+    this.store.updateMessage(sessionId, messageId, {
+      metadata: newMetadata,
+    });
+    // Emit metadata update so UI reflects the finalized state (isStreaming: false)
+    this.emit('messageMetadataUpdate', sessionId, messageId, newMetadata);
+  }
+
+  private handleAgentThinkingEvent(sessionId: string, turn: ActiveTurn, data: unknown): void {
+    if (!isRecord(data)) return;
+
+    const text = typeof data.text === 'string' ? data.text : '';
+    const delta = typeof data.delta === 'string' ? data.delta : '';
+
+    // First thinking event: create the assistant message if not exists
+    if (!turn.currentThinkingMessageId) {
+      // If we already have an assistantMessageId, reuse it for thinking
+      // Otherwise create a new one
+      if (turn.assistantMessageId) {
+        turn.currentThinkingMessageId = turn.assistantMessageId;
+      } else {
+        // Use store.addMessage to create message - it generates its own ID
+        // Set initial thinkingContent to the actual content from this event
+        // OpenClaw's emitReasoningStream only sends events when text.trim() is non-empty,
+        // so the first event should always have content
+        const initialThinkingContent = text || delta || '';
+        const thinkingMessage = this.store.addMessage(sessionId, {
+          type: 'assistant',
+          content: '',
+          metadata: { isStreaming: true, isThinking: true },
+          thinkingContent: initialThinkingContent,
+        });
+        turn.currentThinkingMessageId = thinkingMessage.id;
+        turn.assistantMessageId = thinkingMessage.id;
+        // Initialize turn state with the first text/delta content
+        turn.currentThinkingContent = initialThinkingContent;
+        this.emit('message', sessionId, thinkingMessage);
+        // Note: we don't emit thinkingUpdate for the initial content since
+        // the message already includes it, and UI will render directly from the message event
+        // Return early to skip the update logic below - the initial content is already set
+        return;
+      }
+      // Reusing existing message: set currentThinkingContent to empty so update logic works
+      turn.currentThinkingContent = '';
+    }
+
+    // Update thinking content - use text as the authoritative full content
+    // and calculate the actual delta to emit
+    let actualDelta = '';
+    if (text) {
+      // text is always the full accumulated content
+      const previousContent = turn.currentThinkingContent;
+      turn.currentThinkingContent = text;
+
+      // Calculate actual delta: what's new in text compared to previous
+      if (text.startsWith(previousContent) && text.length > previousContent.length) {
+        actualDelta = text.slice(previousContent.length);
+      } else if (previousContent === '') {
+        // First event - send full text as delta
+        actualDelta = text;
+      } else {
+        // Content reset or changed - send full text
+        actualDelta = text;
+      }
+    } else if (delta) {
+      // If only delta provided (no text), append it
+      turn.currentThinkingContent += delta;
+      actualDelta = delta;
+    }
+
+    // Emit thinking update event with the actual delta
+    const messageId = turn.currentThinkingMessageId;
+    if (messageId && actualDelta) {
+      this.emit('thinkingUpdate', sessionId, messageId, actualDelta);
     }
   }
 
@@ -2869,6 +2993,63 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   /**
+   * Process agent thinking-stream events directly from handleGatewayEvent.
+   * This bypasses handleAgentEvent's session resolution (which may enqueue events),
+   * ensuring thinking updates are processed immediately and displayed before assistant text.
+   */
+  private processAgentThinkingEvent(payload: unknown): void {
+    if (!isRecord(payload)) return;
+    const p = payload as Record<string, unknown>;
+    if (p.stream !== 'thinking') return;
+
+    const dataField = isRecord(p.data) ? (p.data as Record<string, unknown>) : p;
+    const text = typeof dataField.text === 'string' ? dataField.text : '';
+    const delta = typeof dataField.delta === 'string' ? dataField.delta : '';
+
+    const runId = typeof p.runId === 'string' ? p.runId.trim() : '';
+    const sessionKey = typeof p.sessionKey === 'string' ? p.sessionKey.trim() : '';
+    let sessionId = runId ? this.sessionIdByRunId.get(runId) : undefined;
+    if (!sessionId && sessionKey) {
+      sessionId = this.resolveSessionIdBySessionKey(sessionKey) ?? undefined;
+      if (!sessionId && this.channelSessionSync) {
+        sessionId =
+          this.channelSessionSync.resolveOrCreateSession(sessionKey) ||
+          (!this.heartbeatSessionKeys.has(sessionKey) &&
+            this.channelSessionSync.resolveOrCreateMainAgentSession(sessionKey)) ||
+          this.channelSessionSync.resolveOrCreateCronSession(sessionKey) ||
+          undefined;
+        if (sessionId) {
+          this.rememberSessionKey(sessionId, sessionKey);
+        }
+      }
+      if (sessionId && !this.activeTurns.has(sessionId)) {
+        this.ensureActiveTurn(sessionId, sessionKey, runId);
+      }
+      if (sessionId && runId) {
+        this.bindRunIdToTurn(sessionId, runId);
+      }
+    }
+    const turn = sessionId ? this.activeTurns.get(sessionId) : undefined;
+
+    if (!turn || !sessionId) {
+      console.debug(
+        '[Debug:processThinking] skipped: runId:',
+        runId.slice(0, 8),
+        'sessionKey:',
+        sessionKey,
+        'sid:',
+        !!sessionId,
+        'turn:',
+        !!turn,
+      );
+      return;
+    }
+
+    // Call the actual thinking event handler
+    this.handleAgentThinkingEvent(sessionId, turn, p.data);
+  }
+
+  /**
    * Process agent assistant-stream text directly from handleGatewayEvent.
    * This bypasses handleAgentEvent's session resolution (which may enqueue events),
    * ensuring text updates and reset detection always work.
@@ -3007,6 +3188,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private handleChatDelta(sessionId: string, turn: ActiveTurn, payload: ChatEventPayload): void {
+    // End thinking stream when we receive text content
+    if (!turn.thinkingStreamEnded && turn.currentThinkingMessageId) {
+      turn.thinkingStreamEnded = true;
+      // Update thinking message metadata to mark streaming as ended
+      this.finalizeThinkingMessage(sessionId, turn.currentThinkingMessageId);
+    }
+
     const previousText = turn.currentText;
     const previousContentText = turn.currentContentText;
     const previousContentBlocks = [...turn.currentContentBlocks];
@@ -3130,8 +3318,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
       }
     } else if (finalSegmentText) {
+      console.log(
+        '[Debug:handleChatFinal] no assistantMessageId, creating new message with finalSegmentText',
+      );
       const reusedMessageId = this.reuseFinalAssistantMessage(sessionId, finalSegmentText);
       if (reusedMessageId) {
+        console.log('[Debug:handleChatFinal] reused message id:', reusedMessageId);
         turn.assistantMessageId = reusedMessageId;
       } else {
         const assistantMessage = this.store.addMessage(sessionId, {
@@ -4390,6 +4582,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       pendingUserSync: !!isChannel,
       bufferedChatPayloads: [],
       bufferedAgentPayloads: [],
+      currentThinkingMessageId: null,
+      currentThinkingContent: '',
+      thinkingStreamEnded: false,
     });
     if (runId) {
       this.sessionIdByRunId.set(runId, sessionId);
