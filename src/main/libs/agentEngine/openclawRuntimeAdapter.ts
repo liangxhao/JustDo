@@ -2332,7 +2332,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (stream !== 'thinking' && !turn.thinkingStreamEnded && turn.currentThinkingMessageId) {
       turn.thinkingStreamEnded = true;
       // Update thinking message metadata to mark streaming as ended
-      this.finalizeThinkingMessage(sessionId, turn.currentThinkingMessageId);
+      // Pass the final accumulated thinking content to save to database
+      this.finalizeThinkingMessage(
+        sessionId,
+        turn.currentThinkingMessageId,
+        turn.currentThinkingContent,
+      );
     }
 
     // Skip thinking events - they are processed earlier in processAgentThinkingEvent
@@ -2510,8 +2515,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Finalize a thinking message when the thinking stream ends.
    * Updates metadata to mark streaming as complete while preserving isThinking flag
    * so the message remains visible in the UI.
+   * Also saves the final accumulated thinking content to the database.
    */
-  private finalizeThinkingMessage(sessionId: string, messageId: string): void {
+  private finalizeThinkingMessage(
+    sessionId: string,
+    messageId: string,
+    finalThinkingContent?: string,
+  ): void {
     const session = this.store.getSession(sessionId);
     const message = session?.messages.find(m => m.id === messageId);
     if (!message) return;
@@ -2519,9 +2529,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // Preserve isThinking but mark streaming as ended
     const isThinking = message.metadata?.isThinking ?? true;
     const newMetadata = { isStreaming: false, isFinal: true, isThinking };
-    this.store.updateMessage(sessionId, messageId, {
+
+    // Update both metadata and thinkingContent in the database
+    // If finalThinkingContent is provided, use it; otherwise keep existing content
+    const updates: { metadata: typeof newMetadata; thinkingContent?: string } = {
       metadata: newMetadata,
-    });
+    };
+    if (finalThinkingContent !== undefined) {
+      updates.thinkingContent = finalThinkingContent;
+    }
+
+    this.store.updateMessage(sessionId, messageId, updates);
     // Emit metadata update so UI reflects the finalized state (isStreaming: false)
     this.emit('messageMetadataUpdate', sessionId, messageId, newMetadata);
   }
@@ -3192,7 +3210,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!turn.thinkingStreamEnded && turn.currentThinkingMessageId) {
       turn.thinkingStreamEnded = true;
       // Update thinking message metadata to mark streaming as ended
-      this.finalizeThinkingMessage(sessionId, turn.currentThinkingMessageId);
+      // Pass the final accumulated thinking content to save to database
+      this.finalizeThinkingMessage(
+        sessionId,
+        turn.currentThinkingMessageId,
+        turn.currentThinkingContent,
+      );
     }
 
     const previousText = turn.currentText;

@@ -208,6 +208,11 @@ export class SqliteStore {
           SET sequence = (SELECT seq FROM numbered WHERE numbered.id = cowork_messages.id)
         `);
       }
+
+      // Migration: Add thinking_content column to cowork_messages
+      if (!msgColNames.includes('thinking_content')) {
+        this.db.exec('ALTER TABLE cowork_messages ADD COLUMN thinking_content TEXT');
+      }
     } catch {
       // Column already exists or migration not needed.
     }

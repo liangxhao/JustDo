@@ -530,6 +530,7 @@ interface CoworkMessageRow {
   metadata: string | null;
   created_at: number;
   sequence: number | null;
+  thinking_content: string | null;
 }
 
 interface CoworkUserMemoryRow {
@@ -824,7 +825,7 @@ export class CoworkStore {
   private getSessionMessages(sessionId: string): CoworkMessage[] {
     const rows = this.getAll<CoworkMessageRow>(
       `
-      SELECT id, type, content, metadata, created_at, sequence
+      SELECT id, type, content, metadata, created_at, sequence, thinking_content
       FROM cowork_messages
       WHERE session_id = ?
       ORDER BY
@@ -853,6 +854,7 @@ export class CoworkStore {
         content: row.content,
         timestamp: row.created_at,
         metadata,
+        ...(row.thinking_content ? { thinkingContent: row.thinking_content } : {}),
       };
     });
   }
@@ -871,8 +873,8 @@ export class CoworkStore {
     this.db
       .prepare(
         `
-      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -883,6 +885,7 @@ export class CoworkStore {
         message.metadata ? JSON.stringify(message.metadata) : null,
         now,
         sequence,
+        message.thinkingContent || null,
       );
 
     this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
@@ -934,8 +937,8 @@ export class CoworkStore {
       this.db
         .prepare(
           `
-        INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
         )
         .run(
@@ -946,6 +949,7 @@ export class CoworkStore {
           message.metadata ? JSON.stringify(message.metadata) : null,
           now,
           targetSequence,
+          message.thinkingContent || null,
         );
 
       this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
@@ -1028,7 +1032,7 @@ export class CoworkStore {
   updateMessage(
     sessionId: string,
     messageId: string,
-    updates: { content?: string; metadata?: CoworkMessageMetadata },
+    updates: { content?: string; metadata?: CoworkMessageMetadata; thinkingContent?: string },
   ): void {
     const setClauses: string[] = [];
     const values: (string | null)[] = [];
@@ -1040,6 +1044,10 @@ export class CoworkStore {
     if (updates.metadata !== undefined) {
       setClauses.push('metadata = ?');
       values.push(updates.metadata ? JSON.stringify(updates.metadata) : null);
+    }
+    if (updates.thinkingContent !== undefined) {
+      setClauses.push('thinking_content = ?');
+      values.push(updates.thinkingContent || null);
     }
 
     if (setClauses.length === 0) return;
