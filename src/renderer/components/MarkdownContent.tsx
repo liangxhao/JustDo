@@ -14,7 +14,12 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 // @ts-ignore
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { ClipboardDocumentIcon, CheckIcon, DocumentIcon, FolderIcon } from '@heroicons/react/24/outline';
+import {
+  ClipboardDocumentIcon,
+  CheckIcon,
+  DocumentIcon,
+  FolderIcon,
+} from '@heroicons/react/24/outline';
 import { i18nService } from '../services/i18n';
 
 const CODE_BLOCK_LINE_LIMIT = 200;
@@ -177,9 +182,7 @@ const openExternalViaAnchorFallback = (url: string): void => {
 };
 
 function useIsDark() {
-  const [isDark, setIsDark] = useState(() =>
-    document.documentElement.classList.contains('dark')
-  );
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
   useEffect(() => {
     const observer = new MutationObserver(() => {
       setIsDark(document.documentElement.classList.contains('dark'));
@@ -195,35 +198,63 @@ const dispatchAppToast = (message: string): void => {
 };
 
 const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
-  const normalizedClassName = Array.isArray(className)
-    ? className.join(' ')
-    : className || '';
+  const normalizedClassName = Array.isArray(className) ? className.join(' ') : className || '';
   const match = /language-([\w-]+)/.exec(normalizedClassName);
   const hasPosition = node?.position?.start?.line != null && node?.position?.end?.line != null;
-  const isInline = typeof props.inline === 'boolean'
-    ? props.inline
-    : hasPosition
-      ? node.position.start.line === node.position.end.line
-      : !match;
+  const isInline =
+    typeof props.inline === 'boolean'
+      ? props.inline
+      : hasPosition
+        ? node.position.start.line === node.position.end.line
+        : !match;
   const codeText = Array.isArray(children) ? children.join('') : String(children);
   const trimmedCodeText = codeText.replace(/\n$/, '');
-  const shouldHighlight = !isInline && match
-    && trimmedCodeText.length <= CODE_BLOCK_CHAR_LIMIT
-    && trimmedCodeText.split('\n').length <= CODE_BLOCK_LINE_LIMIT;
+  const shouldHighlight =
+    !isInline &&
+    match &&
+    trimmedCodeText.length <= CODE_BLOCK_CHAR_LIMIT &&
+    trimmedCodeText.split('\n').length <= CODE_BLOCK_LINE_LIMIT;
   const [isCopied, setIsCopied] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
   const isDark = useIsDark();
-  const highlighterStyle = isDark ? oneDark : {
-    ...oneLight,
-    'pre[class*="language-"]': { ...(oneLight as Record<string, React.CSSProperties>)['pre[class*="language-"]'], background: '#f0f2f5' },
-    'code[class*="language-"]': { ...(oneLight as Record<string, React.CSSProperties>)['code[class*="language-"]'], background: '#f0f2f5' },
-  };
+  const highlighterStyle = isDark
+    ? {
+        ...oneDark,
+        'pre[class*="language-"]': {
+          ...(oneDark as Record<string, React.CSSProperties>)['pre[class*="language-"]'],
+          background: '#282c34',
+          padding: '4px 8px',
+          margin: 0,
+        },
+        'code[class*="language-"]': {
+          ...(oneDark as Record<string, React.CSSProperties>)['code[class*="language-"]'],
+          background: '#282c34',
+          padding: 0,
+        },
+      }
+    : {
+        ...oneLight,
+        'pre[class*="language-"]': {
+          ...(oneLight as Record<string, React.CSSProperties>)['pre[class*="language-"]'],
+          background: '#f0f2f5',
+          padding: '4px 8px',
+          margin: 0,
+        },
+        'code[class*="language-"]': {
+          ...(oneLight as Record<string, React.CSSProperties>)['code[class*="language-"]'],
+          background: '#f0f2f5',
+          padding: 0,
+        },
+      };
 
-  useEffect(() => () => {
-    if (copyTimeoutRef.current != null) {
-      window.clearTimeout(copyTimeoutRef.current);
-    }
-  }, []);
+  useEffect(
+    () => () => {
+      if (copyTimeoutRef.current != null) {
+        window.clearTimeout(copyTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   const handleCopy = useCallback(async () => {
     try {
@@ -242,22 +273,22 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
     // Simple code block without language - minimal styling
     if (!match) {
       return (
-        <div className="my-2 relative group">
-          <div className="overflow-x-auto rounded-lg dark:bg-[#282c34] bg-[#f0f2f5] text-[13px] leading-6">
+        <div className="mt-1 mb-0.5 relative group">
+          <div className="overflow-x-auto rounded-lg dark:bg-[#282c34] bg-[#f0f2f5] text-[13px] leading-5">
             <button
               type="button"
               onClick={handleCopy}
-              className="absolute top-2 right-2 z-10 p-2 rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100 transform-gpu"
+              className="absolute top-1.5 right-1.5 z-10 p-1 rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100 transform-gpu"
               title={i18nService.t('copyToClipboard')}
               aria-label={i18nService.t('copyToClipboard')}
             >
               {isCopied ? (
-                <CheckIcon className="h-5 w-5 text-green-500" />
+                <CheckIcon className="h-4 w-4 text-green-500" />
               ) : (
-                <ClipboardDocumentIcon className="h-5 w-5" />
+                <ClipboardDocumentIcon className="h-4 w-4" />
               )}
             </button>
-            <code className="block px-4 py-3 font-mono dark:text-gray-100 text-gray-800 whitespace-pre">
+            <code className="block px-2.5 py-1.5 font-mono dark:text-gray-100 text-gray-800 whitespace-pre">
               {trimmedCodeText}
             </code>
           </div>
@@ -267,20 +298,20 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
 
     // Code block with language - show header with language name
     return (
-      <div className="my-3 rounded-xl overflow-hidden border border-border relative shadow-subtle">
-        <div className="bg-surface-raised px-4 py-2 text-xs text-secondary font-medium flex items-center justify-between">
+      <div className="mt-1 mb-0.5 rounded overflow-hidden border border-border relative">
+        <div className="bg-surface-raised px-2 py-0.5 text-xs text-secondary font-medium flex items-center justify-between leading-tight">
           <span>{match[1]}</span>
           <button
             type="button"
             onClick={handleCopy}
-            className="p-2 rounded-md hover:bg-surface-raised transition-colors transform-gpu"
+            className="p-0.5 rounded hover:bg-surface-hover transition-colors"
             title={i18nService.t('copyToClipboard')}
             aria-label={i18nService.t('copyToClipboard')}
           >
             {isCopied ? (
-              <CheckIcon className="h-5 w-5 text-green-500" />
+              <CheckIcon className="h-3.5 w-3.5 text-green-500" />
             ) : (
-              <ClipboardDocumentIcon className="h-5 w-5" />
+              <ClipboardDocumentIcon className="h-3.5 w-3.5" />
             )}
           </button>
         </div>
@@ -289,13 +320,18 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
             style={highlighterStyle}
             language={match[1]}
             PreTag="div"
-            customStyle={{ ...SYNTAX_HIGHLIGHTER_STYLE, background: isDark ? '#282c34' : '#f0f2f5' }}
+            customStyle={{
+              ...SYNTAX_HIGHLIGHTER_STYLE,
+              background: isDark ? '#282c34' : '#f0f2f5',
+              padding: '4px 8px',
+              margin: 0,
+            }}
           >
             {trimmedCodeText}
           </SyntaxHighlighter>
         ) : (
-          <div className="m-0 overflow-x-auto dark:bg-[#282c34] bg-[#f0f2f5] text-[13px] leading-6">
-            <code className="block px-4 py-3 font-mono dark:text-gray-100 text-gray-800 whitespace-pre">
+          <div className="m-0 overflow-x-auto dark:bg-[#282c34] bg-[#f0f2f5] text-[13px] leading-5">
+            <code className="block px-2 py-1 font-mono dark:text-gray-100 text-gray-800 whitespace-pre">
               {trimmedCodeText}
             </code>
           </div>
@@ -307,13 +343,12 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
   const inlineClassName = [
     'inline bg-transparent px-0.5 text-[0.92em] font-mono font-medium text-foreground',
     normalizedClassName,
-  ].filter(Boolean).join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <code
-      className={inlineClassName}
-      {...props}
-    >
+    <code className={inlineClassName} {...props}>
       {children}
     </code>
   );
@@ -358,7 +393,19 @@ const isLikelyLocalFilePath = (href: string): boolean => {
   const extMatch = base.match(/\.([A-Za-z0-9]{1,6})$/);
   if (!extMatch) return false;
   const ext = extMatch[1].toLowerCase();
-  const commonTlds = new Set(['com', 'net', 'org', 'io', 'cn', 'co', 'ai', 'app', 'dev', 'gov', 'edu']);
+  const commonTlds = new Set([
+    'com',
+    'net',
+    'org',
+    'io',
+    'cn',
+    'co',
+    'ai',
+    'app',
+    'dev',
+    'gov',
+    'edu',
+  ]);
   return !commonTlds.has(ext);
 };
 
@@ -376,7 +423,7 @@ const toFileHref = (filePath: string): string => {
 const getLocalPathFromLink = (
   href: string | null,
   text: string,
-  resolveLocalFilePath?: (href: string, text: string) => string | null
+  resolveLocalFilePath?: (href: string, text: string) => string | null,
 ): string | null => {
   if (!href) return null;
   const resolved = resolveLocalFilePath ? resolveLocalFilePath(href, text) : null;
@@ -390,7 +437,7 @@ const getLocalPathFromLink = (
 const findFallbackPathFromContext = (
   anchor: HTMLAnchorElement | null,
   fileName: string,
-  resolveLocalFilePath?: (href: string, text: string) => string | null
+  resolveLocalFilePath?: (href: string, text: string) => string | null,
 ): string | null => {
   const trimmedName = fileName.trim();
   if (!trimmedName || trimmedName.includes('/') || trimmedName.includes('\\')) {
@@ -426,7 +473,7 @@ const createMarkdownComponents = (
   showRevealInFolderAction = false,
 ) => ({
   p: ({ node, className, children, ...props }: any) => (
-    <p className="my-1 first:mt-0 last:mb-0 leading-6 text-foreground" {...props}>
+    <p className="mt-1 mb-0 last:mb-0 leading-6 text-foreground" {...props}>
       {children}
     </p>
   ),
@@ -451,12 +498,12 @@ const createMarkdownComponents = (
     </h3>
   ),
   ul: ({ node, className, children, ...props }: any) => (
-    <ul className="list-disc pl-5 my-1.5 text-foreground" {...props}>
+    <ul className="list-disc pl-5 my-1 text-foreground" {...props}>
       {children}
     </ul>
   ),
   ol: ({ node, className, children, ...props }: any) => (
-    <ol className="list-decimal pl-6 my-1.5 text-foreground" {...props}>
+    <ol className="list-decimal pl-6 my-1 text-foreground" {...props}>
       {children}
     </ol>
   ),
@@ -466,7 +513,10 @@ const createMarkdownComponents = (
     </li>
   ),
   blockquote: ({ node, className, children, ...props }: any) => (
-    <blockquote className="border-l-4 border-primary pl-4 py-1 my-2 bg-surface-raised/30 rounded-r-lg text-foreground" {...props}>
+    <blockquote
+      className="border-l-4 border-primary pl-4 py-1 my-2 bg-surface-raised/30 rounded-r-lg text-foreground"
+      {...props}
+    >
       {children}
     </blockquote>
   ),
@@ -504,14 +554,15 @@ const createMarkdownComponents = (
     </td>
   ),
   img: ({ node, className, src, alt, ...props }: any) => {
-    const resolvedSrc = typeof src === 'string' && src.startsWith('file://')
-      ? src.replace(/^file:\/\//, 'localfile://')
-      : src;
-    return <img className="max-w-full h-auto rounded-xl my-4" src={resolvedSrc} alt={alt} {...props} />;
+    const resolvedSrc =
+      typeof src === 'string' && src.startsWith('file://')
+        ? src.replace(/^file:\/\//, 'localfile://')
+        : src;
+    return (
+      <img className="max-w-full h-auto rounded-xl my-4" src={resolvedSrc} alt={alt} {...props} />
+    );
   },
-  hr: ({ node, ...props }: any) => (
-    <hr className="my-5 border-border" {...props} />
-  ),
+  hr: ({ node, ...props }: any) => <hr className="my-5 border-border" {...props} />,
   a: ({ node, href, className, children, ...props }: any) => {
     if (typeof href === 'string' && href.startsWith('#artifact-')) {
       return null;
@@ -520,14 +571,15 @@ const createMarkdownComponents = (
     const hrefValue = typeof href === 'string' ? href.trim() : '';
     const isExternalLink = !!hrefValue && isExternalHref(hrefValue);
     const linkText = Array.isArray(children) ? children.join('') : String(children ?? '');
-    const resolvedPath = hrefValue && !isExternalLink && resolveLocalFilePath
-      ? resolveLocalFilePath(hrefValue, linkText)
-      : null;
-    const isLocalFilePath = !!hrefValue && !isExternalLink && (resolvedPath || isLikelyLocalFilePath(hrefValue));
+    const resolvedPath =
+      hrefValue && !isExternalLink && resolveLocalFilePath
+        ? resolveLocalFilePath(hrefValue, linkText)
+        : null;
+    const isLocalFilePath =
+      !!hrefValue && !isExternalLink && (resolvedPath || isLikelyLocalFilePath(hrefValue));
 
     if (isLocalFilePath) {
-      const rawPath = resolvedPath
-        ?? stripFileProtocol(stripHashAndQuery(hrefValue));
+      const rawPath = resolvedPath ?? stripFileProtocol(stripHashAndQuery(hrefValue));
       const decodedPath = safeDecodeURIComponent(rawPath);
       const filePath = decodedPath || rawPath;
       const isDirectoryLink = looksLikeDirectory(filePath);
@@ -542,11 +594,7 @@ const createMarkdownComponents = (
             return;
           }
 
-          const fallbackPath = findFallbackPathFromContext(
-            anchor,
-            linkText,
-            resolveLocalFilePath
-          );
+          const fallbackPath = findFallbackPathFromContext(anchor, linkText, resolveLocalFilePath);
           if (fallbackPath) {
             const fallbackResult = await window.electron.shell.openPath(fallbackPath);
             if (!fallbackResult?.success) {
@@ -583,9 +631,9 @@ const createMarkdownComponents = (
           const fallbackPath = findFallbackPathFromContext(
             linkedAnchor,
             linkText,
-            resolveLocalFilePath
+            resolveLocalFilePath,
           );
-          if (fallbackPath && fallbackPath !== filePath && await tryReveal(fallbackPath)) {
+          if (fallbackPath && fallbackPath !== filePath && (await tryReveal(fallbackPath))) {
             return;
           }
 
@@ -684,9 +732,12 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
 }) => {
   const components = useMemo(
     () => createMarkdownComponents(resolveLocalFilePath, showRevealInFolderAction),
-    [resolveLocalFilePath, showRevealInFolderAction]
+    [resolveLocalFilePath, showRevealInFolderAction],
   );
-  const normalizedContent = useMemo(() => normalizeDisplayMath(encodeFileUrlsInMarkdown(content)), [content]);
+  const normalizedContent = useMemo(
+    () => normalizeDisplayMath(encodeFileUrlsInMarkdown(content)),
+    [content],
+  );
   return (
     <div className={`markdown-content text-[15px] leading-6 ${className}`}>
       <ReactMarkdown

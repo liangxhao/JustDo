@@ -1299,7 +1299,7 @@ const AssistantMessageItem: React.FC<{
         <div className="text-foreground">
           <MarkdownContent
             content={displayContent}
-            className="prose dark:prose-invert max-w-none"
+            className="max-w-none"
             resolveLocalFilePath={resolveLocalFilePath}
             showRevealInFolderAction
           />
@@ -1466,8 +1466,10 @@ const ThinkingStreamBlock: React.FC<{
         )}
       </div>
       {!isCollapsed && (
-        <div className="mt-1.5 pl-4 text-xs text-muted-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
-          {thinkingContent}
+        <div className="mt-1.5 ml-4 p-2.5 rounded-md bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100/50 dark:border-blue-900/30 max-h-64 overflow-y-auto">
+          <div className="text-xs [&_.markdown-content]:text-xs [&_.markdown-content]:text-muted-foreground [&_p]:my-0 [&_p]:leading-5 [&_div.my-0.5]:my-0 [&_div.my-0.5]:mt-0.5 [&_code]:text-[0.85em] [&_pre]:my-0 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0">
+            <MarkdownContent content={thinkingContent} className="max-w-none" />
+          </div>
         </div>
       )}
     </div>
