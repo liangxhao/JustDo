@@ -227,4 +227,41 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     this.currentEngine = 'openclaw';
     return 'openclaw';
   }
+
+  /**
+   * Generate a session title using the configured model via Gateway.
+   * Delegates to the OpenClaw runtime which has Gateway access.
+   * Falls back to Claude runtime if OpenClaw doesn't implement it.
+   */
+  async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string> {
+    console.log(
+      '[Router] generateTitle: called, openclaw.hasMethod=',
+      !!this.runtimeByEngine.openclaw.generateTitle,
+      'yd_cowork.hasMethod=',
+      !!this.runtimeByEngine.yd_cowork.generateTitle,
+    );
+    // Try OpenClaw runtime first (has Gateway access)
+    if (this.runtimeByEngine.openclaw.generateTitle) {
+      console.log('[Router] generateTitle: delegating to openclaw runtime...');
+      const result = await this.runtimeByEngine.openclaw.generateTitle(userIntent, timeoutMs);
+      console.log('[Router] generateTitle: openclaw result=', result);
+      return result;
+    }
+    // Fallback to Claude runtime if available
+    if (this.runtimeByEngine.yd_cowork.generateTitle) {
+      console.log('[Router] generateTitle: delegating to yd_cowork runtime...');
+      return this.runtimeByEngine.yd_cowork.generateTitle(userIntent, timeoutMs);
+    }
+    // Return fallback if neither runtime implements generateTitle
+    console.log('[Router] generateTitle: no runtime implements generateTitle, using fallback');
+    const fallback = 'New Session';
+    const normalized = typeof userIntent === 'string' ? userIntent.trim() : '';
+    if (!normalized) return fallback;
+    const firstLine =
+      normalized
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .find(Boolean) || '';
+    return firstLine.slice(0, 50).trim() || fallback;
+  }
 }

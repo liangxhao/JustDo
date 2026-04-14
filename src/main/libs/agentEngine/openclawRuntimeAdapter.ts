@@ -4913,4 +4913,197 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     return messages ?? [];
   }
+
+  /**
+   * Generate a session title using the configured model via GatewayClient.
+   * This reuses the Gateway's authentication mechanism, avoiding separate HTTP auth handling.
+   *
+   * @param userIntent The user's initial prompt/message to generate title from
+   * @param timeoutMs Timeout in milliseconds (default 8000ms)
+   * @returns Generated title, or fallback if generation fails
+   */
+  async generateTitle(userIntent: string | null, timeoutMs = 8000): Promise<string> {
+    const SESSION_TITLE_MAX_CHARS = 50;
+    const SESSION_TITLE_FALLBACK = 'New Session';
+
+    const normalizedInput = typeof userIntent === 'string' ? userIntent.trim() : '';
+    const fallbackTitle = this.buildFallbackTitle(
+      normalizedInput,
+      SESSION_TITLE_FALLBACK,
+      SESSION_TITLE_MAX_CHARS,
+    );
+
+    if (!normalizedInput) {
+      return fallbackTitle;
+    }
+
+    // Ensure gateway client is ready
+    try {
+      await this.ensureGatewayClientReady();
+    } catch (error) {
+      console.warn('[OpenClawRuntime] generateTitle: gateway client not ready:', error);
+      return fallbackTitle;
+    }
+
+    const client = this.gatewayClient;
+    if (!client) {
+      console.warn('[OpenClawRuntime] generateTitle: gateway client unavailable');
+      return fallbackTitle;
+    }
+
+    const prompt = `Generate a short title from this input, keep the same language, return plain text only (no markdown), and keep it within ${SESSION_TITLE_MAX_CHARS} characters: ${normalizedInput}`;
+
+    // Use a temporary session key for title generation
+    const titleSessionKey = `title:${randomUUID()}`;
+    const idempotencyKey = randomUUID();
+
+    console.log('[OpenClawRuntime] generateTitle: sending request via gateway...');
+
+    try {
+      // Use agent method with expectFinal to wait for complete response
+      const result = await client.request<Record<string, unknown>>(
+        'agent',
+        {
+          message: prompt,
+          sessionKey: titleSessionKey,
+          idempotencyKey,
+          deliver: false,
+          bootstrapContextMode: 'lightweight', // Minimal context for quick response
+        },
+        { expectFinal: true },
+      );
+
+      // Log the full result structure for debugging
+      console.log(
+        '[OpenClawRuntime] generateTitle: full result=',
+        JSON.stringify(result).slice(0, 500),
+      );
+
+      // Extract title from result
+      const resultText = this.extractTitleFromAgentResult(result);
+      console.log('[OpenClawRuntime] generateTitle: extracted text=', resultText?.slice(0, 100));
+
+      if (resultText) {
+        return this.normalizeTitle(resultText, fallbackTitle, SESSION_TITLE_MAX_CHARS);
+      }
+    } catch (error) {
+      console.warn('[OpenClawRuntime] generateTitle: request failed:', error);
+    }
+
+    return fallbackTitle;
+  }
+
+  private buildFallbackTitle(input: string, fallback: string, maxChars: number): string {
+    if (!input) return fallback;
+    const firstLine =
+      input
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .find(Boolean) || '';
+    return this.normalizeTitle(firstLine, fallback, maxChars);
+  }
+
+  private normalizeTitle(value: string, fallback: string, maxChars: number): string {
+    let title = value.trim();
+
+    // Strip markdown code fences
+    const fenced = /```(?:[\w-]+)?\s*([\s\S]*?)```/i.exec(title);
+    if (fenced?.[1]) {
+      title = fenced[1].trim();
+    }
+
+    // Strip markdown formatting
+    title = title
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/_([^_\n]+)_/g, '$1')
+      .replace(/^#{1,6}\s+/, '')
+      .trim();
+
+    // Extract from "title: xxx" format
+    const labeled = /^(?:title|标题)\s*[:：]\s*(.+)$/i.exec(title);
+    if (labeled?.[1]) {
+      title = labeled[1].trim();
+    }
+
+    // Strip quotes
+    title = title
+      .replace(/^["'`"''']+/, '')
+      .replace(/["'`"''']+$/, '')
+      .trim();
+
+    if (!title) return fallback;
+    if (title.length > maxChars) {
+      title = title.slice(0, maxChars).trim();
+    }
+
+    return title || fallback;
+  }
+
+  private extractTitleFromAgentResult(result: unknown): string | null {
+    if (!result) return null;
+
+    // Gateway agent response format: { runId, status: 'ok', summary: 'completed', result: { payloads, meta } }
+    // The 'result.payloads[].text' contains the actual agent output
+    const obj = result as Record<string, unknown>;
+
+    // Check for Gateway agent final response structure
+    if (obj.status === 'ok' && obj.result !== undefined) {
+      const innerResult = obj.result as Record<string, unknown>;
+      // result.payloads is an array of ReplyPayload objects
+      const payloads = innerResult.payloads as unknown[];
+      if (Array.isArray(payloads) && payloads.length > 0) {
+        // Extract text from the first payload
+        const firstPayload = payloads[0] as Record<string, unknown>;
+        if (typeof firstPayload?.text === 'string') {
+          return firstPayload.text;
+        }
+      }
+      // Fallback: try other fields in result
+      return this.extractTitleFromAgentResult(obj.result);
+    }
+
+    // Result might be a string directly
+    if (typeof result === 'string') {
+      return result;
+    }
+
+    // Result might be an object with text/content
+    if (typeof obj.text === 'string') return obj.text;
+    if (typeof obj.content === 'string') return obj.content;
+    if (typeof obj.result === 'string') return obj.result;
+    if (typeof obj.summary === 'string') return obj.summary;
+
+    // Result might have a payloads array (direct structure)
+    const payloads = obj.payloads as unknown[];
+    if (Array.isArray(payloads) && payloads.length > 0) {
+      const firstPayload = payloads[0] as Record<string, unknown>;
+      if (typeof firstPayload?.text === 'string') {
+        return firstPayload.text;
+      }
+    }
+
+    // Result might have a message array
+    const messages = obj.messages as unknown[];
+    if (Array.isArray(messages)) {
+      for (const msg of messages) {
+        const msgObj = msg as Record<string, unknown>;
+        if (msgObj?.role === 'assistant') {
+          const content = msgObj.content;
+          if (typeof content === 'string') return content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              const blockObj = block as Record<string, unknown>;
+              if (blockObj?.type === 'text' && typeof blockObj.text === 'string') {
+                return blockObj.text;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
 }

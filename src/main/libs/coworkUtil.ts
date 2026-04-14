@@ -9,6 +9,10 @@ import {
   resolveRawApiConfig,
 } from './claudeSettings';
 import type { OpenAICompatProxyTarget } from './coworkOpenAICompatProxy';
+import {
+  getCoworkOpenAICompatProxyBaseURL,
+  getCoworkOpenAICompatProxyToken,
+} from './coworkOpenAICompatProxy';
 import { coworkLog } from './coworkLogger';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
@@ -1694,42 +1698,57 @@ export async function probeCoworkModelReadiness(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(
+    const url =
       config.protocol === CoworkModelProtocol.GeminiNative
         ? buildGeminiGenerateContentUrl(config.baseURL, config.model)
-        : buildAnthropicMessagesUrl(config.baseURL),
-      {
-        method: 'POST',
-        headers:
-          config.protocol === CoworkModelProtocol.GeminiNative
-            ? {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': config.apiKey,
-              }
-            : {
-                'Content-Type': 'application/json',
-                'x-api-key': config.apiKey,
-                'anthropic-version': '2023-06-01',
-              },
-        body: JSON.stringify(
-          config.protocol === CoworkModelProtocol.GeminiNative
-            ? {
-                contents: [{ role: 'user', parts: [{ text: 'Reply with "ok".' }] }],
-                generationConfig: {
-                  maxOutputTokens: 1,
-                  temperature: 0,
-                },
-              }
-            : {
-                model: config.model,
-                max_tokens: 1,
+        : buildAnthropicMessagesUrl(config.baseURL);
+
+    // Detect if we're using the OpenAI compat proxy
+    const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL();
+    const isProxyRequest = proxyBaseURL && config.baseURL === proxyBaseURL;
+    const proxyToken = getCoworkOpenAICompatProxyToken();
+
+    // Build headers based on protocol and whether we're using proxy
+    let headers: Record<string, string>;
+    if (config.protocol === CoworkModelProtocol.GeminiNative) {
+      headers = {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': config.apiKey,
+      };
+    } else if (isProxyRequest && proxyToken) {
+      headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${proxyToken}`,
+      };
+    } else {
+      headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': config.apiKey,
+        'anthropic-version': '2023-06-01',
+      };
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(
+        config.protocol === CoworkModelProtocol.GeminiNative
+          ? {
+              contents: [{ role: 'user', parts: [{ text: 'Reply with "ok".' }] }],
+              generationConfig: {
+                maxOutputTokens: 1,
                 temperature: 0,
-                messages: [{ role: 'user', content: 'Reply with "ok".' }],
               },
-        ),
-        signal: controller.signal,
-      },
-    );
+            }
+          : {
+              model: config.model,
+              max_tokens: 1,
+              temperature: 0,
+              messages: [{ role: 'user', content: 'Reply with "ok".' }],
+            },
+      ),
+      signal: controller.signal,
+    });
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => '');
@@ -1784,23 +1803,48 @@ export async function generateSessionTitle(userIntent: string | null): Promise<s
         ? buildGeminiGenerateContentUrl(config.baseURL, config.model)
         : buildAnthropicMessagesUrl(config.baseURL);
     const prompt = `Generate a short title from this input, keep the same language, return plain text only (no markdown), and keep it within ${SESSION_TITLE_MAX_CHARS} characters: ${normalizedInput}`;
+
+    // Detect if we're using the OpenAI compat proxy by checking if baseURL matches proxy address
+    const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL();
+    const isProxyRequest = proxyBaseURL && config.baseURL === proxyBaseURL;
+    const proxyToken = getCoworkOpenAICompatProxyToken();
+
     console.log(
-      `[cowork-title] Generating title: protocol=${config.protocol}, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}`,
+      `[cowork-title] Generating title: protocol=${config.protocol}, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}, proxyBaseURL=${proxyBaseURL}, isProxy=${isProxyRequest}, hasProxyToken=${Boolean(proxyToken)}`,
     );
+
+    // Build headers based on protocol and whether we're using proxy
+    let headers: Record<string, string>;
+    if (config.protocol === CoworkModelProtocol.GeminiNative) {
+      headers = {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': config.apiKey,
+      };
+    } else if (isProxyRequest && proxyToken) {
+      // When using proxy, we need Bearer Authorization with proxy token
+      headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${proxyToken}`,
+      };
+      console.log(`[cowork-title] Using proxy auth with token length=${proxyToken.length}`);
+    } else if (isProxyRequest) {
+      // Proxy request but no token - this shouldn't happen, log warning
+      console.warn('[cowork-title] Proxy request detected but no proxy token available!');
+      headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer `, // Empty token will fail auth
+      };
+    } else {
+      headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': config.apiKey,
+        'anthropic-version': '2023-06-01',
+      };
+    }
 
     const response = await fetch(url, {
       method: 'POST',
-      headers:
-        config.protocol === CoworkModelProtocol.GeminiNative
-          ? {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': config.apiKey,
-            }
-          : {
-              'Content-Type': 'application/json',
-              'x-api-key': config.apiKey,
-              'anthropic-version': '2023-06-01',
-            },
+      headers,
       body: JSON.stringify(
         config.protocol === CoworkModelProtocol.GeminiNative
           ? {

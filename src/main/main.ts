@@ -3266,7 +3266,36 @@ if (!gotTheLock) {
   });
 
   ipcMain.handle('generate-session-title', async (_event, userInput: string | null) => {
-    return generateSessionTitle(userInput);
+    // Use Gateway-based title generation (reuses session authentication)
+    console.log('[main] generate-session-title: attempting Gateway-based generation...');
+    try {
+      const router = getCoworkEngineRouter();
+      console.log(
+        '[main] generate-session-title: router exists, hasGenerateTitle=',
+        !!router.generateTitle,
+      );
+      if (router.generateTitle) {
+        console.log('[main] generate-session-title: calling router.generateTitle...');
+        const title = await router.generateTitle(userInput);
+        console.log('[main] generate-session-title: Gateway result=', title);
+        return title;
+      }
+      console.warn(
+        '[main] generate-session-title: router.generateTitle not available, using simple fallback',
+      );
+    } catch (error) {
+      console.warn('[main] Gateway-based title generation failed:', error);
+    }
+    // Simple fallback when Gateway is completely unavailable (no HTTP method)
+    const fallback = 'New Session';
+    const normalizedInput = typeof userInput === 'string' ? userInput.trim() : '';
+    if (!normalizedInput) return fallback;
+    const firstLine =
+      normalizedInput
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .find(Boolean) || '';
+    return firstLine.slice(0, 50).trim() || fallback;
   });
 
   ipcMain.handle('get-recent-cwds', async (_event, limit?: number) => {
