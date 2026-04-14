@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CoworkSessionSummary, CoworkSessionStatus } from '../../types/cowork';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import PencilSquareIcon from '../icons/PencilSquareIcon';
 import TrashIcon from '../icons/TrashIcon';
 import ListChecksIcon from '../icons/ListChecksIcon';
@@ -106,7 +105,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const [renameValue, setRenameValue] = useState(session.title);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const actionButtonRef = useRef<HTMLButtonElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
 
@@ -117,28 +115,24 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     }
   }, [isRenaming, session.title]);
 
-  const calculateMenuPosition = (height: number) => {
-    const rect = actionButtonRef.current?.getBoundingClientRect();
-    if (!rect) return null;
+  const calculateMenuPosition = (clickX: number, clickY: number, height: number) => {
     const menuWidth = 180;
     const padding = 8;
-    const x = Math.min(
-      Math.max(padding, rect.right - menuWidth),
-      window.innerWidth - menuWidth - padding,
-    );
-    const y = Math.min(rect.bottom + 8, window.innerHeight - height - padding);
+    const x = Math.min(Math.max(padding, clickX), window.innerWidth - menuWidth - padding);
+    const y = Math.min(clickY + 4, window.innerHeight - height - padding);
     return { x, y };
   };
 
   const openMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
     if (isRenaming) return;
     if (menuPosition) {
       closeMenu();
       return;
     }
-    const menuHeight = showBatchOption ? 156 : 120;
-    const position = calculateMenuPosition(menuHeight);
+    const menuHeight = showBatchOption ? 120 : 92;
+    const position = calculateMenuPosition(e.clientX, e.clientY, menuHeight);
     if (position) {
       setMenuPosition(position);
     }
@@ -216,7 +210,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     if (!menuPosition) return;
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (!menuRef.current?.contains(target) && !actionButtonRef.current?.contains(target)) {
+      if (!menuRef.current?.contains(target)) {
         closeMenu();
       }
     };
@@ -240,10 +234,13 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
 
   useEffect(() => {
     if (!menuPosition) return;
-    const menuHeight = showConfirmDelete ? 112 : showBatchOption ? 156 : 120;
-    const position = calculateMenuPosition(menuHeight);
-    if (position && (position.x !== menuPosition.x || position.y !== menuPosition.y)) {
-      setMenuPosition(position);
+    const menuHeight = showConfirmDelete ? 90 : showBatchOption ? 120 : 92;
+    // 仅在显示删除确认时调整位置
+    if (showConfirmDelete) {
+      const position = calculateMenuPosition(menuPosition.x, menuPosition.y - 4, menuHeight);
+      if (position && (position.x !== menuPosition.x || position.y !== menuPosition.y)) {
+        setMenuPosition(position);
+      }
     }
   }, [menuPosition, showConfirmDelete]);
 
@@ -258,7 +255,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const pinButtonLabel = session.pinned
     ? i18nService.t('coworkUnpinSession')
     : i18nService.t('coworkPinSession');
-  const actionLabel = i18nService.t('coworkSessionActions');
   const renameLabel = i18nService.t('renameConversation');
   const deleteLabel = i18nService.t('deleteSession');
   const relativeTime = formatRelativeTime(session.updatedAt);
@@ -295,6 +291,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
 
   return (
     <div
+      onContextMenu={!isBatchMode && !isRenaming ? openMenu : undefined}
       onClick={() => {
         if (isRenaming) return;
         closeMenu();
@@ -360,50 +357,21 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               <h3 className="text-xs font-medium text-foreground truncate">{session.title}</h3>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs text-secondary">
+          <div className="flex items-center gap-2 text-[9px] text-secondary">
             <span className="whitespace-nowrap" title={relativeTime.full}>
               {relativeTime.compact}
             </span>
-            <span className="text-[10px] uppercase tracking-wider whitespace-nowrap">
+            <span className="text-[7px] uppercase tracking-wider whitespace-nowrap">
               {i18nService.t(statusLabels[session.status])}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Actions - absolutely positioned overlay */}
-      {!isBatchMode && (
-        <div
-          className={`absolute right-1.5 top-1.5 transition-opacity ${
-            isRenaming
-              ? 'opacity-0 pointer-events-none'
-              : session.pinned
-                ? 'opacity-100'
-                : 'opacity-0 group-hover:opacity-100'
-          }`}
-        >
-          <button
-            ref={actionButtonRef}
-            onClick={openMenu}
-            className="p-1.5 rounded-lg bg-surface-raised text-secondary hover:bg-surface hover:bg-surface transition-colors"
-            aria-label={actionLabel}
-          >
-            {session.pinned ? (
-              <span className="relative block h-4 w-4">
-                <PushPinIcon className="h-4 w-4 transition-opacity duration-150 group-hover:opacity-0" />
-                <EllipsisHorizontalIcon className="absolute inset-0 h-4 w-4 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
-              </span>
-            ) : (
-              <EllipsisHorizontalIcon className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-      )}
-
       {menuPosition && (
         <div
           ref={menuRef}
-          className="fixed z-50 min-w-[180px] rounded-xl border border-border bg-surface shadow-lg overflow-hidden"
+          className="fixed z-50 min-w-[160px] rounded-xl border border-border bg-surface shadow-lg overflow-hidden"
           style={{ top: menuPosition.y, left: menuPosition.x }}
           role="menu"
         >
@@ -412,7 +380,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               key={item.key}
               type="button"
               onClick={item.onClick}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+              className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
                 item.tone === 'danger'
                   ? 'text-red-500 hover:bg-red-500/10'
                   : 'text-foreground hover:bg-surface-raised'
