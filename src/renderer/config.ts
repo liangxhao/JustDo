@@ -322,7 +322,7 @@ export const defaultConfig: AppConfig = {
     newChat: 'Ctrl+N',
     search: 'Ctrl+F',
     settings: 'Ctrl+,',
-    sendMessage: 'Enter',
+    sendMessage: 'Ctrl+Enter',
   },
 };
 

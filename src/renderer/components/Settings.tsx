@@ -353,9 +353,7 @@ const formatShortcutFromEvent = (e: React.KeyboardEvent): string | null => {
 
 const SEND_SHORTCUT_OPTIONS = [
   { value: 'Enter', label: 'Enter', labelMac: 'Enter' },
-  { value: 'Shift+Enter', label: 'Shift+Enter', labelMac: 'Shift+Enter' },
   { value: 'Ctrl+Enter', label: 'Ctrl+Enter', labelMac: 'Cmd+Enter' },
-  { value: 'Alt+Enter', label: 'Alt+Enter', labelMac: 'Option+Enter' },
 ] as const;
 
 const isMacPlatform = navigator.platform.includes('Mac');
