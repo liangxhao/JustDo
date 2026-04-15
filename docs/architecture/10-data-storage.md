@@ -101,10 +101,11 @@ CREATE TABLE cowork_messages (
   session_id TEXT,
   type TEXT,                   -- 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system'
   content TEXT,
-  metadata TEXT,               -- JSON: { isStreaming, toolName, toolInput, ... }
+  thinking_content TEXT,       -- 思考/推理内容（模型 thinking 流，可选）
+  metadata TEXT,               -- JSON: { isStreaming, isThinking, toolName, toolInput, ... }
   timestamp INTEGER,
   sequence INTEGER,            -- 消息顺序号
-  
+
   FOREIGN KEY (session_id) REFERENCES cowork_sessions(id)
 );
 
@@ -112,6 +113,8 @@ CREATE TABLE cowork_messages (
 CREATE INDEX idx_messages_session ON cowork_messages(session_id, sequence);
 CREATE INDEX idx_messages_type ON cowork_messages(type);
 ```
+
+> **thinking_content 字段**：存储模型的思考/推理内容。详见 [thinking-stream-implementation.md](../features/thinking-stream-implementation.md)。
 
 ### 2.5 user_memories 表
 
@@ -268,6 +271,7 @@ class SQLiteStore {
         session_id TEXT,
         type TEXT,
         content TEXT,
+        thinking_content TEXT,   -- 思考内容字段
         metadata TEXT,
         timestamp INTEGER,
         sequence INTEGER
@@ -571,6 +575,13 @@ const migrations: Migration[] = [
     up: (db) => {
       // IM 多实例迁移
       migrateIMConfig(db);
+    },
+  },
+  {
+    version: 5,
+    name: 'add_thinking_content',
+    up: (db) => {
+      db.run('ALTER TABLE cowork_messages ADD COLUMN thinking_content TEXT');
     },
   },
 ];

@@ -2,9 +2,14 @@
 name: thinking-stream-display
 description: Design for displaying OpenClaw thinking content in assistant messages
 type: project
+status: implemented
+implementation_date: 2026-04-14
+implementation_doc: ../../features/thinking-stream-implementation.md
 ---
 
 # Thinking Stream Display Feature Design
+
+> **STATUS: IMPLEMENTED** - See [thinking-stream-implementation.md](../../features/thinking-stream-implementation.md) for the final implementation details.
 
 **Date**: 2026-04-13
 **Project**: GucciAI

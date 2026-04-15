@@ -27,6 +27,8 @@ Cowork 使用 IPC 事件进行实时双向通信：
 |------|------|
 | `message` | 新消息添加到会话 |
 | `messageUpdate` | 流式内容增量更新 |
+| `thinkingUpdate` | 思考内容流式增量更新 |
+| `messageMetadataUpdate` | 消息元数据更新（如思考完成标记） |
 | `permissionRequest` | 工具执行需要用户授权 |
 | `complete` | 会话执行完成 |
 | `error` | 执行错误发生 |
@@ -497,11 +499,14 @@ CREATE TABLE cowork_messages (
   session_id TEXT,
   type TEXT, -- 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system'
   content TEXT,
+  thinking_content TEXT, -- 思考/推理内容（模型 thinking 流）
   metadata TEXT, -- JSON
   timestamp INTEGER,
   sequence INTEGER
 );
 ```
+
+> **Thinking Stream 功能**：详见 [thinking-stream-implementation.md](../features/thinking-stream-implementation.md)，支持实时显示模型思考内容并持久化到数据库。
 
 ### 6.3 Config 表
 
@@ -589,10 +594,13 @@ function App() {
 | 文件 | 职责 |
 |------|------|
 | `src/main/libs/agentEngine/coworkEngineRouter.ts` | 引擎路由层 |
-| `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | OpenClaw 适配 |
+| `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | OpenClaw 适配（含 thinking 流处理） |
 | `src/main/coworkStore.ts` | 会话持久化 |
 | `src/main/libs/openclawConfigSync.ts` | 配置同步 |
 | `src/renderer/services/cowork.ts` | Cowork IPC 服务 |
-| `src/renderer/store/slices/coworkSlice.ts` | Redux 状态 |
+| `src/renderer/store/slices/coworkSlice.ts` | Redux 状态（含 thinkingExpanded） |
 | `src/renderer/components/cowork/CoworkView.tsx` | 主界面 |
+| `src/renderer/components/cowork/CoworkSessionDetail.tsx` | 消息详情（含 ThinkingStreamBlock） |
 | `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限 UI |
+
+> **Thinking Stream Display**：参见 [thinking-stream-implementation.md](../features/thinking-stream-implementation.md) 了解思考内容流式显示的完整实现。

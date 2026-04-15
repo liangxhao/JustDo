@@ -46,35 +46,25 @@ SKILLs/
 ```json
 // SKILLs/skills.config.json
 {
-  "skills": [
-    { "id": "web-search", "enabled": true },
-    { "id": "docx", "enabled": true },
-    { "id": "xlsx", "enabled": true },
-    { "id": "pptx", "enabled": true },
-    { "id": "pdf", "enabled": true },
-    { "id": "remotion", "enabled": true },
-    { "id": "seedance", "enabled": true },
-    { "id": "seedream", "enabled": true },
-    { "id": "playwright", "enabled": true },
-    { "id": "canvas-design", "enabled": true },
-    { "id": "frontend-design", "enabled": true },
-    { "id": "develop-web-game", "enabled": true },
-    { "id": "stock-analyzer", "enabled": true },
-    { "id": "stock-announcements", "enabled": true },
-    { "id": "stock-explorer", "enabled": true },
-    { "id": "content-planner", "enabled": true },
-    { "id": "article-writer", "enabled": true },
-    { "id": "daily-trending", "enabled": true },
-    { "id": "films-search", "enabled": true },
-    { "id": "music-search", "enabled": true },
-    { "id": "weather", "enabled": true },
-    { "id": "local-tools", "enabled": true },
-    { "id": "create-plan", "enabled": true },
-    { "id": "youdaonote", "enabled": true },
-    { "id": "skill-vetter", "enabled": true },
-    { "id": "skill-creator", "enabled": true }
-  ]
+  "version": 1,
+  "description": "Default skill configuration for GucciAI",
+  "defaults": {
+    "docx": { "order": 10, "enabled": true },
+    "web-search": { "order": 15, "enabled": true },
+    "xlsx": { "order": 20, "enabled": true },
+    "pptx": { "order": 30, "enabled": true },
+    "pdf": { "order": 40, "enabled": true },
+    "create-plan": { "order": 80, "enabled": true },
+    "local-tools": { "order": 200, "enabled": true },
+    "skill-creator": { "order": 300, "enabled": true }
+  }
 }
+```
+
+配置结构说明：
+- `version`: 配置文件版本号
+- `description`: 配置描述
+- `defaults`: 默认启用的 Skills 及执行优先级（order 值越小优先级越高）
 ```
 
 ## 2. Skill 定义文档
@@ -137,67 +127,39 @@ Agent: Agent 响应示例
 | **系统工具** | 本地系统操作 | local-tools |
 | **扩展管理** | Skill 扩展 | skill-creator, skill-vetter |
 
-## 3. 内置 Skills
+## 3. 默认启用的 Skills
+
+GucciAI 默认启用以下 8 个核心技能：
 
 ### 3.1 文档生成
 
-| Skill | 说明 | 输出格式 |
-|-------|------|----------|
-| `docx` | Word 文档生成 | .docx |
-| `xlsx` | Excel 表格生成 | .xlsx |
-| `pptx` | PowerPoint 演示文稿 | .pptx |
-| `pdf` | PDF 处理和生成 | .pdf |
+| Skill | 说明 | 输出格式 | 优先级 |
+|-------|------|----------|--------|
+| `docx` | Word 文档生成 | .docx | 10 |
+| `xlsx` | Excel 表格生成 | .xlsx | 20 |
+| `pptx` | PowerPoint 演示文稿 | .pptx | 30 |
+| `pdf` | PDF 处理和生成 | .pdf | 40 |
 
-### 3.2 视频创作
+### 3.2 网络工具
 
-| Skill | 说明 | 技术栈 |
-|-------|------|----------|
-| `remotion` | 程序化视频生成 | Remotion + React |
-| `seedance` | AI 视频生成 | Seedance API |
+| Skill | 说明 | 技术栈 | 优先级 |
+|-------|------|----------|--------|
+| `web-search` | 网络搜索 | 自建服务 + 搜索引擎 API | 15 |
 
-### 3.3 图像设计
+### 3.3 系统工具
 
-| Skill | 说明 | 技术栈 |
-|-------|------|----------|
-| `seedream` | AI 图像生成 | Seedream API |
-| `canvas-design` | Canvas 绘图设计 | HTML Canvas |
+| Skill | 说明 | 安全级别 | 优先级 |
+|-------|------|----------|--------|
+| `local-tools` | 本地系统工具 | medium-high | 200 |
 
-### 3.4 网络工具
+### 3.4 扩展管理
 
-| Skill | 说明 | 技术栈 |
-|-------|------|----------|
-| `web-search` | 网络搜索 | 自建服务 + 搜索引擎 API |
-| `playwright` | 网络自动化 | Playwright |
-| `frontend-design` | 前端 UI 设计 | React + Tailwind |
+| Skill | 说明 | 用途 | 优先级 |
+|-------|------|------|--------|
+| `create-plan` | 创建计划 | 任务规划 | 80 |
+| `skill-creator` | Skill 创建 | 创建自定义 Skill | 300 |
 
-### 3.5 金融分析
-
-| Skill | 说明 | 数据源 |
-|-------|------|----------|
-| `stock-analyzer` | 股票深度分析 | A股数据 |
-| `stock-announcements` | 股票公告检索 | 公告数据 |
-| `stock-explorer` | 股票信息探索 | 基础数据 |
-
-### 3.6 内容创作
-
-| Skill | 说明 | 用途 |
-|-------|------|------|
-| `article-writer` | 文章写作 | 长文、博客 |
-| `content-planner` | 内容规划 | 选题、排期 |
-| `daily-trending` | 每日热点 | 热点聚合 |
-
-### 3.7 系统工具
-
-| Skill | 说明 | 安全级别 |
-|-------|------|----------|
-| `local-tools` | 本地系统工具 | medium-high |
-
-### 3.8 扩展管理
-
-| Skill | 说明 | 用途 |
-|-------|------|------|
-| `skill-creator` | Skill 创建 | 创建自定义 Skill |
-| `skill-vetter` | Skill 安全审计 | 安装前检查 |
+> 其他 Skills（如 remotion、seedance、playwright、stock-analyzer 等）可根据需要手动启用。
 
 ## 4. Skill 管理器
 
@@ -221,10 +183,29 @@ class SkillManager {
   private loadConfig(): void {
     const configPath = path.join(this.skillsDir, 'skills.config.json');
     if (fs.existsSync(configPath)) {
-      this.config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      const rawConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      // 新格式: { version, description, defaults: { skillId: { order, enabled } } }
+      this.config = this.normalizeConfig(rawConfig);
     } else {
-      this.config = { skills: DEFAULT_SKILLS };
+      this.config = DEFAULT_SKILL_CONFIG;
     }
+  }
+  
+  // 规范化配置
+  private normalizeConfig(rawConfig: RawSkillConfig): SkillConfig {
+    const skills: SkillEntry[] = [];
+    
+    if (rawConfig.defaults) {
+      for (const [id, settings] of Object.entries(rawConfig.defaults)) {
+        skills.push({
+          id,
+          enabled: settings.enabled ?? true,
+          order: settings.order ?? 100,
+        });
+      }
+    }
+    
+    return { version: rawConfig.version || 1, skills };
   }
   
   // 加载 Skill 定义
@@ -265,6 +246,7 @@ class SkillManager {
   getEnabledSkills(): string[] {
     return this.config.skills
       .filter(s => s.enabled)
+      .sort((a, b) => a.order - b.order)
       .map(s => s.id);
   }
   
@@ -285,9 +267,26 @@ class SkillManager {
 }
 ```
 
-### 4.2 SkillDefinition 类型
+### 4.2 SkillConfig 类型
 
 ```typescript
+interface SkillEntry {
+  id: string;
+  enabled: boolean;
+  order: number;  // 执行优先级，值越小优先级越高
+}
+
+interface SkillConfig {
+  version: number;
+  skills: SkillEntry[];
+}
+
+interface RawSkillConfig {
+  version?: number;
+  description?: string;
+  defaults: Record<string, { order?: number; enabled?: boolean }>;
+}
+
 interface SkillDefinition {
   id: string;
   name: string;
@@ -595,17 +594,16 @@ function SkillsSettings() {
   
   useEffect(() => {
     // 加载 Skills 配置
-    window.electron.store.get('skillsConfig').then(config => {
-      setSkills(config?.skills || DEFAULT_SKILLS);
+    window.electron.skills.list().then(skillList => {
+      setSkills(skillList);
     });
   }, []);
   
   const toggleSkill = (id: string, enabled: boolean) => {
-    const updated = skills.map(s => 
-      s.id === id ? { ...s, enabled } : s
-    );
-    setSkills(updated);
-    window.electron.store.set('skillsConfig', { skills: updated });
+    window.electron.skills.setEnabled({ id, enabled }).then(() => {
+      // 刷新列表
+      window.electron.skills.list().then(setSkills);
+    });
   };
   
   return (
@@ -613,6 +611,7 @@ function SkillsSettings() {
       {skills.map(skill => (
         <div key={skill.id} className="skill-entry">
           <span className="skill-name">{skill.id}</span>
+          <span className="skill-order">优先级: {skill.order}</span>
           <Toggle
             checked={skill.enabled}
             onChange={(checked) => toggleSkill(skill.id, checked)}
@@ -622,6 +621,7 @@ function SkillsSettings() {
     </div>
   );
 }
+```
 ```
 
 ## 10. 关键文件清单

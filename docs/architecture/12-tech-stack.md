@@ -10,7 +10,7 @@ GucciAI 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vi
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **Electron** | 40.2.1 | 跨平台桌面应用框架 |
+| **Electron** | 41.2.0 | 跨平台桌面应用框架 |
 | **React** | 18.2.0 | UI 组件框架 |
 | **TypeScript** | 5.7.3 | 类型安全的 JavaScript |
 | **Vite** | 5.1.4 | 前端构建工具 |
@@ -355,7 +355,7 @@ npm run build:skills
 
 ```json
 {
-  "version": "2026.4.10"
+  "version": "2026.4.12"
 }
 ```
 

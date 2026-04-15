@@ -50,17 +50,14 @@ Cowork 是 GucciAI 的核心功能 —— 一个 AI 工作会话系统：
 
 ### 3.2 Skills 技能系统
 
-内置 29 个技能，覆盖生产力、创意、投资研究、自动化等场景：
+内置多个 Skills 技能，默认启用 8 个核心技能，覆盖文档生成、网络搜索、系统工具等场景：
 
 | 类别 | 技能示例 |
 |------|----------|
 | 文档生成 | docx（Word）、xlsx（Excel）、pptx（PPT）、pdf |
-| 视频创作 | remotion（视频生成）、seedance（AI 视频） |
-| 图像设计 | seedream（AI 图像）、canvas-design |
-| 网络工具 | web-search、playwright |
-| 金融分析 | stock-analyzer、stock-announcements |
-| 内容创作 | article-writer、content-planner |
+| 网络工具 | web-search |
 | 系统工具 | local-tools |
+| 扩展管理 | skill-creator、create-plan |
 
 ### 3.3 持久化记忆
 
