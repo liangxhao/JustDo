@@ -276,12 +276,9 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
               onToggleSelection={() => onToggleSelection(session.id)}
               onEnterBatchMode={() => onEnterBatchMode(session.id)}
             />
-            {/* 子任务列表: 会话运行中或有运行中的子任务时显示 */}
-            {session.id === currentSessionId &&
-              enrichedSubTasks.length > 0 &&
-              (currentSession?.status !== 'completed' ||
-                enrichedSubTasks.some(s => s.status === 'running')) && (
-                <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
+            {/* 子任务列表: 当前会话时显示，会话完成后保留已完成的子任务 */}
+            {session.id === currentSessionId && enrichedSubTasks.length > 0 && (
+              <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
                   {enrichedSubTasks.map(sub => (
                     <div
                       key={sub.agentId}

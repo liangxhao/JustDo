@@ -2153,6 +2153,35 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (!sessionId) {
+      // 即使没有 sessionId，也处理子 Agent 的生命周期事件
+      // 使用 sessionKeyToLabel 映射获取 agentId/label
+      if (sessionKey && stream === 'lifecycle') {
+        const agentIdOrLabel = this.sessionKeyToLabel.get(sessionKey);
+        // phase 在 data 字段中，不是顶层属性
+        const data = agentPayload.data;
+        const phase = isRecord(data) && typeof data.phase === 'string' ? data.phase.trim() : '';
+        if (agentIdOrLabel) {
+          console.log(
+            '[OpenClawRuntime] subagent lifecycle (no sessionId): agentId=' +
+              agentIdOrLabel +
+              ' phase=' +
+              phase +
+              ' sessionKey=' +
+              sessionKey,
+          );
+          if (phase === 'start' || phase === 'running') {
+            this.subagentStatus.set(agentIdOrLabel, 'running');
+          } else if (
+            phase === 'end' ||
+            phase === 'completed' ||
+            phase === 'stopped' ||
+            phase === 'error'
+          ) {
+            this.subagentStatus.set(agentIdOrLabel, 'done');
+          }
+        }
+      }
+
       console.log(
         '[Debug:handleAgentEvent] no sessionId, dropping event. runId:',
         runId,
@@ -2661,25 +2690,64 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // 当 sessions_spawn 返回结果时，建立 label → childSessionKey 映射
     if (toolName === 'sessions_spawn' && phase === 'result' && !data.isError) {
+      // 打印完整的 data 结构以便调试
+      console.log('[OpenClawRuntime] sessions_spawn result received:');
+      console.log('  - data keys: ' + Object.keys(data).join(','));
+      console.log('  - data.result type: ' + typeof data.result);
+      console.log('  - data.result value: ' + (data.result === undefined ? 'undefined' : JSON.stringify(data.result).slice(0, 500)));
+
       const result = data.result;
       if (isRecord(result)) {
+        console.log('  - result keys: ' + Object.keys(result).join(','));
+        console.log('  - childSessionKey present: ' + ('childSessionKey' in result));
         const childSessionKey =
           typeof result.childSessionKey === 'string' ? result.childSessionKey : null;
 
-        // 从保存的 args 中获取 label
+        // 从保存的 args 中获取 label 和 agentId
         const savedArgs = this.toolCallArgs.get(toolCallId);
+        console.log('  - savedArgs: ' + JSON.stringify(savedArgs || {}));
         const label =
           typeof savedArgs?.label === 'string' && savedArgs.label ? savedArgs.label : null;
+        const inputAgentId =
+          typeof savedArgs?.agentId === 'string' && savedArgs.agentId ? savedArgs.agentId : null;
 
-        if (childSessionKey && label) {
+        // 存储映射，优先使用 label，如果没有 label 则使用 agentId
+        const mappingKey = label || inputAgentId;
+        if (childSessionKey && mappingKey) {
           console.log(
-            '[OpenClawRuntime] sessions_spawn result: label=' +
-              label +
+            '[OpenClawRuntime] sessions_spawn mapping: key=' +
+              mappingKey +
               ' childSessionKey=' +
               childSessionKey,
           );
-          this.labelToSessionKey.set(label, childSessionKey);
-          this.sessionKeyToLabel.set(childSessionKey, label);
+          this.labelToSessionKey.set(mappingKey, childSessionKey);
+          this.sessionKeyToLabel.set(childSessionKey, mappingKey);
+        } else {
+          console.log(
+            '[OpenClawRuntime] sessions_spawn result: missing mapping key or childSessionKey',
+          );
+          console.log('  - label=' + label);
+          console.log('  - inputAgentId=' + inputAgentId);
+          console.log('  - childSessionKey=' + childSessionKey);
+        }
+      } else {
+        // 尝试从 data 的其他字段获取 childSessionKey
+        // 检查是否有 sessionKey 或类似的字段
+        const childSessionKeyAlt =
+          typeof data.sessionKey === 'string' ? data.sessionKey :
+          typeof data.childSessionKey === 'string' ? data.childSessionKey : null;
+
+        if (childSessionKeyAlt) {
+          const savedArgs = this.toolCallArgs.get(toolCallId);
+          const label = typeof savedArgs?.label === 'string' && savedArgs.label ? savedArgs.label : null;
+          const inputAgentId = typeof savedArgs?.agentId === 'string' && savedArgs.agentId ? savedArgs.agentId : null;
+          const mappingKey = label || inputAgentId;
+
+          if (mappingKey) {
+            console.log('[OpenClawRuntime] sessions_spawn mapping (alt): key=' + mappingKey + ' childSessionKey=' + childSessionKeyAlt);
+            this.labelToSessionKey.set(mappingKey, childSessionKeyAlt);
+            this.sessionKeyToLabel.set(childSessionKeyAlt, mappingKey);
+          }
         }
       }
       // 清理保存的 args
@@ -4884,16 +4952,104 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   /**
    * 获取子 Agent 状态
    * @param sessionId 可选，指定父会话 ID 进行过滤
+   * 状态来源：
+   * 1. 内存中的 subagentStatus（实时状态）
+   * 2. CoworkStore 消息中的 sessions_spawn/sessions_resume/sessions_read（持久化状态）
    */
   getSubagentStatuses(sessionId?: string): Record<string, 'running' | 'done'> {
-    if (
-      sessionId &&
-      this.orchestrationParentSessionId &&
-      sessionId !== this.orchestrationParentSessionId
-    ) {
-      return {};
+    // 如果指定了 sessionId 但不是当前编排的父会话，从数据库提取历史状态
+    if (sessionId && this.orchestrationParentSessionId && sessionId !== this.orchestrationParentSessionId) {
+      // 从 CoworkStore 消息中提取子任务状态
+      const session = this.store.getSession(sessionId);
+      if (!session?.messages) return {};
+
+      const statuses: Record<string, 'running' | 'done'> = {};
+      const spawnLabels = new Set<string>();
+
+      for (const msg of session.messages) {
+        const meta = msg.metadata;
+        if (!meta) continue;
+
+        if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
+          const input = meta.toolInput as Record<string, unknown> | undefined;
+          const label = typeof input?.label === 'string' && input.label ? input.label : '';
+          const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+          const key = label || agentId;
+          if (key) {
+            spawnLabels.add(key);
+            statuses[key] = 'running'; // 默认为 running
+          }
+        }
+
+        // sessions_resume 或 sessions_read 表示子任务完成
+        if (msg.type === 'tool_use' && (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')) {
+          const input = meta.toolInput as Record<string, unknown> | undefined;
+          const label = typeof input?.label === 'string' && input.label ? input.label : '';
+          const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+          const key = label || agentId;
+          if (key && statuses[key]) {
+            statuses[key] = 'done';
+          }
+        }
+      }
+
+      // 如果会话已完成，所有子任务也标记为完成
+      if (session.status === 'completed') {
+        for (const key of spawnLabels) {
+          statuses[key] = 'done';
+        }
+      }
+
+      return statuses;
     }
-    return Object.fromEntries(this.subagentStatus);
+
+    // 当前活跃会话：合并内存状态和消息状态
+    const result: Record<string, 'running' | 'done'> = {};
+
+    // 先从消息中提取
+    if (sessionId) {
+      const session = this.store.getSession(sessionId);
+      if (session?.messages) {
+        for (const msg of session.messages) {
+          const meta = msg.metadata;
+          if (!meta) continue;
+
+          if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
+            const input = meta.toolInput as Record<string, unknown> | undefined;
+            const label = typeof input?.label === 'string' && input.label ? input.label : '';
+            const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+            const key = label || agentId;
+            if (key) {
+              result[key] = 'running';
+            }
+          }
+
+          if (msg.type === 'tool_use' && (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')) {
+            const input = meta.toolInput as Record<string, unknown> | undefined;
+            const label = typeof input?.label === 'string' && input.label ? input.label : '';
+            const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+            const key = label || agentId;
+            if (key) {
+              result[key] = 'done';
+            }
+          }
+        }
+
+        // 会话完成则所有子任务完成
+        if (session.status === 'completed') {
+          for (const key of Object.keys(result)) {
+            result[key] = 'done';
+          }
+        }
+      }
+    }
+
+    // 用内存状态覆盖（内存状态更实时）
+    for (const [key, status] of this.subagentStatus) {
+      result[key] = status;
+    }
+
+    return result;
   }
 
   /**
@@ -4904,36 +5060,352 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     agentId: string,
     sessionKey?: string,
   ): Promise<Array<{ role: string; content: string }>> {
+    console.log('[OpenClawRuntime] getSubTaskHistory called:');
+    console.log('  - parentSessionId=' + parentSessionId);
+    console.log('  - agentId=' + agentId);
+    console.log('  - sessionKey=' + (sessionKey || 'none'));
+
     if (
       this.orchestrationParentSessionId &&
       parentSessionId !== this.orchestrationParentSessionId
     ) {
+      console.log('[OpenClawRuntime] getSubTaskHistory: parentSessionId mismatch, returning []');
       return [];
     }
 
-    const messages = this.subagentMessages.get(agentId);
-    if (messages && messages.length > 0) {
-      return messages;
-    }
-
+    // Strategy 1: If sessionKey is provided, use it directly
     if (sessionKey && this.gatewayClient) {
+      console.log('[OpenClawRuntime] getSubTaskHistory: using provided sessionKey=' + sessionKey);
       try {
         const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
           sessionKey,
-          limit: 50,
+          limit: 100,
         });
         if (Array.isArray(history?.messages)) {
           const extracted: Array<{ role: string; content: string }> = [];
           for (const entry of extractGatewayHistoryEntries(history.messages)) {
             extracted.push({ role: entry.role, content: entry.text });
           }
-          return extracted;
+          console.log(
+            '[OpenClawRuntime] getSubTaskHistory: got ' +
+              extracted.length +
+              ' messages from gateway',
+          );
+          if (extracted.length > 0) return extracted;
         }
-      } catch {
-        // 忽略错误，返回空数组
+      } catch (err) {
+        console.warn('[OpenClawRuntime] getSubTaskHistory: gateway query failed:', err);
       }
     }
 
+    // Strategy 1.5: Use in-memory labelToSessionKey mapping (fastest)
+    const cachedSessionKey = this.labelToSessionKey.get(agentId);
+    if (cachedSessionKey && this.gatewayClient) {
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: found cached childSessionKey=' +
+          cachedSessionKey +
+          ' for agentId=' +
+          agentId,
+      );
+      try {
+        const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
+          sessionKey: cachedSessionKey,
+          limit: 100,
+        });
+        if (Array.isArray(history?.messages)) {
+          const extracted: Array<{ role: string; content: string }> = [];
+          for (const entry of extractGatewayHistoryEntries(history.messages)) {
+            extracted.push({ role: entry.role, content: entry.text });
+          }
+          console.log(
+            '[OpenClawRuntime] getSubTaskHistory: got ' +
+              extracted.length +
+              ' messages from cached sessionKey',
+          );
+          if (extracted.length > 0) return extracted;
+        }
+      } catch (err) {
+        console.warn('[OpenClawRuntime] getSubTaskHistory: cached sessionKey query failed:', err);
+      }
+    }
+
+    // Strategy 2: Find childSessionKey from CoworkStore tool_result for sessions_spawn
+    // This is the primary approach - extract childSessionKey from stored tool results
+    const parentSession = this.store.getSession(parentSessionId);
+    if (parentSession && this.gatewayClient) {
+      console.log('[OpenClawRuntime] getSubTaskHistory: scanning CoworkStore for sessions_spawn');
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: parentSession has ' +
+          parentSession.messages.length +
+          ' total messages',
+      );
+
+      // Log all tool_use messages
+      const allToolUses = parentSession.messages.filter(m => m.type === 'tool_use');
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: found ' + allToolUses.length + ' tool_use messages',
+      );
+      for (const tu of allToolUses) {
+        const toolName = tu.metadata?.toolName;
+        const toolInput = tu.metadata?.toolInput as Record<string, unknown> | undefined;
+        const label = typeof toolInput?.label === 'string' ? toolInput.label : '';
+        console.log(
+          '[OpenClawRuntime]   - tool_use: toolName=' +
+            toolName +
+            ' label=' +
+            label +
+            ' toolUseId=' +
+            tu.metadata?.toolUseId,
+        );
+      }
+
+      // Find all tool_use messages for sessions_spawn
+      const spawnToolUses = parentSession.messages.filter(
+        m => m.type === 'tool_use' && m.metadata?.toolName === 'sessions_spawn',
+      );
+
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: found ' +
+          spawnToolUses.length +
+          ' sessions_spawn tool_use messages',
+      );
+
+      // Find all tool_result messages
+      const allToolResults = parentSession.messages.filter(m => m.type === 'tool_result');
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: found ' +
+          allToolResults.length +
+          ' tool_result messages',
+      );
+
+      for (const tr of allToolResults) {
+        const toolUseId = tr.metadata?.toolUseId;
+        const matchingToolUse = parentSession.messages.find(
+          m => m.type === 'tool_use' && m.metadata?.toolUseId === toolUseId,
+        );
+        const toolName = matchingToolUse?.metadata?.toolName || 'unknown';
+        const contentPreview = tr.content?.slice(0, 300) || '(empty)';
+        console.log(
+          '[OpenClawRuntime]   - tool_result: toolUseId=' +
+            toolUseId +
+            ' toolName=' +
+            toolName +
+            ' content=' +
+            contentPreview,
+        );
+      }
+
+      for (const toolUse of spawnToolUses) {
+        const toolInput = toolUse.metadata?.toolInput as Record<string, unknown> | undefined;
+        const label = typeof toolInput?.label === 'string' ? toolInput.label : '';
+        const inputAgentId = typeof toolInput?.agentId === 'string' ? toolInput.agentId : '';
+        const toolUseId = toolUse.metadata?.toolUseId;
+
+        console.log(
+          '[OpenClawRuntime] getSubTaskHistory: checking sessions_spawn label=' +
+            label +
+            ' agentId=' +
+            inputAgentId +
+            ' (target=' +
+            agentId +
+            ') toolUseId=' +
+            toolUseId,
+        );
+
+        // Check if this spawn matches our target agentId
+        // The target agentId can match either the label or the agentId parameter from sessions_spawn
+        if ((label === agentId || inputAgentId === agentId) && toolUseId) {
+          // Find the corresponding tool_result
+          const toolResult = parentSession.messages.find(
+            m => m.type === 'tool_result' && m.metadata?.toolUseId === toolUseId,
+          );
+
+          if (toolResult?.content) {
+            console.log(
+              '[OpenClawRuntime] getSubTaskHistory: found tool_result content length=' +
+                toolResult.content.length,
+            );
+            console.log(
+              '[OpenClawRuntime] getSubTaskHistory: tool_result content preview: ' +
+                toolResult.content.slice(0, 500),
+            );
+
+            try {
+              const parsed = JSON.parse(toolResult.content);
+              console.log(
+                '[OpenClawRuntime] getSubTaskHistory: parsed tool_result keys=' +
+                  Object.keys(parsed).join(','),
+              );
+              const childSessionKey =
+                typeof parsed.childSessionKey === 'string' ? parsed.childSessionKey : null;
+
+              if (childSessionKey) {
+                console.log(
+                  '[OpenClawRuntime] getSubTaskHistory: extracted childSessionKey=' +
+                    childSessionKey,
+                );
+
+                // Query gateway with the childSessionKey
+                const history = await this.gatewayClient.request<{ messages?: unknown[] }>(
+                  'chat.history',
+                  {
+                    sessionKey: childSessionKey,
+                    limit: 100,
+                  },
+                );
+
+                if (Array.isArray(history?.messages)) {
+                  const extracted: Array<{ role: string; content: string }> = [];
+                  for (const entry of extractGatewayHistoryEntries(history.messages)) {
+                    extracted.push({ role: entry.role, content: entry.text });
+                  }
+                  console.log(
+                    '[OpenClawRuntime] getSubTaskHistory: SUCCESS - got ' +
+                      extracted.length +
+                      ' messages',
+                  );
+                  return extracted;
+                } else {
+                  console.log(
+                    '[OpenClawRuntime] getSubTaskHistory: gateway returned no messages array',
+                  );
+                }
+              } else {
+                console.log(
+                  '[OpenClawRuntime] getSubTaskHistory: childSessionKey not found in parsed result',
+                );
+              }
+            } catch (parseErr) {
+              console.warn(
+                '[OpenClawRuntime] getSubTaskHistory: failed to parse tool_result:',
+                parseErr,
+              );
+              console.log(
+                '[OpenClawRuntime] getSubTaskHistory: tool_result content is NOT valid JSON',
+              );
+            }
+          } else {
+            console.log(
+              '[OpenClawRuntime] getSubTaskHistory: no tool_result found for toolUseId=' +
+                toolUseId,
+            );
+          }
+        }
+      }
+    } else {
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: parentSession=' +
+          (parentSession ? 'found' : 'null') +
+          ' gatewayClient=' +
+          (this.gatewayClient ? 'ready' : 'null'),
+      );
+    }
+
+    // Strategy 2.5: Use sessions.list API to get child sessions spawned by the parent
+    // This bypasses the empty tool_result issue by querying OpenClaw's session store directly
+    if (parentSession && this.gatewayClient) {
+      try {
+        // Build parent session key
+        const parentSessionKey = this.toSessionKey(
+          parentSessionId,
+          parentSession.agentId || 'main',
+        );
+        console.log(
+          '[OpenClawRuntime] getSubTaskHistory: Strategy 2.5 - querying sessions.list with spawnedBy=' +
+            parentSessionKey,
+        );
+
+        // Query sessions.list with spawnedBy filter to get child sessions
+        const sessionsResult = await this.gatewayClient.request<{
+          sessions?: Array<{ key: string; label?: string; spawnedBy?: string }>;
+        }>('sessions.list', {
+          spawnedBy: parentSessionKey,
+          limit: 20,
+        });
+
+        const childSessions = sessionsResult?.sessions;
+        if (Array.isArray(childSessions) && childSessions.length > 0) {
+          console.log(
+            '[OpenClawRuntime] getSubTaskHistory: sessions.list returned ' +
+              childSessions.length +
+              ' child sessions',
+          );
+          // 建立所有子会话的 sessionKey → label 映射，用于后续生命周期事件处理
+          for (const cs of childSessions) {
+            console.log(
+              '[OpenClawRuntime]   - child session: key=' + cs.key + ' label=' + cs.label,
+            );
+            if (cs.key && cs.label) {
+              this.sessionKeyToLabel.set(cs.key, cs.label);
+              this.labelToSessionKey.set(cs.label, cs.key);
+            }
+          }
+
+          // Find the matching child session by label (agentId in UI corresponds to label in sessions_spawn)
+          const matchingChild = childSessions.find(
+            cs => cs.label === agentId || cs.key.includes(agentId),
+          );
+
+          if (matchingChild?.key) {
+            console.log(
+              '[OpenClawRuntime] getSubTaskHistory: found matching child session key=' +
+                matchingChild.key,
+            );
+
+            // Query chat.history with the child session key
+            const history = await this.gatewayClient.request<{ messages?: unknown[] }>(
+              'chat.history',
+              {
+                sessionKey: matchingChild.key,
+                limit: 100,
+              },
+            );
+
+            if (Array.isArray(history?.messages)) {
+              const extracted: Array<{ role: string; content: string }> = [];
+              for (const entry of extractGatewayHistoryEntries(history.messages)) {
+                extracted.push({ role: entry.role, content: entry.text });
+              }
+              console.log(
+                '[OpenClawRuntime] getSubTaskHistory: SUCCESS via sessions.list - got ' +
+                  extracted.length +
+                  ' messages',
+              );
+              return extracted;
+            } else {
+              console.log(
+                '[OpenClawRuntime] getSubTaskHistory: chat.history returned no messages for child session key',
+              );
+            }
+          } else {
+            console.log(
+              '[OpenClawRuntime] getSubTaskHistory: no matching child session found for agentId=' +
+                agentId,
+            );
+          }
+        } else {
+          console.log(
+            '[OpenClawRuntime] getSubTaskHistory: sessions.list returned no child sessions',
+          );
+        }
+      } catch (err) {
+        console.warn(
+          '[OpenClawRuntime] getSubTaskHistory: Strategy 2.5 sessions.list failed:',
+          err,
+        );
+      }
+    }
+
+    // Strategy 3: Check in-memory subagentMessages (fallback for messages captured during streaming)
+    const messages = this.subagentMessages.get(agentId);
+    if (messages && messages.length > 0) {
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: found ' + messages.length + ' messages in memory',
+      );
+      return messages;
+    }
+
+    console.log('[OpenClawRuntime] getSubTaskHistory: no messages found, returning []');
     return messages ?? [];
   }
 
