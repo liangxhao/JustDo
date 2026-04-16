@@ -375,3 +375,33 @@ export const getProviderDisplayName = (
   }
   return providerKey.charAt(0).toUpperCase() + providerKey.slice(1);
 };
+
+/**
+ * 内置 provider 名称列表（禁止作为 displayName 使用）
+ */
+const BUILTIN_PROVIDER_NAMES = ['ollama', 'openai', 'anthropic', 'qwen', 'deepseek', 'gemini', 'minimax'];
+
+/**
+ * displayName 校验正则（允许字母、数字、下划线、中划线、空格）
+ */
+const VALID_DISPLAY_NAME_REGEX = /^[A-Za-z][A-Za-z0-9_ -]{0,31}$/;
+
+/**
+ * 校验 displayName 是否合法
+ * - 首字符必须是字母
+ * - 允许字母、数字、下划线、中划线、空格
+ * - 长度限制：1-32 字符
+ * - 不能与内置 provider 名称冲突
+ * - displayName 为空时允许，会回退到 custom_0
+ */
+export const validateDisplayName = (name: string): { valid: boolean; error?: string } => {
+  const trimmed = name.trim();
+  if (!trimmed) return { valid: true }; // 空 name 允许，回退到 custom_0
+  if (!VALID_DISPLAY_NAME_REGEX.test(trimmed)) {
+    return { valid: false, error: 'Must start with letter, only letters/numbers/_/-/space allowed' };
+  }
+  if (BUILTIN_PROVIDER_NAMES.includes(trimmed.toLowerCase())) {
+    return { valid: false, error: 'Cannot use built-in provider name' };
+  }
+  return { valid: true };
+};

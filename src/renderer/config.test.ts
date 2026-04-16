@@ -3,6 +3,7 @@ import {
   isCustomProvider,
   getCustomProviderDefaultName,
   getProviderDisplayName,
+  validateDisplayName,
 } from './config';
 
 test('isCustomProvider: custom_0 is custom', () => {
@@ -69,3 +70,89 @@ test('getProviderDisplayName: custom provider with undefined displayName uses de
   expect(getProviderDisplayName('custom_2', { displayName: undefined })).toBe('Custom2');
 });
 
+// validateDisplayName tests
+test('validateDisplayName: empty string is valid (fallback to custom_0)', () => {
+  expect(validateDisplayName('')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: single letter is valid', () => {
+  expect(validateDisplayName('A')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: letters only is valid', () => {
+  expect(validateDisplayName('LMStudio')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: letters with numbers is valid', () => {
+  expect(validateDisplayName('GPT4')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: letters with underscore is valid', () => {
+  expect(validateDisplayName('My_GPT')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: letters with hyphen is valid', () => {
+  expect(validateDisplayName('My-GPT')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: letters with space is valid', () => {
+  expect(validateDisplayName('My GPT')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: mixed characters is valid', () => {
+  expect(validateDisplayName('GPT-4o_Mini')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: starts with number is invalid', () => {
+  expect(validateDisplayName('123Studio')).toEqual({
+    valid: false,
+    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+  });
+});
+
+test('validateDisplayName: starts with underscore is invalid', () => {
+  expect(validateDisplayName('_GPT')).toEqual({
+    valid: false,
+    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+  });
+});
+
+test('validateDisplayName: starts with hyphen is invalid', () => {
+  expect(validateDisplayName('-GPT')).toEqual({
+    valid: false,
+    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+  });
+});
+
+test('validateDisplayName: starts with space is valid after trim', () => {
+  // ' GPT' trim 后变成 'GPT'，是合法的
+  expect(validateDisplayName(' GPT')).toEqual({ valid: true });
+});
+
+test('validateDisplayName: built-in provider name is invalid', () => {
+  expect(validateDisplayName('ollama')).toEqual({
+    valid: false,
+    error: 'Cannot use built-in provider name',
+  });
+});
+
+test('validateDisplayName: built-in provider name case-insensitive is invalid', () => {
+  expect(validateDisplayName('OpenAI')).toEqual({
+    valid: false,
+    error: 'Cannot use built-in provider name',
+  });
+});
+
+test('validateDisplayName: special characters are invalid', () => {
+  expect(validateDisplayName('GPT@4')).toEqual({
+    valid: false,
+    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+  });
+});
+
+test('validateDisplayName: too long name is invalid', () => {
+  expect(validateDisplayName('ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567')).toEqual({
+    valid: false,
+    error: 'Must start with letter, only letters/numbers/_/-/space allowed',
+  });
+});

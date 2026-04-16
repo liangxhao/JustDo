@@ -55,6 +55,7 @@ import {
   isCustomProvider,
   getCustomProviderDefaultName,
   getProviderDisplayName,
+  validateDisplayName,
 } from '../config';
 import { OllamaIcon, CustomProviderIcon } from './icons/providers';
 import type { PresetAgent } from '../types/agent';
@@ -729,6 +730,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [newModelId, setNewModelId] = useState('');
   const [newModelSupportsImage, setNewModelSupportsImage] = useState(false);
   const [modelFormError, setModelFormError] = useState<string | null>(null);
+
+  // State for displayName validation
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
 
   useEffect(() => {
     setShowApiKey(false);
@@ -2137,7 +2141,11 @@ const Settings: React.FC<SettingsProps> = ({
             stroke="currentColor"
             className="h-5 w-5"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M14.25 6.087c0-.355.186-.676.401-.959.221-.29.349-.634.349-1.003 0-1.036-1.007-1.875-2.25-1.875s-2.25.84-2.25 1.875c0 .369.128.713.349 1.003.215.283.401.604.401.959v0a.64.64 0 01-.657.643 48.39 48.39 0 01-4.163-.3c.186 1.613.293 3.25.315 4.907a.656.656 0 01-.658.663v0c-.355 0-.676-.186-.959-.401a1.647 1.647 0 00-1.003-.349c-1.036 0-1.875 1.007-1.875 2.25s.84 2.25 1.875 2.25c.369 0 .713-.128 1.003-.349.283-.215.604-.401.959-.401v0c.31 0 .555.26.532.57a48.394 48.394 0 01-.3 4.163c1.613-.186 3.25-.293 4.907-.315a.656.656 0 01.663.658v0c0 .355-.186.676-.401.959a1.647 1.647 0 00-.349 1.003c0 1.035 1.007 1.875 2.25 1.875s2.25-.84 2.25-1.875c0-.369-.128-.713-.349-1.003-.215-.283-.401-.604-.401-.959v0c0-.31.26-.555.57-.532a48.394 48.394 0 014.163.3c-.186-1.613-.293-3.25-.315-4.907a.656.656 0 01.658-.663v0c.355 0 .676.186.959.401.29.221.634.349 1.003.349 1.035 0 1.875-1.007 1.875-2.25s-.84-2.25-1.875-2.25c-.369 0-.713.128-1.003.349-.283.215-.604.401-.959.401v0a.64.64 0 01-.643-.657 48.39 48.39 0 01.3-4.163c-1.613.186-3.25.293-4.907.315a.656.656 0 01-.663-.658v0z" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M14.25 6.087c0-.355.186-.676.401-.959.221-.29.349-.634.349-1.003 0-1.036-1.007-1.875-2.25-1.875s-2.25.84-2.25 1.875c0 .369.128.713.349 1.003.215.283.401.604.401.959v0a.64.64 0 01-.657.643 48.39 48.39 0 01-4.163-.3c.186 1.613.293 3.25.315 4.907a.656.656 0 01-.658.663v0c-.355 0-.676-.186-.959-.401a1.647 1.647 0 00-1.003-.349c-1.036 0-1.875 1.007-1.875 2.25s.84 2.25 1.875 2.25c.369 0 .713-.128 1.003-.349.283-.215.604-.401.959-.401v0c.31 0 .555.26.532.57a48.394 48.394 0 01-.3 4.163c1.613-.186 3.25-.293 4.907-.315a.656.656 0 01.663.658v0c0 .355-.186.676-.401.959a1.647 1.647 0 00-.349 1.003c0 1.035 1.007 1.875 2.25 1.875s2.25-.84 2.25-1.875c0-.369-.128-.713-.349-1.003-.215-.283-.401-.604-.401-.959v0c0-.31.26-.555.57-.532a48.394 48.394 0 014.163.3c-.186-1.613-.293-3.25-.315-4.907a.656.656 0 01.658-.663v0c.355 0 .676.186.959.401.29.221.634.349 1.003.349 1.035 0 1.875-1.007 1.875-2.25s-.84-2.25-1.875-2.25c-.369 0-.713.128-1.003.349-.283.215-.604.401-.959.401v0a.64.64 0 01-.643-.657 48.39 48.39 0 01.3-4.163c-1.613.186-3.25.293-4.907.315a.656.656 0 01-.663-.658v0z"
+            />
           </svg>
         ),
       },
@@ -2153,7 +2161,11 @@ const Settings: React.FC<SettingsProps> = ({
             stroke="currentColor"
             className="h-5 w-5"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 16.568a4.5 4.5 0 01-6.38 0 4.5 4.5 0 010-6.38m6.38 0a4.5 4.5 0 01-6.38 0 4.5 4.5 0 010-6.38m6.38 0a4.5 4.5 0 010 6.38m-6.38 0a4.5 4.5 0 010 6.38M7.5 10.5L5.25 8.25m0 0L3 6m2.25 2.25L3 10.5m2.25-2.25L7.5 12m9-3l2.25-2.25m0 0L21 6m-2.25 2.25L21 10.5m-2.25-2.25L16.5 12M7.5 15l-2.25 2.25m0 0L3 19.5m2.25-2.25L3 15m2.25 2.25L7.5 13.5m9 3l2.25 2.25m0 0l2.25 2.25m-2.25-2.25l2.25-2.25m-2.25 2.25L16.5 15" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M13.19 16.568a4.5 4.5 0 01-6.38 0 4.5 4.5 0 010-6.38m6.38 0a4.5 4.5 0 01-6.38 0 4.5 4.5 0 010-6.38m6.38 0a4.5 4.5 0 010 6.38m-6.38 0a4.5 4.5 0 010 6.38M7.5 10.5L5.25 8.25m0 0L3 6m2.25 2.25L3 10.5m2.25-2.25L7.5 12m9-3l2.25-2.25m0 0L21 6m-2.25 2.25L21 10.5m-2.25-2.25L16.5 12M7.5 15l-2.25 2.25m0 0L3 19.5m2.25-2.25L3 15m2.25 2.25L7.5 13.5m9 3l2.25 2.25m0 0l2.25 2.25m-2.25-2.25l2.25-2.25m-2.25 2.25L16.5 15"
+            />
           </svg>
         ),
       },
@@ -3060,12 +3072,20 @@ const Settings: React.FC<SettingsProps> = ({
                     type="text"
                     id={`${activeProvider}-displayName`}
                     value={(providers[activeProvider] as ProviderConfig)?.displayName ?? ''}
-                    onChange={e =>
-                      handleProviderConfigChange(activeProvider, 'displayName', e.target.value)
-                    }
-                    className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                    onChange={e => {
+                      const value = e.target.value;
+                      const validation = validateDisplayName(value);
+                      setDisplayNameError(validation.valid ? null : (validation.error ?? null));
+                      if (validation.valid) {
+                        handleProviderConfigChange(activeProvider, 'displayName', value);
+                      }
+                    }}
+                    className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
                     placeholder={i18nService.t('customDisplayNamePlaceholder')}
                   />
+                  {displayNameError && (
+                    <p className="mt-1 text-xs text-red-500">{displayNameError}</p>
+                  )}
                 </div>
               )}
 

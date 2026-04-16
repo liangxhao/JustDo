@@ -24,6 +24,7 @@ type ProviderConfig = {
   apiFormat?: 'anthropic' | 'openai' | 'native';
   codingPlanEnabled?: boolean;
   models?: ProviderModel[];
+  displayName?: string; // 新增：用于 OpenClaw providerId
 };
 
 type AppConfig = {
@@ -42,6 +43,7 @@ export type ApiConfigResolution = {
     codingPlanEnabled: boolean;
     supportsImage?: boolean;
     modelName?: string;
+    displayName?: string; // 新增：用于 OpenClaw providerId
   };
 };
 
@@ -441,6 +443,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
       supportsImage: matched.supportsImage,
       modelName: matched.modelName,
+      displayName: matched.providerConfig.displayName?.trim(), // 新增：用于 OpenClaw providerId
     },
   };
 }
@@ -509,6 +512,7 @@ export type ProviderRawConfig = {
   apiType: 'anthropic' | 'openai';
   codingPlanEnabled: boolean;
   models: Array<{ id: string; name?: string; supportsImage?: boolean }>;
+  displayName?: string; // 新增：用于 OpenClaw 配置中的 providerId
 };
 
 export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
@@ -546,6 +550,9 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
     const models = (providerConfig.models ?? []).filter(m => m.id?.trim());
     if (models.length === 0) continue;
 
+    // 获取 displayName（仅对 custom provider 有意义）
+    const displayName = providerConfig.displayName?.trim();
+
     result.push({
       providerName,
       baseURL: effectiveBaseURL,
@@ -553,6 +560,7 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
       apiType: effectiveApiFormat === 'anthropic' ? 'anthropic' : 'openai',
       codingPlanEnabled: !!providerConfig.codingPlanEnabled,
       models,
+      displayName,
     });
   }
 
