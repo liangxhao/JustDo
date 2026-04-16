@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionResult } from './types';
 import type {
   CoworkAgentEngine,
   CoworkContinueOptions,
@@ -12,12 +12,11 @@ import { ENGINE_SWITCHED_CODE } from './types';
 type RouterDeps = {
   getCurrentEngine: () => CoworkAgentEngine;
   openclawRuntime: CoworkRuntime;
-  claudeRuntime: CoworkRuntime;
 };
 
 export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
   private readonly getCurrentEngine: () => CoworkAgentEngine;
-  private readonly runtimeByEngine: Record<CoworkAgentEngine, CoworkRuntime>;
+  private readonly runtime: CoworkRuntime;
   private readonly sessionEngine = new Map<string, CoworkAgentEngine>();
   private readonly requestEngine = new Map<string, CoworkAgentEngine>();
   private readonly requestSession = new Map<string, string>();
@@ -26,14 +25,10 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
   constructor(deps: RouterDeps) {
     super();
     this.getCurrentEngine = deps.getCurrentEngine;
-    this.runtimeByEngine = {
-      openclaw: deps.openclawRuntime,
-      yd_cowork: deps.claudeRuntime,
-    };
-    this.currentEngine = this.safeResolveEngine();
+    this.runtime = deps.openclawRuntime;
+    this.currentEngine = 'openclaw';
 
-    this.bindRuntimeEvents('openclaw', deps.openclawRuntime);
-    this.bindRuntimeEvents('yd_cowork', deps.claudeRuntime);
+    this.bindRuntimeEvents(this.runtime);
   }
 
   override on<U extends keyof CoworkRuntimeEvents>(
@@ -58,7 +53,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     const engine = this.safeResolveEngine();
     this.sessionEngine.set(sessionId, engine);
     try {
-      await this.runtimeByEngine[engine].startSession(sessionId, prompt, options);
+      await this.runtime.startSession(sessionId, prompt, options);
     } catch (error) {
       this.sessionEngine.delete(sessionId);
       this.clearRequestEngineBySession(sessionId);
@@ -74,7 +69,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     const engine = this.safeResolveEngine();
     this.sessionEngine.set(sessionId, engine);
     try {
-      await this.runtimeByEngine[engine].continueSession(sessionId, prompt, options);
+      await this.runtime.continueSession(sessionId, prompt, options);
     } catch (error) {
       this.sessionEngine.delete(sessionId);
       this.clearRequestEngineBySession(sessionId);
@@ -83,20 +78,13 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
   }
 
   stopSession(sessionId: string): void {
-    const engine = this.sessionEngine.get(sessionId);
-    if (engine) {
-      this.runtimeByEngine[engine].stopSession(sessionId);
-    } else {
-      this.runtimeByEngine.openclaw.stopSession(sessionId);
-      this.runtimeByEngine.yd_cowork.stopSession(sessionId);
-    }
+    this.runtime.stopSession(sessionId);
     this.sessionEngine.delete(sessionId);
     this.clearRequestEngineBySession(sessionId);
   }
 
   stopAllSessions(): void {
-    this.runtimeByEngine.openclaw.stopAllSessions();
-    this.runtimeByEngine.yd_cowork.stopAllSessions();
+    this.runtime.stopAllSessions();
     this.sessionEngine.clear();
     this.requestEngine.clear();
     this.requestSession.clear();
@@ -105,7 +93,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
   respondToPermission(requestId: string, result: PermissionResult): void {
     const engine = this.requestEngine.get(requestId);
     if (engine) {
-      this.runtimeByEngine[engine].respondToPermission(requestId, result);
+      this.runtime.respondToPermission(requestId, result);
       if (result.behavior === 'allow' || result.behavior === 'deny') {
         this.requestEngine.delete(requestId);
         this.requestSession.delete(requestId);
@@ -113,38 +101,29 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
       return;
     }
 
-    this.runtimeByEngine.openclaw.respondToPermission(requestId, result);
-    this.runtimeByEngine.yd_cowork.respondToPermission(requestId, result);
+    this.runtime.respondToPermission(requestId, result);
   }
 
   isSessionActive(sessionId: string): boolean {
     const engine = this.sessionEngine.get(sessionId);
     if (engine) {
-      return this.runtimeByEngine[engine].isSessionActive(sessionId);
+      return this.runtime.isSessionActive(sessionId);
     }
-    return (
-      this.runtimeByEngine.openclaw.isSessionActive(sessionId) ||
-      this.runtimeByEngine.yd_cowork.isSessionActive(sessionId)
-    );
+    return this.runtime.isSessionActive(sessionId);
   }
 
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null {
     const engine = this.sessionEngine.get(sessionId);
     if (engine) {
-      return this.runtimeByEngine[engine].getSessionConfirmationMode(sessionId);
+      return this.runtime.getSessionConfirmationMode(sessionId);
     }
-    return (
-      this.runtimeByEngine.openclaw.getSessionConfirmationMode(sessionId) ??
-      this.runtimeByEngine.yd_cowork.getSessionConfirmationMode(sessionId)
-    );
+    return this.runtime.getSessionConfirmationMode(sessionId);
   }
 
   onSessionDeleted(sessionId: string): void {
     this.sessionEngine.delete(sessionId);
     this.clearRequestEngineBySession(sessionId);
-    for (const runtime of Object.values(this.runtimeByEngine)) {
-      runtime.onSessionDeleted?.(sessionId);
-    }
+    this.runtime.onSessionDeleted?.(sessionId);
   }
 
   handleEngineConfigChanged(nextEngine: CoworkAgentEngine): void {
@@ -153,10 +132,8 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     }
 
     this.currentEngine = nextEngine;
-    const activeSessionIds = Array.from(this.sessionEngine.keys()).filter(
-      sessionId =>
-        this.runtimeByEngine.openclaw.isSessionActive(sessionId) ||
-        this.runtimeByEngine.yd_cowork.isSessionActive(sessionId),
+    const activeSessionIds = Array.from(this.sessionEngine.keys()).filter(sessionId =>
+      this.runtime.isSessionActive(sessionId),
     );
     this.stopAllSessions();
 
@@ -165,30 +142,30 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     });
   }
 
-  private bindRuntimeEvents(engine: CoworkAgentEngine, runtime: CoworkRuntime): void {
+  private bindRuntimeEvents(runtime: CoworkRuntime): void {
     runtime.on('message', (sessionId, message) => {
-      this.sessionEngine.set(sessionId, engine);
+      this.sessionEngine.set(sessionId, 'openclaw');
       this.emit('message', sessionId, message);
     });
 
     runtime.on('messageUpdate', (sessionId, messageId, content) => {
-      this.sessionEngine.set(sessionId, engine);
+      this.sessionEngine.set(sessionId, 'openclaw');
       this.emit('messageUpdate', sessionId, messageId, content);
     });
 
     runtime.on('thinkingUpdate', (sessionId, messageId, thinkingDelta) => {
-      this.sessionEngine.set(sessionId, engine);
+      this.sessionEngine.set(sessionId, 'openclaw');
       this.emit('thinkingUpdate', sessionId, messageId, thinkingDelta);
     });
 
     runtime.on('messageMetadataUpdate', (sessionId, messageId, metadata) => {
-      this.sessionEngine.set(sessionId, engine);
+      this.sessionEngine.set(sessionId, 'openclaw');
       this.emit('messageMetadataUpdate', sessionId, messageId, metadata);
     });
 
     runtime.on('permissionRequest', (sessionId, request) => {
-      this.sessionEngine.set(sessionId, engine);
-      this.requestEngine.set(request.requestId, engine);
+      this.sessionEngine.set(sessionId, 'openclaw');
+      this.requestEngine.set(request.requestId, 'openclaw');
       this.requestSession.set(request.requestId, sessionId);
       this.emit('permissionRequest', sessionId, request);
     });
@@ -220,7 +197,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
 
   private safeResolveEngine(): CoworkAgentEngine {
     const nextEngine = this.getCurrentEngine();
-    if (nextEngine === 'yd_cowork' || nextEngine === 'openclaw') {
+    if (nextEngine === 'openclaw') {
       this.currentEngine = nextEngine;
       return nextEngine;
     }
@@ -231,29 +208,21 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
   /**
    * Generate a session title using the configured model via Gateway.
    * Delegates to the OpenClaw runtime which has Gateway access.
-   * Falls back to Claude runtime if OpenClaw doesn't implement it.
    */
   async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string> {
     console.log(
       '[Router] generateTitle: called, openclaw.hasMethod=',
-      !!this.runtimeByEngine.openclaw.generateTitle,
-      'yd_cowork.hasMethod=',
-      !!this.runtimeByEngine.yd_cowork.generateTitle,
+      !!this.runtime.generateTitle,
     );
-    // Try OpenClaw runtime first (has Gateway access)
-    if (this.runtimeByEngine.openclaw.generateTitle) {
+    // Try OpenClaw runtime (has Gateway access)
+    if (this.runtime.generateTitle) {
       console.log('[Router] generateTitle: delegating to openclaw runtime...');
-      const result = await this.runtimeByEngine.openclaw.generateTitle(userIntent, timeoutMs);
+      const result = await this.runtime.generateTitle(userIntent, timeoutMs);
       console.log('[Router] generateTitle: openclaw result=', result);
       return result;
     }
-    // Fallback to Claude runtime if available
-    if (this.runtimeByEngine.yd_cowork.generateTitle) {
-      console.log('[Router] generateTitle: delegating to yd_cowork runtime...');
-      return this.runtimeByEngine.yd_cowork.generateTitle(userIntent, timeoutMs);
-    }
-    // Return fallback if neither runtime implements generateTitle
-    console.log('[Router] generateTitle: no runtime implements generateTitle, using fallback');
+    // Return fallback if runtime doesn't implement generateTitle
+    console.log("[Router] generateTitle: runtime doesn't implement generateTitle, using fallback");
     const fallback = 'New Session';
     const normalized = typeof userIntent === 'string' ? userIntent.trim() : '';
     if (!normalized) return fallback;

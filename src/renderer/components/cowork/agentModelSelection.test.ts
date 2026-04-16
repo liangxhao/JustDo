@@ -37,19 +37,6 @@ describe('resolveAgentModelSelection', () => {
     expect(result.hasInvalidExplicitModel).toBe(false);
   });
 
-  test('uses fallback model outside openclaw without marking fallback mode', () => {
-    const result = resolveAgentModelSelection({
-      agentModel: 'anthropic/claude-sonnet-4',
-      availableModels: models,
-      fallbackModel: models[0],
-      engine: 'yd_cowork',
-    });
-
-    expect(result.selectedModel?.id).toBe('gpt-4o');
-    expect(result.usesFallback).toBe(false);
-    expect(result.hasInvalidExplicitModel).toBe(false);
-  });
-
   test('marks invalid explicit model as fallback to global model', () => {
     const result = resolveAgentModelSelection({
       agentModel: 'deleted-model',

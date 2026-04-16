@@ -4,7 +4,7 @@ import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
-import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionResult } from './types';
 import type {
   CoworkMessage,
   CoworkSession,

@@ -25,7 +25,7 @@ export const selectAgentEngine = createSelector(selectCoworkConfig, config => co
 
 export const selectIsOpenClawEngine = createSelector(
   selectAgentEngine,
-  engine => engine !== 'yd_cowork',
+  engine => engine === 'openclaw',
 );
 
 export const selectCurrentMessages = createSelector(

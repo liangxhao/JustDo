@@ -36,7 +36,7 @@
     "start:electron": "node scripts/launch-electron.cjs",
     "electron:dev": "rimraf dist-electron && npm run compile:electron && concurrently \"vite --port 5175\" \"wait-on -v -t 120000 -d 20000 http://localhost:5175 dist-electron/.electron-ready && npm run start:electron\"",
     "electron:dev:openclaw": "npm run openclaw:runtime:host && npm run electron:dev",
-    "postinstall": "patch-package && electron-builder install-app-deps && npm run rebuild:electron-native",
+    "postinstall": "electron-builder install-app-deps && npm run rebuild:electron-native",
     "pack": "npm run setup:python-runtime && npm run build && npm run compile:electron && npm run build:skills && electron-builder --dir",
     "dist": "npm run setup:python-runtime && npm run build && npm run compile:electron && npm run build:skills && electron-builder",
     "dist:mac": "node -r dotenv/config node_modules/.bin/electron-builder --mac --config electron-builder.json",
@@ -70,8 +70,7 @@
     "fix:mac-icon": "bash scripts/fix-mac-icon-display.sh"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.12",
-    "@electron/remote": "^2.0.12",
+        "@electron/remote": "^2.0.12",
     "@headlessui/react": "^1.7.18",
     "@heroicons/react": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
@@ -142,8 +141,7 @@
     "globals": "^17.4.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
-    "patch-package": "^8.0.1",
-    "postcss": "^8.4.35",
+        "postcss": "^8.4.35",
     "prettier": "^3.8.1",
     "rimraf": "^5.0.5",
     "rss-parser": "^3.13.0",

@@ -1,7 +1,23 @@
-import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+/**
+ * Permission result type for tool permission responses.
+ * Matches the structure used by OpenClaw runtime.
+ */
+export type PermissionResult =
+  | {
+      behavior: 'allow';
+      updatedInput?: Record<string, unknown>;
+      updatedPermissions?: Record<string, unknown>;
+      toolUseID?: string;
+    }
+  | {
+      behavior: 'deny';
+      message: string;
+      interrupt?: boolean;
+    };
+
 import type { CoworkMessage } from '../../coworkStore';
 
-export type CoworkAgentEngine = 'openclaw' | 'yd_cowork';
+export type CoworkAgentEngine = 'openclaw';
 
 export const ENGINE_SWITCHED_CODE = 'ENGINE_SWITCHED';
 
