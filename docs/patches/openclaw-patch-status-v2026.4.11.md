@@ -1,95 +1,94 @@
-# OpenClaw v2026.4.11 Patch 适配状态
+# OpenClaw v2026.4.11 Patch 状态 (精简版)
 
-*更新时间: 2026-04-13*
+*更新时间: 2026-04-16*
 
 ---
 
-## 已完成适配的 Patches (13 个)
+## 当前保留的 Patches (7 个)
 
-以下 patches 已成功适配并通过 `git apply --check` 验证：
+以下 patches 已精简，移除了不必要的修改：
 
-### Gateway Entry 优化 (3 个)
-
-| Patch | 文件 | 说明 |
-|-------|------|------|
-| `openclaw-gateway-entry-new-file.patch` | `src/gateway-entry.ts` (新建) | 创建 gateway-entry.ts，跳过 Commander CLI overhead，直接用于 Electron utilityProcess |
-| `openclaw-gateway-entry-run.patch` | `src/cli/gateway-cli/run.ts` | 导出 `GatewayRunOpts` 类型 和 `runGatewayCommand` 函数 |
-| `openclaw-gateway-entry-tsdown.patch` | `tsdown.config.ts` | 添加 `gateway-entry` 构建入口 |
-
-### Facade Runtime 加载修复 (1 个)
+### Cron Job 配置 (4 个)
 
 | Patch | 文件 | 说明 |
 |-------|------|------|
-| `openclaw-facade-runtime-dist-path.patch` | `src/plugin-sdk/facade-runtime.ts` | 修改 facade 加载路径优先指向 `./dist/facade-activation-check.runtime.js`，避免 ESM 模块 require 问题 |
-
-### Cron Job 配置 (5 个)
-
-| Patch | 文件 | 说明 |
-|-------|------|------|
-| `openclaw-cron-tool-owner-only.patch` | `src/agents/tools/cron-tool.ts` | 设置 `ownerOnly: false`，允许所有用户管理 cron jobs |
-| `openclaw-cron-current-time-suffix.patch` | `src/infra/heartbeat-runner.ts` | 仅非 cron 事件时 append 时间行，cron 事件跳过时间 suffix |
-| `openclaw-cron-reminder-prompt.patch` | `src/infra/heartbeat-events-filter.ts` | 简化 cron 提示，直接返回 raw `eventText` 而非包装消息 |
+| `openclaw-cron-reminder-prompt.patch` | `src/infra/heartbeat-events-filter.ts` | 简化 cron 提示，直接返回 raw `eventText` |
 | `openclaw-cron-skip-missed-cron-jobs-types.patch` | `src/config/types.cron.ts` | 添加 `skipMissedJobs?: boolean` 类型定义 |
 | `openclaw-cron-skip-missed-cron-jobs-zod.patch` | `src/config/zod-schema.ts` | 添加 `skipMissedJobs` zod schema 验证 |
 | `openclaw-cron-skip-missed-cron-jobs-ops.patch` | `src/cron/service/ops.ts` | 实现 skip 逻辑，当配置时跳过运行 missed jobs |
 
-### 安全配置 (4 个)
+### Thinking Stream (1 个)
 
 | Patch | 文件 | 说明 |
 |-------|------|------|
-| `openclaw-wecom-exec-deny.patch` | `src/agents/pi-tools.message-provider-policy.ts` | 禁用企业微信 `exec` 和 `process` 工具，防止安全风险 |
-| `openclaw-release-check-shell.patch` | `scripts/release-check.ts` | 添加 `shell: true` 选项，修复 Windows 上 `spawnSync npm ENOENT` 问题 |
-| `openclaw-prepack-shell.patch` | `scripts/openclaw-prepack.ts` | 添加 `shell: true` 选项，修复 Windows 上 `spawnSync pnpm.cmd ENOENT` 问题 |
+| `openclaw-thinking-stream.patch` | `src/agents/pi-embedded-subscribe.ts` | 修改 thinking stream 发送逻辑：无条件发送 raw text + sessionKey |
+
+### Windows 兼容性 (2 个)
+
+| Patch | 文件 | 说明 |
+|-------|------|------|
+| `openclaw-release-check-shell.patch` | `scripts/release-check.ts` | 添加 `shell: true` 选项，修复 Windows `spawnSync npm ENOENT` |
+| `openclaw-prepack-shell.patch` | `scripts/openclaw-prepack.ts` | 添加 `shell: true` 选项，修复 Windows `spawnSync pnpm ENOENT` |
 
 ---
 
-## GucciAI Runtime 适配修改 (非 Patch)
+## 已移除的 Patches (7 个)
 
-以下修改直接在 GucciAI 项目中实现，用于适配 v2026.4.11 的 bundled gateway 机制：
+以下 patches 已移除，原因如下：
 
-### 1. GatewayClient 模块解析修复
-
-**文件**: `src/main/libs/openclawEngineManager.ts`
-
-**问题**: v2026.4.11 将多个客户端模块（Slack、Gateway 等）打包成带哈希的文件名，如 `client-Bwja9dzi.js`。原逻辑按字母顺序返回第一个 `client*.js` 文件，错误选择了 Slack 的客户端而非 GatewayClient。
-
-**修复**: 遍历所有候选文件，检查模块是否实际导出 `GatewayClient`（包括 minified 导出 `t`）。
-
-### 2. sync-openclaw-runtime-current.cjs 简化
-
-**文件**: `scripts/sync-openclaw-runtime-current.cjs`
-
-**变更**: 移除了 facade 文件复制逻辑。现在 facade 文件通过 `openclaw-facade-runtime-dist-path.patch` 从 `dist/` 目录直接加载，避免了需要复制 ~1610 个依赖文件的问题。
+| Patch | 移除原因 |
+|-------|---------|
+| `openclaw-gateway-entry-new-file.patch` | 替代方案：`scripts/bundle-openclaw-gateway.cjs` 打包 |
+| `openclaw-gateway-entry-run.patch` | bundle 方案自动内联，不需要单独导出 |
+| `openclaw-gateway-entry-tsdown.patch` | bundle 不依赖 dist 构建 |
+| `openclaw-wecom-exec-deny.patch` | GucciAI 不支持企业微信，无意义 |
+| `openclaw-facade-runtime-dist-path.patch` | bundle 方案已解决路径问题 |
+| `openclaw-cron-tool-owner-only.patch` | `ownerAllowFrom: ['*']` 已让所有用户被视为 owner，patch 不生效 |
+| `openclaw-cron-current-time-suffix.patch` | 时间信息可在 GucciAI UI 侧显示，不需要 Agent 引用 |
 
 ---
 
-## 可跳过的 Patches
+## 替代方案说明
 
-以下 patches 功能已内置或不再必要：
+### Gateway Entry 优化
 
-- `openclaw-cron-delivery-inference.patch` - v2026.4.11 已有 `extractDeliveryInfo` 和 `normalizeDeliveryContext`
-- `openclaw-cron-owner-fallback.patch` - 功能由 `cron-tool-owner-only.patch` 覆盖
+原来的 3 个 gateway-entry patches 被 `scripts/bundle-openclaw-gateway.cjs` 替代：
+
+**原理**：
+- 使用 esbuild 将 gateway 打包成单文件 `gateway-bundle.mjs`
+- 消除 ESM 模块解析开销（从 ~80s 降至 ~15s）
+- 不需要修改 OpenClaw 源码
+
+**启动流程**：
+```
+utilityProcess → gateway-bundle.mjs (esbuild打包) → gateway server
+```
+
+### Cron Tool 权限
+
+`ownerAllowFrom: ['*']` 配置已让所有用户被视为 owner：
+
+```typescript
+// command-auth.ts
+senderIsOwner = senderIsOwnerByIdentity || senderIsOwnerByScope || ownerState.ownerAllowAll
+```
+
+即使 `cron.ownerOnly = true`，工具也不被限制。
 
 ---
 
 ## 验证结果
 
-所有 13 个 patches 已通过 `git apply --check` 验证：
+保留的 7 个 patches 通过 `git apply --check` 验证：
 
 ```
-✓ openclaw-cron-current-time-suffix.patch
 ✓ openclaw-cron-reminder-prompt.patch
 ✓ openclaw-cron-skip-missed-cron-jobs-ops.patch
 ✓ openclaw-cron-skip-missed-cron-jobs-types.patch
 ✓ openclaw-cron-skip-missed-cron-jobs-zod.patch
-✓ openclaw-cron-tool-owner-only.patch
-✓ openclaw-facade-runtime-dist-path.patch
-✓ openclaw-gateway-entry-new-file.patch
-✓ openclaw-gateway-entry-run.patch
-✓ openclaw-gateway-entry-tsdown.patch
 ✓ openclaw-prepack-shell.patch
 ✓ openclaw-release-check-shell.patch
-✓ openclaw-wecom-exec-deny.patch
+✓ openclaw-thinking-stream.patch
 ```
 
 ---
@@ -106,15 +105,33 @@ scripts/patches/v2026.4.11/
 
 ### 应用 patches
 
+```bash
+npm run openclaw:apply-patches
+```
+
 Patches 会通过 `scripts/apply-openclaw-patches.cjs` 自动应用。
 
 ### 构建测试
 
-完成所有修改后，运行构建测试：
-
 ```bash
 npm run electron:dev:openclaw
 ```
+
+---
+
+## 升级 OpenClaw 的注意事项
+
+升级到新版本时，只需：
+
+1. 更新 `package.json` 中的 `openclaw.version`
+2. 创建新的 `scripts/patches/<version>/` 目录
+3. 复制或适配这 7 个 patches
+4. 运行 `npm run openclaw:apply-patches` 验证
+
+**精简后的好处**：
+- Patches 从 14 个减少到 7 个
+- 减少约 50% 的 patch 维护成本
+- Gateway 启动优化在 GucciAI 内部实现，不依赖 OpenClaw 修改
 
 ---
 
