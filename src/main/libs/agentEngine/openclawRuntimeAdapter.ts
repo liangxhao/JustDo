@@ -2694,7 +2694,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       console.log('[OpenClawRuntime] sessions_spawn result received:');
       console.log('  - data keys: ' + Object.keys(data).join(','));
       console.log('  - data.result type: ' + typeof data.result);
-      console.log('  - data.result value: ' + (data.result === undefined ? 'undefined' : JSON.stringify(data.result).slice(0, 500)));
+      console.log(
+        '  - data.result value: ' +
+          (data.result === undefined ? 'undefined' : JSON.stringify(data.result).slice(0, 500)),
+      );
 
       const result = data.result;
       if (isRecord(result)) {
@@ -2734,17 +2737,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // 尝试从 data 的其他字段获取 childSessionKey
         // 检查是否有 sessionKey 或类似的字段
         const childSessionKeyAlt =
-          typeof data.sessionKey === 'string' ? data.sessionKey :
-          typeof data.childSessionKey === 'string' ? data.childSessionKey : null;
+          typeof data.sessionKey === 'string'
+            ? data.sessionKey
+            : typeof data.childSessionKey === 'string'
+              ? data.childSessionKey
+              : null;
 
         if (childSessionKeyAlt) {
           const savedArgs = this.toolCallArgs.get(toolCallId);
-          const label = typeof savedArgs?.label === 'string' && savedArgs.label ? savedArgs.label : null;
-          const inputAgentId = typeof savedArgs?.agentId === 'string' && savedArgs.agentId ? savedArgs.agentId : null;
+          const label =
+            typeof savedArgs?.label === 'string' && savedArgs.label ? savedArgs.label : null;
+          const inputAgentId =
+            typeof savedArgs?.agentId === 'string' && savedArgs.agentId ? savedArgs.agentId : null;
           const mappingKey = label || inputAgentId;
 
           if (mappingKey) {
-            console.log('[OpenClawRuntime] sessions_spawn mapping (alt): key=' + mappingKey + ' childSessionKey=' + childSessionKeyAlt);
+            console.log(
+              '[OpenClawRuntime] sessions_spawn mapping (alt): key=' +
+                mappingKey +
+                ' childSessionKey=' +
+                childSessionKeyAlt,
+            );
             this.labelToSessionKey.set(mappingKey, childSessionKeyAlt);
             this.sessionKeyToLabel.set(childSessionKeyAlt, mappingKey);
           }
@@ -4958,7 +4971,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    */
   getSubagentStatuses(sessionId?: string): Record<string, 'running' | 'done'> {
     // 如果指定了 sessionId 但不是当前编排的父会话，从数据库提取历史状态
-    if (sessionId && this.orchestrationParentSessionId && sessionId !== this.orchestrationParentSessionId) {
+    if (
+      sessionId &&
+      this.orchestrationParentSessionId &&
+      sessionId !== this.orchestrationParentSessionId
+    ) {
       // 从 CoworkStore 消息中提取子任务状态
       const session = this.store.getSession(sessionId);
       if (!session?.messages) return {};
@@ -4982,7 +4999,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
 
         // sessions_resume 或 sessions_read 表示子任务完成
-        if (msg.type === 'tool_use' && (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')) {
+        if (
+          msg.type === 'tool_use' &&
+          (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')
+        ) {
           const input = meta.toolInput as Record<string, unknown> | undefined;
           const label = typeof input?.label === 'string' && input.label ? input.label : '';
           const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
@@ -5017,17 +5037,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
             const input = meta.toolInput as Record<string, unknown> | undefined;
             const label = typeof input?.label === 'string' && input.label ? input.label : '';
-            const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+            const agentId =
+              typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
             const key = label || agentId;
             if (key) {
               result[key] = 'running';
             }
           }
 
-          if (msg.type === 'tool_use' && (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')) {
+          if (
+            msg.type === 'tool_use' &&
+            (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')
+          ) {
             const input = meta.toolInput as Record<string, unknown> | undefined;
             const label = typeof input?.label === 'string' && input.label ? input.label : '';
-            const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+            const agentId =
+              typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
             const key = label || agentId;
             if (key) {
               result[key] = 'done';
@@ -5065,13 +5090,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     console.log('  - agentId=' + agentId);
     console.log('  - sessionKey=' + (sessionKey || 'none'));
 
-    if (
-      this.orchestrationParentSessionId &&
-      parentSessionId !== this.orchestrationParentSessionId
-    ) {
-      console.log('[OpenClawRuntime] getSubTaskHistory: parentSessionId mismatch, returning []');
+    // 确保 gateway client 已准备好（重启后可能未初始化）
+    try {
+      await this.ensureGatewayClientReady();
+    } catch (error) {
+      console.warn('[OpenClawRuntime] getSubTaskHistory: gateway client not ready:', error);
       return [];
     }
+
+    // 移除 orchestrationParentSessionId 检查，允许查询任何会话的历史
+    // 只要该会话在 CoworkStore 中存在，就应该能获取其子 Agent 历史
+    // 这样可以支持：
+    // 1. 切换会话后查看之前的 subagent 历史
+    // 2. 重新打开软件后查看历史会话的 subagent 历史
 
     // Strategy 1: If sessionKey is provided, use it directly
     if (sessionKey && this.gatewayClient) {
