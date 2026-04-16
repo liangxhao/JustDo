@@ -233,4 +233,19 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
         .find(Boolean) || '';
     return firstLine.slice(0, 50).trim() || fallback;
   }
+
+  /**
+   * Patch the model for an active session via sessions.patch API.
+   * Delegates to the OpenClaw runtime which has Gateway access.
+   */
+  async patchSessionModel(
+    sessionId: string,
+    model: string,
+    agentId?: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (this.runtime.patchSessionModel) {
+      return this.runtime.patchSessionModel(sessionId, model, agentId);
+    }
+    return { ok: false, error: 'patchSessionModel not supported by current runtime' };
+  }
 }

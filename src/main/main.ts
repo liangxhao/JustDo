@@ -2478,6 +2478,26 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle(
+    'cowork:session:patchModel',
+    async (_event, options: { sessionId: string; model: string; agentId?: string }) => {
+      try {
+        const runtime = getCoworkEngineRouter();
+        const result = await runtime.patchSessionModel(
+          options.sessionId,
+          options.model,
+          options.agentId,
+        );
+        return { success: result.ok, error: result.error };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to patch session model',
+        };
+      }
+    },
+  );
+
   // ========== Sub-task IPC Handlers ==========
 
   ipcMain.handle('cowork:subTask:status', async (_event, sessionId?: string) => {
@@ -3103,6 +3123,66 @@ if (!gotTheLock) {
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to set config',
+        };
+      }
+    },
+  );
+
+  // Set default model in app_config (used when no agent/session exists)
+  ipcMain.handle(
+    'config:setDefaultModel',
+    async (_event, options: { modelId: string; providerKey?: string }) => {
+      try {
+        type AppConfigWithModel = {
+          model?: {
+            defaultModel?: string;
+            defaultModelProvider?: string;
+          };
+          providers?: Record<string, unknown>;
+          theme?: string;
+          language?: string;
+          useSystemProxy?: boolean;
+        };
+        const currentConfig = getStore().get<AppConfigWithModel>('app_config') || {};
+        const updatedConfig = {
+          ...currentConfig,
+          model: {
+            ...currentConfig.model,
+            defaultModel: options.modelId,
+            defaultModelProvider: options.providerKey || currentConfig.model?.defaultModelProvider,
+          },
+        };
+        getStore().set('app_config', updatedConfig);
+
+        // Also update main agent's model in the database so agents.list reflects the new model
+        const modelRef = options.providerKey
+          ? `${options.providerKey}/${options.modelId}`
+          : options.modelId;
+        try {
+          const mainAgent = getCoworkStore().getAgent('main');
+          if (mainAgent && mainAgent.model !== modelRef) {
+            getCoworkStore().updateAgent('main', { model: modelRef });
+          }
+        } catch {
+          // Non-fatal: agent update failed, config sync will still proceed
+        }
+
+        // syncOpenClawConfig will pick up the updated agent model
+        const syncResult = await syncOpenClawConfig({
+          reason: 'default-model-change',
+          restartGatewayIfRunning: false,
+        });
+        if (!syncResult.success) {
+          console.error(
+            '[Main] Failed to sync OpenClaw config after default model update:',
+            syncResult.error,
+          );
+        }
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to set default model',
         };
       }
     },

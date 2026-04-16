@@ -244,6 +244,8 @@ contextBridge.exposeInMainWorld('electron', {
     getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
     remoteManaged: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:remoteManaged', sessionId),
+    patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>
+      ipcRenderer.invoke('cowork:session:patchModel', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
     exportResultImage: (options: {
       rect: { x: number; y: number; width: number; height: number };
@@ -276,6 +278,8 @@ contextBridge.exposeInMainWorld('electron', {
       memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
       memoryUserMemoriesMaxItems?: number;
     }) => ipcRenderer.invoke('cowork:config:set', config),
+    setDefaultModel: (options: { modelId: string; providerKey?: string }) =>
+      ipcRenderer.invoke('config:setDefaultModel', options),
     listMemoryEntries: (input: {
       query?: string;
       status?: 'created' | 'stale' | 'deleted' | 'all';

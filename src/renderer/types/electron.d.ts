@@ -408,6 +408,11 @@ interface IElectronAPI {
     remoteManaged: (
       sessionId: string,
     ) => Promise<{ success: boolean; remoteManaged: boolean; error?: string }>;
+    patchSessionModel: (options: {
+      sessionId: string;
+      model: string;
+      agentId?: string;
+    }) => Promise<{ success: boolean; error?: string }>;
     listSessions: (
       agentId?: string,
     ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
@@ -439,6 +444,10 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; error?: string }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
     setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;
+    setDefaultModel: (options: {
+      modelId: string;
+      providerKey?: string;
+    }) => Promise<{ success: boolean; error?: string }>;
     listMemoryEntries: (input: {
       query?: string;
       limit?: number;

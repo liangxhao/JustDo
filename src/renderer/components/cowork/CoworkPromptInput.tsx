@@ -1,14 +1,11 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import {
-  FolderIcon,
-  PaperAirplaneIcon,
-  StopIcon,
-} from '@heroicons/react/24/solid';
+import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
+import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
@@ -888,10 +885,29 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         }
                         onChange={async nextModel => {
                           if (!nextModel) return;
-                          if (coworkAgentEngine === 'openclaw' && currentAgent) {
-                            await agentService.updateAgent(currentAgent.id, {
-                              model: toOpenClawModelRef(nextModel),
-                            });
+                          if (coworkAgentEngine === 'openclaw') {
+                            // Update agent model if we have a currentAgent
+                            if (currentAgent) {
+                              await agentService.updateAgent(currentAgent.id, {
+                                model: toOpenClawModelRef(nextModel),
+                              });
+                            } else {
+                              // No currentAgent - update default model in app_config
+                              await coworkService.setDefaultModel({
+                                modelId: nextModel.id,
+                                providerKey: nextModel.providerKey,
+                              });
+                            }
+                            // Patch session model in real-time via sessions.patch API
+                            if (sessionId) {
+                              const modelRef = toOpenClawModelRef(nextModel);
+                              if (modelRef) {
+                                await coworkService.patchSessionModel({
+                                  sessionId,
+                                  model: modelRef,
+                                });
+                              }
+                            }
                           }
                           // Always update global state so the selection is persisted
                           dispatch(setSelectedModel(nextModel));

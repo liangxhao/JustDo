@@ -530,10 +530,30 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           value={isOpenClawEngine ? headerSelectedModel : globalSelectedModel}
           onChange={async nextModel => {
             if (!nextModel) return;
-            if (isOpenClawEngine && currentAgent) {
-              await agentService.updateAgent(currentAgent.id, {
-                model: toOpenClawModelRef(nextModel),
-              });
+            if (isOpenClawEngine) {
+              // Update agent model if we have a currentAgent
+              if (currentAgent) {
+                await agentService.updateAgent(currentAgent.id, {
+                  model: toOpenClawModelRef(nextModel),
+                });
+              } else {
+                // No currentAgent - update default model in app_config
+                // This will trigger syncOpenClawConfig and update openclaw.json
+                await coworkService.setDefaultModel({
+                  modelId: nextModel.id,
+                  providerKey: nextModel.providerKey,
+                });
+              }
+              // Patch session model in real-time via sessions.patch API
+              if (currentSession?.id) {
+                const modelRef = toOpenClawModelRef(nextModel);
+                if (modelRef) {
+                  await coworkService.patchSessionModel({
+                    sessionId: currentSession.id,
+                    model: modelRef,
+                  });
+                }
+              }
             }
             // Always update global state so the selection is persisted
             dispatch(setSelectedModel(nextModel));

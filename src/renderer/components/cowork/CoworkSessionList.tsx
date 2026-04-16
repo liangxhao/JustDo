@@ -246,45 +246,45 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
             {/* 子任务列表: 当前会话时显示，会话完成后保留已完成的子任务 */}
             {session.id === currentSessionId && enrichedSubTasks.length > 0 && (
               <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
-                  {enrichedSubTasks.map(sub => (
-                    <div
-                      key={sub.agentId}
-                      onClick={() =>
-                        setActiveSubTask({ agentId: sub.agentId, parentSessionId: session.id })
-                      }
-                      className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
-                    >
+                {enrichedSubTasks.map(sub => (
+                  <div
+                    key={sub.agentId}
+                    onClick={() =>
+                      setActiveSubTask({ agentId: sub.agentId, parentSessionId: session.id })
+                    }
+                    className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        sub.status === 'done' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'
+                      }`}
+                    />
+                    <span className="font-medium dark:text-claude-darkText text-claude-text truncate">
+                      {sub.agentId}
+                    </span>
+                    {sub.task && (
                       <span
-                        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                          sub.status === 'done' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'
-                        }`}
-                      />
-                      <span className="font-medium dark:text-claude-darkText text-claude-text truncate">
-                        {sub.agentId}
-                      </span>
-                      {sub.task && (
-                        <span
-                          className="dark:text-claude-darkTextSecondary text-claude-textSecondary truncate flex-1"
-                          title={sub.task}
-                        >
-                          {sub.task}
-                        </span>
-                      )}
-                      <span
-                        className={`text-[10px] flex-shrink-0 ${
-                          sub.status === 'done'
-                            ? 'text-green-600 dark:text-green-400'
-                            : 'text-blue-600 dark:text-blue-400'
-                        }`}
+                        className="dark:text-claude-darkTextSecondary text-claude-textSecondary truncate flex-1"
+                        title={sub.task}
                       >
-                        {sub.status === 'done'
-                          ? i18nService.t('orchLogDone') || 'Completed'
-                          : i18nService.t('orchLogSpawning') || 'Running...'}
+                        {sub.task}
                       </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    )}
+                    <span
+                      className={`text-[10px] flex-shrink-0 ${
+                        sub.status === 'done'
+                          ? 'text-green-600 dark:text-green-400'
+                          : 'text-blue-600 dark:text-blue-400'
+                      }`}
+                    >
+                      {sub.status === 'done'
+                        ? i18nService.t('orchLogDone') || 'Completed'
+                        : i18nService.t('orchLogSpawning') || 'Running...'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </React.Fragment>
         ))}
       </div>

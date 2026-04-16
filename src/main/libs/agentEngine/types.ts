@@ -89,4 +89,16 @@ export interface CoworkRuntime {
    * @returns Generated title, or fallback if generation fails
    */
   generateTitle?(userIntent: string | null, timeoutMs?: number): Promise<string>;
+  /**
+   * Patch the model for a session via OpenClaw gateway sessions.patch API.
+   * Optional: only implemented by OpenClawRuntimeAdapter which has Gateway access.
+   * @param sessionId The session ID to patch
+   * @param model The qualified model reference (e.g. "provider/model-id")
+   * @param agentId The agent ID (defaults to 'main')
+   */
+  patchSessionModel?(
+    sessionId: string,
+    model: string,
+    agentId?: string,
+  ): Promise<{ ok: boolean; error?: string }>;
 }

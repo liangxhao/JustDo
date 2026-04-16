@@ -5394,4 +5394,56 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     return null;
   }
+
+  /**
+   * Patch the model for an active session via sessions.patch API.
+   * This enables real-time model switching without restarting the session.
+   */
+  async patchSessionModel(
+    sessionId: string,
+    model: string,
+    agentId?: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const client = this.gatewayClient;
+    if (!client) {
+      return { ok: false, error: 'OpenClaw gateway client not connected' };
+    }
+
+    // Get agentId from session store if not provided
+    const session = this.store.getSession(sessionId);
+    const effectiveAgentId = agentId || session?.agentId || 'main';
+
+    // Build session key in the format: agent:{agentId}:gucciai:{sessionId}
+    const sessionKey = `agent:${effectiveAgentId}:gucciai:${sessionId}`;
+
+    // Normalize model reference - should be in format "provider/model-id"
+    const normalizedModel = model.trim();
+    if (!normalizedModel) {
+      return { ok: false, error: 'Model reference is required' };
+    }
+
+    console.log(
+      '[OpenClawRuntime] patchSessionModel: sessionId=%s, agentId=%s, key=%s, model=%s',
+      sessionId,
+      effectiveAgentId,
+      sessionKey,
+      normalizedModel,
+    );
+
+    try {
+      const result = await client.request<{ ok?: boolean; key?: string; entry?: unknown }>(
+        'sessions.patch',
+        {
+          key: sessionKey,
+          model: normalizedModel,
+        },
+      );
+      console.log('[OpenClawRuntime] patchSessionModel: success, result=', result);
+      return { ok: true };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.warn('[OpenClawRuntime] patchSessionModel: failed:', errorMsg);
+      return { ok: false, error: errorMsg };
+    }
+  }
 }

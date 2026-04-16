@@ -748,6 +748,27 @@ class CoworkService {
     return window.electron.generateSessionTitle(prompt);
   }
 
+  async patchSessionModel(options: {
+    sessionId: string;
+    model: string;
+    agentId?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    if (!window.electron?.cowork?.patchSessionModel) {
+      return { success: false, error: 'patchSessionModel API not available' };
+    }
+    return window.electron.cowork.patchSessionModel(options);
+  }
+
+  async setDefaultModel(options: {
+    modelId: string;
+    providerKey?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    if (!window.electron?.cowork?.setDefaultModel) {
+      return { success: false, error: 'setDefaultModel API not available' };
+    }
+    return window.electron.cowork.setDefaultModel(options);
+  }
+
   async getRecentCwds(limit?: number): Promise<string[]> {
     if (!window.electron?.getRecentCwds) {
       return [];
