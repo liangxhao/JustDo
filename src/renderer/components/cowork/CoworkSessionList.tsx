@@ -58,16 +58,6 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
       const meta = msg.metadata;
       if (!meta) continue;
 
-      // 调试：打印所有工具调用
-      if (msg.type === 'tool_use') {
-        console.log(
-          '[CoworkSessionList] tool_use message: toolName=' +
-            meta.toolName +
-            ' toolInput=' +
-            JSON.stringify(meta.toolInput || {}).slice(0, 200),
-        );
-      }
-
       if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
         const input = meta.toolInput as Record<string, unknown> | undefined;
         // agentId 或 label 作为子任务标识符（OpenClaw 可能使用 label 代替 agentId）
@@ -78,9 +68,6 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
               ? input.label
               : '';
         const task = typeof input?.task === 'string' ? input.task.slice(0, 60) : '';
-        console.log(
-          '[CoworkSessionList] sessions_spawn found: agentId=' + agentId + ' task=' + task,
-        );
         if (agentId) {
           tasks.set(agentId, { agentId, task, status: 'running' });
         }
@@ -136,12 +123,6 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
     const poll = async () => {
       try {
         const result = await window.electron.cowork.getSubTaskStatus(activeSessionId);
-        console.log(
-          '[CoworkSessionList] getSubTaskStatus result: success=' +
-            result.success +
-            ' statuses=' +
-            JSON.stringify(result.statuses || {}),
-        );
         if (result.success && result.statuses) {
           setBackendStatuses(result.statuses);
         }
@@ -178,20 +159,6 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
       if (!knownAgentIds.has(agentId)) {
         merged.push({ agentId, task: '', status });
       }
-    }
-
-    // 调试日志
-    if (merged.length > 0 || subTasks.length > 0 || Object.keys(backendStatuses).length > 0) {
-      console.log(
-        '[CoworkSessionList] enrichedSubTasks: ' +
-          merged.length +
-          ' items' +
-          ' (subTasks=' +
-          subTasks.length +
-          ', backendStatuses=' +
-          Object.keys(backendStatuses).length +
-          ')',
-      );
     }
 
     return merged;
