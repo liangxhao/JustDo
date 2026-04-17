@@ -20,7 +20,6 @@ interface PlatformDefInput {
   readonly region: 'china' | 'global';
   readonly channel: string;
   readonly channelAliases: readonly string[];
-  readonly logo: string;
   readonly guideUrl: string;
 }
 
@@ -37,7 +36,6 @@ const DEFINITIONS = [
     region: 'china',
     channel: 'openclaw-weixin',
     channelAliases: [],
-    logo: 'weixin.png',
     guideUrl: '',
   },
   {
@@ -46,7 +44,6 @@ const DEFINITIONS = [
     region: 'china',
     channel: 'dingtalk',
     channelAliases: [],
-    logo: 'dingding.png',
     guideUrl: '',
   },
   {
@@ -55,7 +52,6 @@ const DEFINITIONS = [
     region: 'china',
     channel: 'feishu',
     channelAliases: [],
-    logo: 'feishu.png',
     guideUrl: '',
   },
   {
@@ -64,7 +60,6 @@ const DEFINITIONS = [
     region: 'china',
     channel: 'wecom-openclaw-plugin',
     channelAliases: ['wecom'],
-    logo: 'wecom.png',
     guideUrl: '',
   },
   {
@@ -73,7 +68,6 @@ const DEFINITIONS = [
     region: 'china',
     channel: 'qqbot',
     channelAliases: [],
-    logo: 'qq_bot.jpeg',
     guideUrl: '',
   },
   {
@@ -82,7 +76,6 @@ const DEFINITIONS = [
     region: 'china',
     channel: 'nim',
     channelAliases: [],
-    logo: 'nim.png',
     guideUrl: '',
   },
   {
@@ -91,7 +84,6 @@ const DEFINITIONS = [
     region: 'china',
     channel: 'netease-bee',
     channelAliases: [],
-    logo: 'netease-bee.png',
     guideUrl: '',
   },
   {
@@ -100,7 +92,6 @@ const DEFINITIONS = [
     region: 'china',
     channel: 'moltbot-popo',
     channelAliases: ['popo'],
-    logo: 'popo.png',
     guideUrl: '',
   },
   // ── Global ──
@@ -110,7 +101,6 @@ const DEFINITIONS = [
     region: 'global',
     channel: 'telegram',
     channelAliases: [],
-    logo: 'telegram.svg',
     guideUrl: '',
   },
   {
@@ -119,7 +109,6 @@ const DEFINITIONS = [
     region: 'global',
     channel: 'discord',
     channelAliases: [],
-    logo: 'discord.svg',
     guideUrl: '',
   },
 ] as const satisfies readonly PlatformDefInput[];
@@ -148,8 +137,6 @@ export interface PlatformDef {
   readonly channel: ChannelName;
   /** Additional channel aliases (e.g. wecom has both 'wecom' and 'wecom-openclaw-plugin') */
   readonly channelAliases: readonly ChannelName[];
-  /** Logo filename relative to /im-logos/ in public assets */
-  readonly logo: string;
   /** Setup guide URL (empty string if not yet available) */
   readonly guideUrl: string;
 }
@@ -209,11 +196,6 @@ class PlatformRegistryImpl {
   /** Get the full definition for a platform. */
   get(platform: Platform): PlatformDef {
     return this.platformIndex.get(platform)!;
-  }
-
-  /** Logo filename relative to /im-logos/. */
-  logo(platform: Platform): string {
-    return this.platformIndex.get(platform)!.logo;
   }
 
   /** Setup guide URL (empty string if not available). */

@@ -518,14 +518,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const getChannelLogo = (channelValue: string): string | null => {
-    const platform = PlatformRegistry.platformOfChannel(channelValue);
-    if (platform) {
-      return PlatformRegistry.logo(platform);
-    }
-    return null;
-  };
-
   const isChannelUnsupported = (channelValue: string): boolean => {
     return channelValue === 'openclaw-weixin';
   };
@@ -543,7 +535,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
   };
 
   const renderNotifyRow = () => {
-    const selectedLogo = getChannelLogo(form.notifyChannel);
     return (
       <div>
         <label className={labelClass}>{i18nService.t('scheduledTasksFormNotifyChannel')}</label>
@@ -555,9 +546,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
               className={`${inputClass} w-full flex items-center justify-between cursor-pointer`}
             >
               <span className="flex items-center gap-2 truncate">
-                {selectedLogo && (
-                  <img src={selectedLogo} alt="" className="w-5 h-5 object-contain rounded" />
-                )}
                 <span className="truncate">{(() => {
                   const base = getChannelDisplayLabel(form.notifyChannel);
                   if (!form.notifyAccountId) return base;
@@ -583,7 +571,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
                 </div>
                 {channelOptions.map((channel) => {
                   const unsupported = isChannelUnsupported(channel.value);
-                  const logo = getChannelLogo(channel.value);
                   const platform = PlatformRegistry.platformOfChannel(channel.value);
                   const platformLabel = platform ? (i18nService.t(platform) || channel.label) : channel.label;
                   // For multi-instance options, show "平台 · 实例名"; for single-instance use platform label only.
@@ -605,11 +592,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
                         }
                       }}
                     >
-                      {logo ? (
-                        <img src={logo} alt={displayName} className="w-5 h-5 object-contain rounded" />
-                      ) : (
-                        <span className="w-5 h-5" />
-                      )}
+                      <span className="w-5 h-5" />
                       <span className={`text-sm ${unsupported ? 'text-foreground-secondary' : 'text-foreground'}`}>
                         {unsupported
                           ? `${displayName} (${i18nService.t('scheduledTasksChannelUnsupported')})`
