@@ -18,7 +18,7 @@ import {
   setDraftPrompt,
 } from '../../store/slices/coworkSlice';
 import { setSelectedModel } from '../../store/slices/modelSlice';
-import { setSkills, toggleActiveSkill } from '../../store/slices/skillSlice';
+import { setSkills } from '../../store/slices/skillSlice';
 import { CoworkImageAttachment } from '../../types/cowork';
 import { Skill } from '../../types/skill';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -26,7 +26,7 @@ import { getCompactFolderName } from '../../utils/path';
 import PaperClipIcon from '../icons/PaperClipIcon';
 import XMarkIcon from '../icons/XMarkIcon';
 import ModelSelector from '../ModelSelector';
-import { ActiveSkillBadge, SkillsButton } from '../skills';
+import { ActiveSkillBadge } from '../skills';
 import { resolveAgentModelSelection } from './agentModelSelection';
 import AttachmentCard from './AttachmentCard';
 import FolderSelectorPopover from './FolderSelectorPopover';
@@ -132,7 +132,6 @@ interface CoworkPromptInputProps {
   onWorkingDirectoryChange?: (dir: string) => void;
   showFolderSelector?: boolean;
   showModelSelector?: boolean;
-  onManageSkills?: () => void;
   sessionId?: string;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
@@ -151,7 +150,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       onWorkingDirectoryChange,
       showFolderSelector = false,
       showModelSelector = false,
-      onManageSkills,
       sessionId,
       remoteManaged = false,
     } = props;
@@ -373,19 +371,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       dispatch,
       draftKey,
     ]);
-
-    const handleSelectSkill = useCallback(
-      (skill: Skill) => {
-        dispatch(toggleActiveSkill(skill.id));
-      },
-      [dispatch],
-    );
-
-    const handleManageSkills = useCallback(() => {
-      if (onManageSkills) {
-        onManageSkills();
-      }
-    }, [onManageSkills]);
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       const isComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
@@ -932,15 +917,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <PaperClipIcon className="h-4 w-4" />
                     </button>
                   )}
-                  {!remoteManaged && (
-                    <>
-                      <SkillsButton
-                        onSelectSkill={handleSelectSkill}
-                        onManageSkills={handleManageSkills}
-                      />
-                      <ActiveSkillBadge />
-                    </>
-                  )}
+                  {!remoteManaged && <ActiveSkillBadge />}
                 </div>
                 <div className="flex items-center gap-2">
                   {isStreaming ? (

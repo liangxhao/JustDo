@@ -459,15 +459,13 @@ export const buildProviderSelection = (options: {
   codingPlanEnabled?: boolean;
   supportsImage?: boolean;
   modelName?: string;
-<<<<<<< HEAD
-  displayName?: string; // 用于 OpenClaw 配置中的 providerId（仅对 custom provider 有效）
+displayName?: string; // 用于 OpenClaw 配置中的 providerId（仅对 custom provider 有效）
 }): OpenClawProviderSelection => {
   const providerName = options.providerName ?? '';
   const displayName = options.displayName?.trim();
   const descriptor = resolveDescriptor(providerName, !!options.codingPlanEnabled);
 
-<<<<<<< HEAD
-  // 对于 custom provider，如果提供了 displayName，使用它作为 providerId
+// 对于 custom provider，如果提供了 displayName，使用它作为 providerId
   const isCustomProvider = providerName.startsWith('custom_');
   const effectiveProviderId = isCustomProvider && displayName ? displayName : descriptor.providerId;
 
@@ -639,8 +637,7 @@ export class OpenClawConfigSync {
         codingPlanEnabled: apiResolution.providerMetadata?.codingPlanEnabled,
         supportsImage: apiResolution.providerMetadata?.supportsImage,
         modelName: apiResolution.providerMetadata?.modelName,
-<<<<<<< HEAD
-        displayName: apiResolution.providerMetadata?.displayName, // 传递 displayName
+displayName: apiResolution.providerMetadata?.displayName, // 传递 displayName
       });
       primaryModel = providerSelection.primaryModel;
 
@@ -655,8 +652,7 @@ export class OpenClawConfigSync {
             codingPlanEnabled: p.codingPlanEnabled,
             supportsImage: m.supportsImage,
             modelName: m.name,
-<<<<<<< HEAD
-            displayName: p.displayName, // 传递 displayName
+displayName: p.displayName, // 传递 displayName
           });
           if (!allProvidersMap[sel.providerId]) {
             allProvidersMap[sel.providerId] = { ...sel.providerConfig, models: [] };

@@ -41,7 +41,6 @@ import CoworkSessionDetail from './CoworkSessionDetail';
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
-  onShowSkills?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
@@ -49,7 +48,6 @@ export interface CoworkViewProps {
 
 const CoworkView: React.FC<CoworkViewProps> = ({
   onRequestAppSettings,
-  onShowSkills,
   isSidebarCollapsed,
   onToggleSidebar,
   onNewChat,
@@ -603,7 +601,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       <div className="flex-1 flex flex-col h-full">
         {engineStatusBanner}
         <CoworkSessionDetail
-          onManageSkills={() => onShowSkills?.()}
           onContinue={handleContinueSession}
           onStop={handleStopSession}
           onDeleteSession={handleDeleteSession}
@@ -655,7 +652,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                   await coworkService.updateConfig({ workingDirectory: dir });
                 }}
                 showFolderSelector={true}
-                onManageSkills={() => onShowSkills?.()}
               />
             </div>
           </div>

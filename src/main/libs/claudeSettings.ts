@@ -24,8 +24,7 @@ type ProviderConfig = {
   apiFormat?: 'anthropic' | 'openai' | 'native';
   codingPlanEnabled?: boolean;
   models?: ProviderModel[];
-<<<<<<< HEAD
-  displayName?: string; // 用于 OpenClaw providerId
+displayName?: string; // 用于 OpenClaw providerId
 };
 
 type AppConfig = {

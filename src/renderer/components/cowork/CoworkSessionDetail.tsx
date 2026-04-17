@@ -55,7 +55,6 @@ import DiffView, { extractDiffFromToolInput } from './DiffView';
 import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
 
 interface CoworkSessionDetailProps {
-  onManageSkills?: () => void;
   onContinue: (
     prompt: string,
     skillPrompt?: string,
@@ -1656,7 +1655,6 @@ export const AssistantTurnBlock: React.FC<{
 };
 
 const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
-  onManageSkills,
   onContinue,
   onStop,
   onDeleteSession,
@@ -3052,7 +3050,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             disabled={remoteManaged}
             size="large"
             remoteManaged={remoteManaged}
-            onManageSkills={remoteManaged ? undefined : onManageSkills}
             showModelSelector={!remoteManaged}
             sessionId={currentSession?.id}
           />
