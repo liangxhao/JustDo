@@ -80,7 +80,7 @@ export interface CoworkRuntime {
   respondToPermission(requestId: string, result: PermissionResult): void;
   isSessionActive(sessionId: string): boolean;
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null;
-  onSessionDeleted?(sessionId: string): void;
+  onSessionDeleted?(sessionId: string, agentId?: string): void;
   /**
    * Generate a session title using the configured model.
    * Optional: only implemented by OpenClawRuntimeAdapter which has Gateway access.

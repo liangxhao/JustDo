@@ -4480,28 +4480,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Purges all in-memory references so that new channel messages
    * with the same sessionKey can create a fresh session.
    */
-  onSessionDeleted(sessionId: string): void {
+  onSessionDeleted(sessionId: string, agentId?: string): void {
     // Remove sessionIdBySessionKey entries pointing to this session
+    // IMPORTANT: Save removedKeys BEFORE deleting for OpenClaw sync
     const removedKeys: string[] = [];
     for (const [key, id] of this.sessionIdBySessionKey.entries()) {
       if (id === sessionId) {
-        this.sessionIdBySessionKey.delete(key);
         removedKeys.push(key);
+        this.sessionIdBySessionKey.delete(key);
       }
     }
 
-    // Delete session from OpenClaw gateway
-    const client = this.gatewayClient;
-    if (client) {
-      for (const key of removedKeys) {
-        void client
-          .request('sessions.delete', { key, deleteTranscript: true })
-          .catch(error => {
-            console.warn('[OpenClawRuntime] Failed to delete session from gateway:', key, error);
-          });
-      }
+// If removedKeys is empty, build sessionKey from agentId parameter or default to 'main'
+    if (removedKeys.length === 0) {
+      const effectiveAgentId = agentId || 'main';
+      const sessionKey = this.toSessionKey(sessionId, effectiveAgentId);
+      removedKeys.push(sessionKey);
     }
 
+    console.log(
+      `[OpenClaw] onSessionDeleted: sessionId=${sessionId}, agentId=${agentId}, removedKeys=${JSON.stringify(removedKeys)}, totalKeysInMap=${this.sessionIdBySessionKey.size}`,
+    );
+
+    // Sync deletion to OpenClaw Gateway FIRST (using saved removedKeys)
+    // Wait for gatewayClient to be ready before attempting deletion
+    this.deleteOpenClawSessionByKeysWithRetry(sessionId, removedKeys).catch(err => {
+      console.warn(`[OpenClaw] deleteOpenClawSessionByKeysWithRetry error for ${sessionId}:`, err);
+    });
     // Suppress polling re-creation for deleted channel keys.
     // Only real-time events (new IM messages) will re-create the session.
     for (const key of removedKeys) {
@@ -4532,6 +4537,171 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (this.channelSessionSync) {
       this.channelSessionSync.onSessionDeleted(sessionId);
     }
+  }
+
+  /**
+   * Sync deletion to OpenClaw Gateway by calling sessions.delete API.
+   * Deletes the remote session and all its related sessions (subagents, title sessions, etc).
+   */
+  private async deleteOpenClawSessionByKeys(sessionKeys: string[]): Promise<void> {
+    const client = this.gatewayClient;
+    if (!client || sessionKeys.length === 0) {
+      console.log(
+        `[OpenClaw] deleteOpenClawSessionByKeys: skipped, client=${!!client}, keys=${sessionKeys.length}`,
+      );
+      return;
+    }
+
+    console.log(
+      `[OpenClaw] deleteOpenClawSessionByKeys: starting with keys=${JSON.stringify(sessionKeys)}`,
+    );
+
+    // Extract agentId from the first sessionKey (format: agent:{agentId}:gucciai:{sessionId})
+    const agentId = this.extractAgentIdFromSessionKey(sessionKeys[0]);
+
+    // Delete all related sessions in parallel for efficiency
+    const deletePromises: Promise<void>[] = [];
+
+    for (const sessionKey of sessionKeys) {
+      deletePromises.push(this.deleteSessionTree(client, sessionKey));
+    }
+
+    // Also delete orphan subagent and title sessions at agent level
+    if (agentId) {
+      deletePromises.push(this.deleteAgentLevelSessions(client, agentId));
+    }
+
+    await Promise.allSettled(deletePromises);
+    console.log(`[OpenClaw] deleteOpenClawSessionByKeys: completed`);
+  }
+
+  /**
+   * Delete orphan subagent and title sessions at agent level.
+   * These sessions have keys like: agent:{agentId}:subagent:{uuid}, agent:{agentId}:title:{uuid}
+   * They are not spawnedBy the GucciAI session, but should be cleaned up when the session is deleted.
+   */
+  private async deleteAgentLevelSessions(client: GatewayClientLike, agentId: string): Promise<void> {
+    try {
+      // Query all sessions for this agent
+      const listResult = await client.request<{
+        sessions?: Array<{ key: string; spawnedBy?: string }>;
+      }>('sessions.list', { agentId, limit: 200 });
+
+      console.log(
+        `[OpenClaw] deleteAgentLevelSessions: agentId=${agentId}, found ${listResult.sessions?.length ?? 0} sessions`,
+      );
+
+      for (const session of listResult.sessions ?? []) {
+        // Delete sessions that are:
+        // 1. Not spawnedBy a GucciAI session (no spawnedBy or spawnedBy doesn't contain 'gucciai')
+        // 2. Are subagent or title sessions (contain :subagent: or :title:)
+        const isSubagentOrTitle =
+          session.key.includes(':subagent:') || session.key.includes(':title:');
+        const isNotSpawnedByGucciAI =
+          !session.spawnedBy || !session.spawnedBy.includes('gucciai');
+
+        if (isSubagentOrTitle && isNotSpawnedByGucciAI) {
+          try {
+            await client.request('sessions.delete', {
+              key: session.key,
+              deleteTranscript: true,
+            });
+            console.log(`[OpenClaw] deleteAgentLevelSessions: deleted ${session.key}`);
+          } catch (err) {
+            console.warn(`[OpenClaw] deleteAgentLevelSessions: failed to delete ${session.key}:`, err);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[OpenClaw] deleteAgentLevelSessions: error querying agent ${agentId}:`, err);
+    }
+  }
+
+  /**
+   * Extract agentId from session key format: agent:{agentId}:gucciai:{sessionId}
+   */
+  private extractAgentIdFromSessionKey(sessionKey: string): string | null {
+    const match = /^agent:([^:]+):/.exec(sessionKey);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * Delete OpenClaw sessions with retry - waits for gatewayClient to be ready.
+   */
+  private async deleteOpenClawSessionByKeysWithRetry(
+    sessionId: string,
+    sessionKeys: string[],
+  ): Promise<void> {
+    if (sessionKeys.length === 0) {
+      console.log(
+        `[OpenClaw] deleteOpenClawSessionByKeysWithRetry: no keys to delete for sessionId=${sessionId}`,
+      );
+      return;
+    }
+
+    // Wait for gatewayClient to be ready (with timeout)
+    const maxWaitMs = 5000;
+    const startTime = Date.now();
+    while (!this.gatewayClient && Date.now() - startTime < maxWaitMs) {
+      try {
+        await this.ensureGatewayClientReady();
+      } catch (err) {
+        console.warn(
+          `[OpenClaw] deleteOpenClawSessionByKeysWithRetry: waiting for gatewayClient...`,
+          err,
+        );
+      }
+      if (!this.gatewayClient) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    try {
+      await this.deleteOpenClawSessionByKeys(sessionKeys);
+      console.log(
+        `[OpenClaw] deleteOpenClawSessionByKeysWithRetry completed for sessionId=${sessionId}`,
+      );
+    } catch (err) {
+      console.warn(
+        `[OpenClaw] deleteOpenClawSessionByKeysWithRetry failed for sessionId=${sessionId}:`,
+        err,
+      );
+    }
+  }
+
+  /**
+   * Delete a session and all sessions spawned by it (recursively).
+   */
+  private async deleteSessionTree(client: GatewayClientLike, sessionKey: string): Promise<void> {
+    try {
+      // Query sessions spawned by this session (includes subagents and possibly title sessions)
+      const listResult = await client.request<{
+        sessions?: Array<{ key: string; spawnedBy?: string }>;
+      }>('sessions.list', { spawnedBy: sessionKey, limit: 100 });
+
+      // Recursively delete child sessions first (depth-first)
+      for (const childSession of listResult.sessions ?? []) {
+        await this.deleteSessionTree(client, childSession.key);
+      }
+
+      // Delete this session (if not a main session like agent:xxx:main)
+      if (!this.isMainSessionKey(sessionKey)) {
+        await client.request('sessions.delete', {
+          key: sessionKey,
+          deleteTranscript: true,
+        });
+      }
+    } catch (err) {
+      console.warn(`[OpenClaw] Error deleting session tree ${sessionKey}:`, err);
+    }
+  }
+
+  /**
+   * Check if a sessionKey is a main session (e.g., agent:{agentId}:main).
+   * Main sessions cannot be deleted via sessions.delete API.
+   */
+  private isMainSessionKey(key: string): boolean {
+    return key.endsWith(':main');
   }
 
   /**
@@ -5228,10 +5398,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Extract title from result
       const resultText = this.extractTitleFromAgentResult(result);
       if (resultText) {
-        return this.normalizeTitle(resultText, fallbackTitle, SESSION_TITLE_MAX_CHARS);
+        const normalizedTitle = this.normalizeTitle(
+          resultText,
+          fallbackTitle,
+          SESSION_TITLE_MAX_CHARS,
+        );
+        // Clean up the temporary title session immediately
+        try {
+          await client.request('sessions.delete', {
+            key: titleSessionKey,
+            deleteTranscript: true,
+          });
+        } catch (deleteErr) {
+          console.warn(
+            '[OpenClawRuntime] generateTitle: failed to delete temp session:',
+            deleteErr,
+          );
+        }
+        return normalizedTitle;
       }
     } catch (error) {
       console.warn('[OpenClawRuntime] generateTitle: request failed:', error);
+    }
+
+    // Clean up temp session even on failure
+    try {
+      await client.request('sessions.delete', {
+        key: titleSessionKey,
+        deleteTranscript: true,
+      });
+    } catch (deleteErr) {
+      // Ignore cleanup errors on failure path
     }
 
     return fallbackTitle;

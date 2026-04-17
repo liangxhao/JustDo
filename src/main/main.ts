@@ -2361,11 +2361,14 @@ if (!gotTheLock) {
     try {
       getCoworkEngineRouter().stopSession(sessionId);
       const coworkStoreInstance = getCoworkStore();
+      // Get session info BEFORE deleting from SQLite (for OpenClaw sync)
+      const session = coworkStoreInstance.getSession(sessionId);
+      const agentId = session?.agentId || 'main';
       coworkStoreInstance.deleteSession(sessionId);
       // Notify runtime to purge in-memory caches for this session
       // so that channel messages can create a fresh session.
       try {
-        getCoworkEngineRouter().onSessionDeleted(sessionId);
+        getCoworkEngineRouter().onSessionDeleted(sessionId, agentId);
       } catch {
         // Router may not be initialised yet; safe to ignore.
       }
@@ -2385,11 +2388,20 @@ if (!gotTheLock) {
         runtime.stopSession(sessionId);
       });
       const coworkStoreInstance = getCoworkStore();
+      // Get session info BEFORE deleting (for OpenClaw sync)
+      const sessionAgentIds: Map<string, string> = new Map();
+      for (const sessionId of sessionIds) {
+        const session = coworkStoreInstance.getSession(sessionId);
+        if (session) {
+          sessionAgentIds.set(sessionId, session.agentId || 'main');
+        }
+      }
       coworkStoreInstance.deleteSessions(sessionIds);
       const router = getCoworkEngineRouter();
       for (const sessionId of sessionIds) {
         try {
-          router.onSessionDeleted(sessionId);
+          const agentId = sessionAgentIds.get(sessionId) || 'main';
+          router.onSessionDeleted(sessionId, agentId);
         } catch {
           // Router may not be initialised yet; safe to ignore.
         }
