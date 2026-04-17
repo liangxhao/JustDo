@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { CoworkSessionSummary, CoworkSessionStatus } from '../../types/cowork';
+import { useDraggable } from '@dnd-kit/core';
+import type { CoworkSessionSummary, CoworkSessionStatus, SessionGroup } from '../../types/cowork';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import PencilSquareIcon from '../icons/PencilSquareIcon';
 import TrashIcon from '../icons/TrashIcon';
@@ -14,12 +15,13 @@ interface CoworkSessionItemProps {
   isBatchMode: boolean;
   isSelected: boolean;
   showBatchOption?: boolean;
+  groups?: SessionGroup[];
   onSelect: () => void;
   onDelete: () => void;
-  onTogglePin: (pinned: boolean) => void;
   onRename: (title: string) => void;
   onToggleSelection: () => void;
   onEnterBatchMode: () => void;
+  onMoveToGroup?: (groupId: string | null) => void;
 }
 
 const statusLabels: Record<CoworkSessionStatus, string> = {
@@ -28,27 +30,6 @@ const statusLabels: Record<CoworkSessionStatus, string> = {
   completed: 'coworkStatusCompleted',
   error: 'coworkStatusError',
 };
-
-const PushPinIcon: React.FC<React.SVGProps<SVGSVGElement> & { slashed?: boolean }> = ({
-  slashed,
-  ...props
-}) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    {...props}
-  >
-    <g transform="rotate(45 12 12)">
-      <path d="M9 3h6l-1 5 2 2v2H8v-2l2-2-1-5z" />
-      <path d="M12 12v9" />
-    </g>
-    {slashed && <path d="M5 5L19 19" />}
-  </svg>
-);
 
 const formatRelativeTime = (timestamp: number): { compact: string; full: string } => {
   const now = Date.now();
@@ -93,20 +74,43 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   isBatchMode,
   isSelected,
   showBatchOption = true,
+  groups = [],
   onSelect,
   onDelete,
-  onTogglePin,
   onRename,
   onToggleSelection,
   onEnterBatchMode,
+  onMoveToGroup,
 }) => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [showGroupSubMenu, setShowGroupSubMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
+  const closeSubMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const openSubMenu = () => {
+    if (closeSubMenuTimerRef.current) {
+      clearTimeout(closeSubMenuTimerRef.current);
+      closeSubMenuTimerRef.current = null;
+    }
+    setShowGroupSubMenu(true);
+  };
+
+  const closeSubMenu = () => {
+    closeSubMenuTimerRef.current = setTimeout(() => {
+      setShowGroupSubMenu(false);
+    }, 100);
+  };
+
+  // Draggable setup
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: session.id,
+    data: { session },
+  });
 
   useEffect(() => {
     if (!isRenaming) {
@@ -142,12 +146,11 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const closeMenu = () => {
     setMenuPosition(null);
     setShowConfirmDelete(false);
-  };
-
-  const handleTogglePin = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onTogglePin(!session.pinned);
-    closeMenu();
+    setShowGroupSubMenu(false);
+    if (closeSubMenuTimerRef.current) {
+      clearTimeout(closeSubMenuTimerRef.current);
+      closeSubMenuTimerRef.current = null;
+    }
   };
 
   const handleRenameClick = (e: React.MouseEvent) => {
@@ -252,9 +255,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     });
   }, [isRenaming]);
 
-  const pinButtonLabel = session.pinned
-    ? i18nService.t('coworkUnpinSession')
-    : i18nService.t('coworkPinSession');
   const renameLabel = i18nService.t('renameConversation');
   const deleteLabel = i18nService.t('deleteSession');
   const relativeTime = formatRelativeTime(session.updatedAt);
@@ -262,10 +262,19 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
   const batchLabel = i18nService.t('batchOperations');
+  const moveToGroupLabel = i18nService.t('moveToGroup');
+
+  interface MenuItem {
+    key: string;
+    label: string;
+    onClick: (e: React.MouseEvent) => void;
+    onMouseEnter?: () => void;
+    tone: 'neutral' | 'danger';
+  }
+
   const menuItems = useMemo(() => {
-    const items = [
+    const items: MenuItem[] = [
       { key: 'rename', label: renameLabel, onClick: handleRenameClick, tone: 'neutral' as const },
-      { key: 'pin', label: pinButtonLabel, onClick: handleTogglePin, tone: 'neutral' as const },
       { key: 'delete', label: deleteLabel, onClick: handleDeleteClick, tone: 'danger' as const },
     ];
     if (showBatchOption) {
@@ -276,6 +285,17 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         tone: 'neutral' as const,
       });
     }
+    if (onMoveToGroup && groups.length > 0) {
+      items.push({
+        key: 'moveToGroup',
+        label: moveToGroupLabel,
+        onClick: (e: React.MouseEvent) => {
+          e.stopPropagation();
+        },
+        onMouseEnter: openSubMenu,
+        tone: 'neutral' as const,
+      });
+    }
     return items;
   }, [
     batchLabel,
@@ -283,14 +303,26 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     handleBatchClick,
     handleDeleteClick,
     handleRenameClick,
-    handleTogglePin,
-    pinButtonLabel,
     renameLabel,
     showBatchOption,
+    onMoveToGroup,
+    groups.length,
+    moveToGroupLabel,
   ]);
+
+  const handleMoveToGroup = (groupId: string | null) => {
+    if (onMoveToGroup) {
+      onMoveToGroup(groupId);
+    }
+    closeMenu();
+  };
 
   return (
     <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      style={{ opacity: isDragging ? 0.5 : 1 }}
       onContextMenu={!isBatchMode && !isRenaming ? openMenu : undefined}
       onClick={() => {
         if (isRenaming) return;
@@ -380,6 +412,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               key={item.key}
               type="button"
               onClick={item.onClick}
+              onMouseEnter={item.onMouseEnter}
               className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
                 item.tone === 'danger'
                   ? 'text-red-500 hover:bg-red-500/10'
@@ -388,16 +421,50 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
             >
               {item.key === 'batch' && <ListChecksIcon className="h-4 w-4" />}
               {item.key === 'rename' && <PencilSquareIcon className="h-4 w-4" />}
-              {item.key === 'pin' && (
-                <PushPinIcon
-                  slashed={session.pinned}
-                  className={`h-4 w-4 ${session.pinned ? 'opacity-60' : ''}`}
-                />
-              )}
               {item.key === 'delete' && <TrashIcon className="h-4 w-4" />}
+              {item.key === 'moveToGroup' && (
+                <span className="h-4 w-4 flex items-center justify-center">→</span>
+              )}
               {item.label}
+              {item.key === 'moveToGroup' && (
+                <span className="ml-auto">{showGroupSubMenu ? '▼' : '▶'}</span>
+              )}
             </button>
           ))}
+          {/* Group submenu */}
+          {showGroupSubMenu && onMoveToGroup && (
+            <div
+              className="border-t border-border pl-5"
+              onMouseEnter={openSubMenu}
+              onMouseLeave={closeSubMenu}
+            >
+              {/* Ungrouped option */}
+              {session.groupId && (
+                <button
+                  type="button"
+                  onClick={() => handleMoveToGroup(null)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-surface-raised"
+                >
+                  {i18nService.t('ungrouped')}
+                </button>
+              )}
+              {groups.map(group => (
+                <button
+                  key={group.id}
+                  type="button"
+                  onClick={() => handleMoveToGroup(group.id)}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                    session.groupId === group.id
+                      ? 'bg-surface-raised text-secondary'
+                      : 'text-foreground hover:bg-surface-raised'
+                  }`}
+                >
+                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: group.color }} />
+                  {group.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

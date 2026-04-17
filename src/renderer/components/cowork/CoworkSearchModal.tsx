@@ -15,7 +15,6 @@ interface CoworkSearchModalProps {
   currentSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
-  onTogglePin: (sessionId: string, pinned: boolean) => void;
   onRenameSession: (sessionId: string, title: string) => void;
 }
 
@@ -26,7 +25,6 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
   currentSessionId,
   onSelectSession,
   onDeleteSession,
-  onTogglePin,
   onRenameSession,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -112,7 +110,6 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
               showBatchOption={false}
               onSelectSession={handleSelectSession}
               onDeleteSession={onDeleteSession}
-              onTogglePin={onTogglePin}
               onRenameSession={onRenameSession}
               onToggleSelection={() => {}}
               onEnterBatchMode={() => {}}

@@ -74,10 +74,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     await coworkService.deleteSession(sessionId);
   };
 
-  const handleTogglePin = async (sessionId: string, pinned: boolean) => {
-    await coworkService.setSessionPinned(sessionId, pinned);
-  };
-
   const handleRenameSession = async (sessionId: string, title: string) => {
     await coworkService.renameSession(sessionId, title);
   };
@@ -244,10 +240,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-2.5 pb-4">
-        <div className="h-4" /> {/* Spacer instead of agent list */}
-        <div className="px-3 pb-1.5 pl-4 text-sm font-medium text-secondary">
-          {i18nService.t('coworkHistory')}
-        </div>
         <CoworkSessionList
           sessions={sessions}
           isLoading={false}
@@ -256,7 +248,6 @@ const Sidebar: React.FC<SidebarProps> = ({
           selectedIds={selectedIds}
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
-          onTogglePin={handleTogglePin}
           onRenameSession={handleRenameSession}
           onToggleSelection={handleToggleSelection}
           onEnterBatchMode={handleEnterBatchMode}
@@ -269,7 +260,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
-        onTogglePin={handleTogglePin}
         onRenameSession={handleRenameSession}
       />
       {isBatchMode ? (

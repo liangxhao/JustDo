@@ -1,11 +1,41 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { useSelector } from 'react-redux';
-import { selectUnreadSessionIds } from '../../store/selectors/coworkSelectors';
+import { useSelector, useDispatch } from 'react-redux';
+import {
+  DndContext,
+  DragOverlay,
+  useSensor,
+  useSensors,
+  useDroppable,
+  PointerSensor,
+  DragStartEvent,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  selectUnreadSessionIds,
+  selectGroups,
+  selectExpandedGroupIds,
+} from '../../store/selectors/coworkSelectors';
 import { RootState } from '../../store';
-import type { CoworkSessionSummary } from '../../types/cowork';
+import {
+  moveSessionToGroup,
+  toggleGroupExpanded,
+  updateGroup,
+  deleteGroup as deleteGroupAction,
+  reorderGroups,
+} from '../../store/slices/coworkSlice';
+import type {
+  CoworkSessionSummary,
+  UpdateGroupInput,
+  CreateGroupInput,
+  SessionGroup,
+} from '../../types/cowork';
 import CoworkSessionItem from './CoworkSessionItem';
+import SessionGroupHeader from './SessionGroupHeader';
+import SessionGroupPanel from './SessionGroupPanel';
+import CreateGroupModal from './CreateGroupModal';
 import SubTaskDetailDrawer from './SubTaskDetailDrawer';
 import { i18nService } from '../../services/i18n';
+import { coworkService } from '../../services/cowork';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 
 /** 从 sessions_spawn 工具调用中提取的子任务信息 */
@@ -16,234 +46,72 @@ interface SubTaskInfo {
   sessionKey?: string;
 }
 
-interface CoworkSessionListProps {
-  sessions: CoworkSessionSummary[];
-  isLoading?: boolean;
+interface UngroupedDroppableZoneProps {
+  unGroupedSessions: CoworkSessionSummary[];
+  unreadSessionIdSet: Set<string>;
   currentSessionId: string | null;
   isBatchMode: boolean;
   selectedIds: Set<string>;
   showBatchOption?: boolean;
+  groups: SessionGroup[];
+  enrichedSubTasks: SubTaskInfo[];
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
-  onTogglePin: (sessionId: string, pinned: boolean) => void;
   onRenameSession: (sessionId: string, title: string) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
+  setActiveSubTask: React.Dispatch<
+    React.SetStateAction<{ agentId: string; parentSessionId: string } | null>
+  >;
+  onMoveToGroup: (sessionId: string, groupId: string | null) => void;
 }
 
-const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
-  sessions,
-  isLoading = false,
+const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
+  unGroupedSessions,
+  unreadSessionIdSet,
   currentSessionId,
   isBatchMode,
   selectedIds,
-  showBatchOption = true,
+  showBatchOption,
+  groups,
+  enrichedSubTasks,
   onSelectSession,
   onDeleteSession,
-  onTogglePin,
   onRenameSession,
   onToggleSelection,
   onEnterBatchMode,
+  setActiveSubTask,
+  onMoveToGroup,
 }) => {
-  const unreadSessionIds = useSelector(selectUnreadSessionIds);
-  const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
-
-  // 从当前会话消息中提取子任务
-  const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
-  const subTasks = useMemo<SubTaskInfo[]>(() => {
-    if (!currentSession?.messages) return [];
-    const tasks = new Map<string, SubTaskInfo>();
-    for (let i = 0; i < currentSession.messages.length; i++) {
-      const msg = currentSession.messages[i];
-      const meta = msg.metadata;
-      if (!meta) continue;
-
-      if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
-        const input = meta.toolInput as Record<string, unknown> | undefined;
-        // agentId 或 label 作为子任务标识符（OpenClaw 可能使用 label 代替 agentId）
-        const agentId =
-          typeof input?.agentId === 'string' && input.agentId
-            ? input.agentId
-            : typeof input?.label === 'string' && input.label
-              ? input.label
-              : '';
-        const task = typeof input?.task === 'string' ? input.task.slice(0, 60) : '';
-        if (agentId) {
-          tasks.set(agentId, { agentId, task, status: 'running' });
-        }
-      }
-
-      if (
-        msg.type === 'tool_use' &&
-        (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')
-      ) {
-        const input = meta.toolInput as Record<string, unknown> | undefined;
-        // agentId 或 label 作为子任务标识符
-        const agentId =
-          typeof input?.agentId === 'string' && input.agentId
-            ? input.agentId
-            : typeof input?.label === 'string' && input.label
-              ? input.label
-              : '';
-        if (agentId && tasks.has(agentId)) {
-          tasks.set(agentId, { ...tasks.get(agentId)!, status: 'done' });
-        }
-      }
-    }
-
-    if (currentSession.status === 'completed') {
-      for (const [agentId, task] of tasks) {
-        tasks.set(agentId, { ...task, status: 'done' });
-      }
-    }
-
-    return Array.from(tasks.values());
-  }, [currentSession?.messages, currentSession?.status]);
-
-  // 轮询后端获取实时子 Agent 状态
-  const [backendStatuses, setBackendStatuses] = useState<Record<string, 'running' | 'done'>>({});
-  const isSessionActive = currentSession?.status === 'running';
-  const activeSessionId = currentSession?.id;
-  const hasRunningRef = React.useRef(false);
-
-  useEffect(() => {
-    setBackendStatuses({});
-    hasRunningRef.current = false;
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    hasRunningRef.current =
-      Object.values(backendStatuses).some(s => s === 'running') ||
-      subTasks.some(t => t.status === 'running');
-  }, [backendStatuses, subTasks]);
-
-  useEffect(() => {
-    if (!activeSessionId) return;
-    if (subTasks.length === 0 && !isSessionActive) return;
-    const poll = async () => {
-      try {
-        const result = await window.electron.cowork.getSubTaskStatus(activeSessionId);
-        if (result.success && result.statuses) {
-          setBackendStatuses(result.statuses);
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    poll();
-    const timer = setInterval(() => {
-      if (!hasRunningRef.current && !isSessionActive) {
-        clearInterval(timer);
-        return;
-      }
-      poll();
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [activeSessionId, subTasks.length, isSessionActive]);
-
-  // 合并消息提取的子任务和后端发现的状态
-  const enrichedSubTasks = useMemo(() => {
-    const merged = subTasks.map(t => {
-      const backendStatus = backendStatuses[t.agentId];
-      if (backendStatus === 'done' && t.status === 'running') {
-        return { ...t, status: 'done' as const };
-      }
-      if (backendStatus === 'running') {
-        return { ...t, status: 'running' as const };
-      }
-      return t;
-    });
-
-    const knownAgentIds = new Set(subTasks.map(t => t.agentId));
-    for (const [agentId, status] of Object.entries(backendStatuses)) {
-      if (!knownAgentIds.has(agentId)) {
-        merged.push({ agentId, task: '', status });
-      }
-    }
-
-    return merged;
-  }, [subTasks, backendStatuses]);
-
-  // 子任务详情抽屉状态
-  const [activeSubTask, setActiveSubTask] = useState<{
-    agentId: string;
-    parentSessionId: string;
-  } | null>(null);
-
-  const sortedSessions = useMemo(() => {
-    const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary) => {
-      if (b.updatedAt !== a.updatedAt) {
-        return b.updatedAt - a.updatedAt;
-      }
-      return b.createdAt - a.createdAt;
-    };
-
-    const pinnedSessions = sessions.filter(session => session.pinned).sort(sortByRecentActivity);
-    const unpinnedSessions = sessions.filter(session => !session.pinned).sort(sortByRecentActivity);
-    return [...pinnedSessions, ...unpinnedSessions];
-  }, [sessions]);
-
-  if (sessions.length === 0) {
-    if (isLoading) {
-      return (
-        <div className="flex items-center justify-center py-10">
-          <svg
-            className="animate-spin h-6 w-6 dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-        </div>
-      );
-    }
-    return (
-      <div className="flex flex-col items-center justify-center py-10 px-4">
-        <ChatBubbleLeftRightIcon className="h-10 w-10 dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40 mb-3" />
-        <p className="text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-          {i18nService.t('coworkNoSessions')}
-        </p>
-        <p className="text-xs dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70 text-center">
-          {i18nService.t('coworkNoSessionsHint')}
-        </p>
-      </div>
-    );
-  }
+  const { setNodeRef, isOver } = useDroppable({ id: 'ungrouped' });
 
   return (
-    <>
-      <div className="space-y-px">
-        {sortedSessions.map(session => (
+    <div ref={setNodeRef} className="mt-2">
+      <div className="px-2.5 pt-2 pb-1">
+        <span className="text-xs font-medium text-secondary">{i18nService.t('coworkHistory')}</span>
+      </div>
+      <div className={isOver ? 'rounded-lg bg-blue-500/10 ring-1 ring-blue-400/30' : ''}>
+        {unGroupedSessions.map(session => (
           <React.Fragment key={session.id}>
             <CoworkSessionItem
-              key={session.id}
               session={session}
               hasUnread={unreadSessionIdSet.has(session.id)}
               isActive={session.id === currentSessionId}
               isBatchMode={isBatchMode}
               isSelected={selectedIds.has(session.id)}
               showBatchOption={showBatchOption}
+              groups={groups}
               onSelect={() => onSelectSession(session.id)}
               onDelete={() => onDeleteSession(session.id)}
-              onTogglePin={pinned => onTogglePin(session.id, pinned)}
               onRename={title => onRenameSession(session.id, title)}
               onToggleSelection={() => onToggleSelection(session.id)}
               onEnterBatchMode={() => onEnterBatchMode(session.id)}
+              onMoveToGroup={async groupId => {
+                await coworkService.moveSessionToGroup(session.id, groupId);
+                onMoveToGroup(session.id, groupId);
+              }}
             />
-            {/* 子任务列表: 当前会话时显示，会话完成后保留已完成的子任务 */}
+            {/* Subtasks */}
             {session.id === currentSessionId && enrichedSubTasks.length > 0 && (
               <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
                 {enrichedSubTasks.map(sub => (
@@ -287,9 +155,418 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
             )}
           </React.Fragment>
         ))}
+        {unGroupedSessions.length === 0 && (
+          <div className="px-2.5 py-4 text-center text-xs text-secondary">
+            {i18nService.t('coworkNoSessionsHint') || 'Drop sessions here to ungroup'}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+interface UngroupedSessionListProps {
+  sessions: CoworkSessionSummary[];
+  isLoading?: boolean;
+  currentSessionId: string | null;
+  isBatchMode: boolean;
+  selectedIds: Set<string>;
+  showBatchOption?: boolean;
+  onSelectSession: (sessionId: string) => void;
+  onDeleteSession: (sessionId: string) => void;
+  onRenameSession: (sessionId: string, title: string) => void;
+  onToggleSelection: (sessionId: string) => void;
+  onEnterBatchMode: (sessionId: string) => void;
+}
+
+const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
+  sessions,
+  isLoading = false,
+  currentSessionId,
+  isBatchMode,
+  selectedIds,
+  showBatchOption = true,
+  onSelectSession,
+  onDeleteSession,
+  onRenameSession,
+  onToggleSelection,
+  onEnterBatchMode,
+}) => {
+  const dispatch = useDispatch();
+  const unreadSessionIds = useSelector(selectUnreadSessionIds);
+  const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
+  const groups = useSelector(selectGroups);
+  const expandedGroupIds = useSelector(selectExpandedGroupIds);
+
+  // DnD state
+  const [activeSession, setActiveSession] = useState<CoworkSessionSummary | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  );
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const sessionId = event.active.id as string;
+    const session = sessions.find(s => s.id === sessionId);
+    setActiveSession(session || null);
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveSession(null);
+    if (!over) return;
+
+    const sessionId = active.id as string;
+    const targetId = String(over.id);
+
+    if (targetId.startsWith('group-')) {
+      const groupId = targetId.replace('group-', '');
+      await coworkService.moveSessionToGroup(sessionId, groupId);
+      dispatch(moveSessionToGroup({ sessionId, groupId }));
+    } else if (targetId === 'ungrouped') {
+      await coworkService.moveSessionToGroup(sessionId, null);
+      dispatch(moveSessionToGroup({ sessionId, groupId: null }));
+    }
+  };
+
+  // Group handlers
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+
+  const handleToggleGroupExpand = (groupId: string) => {
+    dispatch(toggleGroupExpanded(groupId));
+  };
+
+  const handleCreateGroup = async (input: CreateGroupInput) => {
+    await coworkService.createGroup(input);
+  };
+
+  const handleUpdateGroup = async (id: string, input: UpdateGroupInput) => {
+    await coworkService.updateGroup(id, input);
+    dispatch(updateGroup({ id, updates: input }));
+  };
+
+  const handleDeleteGroup = async (groupId: string) => {
+    await coworkService.deleteGroup(groupId);
+    dispatch(deleteGroupAction(groupId));
+  };
+
+  const handleMoveGroupUp = async (index: number) => {
+    if (index <= 0) return;
+    const newOrder = [...groups];
+    [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
+    const groupIds = newOrder.map(g => g.id);
+    await coworkService.reorderGroups(groupIds);
+    dispatch(reorderGroups(groupIds));
+  };
+
+  const handleMoveGroupDown = async (index: number) => {
+    if (index >= groups.length - 1) return;
+    const newOrder = [...groups];
+    [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
+    const groupIds = newOrder.map(g => g.id);
+    await coworkService.reorderGroups(groupIds);
+    dispatch(reorderGroups(groupIds));
+  };
+
+  // Separate ungrouped sessions
+  const unGroupedSessions = useMemo(() => {
+    const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary) => {
+      if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
+      return b.createdAt - a.createdAt;
+    };
+    const pinned = sessions.filter(s => !s.groupId && s.pinned).sort(sortByRecentActivity);
+    const unpinned = sessions.filter(s => !s.groupId && !s.pinned).sort(sortByRecentActivity);
+    return [...pinned, ...unpinned];
+  }, [sessions]);
+
+  // Grouped sessions by group ID
+  const groupedSessionsByGroupId = useMemo(() => {
+    const result: Record<string, CoworkSessionSummary[]> = {};
+    for (const group of groups) {
+      const groupSessions = sessions.filter(s => s.groupId === group.id);
+      const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary) => {
+        if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
+        return b.createdAt - a.createdAt;
+      };
+      const pinned = groupSessions.filter(s => s.pinned).sort(sortByRecentActivity);
+      const unpinned = groupSessions.filter(s => !s.pinned).sort(sortByRecentActivity);
+      result[group.id] = [...pinned, ...unpinned];
+    }
+    return result;
+  }, [sessions, groups]);
+
+  // From current session messages extract subtasks
+  const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
+  const subTasks = useMemo<SubTaskInfo[]>(() => {
+    if (!currentSession?.messages) return [];
+    const tasks = new Map<string, SubTaskInfo>();
+    for (let i = 0; i < currentSession.messages.length; i++) {
+      const msg = currentSession.messages[i];
+      const meta = msg.metadata;
+      if (!meta) continue;
+
+      if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
+        const input = meta.toolInput as Record<string, unknown> | undefined;
+        const agentId =
+          typeof input?.agentId === 'string' && input.agentId
+            ? input.agentId
+            : typeof input?.label === 'string' && input.label
+              ? input.label
+              : '';
+        const task = typeof input?.task === 'string' ? input.task.slice(0, 60) : '';
+        if (agentId) {
+          tasks.set(agentId, { agentId, task, status: 'running' });
+        }
+      }
+
+      if (
+        msg.type === 'tool_use' &&
+        (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')
+      ) {
+        const input = meta.toolInput as Record<string, unknown> | undefined;
+        const agentId =
+          typeof input?.agentId === 'string' && input.agentId
+            ? input.agentId
+            : typeof input?.label === 'string' && input.label
+              ? input.label
+              : '';
+        if (agentId && tasks.has(agentId)) {
+          tasks.set(agentId, { ...tasks.get(agentId)!, status: 'done' });
+        }
+      }
+    }
+
+    if (currentSession.status === 'completed') {
+      for (const [agentId, task] of tasks) {
+        tasks.set(agentId, { ...task, status: 'done' });
+      }
+    }
+
+    return Array.from(tasks.values());
+  }, [currentSession?.messages, currentSession?.status]);
+
+  // Poll backend for real-time sub agent status
+  const [backendStatuses, setBackendStatuses] = useState<Record<string, 'running' | 'done'>>({});
+  const isSessionActive = currentSession?.status === 'running';
+  const activeSessionId = currentSession?.id;
+  const hasRunningRef = React.useRef(false);
+
+  useEffect(() => {
+    setBackendStatuses({});
+    hasRunningRef.current = false;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    hasRunningRef.current =
+      Object.values(backendStatuses).some(s => s === 'running') ||
+      subTasks.some(t => t.status === 'running');
+  }, [backendStatuses, subTasks]);
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    if (subTasks.length === 0 && !isSessionActive) return;
+    const poll = async () => {
+      try {
+        const result = await window.electron.cowork.getSubTaskStatus(activeSessionId);
+        if (result.success && result.statuses) {
+          setBackendStatuses(result.statuses);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    poll();
+    const timer = setInterval(() => {
+      if (!hasRunningRef.current && !isSessionActive) {
+        clearInterval(timer);
+        return;
+      }
+      poll();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [activeSessionId, subTasks.length, isSessionActive]);
+
+  // Merge message-extracted subtasks and backend-discovered statuses
+  const enrichedSubTasks = useMemo(() => {
+    const merged = subTasks.map(t => {
+      const backendStatus = backendStatuses[t.agentId];
+      if (backendStatus === 'done' && t.status === 'running') {
+        return { ...t, status: 'done' as const };
+      }
+      if (backendStatus === 'running') {
+        return { ...t, status: 'running' as const };
+      }
+      return t;
+    });
+
+    const knownAgentIds = new Set(subTasks.map(t => t.agentId));
+    for (const [agentId, status] of Object.entries(backendStatuses)) {
+      if (!knownAgentIds.has(agentId)) {
+        merged.push({ agentId, task: '', status });
+      }
+    }
+
+    return merged;
+  }, [subTasks, backendStatuses]);
+
+  // Subtask detail drawer state
+  const [activeSubTask, setActiveSubTask] = useState<{
+    agentId: string;
+    parentSessionId: string;
+  } | null>(null);
+
+  if (unGroupedSessions.length === 0 && sessions.length === 0) {
+    if (isLoading) {
+      return (
+        <div className="flex items-center justify-center py-10">
+          <svg
+            className="animate-spin h-6 w-6 dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col items-center justify-center py-10 px-4">
+        <ChatBubbleLeftRightIcon className="h-10 w-10 dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40 mb-3" />
+        <p className="text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+          {i18nService.t('coworkNoSessions')}
+        </p>
+        <p className="text-xs dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70 text-center">
+          {i18nService.t('coworkNoSessionsHint')}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <div className="space-y-px">
+        {/* 对话分组 section */}
+        {groups.length > 0 && (
+          <>
+            <div className="flex items-center justify-between px-2.5 pt-2 pb-1">
+              <span className="text-xs font-medium text-secondary">
+                {i18nService.t('groupedSessions')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsCreateGroupOpen(true)}
+                className="h-5 w-5 inline-flex items-center justify-center rounded text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+                aria-label="Create new group"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  className="h-3.5 w-3.5"
+                >
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+            </div>
+            {groups.map((group, index) => {
+              const groupSessions = groupedSessionsByGroupId[group.id] || [];
+              const isExpanded = expandedGroupIds.includes(group.id);
+              return (
+                <React.Fragment key={group.id}>
+                  <SessionGroupHeader
+                    group={group}
+                    sessionCount={groupSessions.length}
+                    isExpanded={isExpanded}
+                    onToggleExpand={() => handleToggleGroupExpand(group.id)}
+                    onRename={name => handleUpdateGroup(group.id, { name })}
+                    onUpdateColor={color => handleUpdateGroup(group.id, { color })}
+                    onDelete={() => handleDeleteGroup(group.id)}
+                    onMoveUp={index > 0 ? () => handleMoveGroupUp(index) : undefined}
+                    onMoveDown={
+                      index < groups.length - 1 ? () => handleMoveGroupDown(index) : undefined
+                    }
+                  />
+                  <SessionGroupPanel
+                    group={group}
+                    sessions={groupSessions}
+                    groups={groups}
+                    isExpanded={isExpanded}
+                    currentSessionId={currentSessionId}
+                    unreadSessionIds={unreadSessionIds}
+                    isBatchMode={isBatchMode}
+                    selectedIds={selectedIds}
+                    onSelectSession={onSelectSession}
+                    onDeleteSession={onDeleteSession}
+                    onRename={onRenameSession}
+                    onToggleSelection={onToggleSelection}
+                    onEnterBatchMode={onEnterBatchMode}
+                    onMoveToGroup={async (sessionId, groupId) => {
+                      await coworkService.moveSessionToGroup(sessionId, groupId);
+                      dispatch(moveSessionToGroup({ sessionId, groupId }));
+                    }}
+                  />
+                </React.Fragment>
+              );
+            })}
+          </>
+        )}
+
+        {/* 最近对话 section */}
+        <UngroupedDroppableZone
+          unGroupedSessions={unGroupedSessions}
+          unreadSessionIdSet={unreadSessionIdSet}
+          currentSessionId={currentSessionId}
+          isBatchMode={isBatchMode}
+          selectedIds={selectedIds}
+          showBatchOption={showBatchOption}
+          groups={groups}
+          enrichedSubTasks={enrichedSubTasks}
+          onSelectSession={onSelectSession}
+          onDeleteSession={onDeleteSession}
+          onRenameSession={onRenameSession}
+          onToggleSelection={onToggleSelection}
+          onEnterBatchMode={onEnterBatchMode}
+          setActiveSubTask={setActiveSubTask}
+          onMoveToGroup={async (sessionId, groupId) => {
+            await coworkService.moveSessionToGroup(sessionId, groupId);
+            dispatch(moveSessionToGroup({ sessionId, groupId }));
+          }}
+        />
       </div>
 
-      {/* 子任务详情抽屉 */}
+      {/* Drag overlay */}
+      <DragOverlay>
+        {activeSession && (
+          <div className="px-3 py-2 rounded-lg bg-surface-raised shadow-lg border border-border opacity-90">
+            <div className="text-xs font-medium text-foreground truncate">
+              {activeSession.title}
+            </div>
+          </div>
+        )}
+      </DragOverlay>
+
+      <CreateGroupModal
+        isOpen={isCreateGroupOpen}
+        onClose={() => setIsCreateGroupOpen(false)}
+        onCreate={handleCreateGroup}
+      />
+
+      {/* Subtask detail drawer */}
       {activeSubTask && (
         <SubTaskDetailDrawer
           agentId={activeSubTask.agentId}
@@ -297,8 +574,8 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
           onClose={() => setActiveSubTask(null)}
         />
       )}
-    </>
+    </DndContext>
   );
 };
 
-export default CoworkSessionList;
+export default UngroupedSessionList;

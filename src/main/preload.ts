@@ -378,6 +378,17 @@ contextBridge.exposeInMainWorld('electron', {
       sessionKey?: string;
     }) => ipcRenderer.invoke('cowork:subTask:history', options),
   },
+  sessionGroup: {
+    list: () => ipcRenderer.invoke('sessionGroup:list'),
+    create: (input: { name: string; color?: string }) =>
+      ipcRenderer.invoke('sessionGroup:create', input),
+    update: (id: string, input: { name?: string; color?: string; sortOrder?: number }) =>
+      ipcRenderer.invoke('sessionGroup:update', id, input),
+    delete: (id: string) => ipcRenderer.invoke('sessionGroup:delete', id),
+    moveSession: (sessionId: string, groupId: string | null) =>
+      ipcRenderer.invoke('sessionGroup:moveSession', sessionId, groupId),
+    reorder: (groupIds: string[]) => ipcRenderer.invoke('sessionGroup:reorder', groupIds),
+  },
   dialog: {
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
     selectFile: (options?: {

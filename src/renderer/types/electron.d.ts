@@ -44,9 +44,18 @@ interface CoworkSessionSummary {
   title: string;
   status: 'idle' | 'running' | 'completed' | 'error';
   pinned: boolean;
+  groupId?: string | null;
   agentId?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+interface SessionGroup {
+  id: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+  createdAt: number;
 }
 
 interface CoworkConfig {
@@ -506,6 +515,24 @@ interface IElectronAPI {
       messages?: Array<{ role: string; content: string }>;
       error?: string;
     }>;
+  };
+  sessionGroup: {
+    list: () => Promise<{ success: boolean; groups?: SessionGroup[]; error?: string }>;
+    create: (input: { name: string; color?: string }) => Promise<{
+      success: boolean;
+      group?: SessionGroup;
+      error?: string;
+    }>;
+    update: (
+      id: string,
+      input: { name?: string; color?: string; sortOrder?: number },
+    ) => Promise<{ success: boolean; group?: SessionGroup; error?: string }>;
+    delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+    moveSession: (
+      sessionId: string,
+      groupId: string | null,
+    ) => Promise<{ success: boolean; error?: string }>;
+    reorder: (groupIds: string[]) => Promise<{ success: boolean; error?: string }>;
   };
   dialog: {
     selectDirectory: () => Promise<{ success: boolean; path: string | null }>;

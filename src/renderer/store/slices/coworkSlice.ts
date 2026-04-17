@@ -6,6 +6,7 @@ import type {
   CoworkConfig,
   CoworkPermissionRequest,
   CoworkSessionStatus,
+  SessionGroup,
 } from '../../types/cowork';
 import { removeSessionFromState, removeSessionsFromState } from './coworkDeleteState';
 
@@ -18,6 +19,8 @@ export interface DraftAttachment {
 
 interface CoworkState {
   sessions: CoworkSessionSummary[];
+  groups: SessionGroup[];
+  expandedGroupIds: string[];
   currentSessionId: string | null;
   currentSession: CoworkSession | null;
   draftPrompts: Record<string, string>;
@@ -35,6 +38,8 @@ interface CoworkState {
 
 const initialState: CoworkState = {
   sessions: [],
+  groups: [],
+  expandedGroupIds: [],
   currentSessionId: null,
   currentSession: null,
   draftPrompts: {},
@@ -352,6 +357,61 @@ const coworkSlice = createSlice({
     toggleThinkingExpanded(state) {
       state.thinkingExpanded = !state.thinkingExpanded;
     },
+
+    // Session Group actions
+    setGroups(state, action: PayloadAction<SessionGroup[]>) {
+      state.groups = action.payload;
+    },
+
+    addGroup(state, action: PayloadAction<SessionGroup>) {
+      state.groups.push(action.payload);
+    },
+
+    updateGroup(state, action: PayloadAction<{ id: string; updates: Partial<SessionGroup> }>) {
+      const { id, updates } = action.payload;
+      const index = state.groups.findIndex(g => g.id === id);
+      if (index !== -1) {
+        state.groups[index] = { ...state.groups[index], ...updates };
+      }
+    },
+
+    deleteGroup(state, action: PayloadAction<string>) {
+      const groupId = action.payload;
+      state.groups = state.groups.filter(g => g.id !== groupId);
+      state.expandedGroupIds = state.expandedGroupIds.filter(id => id !== groupId);
+      // Update sessions to remove groupId reference
+      state.sessions = state.sessions.map(session =>
+        session.groupId === groupId ? { ...session, groupId: null } : session,
+      );
+    },
+
+    toggleGroupExpanded(state, action: PayloadAction<string>) {
+      const groupId = action.payload;
+      if (state.expandedGroupIds.includes(groupId)) {
+        state.expandedGroupIds = state.expandedGroupIds.filter(id => id !== groupId);
+      } else {
+        state.expandedGroupIds.push(groupId);
+      }
+    },
+
+    moveSessionToGroup(
+      state,
+      action: PayloadAction<{ sessionId: string; groupId: string | null }>,
+    ) {
+      const { sessionId, groupId } = action.payload;
+      const index = state.sessions.findIndex(s => s.id === sessionId);
+      if (index !== -1) {
+        state.sessions[index] = { ...state.sessions[index], groupId };
+      }
+    },
+
+    reorderGroups(state, action: PayloadAction<string[]>) {
+      const groupIds = action.payload;
+      state.groups = groupIds
+        .map(id => state.groups.find(g => g.id === id))
+        .filter((g): g is SessionGroup => g !== undefined)
+        .map((g, index) => ({ ...g, sortOrder: index }));
+    },
   },
 });
 
@@ -383,6 +443,14 @@ export const {
   updateConfig,
   clearCurrentSession,
   toggleThinkingExpanded,
+  // Session Group actions
+  setGroups,
+  addGroup,
+  updateGroup,
+  deleteGroup,
+  toggleGroupExpanded,
+  moveSessionToGroup,
+  reorderGroups,
 } = coworkSlice.actions;
 
 export default coworkSlice.reducer;

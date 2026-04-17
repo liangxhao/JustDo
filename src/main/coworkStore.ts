@@ -407,6 +407,7 @@ export interface CoworkSessionSummary {
   title: string;
   status: CoworkSessionStatus;
   pinned: boolean;
+  groupId: string | null;
   agentId: string;
   createdAt: number;
   updatedAt: number;
@@ -740,6 +741,7 @@ export class CoworkStore {
       status: string;
       pinned: number | null;
       agent_id: string | null;
+      group_id: string | null;
       created_at: number;
       updated_at: number;
     }
@@ -748,7 +750,7 @@ export class CoworkStore {
     if (agentId) {
       rows = this.getAll<SessionSummaryRow>(
         `
-        SELECT id, title, status, pinned, agent_id, created_at, updated_at
+        SELECT id, title, status, pinned, agent_id, group_id, created_at, updated_at
         FROM cowork_sessions
         WHERE agent_id = ?
         ORDER BY pinned DESC, updated_at DESC
@@ -757,7 +759,7 @@ export class CoworkStore {
       );
     } else {
       rows = this.getAll<SessionSummaryRow>(`
-        SELECT id, title, status, pinned, agent_id, created_at, updated_at
+        SELECT id, title, status, pinned, agent_id, group_id, created_at, updated_at
         FROM cowork_sessions
         ORDER BY pinned DESC, updated_at DESC
       `);
@@ -769,6 +771,7 @@ export class CoworkStore {
       status: row.status as CoworkSessionStatus,
       pinned: Boolean(row.pinned),
       agentId: row.agent_id || 'main',
+      groupId: row.group_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));

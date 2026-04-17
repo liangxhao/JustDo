@@ -1,5 +1,6 @@
 import { createSelector } from '@reduxjs/toolkit';
 import type { RootState } from '../index';
+import type { CoworkSessionSummary } from '../../types/cowork';
 
 // --- Primitive (identity) selectors ---
 // These return stable references for primitive values or existing object refs,
@@ -16,6 +17,10 @@ export const selectDraftPrompts = (state: RootState) => state.cowork.draftPrompt
 export const selectPendingPermissions = (state: RootState) => state.cowork.pendingPermissions;
 export const selectUnreadSessionIds = (state: RootState) => state.cowork.unreadSessionIds;
 export const selectThinkingExpanded = (state: RootState) => state.cowork.thinkingExpanded;
+
+// Session Group selectors
+export const selectGroups = (state: RootState) => state.cowork.groups;
+export const selectExpandedGroupIds = (state: RootState) => state.cowork.expandedGroupIds;
 
 // --- Derived (memoized) selectors ---
 // These compute new values from the store and use createSelector to avoid
@@ -50,6 +55,33 @@ export const selectFirstPendingPermission = createSelector(
 
 // Stable empty array reference to avoid unnecessary re-renders
 const EMPTY_ATTACHMENTS: unknown[] = [];
+const EMPTY_SESSIONS: CoworkSessionSummary[] = [];
 
 export const selectDraftAttachments = (state: RootState, draftKey: string) =>
   state.cowork.draftAttachments[draftKey] ?? EMPTY_ATTACHMENTS;
+
+// Session Group derived selectors
+export const selectSessionsByGroup = createSelector(
+  [selectCoworkSessions, (_: RootState, groupId: string | null) => groupId],
+  (sessions, groupId): CoworkSessionSummary[] =>
+    sessions.filter(s => s.groupId === groupId) || EMPTY_SESSIONS,
+);
+
+export const selectUnGroupedSessions = createSelector(selectCoworkSessions, sessions =>
+  sessions.filter(s => !s.groupId),
+);
+
+export const selectGroupById = createSelector(
+  [selectGroups, (_: RootState, groupId: string) => groupId],
+  (groups, groupId) => groups.find(g => g.id === groupId) ?? null,
+);
+
+export const selectIsGroupExpanded = createSelector(
+  [selectExpandedGroupIds, (_: RootState, groupId: string) => groupId],
+  (expandedIds, groupId) => expandedIds.includes(groupId),
+);
+
+export const selectGroupSessionCount = createSelector(
+  [selectCoworkSessions, (_: RootState, groupId: string) => groupId],
+  (sessions, groupId) => sessions.filter(s => s.groupId === groupId).length,
+);

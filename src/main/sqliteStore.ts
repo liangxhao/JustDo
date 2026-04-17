@@ -170,11 +170,22 @@ export class SqliteStore {
       );
     `);
 
+    // Create session groups table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS session_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT DEFAULT '#6366f1',
+        sort_order INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+    `);
+
     // Migrations - safely add columns if they don't exist
     try {
       // Check if execution_mode column exists
       const columns = this.db.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
-      const colNames = columns.map((c) => c.name);
+      const colNames = columns.map(c => c.name);
 
       if (!colNames.includes('execution_mode')) {
         this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN execution_mode TEXT;');
@@ -230,6 +241,19 @@ export class SqliteStore {
       if (!sessionColNames.includes('agent_id')) {
         this.db.exec(
           "ALTER TABLE cowork_sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main';",
+        );
+      }
+    } catch {
+      // Column already exists or migration not needed.
+    }
+
+    // Migration: Add group_id column to cowork_sessions
+    try {
+      const sessionCols = this.db.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
+      const sessionColNames = sessionCols.map(c => c.name);
+      if (!sessionColNames.includes('group_id')) {
+        this.db.exec(
+          'ALTER TABLE cowork_sessions ADD COLUMN group_id TEXT REFERENCES session_groups(id);',
         );
       }
     } catch {

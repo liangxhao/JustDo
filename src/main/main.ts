@@ -29,6 +29,7 @@ import { AgentManager } from './agentManager';
 import { APP_NAME } from './appConstants';
 import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
 import { CoworkStore } from './coworkStore';
+import { GroupStore } from './groupStore';
 import { setLanguage, t } from './i18n';
 import {
   getCronJobService,
@@ -690,6 +691,7 @@ process.on('exit', code => {
 
 let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
+let groupStore: GroupStore | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let skillManager: SkillManager | null = null;
@@ -879,6 +881,14 @@ const getCoworkStore = () => {
     }
   }
   return coworkStore;
+};
+
+const getGroupStore = () => {
+  if (!groupStore) {
+    const sqliteStore = getStore();
+    groupStore = new GroupStore(sqliteStore.getDatabase());
+  }
+  return groupStore;
 };
 
 let agentManager: AgentManager | null = null;
@@ -2486,6 +2496,85 @@ if (!gotTheLock) {
         success: false,
         remoteManaged: false,
         error: error instanceof Error ? error.message : 'Failed to check remote managed status',
+      };
+    }
+  });
+
+  // Session Group IPC handlers
+  ipcMain.handle('sessionGroup:list', async () => {
+    try {
+      const groups = getGroupStore().listGroups();
+      return { success: true, groups };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to list groups',
+      };
+    }
+  });
+
+  ipcMain.handle('sessionGroup:create', async (_event, input: { name: string; color?: string }) => {
+    try {
+      const group = getGroupStore().createGroup(input);
+      return { success: true, group };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create group',
+      };
+    }
+  });
+
+  ipcMain.handle(
+    'sessionGroup:update',
+    async (_event, id: string, input: { name?: string; color?: string; sortOrder?: number }) => {
+      try {
+        const group = getGroupStore().updateGroup(id, input);
+        return { success: true, group };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to update group',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle('sessionGroup:delete', async (_event, id: string) => {
+    try {
+      const deleted = getGroupStore().deleteGroup(id);
+      return { success: deleted };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete group',
+      };
+    }
+  });
+
+  ipcMain.handle(
+    'sessionGroup:moveSession',
+    async (_event, sessionId: string, groupId: string | null) => {
+      try {
+        const moved = getGroupStore().moveSessionToGroup(sessionId, groupId);
+        return { success: moved };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to move session',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle('sessionGroup:reorder', async (_event, groupIds: string[]) => {
+    try {
+      getGroupStore().reorderGroups(groupIds);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to reorder groups',
       };
     }
   });

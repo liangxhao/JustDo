@@ -20,6 +20,11 @@ import {
   clearPendingPermissions,
   setConfig,
   clearCurrentSession,
+  setGroups,
+  addGroup,
+  updateGroup,
+  deleteGroup as deleteGroupAction,
+  moveSessionToGroup,
 } from '../store/slices/coworkSlice';
 import type {
   CoworkSession,
@@ -31,6 +36,9 @@ import type {
   OpenClawEngineStatus,
   CoworkStartOptions,
   CoworkContinueOptions,
+  SessionGroup,
+  CreateGroupInput,
+  UpdateGroupInput,
 } from '../types/cowork';
 import { i18nService } from './i18n';
 import { classifyErrorKey } from '../../common/coworkErrorClassify';
@@ -57,6 +65,9 @@ class CoworkService {
 
     // Load sessions list
     await this.loadSessions();
+
+    // Load session groups
+    await this.loadGroups();
 
     // Set up stream listeners
     this.setupStreamListeners();
@@ -778,6 +789,61 @@ class CoworkService {
 
   clearSession(): void {
     store.dispatch(clearCurrentSession());
+  }
+
+  // Session Group methods
+  async loadGroups(): Promise<void> {
+    if (!window.electron?.sessionGroup?.list) return;
+    const result = await window.electron.sessionGroup.list();
+    if (result.success && result.groups) {
+      store.dispatch(setGroups(result.groups));
+    }
+  }
+
+  async createGroup(input: CreateGroupInput): Promise<SessionGroup | null> {
+    if (!window.electron?.sessionGroup?.create) return null;
+    const result = await window.electron.sessionGroup.create(input);
+    if (result.success && result.group) {
+      store.dispatch(addGroup(result.group));
+      return result.group;
+    }
+    return null;
+  }
+
+  async updateGroup(id: string, input: UpdateGroupInput): Promise<SessionGroup | null> {
+    if (!window.electron?.sessionGroup?.update) return null;
+    const result = await window.electron.sessionGroup.update(id, input);
+    if (result.success && result.group) {
+      store.dispatch(updateGroup({ id, updates: input }));
+      return result.group;
+    }
+    return null;
+  }
+
+  async deleteGroup(id: string): Promise<boolean> {
+    if (!window.electron?.sessionGroup?.delete) return false;
+    const result = await window.electron.sessionGroup.delete(id);
+    if (result.success) {
+      store.dispatch(deleteGroupAction(id));
+      return true;
+    }
+    return false;
+  }
+
+  async moveSessionToGroup(sessionId: string, groupId: string | null): Promise<boolean> {
+    if (!window.electron?.sessionGroup?.moveSession) return false;
+    const result = await window.electron.sessionGroup.moveSession(sessionId, groupId);
+    if (result.success) {
+      store.dispatch(moveSessionToGroup({ sessionId, groupId }));
+      return true;
+    }
+    return false;
+  }
+
+  async reorderGroups(groupIds: string[]): Promise<boolean> {
+    if (!window.electron?.sessionGroup?.reorder) return false;
+    const result = await window.electron.sessionGroup.reorder(groupIds);
+    return result.success;
   }
 
   destroy(): void {

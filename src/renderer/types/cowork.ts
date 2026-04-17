@@ -8,6 +8,36 @@ export interface CoworkImageAttachment {
 // Cowork session status
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
 
+// Session Group types
+export interface SessionGroup {
+  id: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+  createdAt: number;
+}
+
+export interface CreateGroupInput {
+  name: string;
+  color?: string;
+}
+
+export interface UpdateGroupInput {
+  name?: string;
+  color?: string;
+  sortOrder?: number;
+}
+
+// Group color presets
+export const GROUP_COLORS = [
+  '#ef4444', // 红
+  '#f97316', // 橙
+  '#22c55e', // 绿
+  '#3b82f6', // 蓝
+  '#8b5cf6', // 紫
+  '#6366f1', // 默认靛蓝
+];
+
 // Cowork message types
 export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
 
@@ -158,6 +188,7 @@ export interface CoworkSessionSummary {
   title: string;
   status: CoworkSessionStatus;
   pinned: boolean;
+  groupId?: string | null;
   agentId?: string;
   createdAt: number;
   updatedAt: number;
