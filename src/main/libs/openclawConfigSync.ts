@@ -139,20 +139,7 @@ const MANAGED_OWNER_ALLOW_FROM = [
 
 const MANAGED_TOOL_DENY = ['web_search'] as const;
 
-const MANAGED_SKILL_ENTRY_OVERRIDES: Record<string, { enabled: boolean }> = {
-  // QQ plugin ships a legacy reminder skill that steers the model toward a
-  // channel-specific cron wrapper/subagent flow. Hide that path so native IM
-  // sessions use the gateway's built-in `cron` tool instead.
-  'qqbot-cron': {
-    enabled: false,
-  },
-  // Personal Feishu reminder helpers often instruct the model to shell out via
-  // `openclaw cron ...` or message relays. Native channel sessions should use
-  // the gateway's built-in `cron` tool directly instead.
-  'feishu-cron-reminder': {
-    enabled: false,
-  },
-};
+const MANAGED_SKILL_ENTRY_OVERRIDES: Record<string, { enabled: boolean }> = {};
 
 const DISABLED_MANAGED_SKILL_NAMES = Object.entries(MANAGED_SKILL_ENTRY_OVERRIDES)
   .filter(([, value]) => value.enabled === false)
@@ -1160,7 +1147,7 @@ displayName: p.displayName, // 传递 displayName
   /**
    * Sync AGENTS.md to the OpenClaw workspace directory.
    * Embeds the skills routing prompt and system prompt so that OpenClaw's
-   * native channel connectors (DingTalk, Feishu, etc.) can discover and
+   * native channel connectors (Telegram, Discord, etc.) can discover and
    * invoke GucciAI skills.
    */
   private syncAgentsMd(workspaceDir: string, coworkConfig: CoworkConfig): string | undefined {
@@ -1385,8 +1372,7 @@ displayName: p.displayName, // 传递 displayName
 
     // If the file already has a meaningful config (from a previous sync or
     // user configuration), don't downgrade it to the minimal version.
-    // Check for models (API configured), plugin entries (IM channels like
-    // DingTalk/WeCom), or gateway.mode already set.
+    // Check for models (API configured), plugin entries, or gateway.mode already set.
     if (currentContent && currentContent !== nextContent) {
       try {
         const existing = JSON.parse(currentContent);

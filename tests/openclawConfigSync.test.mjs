@@ -97,23 +97,13 @@ const createSessionStore = () => ({
       model: 'claude-sonnet-4-5-20250929',
     },
   },
-  'agent:main:wecom:direct:wangning': {
-    sessionId: 'session-wecom',
+  'agent:main:telegram:dm:user_123': {
+    sessionId: 'session-telegram',
     execSecurity: 'full',
-    skillsSnapshot: {
-      prompt: '<skill><name>feishu-cron-reminder</name></skill>',
-      resolvedSkills: [
-        { name: 'feishu-cron-reminder' },
-      ],
-    },
   },
-  'agent:main:feishu:dm:ou_123': {
-    sessionId: 'session-feishu',
-    skillsSnapshot: {
-      resolvedSkills: [
-        { name: 'qqbot-cron' },
-      ],
-    },
+  'agent:main:discord:dm:user_456': {
+    sessionId: 'session-discord',
+    execSecurity: 'full',
   },
 });
 
@@ -133,12 +123,8 @@ const createSync = (tmpDir, appConfig, options = {}) => {
       systemPrompt: options.systemPrompt ?? '',
       executionMode: options.executionMode ?? 'auto',
     }),
-    getDingTalkInstances: () => options.dingTalkInstances ?? [],
-    getFeishuInstances: () => options.feishuInstances ?? [],
-    getQQInstances: () => options.qqInstances ?? [],
-    getWecomConfig: () => null,
-    getPopoConfig: () => options.popoConfig ?? null,
-    getNimConfig: () => options.nimConfig ?? null,
+    getTelegramInstances: () => options.telegramInstances ?? [],
+    getDiscordInstances: () => options.discordInstances ?? [],
     getSkillsPrompt: () => null,
   });
 };
@@ -183,10 +169,8 @@ test('sync writes native moonshot provider config and migrates matching managed 
   assert.equal(sessionStore['agent:main:gucciai:current-session'].systemPromptReport.provider, 'moonshot');
   assert.equal(sessionStore['agent:main:gucciai:old-claude-session'].modelProvider, 'gucciai');
   assert.equal(sessionStore['agent:main:gucciai:old-claude-session'].model, 'claude-sonnet-4-5-20250929');
-  assert.equal(sessionStore['agent:main:wecom:direct:wangning'].execSecurity, 'deny');
-  assert.equal(sessionStore['agent:main:feishu:dm:ou_123'].execSecurity, 'deny');
-  assert.equal('skillsSnapshot' in sessionStore['agent:main:wecom:direct:wangning'], false);
-  assert.equal('skillsSnapshot' in sessionStore['agent:main:feishu:dm:ou_123'], false);
+  assert.equal(sessionStore['agent:main:telegram:dm:user_123'].execSecurity, 'deny');
+  assert.equal(sessionStore['agent:main:discord:dm:user_456'].execSecurity, 'deny');
 });
 
 test('sync maps moonshot coding plan sessions to kimi-coding model refs', (t) => {
@@ -218,10 +202,8 @@ test('sync maps moonshot coding plan sessions to kimi-coding model refs', (t) =>
   assert.equal(sessionStore['agent:main:gucciai:current-session'].model, 'k2p5');
   assert.equal(sessionStore['agent:main:gucciai:current-session'].systemPromptReport.provider, 'kimi-coding');
   assert.equal(sessionStore['agent:main:gucciai:current-session'].systemPromptReport.model, 'k2p5');
-  assert.equal(sessionStore['agent:main:wecom:direct:wangning'].execSecurity, 'deny');
-  assert.equal(sessionStore['agent:main:feishu:dm:ou_123'].execSecurity, 'deny');
-  assert.equal('skillsSnapshot' in sessionStore['agent:main:wecom:direct:wangning'], false);
-  assert.equal('skillsSnapshot' in sessionStore['agent:main:feishu:dm:ou_123'], false);
+  assert.equal(sessionStore['agent:main:telegram:dm:user_123'].execSecurity, 'deny');
+  assert.equal(sessionStore['agent:main:discord:dm:user_456'].execSecurity, 'deny');
 });
 
 test('sync denies exec for native channel sessions even without provider migration', (t) => {
@@ -246,10 +228,8 @@ test('sync denies exec for native channel sessions even without provider migrati
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
   assert.equal(sessionStore['agent:main:gucciai:current-session'].modelProvider, 'gucciai');
   assert.equal(sessionStore['agent:main:gucciai:current-session'].model, 'kimi-k2.5');
-  assert.equal(sessionStore['agent:main:wecom:direct:wangning'].execSecurity, 'deny');
-  assert.equal(sessionStore['agent:main:feishu:dm:ou_123'].execSecurity, 'deny');
-  assert.equal('skillsSnapshot' in sessionStore['agent:main:wecom:direct:wangning'], false);
-  assert.equal('skillsSnapshot' in sessionStore['agent:main:feishu:dm:ou_123'], false);
+  assert.equal(sessionStore['agent:main:telegram:dm:user_123'].execSecurity, 'deny');
+  assert.equal(sessionStore['agent:main:discord:dm:user_456'].execSecurity, 'deny');
 });
 
 test('sync writes scheduled-task policy into managed AGENTS.md for native channel sessions', (t) => {
@@ -285,8 +265,7 @@ test('sync writes scheduled-task policy into managed AGENTS.md for native channe
   assert.match(agentsMd, /follow the native `cron` tool schema/i);
   assert.match(agentsMd, /plugins provide session context and outbound delivery; they do not own scheduling logic/i);
   assert.match(agentsMd, /ignore channel-specific reminder helpers or reminder skills/i);
-  assert.match(agentsMd, /QQBOT_PAYLOAD/);
-  assert.match(agentsMd, /QQBOT_CRON/);
+  assert.match(agentsMd, /do not use wrapper payloads or channel-specific relay formats/i);
   assert.match(agentsMd, /do not use `sessions_spawn`, `subagents`, or ad-hoc background workflows as a substitute for `cron\.add`/i);
   assert.match(agentsMd, /## System Prompt/);
   assert.match(agentsMd, /Always answer in Chinese\./);
@@ -353,52 +332,41 @@ test('sync backfills the default OpenClaw AGENTS template when an old workspace 
   assert.doesNotMatch(agentsMd, /Old managed-only content\./);
 });
 
-test('sync disables legacy qqbot-cron skill so QQ reminders use native cron', (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-config-sync-qq-skill-'));
+test('sync configures telegram and discord channels when instances are provided', (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-config-sync-im-'));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
   setElectronPaths(tmpDir);
 
   const sync = createSync(tmpDir, createAppConfig(), {
-    qqInstances: [{
+    telegramInstances: [{
       instanceId: 'default',
       instanceName: 'Default',
       enabled: true,
-      appId: 'qq-app-id',
-      appSecret: 'qq-app-secret',
+      botToken: 'telegram-bot-token',
       dmPolicy: 'open',
       allowFrom: [],
       groupPolicy: 'open',
       groupAllowFrom: [],
       historyLimit: 50,
-      markdownSupport: true,
-      imageServerBaseUrl: '',
-      debug: false,
+    }],
+    discordInstances: [{
+      instanceId: 'default',
+      instanceName: 'Default',
+      enabled: true,
+      botToken: 'discord-bot-token',
+      dmPolicy: 'open',
+      allowFrom: [],
+      guildPolicy: 'open',
+      guildAllowFrom: [],
+      historyLimit: 50,
     }],
   });
-  const result = sync.sync('test-qq-native-cron');
+  const result = sync.sync('test-im-channels');
 
   assert.equal(result.ok, true);
 
   const config = JSON.parse(fs.readFileSync(path.join(tmpDir, 'state', 'openclaw.json'), 'utf8'));
-  assert.equal(config.channels.qqbot.enabled, true);
-  assert.equal(config.skills.entries['qqbot-cron'].enabled, false);
-  assert.equal(config.skills.entries['feishu-cron-reminder'].enabled, false);
   assert.equal(config.cron.enabled, true);
-});
-
-test('sync disables legacy reminder skills so native IM sessions use built-in cron', (t) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-config-sync-reminder-skills-'));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
-  setElectronPaths(tmpDir);
-
-  const sync = createSync(tmpDir, createAppConfig());
-  const result = sync.sync('test-native-im-reminder-skills');
-
-  assert.equal(result.ok, true);
-
-  const config = JSON.parse(fs.readFileSync(path.join(tmpDir, 'state', 'openclaw.json'), 'utf8'));
-  assert.equal(config.skills.entries['qqbot-cron'].enabled, false);
-  assert.equal(config.skills.entries['feishu-cron-reminder'].enabled, false);
 });
 
 test('sync writes non-empty placeholder apiKey for providers that do not require auth (e.g. Ollama)', (t) => {

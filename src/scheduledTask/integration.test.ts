@@ -109,7 +109,7 @@ test('integration: wire roundtrip preserves all fields', () => {
     description: 'Desc with "quotes" & special chars',
     schedule: { kind: ScheduleKind.Cron, expr: '*/5 * * * *' },
     payload: { kind: PayloadKind.AgentTurn, message: 'Do work', timeoutSeconds: 120 },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu', to: 'user-1' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'telegram', to: 'user-1' },
     origin: { kind: OriginKind.Manual },
     binding: { kind: BindingKind.NewSession },
   });
@@ -127,7 +127,7 @@ test('integration: wire roundtrip preserves all fields', () => {
   expect(restored.schedule).toEqual({ kind: ScheduleKind.Cron, expr: '*/5 * * * *' });
   expect((restored.payload as any).message).toBe('Do work');
   expect((restored.payload as any).timeoutSeconds).toBe(120);
-  expect((restored.delivery as any).channel).toBe('feishu');
+  expect((restored.delivery as any).channel).toBe('telegram');
 });
 
 test('integration: legacy task with IM announce -> normalizeDraft links binding', () => {
@@ -136,10 +136,10 @@ test('integration: legacy task with IM announce -> normalizeDraft links binding'
   const model = makeModel({
     origin,
     binding: { kind: BindingKind.NewSession },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'telegram' },
   });
 
   const normalized = policy.normalizeDraft(model);
   expect(normalized.binding.kind).toBe(BindingKind.IMSession);
-  expect((normalized.binding as any).platform).toBe('feishu');
+  expect((normalized.binding as any).platform).toBe('telegram');
 });

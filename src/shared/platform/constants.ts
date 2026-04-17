@@ -29,71 +29,6 @@ interface PlatformDefInput {
 // ═══════════════════════════════════════════════════════
 
 const DEFINITIONS = [
-  // ── China ──
-  {
-    id: 'weixin',
-    label: 'WeChat',
-    region: 'china',
-    channel: 'openclaw-weixin',
-    channelAliases: [],
-    guideUrl: '',
-  },
-  {
-    id: 'dingtalk',
-    label: 'DingTalk',
-    region: 'china',
-    channel: 'dingtalk',
-    channelAliases: [],
-    guideUrl: '',
-  },
-  {
-    id: 'feishu',
-    label: 'Feishu',
-    region: 'china',
-    channel: 'feishu',
-    channelAliases: [],
-    guideUrl: '',
-  },
-  {
-    id: 'wecom',
-    label: 'WeCom',
-    region: 'china',
-    channel: 'wecom-openclaw-plugin',
-    channelAliases: ['wecom'],
-    guideUrl: '',
-  },
-  {
-    id: 'qq',
-    label: 'QQ',
-    region: 'china',
-    channel: 'qqbot',
-    channelAliases: [],
-    guideUrl: '',
-  },
-  {
-    id: 'nim',
-    label: 'NIM',
-    region: 'china',
-    channel: 'nim',
-    channelAliases: [],
-    guideUrl: '',
-  },
-  {
-    id: 'netease-bee',
-    label: 'NetEase Bee',
-    region: 'china',
-    channel: 'netease-bee',
-    channelAliases: [],
-    guideUrl: '',
-  },
-  {
-    id: 'popo',
-    label: 'POPO',
-    region: 'china',
-    channel: 'moltbot-popo',
-    channelAliases: ['popo'],
-    guideUrl: '',
-  },
   // ── Global ──
   {
     id: 'telegram',
@@ -135,7 +70,7 @@ export interface PlatformDef {
   readonly region: 'china' | 'global';
   /** Primary OpenClaw channel */
   readonly channel: ChannelName;
-  /** Additional channel aliases (e.g. wecom has both 'wecom' and 'wecom-openclaw-plugin') */
+  /** Additional channel aliases */
   readonly channelAliases: readonly ChannelName[];
   /** Setup guide URL (empty string if not yet available) */
   readonly guideUrl: string;

@@ -15,7 +15,7 @@ export function buildScheduledTaskEnginePrompt(engine: CoworkAgentEngine): strin
       '- For one-time reminders (`schedule.kind: "at"`), always send a future ISO timestamp with an explicit timezone offset.',
       '- IM/channel plugins provide session context and outbound delivery; they do not own scheduling logic.',
       '- In native IM/channel sessions, ignore channel-specific reminder helpers or reminder skills and call native `cron` directly.',
-      '- Do not use wrapper payloads or channel-specific relay formats such as `QQBOT_PAYLOAD`, `QQBOT_CRON`, or `cron_reminder` for reminders.',
+      '- Do not use wrapper payloads or channel-specific relay formats for reminders.',
       '- Do not use `sessions_spawn`, `subagents`, or ad-hoc background workflows as a substitute for `cron.add`.',
       '- Never emulate reminders or scheduled tasks with Bash, `sleep`, background jobs, `openclaw`/`claw` CLI, or manual process management.',
       '- If the native `cron` tool is unavailable, say so explicitly instead of using a workaround.',

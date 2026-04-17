@@ -74,8 +74,8 @@ test('metaStore: list on empty table returns empty array', () => {
 
 test('metaStore: origin/binding with special characters survives JSON roundtrip', () => {
   const store = createMetaStore();
-  const origin = { kind: OriginKind.IM, platform: 'dingtalk', conversationId: 'acct:user:"peer&1"' };
-  const binding = { kind: BindingKind.IMSession, platform: 'dingtalk', conversationId: 'acct:user:"peer&1"' };
+  const origin = { kind: OriginKind.IM, platform: 'telegram', conversationId: 'acct:user:"peer&1"' };
+  const binding = { kind: BindingKind.IMSession, platform: 'telegram', conversationId: 'acct:user:"peer&1"' };
 
   store.set('task-special', origin, binding);
   const meta = store.get('task-special');

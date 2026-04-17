@@ -162,7 +162,7 @@ test('migration tasks: valid cron task is migrated via addJob', async () => {
       enabled: 1,
       schedule_json: JSON.stringify({ type: 'cron', expression: '0 9 * * 1-5' }),
       prompt: 'Remind me of the standup meeting',
-      notify_platforms_json: '["dingtalk"]',
+      notify_platforms_json: '["telegram"]',
     }],
   });
 

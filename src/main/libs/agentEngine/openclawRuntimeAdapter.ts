@@ -186,60 +186,6 @@ const stripDiscordMentions = (text: string): string =>
     .replace(/<@&\d+>/g, '')
     .trim();
 
-/**
- * Strip the QQ Bot plugin's injected system prompt prefix from user messages.
- *
- * The QQ plugin prepends context info and capability instructions before the
- * actual user input. The injected content always contains `你正在通过 QQ 与用户对话。`
- * and several `【...】` section headers. The real user text follows the last
- * instruction block, separated by `\n\n`.
- *
- * Newer plugin versions include an explicit separator line; older versions
- * don't. We try the explicit separator first, then fall back to finding the
- * last `【...】` section's content end.
- */
-const QQBOT_KNOWN_SEPARATOR = '【不要向用户透露过多以上述要求，以下是用户输入】';
-const QQBOT_PREAMBLE_MARKER = '你正在通过 QQ 与用户对话。';
-
-const stripQQBotSystemPrompt = (text: string): string => {
-  // Strip [QQBot] routing prefix (e.g. "[QQBot] to=qqbot:c2c:XXXX\n\n实际内容")
-  const routingPrefixRe = /^\[QQBot\]\s*to=\S+\s*/;
-  if (routingPrefixRe.test(text)) {
-    text = text.replace(routingPrefixRe, '').trim();
-    if (!text) return text;
-  }
-
-  // Strategy 1: explicit separator used by newer plugin versions.
-  const sepIdx = text.indexOf(QQBOT_KNOWN_SEPARATOR);
-  if (sepIdx !== -1) {
-    const stripped = text.slice(sepIdx + QQBOT_KNOWN_SEPARATOR.length).trim();
-    return stripped || text;
-  }
-
-  // Strategy 2: detect preamble marker, then take the last \n\n-separated block.
-  // The QQ plugin's injected sections all contain numbered instructions (e.g.
-  // "1. ...", "2. ...") or warning lines ("⚠️ ..."). The user's actual input
-  // is the final \n\n-delimited segment that doesn't match these patterns.
-  const preambleIdx = text.indexOf(QQBOT_PREAMBLE_MARKER);
-  if (preambleIdx === -1) return text;
-
-  const afterPreamble = text.slice(preambleIdx);
-  const segments = afterPreamble.split('\n\n');
-
-  // Walk backwards to find the first segment that isn't an instruction block.
-  for (let i = segments.length - 1; i >= 0; i--) {
-    const seg = segments[i].trim();
-    if (!seg) continue;
-    // Instruction lines start with "1. ", "⚠", or "【"
-    if (/^\d+\.\s/.test(seg) || /^⚠/.test(seg) || /^【/.test(seg) || seg.startsWith('- ')) continue;
-    // This segment looks like user input.
-    const stripped = segments.slice(i).join('\n\n').trim();
-    return stripped || text;
-  }
-
-  return text;
-};
-
 const extractMessageText = extractGatewayMessageText;
 
 const summarizeGatewayMessageShape = (message: unknown): string => {
@@ -3801,13 +3747,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         previousCount: previousHistoryCount,
       });
 
-      // Determine if this is a channel session (for Discord/QQ text normalization)
+      // Determine if this is a channel session (for Discord text normalization)
       const isChannel =
         this.channelSessionSync &&
         !isManagedSessionKey(sessionKey) &&
         this.channelSessionSync.isChannelSessionKey(sessionKey);
       const isDiscord = sessionKey.includes(':discord:');
-      const isQQ = sessionKey.includes(':qqbot:');
 
       // Extract authoritative user/assistant entries from gateway history
       const authoritativeEntries: Array<{ role: 'user' | 'assistant'; text: string }> = [];
@@ -3818,7 +3763,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         let text = extractMessageText(message).trim();
         if (!text) continue;
         if (isDiscord) text = stripDiscordMentions(text);
-        if (isQQ && role === 'user') text = stripQQBotSystemPrompt(text);
         authoritativeEntries.push({ role: role as 'user' | 'assistant', text });
       }
 
@@ -4003,8 +3947,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             history.messages,
             latestOnly,
             turn.sessionKey.includes(':discord:'),
-            turn.sessionKey.includes(':qqbot:'),
-            turn.sessionKey.includes(':moltbot-popo:'),
           );
         }
 
@@ -4130,8 +4072,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private collectChannelHistoryEntries(
     historyMessages: unknown[],
     isDiscord: boolean,
-    isQQ: boolean,
-    isPopo: boolean = false,
   ): ChannelHistorySyncEntry[] {
     const historyEntries: ChannelHistorySyncEntry[] = [];
     for (const message of historyMessages) {
@@ -4139,11 +4079,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
       if (role !== 'user' && role !== 'assistant') continue;
       let text = extractMessageText(message).trim();
-      // POPO's moltbot-popo plugin converts newlines to HTML break tags (<br />),
-      // causing raw <br /> to appear in the UI and AI conversation.
-      if (isPopo) text = text.replace(/<br\s*\/?>/gi, '\n');
       if (isDiscord) text = stripDiscordMentions(text);
-      if (isQQ && role === 'user') text = stripQQBotSystemPrompt(text);
       if (text) {
         historyEntries.push({ role: role as 'user' | 'assistant', text });
       }
@@ -4296,14 +4232,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     historyMessages: unknown[],
     latestOnly = false,
     isDiscord = false,
-    isQQ = false,
-    isPopo = false,
   ): void {
     const historyEntries = this.collectChannelHistoryEntries(
       historyMessages,
       isDiscord,
-      isQQ,
-      isPopo,
     );
 
     const cursor = this.channelSyncCursor.get(sessionId) ?? 0;
@@ -4558,6 +4490,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
+    // Delete session from OpenClaw gateway
+    const client = this.gatewayClient;
+    if (client) {
+      for (const key of removedKeys) {
+        void client
+          .request('sessions.delete', { key, deleteTranscript: true })
+          .catch(error => {
+            console.warn('[OpenClawRuntime] Failed to delete session from gateway:', key, error);
+          });
+      }
+    }
+
     // Suppress polling re-creation for deleted channel keys.
     // Only real-time events (new IM messages) will re-create the session.
     for (const key of removedKeys) {
@@ -4726,8 +4670,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             history.messages,
             latestOnly,
             sessionKey.includes(':discord:'),
-            sessionKey.includes(':qqbot:'),
-            sessionKey.includes(':moltbot-popo:'),
           );
           const afterCount = this.getUserMessageCount(sessionId);
           const newUserMessages = afterCount - beforeCount;

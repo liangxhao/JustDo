@@ -667,30 +667,6 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; data?: QwenOAuthToken; error?: string }>;
     onOAuthProgress: (callback: (message: string) => void) => () => void;
   };
-  feishu: {
-    install: {
-      qrcode: (isLark: boolean) => Promise<{
-        url: string;
-        deviceCode: string;
-        interval: number;
-        expireIn: number;
-      }>;
-      poll: (deviceCode: string) => Promise<{
-        done: boolean;
-        appId?: string;
-        appSecret?: string;
-        domain?: string;
-        error?: string;
-      }>;
-      verify: (
-        appId: string,
-        appSecret: string,
-      ) => Promise<{
-        success: boolean;
-        error?: string;
-      }>;
-    };
-  };
   githubCopilot: {
     requestDeviceCode: () => Promise<{
       userCode: string;

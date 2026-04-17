@@ -59,19 +59,13 @@ describe('enterpriseConfigSync', () => {
     expect(map['all']).toBe('sandbox');
   });
 
-  test('channel key mapping covers all 10 platforms', () => {
+  test('channel key mapping covers telegram and discord', () => {
     const map: Record<string, string> = {
       telegram: 'telegramOpenClaw', discord: 'discordOpenClaw',
-      feishu: 'feishuOpenClaw', 'dingtalk-connector': 'dingtalkOpenClaw',
-      qqbot: 'qq', wecom: 'wecomOpenClaw', 'moltbot-popo': 'popo',
-      nim: 'nim', 'openclaw-weixin': 'weixin', xiaomifeng: 'xiaomifeng',
     };
-    expect(Object.keys(map)).toHaveLength(10);
+    expect(Object.keys(map)).toHaveLength(2);
     expect(map['telegram']).toBe('telegramOpenClaw');
-    expect(map['dingtalk-connector']).toBe('dingtalkOpenClaw');
-    expect(map['qqbot']).toBe('qq');
-    expect(map['moltbot-popo']).toBe('popo');
-    expect(map['openclaw-weixin']).toBe('weixin');
+    expect(map['discord']).toBe('discordOpenClaw');
   });
 
   test('recursive directory copy preserves nested structure', () => {

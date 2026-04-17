@@ -518,17 +518,17 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const isChannelUnsupported = (channelValue: string): boolean => {
-    return channelValue === 'openclaw-weixin';
+  const isChannelUnsupported = (_channelValue: string): boolean => {
+    return false;
   };
 
   const getChannelDisplayLabel = (channelValue: string): string => {
     if (channelValue === 'none') return i18nService.t('scheduledTasksFormNotifyChannelNone');
-    // Use i18n translation for platform name (e.g. weixin -> '微信', feishu -> '飞书')
+    // Use i18n translation for platform name (e.g. telegram -> 'Telegram', discord -> 'Discord')
     const platform = PlatformRegistry.platformOfChannel(channelValue);
     if (platform) {
       const label = i18nService.t(platform) || PlatformRegistry.get(platform).label;
-      return isChannelUnsupported(channelValue) ? `${label} (${i18nService.t('scheduledTasksChannelUnsupported')})` : label;
+      return label;
     }
     const option = channelOptions.find(c => c.value === channelValue);
     return option ? option.label : channelValue;

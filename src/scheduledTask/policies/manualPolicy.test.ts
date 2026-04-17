@@ -14,11 +14,11 @@ test('ManualPolicy.normalizeDraft: IM announce + non-im binding -> auto-links to
   const draft = makeModel({
     origin: { kind: OriginKind.Manual },
     binding: { kind: BindingKind.NewSession },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'telegram' },
   });
   const result = policy.normalizeDraft(draft);
   expect(result.binding.kind).toBe(BindingKind.IMSession);
-  expect((result.binding as any).platform).toBe('feishu');
+  expect((result.binding as any).platform).toBe('telegram');
   expect((result.binding as any).conversationId).toBe('');
 });
 
@@ -26,8 +26,8 @@ test('ManualPolicy.normalizeDraft: IM announce + already im_session -> unchanged
   const policy = new ManualTaskPolicy();
   const draft = makeModel({
     origin: { kind: OriginKind.Manual },
-    binding: { kind: BindingKind.IMSession, platform: 'feishu', conversationId: '' },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu' },
+    binding: { kind: BindingKind.IMSession, platform: 'telegram', conversationId: '' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'telegram' },
   });
   const result = policy.normalizeDraft(draft);
   expect(result.binding).toEqual(draft.binding);
@@ -38,7 +38,7 @@ test('ManualPolicy.normalizeDraft: im_session binding + non-announce delivery ->
   const policy = new ManualTaskPolicy();
   const draft = makeModel({
     origin: { kind: OriginKind.Manual },
-    binding: { kind: BindingKind.IMSession, platform: 'feishu', conversationId: '' },
+    binding: { kind: BindingKind.IMSession, platform: 'telegram', conversationId: '' },
     delivery: { mode: DeliveryMode.None },
   });
   const result = policy.normalizeDraft(draft);

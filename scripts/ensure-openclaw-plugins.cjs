@@ -82,7 +82,7 @@ function readJsonFile(filePath) {
  * Handles scoped packages like @scope/name.
  */
 function findInstalledPackageDir(nodeModulesDir, npmSpec) {
-  // npm spec might be scoped like "@dingtalk-real-ai/dingtalk-connector"
+  // npm spec might be scoped like "@scope/package-name"
   const pkgDir = path.join(nodeModulesDir, npmSpec);
   if (fs.existsSync(path.join(pkgDir, 'package.json'))) {
     return pkgDir;
@@ -298,46 +298,3 @@ for (const plugin of plugins) {
 }
 
 log(`All ${plugins.length} plugin(s) installed successfully.`);
-
-// --- Post-install patch: openclaw-weixin gatewayMethods ---
-// The openclaw-weixin plugin defines loginWithQrStart/loginWithQrWait in its
-// gateway adapter but does not declare gatewayMethods on the channel plugin
-// object.  Without this declaration, the gateway's resolveWebLoginProvider()
-// cannot discover the plugin for web.login.start/web.login.wait RPC calls.
-// Patch channel.ts to inject the missing property.
-const weixinChannelPath = path.join(runtimeExtensionsDir, 'openclaw-weixin', 'src', 'channel.ts');
-if (fs.existsSync(weixinChannelPath)) {
-  let src = fs.readFileSync(weixinChannelPath, 'utf8');
-  if (!src.includes('gatewayMethods')) {
-    // Insert gatewayMethods right after the configSchema block in weixinPlugin
-    const marker = 'configSchema: {';
-    const idx = src.indexOf(marker);
-    if (idx !== -1) {
-      src = src.slice(0, idx) + 'gatewayMethods: ["web.login.start", "web.login.wait"],\n  ' + src.slice(idx);
-      fs.writeFileSync(weixinChannelPath, src);
-      log('Patched openclaw-weixin/src/channel.ts: added gatewayMethods declaration');
-    }
-  } else {
-    log('openclaw-weixin/src/channel.ts already has gatewayMethods, skipping patch');
-  }
-}
-
-// --- Post-install patch: openclaw-weixin CHANNEL_VERSION ---
-// Replace the dynamic readChannelVersion() call with a hardcoded version string
-// to avoid runtime resolution issues when the plugin is bundled outside its
-// original npm package context.
-const weixinApiPath = path.join(runtimeExtensionsDir, 'openclaw-weixin', 'src', 'api', 'api.ts');
-if (fs.existsSync(weixinApiPath)) {
-  let apiSrc = fs.readFileSync(weixinApiPath, 'utf8');
-  const versionBefore = 'const CHANNEL_VERSION = readChannelVersion();';
-  const versionAfter = 'const CHANNEL_VERSION = "1.0.3";';
-  if (apiSrc.includes(versionBefore)) {
-    apiSrc = apiSrc.replace(versionBefore, versionAfter);
-    fs.writeFileSync(weixinApiPath, apiSrc);
-    log('Patched openclaw-weixin/src/api/api.ts: replaced readChannelVersion() with hardcoded "1.0.3"');
-  } else if (apiSrc.includes(versionAfter)) {
-    log('openclaw-weixin/src/api/api.ts already has hardcoded CHANNEL_VERSION, skipping patch');
-  } else {
-    log('WARNING: could not find CHANNEL_VERSION assignment in openclaw-weixin/src/api/api.ts, skipping patch');
-  }
-}

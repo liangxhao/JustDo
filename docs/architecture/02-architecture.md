@@ -235,7 +235,6 @@ export const IpcChannel = {
   ImGetStatus: 'im:getStatus',
   ImGetConfig: 'im:getConfig',
   ImSetConfig: 'im:setConfig',
-  ImDingTalkInstanceAdd: 'im:dingtalk:instance:add',
   // ...
 } as const;
 ```

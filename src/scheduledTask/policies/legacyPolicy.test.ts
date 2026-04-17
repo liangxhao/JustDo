@@ -2,8 +2,12 @@ import { test, expect } from 'vitest';
 import { makeModel } from '../fixtures';
 import { LegacyTaskPolicy } from './legacyPolicy';
 import {
-  OriginKind, BindingKind, DeliveryMode, DeliveryChannel,
-  SessionTarget, WakeMode,
+  OriginKind,
+  BindingKind,
+  DeliveryMode,
+  DeliveryChannel,
+  SessionTarget,
+  WakeMode,
 } from '../constants';
 
 test('LegacyPolicy.getCreateDefaults: returns sessionTarget main + next-heartbeat wakeMode', () => {
@@ -18,11 +22,11 @@ test('LegacyPolicy.normalizeDraft: announce IM channel + new_session binding -> 
   const draft = makeModel({
     origin: { kind: OriginKind.Legacy },
     binding: { kind: BindingKind.NewSession },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'telegram' },
   });
   const result = policy.normalizeDraft(draft);
   expect(result.binding.kind).toBe(BindingKind.IMSession);
-  expect((result.binding as any).platform).toBe('feishu');
+  expect((result.binding as any).platform).toBe('telegram');
   expect((result.binding as any).conversationId).toBe('');
 });
 
@@ -53,7 +57,7 @@ test('LegacyPolicy.onDeliveryChanged: to mode=none -> binding resets to new_sess
   const policy = new LegacyTaskPolicy();
   const draft = makeModel({
     origin: { kind: OriginKind.Legacy },
-    binding: { kind: BindingKind.IMSession, platform: 'feishu', conversationId: '' },
+    binding: { kind: BindingKind.IMSession, platform: 'telegram', conversationId: '' },
   });
   const result = policy.onDeliveryChanged(draft, { mode: DeliveryMode.None });
   expect(result.binding).toEqual({ kind: BindingKind.NewSession });
@@ -99,7 +103,10 @@ test('LegacyPolicy.toWireBinding: any binding -> always returns sessionTarget ma
   expect(wireIm.sessionTarget).toBe(SessionTarget.Main);
   expect(wireIm.sessionKey).toBe(null);
 
-  const wireSessionKey = policy.toWireBinding({ kind: BindingKind.SessionKey, sessionKey: 'custom:key' });
+  const wireSessionKey = policy.toWireBinding({
+    kind: BindingKind.SessionKey,
+    sessionKey: 'custom:key',
+  });
   expect(wireSessionKey.sessionTarget).toBe(SessionTarget.Main);
   expect(wireSessionKey.sessionKey).toBe(null);
 });

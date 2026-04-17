@@ -44,7 +44,7 @@ test('IMPolicy.normalizeDraft: binding platform != delivery channel -> corrects 
   const draft = makeModel({
     origin: { kind: OriginKind.IM, platform: 'telegram', conversationId: 'c1' },
     binding: { kind: BindingKind.IMSession, platform: 'telegram', conversationId: 'c1' },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'discord' },
   });
   const result = policy.normalizeDraft(draft);
   expect(result.delivery.channel).toBe('telegram');
@@ -68,7 +68,7 @@ test('IMPolicy.normalizeDraft: binding not im_session -> returns unchanged', () 
   const draft = makeModel({
     origin: { kind: OriginKind.IM, platform: 'telegram', conversationId: 'c1' },
     binding: { kind: BindingKind.NewSession },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'discord' },
   });
   const result = policy.normalizeDraft(draft);
   expect(result).toEqual(draft);
@@ -105,9 +105,9 @@ test('IMPolicy.onDeliveryChanged: from announce to different IM channel -> bindi
 test('IMPolicy.onDeliveryChanged: announce to webhook -> binding resets to new_session', () => {
   const policy = new IMTaskPolicy();
   const draft = makeModel({
-    origin: { kind: OriginKind.IM, platform: 'feishu', conversationId: 'c2' },
-    binding: { kind: BindingKind.IMSession, platform: 'feishu', conversationId: 'c2' },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu' },
+    origin: { kind: OriginKind.IM, platform: 'discord', conversationId: 'c2' },
+    binding: { kind: BindingKind.IMSession, platform: 'discord', conversationId: 'c2' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'discord' },
   });
   const result = policy.onDeliveryChanged(draft, { mode: DeliveryMode.Webhook });
   expect(result.binding).toEqual({ kind: BindingKind.NewSession });

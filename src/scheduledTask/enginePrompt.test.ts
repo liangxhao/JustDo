@@ -17,7 +17,7 @@ test('openclaw prompt points scheduled task requests to the native cron tool', (
   expect(prompt).toMatch(
     /native im\/channel sessions, ignore channel-specific reminder helpers or reminder skills/i,
   );
-  expect(prompt).toMatch(/do not use wrapper payloads .*qqbot_payload.*qqbot_cron.*cron_reminder/i);
+  expect(prompt).toMatch(/do not use wrapper payloads or channel-specific relay formats for reminders/i);
   expect(prompt).toMatch(
     /do not use `sessions_spawn`, `subagents`, or ad-hoc background workflows as a substitute for `cron\.add`/i,
   );

@@ -12,7 +12,7 @@ export function initScheduledTaskHelpers(d: ScheduledTaskHelperDeps): void {
   deps = d;
 }
 
-const MULTI_INSTANCE_CONFIG_KEYS = new Set(['dingtalk', 'feishu', 'qq']);
+const MULTI_INSTANCE_CONFIG_KEYS = new Set<string>();
 
 function isConfigKeyEnabled(key: string, value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;

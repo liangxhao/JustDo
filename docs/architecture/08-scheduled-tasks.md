@@ -1,636 +1,897 @@
-# GucciAI 定时任务系统设计
+# GucciAI 定时任务系统设计文档
 
 ## 1. 概述
 
-GucciAI 支持定时任务功能，用户可以通过自然语言或 GUI 创建定时任务，Agent 会按计划自动执行。任务结果可推送到桌面或 IM 平台。
+GucciAI 定时任务系统是一套横跨 **Renderer(UI) → Main Process(IPC) → OpenClaw Gateway(调度引擎)** 三层的端到端自动化执行框架。用户可通过 UI 界面或对话创建定时任务，由 OpenClaw Cron 引擎调度触发，执行结果可推送到 IM 平台或 Webhook。
 
-### 1.1 创建方式
+### 1.1 核心设计理念
 
-| 方式 | 说明 | 示例 |
-|------|------|------|
-| **自然语言** | 通过对话创建 | "每天早上 9 点给我推送科技新闻" |
-| **GUI** | 在定时任务面板手动配置 | 设置 Cron 表达式和任务内容 |
-
-### 1.2 典型场景
-
-| 场景 | 说明 |
+| 理念 | 说明 |
 |------|------|
-| 新闻收集 | 每日自动聚合行业新闻 |
-| 邮件清理 | 定期检查邮箱并整理 |
-| 数据报告 | 定期生成业务分析报告 |
-| 内容监控 | 定期检查网站变化 |
-| 工作提醒 | 定时生成待办或会议提醒 |
+| **OpenClaw 驱动** | 所有调度、执行、投递由 OpenClaw Gateway 原生完成，GucciAI 仅负责任务 CRUD 和 UI 展示 |
+| **策略模式(Policy Pattern)** | 不同来源的任务各自拥有独立策略类，控制默认参数、绑定关系、只读字段 |
+| **来源推断(Origin Inference)** | 通过 `sessionKey` 格式反向推断任务来源，实现与旧数据无缝兼容 |
+| **流式轮询** | 15 秒间隔轮询机制将 OpenClaw 状态变化实时推送到 UI |
 
-## 2. 数据模型
+### 1.2 系统架构
 
-### 2.1 任务定义
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Renderer Process                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐  │
+│  │   TaskForm      │  │    TaskList     │  │  TaskDetail │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────┘  │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │           ScheduledTaskService (IPC 封装)           │    │
+│  │           scheduledTaskSlice (Redux Store)          │    │
+│  └─────────────────────────────────────────────────────┘    │
+├─────────────────────────────────────────────────────────────┤
+│                     Main Process                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │          IPC Handlers (scheduledTask:*)             │    │
+│  │          CronJobService (Gateway 适配器)            │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │     TaskModelMapper / TaskPolicyRegistry            │    │
+│  │     inferOriginAndBinding / enginePrompt            │    │
+│  └─────────────────────────────────────────────────────┘    │
+├─────────────────────────────────────────────────────────────┤
+│                     OpenClaw Gateway                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐  │
+│  │  Cron Scheduler │  │  Agent Executor │  │ Delivery    │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────┘  │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │   Channel Adapters (Telegram / Discord / Webhook)   │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
 
-定时任务定义存储在 OpenClaw 的管理目录中：
+---
+
+## 2. 类型系统
+
+### 2.1 常量定义
+
+所有枚举值定义在 [constants.ts](src/scheduledTask/constants.ts):
 
 ```typescript
-interface ScheduledTaskDefinition {
-  id: string;                // 任务 ID
-  name: string;              // 任务名称
-  description: string;       // 任务描述
-  cron: string;              // Cron 表达式
-  prompt: string;            // 执行时的 prompt
-  workingDirectory: string;  // 工作目录
-  agentId?: string;          // 绑定的 Agent ID
-  timezone?: string;         // 时区
-  enabled: boolean;          // 是否启用
+// 调度类型
+export const ScheduleKind = {
+  At: 'at',      // 一次性任务
+  Every: 'every', // 固定间隔
+  Cron: 'cron',  // Cron 表达式
+} as const;
+
+// Payload 类型
+export const PayloadKind = {
+  AgentTurn: 'agentTurn',  // Agent 对话轮次
+  SystemEvent: 'systemEvent', // 系统事件注入
+} as const;
+
+// 投递模式
+export const DeliveryMode = {
+  None: 'none',       // 不投递
+  Announce: 'announce', // IM 通道投递
+  Webhook: 'webhook',  // HTTP POST 投递
+} as const;
+
+// 会话目标
+export const SessionTarget = {
+  Main: 'main',       // 在主会话中执行
+  Isolated: 'isolated', // 创建隔离会话
+} as const;
+
+// 唤醒模式
+export const WakeMode = {
+  Now: 'now',             // 立即触发
+  NextHeartbeat: 'next-heartbeat', // 等待下次心跳
+} as const;
+
+// 任务来源类型
+export const OriginKind = {
+  Legacy: 'legacy',   // 旧版任务
+  IM: 'im',           // IM 创建
+  Cowork: 'cowork',   // Cowork 会话创建
+  Cron: 'cron',       // Cron 系统创建
+  Manual: 'manual',   // UI 手动创建
+} as const;
+
+// 执行绑定类型
+export const BindingKind = {
+  NewSession: 'new_session',   // 每次创建新会话
+  UISession: 'ui_session',     // 绑定 UI 会话
+  IMSession: 'im_session',     // 绑定 IM 会话
+  SessionKey: 'session_key',   // 使用显式 sessionKey
+} as const;
+
+// 任务状态
+export const TaskStatus = {
+  Success: 'success',
+  Error: 'error',
+  Skipped: 'skipped',
+  Running: 'running',
+} as const;
+```
+
+### 2.2 核心类型定义
+
+类型定义在 [types.ts](src/scheduledTask/types.ts):
+
+```typescript
+// 调度配置
+export interface ScheduleAt {
+  kind: 'at';
+  at: string;  // ISO 8601 时间戳
+}
+export interface ScheduleEvery {
+  kind: 'every';
+  everyMs: number;  // 间隔毫秒数
+  anchorMs?: number; // 首次触发锚点
+}
+export interface ScheduleCron {
+  kind: 'cron';
+  expr: string;  // Cron 表达式
+  tz?: string;   // 时区
+  staggerMs?: number; // 随机延迟
+}
+export type Schedule = ScheduleAt | ScheduleEvery | ScheduleCron;
+
+// 执行内容
+export interface AgentTurnPayload {
+  kind: 'agentTurn';
+  message: string;  // Agent 执行的 prompt
+  timeoutSeconds?: number;
+  model?: string;   // 可选模型指定
+}
+export interface SystemEventPayload {
+  kind: 'systemEvent';
+  text: string;  // 注入的系统事件文本
+}
+export type ScheduledTaskPayload = AgentTurnPayload | SystemEventPayload;
+
+// 投递配置
+export interface ScheduledTaskDelivery {
+  mode: DeliveryMode;
+  channel?: string;    // IM 通道: 'telegram', 'discord'
+  to?: string;         // 目标标识
+  accountId?: string;  // 多账号标识
+  bestEffort?: boolean;
+}
+
+// 任务状态
+export interface TaskState {
+  nextRunAtMs: number | null;     // 下次触发时间
+  lastRunAtMs: number | null;     // 最后执行时间
+  lastStatus: TaskLastStatus;     // 最后状态
+  lastError: string | null;       // 最后错误
+  lastDurationMs: number | null;  // 最后执行时长
+  runningAtMs: number | null;     // 正在执行时间戳
+  consecutiveErrors: number;      // 连续错误次数
+}
+
+// 任务定义
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  schedule: Schedule;
+  sessionTarget: SessionTarget;
+  wakeMode: WakeMode;
+  payload: ScheduledTaskPayload;
+  delivery: ScheduledTaskDelivery;
+  agentId: string | null;
+  sessionKey: string | null;
+  state: TaskState;
+  createdAt: string;
+  updatedAt: string;
 }
 ```
 
-### 2.2 任务元数据
+---
 
-元数据存储在 SQLite，用于追踪任务来源和绑定关系：
+## 3. 来源与绑定推断
 
-```sql
-CREATE TABLE scheduled_task_meta (
-  task_id TEXT PRIMARY KEY,
-  origin TEXT,               -- 'conversation' | 'gui' | 'migration'
-  origin_session_id TEXT,    -- 来源会话 ID
-  origin_message_id TEXT,    -- 来源消息 ID
-  agent_id TEXT,             -- 绑定的 Agent ID
-  im_delivery TEXT,          -- IM 推送配置 JSON
-  created_at INTEGER,
-  updated_at INTEGER
-);
-```
+### 3.1 TaskOrigin -- 任务来源
 
-### 2.3 任务常量
+定义在 [origin.ts](src/scheduledTask/origin.ts):
 
 ```typescript
-// src/scheduledTask/constants.ts
-export const ScheduleKind = {
-  At: 'at',
-  Every: 'every',
-} as const;
+export type TaskOrigin =
+  | { kind: 'legacy' }                                         // 旧版任务
+  | { kind: 'im'; platform: string; conversationId: string }   // IM 创建
+  | { kind: 'cowork'; sessionId: string }                      // Cowork 创建
+  | { kind: 'cron'; jobId: string }                            // Cron 系统创建
+  | { kind: 'manual' };                                        // UI 手动创建
+```
 
-export const PayloadKind = {
-  Prompt: 'prompt',
-  Workflow: 'workflow',
-} as const;
+### 3.2 ExecutionBinding -- 执行绑定
 
-export const DeliveryMode = {
-  Cowork: 'cowork',
-  IM: 'im',
-  Both: 'both',
-} as const;
+```typescript
+export type ExecutionBinding =
+  | { kind: 'new_session' }                                      // 每次触发创建新会话
+  | { kind: 'ui_session'; sessionId: string }                    // 绑定 UI 会话
+  | { kind: 'im_session'; platform: string; conversationId: string; sessionId?: string } // 绑定 IM 会话
+  | { kind: 'session_key'; sessionKey: string };                 // 使用显式 sessionKey
+```
 
-export const SessionTarget = {
-  Main: 'main',
-  Isolated: 'isolated',
-} as const;
+### 3.3 inferOriginAndBinding -- 反向推断函数
 
-export const WakeMode = {
-  Direct: 'direct',
-  Bridge: 'bridge',
-} as const;
+通过解析 `sessionKey` 格式反向推断来源和绑定:
 
-export const OriginKind = {
-  Conversation: 'conversation',
-  GUI: 'gui',
-  Migration: 'migration',
-} as const;
+```typescript
+// 文件: src/scheduledTask/origin.ts
 
-export const BindingKind = {
-  Agent: 'agent',
-  IMConversation: 'im_conversation',
-} as const;
+export function inferOriginAndBinding(task: InferableTask): {
+  origin: TaskOrigin;
+  binding: ExecutionBinding;
+} {
+  const sk = (task.sessionKey ?? '').trim();
 
-export const TaskStatus = {
-  Pending: 'pending',
-  Running: 'running',
-  Completed: 'completed',
-  Failed: 'failed',
-} as const;
+  // 1. Managed session key: "agent:main:gucciai:{sessionId}"
+  if (sk && isManagedSessionKey(sk)) {
+    const parsed = parseManagedSessionKey(sk);
+    if (parsed) {
+      // 检查是否配置了 IM 通道投递
+      const isIMChannel = task.delivery?.mode === 'announce' && 
+        task.delivery?.channel && task.delivery.channel !== 'last';
+      
+      if (isIMChannel) {
+        return {
+          origin: { kind: 'im', platform: task.delivery.channel, conversationId: '' },
+          binding: { kind: 'im_session', platform: task.delivery.channel, conversationId: '', sessionId: parsed.sessionId },
+        };
+      }
+      return {
+        origin: { kind: 'cowork', sessionId: parsed.sessionId },
+        binding: { kind: 'ui_session', sessionId: parsed.sessionId },
+      };
+    }
+  }
 
+  // 2. Cron session key: "cron:{jobId}" or "agent:{agentId}:cron:{jobId}"
+  if (sk && isCronSessionKey(sk)) {
+    const idx = sk.lastIndexOf('cron:');
+    const jobId = idx >= 0 ? sk.slice(idx + 'cron:'.length) : sk;
+    return {
+      origin: { kind: 'cron', jobId },
+      binding: { kind: 'session_key', sessionKey: sk },
+    };
+  }
+
+  // 3. Unknown sessionKey → session_key binding
+  if (sk) {
+    return {
+      origin: { kind: 'cowork', sessionId: '' },
+      binding: { kind: 'session_key', sessionKey: sk },
+    };
+  }
+
+  // 4. No sessionKey → manual origin
+  return {
+    origin: { kind: 'manual' },
+    binding: { kind: 'new_session' },
+  };
+}
+```
+
+### 3.4 SessionKey 格式说明
+
+| 类型 | 格式 | 示例 | 用途 |
+|------|------|------|------|
+| 托管会话 | `agent:main:gucciai:{sessionId}` | `agent:main:gucciai:abc123` | UI/Cowork 创建的会话 |
+| 通道会话 | `agent:{agentId}:{platform}:{subtype}:{conversationId}` | `agent:main:telegram:direct:ou_xxx` | IM 通道会话 |
+| Cron 会话 | `cron:{jobId}` | `cron:job-456` | 隔离 Cron 任务的独立会话 |
+
+---
+
+## 4. 策略模式 (Policy Pattern)
+
+策略模式是定时任务系统的核心设计抽象，用于处理不同来源任务的差异化行为。
+
+### 4.1 TaskPolicy 接口
+
+定义在 [policies/types.ts](src/scheduledTask/policies/types.ts):
+
+```typescript
+export interface TaskPolicy {
+  readonly kind: TaskOrigin['kind'];
+
+  /** 返回该来源任务的默认参数 */
+  getCreateDefaults(origin: TaskOrigin): Partial<PolicyTaskInput>;
+
+  /** 保存前的归一化校验（自动填充、绑定一致性） */
+  normalizeDraft(draft: PolicyTaskModel): PolicyTaskModel;
+
+  /** 用户修改投递配置时联动更新绑定关系 */
+  onDeliveryChanged(draft: PolicyTaskModel, newDelivery: PolicyDelivery): PolicyTaskModel;
+
+  /** 将 ExecutionBinding 映射为 sessionTarget/sessionKey */
+  toWireBinding(binding: ExecutionBinding): WireBinding;
+
+  /** 生成人类可读的运行行为描述 */
+  describeRunBehavior(task: PolicyTaskModel): string;
+
+  /** 返回 UI 中不可编辑的字段列表 */
+  getReadonlyFields(): string[];
+}
+```
+
+### 4.2 四种策略实现
+
+| 策略类 | 文件 | 来源类型 | 默认 sessionTarget | 默认 wakeMode | 默认 delivery | 只读字段 |
+|--------|------|----------|-------------------|---------------|--------------|---------|
+| `ManualTaskPolicy` | [manualPolicy.ts](src/scheduledTask/policies/manualPolicy.ts) | `manual` | `isolated` | `now` | `announce` + `last` | 无 |
+| `IMTaskPolicy` | [imPolicy.ts](src/scheduledTask/policies/imPolicy.ts) | `im` | `main` | `now` | `announce` + 来源平台 | `origin` |
+| `CoworkTaskPolicy` | [coworkPolicy.ts](src/scheduledTask/policies/coworkPolicy.ts) | `cowork` | `main` | `now` | `announce` + `last` | `origin` |
+| `LegacyTaskPolicy` | [legacyPolicy.ts](src/scheduledTask/policies/legacyPolicy.ts) | `legacy` | `main` | `next-heartbeat` | 无 | `origin` |
+
+### 4.3 ManualTaskPolicy 实现
+
+```typescript
+// 文件: src/scheduledTask/policies/manualPolicy.ts
+
+export class ManualTaskPolicy implements TaskPolicy {
+  readonly kind = OriginKind.Manual;
+
+  getCreateDefaults(): Partial<PolicyTaskInput> {
+    return {
+      sessionTarget: SessionTarget.Isolated,
+      wakeMode: WakeMode.Now,
+      delivery: { mode: DeliveryMode.Announce, channel: DeliveryChannel.Last },
+    };
+  }
+
+  normalizeDraft(draft: PolicyTaskModel): PolicyTaskModel {
+    // 如果选择了 IM 投递但绑定不是 im_session，自动关联
+    if (draft.delivery.mode === DeliveryMode.Announce
+        && draft.delivery.channel
+        && draft.delivery.channel !== DeliveryChannel.Last
+        && draft.binding.kind !== BindingKind.IMSession) {
+      return {
+        ...draft,
+        binding: { kind: BindingKind.IMSession, platform: draft.delivery.channel, conversationId: '' },
+      };
+    }
+    // 如果绑定是 im_session 但 delivery 不是 announce，重置
+    if (draft.binding.kind === BindingKind.IMSession
+        && draft.delivery.mode !== DeliveryMode.Announce) {
+      return { ...draft, binding: { kind: BindingKind.NewSession } };
+    }
+    return draft;
+  }
+
+  onDeliveryChanged(draft: PolicyTaskModel, newDelivery: PolicyDelivery): PolicyTaskModel {
+    // 选择 IM 投递时自动切换为 im_session 绑定
+    if (newDelivery.mode === DeliveryMode.Announce
+        && newDelivery.channel
+        && newDelivery.channel !== DeliveryChannel.Last) {
+      return {
+        ...draft,
+        delivery: newDelivery,
+        binding: { kind: BindingKind.IMSession, platform: newDelivery.channel, conversationId: '' },
+      };
+    }
+    // 切换为 none/webhook 时重置绑定
+    if (newDelivery.mode === DeliveryMode.None || newDelivery.mode === DeliveryMode.Webhook) {
+      return { ...draft, delivery: newDelivery, binding: { kind: BindingKind.NewSession } };
+    }
+    return { ...draft, delivery: newDelivery };
+  }
+
+  toWireBinding(binding: ExecutionBinding): WireBinding {
+    switch (binding.kind) {
+      case BindingKind.NewSession:
+        return { sessionTarget: SessionTarget.Main, sessionKey: null };
+      case BindingKind.UISession:
+        return { sessionTarget: SessionTarget.Main, sessionKey: buildManagedSessionKey(binding.sessionId) };
+      case BindingKind.IMSession:
+        if (binding.sessionId) {
+          return { sessionTarget: SessionTarget.Main, sessionKey: buildManagedSessionKey(binding.sessionId) };
+        }
+        return { sessionTarget: SessionTarget.Main, sessionKey: null };
+      case BindingKind.SessionKey:
+        return { sessionTarget: SessionTarget.Isolated, sessionKey: binding.sessionKey };
+    }
+  }
+
+  describeRunBehavior(task: PolicyTaskModel): string {
+    switch (task.binding.kind) {
+      case BindingKind.NewSession: return RunBehavior.newSession;
+      case BindingKind.UISession: return RunBehavior.uiSession;
+      case BindingKind.IMSession: return RunBehavior.imSession(task.binding.platform);
+      case BindingKind.SessionKey: return RunBehavior.sessionKey;
+    }
+  }
+
+  getReadonlyFields(): string[] {
+    return [];  // UI 创建的任务无只读字段
+  }
+}
+```
+
+### 4.4 TaskPolicyRegistry
+
+定义在 [policies/registry.ts](src/scheduledTask/policies/registry.ts):
+
+```typescript
+export class TaskPolicyRegistry {
+  private readonly policies: Map<string, TaskPolicy>;
+
+  constructor(policies: TaskPolicy[]) {
+    this.policies = new Map(policies.map(p => [p.kind, p]));
+  }
+
+  get(origin: TaskOrigin): TaskPolicy {
+    return this.policies.get(origin.kind) ?? this.policies.get(OriginKind.Manual)!;
+  }
+}
+
+export const taskPolicyRegistry = new TaskPolicyRegistry([
+  new LegacyTaskPolicy(),
+  new IMTaskPolicy(),
+  new CoworkTaskPolicy(),
+  new ManualTaskPolicy(),
+]);
+```
+
+---
+
+## 5. TaskModelMapper
+
+负责 **线格式(Wire Format)** 与 **领域模型(Domain Model)** 之间的双向转换。
+
+定义在 [modelMapper.ts](src/scheduledTask/modelMapper.ts):
+
+```typescript
+export class TaskModelMapper {
+  /** 从 IPC 数据还原领域模型（含 origin + binding） */
+  fromWire(wire: WireTask, meta?: { origin: TaskOrigin; binding: ExecutionBinding }): PolicyTaskModel {
+    const resolved = meta ?? inferOriginAndBinding(wire);
+    return {
+      ...wire,
+      origin: resolved.origin,
+      binding: resolved.binding,
+    };
+  }
+
+  /** 保存时转为 IPC 格式 */
+  toWireInput(model: PolicyTaskModel, policy: TaskPolicy): PolicyTaskInput {
+    const wireBinding = policy.toWireBinding(model.binding);
+    return {
+      name: model.name,
+      description: model.description,
+      enabled: model.enabled,
+      schedule: model.schedule,
+      sessionTarget: wireBinding.sessionTarget,
+      wakeMode: model.wakeMode,
+      payload: model.payload,
+      delivery: model.delivery,
+      agentId: model.agentId,
+      sessionKey: wireBinding.sessionKey,
+    };
+  }
+
+  /** 创建空白草稿 */
+  createDraft(origin: TaskOrigin, defaults: Partial<PolicyTaskInput>): PolicyTaskModel {
+    const now = new Date().toISOString();
+    return {
+      id: `draft-${Date.now()}`,
+      name: defaults.name ?? '',
+      description: defaults.description ?? '',
+      enabled: defaults.enabled ?? true,
+      schedule: defaults.schedule ?? { kind: ScheduleKind.Every, everyMs: 3600000 },
+      sessionTarget: defaults.sessionTarget ?? SessionTarget.Main,
+      wakeMode: defaults.wakeMode ?? WakeMode.Now,
+      payload: defaults.payload ?? { kind: PayloadKind.SystemEvent, text: '' },
+      delivery: defaults.delivery ?? { mode: DeliveryMode.None },
+      agentId: defaults.agentId ?? null,
+      sessionKey: defaults.sessionKey ?? null,
+      state: { nextRunAtMs: null, lastRunAtMs: null, lastStatus: null, lastError: null, lastDurationMs: null, runningAtMs: null, consecutiveErrors: 0 },
+      createdAt: now,
+      updatedAt: now,
+      origin,
+      binding: { kind: BindingKind.NewSession },
+    };
+  }
+}
+```
+
+---
+
+## 6. IPC 通信设计
+
+### 6.1 IPC 通道定义
+
+定义在 [constants.ts](src/scheduledTask/constants.ts):
+
+```typescript
 export const IpcChannel = {
-  ScheduledTaskList: 'scheduledTask:list',
-  ScheduledTaskCreate: 'scheduledTask:create',
-  ScheduledTaskUpdate: 'scheduledTask:update',
-  ScheduledTaskDelete: 'scheduledTask:delete',
-  ScheduledTaskGetMeta: 'scheduledTask:getMeta',
-  ScheduledTaskSetMeta: 'scheduledTask:setMeta',
+  // CRUD 操作
+  List: 'scheduledTask:list',
+  Get: 'scheduledTask:get',
+  Create: 'scheduledTask:create',
+  Update: 'scheduledTask:update',
+  Delete: 'scheduledTask:delete',
+  Toggle: 'scheduledTask:toggle',
+  
+  // 执行控制
+  RunManually: 'scheduledTask:runManually',
+  Stop: 'scheduledTask:stop',
+  
+  // 运行历史
+  ListRuns: 'scheduledTask:listRuns',
+  CountRuns: 'scheduledTask:countRuns',
+  ListAllRuns: 'scheduledTask:listAllRuns',
+  ResolveSession: 'scheduledTask:resolveSession',
+  
+  // 通道查询
+  ListChannels: 'scheduledTask:listChannels',
+  ListChannelConversations: 'scheduledTask:listChannelConversations',
+  
+  // 状态推送
+  StatusUpdate: 'scheduledTask:statusUpdate',  // 任务状态变更
+  RunUpdate: 'scheduledTask:runUpdate',        // 运行记录更新
+  Refresh: 'scheduledTask:refresh',            // 全量刷新信号
 } as const;
 ```
 
-## 3. 任务生命周期
+### 6.2 IPC Handlers 实现
 
-### 3.1 任务创建
+定义在 [handlers.ts](src/main/ipcHandlers/scheduledTask/handlers.ts):
 
-```mermaid
-flowchart LR
-  U[User] -->|natural language| C[Conversation]
-  C -->|detect schedule intent| E[Engine]
-  E -->|extract schedule params| P[Parser]
-  P -->|cron.add tool| O[OpenClaw]
-  O -->|task created| DB[SQLite Meta]
-  DB -->|notification| GUI[UI]
+```typescript
+export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): void {
+  const { getCronJobService, getOpenClawRuntimeAdapter } = deps;
+
+  // 列出所有任务
+  ipcMain.handle(ScheduledTaskIpc.List, async () => {
+    if (!getOpenClawRuntimeAdapter()?.getGatewayClient()) {
+      return { success: true, tasks: [] };  // Gateway 未就绪时返回空列表
+    }
+    const tasks = await getCronJobService().listJobs();
+    return { success: true, tasks };
+  });
+
+  // 创建任务
+  ipcMain.handle(ScheduledTaskIpc.Create, async (_event, input) => {
+    const task = await getCronJobService().addJob(input);
+    return { success: true, task };
+  });
+
+  // 更新任务
+  ipcMain.handle(ScheduledTaskIpc.Update, async (_event, id, input) => {
+    const task = await getCronJobService().updateJob(id, input);
+    return { success: true, task };
+  });
+
+  // 手动触发执行
+  ipcMain.handle(ScheduledTaskIpc.RunManually, async (_event, id) => {
+    await getCronJobService().runJob(id);
+    return { success: true };
+  });
+
+  // ... 其他 handlers
+}
 ```
 
-### 3.2 任务执行
+---
+
+## 7. CronJobService -- Gateway 适配器
+
+### 7.1 职责
+
+`CronJobService` 是 GucciAI 与 OpenClaw Gateway 之间的适配器层，封装所有 Cron RPC 调用。
+
+定义在 [cronJobService.ts](src/scheduledTask/cronJobService.ts):
+
+```typescript
+export class CronJobService {
+  private readonly getGatewayClient: () => GatewayClientLike | null;
+  private readonly ensureGatewayReady: () => Promise<void>;
+  private pollingTimer: ReturnType<typeof setInterval> | null = null;
+  private lastKnownStates: Map<string, string> = new Map();
+  private lastKnownRunAtMs: Map<string, number> = new Map();
+  private jobNameCache: Map<string, string> = new Map();  // jobId → name 映射
+  private runningJobIds: Set<string> = new Set();
+
+  private static readonly POLL_INTERVAL_MS = 15_000;  // 15 秒轮询间隔
+
+  // Gateway RPC 方法映射
+  async addJob(input: ScheduledTaskInput): Promise<ScheduledTask>;
+  async updateJob(id: string, input: Partial<ScheduledTaskInput>): Promise<ScheduledTask>;
+  async removeJob(id: string): Promise<void>;
+  async listJobs(): Promise<ScheduledTask[]>;
+  async toggleJob(id: string, enabled: boolean): Promise<ScheduledTask>;
+  async runJob(id: string): Promise<void>;
+  async listRuns(jobId: string, limit?: number, offset?: number): Promise<ScheduledTaskRun[]>;
+  async listAllRuns(limit?: number, offset?: number): Promise<ScheduledTaskRunWithName[]>;
+
+  // 轮询机制
+  startPolling(): void;
+  stopPolling(): void;
+}
+```
+
+### 7.2 Gateway RPC 方法映射
+
+| CronJobService 方法 | Gateway RPC | 说明 |
+|---------------------|------------|------|
+| `addJob()` | `cron.add` | 创建 Cron Job |
+| `updateJob()` | `cron.update` | 更新 Cron Job (patch 模式) |
+| `removeJob()` | `cron.remove` | 删除 Cron Job |
+| `toggleJob()` | `cron.update` | 更新 enabled 字段 |
+| `runJob()` | `cron.run` | 立即触发执行 |
+| `listJobs()` | `cron.list` | 列出所有 Job (含 disabled) |
+| `listRuns()` | `cron.runs` | 查询运行历史 |
+| `listAllRuns()` | `cron.runs` | 查询全局运行历史 |
+
+### 7.3 类型映射
+
+```typescript
+// Gateway 类型 → GucciAI 类型
+export function mapGatewaySchedule(schedule: GatewaySchedule): Schedule;
+export function mapGatewayTaskState(state: GatewayJobState, deliveryMode?: DeliveryMode): TaskState;
+export function mapGatewayJob(job: GatewayJob): ScheduledTask;
+export function mapGatewayRun(entry: GatewayRunLogEntry): ScheduledTaskRun;
+
+// GucciAI 类型 → Gateway 类型
+function toGatewaySchedule(schedule: Schedule): GatewaySchedule;
+function toGatewayPayload(payload: ScheduledTaskPayload): GatewayPayload;
+function toGatewayDelivery(delivery?: ScheduledTaskDelivery): GatewayDelivery | undefined;
+```
+
+### 7.4 轮询机制
+
+```typescript
+// 文件: src/scheduledTask/cronJobService.ts
+
+private async pollOnce(): Promise<void> {
+  const client = this.getGatewayClient();
+  if (!client) return;
+
+  // 1. 获取所有任务状态
+  const result = await client.request<{ jobs?: GatewayJob[] }>('cron.list', {
+    includeDisabled: true,
+    limit: 200,
+  });
+  const jobs = Array.isArray(result.jobs) ? result.jobs : [];
+
+  // 2. 更新 jobId → name 缓存
+  this.jobNameCache.clear();
+  this.runningJobIds.clear();
+  for (const job of jobs) {
+    this.jobNameCache.set(job.id, job.name);
+    if (job.state.runningAtMs) {
+      this.runningJobIds.add(job.id);
+    }
+  }
+
+  // 3. 检测状态变更并推送
+  for (const job of jobs) {
+    const stateHash = JSON.stringify(job.state);
+    const previousHash = this.lastKnownStates.get(job.id);
+    if (previousHash !== stateHash) {
+      this.lastKnownStates.set(job.id, stateHash);
+      if (previousHash !== undefined) {
+        const task = mapGatewayJob(job);
+        this.emitStatusUpdate(task.id, task.state);  // → UI
+      }
+    }
+
+    // 4. 检测新运行记录
+    const lastRunAtMs = job.state.lastRunAtMs ?? 0;
+    const previousRunAtMs = this.lastKnownRunAtMs.get(job.id) ?? 0;
+    if (lastRunAtMs > previousRunAtMs && previousRunAtMs > 0) {
+      const runs = await this.listRuns(job.id, 1, 0);
+      if (runs[0]) {
+        const task = mapGatewayJob(job);
+        this.emitRunUpdate({ ...runs[0], taskName: task.name });  // → UI
+      }
+    }
+    this.lastKnownRunAtMs.set(job.id, lastRunAtMs);
+  }
+
+  // 5. 首次轮询发送刷新信号
+  if (!this.firstPollDone) {
+    this.firstPollDone = true;
+    this.emitFullRefresh();
+  }
+}
+```
+
+---
+
+## 8. OpenClaw Cron 调度引擎
+
+OpenClaw Gateway 内置 Cron 调度引擎，负责定时任务的存储、调度触发、会话创建、Agent 执行和结果投递。
+
+### 8.1 Cron Job 数据模型
+
+```typescript
+interface GatewayJob {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  schedule: GatewaySchedule;           // at | every | cron
+  sessionTarget: 'main' | 'isolated';
+  wakeMode: 'now' | 'next-heartbeat';
+  payload: GatewayPayload;            // systemEvent | agentTurn
+  delivery?: GatewayDelivery;         // announce | webhook | none
+  agentId?: string | null;
+  sessionKey?: string | null;
+  deleteAfterRun?: boolean;           // 一次性任务自动删除
+  state: GatewayJobState;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+```
+
+### 8.2 执行路径
+
+| sessionTarget | 执行路径 | 说明 |
+|---------------|---------|------|
+| `main` | 主会话路径 | 将 `systemEvent` 注入主会话时间线，按 `wakeMode` 触发 Agent |
+| `isolated` | 隔离会话路径 | 创建独立会话 `cron:{jobId}`，Agent 在独立上下文执行 |
+
+### 8.3 Announce 投递流程
+
+当隔离任务完成且 `delivery.mode = 'announce'` 时:
+
+1. **Channel 路由**: 根据 `delivery.channel` 选择 Channel Adapter (Telegram/Discord)
+2. **目标解析**: `delivery.to` 指定接收者
+3. **消息分块**: 长消息自动分块适配平台限制
+4. **去重检查**: 跳过已发送的重复消息
+5. **心跳过滤**: 纯心跳响应不投递
+
+### 8.4 重试与错误处理
+
+**瞬态错误（自动重试）**:
+- 速率限制 (429)
+- 网络错误 (timeout, ECONNRESET)
+- 服务器错误 (5xx)
+
+**永久错误（立即禁用）**:
+- 认证失败
+- 配置/验证错误
+
+**重试策略**:
+
+| 任务类型 | 重试次数 | 退避策略 | 失败后行为 |
+|---------|---------|---------|-----------|
+| 一次性 (`at`) | 最多 3 次 | 30s → 1m → 5m | 禁用或删除 |
+| 循环 (`cron`/`every`) | 不限次 | 30s → 1m → 5m → 15m → 60m | 保持启用 |
+
+---
+
+## 9. Engine Prompt
+
+定义 Agent 在不同引擎下如何处理定时任务请求。
+
+定义在 [enginePrompt.ts](src/scheduledTask/enginePrompt.ts):
+
+```typescript
+export function buildScheduledTaskEnginePrompt(engine: CoworkAgentEngine): string {
+  if (engine === 'openclaw') {
+    return [
+      '## Scheduled Tasks',
+      '- Use the native `cron` tool for any scheduled task creation or management request.',
+      '- For scheduled-task creation, call native `cron` with `action: "add"` / `cron.add`.',
+      '- Prefer the active conversation context when the user wants scheduled replies.',
+      '- When `cron.add` includes any channel delivery config, you MUST set `sessionTarget: "isolated"`.',
+      '- For one-time reminders (`schedule.kind: "at"`), send a future ISO timestamp with timezone offset.',
+      '- Do not use wrapper payloads or channel-specific relay formats for reminders.',
+      '- Never emulate reminders with Bash, `sleep`, background jobs, or manual process management.',
+      '',
+      '### Message delivery in scheduled-task sessions',
+      '- When running in a scheduled-task session, do NOT call `message` tool directly.',
+      '- The cron system handles result delivery automatically based on delivery config.',
+      '- Output results as plain text; the cron system will forward if delivery is configured.',
+    ].join('\n');
+  }
+
+  // 非 OpenClaw 引擎提示用户切换
+  return [
+    '## Scheduled Tasks',
+    `- Scheduled tasks are only available in OpenClaw. Switch the agent engine to OpenClaw.`,
+  ].join('\n');
+}
+```
+
+---
+
+## 10. 完整生命周期示例
+
+### 10.1 UI 创建 + Telegram 投递
 
 ```mermaid
 sequenceDiagram
-  participant Cron as Cron Service
-  participant OC as OpenClaw
-  participant Handler as ScheduledTaskHandler
-  participant Engine as Agent Engine
-  participant IM as IM Platform
-  
-  Cron->>OC: 触发任务
-  OC->>Handler: 任务事件
-  Handler->>Handler: 查询 meta（delivery 配置）
-  Handler->>Engine: 启动 Cowork 会话
-  
-  Engine-->>Handler: 执行结果
-  
-  alt IM 推送
-    Handler->>IM: 发送结果
-  end
-  
-  Handler-->>Handler: 更新状态
+    actor User
+    participant UI as TaskForm
+    participant Svc as ScheduledTaskService
+    participant IPC as IPC Handler
+    participant Cron as CronJobService
+    participant GW as OpenClaw Gateway
+    participant TG as Telegram Plugin
+
+    User->>UI: 填写表单<br/>每天 9:00 / announce / telegram
+    UI->>Svc: createTask(input)
+    Svc->>IPC: invoke: scheduledTask:create
+    IPC->>Cron: addJob(input)
+    Cron->>GW: cron.add({ schedule, payload, delivery })
+    GW-->>Cron: GatewayJob
+    Cron-->>IPC: ScheduledTask
+    IPC-->>Svc: { success: true, task }
+    Svc->>UI: dispatch(addTask)
+
+    Note over GW: === 每天 9:00 触发 ===
+    GW->>GW: 创建隔离会话 cron:{jobId}
+    GW->>GW: Agent 执行 payload
+    GW->>TG: announce 投递
+    TG->>TG: Telegram API: sendMessage
+
+    Note over Cron: === 轮询检测 ===
+    Cron->>GW: cron.list (15s)
+    GW-->>Cron: 状态已变更
+    Cron->>UI: statusUpdate
 ```
 
-### 3.3 Session Key 格式
+### 10.2 对话中创建定时提醒
 
-| 类型 | 格式 | 示例 |
-|------|------|------|
-| Cron 任务 | `cron:{taskId}` | `cron:task-001` |
-| Agent 绑定 | `agent:{agentId}:cron:{taskId}` | `agent:bot1:cron:task-001` |
+```mermaid
+sequenceDiagram
+    actor User
+    participant Chat as Cowork Session
+    participant Agent as Agent (OpenClaw)
+    participant GW as Gateway
+    participant Cron as CronJobService
 
-## 4. 任务管理
-
-### 4.1 ScheduledTaskHandler
-
-**文件**：`src/main/ipcHandlers/scheduledTask/handlers.ts`
-
-```typescript
-class ScheduledTaskHandler {
-  // 处理定时任务执行
-  async handleTaskExecution(taskId: string): Promise<void> {
-    // 1. 获取任务元数据
-    const meta = this.getTaskMeta(taskId);
-
-    // 2. 获取任务定义
-    const definition = await this.getTaskDefinition(taskId);
-
-    // 3. 启动 Cowork 会话
-    const sessionKey = this.buildSessionKey(taskId, meta);
-
-    await this.engineRouter.startSession(sessionKey, definition.prompt);
-
-    // 4. 等待执行完成
-    const result = await this.waitForCompletion(sessionKey);
-
-    // 5. 处理推送（规划中：IM 推送）
-    // 待 IM 集成后实现结果推送功能
-  }
-
-  // 获取任务元数据
-  private getTaskMeta(taskId: string): ScheduledTaskMeta {
-    return this.db.get(`
-      SELECT * FROM scheduled_task_meta WHERE task_id = ?
-    `, [taskId]);
-  }
-
-  // 构建 Session Key
-  private buildSessionKey(taskId: string, meta: ScheduledTaskMeta): string {
-    if (meta.agentId) {
-      return `agent:${meta.agentId}:cron:${taskId}`;
-    }
-    return `cron:${taskId}`;
-  }
-}
-```
-
-### 4.2 IPC Handlers
-
-```typescript
-// src/main/ipcHandlers/scheduledTask/handlers.ts
-
-async function handleScheduledTaskList(): Promise<ScheduledTaskDefinition[]> {
-  // 查询 OpenClaw 任务列表
-  const tasks = await openclawClient.cron.list();
-  
-  // 附加元数据
-  for (const task of tasks) {
-    const meta = getTaskMeta(task.id);
-    task.meta = meta;
-  }
-  
-  return tasks;
-}
-
-async function handleScheduledTaskCreate(
-  params: CreateTaskParams
-): Promise<ScheduledTaskDefinition> {
-  // 1. 创建任务定义
-  const task: ScheduledTaskDefinition = {
-    id: uuid(),
-    name: params.name,
-    description: params.description,
-    cron: params.cron,
-    prompt: params.prompt,
-    workingDirectory: params.workingDirectory,
-    agentId: params.agentId,
-    enabled: true,
-  };
-  
-  // 2. 在 OpenClaw 创建任务
-  await openclawClient.cron.add(task);
-  
-  // 3. 存储元数据
-  setTaskMeta(task.id, {
-    origin: OriginKind.GUI,
-    agentId: params.agentId,
-    imDelivery: params.imDelivery,
-  });
-  
-  return task;
-}
-
-async function handleScheduledTaskUpdate(
-  taskId: string,
-  params: UpdateTaskParams
-): Promise<void> {
-  // 更新 OpenClaw 任务
-  await openclawClient.cron.update(taskId, params);
-  
-  // 更新元数据
-  if (params.agentId || params.imDelivery) {
-    updateTaskMeta(taskId, {
-      agentId: params.agentId,
-      imDelivery: params.imDelivery,
-    });
-  }
-}
-
-async function handleScheduledTaskDelete(taskId: string): Promise<void> {
-  // 删除 OpenClaw 任务
-  await openclawClient.cron.remove(taskId);
-  
-  // 删除元数据
-  deleteTaskMeta(taskId);
-}
-```
-
-## 5. 自然语言创建
-
-### 5.1 意图检测
-
-Agent 通过内置工具识别定时任务意图：
-
-```typescript
-// 提取定时任务参数
-interface ExtractedSchedule {
-  kind: ScheduleKind;        // 'at' | 'every'
-  time: string;              // 时间描述
-  interval?: string;         // 间隔描述
-  prompt: string;            // 任务内容
-}
-
-// 示例
-"每天早上 9 点给我推送科技新闻"
-→ {
-  kind: 'every',
-  time: '09:00',
-  interval: 'daily',
-  prompt: '推送科技新闻'
-}
-
-"提醒我 5 分钟后开会"
-→ {
-  kind: 'at',
-  time: '+5min',
-  prompt: '提醒开会'
-}
-```
-
-### 5.2 Cron 表达式生成
-
-```typescript
-// 将自然语言时间转换为 Cron 表达式
-function scheduleToCron(schedule: ExtractedSchedule): string {
-  if (schedule.kind === 'every') {
-    switch (schedule.interval) {
-      case 'daily':
-        return `${schedule.time.split(':')[1]} ${schedule.time.split(':')[0]} * * *`;
-      case 'weekly':
-        // 每周一
-        return `${schedule.time.split(':')[1]} ${schedule.time.split(':')[0]} * * 1`;
-      case 'hourly':
-        return `0 * * * *`;
-      default:
-        // 自定义间隔
-        return parseCustomInterval(schedule.interval);
-    }
-  }
-  
-  if (schedule.kind === 'at') {
-    // 单次任务
-    const targetTime = parseAtTime(schedule.time);
-    return formatOneTimeCron(targetTime);
-  }
-  
-  throw new Error('无法解析时间');
-}
-```
-
-### 5.3 cron.add 工具
-
-Agent 通过 `cron.add` 工具创建任务：
-
-```typescript
-interface CronAddInput {
-  name: string;              // 任务名称
-  cron: string;              // Cron 表达式
-  prompt: string;            // 任务 prompt
-  workingDirectory?: string; // 工作目录
-  timezone?: string;         // 时区
-}
-
-// 工具实现
-async function executeCronAdd(input: CronAddInput): Promise<{ taskId: string }> {
-  const taskId = uuid();
-  
-  // 创建任务
-  await openclawClient.cron.add({
-    id: taskId,
-    name: input.name,
-    cron: input.cron,
-    prompt: input.prompt,
-    workingDirectory: input.workingDirectory || defaultWorkingDir,
-    timezone: input.timezone,
-    enabled: true,
-  });
-  
-  // 存储元数据（标记来源为 conversation）
-  setTaskMeta(taskId, {
-    origin: OriginKind.Conversation,
-    originSessionId: currentSessionId,
-    originMessageId: currentMessageId,
-  });
-  
-  return { taskId };
-}
-```
-
-## 6. IM 推送配置
-
-### 6.1 推送选项
-
-任务执行结果可推送到 IM：
-
-```typescript
-interface IMDeliveryConfig {
-  platform: IMPlatform;      // IM 平台
-  conversationId: string;    // IM 会话 ID
-  format?: 'full' | 'summary'; // 推送格式
-}
-```
-
-### 6.2 后台投递
-
-定时任务通常没有活跃的 Accumulator，使用后台投递机制：
-
-```typescript
-// 确保后台 Accumulator
-function ensureBackgroundAccumulator(
-  sessionId: string,
-  platform: IMPlatform,
-  conversationId: string
-): MessageAccumulator {
-  const accumulator: MessageAccumulator = {
-    messages: [],
-    resolve: (text) => {
-      // 后台投递，不等待
-      sendAsyncReply(platform, conversationId, text);
-    },
-    reject: (error) => {
-      sendAsyncReply(platform, conversationId, `[执行失败: ${error.message}]`);
-    },
-    timeoutId: setTimeout(() => {
-      // 超时处理
-      const partial = formatPartialReply(accumulator.messages);
-      sendAsyncReply(platform, conversationId, partial);
-    }, ACCUMULATOR_TIMEOUT_MS),
-    backgroundDelivery: {
-      conversationId,
-      platform,
-    },
-  };
-  
-  return accumulator;
-}
-```
-
-### 6.3 提醒守卫
-
-`imReplyGuard.ts` 确保提醒内容准确：
-
-```typescript
-// 检测提醒相关的 misleading 响应
-function checkReminderGuard(response: string, toolCalls: ToolCall[]): string {
-  // 检测模式
-  const reminderPatterns = [
-    '我会提醒你',
-    '已创建定时任务',
-    '已设置提醒',
-    'I will remind you',
-    'Reminder created',
-  ];
-  
-  const hasReminderPattern = reminderPatterns.some(p => 
-    response.toLowerCase().includes(p.toLowerCase())
-  );
-  
-  // 检查是否有失败的 cron.add 调用
-  const failedCronAdds = toolCalls.filter(
-    tc => tc.name === 'cron.add' && tc.status === 'failed'
-  );
-  
-  if (hasReminderPattern && failedCronAdds.length > 0) {
-    // 替换为正确信息
-    return `抱歉，定时任务创建失败：${failedCronAdds[0].error}。请稍后重试。`;
-  }
-  
-  return response;
-}
-```
-
-## 7. GUI 管理
-
-### 7.1 Scheduled Tasks 面板
-
-**文件**：`src/renderer/components/scheduledTasks/ScheduledTaskPanel.tsx`
-
-```typescript
-function ScheduledTaskPanel() {
-  const [tasks, setTasks] = useState<ScheduledTask[]>([]);
-  
-  useEffect(() => {
-    loadTasks();
-  }, []);
-  
-  const loadTasks = async () => {
-    const taskList = await window.electron.scheduledTask.list();
-    setTasks(taskList);
-  };
-  
-  const createTask = async (params: CreateTaskParams) => {
-    await window.electron.scheduledTask.create(params);
-    loadTasks();
-  };
-  
-  const deleteTask = async (taskId: string) => {
-    await window.electron.scheduledTask.delete(taskId);
-    loadTasks();
-  };
-  
-  const toggleTask = async (taskId: string, enabled: boolean) => {
-    await window.electron.scheduledTask.update(taskId, { enabled });
-    loadTasks();
-  };
-  
-  return (
-    <div className="scheduled-task-panel">
-      <div className="task-list">
-        {tasks.map(task => (
-          <div key={task.id} className="task-entry">
-            <span className="task-name">{task.name}</span>
-            <span className="task-cron">{cronstrue.toString(task.cron)}</span>
-            <Toggle
-              checked={task.enabled}
-              onChange={(checked) => toggleTask(task.id, checked)}
-            />
-            <button onClick={() => deleteTask(task.id)}>删除</button>
-          </div>
-        ))}
-      </div>
-      
-      <button onClick={() => setShowCreateModal(true)}>创建任务</button>
-      
-      {showCreateModal && (
-        <CreateTaskModal
-          onCreate={createTask}
-          onClose={() => setShowCreateModal(false)}
-        />
-      )}
-    </div>
-  );
-}
-```
-
-### 7.2 创建任务 Modal
-
-```typescript
-function CreateTaskModal({ onCreate, onClose }: Props) {
-  const [name, setName] = useState('');
-  const [cron, setCron] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const [imDelivery, setImDelivery] = useState<IMDeliveryConfig | null>(null);
-  
-  const handleSubmit = () => {
-    onCreate({
-      name,
-      cron,
-      prompt,
-      workingDirectory: coworkConfig.workingDirectory,
-      imDelivery,
-    });
-    onClose();
-  };
-  
-  return (
-    <Modal>
-      <input
-        placeholder="任务名称"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-      />
-      
-      <input
-        placeholder="Cron 表达式（如 0 9 * * *）"
-        value={cron}
-        onChange={(e) => setCron(e.target.value)}
-      />
-      
-      <p className="cron-human">
-        {cronstrue.toString(cron)}
-      </p>
-      
-      <textarea
-        placeholder="任务内容（Agent 执行的 prompt）"
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-      />
-      
-      <IMDeliverySelector
-        value={imDelivery}
-        onChange={setImDelivery}
-      />
-      
-      <button onClick={handleSubmit}>创建</button>
-      <button onClick={onClose}>取消</button>
-    </Modal>
-  );
-}
-```
-
-## 8. Cron 服务管理
-
-### 8.1 CronJobServiceManager
-
-**文件**：`src/main/ipcHandlers/scheduledTask/cronJobServiceManager.ts`
-
-```typescript
-class CronJobServiceManager {
-  private cronService: CronService | null;
-  
-  // 启动 Cron 服务
-  async start(): Promise<void> {
-    if (this.cronService) return;
+    User->>Chat: "明天上午9点提醒我查收邮件"
+    Chat->>Agent: 用户消息
+    Agent->>Agent: 解析意图
+    Agent->>GW: cron.add({ schedule: 'at', payload: '提醒：查收邮件' })
+    GW-->>Agent: { id, name }
+    Agent->>Chat: "好的，已设置好提醒！明天 09:00 会提醒你..."
     
-    this.cronService = new CronService();
-    
-    // 注册任务执行回调
-    this.cronService.on('task.triggered', (taskId) => {
-      this.handleTaskTrigger(taskId);
-    });
-    
-    await this.cronService.start();
-  }
-  
-  // 停止 Cron 服务
-  async stop(): Promise<void> {
-    if (this.cronService) {
-      await this.cronService.stop();
-      this.cronService = null;
-    }
-  }
-  
-  // 处理任务触发
-  private async handleTaskTrigger(taskId: string): Promise<void> {
-    console.log(`[Cron] Task triggered: ${taskId}`);
-    
-    const handler = new ImScheduledTaskHandler();
-    await handler.handleTaskExecution(taskId);
-  }
-}
+    Note over GW: === 次日 9:00 触发 ===
+    GW->>GW: 创建隔离会话 + 执行
+    GW->>User: 投递提醒消息
 ```
 
-## 9. 关键文件清单
+---
+
+## 11. 关键文件清单
 
 | 文件 | 职责 |
 |------|------|
-| `src/scheduledTask/constants.ts` | 任务常量定义 |
-| `src/scheduledTask/enginePrompt.ts` | Agent prompt 模板 |
-| `src/main/im/imScheduledTaskHandler.ts` | 任务执行处理 |
-| `src/main/ipcHandlers/scheduledTask/handlers.ts` | IPC handlers |
-| `src/main/ipcHandlers/scheduledTask/cronJobServiceManager.ts` | Cron 服务管理 |
-| `src/main/ipcHandlers/scheduledTask/helpers.ts` | 辅助函数 |
-| `src/renderer/components/scheduledTasks/ScheduledTaskPanel.tsx` | GUI 面板 |
-| `src/renderer/components/scheduledTasks/CreateTaskModal.tsx` | 创建 Modal |
+| [src/scheduledTask/constants.ts](src/scheduledTask/constants.ts) | 常量定义 (ScheduleKind, PayloadKind, DeliveryMode, IPC 通道等) |
+| [src/scheduledTask/types.ts](src/scheduledTask/types.ts) | 核心类型定义 (ScheduledTask, Schedule, Payload, Delivery, TaskState) |
+| [src/scheduledTask/origin.ts](src/scheduledTask/origin.ts) | 来源与绑定推断 (TaskOrigin, ExecutionBinding, inferOriginAndBinding) |
+| [src/scheduledTask/modelMapper.ts](src/scheduledTask/modelMapper.ts) | Wire ↔ Domain 模型转换 |
+| [src/scheduledTask/cronJobService.ts](src/scheduledTask/cronJobService.ts) | Gateway 适配器 (RPC 封装 + 轮询) |
+| [src/scheduledTask/enginePrompt.ts](src/scheduledTask/enginePrompt.ts) | Agent 行为提示词 |
+| [src/scheduledTask/policies/types.ts](src/scheduledTask/policies/types.ts) | TaskPolicy 接口定义 |
+| [src/scheduledTask/policies/manualPolicy.ts](src/scheduledTask/policies/manualPolicy.ts) | UI 手动创建策略 |
+| [src/scheduledTask/policies/imPolicy.ts](src/scheduledTask/policies/imPolicy.ts) | IM 创建策略 |
+| [src/scheduledTask/policies/coworkPolicy.ts](src/scheduledTask/policies/coworkPolicy.ts) | Cowork 创建策略 |
+| [src/scheduledTask/policies/legacyPolicy.ts](src/scheduledTask/policies/legacyPolicy.ts) | 旧版任务兼容策略 |
+| [src/scheduledTask/policies/registry.ts](src/scheduledTask/policies/registry.ts) | 策略注册表 |
+| [src/main/ipcHandlers/scheduledTask/handlers.ts](src/main/ipcHandlers/scheduledTask/handlers.ts) | IPC Handler 实现 |
+| [src/main/ipcHandlers/scheduledTask/helpers.ts](src/main/ipcHandlers/scheduledTask/helpers.ts) | 辅助函数 (通道列表) |
+| [src/renderer/services/scheduledTask.ts](src/renderer/services/scheduledTask.ts) | Renderer IPC 封装 |
+| [src/renderer/components/scheduledTasks/](src/renderer/components/scheduledTasks/) | UI 组件 (TaskForm, TaskList, TaskDetail) |
+
+---
+
+## 12. 设计决策总结
+
+| 决策 | 理由 |
+|------|------|
+| 策略模式区分任务来源 | 不同来源的默认参数、绑定关系、只读字段各不相同，策略模式避免了大量 if-else |
+| 来源推断而非存储 | 通过 sessionKey 格式反推来源，无需修改 OpenClaw 数据模型即可兼容旧数据 |
+| 15 秒轮询而非 WebSocket | OpenClaw Gateway 不暴露实时事件流，轮询是简单可靠的状态同步方式 |
+| `isolated` + `announce` 作为 IM 投递标准模式 | 隔离会话避免污染主聊天记录，announce 模式让 OpenClaw 原生处理消息投递 |

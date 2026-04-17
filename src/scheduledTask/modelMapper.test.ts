@@ -44,7 +44,7 @@ test('mapper.fromWire: preserves all wire fields', () => {
     description: 'Test desc',
     schedule: { kind: ScheduleKind.Cron, expr: '*/5 * * * *' },
     payload: { kind: PayloadKind.AgentTurn, message: 'work', timeoutSeconds: 120 },
-    delivery: { mode: DeliveryMode.Announce, channel: 'feishu' },
+    delivery: { mode: DeliveryMode.Announce, channel: 'telegram' },
   });
   const model = mapper.fromWire(wire, {
     origin: { kind: OriginKind.Manual },
@@ -53,7 +53,7 @@ test('mapper.fromWire: preserves all wire fields', () => {
   expect(model.name).toBe('My Task');
   expect(model.description).toBe('Test desc');
   expect(model.schedule).toEqual({ kind: ScheduleKind.Cron, expr: '*/5 * * * *' });
-  expect(model.delivery.channel).toBe('feishu');
+  expect(model.delivery.channel).toBe('telegram');
 });
 
 test('mapper.toWireInput: new_session binding -> sessionKey null', () => {

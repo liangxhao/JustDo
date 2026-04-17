@@ -72,8 +72,8 @@ test('channel sync does not treat managed local session keys as channel sessions
 test('channel sync still recognizes real channel session keys', () => {
   const sync = createSync();
 
-  assert.deepEqual(parseChannelSessionKey('agent:main:feishu:dm:ou_123'), {
-    platform: 'feishu',
+  assert.deepEqual(parseChannelSessionKey('agent:main:telegram:dm:ou_123'), {
+    platform: 'telegram',
     conversationId: 'dm:ou_123',
   });
   assert.equal(sync.isChannelSessionKey('agent:main:main'), true);

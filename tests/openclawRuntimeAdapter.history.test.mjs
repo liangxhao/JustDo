@@ -84,7 +84,7 @@ test('syncFullChannelHistory seeds gateway history cursor so old reminders are n
     request: async () => ({ messages: historyMessages }),
   };
 
-  await adapter.syncFullChannelHistory(session.id, 'dingtalk-connector:acct:user');
+  await adapter.syncFullChannelHistory(session.id, 'telegram:acct:user');
 
   assert.equal(adapter.gatewayHistoryCountBySession.get(session.id), historyMessages.length);
 
@@ -115,7 +115,7 @@ test('prefetchChannelUserMessages also consumes existing reminder history backlo
     request: async () => ({ messages: historyMessages }),
   };
 
-  await adapter.prefetchChannelUserMessages(session.id, 'dingtalk-connector:acct:user');
+  await adapter.prefetchChannelUserMessages(session.id, 'telegram:acct:user');
 
   assert.equal(adapter.gatewayHistoryCountBySession.get(session.id), historyMessages.length);
   assert.equal(session.messages.filter((message) => message.type === 'user').length, 2);
@@ -132,11 +132,11 @@ test('getSessionKeysForSession prefers channel keys before managed fallback', ()
   const { store } = createStore([]);
   const adapter = new OpenClawRuntimeAdapter(store, {});
 
-  adapter.rememberSessionKey('session-1', 'agent:main:openai-user:dingtalk-connector:__default__:2459325231940374');
+  adapter.rememberSessionKey('session-1', 'agent:main:openai-user:telegram:__default__:2459325231940374');
   adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
 
   assert.deepEqual(adapter.getSessionKeysForSession('session-1'), [
-    'agent:main:openai-user:dingtalk-connector:__default__:2459325231940374',
+    'agent:main:openai-user:telegram:__default__:2459325231940374',
     'agent:main:gucciai:session-1',
   ]);
 });
