@@ -2113,6 +2113,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       typeof agentPayload.sessionKey === 'string' ? agentPayload.sessionKey.trim() : '';
     const stream = typeof agentPayload.stream === 'string' ? agentPayload.stream : '';
 
+    // Extract phase from lifecycle events to check for end states
+    const data = isRecord(agentPayload.data) ? agentPayload.data : {};
+    const phase = typeof data.phase === 'string' ? data.phase.trim() : '';
+    const isLifecycleEnd =
+      stream === 'lifecycle' &&
+      (phase === 'end' || phase === 'fallback' || phase === 'completed' || phase === 'stopped');
+
     const sessionIdByRunId = runId ? this.sessionIdByRunId.get(runId) : undefined;
     const sessionIdBySessionKey = sessionKey
       ? (this.resolveSessionIdBySessionKey(sessionKey) ?? undefined)
@@ -2120,9 +2127,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     let sessionId = sessionIdByRunId ?? sessionIdBySessionKey;
 
     // Re-create ActiveTurn for channel session follow-up turns.
-    // Exclude stream=error events (e.g. seq gap notifications) — they are diagnostic alerts,
-    // not new run events, and must not create a ghost ActiveTurn that blocks the next user turn.
-    if (sessionId && !this.activeTurns.has(sessionId) && sessionKey && stream !== 'error') {
+    // Exclude:
+    // - stream=error events (seq gap notifications) — diagnostic alerts, not new runs
+    // - lifecycle end events (phase=end/fallback/completed/stopped) — turn already cleaned up
+    if (
+      sessionId &&
+      !this.activeTurns.has(sessionId) &&
+      sessionKey &&
+      stream !== 'error' &&
+      !isLifecycleEnd
+    ) {
       console.log(
         '[Debug:handleAgentEvent] re-creating ActiveTurn for follow-up turn, sessionId:',
         sessionId,

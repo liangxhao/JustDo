@@ -379,7 +379,7 @@ export const getProviderDisplayName = (
 /**
  * 内置 provider 名称列表（禁止作为 displayName 使用）
  */
-const BUILTIN_PROVIDER_NAMES = ['ollama', 'openai', 'anthropic', 'qwen', 'deepseek', 'gemini', 'minimax'];
+const BUILTIN_PROVIDER_NAMES = ['ollama'];
 
 /**
  * displayName 校验正则（允许字母、数字、下划线、中划线、空格）
@@ -398,7 +398,7 @@ export const validateDisplayName = (name: string): { valid: boolean; error?: str
   const trimmed = name.trim();
   if (!trimmed) return { valid: true }; // 空 name 允许，回退到 custom_0
   if (!VALID_DISPLAY_NAME_REGEX.test(trimmed)) {
-    return { valid: false, error: 'Must start with letter, only letters/numbers/_/-/space allowed' };
+return { valid: false, error: 'Must start with letter, only letters/numbers/_/-/space allowed' };
   }
   if (BUILTIN_PROVIDER_NAMES.includes(trimmed.toLowerCase())) {
     return { valid: false, error: 'Cannot use built-in provider name' };

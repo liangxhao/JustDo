@@ -24,7 +24,8 @@ type ProviderConfig = {
   apiFormat?: 'anthropic' | 'openai' | 'native';
   codingPlanEnabled?: boolean;
   models?: ProviderModel[];
-  displayName?: string; // 新增：用于 OpenClaw providerId
+<<<<<<< HEAD
+  displayName?: string; // 用于 OpenClaw providerId
 };
 
 type AppConfig = {
@@ -562,6 +563,29 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
       models,
       displayName,
     });
+  }
+
+  return result;
+}
+
+/**
+ * 获取所有 custom provider 的 displayName 映射
+ * 用于 openclaw.json 中将 custom_0 等转换为用户设置的显示名称
+ */
+export function getProviderDisplayNameMap(): Record<string, string> {
+  const result: Record<string, string> = {};
+  const sqliteStore = getStore();
+  if (!sqliteStore) return result;
+  const appConfig = sqliteStore.get<AppConfig>('app_config');
+  if (!appConfig?.providers) return result;
+
+  for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
+    // 只处理 custom_* provider
+    if (!providerName.startsWith('custom_')) continue;
+    const displayName = providerConfig.displayName?.trim();
+    if (displayName) {
+      result[providerName] = displayName;
+    }
   }
 
   return result;
