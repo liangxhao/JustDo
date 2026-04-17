@@ -1,4 +1,6 @@
 import { OpenClawProviderId, ProviderRegistry } from '@shared/providers/constants';
+import { isCustomProvider, getProviderDisplayName } from '../config';
+import { configService } from '../services/config';
 
 import type { Model } from '../store/slices/modelSlice';
 
@@ -10,7 +12,17 @@ export function toOpenClawModelRef(
     return `${OpenClawProviderId.GucciAI}/${model.id}`;
   }
 
-  return `${ProviderRegistry.getOpenClawProviderId(model.providerKey ?? '')}/${model.id}`;
+  const providerKey = model.providerKey ?? '';
+
+  // For custom providers, use displayName from config instead of custom_*
+  if (isCustomProvider(providerKey)) {
+    const appConfig = configService.getConfig();
+    const providerConfig = appConfig.providers?.[providerKey];
+    const displayName = getProviderDisplayName(providerKey, providerConfig as Record<string, unknown>);
+    return `${displayName}/${model.id}`;
+  }
+
+  return `${ProviderRegistry.getOpenClawProviderId(providerKey)}/${model.id}`;
 }
 
 export function matchesOpenClawModelRef(

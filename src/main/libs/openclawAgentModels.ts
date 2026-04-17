@@ -3,6 +3,7 @@ import type { Agent } from '../coworkStore';
 type BuildManagedAgentEntriesInput = {
   agents: Agent[];
   fallbackPrimaryModel: string;
+  displayNameMap?: Record<string, string>;
 };
 
 type ProviderModelCatalog = Record<string, { models: Array<{ id: string }> }>;
@@ -150,9 +151,22 @@ export function resolveQualifiedAgentModelRef(options: {
 export function buildAgentEntry(
   agent: Agent,
   fallbackPrimaryModel: string,
+  displayNameMap?: Record<string, string>,
 ): Record<string, unknown> {
-  const primaryModel =
-    parsePrimaryModelRef(agent.model.trim())?.primaryModel || fallbackPrimaryModel;
+  let primaryModel = parsePrimaryModelRef(agent.model.trim())?.primaryModel || fallbackPrimaryModel;
+
+  // If agent.model uses custom_* provider format, replace with displayName
+  if (displayNameMap && primaryModel.startsWith('custom_')) {
+    const slashIndex = primaryModel.indexOf('/');
+    if (slashIndex > 0) {
+      const providerName = primaryModel.slice(0, slashIndex);
+      const modelId = primaryModel.slice(slashIndex + 1);
+      const displayName = displayNameMap[providerName];
+      if (displayName) {
+        primaryModel = `${displayName}/${modelId}`;
+      }
+    }
+  }
 
   return {
     id: agent.id,
@@ -177,8 +191,9 @@ export function buildAgentEntry(
 export function buildManagedAgentEntries({
   agents,
   fallbackPrimaryModel,
+  displayNameMap,
 }: BuildManagedAgentEntriesInput): Array<Record<string, unknown>> {
   return agents
     .filter(agent => agent.id !== 'main' && agent.enabled)
-    .map(agent => buildAgentEntry(agent, fallbackPrimaryModel));
+    .map(agent => buildAgentEntry(agent, fallbackPrimaryModel, displayNameMap));
 }

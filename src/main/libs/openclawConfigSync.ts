@@ -10,6 +10,7 @@ import {
 } from '../../shared/providers';
 import type { Agent, CoworkConfig, CoworkExecutionMode } from '../coworkStore';
 import {
+  getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
@@ -458,12 +459,14 @@ export const buildProviderSelection = (options: {
   codingPlanEnabled?: boolean;
   supportsImage?: boolean;
   modelName?: string;
-  displayName?: string; // 新增：用于 OpenClaw 配置中的 providerId（仅对 custom provider 有效）
+<<<<<<< HEAD
+  displayName?: string; // 用于 OpenClaw 配置中的 providerId（仅对 custom provider 有效）
 }): OpenClawProviderSelection => {
   const providerName = options.providerName ?? '';
   const displayName = options.displayName?.trim();
   const descriptor = resolveDescriptor(providerName, !!options.codingPlanEnabled);
 
+<<<<<<< HEAD
   // 对于 custom provider，如果提供了 displayName，使用它作为 providerId
   const isCustomProvider = providerName.startsWith('custom_');
   const effectiveProviderId = isCustomProvider && displayName ? displayName : descriptor.providerId;
@@ -480,6 +483,7 @@ export const buildProviderSelection = (options: {
   if (api === 'openai-completions' && options.apiType === 'anthropic' && isDashScopeUrl(baseUrl)) {
     baseUrl = rewriteDashScopeAnthropicToOpenAI(baseUrl);
   }
+  // apiKey placeholder still uses original providerName for env var consistency
   const apiKey = descriptor.resolveApiKey
     ? descriptor.resolveApiKey({ apiKey: options.apiKey, providerName })
     : `\${${providerApiKeyEnvVar(providerName)}}`;
@@ -504,7 +508,7 @@ export const buildProviderSelection = (options: {
       baseUrl,
       api,
       apiKey,
-      auth: 'api-key',
+      auth: 'api-key' as const,
       models: [
         {
           id: sessionModelId,
@@ -611,6 +615,7 @@ export class OpenClawConfigSync {
     let allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> = {};
     let primaryModel = '';
     let providerSelection: OpenClawProviderSelection | null = null;
+    const displayNameMap = getProviderDisplayNameMap();
 
     if (apiResolution.config) {
       const { baseURL, apiKey, model, apiType } = apiResolution.config;
@@ -624,15 +629,17 @@ export class OpenClawConfigSync {
         };
       }
 
+      const providerName = apiResolution.providerMetadata?.providerName ?? '';
       providerSelection = buildProviderSelection({
         apiKey,
         baseURL,
         modelId,
         apiType,
-        providerName: apiResolution.providerMetadata?.providerName,
+        providerName,
         codingPlanEnabled: apiResolution.providerMetadata?.codingPlanEnabled,
         supportsImage: apiResolution.providerMetadata?.supportsImage,
         modelName: apiResolution.providerMetadata?.modelName,
+<<<<<<< HEAD
         displayName: apiResolution.providerMetadata?.displayName, // 传递 displayName
       });
       primaryModel = providerSelection.primaryModel;
@@ -648,6 +655,7 @@ export class OpenClawConfigSync {
             codingPlanEnabled: p.codingPlanEnabled,
             supportsImage: m.supportsImage,
             modelName: m.name,
+<<<<<<< HEAD
             displayName: p.displayName, // 传递 displayName
           });
           if (!allProvidersMap[sel.providerId]) {
@@ -955,6 +963,19 @@ export class OpenClawConfigSync {
     selection: OpenClawProviderSelection,
     availableProviders: Record<string, OpenClawProviderSelection['providerConfig']>,
   ): boolean {
+    const displayNameMap = getProviderDisplayNameMap();
+
+    // Helper to replace custom_* provider references in agentModel with displayName
+    const replaceCustomProviderRef = (modelRef: string): string => {
+      const parsed = parsePrimaryModelRef(modelRef);
+      if (!parsed) return modelRef;
+      const displayName = displayNameMap[parsed.providerId];
+      if (displayName) {
+        return `${displayName}/${parsed.modelId}`;
+      }
+      return modelRef;
+    };
+
     const shouldMigrateManagedModelRefs = !(
       selection.providerId === 'gucciai' && selection.sessionModelId === selection.legacyModelId
     );
@@ -963,6 +984,7 @@ export class OpenClawConfigSync {
       modelId: selection.sessionModelId,
       primaryModel: selection.primaryModel,
     };
+
     const configuredAgents = this.getAgents?.() ?? [];
     const agentById = new Map(configuredAgents.map(agent => [agent.id, agent]));
     if (!agentById.has('main')) {
@@ -1041,9 +1063,13 @@ export class OpenClawConfigSync {
           continue;
         }
 
+        // Replace custom_* in agentModel with displayName before resolving
+        const rawAgentModel =
+          qualification.status === 'qualified' ? qualification.primaryModel : agent.model;
+        const effectiveAgentModel = replaceCustomProviderRef(rawAgentModel);
+
         const target = resolveManagedSessionModelTarget({
-          agentModel:
-            qualification.status === 'qualified' ? qualification.primaryModel : agent.model,
+          agentModel: effectiveAgentModel,
           fallbackPrimaryModel: fallbackTarget.primaryModel,
           availableProviders,
           currentProviderId: entryProvider,
@@ -1236,10 +1262,11 @@ export class OpenClawConfigSync {
   private buildAgentsList(defaultPrimaryModel: string): { list?: Array<Record<string, unknown>> } {
     const agents = this.getAgents?.() ?? [];
     const mainAgent = agents.find(agent => agent.id === 'main');
+    const displayNameMap = getProviderDisplayNameMap();
 
     const list: Array<Record<string, unknown>> = [
       mainAgent
-        ? buildAgentEntry(mainAgent, defaultPrimaryModel)
+        ? buildAgentEntry(mainAgent, defaultPrimaryModel, displayNameMap)
         : {
             id: 'main',
             default: true,
@@ -1252,6 +1279,7 @@ export class OpenClawConfigSync {
       ...buildManagedAgentEntries({
         agents,
         fallbackPrimaryModel: defaultPrimaryModel,
+        displayNameMap,
       }),
     ];
 
