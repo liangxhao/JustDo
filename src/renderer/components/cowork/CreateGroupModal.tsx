@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { CreateGroupInput } from '../../types/cowork';
 import { GROUP_COLORS } from '../../types/cowork';
 import Modal from '../common/Modal';
@@ -8,20 +8,37 @@ interface CreateGroupModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreate: (input: CreateGroupInput) => void;
+  existingColors?: string[];
 }
 
-const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose, onCreate }) => {
+const getDefaultColor = (existingColors?: string[]): string => {
+  const usedSet = new Set(existingColors?.map(c => c.toLowerCase()));
+  for (const color of GROUP_COLORS) {
+    if (!usedSet.has(color.toLowerCase())) {
+      return color;
+    }
+  }
+  return GROUP_COLORS[0];
+};
+
+const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
+  isOpen,
+  onClose,
+  onCreate,
+  existingColors,
+}) => {
+  const defaultColor = useMemo(() => getDefaultColor(existingColors), []);
   const [name, setName] = useState('');
-  const [color, setColor] = useState(GROUP_COLORS[5]); // default indigo
+  const [color, setColor] = useState(defaultColor);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (isOpen && inputRef.current) {
-      inputRef.current.focus();
+    if (isOpen) {
+      inputRef.current?.focus();
       setName('');
-      setColor(GROUP_COLORS[5]);
+      setColor(getDefaultColor(existingColors));
     }
-  }, [isOpen]);
+  }, [isOpen, existingColors]);
 
   const handleCreate = () => {
     if (name.trim()) {

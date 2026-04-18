@@ -33,7 +33,7 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
   const filteredSessions = useMemo(() => {
     const trimmedQuery = searchQuery.trim().toLowerCase();
     if (!trimmedQuery) return sessions;
-    return sessions.filter((session) => session.title.toLowerCase().includes(trimmedQuery));
+    return sessions.filter(session => session.title.toLowerCase().includes(trimmedQuery));
   }, [sessions, searchQuery]);
 
   useEffect(() => {
@@ -71,18 +71,14 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
       overlayClassName="fixed inset-0 z-50 flex items-start justify-center modal-backdrop p-6"
       className="modal-content w-full max-w-2xl mt-10 rounded-2xl border border-border bg-surface shadow-modal overflow-hidden"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={i18nService.t('search')}
-      >
+      <div role="dialog" aria-modal="true" aria-label={i18nService.t('search')}>
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
           <div className="relative flex-1">
             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
             <input
               ref={searchInputRef}
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={event => setSearchQuery(event.target.value)}
               placeholder={i18nService.t('searchConversations')}
               className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
             />

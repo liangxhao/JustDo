@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useDroppable } from '@dnd-kit/core';
+import { useDraggable, useDroppable } from '@dnd-kit/core';
 import type { SessionGroup } from '../../types/cowork';
+import { GROUP_COLORS } from '../../types/cowork';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import Modal from '../common/Modal';
@@ -16,8 +17,6 @@ interface SessionGroupHeaderProps {
   onMoveUp?: () => void;
   onMoveDown?: () => void;
 }
-
-const GROUP_COLORS = ['#ef4444', '#f97316', '#22c55e', '#3b82f6', '#8b5cf6', '#6366f1'];
 
 const ChevronIcon: React.FC<React.SVGProps<SVGSVGElement> & { direction: 'up' | 'down' }> = ({
   direction,
@@ -55,9 +54,18 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
-  // Droppable setup - allows dropping sessions onto this group header
+  // Droppable + Draggable setup — sessions can drop onto this group, and groups can reorder by drag
   const { setNodeRef, isOver } = useDroppable({
     id: `group-${group.id}`,
+    data: { group },
+  });
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: `group-drag-${group.id}`,
     data: { group },
   });
 
@@ -148,11 +156,16 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
   return (
     <>
       <div
-        ref={setNodeRef}
-        className={`session-group-header ${menuPosition ? 'has-menu' : ''} ${isOver ? 'drop-target' : ''}`}
+        ref={node => {
+          setNodeRef(node);
+          setDragRef(node);
+        }}
+        {...attributes}
+        {...listeners}
+        className={`session-group-header ${menuPosition ? 'has-menu' : ''} ${isOver ? 'drop-target' : ''} ${isDragging ? 'opacity-50' : ''}`}
         onClick={onToggleExpand}
         onContextMenu={openMenu}
-        style={{ cursor: 'pointer' }}
+        style={{ cursor: 'grab' }}
       >
         <div className="group-indicator" style={{ backgroundColor: group.color }} />
         {isRenaming ? (
@@ -189,14 +202,20 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
             zIndex: 1000,
           }}
         >
-          <div className="menu-item" onClick={() => setIsRenaming(true)}>
+          <div
+            className="menu-item"
+            onClick={() => {
+              setShowColorPicker(false);
+              setIsRenaming(true);
+            }}
+          >
             {i18nService.t('rename')}
           </div>
-          <div className="menu-item" onClick={() => setShowColorPicker(true)}>
+          <div className="menu-item" onClick={() => setShowColorPicker(prev => !prev)}>
             {i18nService.t('changeColor')}
           </div>
           {showColorPicker && (
-            <div className="color-picker">
+            <div className="color-picker-row px-3">
               {GROUP_COLORS.map(color => (
                 <div
                   key={color}
@@ -211,6 +230,7 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
             <div
               className="menu-item"
               onClick={() => {
+                setShowColorPicker(false);
                 onMoveUp();
                 setMenuPosition(null);
               }}
@@ -222,6 +242,7 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
             <div
               className="menu-item"
               onClick={() => {
+                setShowColorPicker(false);
                 onMoveDown();
                 setMenuPosition(null);
               }}
@@ -229,7 +250,13 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
               {i18nService.t('moveDown')}
             </div>
           )}
-          <div className="menu-item danger" onClick={() => setShowDeleteModal(true)}>
+          <div
+            className="menu-item danger"
+            onClick={() => {
+              setShowColorPicker(false);
+              setShowDeleteModal(true);
+            }}
+          >
             {i18nService.t('delete')}
           </div>
         </div>

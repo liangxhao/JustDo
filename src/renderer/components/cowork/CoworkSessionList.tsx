@@ -46,6 +46,54 @@ interface SubTaskInfo {
   sessionKey?: string;
 }
 
+/** Subagent list for a given session — reusable across grouped and ungrouped areas */
+interface SubAgentListProps {
+  sessionId: string;
+  currentSessionId: string | null;
+  enrichedSubTasks: SubTaskInfo[];
+  setActiveSubTask: React.Dispatch<
+    React.SetStateAction<{ agentId: string; parentSessionId: string } | null>
+  >;
+}
+
+const SubAgentList: React.FC<SubAgentListProps> = ({
+  sessionId,
+  currentSessionId,
+  enrichedSubTasks,
+  setActiveSubTask,
+}) => {
+  if (sessionId !== currentSessionId || enrichedSubTasks.length === 0) return null;
+
+  return (
+    <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
+      {enrichedSubTasks.map(sub => (
+        <div
+          key={sub.agentId}
+          onClick={() => setActiveSubTask({ agentId: sub.agentId, parentSessionId: sessionId })}
+          className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+              sub.status === 'done' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'
+            }`}
+          />
+          <span className="font-medium dark:text-claude-darkText text-claude-text truncate">
+            {sub.agentId}
+          </span>
+          {sub.task && (
+            <span
+              className="dark:text-claude-darkTextSecondary text-claude-textSecondary truncate flex-1"
+              title={sub.task}
+            >
+              {sub.task}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
   unreadSessionIdSet: Set<string>;
@@ -111,48 +159,12 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
                 onMoveToGroup(session.id, groupId);
               }}
             />
-            {/* Subtasks */}
-            {session.id === currentSessionId && enrichedSubTasks.length > 0 && (
-              <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
-                {enrichedSubTasks.map(sub => (
-                  <div
-                    key={sub.agentId}
-                    onClick={() =>
-                      setActiveSubTask({ agentId: sub.agentId, parentSessionId: session.id })
-                    }
-                    className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                        sub.status === 'done' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'
-                      }`}
-                    />
-                    <span className="font-medium dark:text-claude-darkText text-claude-text truncate">
-                      {sub.agentId}
-                    </span>
-                    {sub.task && (
-                      <span
-                        className="dark:text-claude-darkTextSecondary text-claude-textSecondary truncate flex-1"
-                        title={sub.task}
-                      >
-                        {sub.task}
-                      </span>
-                    )}
-                    <span
-                      className={`text-[10px] flex-shrink-0 ${
-                        sub.status === 'done'
-                          ? 'text-green-600 dark:text-green-400'
-                          : 'text-blue-600 dark:text-blue-400'
-                      }`}
-                    >
-                      {sub.status === 'done'
-                        ? i18nService.t('orchLogDone') || 'Completed'
-                        : i18nService.t('orchLogSpawning') || 'Running...'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+            <SubAgentList
+              sessionId={session.id}
+              currentSessionId={currentSessionId}
+              enrichedSubTasks={enrichedSubTasks}
+              setActiveSubTask={setActiveSubTask}
+            />
           </React.Fragment>
         ))}
         {unGroupedSessions.length === 0 && (
@@ -207,9 +219,14 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   );
 
   const handleDragStart = (event: DragStartEvent) => {
-    const sessionId = event.active.id as string;
-    const session = sessions.find(s => s.id === sessionId);
-    setActiveSession(session || null);
+    const activeId = event.active.id as string;
+    // Only show drag overlay for sessions, not groups
+    if (!activeId.startsWith('group-drag-')) {
+      const session = sessions.find(s => s.id === activeId);
+      setActiveSession(session || null);
+    } else {
+      setActiveSession(null);
+    }
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -217,10 +234,34 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     setActiveSession(null);
     if (!over) return;
 
-    const sessionId = active.id as string;
+    const activeId = String(active.id);
     const targetId = String(over.id);
 
-    if (targetId.startsWith('group-')) {
+    // Group reordering
+    if (activeId.startsWith('group-drag-')) {
+      const draggedGroupId = activeId.replace('group-drag-', '');
+      // Handle dropping onto another group header
+      if (targetId.startsWith('group-') && !targetId.startsWith('group-drag-')) {
+        const targetGroupId = targetId.replace('group-', '');
+        if (draggedGroupId !== targetGroupId) {
+          const fromIndex = groups.findIndex(g => g.id === draggedGroupId);
+          const toIndex = groups.findIndex(g => g.id === targetGroupId);
+          const newOrder = [...groups];
+          const [moved] = newOrder.splice(fromIndex, 1);
+          newOrder.splice(toIndex, 0, moved);
+          const newSortOrders = newOrder.map((g, i) => ({ id: g.id, sortOrder: i }));
+          for (const { id, sortOrder } of newSortOrders) {
+            await coworkService.updateGroup(id, { sortOrder });
+          }
+          dispatch(reorderGroups(newOrder.map(g => g.id)));
+        }
+      }
+      return;
+    }
+
+    // Session moving
+    const sessionId = activeId;
+    if (targetId.startsWith('group-') && !targetId.startsWith('group-drag-')) {
       const groupId = targetId.replace('group-', '');
       await coworkService.moveSessionToGroup(sessionId, groupId);
       dispatch(moveSessionToGroup({ sessionId, groupId }));
@@ -519,6 +560,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                       await coworkService.moveSessionToGroup(sessionId, groupId);
                       dispatch(moveSessionToGroup({ sessionId, groupId }));
                     }}
+                    enrichedSubTasks={enrichedSubTasks}
+                    setActiveSubTask={setActiveSubTask}
                   />
                 </React.Fragment>
               );
@@ -564,6 +607,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         isOpen={isCreateGroupOpen}
         onClose={() => setIsCreateGroupOpen(false)}
         onCreate={handleCreateGroup}
+        existingColors={groups.map(g => g.color)}
       />
 
       {/* Subtask detail drawer */}
