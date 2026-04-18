@@ -78,8 +78,15 @@ type AgentEventPayload = {
   seq?: number;
   runId?: string;
   sessionKey?: string;
+  /** Alternative field name used by some gateway events (e.g., agent lifecycle events) */
+  session?: string;
   stream?: string;
   data?: unknown;
+  /** Gateway tool event fields: tool='result:sessions_spawn', call='toolCallId', meta='label xxx' */
+  tool?: string;
+  call?: string;
+  meta?: string;
+  err?: boolean;
 };
 
 type ExecApprovalRequestedPayload = {
@@ -1181,13 +1188,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
 
-    // 设置编排父会话 ID 并清理之前的子 Agent 数据
+    // 设置编排父会话 ID
+    // 注意：不清空之前的子 Agent 数据，因为同一会话可能有多个 turn，
+    // 每个 turn 可能启动新的 subagent，之前的 subagent 状态应保留
+    const previousOrchestrationSessionId = this.orchestrationParentSessionId;
     this.orchestrationParentSessionId = sessionId;
-    this.subagentMessages.clear();
-    this.subagentStatus.clear();
-    this.labelToSessionKey.clear();
-    this.sessionKeyToLabel.clear();
-    this.toolCallArgs.clear();
+
+    // 只有当切换到不同的 session 时才清空状态
+    if (previousOrchestrationSessionId && previousOrchestrationSessionId !== sessionId) {
+      this.subagentMessages.clear();
+      this.subagentStatus.clear();
+      this.labelToSessionKey.clear();
+      this.sessionKeyToLabel.clear();
+      this.toolCallArgs.clear();
+    }
 
     if (this.activeTurns.has(sessionId)) {
       throw new Error(`Session ${sessionId} is still running.`);
@@ -2061,8 +2075,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!isRecord(payload)) return;
     const agentPayload = payload as AgentEventPayload;
     const runId = typeof agentPayload.runId === 'string' ? agentPayload.runId.trim() : '';
-    const sessionKey =
-      typeof agentPayload.sessionKey === 'string' ? agentPayload.sessionKey.trim() : '';
+    // Support both sessionKey and session fields (gateway uses 'session' for agent events)
+    // Also normalize subagent sessionKey format: 'subagent:xxx' → 'agent:main:subagent:xxx'
+    let sessionKey =
+      typeof agentPayload.sessionKey === 'string'
+        ? agentPayload.sessionKey.trim()
+        : typeof agentPayload.session === 'string'
+          ? agentPayload.session.trim()
+          : '';
+    // Normalize subagent sessionKey: if it starts with 'subagent:', add 'agent:main:' prefix
+    // This is needed because gateway agent events use 'subagent:xxx' format
+    // but sessionKeyToLabel mapping stores 'agent:main:subagent:xxx' format
+    if (sessionKey && sessionKey.startsWith('subagent:') && !sessionKey.startsWith('agent:')) {
+      sessionKey = 'agent:main:' + sessionKey;
+    }
     const stream = typeof agentPayload.stream === 'string' ? agentPayload.stream : '';
 
     // Extract phase from lifecycle events to check for end states
@@ -2126,7 +2152,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // 即使没有 sessionId，也处理子 Agent 的生命周期事件
       // 使用 sessionKeyToLabel 映射获取 agentId/label
       if (sessionKey && stream === 'lifecycle') {
-        const agentIdOrLabel = this.sessionKeyToLabel.get(sessionKey);
+        // Try to get agentId from sessionKeyToLabel mapping
+        let agentIdOrLabel = this.sessionKeyToLabel.get(sessionKey);
+        // Also try with 'subagent:' prefix (gateway might use short format)
+        if (!agentIdOrLabel && sessionKey.startsWith('subagent:')) {
+          const fullSessionKey = 'agent:main:' + sessionKey;
+          agentIdOrLabel = this.sessionKeyToLabel.get(fullSessionKey);
+        }
+        // Also try reverse lookup: extract UUID from sessionKey and find matching label
+        if (!agentIdOrLabel) {
+          // sessionKey format: 'agent:main:subagent:UUID' or 'subagent:UUID'
+          const uuidMatch = sessionKey.match(/subagent:([a-f0-9-]+)/i);
+          if (uuidMatch) {
+            // Try to find a label whose childSessionKey contains this UUID
+            for (const [label, childKey] of this.labelToSessionKey) {
+              if (childKey && childKey.includes(uuidMatch[1])) {
+                agentIdOrLabel = label;
+                break;
+              }
+            }
+          }
+        }
         // phase 在 data 字段中，不是顶层属性
         const data = agentPayload.data;
         const phase = isRecord(data) && typeof data.phase === 'string' ? data.phase.trim() : '';
@@ -2149,6 +2195,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           ) {
             this.subagentStatus.set(agentIdOrLabel, 'done');
           }
+        } else {
+          console.log(
+            '[OpenClawRuntime] subagent lifecycle (no sessionId): NO MAPPING FOUND sessionKey=' +
+              sessionKey +
+              ' phase=' +
+              phase +
+              ' labelToSessionKeys=' +
+              Array.from(this.labelToSessionKey.entries())
+                .map(([k, v]) => `${k}:${v}`)
+                .join(','),
+          );
         }
       }
 
@@ -2349,10 +2406,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (stream === 'tool' || stream === 'tools' || (!stream && hasToolShape)) {
+      // Gateway format check: tool events may have 'tool', 'call', 'meta' directly in payload
+      // (not nested in 'data'). Example: { stream: 'tool', tool: 'result:sessions_spawn', call: 'xxx', meta: 'label xxx' }
+      const hasGatewayToolShape =
+        typeof (agentPayload as Record<string, unknown>).tool === 'string';
+
       if (Array.isArray(agentPayload.data)) {
         for (const entry of agentPayload.data) {
           this.handleAgentToolEvent(sessionId, turn, entry);
         }
+      } else if (hasGatewayToolShape) {
+        // Gateway format: pass entire payload (contains tool, call, meta)
+        this.handleAgentToolEvent(sessionId, turn, agentPayload);
       } else {
         this.handleAgentToolEvent(sessionId, turn, agentPayload.data);
       }
@@ -2619,14 +2684,47 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private handleAgentToolEvent(sessionId: string, turn: ActiveTurn, data: unknown): void {
     if (!isRecord(data)) return;
 
-    const rawPhase = typeof data.phase === 'string' ? data.phase.trim() : '';
-    const phase = rawPhase === 'end' ? 'result' : rawPhase;
-    const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId.trim() : '';
+    // Gateway may return tool events in two formats:
+    // 1. Standard format: { phase, name, toolCallId, args, result, ... }
+    // 2. Gateway format: { tool: 'result:sessions_spawn', call: 'xxx', meta: 'label xxx', err: false }
+    // Parse both formats
+
+    // Try gateway format first: tool='result:sessions_spawn', call='toolCallId', meta='label xxx'
+    const toolField = typeof data.tool === 'string' ? data.tool.trim() : '';
+    let phase: string;
+    let toolName: string;
+    let toolCallId: string;
+
+    if (toolField && toolField.includes(':')) {
+      // Gateway format: 'result:sessions_spawn' or 'start:sessions_spawn'
+      const parts = toolField.split(':');
+      phase = parts[0] === 'end' ? 'result' : parts[0];
+      toolName = parts.slice(1).join(':') || 'Tool';
+      // In gateway format, 'call' is the toolCallId
+      toolCallId = typeof data.call === 'string' ? data.call.trim() : '';
+    } else {
+      // Standard format
+      const rawPhase = typeof data.phase === 'string' ? data.phase.trim() : '';
+      phase = rawPhase === 'end' ? 'result' : rawPhase;
+      toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId.trim() : '';
+      const toolNameRaw = typeof data.name === 'string' ? data.name.trim() : '';
+      toolName = toolNameRaw || 'Tool';
+    }
+
     if (!toolCallId) return;
     if (phase !== 'start' && phase !== 'update' && phase !== 'result') return;
 
-    const toolNameRaw = typeof data.name === 'string' ? data.name.trim() : '';
-    const toolName = toolNameRaw || 'Tool';
+    // Parse meta field from gateway format: 'label xxx, task yyy'
+    // This provides label info when args is empty
+    let metaLabel: string | null = null;
+    const metaField = typeof data.meta === 'string' ? data.meta.trim() : '';
+    if (metaField) {
+      // meta format: 'label calc-1-plus-2, task 计算 1+2 的结果...'
+      const labelMatch = metaField.match(/label\s+([^,]+)/);
+      if (labelMatch && labelMatch[1]) {
+        metaLabel = labelMatch[1].trim();
+      }
+    }
 
     // 调试：sessions_spawn 工具调用
     if (
@@ -2634,74 +2732,114 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       toolName === 'sessions_resume' ||
       toolName === 'sessions_read'
     ) {
+      // Log full data structure to diagnose childSessionKey location
+      const dataKeys = Object.keys(data);
+      const hasResult = isRecord(data.result);
+      const resultKeys = hasResult ? Object.keys(data.result as Record<string, unknown>) : [];
       console.log(
         '[OpenClawRuntime] subagent tool call: toolName=' +
           toolName +
           ' phase=' +
           phase +
-          ' args=' +
-          JSON.stringify(data.args ?? {}).slice(0, 500),
+          ' toolCallId=' +
+          toolCallId +
+          ' dataKeys=[' +
+          dataKeys.join(',') +
+          '] resultKeys=[' +
+          resultKeys.join(',') +
+          '] meta=' +
+          (metaField || '(none)'),
       );
+      // Log full result object if present
+      if (hasResult) {
+        try {
+          const resultJson = JSON.stringify(data.result).slice(0, 500);
+          console.log('[OpenClawRuntime] sessions_spawn result: ' + resultJson);
+        } catch {
+          console.log('[OpenClawRuntime] sessions_spawn result: (failed to stringify)');
+        }
+      }
     }
 
     // 当 sessions_spawn 开始时，使用 label 或 agentId 作为子任务标识符
-    if (toolName === 'sessions_spawn' && phase === 'start' && isRecord(data.args)) {
-      const args = data.args as Record<string, unknown>;
-      // 保存 args 供 result 阶段使用
-      this.toolCallArgs.set(toolCallId, args);
+    if (toolName === 'sessions_spawn' && phase === 'start') {
+      const args = isRecord(data.args) ? (data.args as Record<string, unknown>) : {};
+      // 保存 args 和 metaLabel 供 result 阶段使用
+      const savedInfo = {
+        ...args,
+        _metaLabel: metaLabel,
+      };
+      this.toolCallArgs.set(toolCallId, savedInfo);
 
       const agentId =
         typeof args.agentId === 'string' && args.agentId
           ? args.agentId
           : typeof args.label === 'string' && args.label
             ? args.label
-            : '';
+            : metaLabel || '';
       if (agentId) {
         this.subagentStatus.set(agentId, 'running');
       }
     }
 
     // 当 sessions_spawn 返回结果时，建立 label → childSessionKey 映射
-    if (toolName === 'sessions_spawn' && phase === 'result' && !data.isError) {
+    if (toolName === 'sessions_spawn' && phase === 'result' && !data.isError && !data.err) {
+      // Try to get childSessionKey from various sources
+      let childSessionKey: string | null = null;
+
+      // 1. From result object
       const result = data.result;
       if (isRecord(result)) {
-        const childSessionKey =
+        childSessionKey =
           typeof result.childSessionKey === 'string' ? result.childSessionKey : null;
+      }
 
-        // 从保存的 args 中获取 label 和 agentId
-        const savedArgs = this.toolCallArgs.get(toolCallId);
-        const label =
-          typeof savedArgs?.label === 'string' && savedArgs.label ? savedArgs.label : null;
-        const inputAgentId =
-          typeof savedArgs?.agentId === 'string' && savedArgs.agentId ? savedArgs.agentId : null;
-
-        // 存储映射，优先使用 label，如果没有 label 则使用 agentId
-        const mappingKey = label || inputAgentId;
-        if (childSessionKey && mappingKey) {
-          this.labelToSessionKey.set(mappingKey, childSessionKey);
-          this.sessionKeyToLabel.set(childSessionKey, mappingKey);
-        }
-      } else {
-        // 尝试从 data 的其他字段获取 childSessionKey
-        const childSessionKeyAlt =
+      // 2. From data.sessionKey or data.childSessionKey
+      if (!childSessionKey) {
+        childSessionKey =
           typeof data.sessionKey === 'string'
             ? data.sessionKey
             : typeof data.childSessionKey === 'string'
               ? data.childSessionKey
               : null;
+      }
 
-        if (childSessionKeyAlt) {
-          const savedArgs = this.toolCallArgs.get(toolCallId);
-          const label =
-            typeof savedArgs?.label === 'string' && savedArgs.label ? savedArgs.label : null;
-          const inputAgentId =
-            typeof savedArgs?.agentId === 'string' && savedArgs.agentId ? savedArgs.agentId : null;
-          const mappingKey = label || inputAgentId;
+      // Get label from saved args or meta field
+      const savedInfo = this.toolCallArgs.get(toolCallId);
+      const savedArgs = savedInfo && isRecord(savedInfo) ? savedInfo : {};
+      const label =
+        typeof savedArgs.label === 'string' && savedArgs.label
+          ? savedArgs.label
+          : typeof savedArgs._metaLabel === 'string' && savedArgs._metaLabel
+            ? savedArgs._metaLabel
+            : metaLabel || null;
+      const inputAgentId =
+        typeof savedArgs.agentId === 'string' && savedArgs.agentId ? savedArgs.agentId : null;
 
-          if (mappingKey) {
-            this.labelToSessionKey.set(mappingKey, childSessionKeyAlt);
-            this.sessionKeyToLabel.set(childSessionKeyAlt, mappingKey);
-          }
+      const mappingKey = label || inputAgentId;
+      if (childSessionKey && mappingKey) {
+        console.log(
+          '[OpenClawRuntime] sessions_spawn mapping: label=' +
+            mappingKey +
+            ' childSessionKey=' +
+            childSessionKey,
+        );
+        this.labelToSessionKey.set(mappingKey, childSessionKey);
+        this.sessionKeyToLabel.set(childSessionKey, mappingKey);
+      } else {
+        console.log(
+          '[OpenClawRuntime] sessions_spawn missing mapping: childSessionKey=' +
+            (childSessionKey || '(none)') +
+            ' mappingKey=' +
+            (mappingKey || '(none)'),
+        );
+        // When childSessionKey is missing from gateway tool event, query sessions.list
+        // to get child session info and establish mapping
+        // Get parent sessionKey from the event or store
+        const parentSessionKey = turn.sessionKey;
+        if (mappingKey && parentSessionKey && this.gatewayClient) {
+          // Async query - don't block the event processing
+          void this.querySubagentSessionKey(mappingKey, parentSessionKey);
         }
       }
       // 清理保存的 args
@@ -2709,24 +2847,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     // 当 sessions_resume 或 sessions_read 完成时，标记子任务完成
-    if (
-      (toolName === 'sessions_resume' || toolName === 'sessions_read') &&
-      phase === 'result' &&
-      isRecord(data.args)
-    ) {
-      const args = data.args as Record<string, unknown>;
+    if ((toolName === 'sessions_resume' || toolName === 'sessions_read') && phase === 'result') {
+      // Get agentId from args or meta field
+      const args = isRecord(data.args) ? (data.args as Record<string, unknown>) : {};
       const agentId =
         typeof args.agentId === 'string' && args.agentId
           ? args.agentId
           : typeof args.label === 'string' && args.label
             ? args.label
-            : '';
+            : metaLabel || '';
       if (agentId && this.subagentStatus.has(agentId)) {
         this.subagentStatus.set(agentId, 'done');
       }
     }
 
-    if (toolNameRaw.toLowerCase() === 'browser') {
+    if (toolName.toLowerCase() === 'browser') {
       const isError = Boolean(data.isError);
       // Log full data keys and values for diagnosis
       const dataKeys = Object.keys(data);
@@ -5322,6 +5457,46 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     return result;
+  }
+
+  /**
+   * Query sessions.list to find subagent sessionKey and establish mapping.
+   * Called when gateway tool event doesn't contain childSessionKey directly.
+   */
+  private async querySubagentSessionKey(label: string, parentSessionKey: string): Promise<void> {
+    if (!this.gatewayClient) return;
+
+    try {
+      const sessionsResult = await this.gatewayClient.request<{
+        sessions?: Array<{ key: string; label?: string; spawnedBy?: string }>;
+      }>('sessions.list', {
+        spawnedBy: parentSessionKey,
+        limit: 20,
+      });
+
+      const childSessions = sessionsResult?.sessions;
+      if (Array.isArray(childSessions) && childSessions.length > 0) {
+        // Find the matching child session by label
+        const matchingChild = childSessions.find(
+          cs => cs.label === label || cs.key.includes(label),
+        );
+
+        if (matchingChild && matchingChild.key) {
+          console.log(
+            '[OpenClawRuntime] querySubagentSessionKey: found mapping label=' +
+              label +
+              ' childSessionKey=' +
+              matchingChild.key,
+          );
+          this.labelToSessionKey.set(label, matchingChild.key);
+          this.sessionKeyToLabel.set(matchingChild.key, label);
+          // Set status to running since we found it
+          this.subagentStatus.set(label, 'running');
+        }
+      }
+    } catch (err) {
+      console.warn('[OpenClawRuntime] querySubagentSessionKey failed:', err);
+    }
   }
 
   /**
