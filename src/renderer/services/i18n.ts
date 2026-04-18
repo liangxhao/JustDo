@@ -626,15 +626,27 @@ const translations: Record<LanguageType, Record<string, string>> = {
     official: '官方',
     noSkillsAvailable: '暂无可用技能',
     skillsDescription: '为您的智能体提供预封装且可重复的最佳实践与工具',
+    skillsDescriptionGateway: '从 OpenClaw Gateway 管理的技能，为您的智能体提供工具和能力',
     skillInstalled: '已安装',
     skillMarketplace: '技能市场',
     skillMarketplaceEmpty: '暂无可用技能',
     skillMarketplaceComingSoon: '即将上线，敬请期待',
+    skillMarketplaceComingSoonDesc: '技能市场功能正在开发中，您将能够从 ClawHub 搜索和安装更多技能',
     skillCategoryAll: '全部',
     skillInstall: '安装',
     skillInstalling: '安装中',
+    skillInstallSuccess: '技能安装成功',
     skillInstallFailed: '安装失败',
     skillAlreadyInstalled: '已安装',
+    skillDeleteNotSupported: '技能删除功能已禁用，请使用禁用功能替代',
+    // Gateway offline
+    gatewayOffline: 'Gateway 离线',
+    gatewayOfflineSkillsUnavailable: 'Gateway 离线，技能功能暂时不可用',
+    // Skill status
+    missing: '缺失',
+    missingBins: '缺失工具',
+    missingEnv: '缺失环境变量',
+    skillMissingRequirements: '技能缺少必要依赖',
 
     // Security scan
     gucciaiGuardEnabled: '安全防护中',
@@ -1717,15 +1729,29 @@ const translations: Record<LanguageType, Record<string, string>> = {
     official: 'Official',
     noSkillsAvailable: 'No skills available',
     skillsDescription: 'Pre-packaged best practices and tools for your AI agent',
+    skillsDescriptionGateway:
+      'Skills managed by OpenClaw Gateway, providing tools and capabilities for your AI agent',
     skillInstalled: 'Installed',
     skillMarketplace: 'Marketplace',
     skillMarketplaceEmpty: 'No skills available yet',
     skillMarketplaceComingSoon: 'Coming Soon',
+    skillMarketplaceComingSoonDesc:
+      'Skill marketplace is under development. You will be able to search and install more skills from ClawHub',
     skillCategoryAll: 'All',
     skillInstall: 'Install',
     skillInstalling: 'Installing',
+    skillInstallSuccess: 'Skill installed successfully',
     skillInstallFailed: 'Install failed',
     skillAlreadyInstalled: 'Installed',
+    skillDeleteNotSupported: 'Skill deletion is disabled. Please use disable instead',
+    // Gateway offline
+    gatewayOffline: 'Gateway Offline',
+    gatewayOfflineSkillsUnavailable: 'Gateway is offline. Skills are temporarily unavailable',
+    // Skill status
+    missing: 'missing',
+    missingBins: 'Missing tools',
+    missingEnv: 'Missing env vars',
+    skillMissingRequirements: 'Skill missing required dependencies',
 
     // Security scan
     gucciaiGuardEnabled: 'Security Active',

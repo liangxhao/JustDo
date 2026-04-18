@@ -21,6 +21,146 @@ export type CoworkAgentEngine = 'openclaw';
 
 export const ENGINE_SWITCHED_CODE = 'ENGINE_SWITCHED';
 
+// ============================================================
+// Gateway Skill Types
+// ============================================================
+
+/**
+ * Gateway skill status response from skills.status RPC.
+ */
+export interface GatewaySkillStatus {
+  workspaceDir: string;
+  managedSkillsDir: string;
+  skills: GatewaySkillEntry[];
+}
+
+/**
+ * Single skill entry in skills.status response.
+ */
+export interface GatewaySkillEntry {
+  name: string;
+  description: string;
+  source:
+    | 'workspace'
+    | 'agents-project'
+    | 'agents-personal'
+    | 'managed'
+    | 'openclaw-bundled'
+    | 'extra-dir'
+    | 'unknown';
+  bundled: boolean;
+  filePath: string;
+  baseDir: string;
+  skillKey: string;
+  primaryEnv?: string;
+  emoji?: string;
+  homepage?: string;
+  always: boolean;
+  eligible: boolean;
+  disabled: boolean;
+  blockedByAllowlist: boolean;
+  missing: GatewaySkillMissing;
+  install: GatewaySkillInstallOption[];
+  configChecks: Array<{ path: string; satisfied: boolean }>;
+}
+
+/**
+ * Missing requirements for a skill.
+ */
+export interface GatewaySkillMissing {
+  bins: string[];
+  env: string[];
+  config: string[];
+  os: string[];
+}
+
+/**
+ * Install option for a skill with missing requirements.
+ */
+export interface GatewaySkillInstallOption {
+  id: string;
+  kind: 'brew' | 'node' | 'go' | 'uv' | 'download' | 'script';
+  label: string;
+  bins?: string[];
+  formula?: string;
+  url?: string;
+  hint?: string;
+  optional?: boolean;
+}
+
+/**
+ * ClawHub search result from skills.search RPC.
+ */
+export interface ClawHubSearchResult {
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  author?: string;
+  tags?: string[];
+  homepage?: string;
+}
+
+/**
+ * ClawHub skill detail from skills.detail RPC.
+ */
+export interface ClawHubDetail {
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  author?: string;
+  tags?: string[];
+  homepage?: string;
+  readme?: string;
+  install?: {
+    requires?: {
+      bins?: string[];
+      env?: string[];
+    };
+  };
+}
+
+/**
+ * Parameters for skills.install RPC.
+ */
+export type SkillInstallParams =
+  | {
+      source: 'clawhub';
+      slug: string;
+      version?: string;
+      force?: boolean;
+    }
+  | {
+      name: string;
+      installId: string;
+      dangerouslyForceUnsafeInstall?: boolean;
+      timeoutMs?: number;
+    };
+
+/**
+ * Parameters for skills.update RPC (config mode).
+ */
+export interface SkillUpdateParams {
+  skillKey: string;
+  enabled?: boolean;
+  apiKey?: string | { source: string; provider: string; id: string };
+  env?: Record<string, string>;
+}
+
+/**
+ * Result from skills.install or skills.update RPC.
+ */
+export interface SkillRpcResult {
+  ok: boolean;
+  error?: string;
+  message?: string;
+}
+
+// ============================================================
+// End Gateway Skill Types
+// ============================================================
+
 export interface PermissionRequest {
   requestId: string;
   toolName: string;

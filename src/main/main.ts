@@ -1816,79 +1816,204 @@ if (!gotTheLock) {
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('app:getSystemLocale', () => app.getLocale());
 
-  // Skills IPC handlers
-  ipcMain.handle('skills:list', () => {
+  // Skills IPC handlers - Gateway RPC based
+  // All skill operations go through OpenClaw Gateway.
+  // Gateway offline = skills unavailable, UI locked.
+
+  ipcMain.handle('skills:list', async () => {
     try {
-      const skills = getSkillManager().listSkills();
-      return { success: true, skills };
+      const adapter = openClawRuntimeAdapter;
+      if (!adapter) {
+        return {
+          success: false,
+          error: 'Gateway not connected',
+          gatewayOffline: true,
+        };
+      }
+      const status = await adapter.getSkillsStatus();
+      const skills = status.skills.map(entry => ({
+        id: entry.skillKey,
+        name: entry.name,
+        description: entry.description,
+        enabled: !entry.disabled,
+        isOfficial: entry.bundled,
+        isBuiltIn: entry.bundled,
+        updatedAt: Date.now(),
+        prompt: '',
+        skillPath: entry.filePath,
+        version: undefined as string | undefined,
+        // Gateway extended fields
+        source: entry.source,
+        eligible: entry.eligible,
+        missing: entry.missing,
+        install: entry.install,
+        emoji: entry.emoji,
+        homepage: entry.homepage,
+      }));
+      return { success: true, skills, workspaceDir: status.workspaceDir };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to load skills';
+      console.error('[Skills] skills:list error:', errorMsg);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to load skills',
+        error: errorMsg,
+        gatewayOffline: errorMsg.includes('not connected'),
       };
     }
   });
 
-  ipcMain.handle('skills:setEnabled', (_event, options: { id: string; enabled: boolean }) => {
+  ipcMain.handle('skills:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
     try {
-      const skills = getSkillManager().setSkillEnabled(options.id, options.enabled);
+      const adapter = openClawRuntimeAdapter;
+      if (!adapter) {
+        return {
+          success: false,
+          error: 'Gateway not connected',
+          gatewayOffline: true,
+        };
+      }
+      const result = await adapter.updateSkillConfig({
+        skillKey: options.id,
+        enabled: options.enabled,
+      });
+      if (!result.ok) {
+        return { success: false, error: result.error || 'Failed to update skill' };
+      }
+      // Refetch skill list after update
+      const status = await adapter.getSkillsStatus();
+      const skills = status.skills.map(entry => ({
+        id: entry.skillKey,
+        name: entry.name,
+        description: entry.description,
+        enabled: !entry.disabled,
+        isOfficial: entry.bundled,
+        isBuiltIn: entry.bundled,
+        updatedAt: Date.now(),
+        prompt: '',
+        skillPath: entry.filePath,
+        version: undefined as string | undefined,
+        source: entry.source,
+        eligible: entry.eligible,
+        missing: entry.missing,
+        install: entry.install,
+        emoji: entry.emoji,
+        homepage: entry.homepage,
+      }));
       return { success: true, skills };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to update skill';
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to update skill',
+        error: errorMsg,
+        gatewayOffline: errorMsg.includes('not connected'),
       };
     }
   });
 
-  ipcMain.handle('skills:delete', (_event, id: string) => {
+  ipcMain.handle(
+    'skills:install',
+    async (_event, params: import('./libs/agentEngine/types').SkillInstallParams) => {
+      try {
+        const adapter = openClawRuntimeAdapter;
+        if (!adapter) {
+          return {
+            success: false,
+            error: 'Gateway not connected',
+            gatewayOffline: true,
+          };
+        }
+        const result = await adapter.installSkill(params);
+        return { success: result.ok, error: result.error };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Failed to install skill';
+        return {
+          success: false,
+          error: errorMsg,
+          gatewayOffline: errorMsg.includes('not connected'),
+        };
+      }
+    },
+  );
+
+  ipcMain.handle('skills:search', async (_event, options: { query?: string; limit?: number }) => {
     try {
-      const skills = getSkillManager().deleteSkill(id);
-      return { success: true, skills };
+      const adapter = openClawRuntimeAdapter;
+      if (!adapter) {
+        return {
+          success: false,
+          error: 'Gateway not connected',
+          gatewayOffline: true,
+        };
+      }
+      const results = await adapter.searchClawHubSkills(options.query, options.limit);
+      return { success: true, results };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to search skills';
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete skill',
+        error: errorMsg,
+        gatewayOffline: errorMsg.includes('not connected'),
       };
     }
   });
 
+  ipcMain.handle('skills:detail', async (_event, options: { slug: string }) => {
+    try {
+      const adapter = openClawRuntimeAdapter;
+      if (!adapter) {
+        return {
+          success: false,
+          error: 'Gateway not connected',
+          gatewayOffline: true,
+        };
+      }
+      const detail = await adapter.getClawHubSkillDetail(options.slug);
+      return { success: true, detail };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to get skill detail';
+      return {
+        success: false,
+        error: errorMsg,
+        gatewayOffline: errorMsg.includes('not connected'),
+      };
+    }
+  });
+
+  // Deprecated handlers - no longer needed, Gateway manages everything
+  // skills:delete - Gateway doesn't support delete via RPC, use file system directly or disable
+  ipcMain.handle('skills:delete', async (_event, id: string) => {
+    // Skills delete not supported via Gateway RPC
+    // User should disable skill instead
+    return {
+      success: false,
+      error: 'Skill deletion not supported. Please disable the skill instead.',
+    };
+  });
+
+  // skills:getRoot - No longer needed, Gateway manages skill locations
   ipcMain.handle('skills:getRoot', () => {
-    try {
-      const root = getSkillManager().getSkillsRoot();
-      return { success: true, path: root };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to resolve skills root',
-      };
-    }
+    return { success: false, error: 'Local skill root no longer used. Gateway manages skills.' };
   });
 
+  // skills:autoRoutingPrompt - No longer needed, Gateway handles skill routing
   ipcMain.handle('skills:autoRoutingPrompt', () => {
-    try {
-      const prompt = getSkillManager().buildAutoRoutingPrompt();
-      return { success: true, prompt };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to build auto-routing prompt',
-      };
-    }
+    return { success: false, prompt: '' };
   });
 
+  // skills:getConfig / skills:setConfig - No longer needed, use Gateway skills.update
   ipcMain.handle('skills:getConfig', (_event, skillId: string) => {
-    return getSkillManager().getSkillConfig(skillId);
+    return null;
   });
 
   ipcMain.handle('skills:setConfig', (_event, skillId: string, config: Record<string, string>) => {
-    return getSkillManager().setSkillConfig(skillId, config);
+    return null;
   });
 
   ipcMain.handle(
     'skills:testEmailConnectivity',
     async (_event, skillId: string, config: Record<string, string>) => {
-      return getSkillManager().testEmailConnectivity(skillId, config);
+      // No longer supported - Gateway manages skill connectivity
+      return null;
     },
   );
 
@@ -2391,21 +2516,18 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle(
-    'cowork:message:delete',
-    async (_event, sessionId: string, messageId: string) => {
-      try {
-        const coworkStoreInstance = getCoworkStore();
-        const deleted = coworkStoreInstance.deleteMessage(sessionId, messageId);
-        return { success: deleted };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to delete message',
-        };
-      }
-    },
-  );
+  ipcMain.handle('cowork:message:delete', async (_event, sessionId: string, messageId: string) => {
+    try {
+      const coworkStoreInstance = getCoworkStore();
+      const deleted = coworkStoreInstance.deleteMessage(sessionId, messageId);
+      return { success: deleted };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete message',
+      };
+    }
+  });
 
   ipcMain.handle('cowork:session:deleteBatch', async (_event, sessionIds: string[]) => {
     try {

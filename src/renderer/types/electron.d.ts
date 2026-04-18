@@ -153,6 +153,53 @@ interface Skill {
   updatedAt: number;
   prompt: string;
   skillPath: string;
+  // Gateway extended fields
+  source?:
+    | 'workspace'
+    | 'agents-project'
+    | 'agents-personal'
+    | 'managed'
+    | 'openclaw-bundled'
+    | 'extra-dir'
+    | 'unknown';
+  eligible?: boolean;
+  missing?: {
+    bins: string[];
+    env: string[];
+    config: string[];
+    os: string[];
+  };
+  install?: Array<{
+    id: string;
+    kind: 'brew' | 'node' | 'go' | 'uv' | 'download' | 'script';
+    label: string;
+    bins?: string[];
+    formula?: string;
+    url?: string;
+  }>;
+  emoji?: string;
+  homepage?: string;
+}
+
+// ClawHub marketplace types
+interface ClawHubSkill {
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  author?: string;
+  tags?: string[];
+  homepage?: string;
+}
+
+interface ClawHubSkillDetail extends ClawHubSkill {
+  readme?: string;
+  install?: {
+    requires?: {
+      bins?: string[];
+      env?: string[];
+    };
+  };
 }
 
 type EmailConnectivityCheckCode = 'imap_connection' | 'smtp_connection';
@@ -239,11 +286,36 @@ interface IElectronAPI {
     remove: (key: string) => Promise<void>;
   };
   skills: {
-    list: () => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
+    list: () => Promise<{
+      success: boolean;
+      skills?: Skill[];
+      error?: string;
+      gatewayOffline?: boolean;
+    }>;
     setEnabled: (options: {
       id: string;
       enabled: boolean;
-    }) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
+    }) => Promise<{ success: boolean; skills?: Skill[]; error?: string; gatewayOffline?: boolean }>;
+    // Gateway-based skill management
+    install: (params: {
+      source: 'clawhub';
+      slug: string;
+      version?: string;
+      force?: boolean;
+    }) => Promise<{ success: boolean; error?: string; gatewayOffline?: boolean }>;
+    search: (options?: { query?: string; limit?: number }) => Promise<{
+      success: boolean;
+      results?: ClawHubSkill[];
+      error?: string;
+      gatewayOffline?: boolean;
+    }>;
+    detail: (options: { slug: string }) => Promise<{
+      success: boolean;
+      detail?: ClawHubSkillDetail;
+      error?: string;
+      gatewayOffline?: boolean;
+    }>;
+    // Deprecated: no longer functional
     delete: (id: string) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
     getRoot: () => Promise<{ success: boolean; path?: string; error?: string }>;
     autoRoutingPrompt: () => Promise<{ success: boolean; prompt?: string | null; error?: string }>;

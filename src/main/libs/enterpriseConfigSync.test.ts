@@ -30,7 +30,7 @@ describe('enterpriseConfigSync', () => {
         name: 'Test',
         ui: { hideTabs: [], disableUpdate: false },
         sync: { openclaw: false, skills: false, agents: false, mcp: false },
-      })
+      }),
     );
     const raw = fs.readFileSync(path.join(manifestDir, 'manifest.json'), 'utf-8');
     const manifest = JSON.parse(raw);
@@ -42,7 +42,9 @@ describe('enterpriseConfigSync', () => {
     const appConfig = {
       api: { key: 'sk-test', baseUrl: 'https://api.example.com' },
       model: { defaultModel: 'test-model', defaultModelProvider: 'test' },
-      providers: { test: { enabled: true, apiKey: 'sk-test', baseUrl: 'https://api.example.com', models: [] } },
+      providers: {
+        test: { enabled: true, apiKey: 'sk-test', baseUrl: 'https://api.example.com', models: [] },
+      },
       theme: 'dark',
       language: 'zh',
     };
@@ -61,7 +63,8 @@ describe('enterpriseConfigSync', () => {
 
   test('channel key mapping covers telegram and discord', () => {
     const map: Record<string, string> = {
-      telegram: 'telegramOpenClaw', discord: 'discordOpenClaw',
+      telegram: 'telegramOpenClaw',
+      discord: 'discordOpenClaw',
     };
     expect(Object.keys(map)).toHaveLength(2);
     expect(map['telegram']).toBe('telegramOpenClaw');

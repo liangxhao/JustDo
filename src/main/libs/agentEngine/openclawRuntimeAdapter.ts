@@ -5751,4 +5751,93 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return { ok: false, error: errorMsg };
     }
   }
+
+  // ============================================================
+  // Skill Management RPC Methods
+  // ============================================================
+
+  /**
+   * Get skill status from Gateway via skills.status RPC.
+   * Returns all skills visible to the gateway with eligibility info.
+   */
+  async getSkillsStatus(agentId?: string): Promise<import('./types').GatewaySkillStatus> {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    const result = await client.request<import('./types').GatewaySkillStatus>('skills.status', {
+      agentId,
+    });
+    console.log(
+      '[OpenClawRuntime] getSkillsStatus: received',
+      result.skills?.length || 0,
+      'skills',
+    );
+    return result;
+  }
+
+  /**
+   * Install a skill via skills.install RPC.
+   * Supports ClawHub installs (source: 'clawhub') and Gateway installer mode.
+   */
+  async installSkill(
+    params: import('./types').SkillInstallParams,
+  ): Promise<import('./types').SkillRpcResult> {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    console.log('[OpenClawRuntime] installSkill: params=', params);
+    const result = await client.request<import('./types').SkillRpcResult>('skills.install', params);
+    console.log('[OpenClawRuntime] installSkill: result=', result);
+    return result;
+  }
+
+  /**
+   * Update skill config via skills.update RPC.
+   * Used to enable/disable skills or set apiKey/env config.
+   */
+  async updateSkillConfig(
+    params: import('./types').SkillUpdateParams,
+  ): Promise<import('./types').SkillRpcResult> {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    console.log(
+      '[OpenClawRuntime] updateSkillConfig: skillKey=',
+      params.skillKey,
+      'enabled=',
+      params.enabled,
+    );
+    const result = await client.request<import('./types').SkillRpcResult>('skills.update', params);
+    console.log('[OpenClawRuntime] updateSkillConfig: result=', result);
+    return result;
+  }
+
+  /**
+   * Search ClawHub marketplace via skills.search RPC.
+   */
+  async searchClawHubSkills(
+    query?: string,
+    limit?: number,
+  ): Promise<import('./types').ClawHubSearchResult[]> {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    const result = await client.request<{ results?: import('./types').ClawHubSearchResult[] }>(
+      'skills.search',
+      { query, limit: limit || 20 },
+    );
+    console.log(
+      '[OpenClawRuntime] searchClawHubSkills: received',
+      result.results?.length || 0,
+      'results',
+    );
+    return result.results || [];
+  }
+
+  /**
+   * Get ClawHub skill detail via skills.detail RPC.
+   */
+  async getClawHubSkillDetail(slug: string): Promise<import('./types').ClawHubDetail | null> {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    const result = await client.request<import('./types').ClawHubDetail>('skills.detail', { slug });
+    console.log('[OpenClawRuntime] getClawHubSkillDetail: slug=', slug, 'result=', result);
+    return result;
+  }
 }

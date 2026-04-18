@@ -1,4 +1,4 @@
-import { Skill, LocalizedText } from '../types/skill';
+import { Skill, LocalizedText, ClawHubSkill, ClawHubSkillDetail } from '../types/skill';
 import { i18nService } from './i18n';
 
 export function resolveLocalizedText(text: string | LocalizedText): string {
@@ -33,11 +33,19 @@ type EmailConnectivityTestResult = {
   checks: EmailConnectivityCheck[];
 };
 
+type SkillListResult = {
+  success: boolean;
+  skills?: Skill[];
+  error?: string;
+  gatewayOffline?: boolean;
+};
+
 class SkillService {
   private skills: Skill[] = [];
   private initialized = false;
   private localSkillDescriptions: Map<string, string | LocalizedText> = new Map();
   private marketplaceSkillDescriptions: Map<string, string | LocalizedText> = new Map();
+  private gatewayOffline = false;
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -47,27 +55,37 @@ class SkillService {
 
   async loadSkills(): Promise<Skill[]> {
     try {
-      const result = await window.electron.skills.list();
+      const result: SkillListResult = await window.electron.skills.list();
       if (result.success && result.skills) {
         this.skills = result.skills;
+        this.gatewayOffline = false;
       } else {
         this.skills = [];
+        this.gatewayOffline = result.gatewayOffline || false;
       }
       return this.skills;
     } catch (error) {
       console.error('Failed to load skills:', error);
       this.skills = [];
+      this.gatewayOffline = true;
       return this.skills;
     }
   }
 
+  /** Check if Gateway is offline (skills unavailable) */
+  isGatewayOffline(): boolean {
+    return this.gatewayOffline;
+  }
+
   async setSkillEnabled(id: string, enabled: boolean): Promise<Skill[]> {
     try {
-      const result = await window.electron.skills.setEnabled({ id, enabled });
+      const result: SkillListResult = await window.electron.skills.setEnabled({ id, enabled });
       if (result.success && result.skills) {
         this.skills = result.skills;
+        this.gatewayOffline = false;
         return this.skills;
       }
+      this.gatewayOffline = result.gatewayOffline || false;
       throw new Error(result.error || 'Failed to update skill');
     } catch (error) {
       console.error('Failed to update skill:', error);
@@ -75,31 +93,17 @@ class SkillService {
     }
   }
 
-  async deleteSkill(id: string): Promise<{ success: boolean; skills?: Skill[]; error?: string }> {
-    try {
-      const result = await window.electron.skills.delete(id);
-      if (result.success && result.skills) {
-        this.skills = result.skills;
-      }
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to delete skill';
-      console.error('Failed to delete skill:', error);
-      return { success: false, error: message };
-    }
+  async deleteSkill(_id: string): Promise<{ success: boolean; skills?: Skill[]; error?: string }> {
+    // Skill deletion not supported via Gateway - use disable instead
+    return {
+      success: false,
+      error: 'Skill deletion not supported. Please disable the skill instead.',
+    };
   }
 
   async getSkillsRoot(): Promise<string | null> {
-    try {
-      const result = await window.electron.skills.getRoot();
-      if (result.success && result.path) {
-        return result.path;
-      }
-      return null;
-    } catch (error) {
-      console.error('Failed to get skills root:', error);
-      return null;
-    }
+    // No longer needed - Gateway manages skill locations
+    return null;
   }
 
   onSkillsChanged(callback: () => void): () => void {
@@ -118,52 +122,77 @@ class SkillService {
     return this.skills.find(s => s.id === id);
   }
 
-  async getSkillConfig(skillId: string): Promise<Record<string, string>> {
-    try {
-      const result = await window.electron.skills.getConfig(skillId);
-      if (result.success && result.config) {
-        return result.config;
-      }
-      return {};
-    } catch (error) {
-      console.error('Failed to get skill config:', error);
-      return {};
-    }
+  async getSkillConfig(_skillId: string): Promise<Record<string, string>> {
+    // No longer supported - use Gateway skills.update
+    return {};
   }
 
-  async setSkillConfig(skillId: string, config: Record<string, string>): Promise<boolean> {
-    try {
-      const result = await window.electron.skills.setConfig(skillId, config);
-      return result.success;
-    } catch (error) {
-      console.error('Failed to set skill config:', error);
-      return false;
-    }
+  async setSkillConfig(_skillId: string, _config: Record<string, string>): Promise<boolean> {
+    // No longer supported - use Gateway skills.update
+    return false;
   }
 
   async testEmailConnectivity(
-    skillId: string,
-    config: Record<string, string>,
+    _skillId: string,
+    _config: Record<string, string>,
   ): Promise<EmailConnectivityTestResult | null> {
+    // No longer supported - Gateway manages skill connectivity
+    return null;
+  }
+
+  async getAutoRoutingPrompt(): Promise<string | null> {
+    // No longer needed - Gateway handles skill routing
+    return null;
+  }
+
+  // ============================================================
+  // Marketplace methods (Gateway ClawHub integration)
+  // ============================================================
+
+  /** Search ClawHub marketplace for skills */
+  async searchMarketplace(query?: string, limit?: number): Promise<ClawHubSkill[]> {
     try {
-      const result = await window.electron.skills.testEmailConnectivity(skillId, config);
-      if (result.success && result.result) {
-        return result.result;
+      const result = await window.electron.skills.search({ query, limit });
+      if (result.success && result.results) {
+        return result.results;
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to search marketplace:', error);
+      return [];
+    }
+  }
+
+  /** Get detailed info for a ClawHub skill */
+  async getMarketplaceDetail(slug: string): Promise<ClawHubSkillDetail | null> {
+    try {
+      const result = await window.electron.skills.detail({ slug });
+      if (result.success && result.detail) {
+        return result.detail;
       }
       return null;
     } catch (error) {
-      console.error('Failed to test email connectivity:', error);
+      console.error('Failed to get skill detail:', error);
       return null;
     }
   }
 
-  async getAutoRoutingPrompt(): Promise<string | null> {
+  /** Install a skill from ClawHub marketplace */
+  async installSkill(
+    slug: string,
+    version?: string,
+  ): Promise<{ success: boolean; error?: string }> {
     try {
-      const result = await window.electron.skills.autoRoutingPrompt();
-      return result.success ? result.prompt || null : null;
+      const result = await window.electron.skills.install({
+        source: 'clawhub',
+        slug,
+        version,
+      });
+      return { success: result.success, error: result.error };
     } catch (error) {
-      console.error('Failed to get auto-routing prompt:', error);
-      return null;
+      const message = error instanceof Error ? error.message : 'Failed to install skill';
+      console.error('Failed to install skill:', error);
+      return { success: false, error: message };
     }
   }
 

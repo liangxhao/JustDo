@@ -14,6 +14,13 @@ contextBridge.exposeInMainWorld('electron', {
     list: () => ipcRenderer.invoke('skills:list'),
     setEnabled: (options: { id: string; enabled: boolean }) =>
       ipcRenderer.invoke('skills:setEnabled', options),
+    // New: Gateway-based skill management
+    install: (params: { source: 'clawhub'; slug: string; version?: string; force?: boolean }) =>
+      ipcRenderer.invoke('skills:install', params),
+    search: (options?: { query?: string; limit?: number }) =>
+      ipcRenderer.invoke('skills:search', options || {}),
+    detail: (options: { slug: string }) => ipcRenderer.invoke('skills:detail', options),
+    // Deprecated: no longer functional, Gateway manages everything
     delete: (id: string) => ipcRenderer.invoke('skills:delete', id),
     getRoot: () => ipcRenderer.invoke('skills:getRoot'),
     autoRoutingPrompt: () => ipcRenderer.invoke('skills:autoRoutingPrompt'),

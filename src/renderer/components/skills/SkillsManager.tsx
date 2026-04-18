@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { XMarkIcon } from '@heroicons/react/24/outline';
@@ -10,12 +10,8 @@ import { setSkills } from '../../store/slices/skillSlice';
 import { Skill } from '../../types/skill';
 import Modal from '../common/Modal';
 import ErrorMessage from '../ErrorMessage';
-import FolderOpenIcon from '../icons/FolderOpenIcon';
-import PencilSquareIcon from '../icons/PencilSquareIcon';
-import PlusCircleIcon from '../icons/PlusCircleIcon';
 import PuzzleIcon from '../icons/PuzzleIcon';
 import SearchIcon from '../icons/SearchIcon';
-import TrashIcon from '../icons/TrashIcon';
 import Tooltip from '../ui/Tooltip';
 
 type SkillTab = 'installed' | 'marketplace';
@@ -25,20 +21,18 @@ interface SkillsManagerProps {
   onCreateByChat?: () => void;
 }
 
-const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat }) => {
+const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   const dispatch = useDispatch();
   const skills = useSelector((state: RootState) => state.skill.skills);
 
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
   const [skillActionError, setSkillActionError] = useState('');
-  const [isAddSkillMenuOpen, setIsAddSkillMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<SkillTab>('installed');
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [skillPendingDelete, setSkillPendingDelete] = useState<Skill | null>(null);
-  const [isDeletingSkill, setIsDeletingSkill] = useState(false);
 
-  const addSkillMenuRef = useRef<HTMLDivElement>(null);
-  const addSkillButtonRef = useRef<HTMLButtonElement>(null);
+  // Gateway offline state
+  const [gatewayOffline, setGatewayOffline] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -46,6 +40,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
       const loadedSkills = await skillService.loadSkills();
       if (!isActive) return;
       dispatch(setSkills(loadedSkills));
+      setGatewayOffline(skillService.isGatewayOffline());
     };
     loadSkills();
 
@@ -53,6 +48,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
       const loadedSkills = await skillService.loadSkills();
       if (!isActive) return;
       dispatch(setSkills(loadedSkills));
+      setGatewayOffline(skillService.isGatewayOffline());
     });
 
     return () => {
@@ -60,48 +56,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
       unsubscribe();
     };
   }, [dispatch]);
-
-  useEffect(() => {
-    if (!isAddSkillMenuOpen) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node;
-      const isInsideMenu = addSkillMenuRef.current?.contains(target);
-      const isInsideButton = addSkillButtonRef.current?.contains(target);
-      if (!isInsideMenu && !isInsideButton) {
-        setIsAddSkillMenuOpen(false);
-      }
-    };
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsAddSkillMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleEscape);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleEscape);
-    };
-  }, [isAddSkillMenuOpen]);
-
-  useEffect(() => {
-    const hasOpenDialog = selectedSkill;
-    if (!hasOpenDialog) return;
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        if (selectedSkill) setSelectedSkill(null);
-      }
-    };
-
-    document.addEventListener('keydown', handleEscape);
-    return () => {
-      document.removeEventListener('keydown', handleEscape);
-    };
-  }, [selectedSkill]);
 
   const filteredSkills = useMemo(() => {
     const query = skillSearchQuery.toLowerCase();
@@ -123,6 +77,10 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
   };
 
   const handleToggleSkill = async (skillId: string) => {
+    if (gatewayOffline) {
+      setSkillActionError(i18nService.t('gatewayOffline'));
+      return;
+    }
     const targetSkill = skills.find(skill => skill.id === skillId);
     if (!targetSkill) return;
     try {
@@ -136,76 +94,45 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
     }
   };
 
-  const handleRequestDeleteSkill = (skill: Skill) => {
-    if (skill.isBuiltIn) {
-      setSkillActionError(i18nService.t('skillBuiltInCannotDelete'));
-      return;
-    }
-    setSkillActionError('');
-    setSkillPendingDelete(skill);
-  };
-
+  // Skill deletion not supported - handled via error message
   const handleCancelDeleteSkill = () => {
-    if (isDeletingSkill) return;
     setSkillPendingDelete(null);
   };
 
-  const handleConfirmDeleteSkill = async () => {
-    if (!skillPendingDelete || isDeletingSkill) return;
-    setIsDeletingSkill(true);
-    setSkillActionError('');
-    const result = await skillService.deleteSkill(skillPendingDelete.id);
-    if (!result.success) {
-      setSkillActionError(result.error || i18nService.t('skillDeleteFailed'));
-      setIsDeletingSkill(false);
-      return;
+  // Render skill eligibility status
+  const renderSkillStatus = (skill: Skill) => {
+    if (skill.eligible === false) {
+      const missingBins = skill.missing?.bins || [];
+      const missingEnv = skill.missing?.env || [];
+      const missingCount = missingBins.length + missingEnv.length;
+      if (missingCount > 0) {
+        return (
+          <Tooltip
+            content={`${i18nService.t('skillMissingRequirements')}: ${missingBins.join(', ')} ${missingEnv.join(', ')}`}
+            position="bottom"
+            maxWidth="360px"
+          >
+            <span className="px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-600 text-[10px] font-medium">
+              {missingCount} {i18nService.t('missing')}
+            </span>
+          </Tooltip>
+        );
+      }
     }
-    if (result.skills) {
-      dispatch(setSkills(result.skills));
-    }
-    setIsDeletingSkill(false);
-    setSkillPendingDelete(null);
-  };
-
-  const handleCreateByChat = () => {
-    setIsAddSkillMenuOpen(false);
-    const skillCreator = skills.find(s => s.id === 'skill-creator');
-
-    if (!skillCreator) {
-      // Not installed → switch to marketplace tab and search
-      setActiveTab('marketplace');
-      setSkillSearchQuery('skill-creator');
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: i18nService.t('skillCreatorNotInstalled') }),
-      );
-      return;
-    }
-
-    if (!skillCreator.enabled) {
-      // Installed but disabled → switch to installed tab and search
-      setActiveTab('installed');
-      setSkillSearchQuery('skill-creator');
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: i18nService.t('skillCreatorNotEnabled') }),
-      );
-      return;
-    }
-
-    onCreateByChat?.();
-  };
-
-  const handleOpenSkillsFolder = async () => {
-    const root = await skillService.getSkillsRoot();
-    if (root) {
-      window.electron.shell.openPath(root);
-    }
-    setIsAddSkillMenuOpen(false);
+    return null;
   };
 
   return (
     <div className="space-y-4">
+      {/* Gateway offline warning */}
+      {gatewayOffline && (
+        <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-sm">
+          {i18nService.t('gatewayOfflineSkillsUnavailable')}
+        </div>
+      )}
+
       <div>
-        <p className="text-sm text-secondary">{i18nService.t('skillsDescription')}</p>
+        <p className="text-sm text-secondary">{i18nService.t('skillsDescriptionGateway')}</p>
       </div>
 
       {skillActionError && (
@@ -214,7 +141,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
 
       {/* Sticky toolbar: Description + Search + Tabs */}
       <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 space-y-4 shadow-sm">
-        {/* Search + Add button */}
+        {/* Search */}
         <div className="flex items-center gap-3">
           <div className="relative flex-1">
             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
@@ -223,43 +150,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
               placeholder={i18nService.t('searchSkills')}
               value={skillSearchQuery}
               onChange={e => setSkillSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+              disabled={gatewayOffline && activeTab === 'installed'}
+              className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
             />
-          </div>
-          <div className="relative">
-            <button
-              ref={addSkillButtonRef}
-              type="button"
-              onClick={() => setIsAddSkillMenuOpen(prev => !prev)}
-              className="px-3 py-2 text-sm rounded-xl border transition-colors bg-surface border-border text-foreground hover:bg-surface-raised flex items-center gap-2"
-            >
-              <PlusCircleIcon className="h-4 w-4" />
-              <span>{i18nService.t('addSkill')}</span>
-            </button>
-
-            {isAddSkillMenuOpen && (
-              <div
-                ref={addSkillMenuRef}
-                className="absolute right-0 mt-2 w-72 rounded-xl border border-border bg-surface shadow-lg z-50 overflow-hidden"
-              >
-                <button
-                  type="button"
-                  onClick={handleOpenSkillsFolder}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-foreground hover:bg-surface-raised transition-colors"
-                >
-                  <FolderOpenIcon className="h-4 w-4 text-secondary" />
-                  <span>{i18nService.t('openSkillsFolder')}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCreateByChat}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-foreground hover:bg-surface-raised transition-colors"
-                >
-                  <PencilSquareIcon className="h-4 w-4 text-secondary" />
-                  <span>{i18nService.t('createSkillByChat')}</span>
-                </button>
-              </div>
-            )}
           </div>
         </div>
 
@@ -268,11 +161,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
           <button
             type="button"
             onClick={() => setActiveTab('installed')}
+            disabled={gatewayOffline}
             className={`px-4 py-2 text-sm font-medium transition-colors relative ${
               activeTab === 'installed'
                 ? 'text-foreground'
                 : 'text-secondary hover:hover:text-foreground'
-            }`}
+            } ${gatewayOffline ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             {i18nService.t('skillInstalled')}
             {skills.length > 0 && (
@@ -289,11 +183,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
           <button
             type="button"
             onClick={() => setActiveTab('marketplace')}
+            disabled={gatewayOffline}
             className={`px-4 py-2 text-sm font-medium transition-colors relative ${
               activeTab === 'marketplace'
                 ? 'text-foreground'
                 : 'text-secondary hover:hover:text-foreground'
-            }`}
+            } ${gatewayOffline ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             {i18nService.t('skillMarketplace')}
             <div
@@ -311,7 +206,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
             <div className="grid grid-cols-2 gap-3">
               {filteredSkills.length === 0 ? (
                 <div className="col-span-2 text-center py-8 text-sm text-secondary">
-                  {i18nService.t('noSkillsAvailable')}
+                  {gatewayOffline
+                    ? i18nService.t('gatewayOffline')
+                    : i18nService.t('noSkillsAvailable')}
                 </div>
               ) : (
                 filteredSkills.map(skill => (
@@ -330,26 +227,18 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
                         </span>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        {!readOnly && !skill.isBuiltIn && (
-                          <button
-                            type="button"
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleRequestDeleteSkill(skill);
-                            }}
-                            className="p-1 rounded-lg text-secondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                            title={i18nService.t('deleteSkill')}
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
-                        )}
+                        {/* Status badge */}
+                        {renderSkillStatus(skill)}
+                        {/* Toggle */}
                         <div
                           className={`w-9 h-5 rounded-full flex items-center transition-colors flex-shrink-0 ${
-                            readOnly ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                            readOnly || gatewayOffline
+                              ? 'opacity-50 cursor-not-allowed'
+                              : 'cursor-pointer'
                           } ${skill.enabled ? 'bg-primary' : 'bg-border'}`}
                           onClick={e => {
                             e.stopPropagation();
-                            if (!readOnly) handleToggleSkill(skill.id);
+                            if (!readOnly && !gatewayOffline) handleToggleSkill(skill.id);
                           }}
                         >
                           <div
@@ -416,10 +305,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
             <h3 className="text-lg font-medium text-foreground mb-2">
               {i18nService.t('skillMarketplaceComingSoon')}
             </h3>
+            <p className="text-sm text-secondary max-w-md">
+              {i18nService.t('skillMarketplaceComingSoonDesc')}
+            </p>
           </div>
         )}
       </div>
 
+      {/* Skill detail modal */}
       {selectedSkill &&
         createPortal(
           <Modal
@@ -455,6 +348,25 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
               )}
             </p>
 
+            {/* Eligibility info */}
+            {selectedSkill.eligible === false && selectedSkill.missing && (
+              <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 mb-4">
+                <p className="text-xs text-yellow-600 font-medium mb-1">
+                  {i18nService.t('skillMissingRequirements')}
+                </p>
+                {selectedSkill.missing.bins.length > 0 && (
+                  <p className="text-xs text-secondary">
+                    {i18nService.t('missingBins')}: {selectedSkill.missing.bins.join(', ')}
+                  </p>
+                )}
+                {selectedSkill.missing.env.length > 0 && (
+                  <p className="text-xs text-secondary">
+                    {i18nService.t('missingEnv')}: {selectedSkill.missing.env.join(', ')}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="space-y-2 mb-5">
               {selectedSkill.isOfficial && (
                 <div className="flex items-center text-xs">
@@ -479,27 +391,13 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
             </div>
 
             <div className="flex items-center justify-between">
-              {!readOnly && !selectedSkill.isBuiltIn ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedSkill(null);
-                    handleRequestDeleteSkill(selectedSkill);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl text-red-500 dark:text-red-400 hover:bg-red-500/10 transition-colors"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                  {i18nService.t('deleteSkill')}
-                </button>
-              ) : (
-                <div />
-              )}
+              <div />
               <div
                 className={`w-9 h-5 rounded-full flex items-center transition-colors flex-shrink-0 ${
-                  readOnly ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  readOnly || gatewayOffline ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                 } ${selectedSkill.enabled ? 'bg-primary' : 'bg-border'}`}
                 onClick={() => {
-                  if (readOnly) return;
+                  if (readOnly || gatewayOffline) return;
                   handleToggleSkill(selectedSkill.id);
                   setSelectedSkill({ ...selectedSkill, enabled: !selectedSkill.enabled });
                 }}
@@ -526,27 +424,15 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
               {i18nService.t('deleteSkill')}
             </div>
             <p className="mt-2 text-sm text-secondary">
-              {i18nService.t('skillDeleteConfirm').replace('{name}', skillPendingDelete.name)}
+              {i18nService.t('skillDeleteNotSupported')}
             </p>
-            {skillActionError && (
-              <div className="mt-3 text-xs text-red-500">{skillActionError}</div>
-            )}
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={handleCancelDeleteSkill}
-                disabled={isDeletingSkill}
-                className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors"
               >
                 {i18nService.t('cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeleteSkill}
-                disabled={isDeletingSkill}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {i18nService.t('confirmDelete')}
               </button>
             </div>
           </Modal>,
