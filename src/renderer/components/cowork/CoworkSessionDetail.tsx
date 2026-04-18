@@ -801,6 +801,23 @@ export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[]
     }
   }
 
+  // Sort assistantItems to ensure correct display order during streaming:
+  // thinking → tool_group → assistant(response) → system → tool_result
+  // This prevents tools from appearing below response text when events arrive
+  // out of order during streaming.
+  for (const turn of turns) {
+    turn.assistantItems.sort((a, b) => {
+      const getPriority = (item: AssistantTurnItem): number => {
+        if (item.type === 'assistant' && item.message.metadata?.isThinking) return 0;
+        if (item.type === 'tool_group') return 1;
+        if (item.type === 'assistant') return 2;
+        if (item.type === 'system') return 3;
+        return 4; // tool_result
+      };
+      return getPriority(a) - getPriority(b);
+    });
+  }
+
   return turns;
 };
 
@@ -809,7 +826,9 @@ const isRenderableAssistantOrSystemMessage = (message: CoworkMessage): boolean =
     return true;
   }
   if (message.metadata?.isThinking) {
-    return Boolean(message.metadata?.isStreaming);
+    // Thinking messages should stay visible after streaming ends
+    // as long as they have thinking content
+    return Boolean(message.thinkingContent && message.thinkingContent.length > 0);
   }
   return false;
 };
@@ -1236,9 +1255,7 @@ export const UserMessageItem: React.FC<{
                 )}
               </div>
               <div className="flex items-center gap-1.5 mt-1 pl-4 sm:pl-8 md:pl-12">
-                <span className="text-[10px] text-muted">
-                  {formatTimestamp(message.timestamp)}
-                </span>
+                <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
                 <button
                   onClick={handleDelete}
                   className={`p-0.5 rounded transition-colors ${
@@ -1280,7 +1297,14 @@ const AssistantMessageItem: React.FC<{
   showCopyButton?: boolean;
   agentModel?: string;
   sessionId?: string;
-}> = ({ message, resolveLocalFilePath, mapDisplayText, showCopyButton = false, agentModel, sessionId }) => {
+}> = ({
+  message,
+  resolveLocalFilePath,
+  mapDisplayText,
+  showCopyButton = false,
+  agentModel,
+  sessionId,
+}) => {
   const [isHovered, setIsHovered] = useState(false);
 
   const handleDelete = useCallback(() => {
@@ -1319,14 +1343,14 @@ const AssistantMessageItem: React.FC<{
         </div>
       )}
       <div className="flex items-center gap-1.5 pl-4">
-        {(message.modelName || agentModel) && <span className="text-[10px] text-secondary">{message.modelName || agentModel}</span>}
+        {(message.modelName || agentModel) && (
+          <span className="text-[10px] text-secondary">{message.modelName || agentModel}</span>
+        )}
         <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
         <button
           onClick={handleDelete}
           className={`p-0.5 rounded transition-colors ${
-            isHovered
-              ? 'text-red-400 hover:bg-red-500/10'
-              : 'text-transparent pointer-events-none'
+            isHovered ? 'text-red-400 hover:bg-red-500/10' : 'text-transparent pointer-events-none'
           }`}
           title={i18nService.t('delete') || 'Delete'}
         >

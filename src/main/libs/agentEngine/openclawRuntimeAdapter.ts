@@ -2330,6 +2330,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // End thinking stream when we receive non-thinking streams (tool/lifecycle)
     if (stream !== 'thinking' && !turn.thinkingStreamEnded && turn.currentThinkingMessageId) {
       turn.thinkingStreamEnded = true;
+      // Reset assistantMessageId so response text creates a new message
+      // instead of reusing the thinking message. This ensures correct
+      // display order: thinking → tools → response.
+      turn.assistantMessageId = null;
       // Update thinking message metadata to mark streaming as ended
       // Pass the final accumulated thinking content to save to database
       this.finalizeThinkingMessage(
@@ -3227,6 +3231,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // End thinking stream when we receive text content
     if (!turn.thinkingStreamEnded && turn.currentThinkingMessageId) {
       turn.thinkingStreamEnded = true;
+      // Reset assistantMessageId so response text creates a new message
+      // instead of reusing the thinking message.
+      turn.assistantMessageId = null;
       // Update thinking message metadata to mark streaming as ended
       // Pass the final accumulated thinking content to save to database
       this.finalizeThinkingMessage(
@@ -3726,12 +3733,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
-    // Skip reconciliation for main-window (managed) sessions — local store is
-    // the source of truth; only channel/IM sessions need gateway reconciliation.
-    if (isManagedSessionKey(sessionKey)) {
-      return;
-    }
-
+    const isManaged = isManagedSessionKey(sessionKey);
     const limit = options?.isFullSync
       ? OpenClawRuntimeAdapter.FULL_HISTORY_SYNC_LIMIT
       : FINAL_HISTORY_SYNC_LIMIT;
@@ -3742,8 +3744,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         limit,
       });
       if (!Array.isArray(history?.messages) || history.messages.length === 0) {
-        console.log('[Reconcile] empty history — sessionId:', sessionId);
-        this.channelSyncCursor.set(sessionId, 0);
+        if (!isManaged) {
+          console.log('[Reconcile] empty history — sessionId:', sessionId);
+          this.channelSyncCursor.set(sessionId, 0);
+        }
+        return;
+      }
+
+      // Patch tool_result messages with content from history (gateway tool events
+      // don't include the actual output — only the transcript does)
+      this.patchToolResultsFromHistory(sessionId, history.messages);
+
+      // For managed sessions, tool result patching is all we need.
+      if (isManaged) {
         return;
       }
 
@@ -3770,8 +3783,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const sessionAgentId = session?.agentId || 'main';
       const sessionAgent = this.store.getAgent(sessionAgentId);
       const sessionRawModel = sessionAgent?.model || '';
-      const sessionModelName = sessionRawModel.includes('/') ? sessionRawModel.slice(sessionRawModel.indexOf('/') + 1) : sessionRawModel;
-      const authoritativeEntries: Array<{ role: 'user' | 'assistant'; text: string; modelName?: string }> = [];
+      const sessionModelName = sessionRawModel.includes('/')
+        ? sessionRawModel.slice(sessionRawModel.indexOf('/') + 1)
+        : sessionRawModel;
+      const authoritativeEntries: Array<{
+        role: 'user' | 'assistant';
+        text: string;
+        modelName?: string;
+      }> = [];
       for (const message of history.messages) {
         if (!isRecord(message)) continue;
         const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
@@ -3875,6 +3894,104 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     } catch (error) {
       console.warn('[Reconcile] failed — sessionId:', sessionId, 'error:', error);
+    }
+  }
+
+  /**
+   * Extract tool result content from chat.history messages and patch local
+   * tool_result messages that have empty content.
+   *
+   * The gateway WebSocket `tool result` event does not include the actual tool
+   * output — only a short `meta` summary.  The real output lives in the session
+   * transcript, which chat.history reads from disk.
+   */
+  private patchToolResultsFromHistory(sessionId: string, historyMessages: unknown[]): void {
+    const toolResultsByCallId = new Map<string, { text: string; isError: boolean }>();
+
+    // Scan history for tool_result content: standalone messages and embedded blocks
+    for (const raw of historyMessages) {
+      if (!isRecord(raw)) continue;
+      const message = raw as Record<string, unknown>;
+
+      // Standalone tool_result message (role-level)
+      const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
+      if (
+        role === 'tool_result' ||
+        role === 'toolresult' ||
+        role === 'tool' ||
+        role === 'function'
+      ) {
+        const toolCallId =
+          typeof message.toolCallId === 'string'
+            ? message.toolCallId
+            : typeof message.tool_call_id === 'string'
+              ? message.tool_call_id
+              : '';
+        if (toolCallId) {
+          const text = extractToolText(message.content) || extractToolText(message);
+          if (text) {
+            toolResultsByCallId.set(toolCallId, {
+              text,
+              isError: Boolean(message.isError),
+            });
+          }
+        }
+        continue;
+      }
+
+      // Content blocks with tool_result type (embedded in assistant messages)
+      if (Array.isArray(message.content)) {
+        for (const block of message.content as Array<Record<string, unknown>>) {
+          if (!isRecord(block)) continue;
+          const blockType = typeof block.type === 'string' ? block.type.toLowerCase() : '';
+          if (blockType !== 'tool_result' && blockType !== 'toolresult') continue;
+          const toolCallId =
+            typeof block.toolCallId === 'string'
+              ? block.toolCallId
+              : typeof block.tool_call_id === 'string'
+                ? block.tool_call_id
+                : '';
+          if (!toolCallId) continue;
+          const text = extractToolText(block);
+          if (text) {
+            toolResultsByCallId.set(toolCallId, {
+              text,
+              isError: Boolean(block.isError),
+            });
+          }
+        }
+      }
+    }
+
+    if (toolResultsByCallId.size === 0) return;
+
+    // Patch local tool_result messages that have empty content
+    const session = this.store.getSession(sessionId);
+    if (!session) return;
+
+    let patchedCount = 0;
+    for (const msg of session.messages) {
+      if (msg.type !== 'tool_result') continue;
+      if (msg.content?.trim()) continue;
+      const toolUseId = msg.metadata?.toolUseId as string | undefined;
+      if (!toolUseId) continue;
+      const result = toolResultsByCallId.get(toolUseId);
+      if (!result) continue;
+
+      this.store.updateMessage(sessionId, msg.id, {
+        content: result.text,
+        metadata: {
+          ...msg.metadata,
+          toolResult: result.text,
+          isError: result.isError,
+          error: result.isError ? result.text : undefined,
+        },
+      });
+      this.emit('messageUpdate', sessionId, msg.id, result.text);
+      patchedCount++;
+    }
+    if (patchedCount > 0) {
+      console.log('[patchToolResults] patched', patchedCount, 'messages for sessionId:', sessionId);
     }
   }
 
@@ -3998,6 +4115,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (canonicalText) {
           break;
         }
+      }
+
+      // Patch tool result messages with content from history (gateway tool events
+      // do not include the actual output text).
+      if (historyMessages) {
+        this.patchToolResultsFromHistory(sessionId, historyMessages);
       }
 
       if (!historyMessages || !canonicalText) {
@@ -4254,10 +4377,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     latestOnly = false,
     isDiscord = false,
   ): void {
-    const historyEntries = this.collectChannelHistoryEntries(
-      historyMessages,
-      isDiscord,
-    );
+    const historyEntries = this.collectChannelHistoryEntries(historyMessages, isDiscord);
 
     const cursor = this.channelSyncCursor.get(sessionId) ?? 0;
 
@@ -4512,7 +4632,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
-// If removedKeys is empty, build sessionKey from agentId parameter or default to 'main'
+    // If removedKeys is empty, build sessionKey from agentId parameter or default to 'main'
     if (removedKeys.length === 0) {
       const effectiveAgentId = agentId || 'main';
       const sessionKey = this.toSessionKey(sessionId, effectiveAgentId);
@@ -4601,7 +4721,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * These sessions have keys like: agent:{agentId}:subagent:{uuid}, agent:{agentId}:title:{uuid}
    * They are not spawnedBy the GucciAI session, but should be cleaned up when the session is deleted.
    */
-  private async deleteAgentLevelSessions(client: GatewayClientLike, agentId: string): Promise<void> {
+  private async deleteAgentLevelSessions(
+    client: GatewayClientLike,
+    agentId: string,
+  ): Promise<void> {
     try {
       // Query all sessions for this agent
       const listResult = await client.request<{
@@ -4618,8 +4741,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // 2. Are subagent or title sessions (contain :subagent: or :title:)
         const isSubagentOrTitle =
           session.key.includes(':subagent:') || session.key.includes(':title:');
-        const isNotSpawnedByGucciAI =
-          !session.spawnedBy || !session.spawnedBy.includes('gucciai');
+        const isNotSpawnedByGucciAI = !session.spawnedBy || !session.spawnedBy.includes('gucciai');
 
         if (isSubagentOrTitle && isNotSpawnedByGucciAI) {
           try {
@@ -4629,7 +4751,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             });
             console.log(`[OpenClaw] deleteAgentLevelSessions: deleted ${session.key}`);
           } catch (err) {
-            console.warn(`[OpenClaw] deleteAgentLevelSessions: failed to delete ${session.key}:`, err);
+            console.warn(
+              `[OpenClaw] deleteAgentLevelSessions: failed to delete ${session.key}:`,
+              err,
+            );
           }
         }
       }
