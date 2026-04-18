@@ -3307,8 +3307,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     turn.currentText = text;
     turn.currentAssistantSegmentText = this.resolveAssistantSegmentText(turn, text);
 
+    // Check if current assistantMessageId is a thinking message
+    // If so, finalize it and create a new assistant message for text content
+    if (turn.assistantMessageId && turn.currentThinkingMessageId === turn.assistantMessageId) {
+      const session = this.store.getSession(sessionId);
+      const existingMsg = session?.messages.find(m => m.id === turn.assistantMessageId);
+      const isThinkingMsg = existingMsg?.metadata?.isThinking === true;
+
+      if (isThinkingMsg) {
+        // Finalize thinking message and prepare for text content
+        turn.thinkingStreamEnded = true;
+        turn.assistantMessageId = null;
+        this.finalizeThinkingMessage(
+          sessionId,
+          turn.currentThinkingMessageId!,
+          turn.currentThinkingContent,
+        );
+      }
+    }
+
     if (!turn.assistantMessageId && turn.currentAssistantSegmentText) {
-      // Create a new message for the new text segment (after split).
+      // Create a new message for the new text segment (after split or thinking end).
       const assistantMessage = this.store.addMessage(sessionId, {
         type: 'assistant',
         content: turn.currentAssistantSegmentText,

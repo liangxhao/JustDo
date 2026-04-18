@@ -313,10 +313,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           : undefined;
 
       // Extract image attachments (with base64 data) for vision-capable models
+      console.log('[CoworkPromptInput] handleSubmit: attachments:', {
+        count: attachments.length,
+        details: attachments.map(a => ({
+          path: a.path,
+          isImage: a.isImage,
+          hasDataUrl: !!a.dataUrl,
+          dataUrlLength: a.dataUrl?.length ?? 0,
+        })),
+      });
       const imageAtts: CoworkImageAttachment[] = [];
       for (const attachment of attachments) {
         if (attachment.isImage && attachment.dataUrl) {
           const extracted = extractBase64FromDataUrl(attachment.dataUrl);
+          console.log('[CoworkPromptInput] handleSubmit: extracting base64 from', attachment.name, {
+            extracted: !!extracted,
+            mimeType: extracted?.mimeType,
+            base64Length: extracted?.base64Data.length ?? 0,
+          });
           if (extracted) {
             imageAtts.push({
               name: attachment.name,
@@ -327,12 +341,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         }
       }
 
-      // Build prompt with ALL attachments that have real file paths (both regular files and images).
-      // Image attachments also need their file paths in the prompt so the model knows
-      // where the original files are located (e.g., for skills like seedream that need --image <path>).
-      // Note: inline/clipboard images have pseudo-paths starting with 'inline:' and are excluded.
+      // Build prompt with NON-IMAGE attachments that have real file paths.
+      // Images are processed purely through Gateway attachments mechanism (base64).
+      // Gateway handles them appropriately (inline or media store).
+      // Non-image files need text injection because Gateway does not process them.
+      // Note: inline/clipboard images have pseudo-paths starting with 'inline:'.
       const attachmentLines = attachments
-        .filter(a => !a.path.startsWith('inline:'))
+        .filter(a => !a.path.startsWith('inline:') && !a.isImage)
         .map(attachment => `${i18nService.t('inputFileLabel')}: ${attachment.path}`)
         .join('\n');
       const finalPrompt = trimmedValue
@@ -583,11 +598,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 let dataUrl: string | null = null;
                 try {
                   dataUrl = await fileToDataUrl(file);
+                  console.log('[CoworkPromptInput] handleIncomingFiles: clipboard image dataUrl', {
+                    success: !!dataUrl,
+                    length: dataUrl?.length ?? 0,
+                    mimeType: file.type,
+                  });
                 } catch (error) {
                   console.error('Failed to read clipboard image as data URL:', error);
                 }
 
                 const stagedPath = await saveInlineFile(file);
+                console.log('[CoworkPromptInput] handleIncomingFiles: saveInlineFile result', {
+                  stagedPath,
+                  hasDataUrl: !!dataUrl,
+                });
 
                 if (stagedPath) {
                   addAttachment(stagedPath, {

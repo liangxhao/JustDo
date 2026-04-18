@@ -452,9 +452,12 @@ export const buildProviderSelection = (options: {
   const displayName = options.displayName?.trim();
   const descriptor = resolveDescriptor(providerName, !!options.codingPlanEnabled);
 
-  // 对于 custom provider，如果提供了 displayName，使用它作为 providerId
-  const isCustomProvider = providerName.startsWith('custom_');
-  const effectiveProviderId = isCustomProvider && displayName ? displayName : descriptor.providerId;
+  // 对于非注册 provider（不在 PROVIDER_REGISTRY 中），如果提供了 displayName，使用它作为 providerId
+  // Gateway 的 normalizeProviderId 会将 provider 转为小写进行匹配
+  // 因此 providerId 需要使用小写版本以确保 catalog lookup 成功
+  const isRegisteredProvider = providerName in PROVIDER_REGISTRY;
+  const effectiveProviderId =
+    !isRegisteredProvider && displayName ? displayName.toLowerCase() : descriptor.providerId;
 
   let baseUrl =
     descriptor.resolveRuntimeBaseUrl?.() ?? descriptor.normalizeBaseUrl(options.baseURL);
