@@ -11,6 +11,7 @@ import {
   updateMessageContent,
   updateMessageThinkingContent,
   updateMessageMetadata,
+  deleteMessage as deleteMessageAction,
   setStreaming,
   setRemoteManaged,
   updateSessionPinned,
@@ -449,6 +450,20 @@ class CoworkService {
     }
 
     console.error('Failed to batch delete sessions:', result.error);
+    return false;
+  }
+
+  async deleteMessage(sessionId: string, messageId: string): Promise<boolean> {
+    const cowork = window.electron?.cowork;
+    if (!cowork) return false;
+
+    const result = await cowork.deleteMessage(sessionId, messageId);
+    if (result.success) {
+      store.dispatch(deleteMessageAction({ sessionId, messageId }));
+      return true;
+    }
+
+    console.error('Failed to delete message:', result.error);
     return false;
   }
 

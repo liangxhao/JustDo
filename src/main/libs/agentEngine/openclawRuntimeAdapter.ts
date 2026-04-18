@@ -136,6 +136,8 @@ type ActiveTurn = {
   currentThinkingContent: string;
   /** True when thinking stream has ended (first text or non-thinking event received). */
   thinkingStreamEnded: boolean;
+  /** Model name for this turn's assistant messages (captured at turn start). */
+  modelName: string;
 };
 
 type BufferedChatEvent = {
@@ -1219,6 +1221,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const agentId = options.agentId || session.agentId || 'main';
+    const agent = this.store.getAgent(agentId);
+    const rawModel = agent?.model || '';
+    const modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
     const sessionKey = this.toSessionKey(sessionId, agentId);
     this.rememberSessionKey(sessionId, sessionKey);
 
@@ -1263,6 +1268,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       currentThinkingMessageId: null,
       currentThinkingContent: '',
       thinkingStreamEnded: false,
+      modelName,
     });
     this.sessionIdByRunId.set(runId, sessionId);
 
@@ -2559,6 +2565,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           content: '',
           metadata: { isStreaming: true, isThinking: true },
           thinkingContent: initialThinkingContent,
+          modelName: turn.modelName,
         });
         turn.currentThinkingMessageId = thinkingMessage.id;
         turn.assistantMessageId = thinkingMessage.id;
@@ -3167,6 +3174,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         type: 'assistant',
         content: turn.currentAssistantSegmentText,
         metadata: { isStreaming: true, isFinal: false },
+        modelName: turn.modelName,
       });
       turn.assistantMessageId = assistantMessage.id;
       this.emit('message', sessionId, assistantMessage);
@@ -3288,6 +3296,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           isStreaming: true,
           isFinal: false,
         },
+        modelName: turn.modelName,
       });
       turn.assistantMessageId = assistantMessage.id;
       turn.currentAssistantSegmentText = segmentText;
@@ -3366,6 +3375,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             isStreaming: false,
             isFinal: true,
           },
+          modelName: turn.modelName,
         });
         turn.assistantMessageId = assistantMessage.id;
         this.emit('message', sessionId, assistantMessage);
@@ -3456,6 +3466,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         type: 'assistant',
         content: t('taskTimedOut'),
         metadata: { isTimeout: true },
+        modelName: turn.modelName,
       });
       this.emit('message', sessionId, hintMessage);
       this.emit('complete', sessionId, turn.runId);
@@ -3755,7 +3766,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const isDiscord = sessionKey.includes(':discord:');
 
       // Extract authoritative user/assistant entries from gateway history
-      const authoritativeEntries: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+      const session = this.store.getSession(sessionId);
+      const sessionAgentId = session?.agentId || 'main';
+      const sessionAgent = this.store.getAgent(sessionAgentId);
+      const sessionRawModel = sessionAgent?.model || '';
+      const sessionModelName = sessionRawModel.includes('/') ? sessionRawModel.slice(sessionRawModel.indexOf('/') + 1) : sessionRawModel;
+      const authoritativeEntries: Array<{ role: 'user' | 'assistant'; text: string; modelName?: string }> = [];
       for (const message of history.messages) {
         if (!isRecord(message)) continue;
         const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
@@ -3763,7 +3779,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         let text = extractMessageText(message).trim();
         if (!text) continue;
         if (isDiscord) text = stripDiscordMentions(text);
-        authoritativeEntries.push({ role: role as 'user' | 'assistant', text });
+        authoritativeEntries.push({
+          role: role as 'user' | 'assistant',
+          text,
+          ...(role === 'assistant' ? { modelName: sessionModelName } : {}),
+        });
       }
 
       // For channel sessions, append file paths from "message" tool calls
@@ -3788,10 +3808,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
 
       // Collect local user/assistant messages for comparison
-      const session = this.store.getSession(sessionId);
+      const localSession = this.store.getSession(sessionId);
       const localEntries: Array<{ role: 'user' | 'assistant'; text: string }> = [];
-      if (session) {
-        for (const msg of session.messages) {
+      if (localSession) {
+        for (const msg of localSession.messages) {
           if (msg.type !== 'user' && msg.type !== 'assistant') continue;
           const text = msg.content.trim();
           if (!text) continue;
@@ -4032,6 +4052,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             isStreaming: false,
             isFinal: true,
           },
+          modelName: turn.modelName,
         });
         turn.assistantMessageId = assistantMessage.id;
         this.emit('message', sessionId, assistantMessage);
@@ -4749,6 +4770,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.channelSessionSync &&
       !isManagedSessionKey(sessionKey) &&
       this.channelSessionSync.isChannelSessionKey(sessionKey);
+    const session = this.store.getSession(sessionId);
+    const agentId = session?.agentId || 'main';
+    const agent = this.store.getAgent(agentId);
+    const rawModel = agent?.model || '';
+    const modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
     console.log(
       '[Debug:ensureActiveTurn] creating turn — sessionId:',
       sessionId,
@@ -4786,6 +4812,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       currentThinkingMessageId: null,
       currentThinkingContent: '',
       thinkingStreamEnded: false,
+      modelName,
     });
     if (runId) {
       this.sessionIdByRunId.set(runId, sessionId);

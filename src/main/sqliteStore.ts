@@ -224,6 +224,11 @@ export class SqliteStore {
       if (!msgColNames.includes('thinking_content')) {
         this.db.exec('ALTER TABLE cowork_messages ADD COLUMN thinking_content TEXT');
       }
+
+      // Migration: Add model_name column to cowork_messages
+      if (!msgColNames.includes('model_name')) {
+        this.db.exec('ALTER TABLE cowork_messages ADD COLUMN model_name TEXT');
+      }
     } catch {
       // Column already exists or migration not needed.
     }

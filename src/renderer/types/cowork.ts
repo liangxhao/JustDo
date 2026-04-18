@@ -78,6 +78,7 @@ export interface CoworkMessage {
   timestamp: number;
   metadata?: CoworkMessageMetadata;
   thinkingContent?: string; // Accumulated thinking content during streaming
+  modelName?: string; // Model that generated this message (for assistant messages)
 }
 
 // Cowork session

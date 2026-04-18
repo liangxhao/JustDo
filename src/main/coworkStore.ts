@@ -384,6 +384,7 @@ export interface CoworkMessage {
   timestamp: number;
   metadata?: CoworkMessageMetadata;
   thinkingContent?: string; // Accumulated thinking content during streaming
+  modelName?: string; // Model that generated this message (for assistant messages)
 }
 
 export interface CoworkSession {
@@ -532,6 +533,7 @@ interface CoworkMessageRow {
   created_at: number;
   sequence: number | null;
   thinking_content: string | null;
+  model_name: string | null;
 }
 
 interface CoworkUserMemoryRow {
@@ -828,7 +830,7 @@ export class CoworkStore {
   private getSessionMessages(sessionId: string): CoworkMessage[] {
     const rows = this.getAll<CoworkMessageRow>(
       `
-      SELECT id, type, content, metadata, created_at, sequence, thinking_content
+      SELECT id, type, content, metadata, created_at, sequence, thinking_content, model_name
       FROM cowork_messages
       WHERE session_id = ?
       ORDER BY
@@ -858,6 +860,7 @@ export class CoworkStore {
         timestamp: row.created_at,
         metadata,
         ...(row.thinking_content ? { thinkingContent: row.thinking_content } : {}),
+        ...(row.model_name ? { modelName: row.model_name } : {}),
       };
     });
   }
@@ -876,8 +879,8 @@ export class CoworkStore {
     this.db
       .prepare(
         `
-      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content, model_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -889,6 +892,7 @@ export class CoworkStore {
         now,
         sequence,
         message.thinkingContent || null,
+        message.modelName || null,
       );
 
     this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
@@ -901,6 +905,8 @@ export class CoworkStore {
       metadata: message.metadata,
       // Include thinkingContent if provided (used for streaming thinking display)
       ...(message.thinkingContent ? { thinkingContent: message.thinkingContent } : {}),
+      // Include modelName if provided (used to display which model generated this message)
+      ...(message.modelName ? { modelName: message.modelName } : {}),
     };
   }
 
@@ -940,8 +946,8 @@ export class CoworkStore {
       this.db
         .prepare(
           `
-        INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content, model_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         )
         .run(
@@ -953,6 +959,7 @@ export class CoworkStore {
           now,
           targetSequence,
           message.thinkingContent || null,
+          message.modelName || null,
         );
 
       this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
@@ -966,6 +973,8 @@ export class CoworkStore {
       metadata: message.metadata,
       // Include thinkingContent if provided (used for streaming thinking display)
       ...(message.thinkingContent ? { thinkingContent: message.thinkingContent } : {}),
+      // Include modelName if provided (used to display which model generated this message)
+      ...(message.modelName ? { modelName: message.modelName } : {}),
     };
   }
 
@@ -987,7 +996,7 @@ export class CoworkStore {
    */
   replaceConversationMessages(
     sessionId: string,
-    authoritative: Array<{ role: 'user' | 'assistant'; text: string }>,
+    authoritative: Array<{ role: 'user' | 'assistant'; text: string; modelName?: string }>,
   ): void {
     const now = Date.now();
 
@@ -1013,8 +1022,8 @@ export class CoworkStore {
         this.db
           .prepare(
             `
-          INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, model_name)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
           )
           .run(
@@ -1025,6 +1034,7 @@ export class CoworkStore {
             JSON.stringify({ isStreaming: false, isFinal: true }),
             now,
             nextSeq++,
+            entry.modelName || null,
           );
       }
 

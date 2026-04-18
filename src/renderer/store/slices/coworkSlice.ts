@@ -235,6 +235,16 @@ const coworkSlice = createSlice({
       }
     },
 
+    deleteMessage(state, action: PayloadAction<{ sessionId: string; messageId: string }>) {
+      const { sessionId, messageId } = action.payload;
+
+      if (state.currentSession?.id === sessionId) {
+        state.currentSession.messages = state.currentSession.messages.filter(
+          m => m.id !== messageId,
+        );
+      }
+    },
+
     updateMessageMetadata(
       state,
       action: PayloadAction<{
@@ -432,6 +442,7 @@ export const {
   updateMessageContent,
   updateMessageThinkingContent,
   updateMessageMetadata,
+  deleteMessage,
   setStreaming,
   setRemoteManaged,
   updateSessionPinned,

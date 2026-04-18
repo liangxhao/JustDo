@@ -14,6 +14,8 @@ import {
   ChevronRightIcon,
   DocumentArrowDownIcon,
   PhotoIcon,
+  SparklesIcon,
+  UserIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { store } from '../../store';
@@ -29,7 +31,6 @@ import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminder
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
-import { setActiveSkillIds } from '../../store/slices/skillSlice';
 import { toggleThinkingExpanded } from '../../store/slices/coworkSlice';
 import type {
   CoworkMessage,
@@ -1097,7 +1098,7 @@ const CopyButton: React.FC<{
   return (
     <button
       onClick={handleCopy}
-      className={`p-1.5 rounded-md hover:bg-surface-raised transition-all duration-200 ${
+      className={`p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-all duration-200 ${
         visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}
       title={i18nService.t('copyToClipboard')}
@@ -1113,7 +1114,7 @@ const CopyButton: React.FC<{
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="w-4 h-4 text-green-500"
+          className="w-3.5 h-3.5 text-green-500"
           aria-hidden="true"
         >
           <polyline points="20 6 9 17 4 12"></polyline>
@@ -1129,7 +1130,7 @@ const CopyButton: React.FC<{
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="w-4 h-4 text-[var(--icon-secondary)]"
+          className="w-3.5 h-3.5 text-[var(--icon-secondary)]"
           aria-hidden="true"
         >
           <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
@@ -1140,49 +1141,24 @@ const CopyButton: React.FC<{
   );
 };
 
-// Re-edit button component — lets the user re-fill a sent message back into the input
-const ReEditButton: React.FC<{
-  visible: boolean;
-  onClick: () => void;
-}> = ({ visible, onClick }) => {
-  return (
-    <button
-      onClick={e => {
-        e.stopPropagation();
-        onClick();
-      }}
-      className={`p-1.5 rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-all duration-200 ${
-        visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
-      }`}
-      title={i18nService.t('coworkReEdit')}
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="24"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="w-4 h-4 text-[var(--icon-secondary)]"
-        aria-hidden="true"
-      >
-        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-        <path d="m15 5 4 4" />
-      </svg>
-    </button>
-  );
+// Format epoch-ms timestamp to absolute time like "10:30"
+const formatTimestamp = (ts: number): string => {
+  const date = new Date(ts);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 };
 
 export const UserMessageItem: React.FC<{
   message: CoworkMessage;
   skills: Skill[];
-  onReEdit?: (message: CoworkMessage) => void;
-}> = React.memo(({ message, skills, onReEdit }) => {
+  sessionId?: string;
+}> = React.memo(({ message, skills, sessionId }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
+
+  const handleDelete = useCallback(() => {
+    if (!sessionId) return;
+    void coworkService.deleteMessage(sessionId, message.id);
+  }, [sessionId, message.id]);
 
   // Get skills used for this message
   const messageSkillIds = (message.metadata as CoworkMessageMetadata)?.skillIds || [];
@@ -1203,8 +1179,16 @@ export const UserMessageItem: React.FC<{
       <div className="max-w-3xl mx-auto">
         <div className="pl-4 sm:pl-8 md:pl-12">
           <div className="flex items-start gap-3 flex-row-reverse">
+            {/* User avatar */}
+            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <UserIcon className="h-4 w-4 text-primary" />
+            </div>
             <div className="w-full min-w-0 flex flex-col items-end">
-              <div className="w-fit max-w-[42rem] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
+              <div className="relative w-fit max-w-[42rem] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
+                {/* Copy button — top-right inside bubble */}
+                <div className="absolute top-1.5 right-1.5">
+                  <CopyButton content={message.content} visible={isHovered} />
+                </div>
                 {message.content?.trim() && (
                   <MarkdownContent
                     content={message.content}
@@ -1233,9 +1217,7 @@ export const UserMessageItem: React.FC<{
                   </div>
                 )}
               </div>
-              <div className="flex items-center justify-end gap-1.5 mt-1">
-                {onReEdit && <ReEditButton visible={isHovered} onClick={() => onReEdit(message)} />}
-                <CopyButton content={message.content} visible={isHovered} />
+              <div className="flex items-center gap-1.5 mt-1 pl-4 sm:pl-8 md:pl-12">
                 {messageSkills.length > 0 && (
                   <div className="flex items-center gap-1.5 mr-1.5">
                     {messageSkills.map(skill => (
@@ -1252,6 +1234,22 @@ export const UserMessageItem: React.FC<{
                     ))}
                   </div>
                 )}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1 pl-4 sm:pl-8 md:pl-12">
+                <span className="text-[10px] text-muted">
+                  {formatTimestamp(message.timestamp)}
+                </span>
+                <button
+                  onClick={handleDelete}
+                  className={`p-0.5 rounded transition-colors ${
+                    isHovered
+                      ? 'text-red-400 hover:bg-red-500/10'
+                      : 'text-transparent pointer-events-none'
+                  }`}
+                  title={i18nService.t('delete') || 'Delete'}
+                >
+                  <TrashIcon className="h-3 w-3" />
+                </button>
               </div>
             </div>
           </div>
@@ -1280,8 +1278,15 @@ const AssistantMessageItem: React.FC<{
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   showCopyButton?: boolean;
-}> = ({ message, resolveLocalFilePath, mapDisplayText, showCopyButton = false }) => {
+  agentModel?: string;
+  sessionId?: string;
+}> = ({ message, resolveLocalFilePath, mapDisplayText, showCopyButton = false, agentModel, sessionId }) => {
   const [isHovered, setIsHovered] = useState(false);
+
+  const handleDelete = useCallback(() => {
+    if (!sessionId) return;
+    void coworkService.deleteMessage(sessionId, message.id);
+  }, [sessionId, message.id]);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
 
   // Check if thinking content exists
@@ -1289,7 +1294,7 @@ const AssistantMessageItem: React.FC<{
 
   return (
     <div
-      className="relative"
+      className="relative space-y-2"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -1298,20 +1303,36 @@ const AssistantMessageItem: React.FC<{
 
       {/* Normal content */}
       {message.content && (
-        <div className="text-foreground">
+        <div className="relative w-fit max-w-[42rem] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
+          {/* Copy button — top-right inside bubble */}
+          {showCopyButton && (
+            <div className="absolute top-1.5 right-1.5">
+              <CopyButton content={displayContent} visible={isHovered} />
+            </div>
+          )}
           <MarkdownContent
             content={displayContent}
-            className="max-w-none"
+            className="max-w-none whitespace-pre-wrap break-words"
             resolveLocalFilePath={resolveLocalFilePath}
             showRevealInFolderAction
           />
         </div>
       )}
-      {showCopyButton && (
-        <div className="flex items-center gap-1.5 mt-1">
-          <CopyButton content={displayContent} visible={isHovered} />
-        </div>
-      )}
+      <div className="flex items-center gap-1.5 pl-4">
+        {(message.modelName || agentModel) && <span className="text-[10px] text-secondary">{message.modelName || agentModel}</span>}
+        <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
+        <button
+          onClick={handleDelete}
+          className={`p-0.5 rounded transition-colors ${
+            isHovered
+              ? 'text-red-400 hover:bg-red-500/10'
+              : 'text-transparent pointer-events-none'
+          }`}
+          title={i18nService.t('delete') || 'Delete'}
+        >
+          <TrashIcon className="h-3 w-3" />
+        </button>
+      </div>
     </div>
   );
 };
@@ -1480,7 +1501,7 @@ const ThinkingStreamBlock: React.FC<{
   return (
     <div className="mb-2">
       <div
-        className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
+        className="flex items-center gap-1.5 w-fit text-xs text-muted-foreground cursor-pointer select-none max-w-[42rem]"
         onClick={handleToggle}
       >
         <ChevronRightIcon
@@ -1494,7 +1515,7 @@ const ThinkingStreamBlock: React.FC<{
         )}
       </div>
       {!localCollapsed && (
-        <div className="mt-1.5 ml-4 p-2.5 rounded-md bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100/50 dark:border-blue-900/30 max-h-64 overflow-y-auto">
+        <div className="mt-1.5 w-fit max-w-[42rem] p-2.5 rounded-md bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100/50 dark:border-blue-900/30 max-h-64 overflow-y-auto">
           <div className="text-xs [&_.markdown-content]:text-xs [&_.markdown-content]:text-muted-foreground [&_p]:my-0 [&_p]:leading-5 [&_div.my-0.5]:my-0 [&_div.my-0.5]:mt-0.5 [&_code]:text-[0.85em] [&_pre]:my-0 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0">
             <MarkdownContent content={thinkingContent} className="max-w-none" />
           </div>
@@ -1510,12 +1531,16 @@ export const AssistantTurnBlock: React.FC<{
   mapDisplayText?: (value: string) => string;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
+  agentModel?: string;
+  sessionId?: string;
 }> = ({
   turn,
   resolveLocalFilePath,
   mapDisplayText,
   showTypingIndicator = false,
   showCopyButtons = true,
+  agentModel,
+  sessionId,
 }) => {
   const visibleAssistantItems = getVisibleAssistantItems(turn.assistantItems);
 
@@ -1602,7 +1627,11 @@ export const AssistantTurnBlock: React.FC<{
     <div className="px-4 py-2">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-start gap-3">
-          <div className="flex-1 min-w-0 px-4 py-3 space-y-3">
+          {/* Assistant avatar */}
+          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
+            <SparklesIcon className="h-4 w-4 text-purple-500" />
+          </div>
+          <div className="min-w-0 px-0 py-3 space-y-3">
             {visibleAssistantItems.map((item, index) => {
               if (item.type === 'assistant') {
                 // Check if there are any tool_group items after this assistant message
@@ -1619,6 +1648,8 @@ export const AssistantTurnBlock: React.FC<{
                     resolveLocalFilePath={resolveLocalFilePath}
                     mapDisplayText={mapDisplayText}
                     showCopyButton={showCopyButtons && !hasToolGroupAfter}
+                    agentModel={agentModel}
+                    sessionId={sessionId}
                   />
                 );
               }
@@ -1672,6 +1703,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const messagesLength = useSelector(selectCurrentMessagesLength);
   const thinkingExpanded = useSelector(selectThinkingExpanded);
   const skills = useSelector((state: RootState) => state.skill.skills);
+  const agentModel = useSelector((state: RootState) => {
+    const session = state.cowork.currentSession;
+    if (!session?.agentId) return '';
+    const agent = state.agent.agents.find(a => a.id === session.agentId);
+    const raw = agent?.model || '';
+    const slashIdx = raw.indexOf('/');
+    return slashIdx >= 0 ? raw.slice(slashIdx + 1) : raw;
+  });
   const detailRootRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
@@ -2345,29 +2384,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     return value;
   }, []);
 
-  const handleReEdit = useCallback(
-    (message: CoworkMessage) => {
-      const ref = promptInputRef.current;
-      if (!ref) return;
-      // Set text content
-      if (message.content?.trim()) {
-        ref.setValue(message.content);
-      }
-      // Restore image attachments (always call to clear previous attachments)
-      const imageAttachments = ((message.metadata as CoworkMessageMetadata)?.imageAttachments ??
-        []) as CoworkImageAttachment[];
-      ref.setImageAttachments(imageAttachments);
-      // Restore active skills
-      const skillIds = (message.metadata as CoworkMessageMetadata)?.skillIds;
-      if (skillIds && skillIds.length > 0) {
-        dispatch(setActiveSkillIds(skillIds));
-      }
-      // Focus the input
-      ref.focus();
-    },
-    [dispatch],
-  );
-
   const messages = currentSession?.messages;
   const displayItems = useMemo(() => (messages ? buildDisplayItems(messages) : []), [messages]);
   const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
@@ -2456,6 +2472,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             resolveLocalFilePath={resolveLocalFilePath}
             showTypingIndicator
             showCopyButtons={!isStreaming}
+            agentModel={agentModel}
+            sessionId={sessionId}
           />
         </div>
       );
@@ -2490,11 +2508,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               data-export-role="user-message"
               {...(userRailIdx >= 0 ? { 'data-rail-index': userRailIdx } : undefined)}
             >
-              <UserMessageItem
-                message={turn.userMessage}
-                skills={skills}
-                onReEdit={remoteManaged ? undefined : handleReEdit}
-              />
+              <UserMessageItem message={turn.userMessage} skills={skills} sessionId={sessionId} />
             </div>
           )}
           {showAssistantBlock && (
@@ -2508,6 +2522,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 mapDisplayText={mapDisplayText}
                 showTypingIndicator={showTypingIndicator}
                 showCopyButtons={!isStreaming}
+                agentModel={agentModel}
+                sessionId={sessionId}
               />
             </div>
           )}

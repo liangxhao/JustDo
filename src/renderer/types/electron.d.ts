@@ -425,6 +425,10 @@ interface IElectronAPI {
     listSessions: (
       agentId?: string,
     ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    deleteMessage: (
+      sessionId: string,
+      messageId: string,
+    ) => Promise<{ success: boolean; error?: string }>;
     exportResultImage: (options: {
       rect: { x: number; y: number; width: number; height: number };
       defaultFileName?: string;

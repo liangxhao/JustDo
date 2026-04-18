@@ -164,6 +164,10 @@ const App: React.FC = () => {
             console.error('[App] initializeApp: scheduledTaskService.init failed:', error);
           },
         );
+
+        // 加载 agents 列表，不阻塞首屏
+        const { agentService } = await import('./services/agent');
+        void agentService.loadAgents();
       } catch (error) {
         console.error('Failed to initialize app:', error);
         setInitError(i18nService.t('initializationError'));

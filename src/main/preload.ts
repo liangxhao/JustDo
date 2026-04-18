@@ -247,6 +247,8 @@ contextBridge.exposeInMainWorld('electron', {
     patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:session:patchModel', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
+    deleteMessage: (sessionId: string, messageId: string) =>
+      ipcRenderer.invoke('cowork:message:delete', sessionId, messageId),
     exportResultImage: (options: {
       rect: { x: number; y: number; width: number; height: number };
       defaultFileName?: string;
