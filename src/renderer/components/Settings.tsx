@@ -118,6 +118,8 @@ interface ProviderExportEntry {
   apiFormat?: 'anthropic' | 'openai' | 'gemini';
   codingPlanEnabled?: boolean;
   models?: Model[];
+  /** Display name shown in UI (for custom providers: displayName, for built-in: label) */
+  displayName?: string;
 }
 
 interface ProvidersExportPayload {
@@ -141,6 +143,7 @@ interface ProvidersImportEntry {
   apiFormat?: 'anthropic' | 'openai' | 'native';
   codingPlanEnabled?: boolean;
   models?: Model[];
+  displayName?: string;
 }
 
 interface ProvidersImportPayload {
@@ -1793,6 +1796,12 @@ const Settings: React.FC<SettingsProps> = ({
       Object.entries(providers).map(async ([providerKey, providerConfig]) => {
         const apiKey = await encryptWithPassword(providerConfig.apiKey, password);
         const apiFormat = getEffectiveApiFormat(providerKey, providerConfig.apiFormat);
+        const isCustom = isCustomProvider(providerKey);
+        const displayName = isCustom
+          ? (providerConfig as ProviderConfig).displayName ||
+            getCustomProviderDefaultName(providerKey)
+          : (providerMeta[providerKey as ProviderType]?.label ??
+            getProviderDisplayName(providerKey));
         return [
           providerKey,
           {
@@ -1802,6 +1811,7 @@ const Settings: React.FC<SettingsProps> = ({
             apiFormat,
             codingPlanEnabled: (providerConfig as ProviderConfig).codingPlanEnabled,
             models: providerConfig.models,
+            displayName,
           },
         ] as const;
       }),
@@ -1905,11 +1915,35 @@ const Settings: React.FC<SettingsProps> = ({
     try {
       const providerUpdates: Partial<ProvidersConfig> = {};
       let hadDecryptFailure = false;
-      for (const providerKey of providerKeys) {
+
+      // Iterate over all provider keys in the import payload
+      const payloadProviderKeys = Object.keys(payload.providers || {});
+      for (const providerKey of payloadProviderKeys) {
+        // For built-in providers, check if they exist in current config
+        // For custom providers (custom_N), create new entry if not exists
+        const isCustom = isCustomProvider(providerKey);
+        if (!isCustom && !providers[providerKey]) {
+          console.warn(`Skipping unknown built-in provider: ${providerKey}`);
+          continue;
+        }
+        if (isCustom && !CUSTOM_PROVIDER_KEYS.includes(providerKey as typeof CUSTOM_PROVIDER_KEYS[number])) {
+          console.warn(`Skipping invalid custom provider key: ${providerKey}`);
+          continue;
+        }
+
         const providerData = payload.providers?.[providerKey];
         if (!providerData) {
           continue;
         }
+
+        // For custom providers not yet in config, use empty defaults
+        const currentConfig = providers[providerKey] || {
+          enabled: false,
+          apiKey: '',
+          baseUrl: '',
+          apiFormat: 'openai' as const,
+          models: [],
+        };
 
         let apiKey: string | undefined;
         if (typeof providerData.apiKey === 'string') {
@@ -1942,21 +1976,24 @@ const Settings: React.FC<SettingsProps> = ({
           enabled:
             typeof providerData.enabled === 'boolean'
               ? providerData.enabled
-              : providers[providerKey].enabled,
-          apiKey: apiKey ?? providers[providerKey].apiKey,
+              : currentConfig.enabled,
+          apiKey: apiKey ?? currentConfig.apiKey,
           baseUrl:
             typeof providerData.baseUrl === 'string'
               ? providerData.baseUrl
-              : providers[providerKey].baseUrl,
+              : currentConfig.baseUrl,
           apiFormat: getEffectiveApiFormat(
             providerKey,
-            providerData.apiFormat ?? providers[providerKey].apiFormat,
+            providerData.apiFormat ?? currentConfig.apiFormat,
           ),
           codingPlanEnabled:
             typeof providerData.codingPlanEnabled === 'boolean'
               ? providerData.codingPlanEnabled
-              : (providers[providerKey] as ProviderConfig).codingPlanEnabled,
-          models: models ?? providers[providerKey].models,
+              : currentConfig.codingPlanEnabled,
+          models: models ?? currentConfig.models,
+          ...(isCustom && providerData.displayName
+            ? { displayName: providerData.displayName }
+            : {}),
         };
       }
 
@@ -2005,11 +2042,34 @@ const Settings: React.FC<SettingsProps> = ({
       const providerUpdates: Partial<ProvidersConfig> = {};
       let hadDecryptFailure = false;
 
-      for (const providerKey of providerKeys) {
+      // Iterate over all provider keys in the import payload
+      const payloadProviderKeys = Object.keys(payload.providers);
+      for (const providerKey of payloadProviderKeys) {
+        // For built-in providers, check if they exist in current config
+        // For custom providers (custom_N), create new entry if not exists
+        const isCustom = isCustomProvider(providerKey);
+        if (!isCustom && !providers[providerKey]) {
+          console.warn(`Skipping unknown built-in provider: ${providerKey}`);
+          continue;
+        }
+        if (isCustom && !CUSTOM_PROVIDER_KEYS.includes(providerKey as typeof CUSTOM_PROVIDER_KEYS[number])) {
+          console.warn(`Skipping invalid custom provider key: ${providerKey}`);
+          continue;
+        }
+
         const providerData = payload.providers[providerKey];
         if (!providerData) {
           continue;
         }
+
+        // For custom providers not yet in config, use empty defaults
+        const currentConfig = providers[providerKey] || {
+          enabled: false,
+          apiKey: '',
+          baseUrl: '',
+          apiFormat: 'openai' as const,
+          models: [],
+        };
 
         let apiKey: string | undefined;
         if (typeof providerData.apiKey === 'string') {
@@ -2033,21 +2093,24 @@ const Settings: React.FC<SettingsProps> = ({
           enabled:
             typeof providerData.enabled === 'boolean'
               ? providerData.enabled
-              : providers[providerKey].enabled,
-          apiKey: apiKey ?? providers[providerKey].apiKey,
+              : currentConfig.enabled,
+          apiKey: apiKey ?? currentConfig.apiKey,
           baseUrl:
             typeof providerData.baseUrl === 'string'
               ? providerData.baseUrl
-              : providers[providerKey].baseUrl,
+              : currentConfig.baseUrl,
           apiFormat: getEffectiveApiFormat(
             providerKey,
-            providerData.apiFormat ?? providers[providerKey].apiFormat,
+            providerData.apiFormat ?? currentConfig.apiFormat,
           ),
           codingPlanEnabled:
             typeof providerData.codingPlanEnabled === 'boolean'
               ? providerData.codingPlanEnabled
-              : (providers[providerKey] as ProviderConfig).codingPlanEnabled,
-          models: models ?? providers[providerKey].models,
+              : currentConfig.codingPlanEnabled,
+          models: models ?? currentConfig.models,
+          ...(isCustom && providerData.displayName
+            ? { displayName: providerData.displayName }
+            : {}),
         };
       }
 
