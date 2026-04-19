@@ -1292,16 +1292,8 @@ const AssistantMessageItem: React.FC<{
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   showCopyButton?: boolean;
-  agentModel?: string;
   sessionId?: string;
-}> = ({
-  message,
-  resolveLocalFilePath,
-  mapDisplayText,
-  showCopyButton = false,
-  agentModel,
-  sessionId,
-}) => {
+}> = ({ message, resolveLocalFilePath, mapDisplayText, showCopyButton = false, sessionId }) => {
   const [isHovered, setIsHovered] = useState(false);
 
   const handleDelete = useCallback(() => {
@@ -1340,8 +1332,8 @@ const AssistantMessageItem: React.FC<{
         </div>
       )}
       <div className="flex items-center gap-1.5 pl-4">
-        {(message.modelName || agentModel) && (
-          <span className="text-[10px] text-secondary">{message.modelName || agentModel}</span>
+        {message.modelName && (
+          <span className="text-[10px] text-secondary">{message.modelName}</span>
         )}
         <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
         <button
@@ -1552,7 +1544,6 @@ export const AssistantTurnBlock: React.FC<{
   mapDisplayText?: (value: string) => string;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
-  agentModel?: string;
   sessionId?: string;
 }> = ({
   turn,
@@ -1560,7 +1551,6 @@ export const AssistantTurnBlock: React.FC<{
   mapDisplayText,
   showTypingIndicator = false,
   showCopyButtons = true,
-  agentModel,
   sessionId,
 }) => {
   const visibleAssistantItems = getVisibleAssistantItems(turn.assistantItems);
@@ -1669,7 +1659,6 @@ export const AssistantTurnBlock: React.FC<{
                     resolveLocalFilePath={resolveLocalFilePath}
                     mapDisplayText={mapDisplayText}
                     showCopyButton={showCopyButtons && !hasToolGroupAfter}
-                    agentModel={agentModel}
                     sessionId={sessionId}
                   />
                 );
@@ -1724,14 +1713,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const messagesLength = useSelector(selectCurrentMessagesLength);
   const thinkingExpanded = useSelector(selectThinkingExpanded);
   const skills = useSelector((state: RootState) => state.skill.skills);
-  const agentModel = useSelector((state: RootState) => {
-    const session = state.cowork.currentSession;
-    if (!session?.agentId) return '';
-    const agent = state.agent.agents.find(a => a.id === session.agentId);
-    const raw = agent?.model || '';
-    const slashIdx = raw.indexOf('/');
-    return slashIdx >= 0 ? raw.slice(slashIdx + 1) : raw;
-  });
   const detailRootRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
@@ -2493,7 +2474,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             resolveLocalFilePath={resolveLocalFilePath}
             showTypingIndicator
             showCopyButtons={!isStreaming}
-            agentModel={agentModel}
             sessionId={sessionId}
           />
         </div>
@@ -2543,7 +2523,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 mapDisplayText={mapDisplayText}
                 showTypingIndicator={showTypingIndicator}
                 showCopyButtons={!isStreaming}
-                agentModel={agentModel}
                 sessionId={sessionId}
               />
             </div>
