@@ -1209,10 +1209,7 @@ export const UserMessageItem: React.FC<{
                   <CopyButton content={message.content} visible={isHovered} />
                 </div>
                 {message.content?.trim() && (
-                  <MarkdownContent
-                    content={message.content}
-                    className="max-w-none whitespace-pre-wrap break-words"
-                  />
+                  <MarkdownContent content={message.content} className="max-w-none break-words" />
                 )}
                 {imageAttachments.length > 0 && (
                   <div className={`flex flex-wrap gap-2 ${message.content?.trim() ? 'mt-2' : ''}`}>
@@ -1336,7 +1333,7 @@ const AssistantMessageItem: React.FC<{
           )}
           <MarkdownContent
             content={displayContent}
-            className="max-w-none whitespace-pre-wrap break-words"
+            className="max-w-none break-words"
             resolveLocalFilePath={resolveLocalFilePath}
             showRevealInFolderAction
           />

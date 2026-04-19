@@ -478,7 +478,7 @@ const createMarkdownComponents = (
   showRevealInFolderAction = false,
 ) => ({
   p: ({ node, className, children, ...props }: any) => (
-    <p className="mt-1 mb-0 last:mb-0 leading-6 text-foreground" {...props}>
+    <p className="mb-0 leading-6 text-foreground [&+&]:mt-1" {...props}>
       {children}
     </p>
   ),
