@@ -19,7 +19,6 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
 import {
   migrateScheduledTaskRunsToOpenclaw,
   migrateScheduledTasksToOpenclaw,
@@ -1477,13 +1476,11 @@ const refreshMcpBridge = (): Promise<{ tools: number; error?: string }> => {
 };
 
 function mergeCoworkSystemPrompt(
-  engine: CoworkAgentEngine,
+  _engine: CoworkAgentEngine,
   systemPrompt?: string,
 ): string | undefined {
-  const sections = [buildScheduledTaskEnginePrompt(engine), systemPrompt?.trim() || ''].filter(
-    Boolean,
-  );
-  return sections.length > 0 ? sections.join('\n\n') : undefined;
+  // 纯透传：只返回用户配置的 systemPrompt，不注入任何 GucciAI 内容
+  return systemPrompt?.trim() || undefined;
 }
 
 // 获取正确的预加载脚本路径
@@ -2745,7 +2742,11 @@ if (!gotTheLock) {
         return { success: true, statuses: {}, displayLabels: {} };
       }
       const result = (openClawRuntimeAdapter as any).getSubagentStatuses(sessionId);
-      return { success: true, statuses: result.statuses || {}, displayLabels: result.displayLabels || {} };
+      return {
+        success: true,
+        statuses: result.statuses || {},
+        displayLabels: result.displayLabels || {},
+      };
     } catch (error) {
       return { success: false, statuses: {}, displayLabels: {} };
     }
@@ -4610,6 +4611,15 @@ if (!gotTheLock) {
       console.log('[Main] initApp: syncBundledSkillsToUserData done');
     } catch (error) {
       console.error('[Main] initApp: syncBundledSkillsToUserData failed:', error);
+    }
+
+    // Sync built-in skills to OpenClaw state directory
+    try {
+      const stateDir = getOpenClawEngineManager().getStateDir();
+      manager.syncBuiltinSkillsToOpenClaw(stateDir);
+      console.log('[Main] initApp: syncBuiltinSkillsToOpenClaw done');
+    } catch (error) {
+      console.error('[Main] initApp: syncBuiltinSkillsToOpenClaw failed:', error);
     }
 
     try {

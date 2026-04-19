@@ -32,15 +32,12 @@ import {
 } from '../openclawChannelSessionSync';
 import { extractGatewayHistoryEntries, extractGatewayMessageText } from '../openclawHistory';
 import { extractOpenClawAssistantStreamText } from '../openclawAssistantText';
-import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
 import { isDeleteCommand, getCommandDangerLevel } from '../commandSafety';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclawConfigSync';
 import { t } from '../../i18n';
 
 const OPENCLAW_GATEWAY_TOOL_EVENTS_CAP = 'tool-events';
-const BRIDGE_MAX_MESSAGES = 20;
-const BRIDGE_MAX_MESSAGE_CHARS = 1200;
 const GATEWAY_READY_TIMEOUT_MS = 15_000;
 const FINAL_HISTORY_SYNC_LIMIT = 50;
 const CHANNEL_SESSION_DISCOVERY_LIMIT = 200;
@@ -536,8 +533,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     { resolve: () => void; reject: (error: Error) => void }
   >();
   private readonly confirmationModeBySession = new Map<string, 'modal' | 'text'>();
-  private readonly bridgedSessions = new Set<string>();
-  private readonly lastSystemPromptBySession = new Map<string, string>();
   private readonly gatewayHistoryCountBySession = new Map<string, number>();
   private readonly latestTurnTokenBySession = new Map<string, number>();
 
@@ -1359,132 +1354,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private async buildOutboundPrompt(
-    sessionId: string,
+    _sessionId: string,
     prompt: string,
-    systemPrompt?: string,
-    agentId?: string,
+    _systemPrompt?: string,
+    _agentId?: string,
   ): Promise<string> {
-    const normalizedSystemPrompt = (systemPrompt ?? '').trim();
-    const previousSystemPrompt = this.lastSystemPromptBySession.get(sessionId) ?? '';
-    const shouldInjectSystemPrompt = Boolean(
-      normalizedSystemPrompt && normalizedSystemPrompt !== previousSystemPrompt,
-    );
-
-    if (normalizedSystemPrompt) {
-      this.lastSystemPromptBySession.set(sessionId, normalizedSystemPrompt);
-    } else {
-      this.lastSystemPromptBySession.delete(sessionId);
-    }
-
-    const sections: string[] = [];
-    if (shouldInjectSystemPrompt) {
-      sections.push(this.buildSystemPromptPrefix(normalizedSystemPrompt));
-    }
-    sections.push(buildOpenClawLocalTimeContextPrompt());
-
-    if (this.bridgedSessions.has(sessionId)) {
-      if (prompt.trim()) {
-        sections.push(`[Current user request]\n${prompt}`);
-      }
-      return sections.join('\n\n');
-    }
-
-    const client = this.requireGatewayClient();
-    const sessionKey = this.toSessionKey(sessionId, agentId);
-    let hasHistory = false;
-    try {
-      const history = await client.request<{ messages?: unknown[] }>('chat.history', {
-        sessionKey,
-        limit: 1,
-      });
-      hasHistory = Array.isArray(history?.messages) && history.messages.length > 0;
-    } catch (error) {
-      console.warn(
-        '[OpenClawRuntime] chat.history check failed, continuing without history guard:',
-        error,
-      );
-    }
-
-    this.bridgedSessions.add(sessionId);
-
-    // Enable reasoning stream so thinking events are emitted via WebSocket
-    // OpenClaw parses /reasoning directive and sets session.reasoningLevel
-    // Must include this for every turn, not just new sessions, to ensure thinking events are sent
-    sections.push('/reasoning stream');
-
-    if (!hasHistory) {
-      const session = this.store.getSession(sessionId);
-      if (session) {
-        const bridgePrefix = this.buildBridgePrefix(session.messages, prompt);
-        if (bridgePrefix) {
-          sections.push(bridgePrefix);
-        }
-      }
-    }
-
-    if (prompt.trim()) {
-      sections.push(`[Current user request]\n${prompt}`);
-    }
-    return sections.join('\n\n');
-  }
-
-  private buildSystemPromptPrefix(systemPrompt: string): string {
-    return [
-      '[GucciAI system instructions]',
-      'Apply the instructions below as the highest-priority guidance for this session.',
-      'If earlier GucciAI system instructions exist, replace them with this version.',
-      systemPrompt,
-    ].join('\n');
-  }
-
-  private buildBridgePrefix(messages: CoworkMessage[], currentPrompt: string): string {
-    const normalizedCurrentPrompt = currentPrompt.trim();
-    if (!normalizedCurrentPrompt) return '';
-
-    const source = messages
-      .filter(message => {
-        if (message.type !== 'user' && message.type !== 'assistant') {
-          return false;
-        }
-        if (!message.content.trim()) {
-          return false;
-        }
-        if (message.metadata?.isThinking) {
-          return false;
-        }
-        return true;
-      })
-      .map(message => ({
-        type: message.type,
-        content: message.content.trim(),
-      }));
-
-    if (source.length === 0) {
-      return '';
-    }
-
-    if (
-      source[source.length - 1]?.type === 'user' &&
-      source[source.length - 1]?.content === normalizedCurrentPrompt
-    ) {
-      source.pop();
-    }
-
-    const recent = source.slice(-BRIDGE_MAX_MESSAGES);
-    if (recent.length === 0) {
-      return '';
-    }
-
-    const lines = recent.map(entry => {
-      const role = entry.type === 'user' ? 'User' : 'Assistant';
-      return `${role}: ${truncate(entry.content, BRIDGE_MAX_MESSAGE_CHARS)}`;
-    });
-
-    return [
-      '[Context bridge from previous GucciAI conversation]',
-      'Use this prior context for continuity. Focus your final answer on the current request.',
-      ...lines,
-    ].join('\n');
+    // 纯透传：直接返回用户消息，不注入任何 GucciAI 上下文
+    return prompt.trim();
   }
 
   private async ensureGatewayClientReady(): Promise<void> {
@@ -4764,10 +4640,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     this.activeTurns.delete(sessionId);
     setCoworkProxySessionId(null);
-    // NOTE: Do NOT clear lastSystemPromptBySession here — it must persist
-    // across turns so that the system prompt is only injected on the first
-    // turn of a session (or when it actually changes).  Cleanup happens in
-    // onSessionDeleted() when the session is removed entirely.
     this.reCreatedChannelSessionIds.delete(sessionId);
   }
 
@@ -4844,9 +4716,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // Clean up active turn and related run-id mappings
     this.cleanupSessionTurn(sessionId);
 
-    // Clean up pending approvals, bridged state, confirmation mode
+    // Clean up pending approvals, confirmation mode
     this.clearPendingApprovalsBySession(sessionId);
-    this.bridgedSessions.delete(sessionId);
     this.confirmationModeBySession.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
 

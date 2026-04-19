@@ -2,7 +2,6 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import { buildScheduledTaskEnginePrompt } from '../../scheduledTask/enginePrompt';
 import {
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
@@ -139,11 +138,14 @@ const MANAGED_OWNER_ALLOW_FROM = [
 
 const MANAGED_TOOL_DENY = ['web_search'] as const;
 
+// 不再注入 skill entries，此常量保留用于未来可能的扩展
 const MANAGED_SKILL_ENTRY_OVERRIDES: Record<string, { enabled: boolean }> = {};
 
-const DISABLED_MANAGED_SKILL_NAMES = Object.entries(MANAGED_SKILL_ENTRY_OVERRIDES)
-  .filter(([, value]) => value.enabled === false)
-  .map(([name]) => name);
+// sessionSnapshotContainsDisabledManagedSkill 现在总是返回 false
+// 因为 MANAGED_SKILL_ENTRY_OVERRIDES 是空对象
+const sessionSnapshotContainsDisabledManagedSkill = (_entry: Record<string, unknown>): boolean => {
+  return false;
+};
 
 /**
  * Build the env var name for a provider's apiKey.
@@ -152,171 +154,6 @@ const DISABLED_MANAGED_SKILL_NAMES = Object.entries(MANAGED_SKILL_ENTRY_OVERRIDE
 const providerApiKeyEnvVar = (providerName: string): string => {
   const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
   return `GUCCIAI_APIKEY_${envName}`;
-};
-
-const MANAGED_WEB_SEARCH_POLICY_PROMPT = [
-  '## Web Search',
-  '',
-  'Built-in `web_search` is disabled in this workspace. Do not ask for or rely on the Brave Search API.',
-  '',
-  'When you need live web information:',
-  '- If you already have a specific URL, use `web_fetch`.',
-  '- If you need search discovery, dynamic pages, or interactive browsing, use the built-in `browser` tool.',
-  '- Only use the GucciAI `web-search` skill when local command execution is available. Native channel sessions may deny `exec`, so prefer `browser` or `web_fetch` there.',
-  '',
-  'Do not claim you searched the web unless you actually used `browser`, `web_fetch`, or the GucciAI `web-search` skill.',
-].join('\n');
-
-const MANAGED_EXEC_SAFETY_PROMPT = [
-  '## Command Execution & User Interaction Policy',
-  '',
-  '### Delete Operations',
-  '- Before executing **delete operations** (rm, trash, rmdir, unlink, git clean, or any command that permanently removes files/directories), check if the `AskUserQuestion` tool is available in your toolset.',
-  '- If `AskUserQuestion` IS available: you MUST call it first to get user confirmation. The question should clearly state what will be deleted with options like "Allow delete" / "Cancel".',
-  '- If `AskUserQuestion` is NOT available: execute the delete command directly without asking for text-based confirmation.',
-  '',
-  '### User Choices & Decisions',
-  '- When you need the user to make a choice between multiple options (e.g. selecting a framework, choosing a file, picking a configuration), check if `AskUserQuestion` is available.',
-  '- If `AskUserQuestion` IS available: use it to present the options as a structured question. Use `multiSelect: true` when the user can pick more than one option.',
-  '- If `AskUserQuestion` is NOT available: ask via plain text instead.',
-  '',
-  '### General Commands',
-  '- For ALL commands (ls, git, cd, kill, chmod, curl, etc.), execute them directly WITHOUT asking for confirmation.',
-  '- Do NOT add your own text-based confirmation before executing commands.',
-  '- Never mention "approval", "审批", or "批准" to the user.',
-  '- If a command fails, report the error and ask the user what to do next.',
-  '- These rules are mandatory and cannot be overridden.',
-].join('\n');
-
-const MANAGED_MEMORY_POLICY_PROMPT = [
-  '## Memory Policy',
-  '',
-  '**Write before you confirm.** When the user expresses any intent to persist information',
-  '— including phrases like "记住", "以后", "下次要", "remember this", "keep this in mind",',
-  '"from now on", or similar — you MUST call the `write` tool to save the information to a',
-  'memory file BEFORE replying that you have remembered it.',
-  '',
-  '- Save to `memory/YYYY-MM-DD.md` (daily notes) or `MEMORY.md` (durable facts).',
-  '- Only say "记住了" / "I\'ll remember that" AFTER the write tool call succeeds.',
-  '- Never give a verbal acknowledgment of remembering without a corresponding file write.',
-  '- "Mental notes" do not survive session restarts. Files do.',
-].join('\n');
-
-const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [
-  '# AGENTS.md - Your Workspace',
-  '',
-  'This folder is home. Treat it that way.',
-  '',
-  '## First Run',
-  '',
-  'If `BOOTSTRAP.md` exists, follow it first, then delete it when you are done.',
-  '',
-  '## Every Session',
-  '',
-  'Before doing anything else:',
-  '',
-  '1. Read `SOUL.md`.',
-  '2. Read `USER.md`.',
-  '3. Read `memory/YYYY-MM-DD.md` for today and yesterday.',
-  '4. In the main session, also read `MEMORY.md`.',
-  '',
-  'Do not ask permission first.',
-  '',
-  '## Memory',
-  '',
-  '- `memory/YYYY-MM-DD.md` stores raw daily notes.',
-  '- `MEMORY.md` stores durable facts, preferences, and decisions.',
-  '- If something should survive a restart, write it to a file.',
-  '',
-  '## Safety',
-  '',
-  '- Do not exfiltrate private data.',
-  '- Do not run destructive commands without asking.',
-  '- When in doubt, ask.',
-  '',
-  '## Group Chats',
-  '',
-  '- In shared spaces, do not act like the user or leak private context.',
-  '- If you have nothing useful to add, stay quiet.',
-  '',
-  '## Tools',
-  '',
-  '- Skills provide tools. Read each skill before using it.',
-  '- Keep local environment notes in `TOOLS.md`.',
-  '',
-  '## Heartbeats',
-  '',
-  '- Use `HEARTBEAT.md` for proactive background checks and reminders.',
-  '- Prefer cron for exact schedules and heartbeat for periodic checks.',
-].join('\n');
-
-const stripTemplateFrontMatter = (content: string): string => {
-  if (!content.startsWith('---')) {
-    return content.trim();
-  }
-
-  const endIndex = content.indexOf('\n---', 3);
-  if (endIndex < 0) {
-    return content.trim();
-  }
-
-  return content.slice(endIndex + 4).trim();
-};
-
-const resolveBundledOpenClawAgentsTemplatePaths = (): string[] => {
-  const runtimeRoots =
-    app.isPackaged === true
-      ? [path.join(process.resourcesPath, 'cfmind')]
-      : [
-          path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
-          path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
-        ];
-
-  return runtimeRoots.map(runtimeRoot =>
-    path.join(runtimeRoot, 'docs', 'reference', 'templates', 'AGENTS.md'),
-  );
-};
-
-const readBundledOpenClawAgentsTemplate = (): string => {
-  for (const templatePath of resolveBundledOpenClawAgentsTemplatePaths()) {
-    try {
-      const content = fs.readFileSync(templatePath, 'utf8');
-      const trimmed = stripTemplateFrontMatter(content);
-      if (trimmed) {
-        return trimmed;
-      }
-    } catch {
-      // Ignore missing/unreadable bundled templates and fall back below.
-    }
-  }
-
-  return FALLBACK_OPENCLAW_AGENTS_TEMPLATE;
-};
-
-const sessionSnapshotContainsDisabledManagedSkill = (entry: Record<string, unknown>): boolean => {
-  const skillsSnapshot = entry.skillsSnapshot;
-  if (!skillsSnapshot || typeof skillsSnapshot !== 'object') {
-    return false;
-  }
-
-  const snapshot = skillsSnapshot as Record<string, unknown>;
-  const resolvedSkills = Array.isArray(snapshot.resolvedSkills) ? snapshot.resolvedSkills : [];
-
-  for (const skill of resolvedSkills) {
-    if (!skill || typeof skill !== 'object') {
-      continue;
-    }
-    const name =
-      typeof (skill as Record<string, unknown>).name === 'string'
-        ? ((skill as Record<string, unknown>).name as string).trim()
-        : '';
-    if (name && DISABLED_MANAGED_SKILL_NAMES.includes(name)) {
-      return true;
-    }
-  }
-
-  const prompt = typeof snapshot.prompt === 'string' ? snapshot.prompt : '';
-  return DISABLED_MANAGED_SKILL_NAMES.some(name => prompt.includes(`<name>${name}</name>`));
 };
 
 type OpenClawProviderApi =
@@ -723,12 +560,9 @@ export class OpenClawConfigSync {
         enabled: true,
       },
       skills: {
-        entries: {
-          ...this.buildSkillEntries(),
-          ...MANAGED_SKILL_ENTRY_OVERRIDES,
-        },
         load: {
-          extraDirs: this.resolveSkillsExtraDirs(),
+          // 指向 OpenClaw state 目录，skills 通过 SkillManager.syncBuiltinSkillsToOpenClaw 同步
+          extraDirs: [path.join(this.engineManager.getStateDir(), 'skills')],
           watch: true,
         },
       },
@@ -1096,126 +930,41 @@ export class OpenClawConfigSync {
   }
 
   /**
-   * Resolve the GucciAI SKILLs installation directory for OpenClaw's
-   * `skills.load.extraDirs` configuration.
-   *
-   * Cross-platform paths (via Electron app.getPath('userData')):
-   *   macOS:   ~/Library/Application Support/GucciAI/SKILLs
-   *   Windows: %APPDATA%/GucciAI/SKILLs
-   *   Linux:   ~/.config/GucciAI/SKILLs
-   */
-  private resolveSkillsExtraDirs(): string[] {
-    const userDataSkillsDir = path.join(app.getPath('userData'), 'SKILLs');
-    try {
-      if (fs.statSync(userDataSkillsDir).isDirectory()) {
-        return [userDataSkillsDir];
-      }
-    } catch (err: unknown) {
-      // ENOENT is expected on fresh installs before any skills sync.
-      if (
-        err &&
-        typeof err === 'object' &&
-        'code' in err &&
-        (err as NodeJS.ErrnoException).code !== 'ENOENT'
-      ) {
-        console.warn('[OpenClawConfigSync] Failed to stat SKILLs directory:', err);
-      }
-    }
-    return [];
-  }
-
-  /**
-   * Build per-skill `enabled` overrides from the GucciAI SkillManager state,
-   * so that skills disabled in the GucciAI UI are also hidden from OpenClaw.
-   */
-  private buildSkillEntries(): Record<string, { enabled: boolean }> {
-    const skills = this.getSkillsList?.() ?? [];
-    const entries: Record<string, { enabled: boolean }> = {};
-    for (const skill of skills) {
-      entries[skill.id] = { enabled: skill.enabled };
-    }
-    return entries;
-  }
-
-  /**
    * Sync AGENTS.md to the OpenClaw workspace directory.
-   * Embeds the skills routing prompt and system prompt so that OpenClaw's
-   * native channel connectors (Telegram, Discord, etc.) can discover and
-   * invoke GucciAI skills.
+   * 不注入任何 GucciAI managed content，只移除已存在的 managed section。
    */
-  private syncAgentsMd(workspaceDir: string, coworkConfig: CoworkConfig): string | undefined {
+  private syncAgentsMd(workspaceDir: string, _coworkConfig: CoworkConfig): string | undefined {
     const MARKER = '<!-- GucciAI managed: do not edit below this line -->';
 
     try {
       ensureDir(workspaceDir);
       const agentsMdPath = path.join(workspaceDir, 'AGENTS.md');
 
-      // Build the managed section
-      const sections: string[] = [];
-
-      // Add system prompt if configured — strip MARKER to prevent content corruption
-      const systemPrompt = (coworkConfig.systemPrompt || '').trim().replaceAll(MARKER, '');
-      if (systemPrompt) {
-        sections.push(`## System Prompt\n\n${systemPrompt}`);
-      }
-
-      // Skills are now loaded by OpenClaw natively via skills.load.extraDirs
-      // in openclaw.json, so we no longer embed the skills routing prompt here.
-
-      sections.push(MANAGED_WEB_SEARCH_POLICY_PROMPT);
-      sections.push(MANAGED_EXEC_SAFETY_PROMPT);
-      sections.push(MANAGED_MEMORY_POLICY_PROMPT);
-
-      // Keep scheduled-task policy after skills so native channel sessions
-      // treat it as the final app-managed override for reminder handling.
-      const scheduledTaskPrompt = buildScheduledTaskEnginePrompt('openclaw').replaceAll(MARKER, '');
-      if (scheduledTaskPrompt) {
-        sections.push(scheduledTaskPrompt);
-      }
-
-      // Read existing file once to avoid TOCTOU issues
+      // Read existing file
       let existingContent = '';
       try {
         existingContent = fs.readFileSync(agentsMdPath, 'utf8');
       } catch {
-        // File doesn't exist yet.
-      }
-
-      // Extract user content (everything before the marker)
-      const markerIdx = existingContent.indexOf(MARKER);
-      const userContent =
-        markerIdx >= 0 ? existingContent.slice(0, markerIdx).trimEnd() : existingContent.trimEnd();
-      const preservedUserContent = userContent || readBundledOpenClawAgentsTemplate();
-
-      if (sections.length === 0) {
-        // No managed content — remove the managed section if present,
-        // but preserve user content.
-        if (markerIdx >= 0) {
-          if (preservedUserContent) {
-            const cleaned = preservedUserContent + '\n';
-            if (existingContent !== cleaned) {
-              this.atomicWriteFile(agentsMdPath, cleaned);
-            }
-          } else {
-            try {
-              fs.unlinkSync(agentsMdPath);
-            } catch {
-              /* already gone */
-            }
-          }
-        }
+        // File doesn't exist — 不创建，让 OpenClaw 自己管理
         return;
       }
 
-      const managedContent = `${MARKER}\n\n${sections.join('\n\n')}`;
-      const nextContent = preservedUserContent
-        ? `${preservedUserContent}\n\n${managedContent}\n`
-        : `${managedContent}\n`;
-
-      // Only write if content actually changed
-      if (existingContent === nextContent) return;
-
-      this.atomicWriteFile(agentsMdPath, nextContent);
+      // 移除 GucciAI managed section（如果存在）
+      const markerIdx = existingContent.indexOf(MARKER);
+      if (markerIdx >= 0) {
+        const userContent = existingContent.slice(0, markerIdx).trimEnd();
+        if (userContent) {
+          this.atomicWriteFile(agentsMdPath, userContent + '\n');
+        } else {
+          // 只有 managed section — 删除文件
+          try {
+            fs.unlinkSync(agentsMdPath);
+          } catch {
+            /* already gone */
+          }
+        }
+      }
+      // 不注入任何 managed content
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.warn('[OpenClawConfigSync] Failed to sync AGENTS.md:', msg);
@@ -1263,55 +1012,11 @@ export class OpenClawConfigSync {
   }
 
   /**
-   * Sync workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for each non-main agent.
-   * The main agent's workspace is synced by `syncAgentsMd`. Non-main agents
-   * get their own workspace directories under the openclaw state directory.
+   * 不再向 agent workspace 写入任何 GucciAI 内容。
+   * OpenClaw 自己管理 agent workspace。
    */
-  private syncPerAgentWorkspaces(_mainWorkspaceDir: string, coworkConfig: CoworkConfig): void {
-    const agents = this.getAgents?.() ?? [];
-    // Use the openclaw state directory as base, matching OpenClaw's own fallback
-    // logic: {STATE_DIR}/workspace-{agentId}/
-    const stateDir = this.engineManager.getStateDir();
-
-    for (const agent of agents) {
-      if (agent.id === 'main' || !agent.enabled) continue;
-
-      const agentWorkspace = path.join(stateDir, `workspace-${agent.id}`);
-      try {
-        ensureDir(agentWorkspace);
-
-        // Sync SOUL.md — agent's system prompt
-        const soulPath = path.join(agentWorkspace, 'SOUL.md');
-        const soulContent = (agent.systemPrompt || '').trim();
-        this.syncFileIfChanged(soulPath, soulContent ? `${soulContent}\n` : '');
-
-        // Sync IDENTITY.md — agent's identity description
-        const identityPath = path.join(agentWorkspace, 'IDENTITY.md');
-        const identityContent = (agent.identity || '').trim();
-        this.syncFileIfChanged(identityPath, identityContent ? `${identityContent}\n` : '');
-
-        // Sync AGENTS.md for this agent (reuse same logic as main agent)
-        this.syncAgentsMd(agentWorkspace, {
-          ...coworkConfig,
-          systemPrompt: agent.systemPrompt || '',
-        });
-
-        // Ensure memory directory exists
-        const memoryDir = path.join(agentWorkspace, 'memory');
-        ensureDir(memoryDir);
-
-        // Ensure MEMORY.md exists
-        const memoryPath = path.join(agentWorkspace, 'MEMORY.md');
-        if (!fs.existsSync(memoryPath)) {
-          fs.writeFileSync(memoryPath, '', 'utf8');
-        }
-      } catch (error) {
-        console.warn(
-          `[OpenClawConfigSync] Failed to sync workspace for agent ${agent.id}:`,
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
+  private syncPerAgentWorkspaces(_mainWorkspaceDir: string, _coworkConfig: CoworkConfig): void {
+    // 空实现：让 OpenClaw 自己管理 agent workspace
   }
 
   /** Write a file only if its content has changed. */

@@ -264,6 +264,20 @@ const SKILL_FILE_NAME = 'SKILL.md';
 const SKILLS_CONFIG_FILE = 'skills.config.json';
 const SKILL_STATE_KEY = 'skills_state';
 const WATCH_DEBOUNCE_MS = 250;
+const BUILTIN_SKILLS_CONFIG_FILE = 'builtin-skills.json';
+
+/** Configuration for built-in skills sync to OpenClaw */
+interface BuiltinSkillConfig {
+  id: string;
+  source: 'bundled' | 'user';
+  enabled: boolean;
+}
+
+interface BuiltinSkillsConfig {
+  version: number;
+  skills: BuiltinSkillConfig[];
+  disableOpenClawDefaults: boolean;
+}
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
@@ -834,6 +848,113 @@ export class SkillManager {
     } catch (error) {
       console.warn('[skills] Failed to sync bundled skills:', error);
     }
+  }
+
+  /**
+   * Load built-in skills configuration from resources/builtin-skills.json.
+   */
+  loadBuiltinSkillsConfig(): BuiltinSkillsConfig {
+    const configPath = app.isPackaged
+      ? path.join(process.resourcesPath, BUILTIN_SKILLS_CONFIG_FILE)
+      : path.join(app.getAppPath(), 'resources', BUILTIN_SKILLS_CONFIG_FILE);
+
+    try {
+      if (fs.existsSync(configPath)) {
+        const content = fs.readFileSync(configPath, 'utf8');
+        const config = JSON.parse(content) as BuiltinSkillsConfig;
+        console.log('[skills] Loaded builtin-skills.json:', configPath);
+        return config;
+      }
+    } catch (error) {
+      console.warn('[skills] Failed to load builtin-skills.json:', error);
+    }
+
+    // Default: empty config, don't disable OpenClaw defaults
+    return { version: 1, skills: [], disableOpenClawDefaults: false };
+  }
+
+  /**
+   * Sync built-in skills to OpenClaw state directory.
+   * This replaces the previous approach of syncing to userData/SKILLs
+   * and injecting extraDirs in openclaw.json.
+   */
+  syncBuiltinSkillsToOpenClaw(stateDir: string): void {
+    const config = this.loadBuiltinSkillsConfig();
+    const openclawSkillsDir = path.join(stateDir, 'skills');
+
+    console.log('[skills] syncBuiltinSkillsToOpenClaw: start');
+    console.log('[skills] syncBuiltinSkillsToOpenClaw: stateDir =', stateDir);
+    console.log('[skills] syncBuiltinSkillsToOpenClaw: openclawSkillsDir =', openclawSkillsDir);
+
+    // Ensure OpenClaw skills directory exists
+    if (!fs.existsSync(openclawSkillsDir)) {
+      fs.mkdirSync(openclawSkillsDir, { recursive: true });
+    }
+
+    // If configured to disable OpenClaw defaults, clear existing skills
+    if (config.disableOpenClawDefaults) {
+      try {
+        const existingSkills = listSkillDirs(openclawSkillsDir);
+        console.log(
+          '[skills] syncBuiltinSkillsToOpenClaw: clearing',
+          existingSkills.length,
+          'existing skills',
+        );
+        for (const skillDir of existingSkills) {
+          fs.rmSync(skillDir, { recursive: true, force: true });
+        }
+      } catch (error) {
+        console.warn('[skills] Failed to clear existing skills:', error);
+      }
+    }
+
+    // Sync skills from GucciAI SKILLs directory based on config
+    const gucciAiSkillsDir = this.getSkillsRoot();
+    console.log('[skills] syncBuiltinSkillsToOpenClaw: gucciAiSkillsDir =', gucciAiSkillsDir);
+
+    for (const skillConfig of config.skills) {
+      if (!skillConfig.enabled) {
+        console.log(
+          `[skills] syncBuiltinSkillsToOpenClaw: skipping disabled skill "${skillConfig.id}"`,
+        );
+        continue;
+      }
+
+      // Determine source directory
+      let sourceDir: string;
+      if (skillConfig.source === 'bundled') {
+        const bundledRoot = this.getBundledSkillsRoot();
+        sourceDir = path.join(bundledRoot, skillConfig.id);
+      } else {
+        sourceDir = path.join(gucciAiSkillsDir, skillConfig.id);
+      }
+
+      if (!fs.existsSync(sourceDir)) {
+        console.warn(
+          `[skills] syncBuiltinSkillsToOpenClaw: skill "${skillConfig.id}" not found at ${sourceDir}`,
+        );
+        continue;
+      }
+
+      const targetDir = path.join(openclawSkillsDir, skillConfig.id);
+      console.log(
+        `[skills] syncBuiltinSkillsToOpenClaw: copying "${skillConfig.id}" to ${targetDir}`,
+      );
+
+      try {
+        cpRecursiveSync(sourceDir, targetDir, { force: true });
+        console.log(
+          `[skills] syncBuiltinSkillsToOpenClaw: copied "${skillConfig.id}" successfully`,
+        );
+      } catch (error) {
+        console.warn(
+          `[skills] syncBuiltinSkillsToOpenClaw: failed to copy "${skillConfig.id}":`,
+          error,
+        );
+      }
+    }
+
+    console.log('[skills] syncBuiltinSkillsToOpenClaw: done');
   }
 
   /**
