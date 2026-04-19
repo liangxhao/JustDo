@@ -31,7 +31,6 @@ const createStore = (messages) => {
     status: 'completed',
     pinned: false,
     cwd: '',
-    systemPrompt: '',
     executionMode: 'local',
     activeSkillIds: [],
     messages: [...messages],

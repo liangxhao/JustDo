@@ -142,7 +142,7 @@ export class OpenClawChannelSessionSync {
 
     const cwd = this.getDefaultCwd();
     console.log('[ChannelSessionSync] creating main agent session: key=', sessionKey, 'cwd=', cwd);
-    const session = this.coworkStore.createSession('[OpenClaw]', cwd, '', 'local');
+    const session = this.coworkStore.createSession('[OpenClaw]', cwd, 'local');
     console.log('[ChannelSessionSync] created main agent session:', session.id);
 
     this.syncedSessionKeys.set(sessionKey, session.id);
@@ -179,7 +179,7 @@ export class OpenClawChannelSessionSync {
       'cwd=',
       cwd,
     );
-    const session = this.coworkStore.createSession(title, cwd, '', 'local');
+    const session = this.coworkStore.createSession(title, cwd, 'local');
     console.log('[ChannelSessionSync] created cron session:', session.id);
 
     this.syncedSessionKeys.set(sessionKey, session.id);

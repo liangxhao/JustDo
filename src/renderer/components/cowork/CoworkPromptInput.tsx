@@ -20,7 +20,6 @@ import {
 import { setSelectedModel } from '../../store/slices/modelSlice';
 import { setSkills } from '../../store/slices/skillSlice';
 import { CoworkImageAttachment } from '../../types/cowork';
-import { Skill } from '../../types/skill';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
 import PaperClipIcon from '../icons/PaperClipIcon';
@@ -73,28 +72,6 @@ const getFileNameFromPath = (path: string): string => {
   return parts[parts.length - 1] || path;
 };
 
-const getSkillDirectoryFromPath = (skillPath: string): string => {
-  const normalized = skillPath.trim().replace(/\\/g, '/');
-  return normalized.replace(/\/SKILL\.md$/i, '') || normalized;
-};
-
-const buildInlinedSkillPrompt = (skill: Skill): string => {
-  const skillDirectory = getSkillDirectoryFromPath(skill.skillPath);
-  return [
-    `## Skill: ${skill.name}`,
-    '<skill_context>',
-    `  <location>${skill.skillPath}</location>`,
-    `  <directory>${skillDirectory}</directory>`,
-    '  <path_rules>',
-    '    Resolve relative file references from this skill against <directory>.',
-    '    Do not assume skills are under the current workspace directory.',
-    '  </path_rules>',
-    '</skill_context>',
-    '',
-    skill.prompt,
-  ].join('\n');
-};
-
 const SEND_SHORTCUT_OPTIONS = [
   { value: 'Enter', label: 'Enter', labelMac: 'Enter' },
   { value: 'Ctrl+Enter', label: 'Ctrl+Enter', labelMac: 'Cmd+Enter' },
@@ -120,7 +97,6 @@ export interface CoworkPromptInputRef {
 interface CoworkPromptInputProps {
   onSubmit: (
     prompt: string,
-    skillPrompt?: string,
     imageAttachments?: CoworkImageAttachment[],
   ) => boolean | void | Promise<boolean | void>;
   onStop?: () => void;
@@ -166,6 +142,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const coworkAgentEngine = useSelector((state: RootState) => state.cowork.config.agentEngine);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
     const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
+    const currentAgent = agents.find(agent => agent.id === currentAgentId);
+    const { selectedModel: agentSelectedModel, hasInvalidExplicitModel: agentModelIsInvalid } =
+      resolveAgentModelSelection({
+        agentModel: currentAgent?.model ?? '',
+        availableModels,
+        fallbackModel: globalSelectedModel,
+        engine: coworkAgentEngine,
+      });
     const [value, setValue] = useState(draftPrompt);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
     const [showFolderRequiredWarning, setShowFolderRequiredWarning] = useState(false);
@@ -204,17 +188,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         textareaRef.current?.focus();
       },
     }));
-
-    const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
-    const skills = useSelector((state: RootState) => state.skill.skills);
-    const currentAgent = agents.find(agent => agent.id === currentAgentId);
-    const { selectedModel: agentSelectedModel, hasInvalidExplicitModel: agentModelIsInvalid } =
-      resolveAgentModelSelection({
-        agentModel: currentAgent?.model ?? '',
-        availableModels,
-        fallbackModel: globalSelectedModel,
-        engine: coworkAgentEngine,
-      });
 
     const isLarge = size === 'large';
     const minHeight = isLarge ? 60 : 24;
@@ -303,15 +276,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       if ((!trimmedValue && attachments.length === 0) || isStreaming || disabled) return;
       setShowFolderRequiredWarning(false);
 
-      // Get active skills prompts and combine them
-      const activeSkills = activeSkillIds
-        .map(id => skills.find(s => s.id === id))
-        .filter((s): s is Skill => s !== undefined);
-      const skillPrompt =
-        activeSkills.length > 0
-          ? activeSkills.map(buildInlinedSkillPrompt).join('\n\n')
-          : undefined;
-
       // Extract image attachments (with base64 data) for vision-capable models
       console.log('[CoworkPromptInput] handleSubmit: attachments:', {
         count: attachments.length,
@@ -363,11 +327,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           base64Lengths: imageAtts.map(a => a.base64Data.length),
         });
       }
-      const result = await onSubmit(
-        finalPrompt,
-        skillPrompt,
-        imageAtts.length > 0 ? imageAtts : undefined,
-      );
+      const result = await onSubmit(finalPrompt, imageAtts.length > 0 ? imageAtts : undefined);
       if (result === false) return;
       setValue('');
       dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
@@ -378,8 +338,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       isStreaming,
       disabled,
       onSubmit,
-      activeSkillIds,
-      skills,
       attachments,
       showFolderSelector,
       workingDirectory,

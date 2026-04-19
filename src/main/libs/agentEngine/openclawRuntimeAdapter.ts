@@ -695,7 +695,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         status: 'completed' as CoworkSessionStatus,
         pinned: false,
         cwd: '',
-        systemPrompt: '',
         executionMode: 'local' as CoworkExecutionMode,
         activeSkillIds: [],
         messages,
@@ -804,7 +803,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         status: 'completed' as CoworkSessionStatus,
         pinned: false,
         cwd: '',
-        systemPrompt: '',
         executionMode: 'local' as CoworkExecutionMode,
         activeSkillIds: [],
         messages,
@@ -1037,7 +1035,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: options.skipInitialUserMessage,
       skillIds: options.skillIds,
-      systemPrompt: options.systemPrompt,
       confirmationMode: options.confirmationMode,
       imageAttachments: options.imageAttachments,
       agentId: options.agentId,
@@ -1051,7 +1048,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<void> {
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: false,
-      systemPrompt: options.systemPrompt,
       skillIds: options.skillIds,
       imageAttachments: options.imageAttachments,
     });
@@ -1178,7 +1174,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     prompt: string,
     options: {
       skipInitialUserMessage?: boolean;
-      systemPrompt?: string;
       skillIds?: string[];
       confirmationMode?: 'modal' | 'text';
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
@@ -1255,12 +1250,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const runId = randomUUID();
     const turnToken = this.nextTurnToken(sessionId);
-    const outboundMessage = await this.buildOutboundPrompt(
-      sessionId,
-      prompt,
-      options.systemPrompt ?? session.systemPrompt,
-      agentId,
-    );
+    const outboundMessage = await this.buildOutboundPrompt(sessionId, prompt, agentId);
     const completionPromise = new Promise<void>((resolve, reject) => {
       this.pendingTurns.set(sessionId, { resolve, reject });
     });
@@ -1356,7 +1346,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private async buildOutboundPrompt(
     _sessionId: string,
     prompt: string,
-    _systemPrompt?: string,
     _agentId?: string,
   ): Promise<string> {
     // 纯透传：直接返回用户消息，不注入任何 GucciAI 上下文

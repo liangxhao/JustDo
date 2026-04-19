@@ -1475,14 +1475,6 @@ const refreshMcpBridge = (): Promise<{ tools: number; error?: string }> => {
   return mcpBridgeRefreshPromise;
 };
 
-function mergeCoworkSystemPrompt(
-  _engine: CoworkAgentEngine,
-  systemPrompt?: string,
-): string | undefined {
-  // 纯透传：只返回用户配置的 systemPrompt，不注入任何 GucciAI 内容
-  return systemPrompt?.trim() || undefined;
-}
-
 // 获取正确的预加载脚本路径
 const PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'preload.js')
@@ -2290,7 +2282,6 @@ if (!gotTheLock) {
       options: {
         prompt: string;
         cwd?: string;
-        systemPrompt?: string;
         title?: string;
         activeSkillIds?: string[];
         imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
@@ -2308,10 +2299,6 @@ if (!gotTheLock) {
 
         const coworkStoreInstance = getCoworkStore();
         const config = coworkStoreInstance.getConfig();
-        const systemPrompt = mergeCoworkSystemPrompt(
-          activeEngine,
-          options.systemPrompt ?? config.systemPrompt,
-        );
         const selectedWorkspaceRoot = (options.cwd || config.workingDirectory || '').trim();
 
         if (!selectedWorkspaceRoot) {
@@ -2329,7 +2316,6 @@ if (!gotTheLock) {
         const session = coworkStoreInstance.createSession(
           title,
           taskWorkingDirectory,
-          systemPrompt,
           config.executionMode || 'local',
           options.activeSkillIds || [],
           options.agentId || 'main',
@@ -2362,7 +2348,6 @@ if (!gotTheLock) {
         runtime
           .startSession(session.id, options.prompt, {
             skipInitialUserMessage: true,
-            systemPrompt,
             skillIds: options.activeSkillIds,
             workspaceRoot: selectedWorkspaceRoot,
             confirmationMode: 'modal',
@@ -2415,7 +2400,6 @@ if (!gotTheLock) {
       options: {
         sessionId: string;
         prompt: string;
-        systemPrompt?: string;
         activeSkillIds?: string[];
         imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       },
@@ -2430,13 +2414,8 @@ if (!gotTheLock) {
         }
 
         const runtime = getCoworkEngineRouter();
-        const existingSession = getCoworkStore().getSession(options.sessionId);
         runtime
           .continueSession(options.sessionId, options.prompt, {
-            systemPrompt: mergeCoworkSystemPrompt(
-              activeEngine,
-              options.systemPrompt ?? existingSession?.systemPrompt,
-            ),
             skillIds: options.activeSkillIds,
             imageAttachments: options.imageAttachments,
           })

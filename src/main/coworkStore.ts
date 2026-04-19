@@ -1,7 +1,5 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
-import { app } from 'electron';
-import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -394,7 +392,6 @@ export interface CoworkSession {
   status: CoworkSessionStatus;
   pinned: boolean;
   cwd: string;
-  systemPrompt: string;
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
   agentId: string;
@@ -463,7 +460,6 @@ export interface CoworkConversationSearchRecord {
 
 export interface CoworkConfig {
   workingDirectory: string;
-  systemPrompt: string;
   executionMode: CoworkExecutionMode;
   agentEngine: CoworkAgentEngine;
   memoryEnabled: boolean;
@@ -510,21 +506,6 @@ export interface ApplyTurnMemoryUpdatesResult {
   skipped: number;
 }
 
-let cachedDefaultSystemPrompt: string | null = null;
-
-const getDefaultSystemPrompt = (): string => {
-  if (cachedDefaultSystemPrompt !== null) {
-    return cachedDefaultSystemPrompt;
-  }
-  try {
-    const promptPath = path.join(app.getAppPath(), 'resources', 'SYSTEM_PROMPT.md');
-    cachedDefaultSystemPrompt = fs.readFileSync(promptPath, 'utf-8');
-  } catch {
-    cachedDefaultSystemPrompt = '';
-  }
-  return cachedDefaultSystemPrompt;
-};
-
 interface CoworkMessageRow {
   id: string;
   type: string;
@@ -566,7 +547,6 @@ export class CoworkStore {
   createSession(
     title: string,
     cwd: string,
-    systemPrompt: string = '',
     executionMode: CoworkExecutionMode = 'local',
     activeSkillIds: string[] = [],
     agentId: string = 'main',
@@ -577,21 +557,11 @@ export class CoworkStore {
     this.db
       .prepare(
         `
-      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, pinned, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?)
+      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, execution_mode, active_skill_ids, agent_id, pinned, created_at, updated_at)
+      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, 0, ?, ?)
     `,
       )
-      .run(
-        id,
-        title,
-        cwd,
-        systemPrompt,
-        executionMode,
-        JSON.stringify(activeSkillIds),
-        agentId,
-        now,
-        now,
-      );
+      .run(id, title, cwd, executionMode, JSON.stringify(activeSkillIds), agentId, now, now);
 
     return {
       id,
@@ -600,7 +570,6 @@ export class CoworkStore {
       status: 'idle',
       pinned: false,
       cwd,
-      systemPrompt,
       executionMode,
       activeSkillIds,
       agentId,
@@ -618,7 +587,6 @@ export class CoworkStore {
       status: string;
       pinned?: number | null;
       cwd: string;
-      system_prompt: string;
       execution_mode?: string | null;
       active_skill_ids?: string | null;
       agent_id?: string | null;
@@ -628,7 +596,7 @@ export class CoworkStore {
 
     const row = this.getOne<SessionRow>(
       `
-      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, created_at, updated_at
+      SELECT id, title, claude_session_id, status, pinned, cwd, execution_mode, active_skill_ids, agent_id, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `,
@@ -656,7 +624,6 @@ export class CoworkStore {
       status: row.status as CoworkSessionStatus,
       pinned: Boolean(row.pinned),
       cwd: row.cwd,
-      systemPrompt: row.system_prompt,
       executionMode: (row.execution_mode as CoworkExecutionMode) || 'local',
       activeSkillIds,
       agentId: row.agent_id || 'main',
@@ -669,10 +636,7 @@ export class CoworkStore {
   updateSession(
     id: string,
     updates: Partial<
-      Pick<
-        CoworkSession,
-        'title' | 'claudeSessionId' | 'status' | 'cwd' | 'systemPrompt' | 'executionMode'
-      >
+      Pick<CoworkSession, 'title' | 'claudeSessionId' | 'status' | 'cwd' | 'executionMode'>
     >,
   ): void {
     const now = Date.now();
@@ -694,10 +658,6 @@ export class CoworkStore {
     if (updates.cwd !== undefined) {
       setClauses.push('cwd = ?');
       values.push(updates.cwd);
-    }
-    if (updates.systemPrompt !== undefined) {
-      setClauses.push('system_prompt = ?');
-      values.push(updates.systemPrompt);
     }
     if (updates.executionMode !== undefined) {
       setClauses.push('execution_mode = ?');
@@ -1099,7 +1059,6 @@ export class CoworkStore {
 
     return {
       workingDirectory: cfg.get('workingDirectory') || getDefaultWorkingDirectory(),
-      systemPrompt: getDefaultSystemPrompt(),
       executionMode: 'local' as CoworkExecutionMode,
       agentEngine: normalizeCoworkAgentEngineValue(cfg.get('agentEngine')),
       memoryEnabled: parseBooleanConfig(cfg.get('memoryEnabled'), DEFAULT_MEMORY_ENABLED),

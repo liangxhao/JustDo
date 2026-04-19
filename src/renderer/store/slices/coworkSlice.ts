@@ -51,7 +51,6 @@ const initialState: CoworkState = {
   pendingPermissions: [],
   config: {
     workingDirectory: '',
-    systemPrompt: '',
     executionMode: 'local',
     agentEngine: 'openclaw',
     memoryEnabled: true,

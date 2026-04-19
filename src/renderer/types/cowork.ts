@@ -89,7 +89,6 @@ export interface CoworkSession {
   status: CoworkSessionStatus;
   pinned: boolean;
   cwd: string;
-  systemPrompt: string;
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
   agentId: string;
@@ -101,7 +100,6 @@ export interface CoworkSession {
 // Cowork configuration
 export interface CoworkConfig {
   workingDirectory: string;
-  systemPrompt: string;
   executionMode: CoworkExecutionMode;
   agentEngine: CoworkAgentEngine;
   memoryEnabled: boolean;
@@ -209,7 +207,6 @@ export interface CoworkSessionSummary {
 export interface CoworkStartOptions {
   prompt: string;
   cwd?: string;
-  systemPrompt?: string;
   title?: string;
   activeSkillIds?: string[];
   agentId?: string;
@@ -220,7 +217,6 @@ export interface CoworkStartOptions {
 export interface CoworkContinueOptions {
   sessionId: string;
   prompt: string;
-  systemPrompt?: string;
   activeSkillIds?: string[];
   imageAttachments?: CoworkImageAttachment[];
 }

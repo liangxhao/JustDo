@@ -5,7 +5,6 @@ import { agentService } from '../../services/agent';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { quickActionService } from '../../services/quickAction';
-import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
 import {
   selectCoworkConfig,
@@ -195,7 +194,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   const handleStartSession = async (
     prompt: string,
-    skillPrompt?: string,
     imageAttachments?: CoworkImageAttachment[],
   ): Promise<boolean | void> => {
     if (isOpenClawEngine && openClawStatus && !isOpenClawReadyForSession(openClawStatus)) {
@@ -253,7 +251,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         createdAt: now,
         updatedAt: now,
         cwd: config.workingDirectory || '',
-        systemPrompt: '',
         executionMode: config.executionMode || 'local',
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
@@ -285,25 +282,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       dispatch(clearActiveSkills());
       dispatch(clearSelection());
 
-      // Combine skill prompt with system prompt.
-      // OpenClaw loads skills natively via skills.load.extraDirs, so skip the
-      // auto-routing prompt to avoid injecting Claude SDK tool-calling instructions
-      // that confuse non-Claude models (e.g. kimi-k2.5 falls back to text-based
-      // tool calls, producing empty tool names and err=true failures).
-      let effectiveSkillPrompt = skillPrompt;
-      if (!skillPrompt && !isOpenClawEngine) {
-        effectiveSkillPrompt = (await skillService.getAutoRoutingPrompt()) || undefined;
-      }
-      const combinedSystemPrompt =
-        [effectiveSkillPrompt, config.systemPrompt].filter(p => p?.trim()).join('\n\n') ||
-        undefined;
-
       // Start the actual session immediately with fallback title
       const { session: startedSession, error: startError } = await coworkService.startSession({
         prompt,
         title: fallbackTitle,
         cwd: config.workingDirectory || undefined,
-        systemPrompt: combinedSystemPrompt,
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
         imageAttachments,
@@ -360,7 +343,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   const handleContinueSession = async (
     prompt: string,
-    skillPrompt?: string,
     imageAttachments?: CoworkImageAttachment[],
   ) => {
     if (!currentSession) return;
@@ -390,20 +372,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         dispatch(clearActiveSkills());
       }
 
-      // Combine skill prompt with system prompt for continuation.
-      // Skip auto-routing prompt for OpenClaw — skills are loaded natively.
-      let effectiveSkillPrompt = skillPrompt;
-      if (!skillPrompt && !isOpenClawEngine) {
-        effectiveSkillPrompt = (await skillService.getAutoRoutingPrompt()) || undefined;
-      }
-      const combinedSystemPrompt =
-        [effectiveSkillPrompt, config.systemPrompt].filter(p => p?.trim()).join('\n\n') ||
-        undefined;
-
       await coworkService.continueSession({
         sessionId: currentSession.id,
         prompt,
-        systemPrompt: combinedSystemPrompt,
         activeSkillIds: sessionSkillIds.length > 0 ? sessionSkillIds : undefined,
         imageAttachments,
       });

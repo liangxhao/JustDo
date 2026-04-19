@@ -58,7 +58,6 @@ import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
 interface CoworkSessionDetailProps {
   onContinue: (
     prompt: string,
-    skillPrompt?: string,
     imageAttachments?: CoworkImageAttachment[],
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;

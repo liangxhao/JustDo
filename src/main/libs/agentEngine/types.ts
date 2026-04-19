@@ -192,7 +192,6 @@ export type CoworkImageAttachment = {
 export type CoworkStartOptions = {
   skipInitialUserMessage?: boolean;
   skillIds?: string[];
-  systemPrompt?: string;
   autoApprove?: boolean;
   workspaceRoot?: string;
   confirmationMode?: 'modal' | 'text';
@@ -201,7 +200,6 @@ export type CoworkStartOptions = {
 };
 
 export type CoworkContinueOptions = {
-  systemPrompt?: string;
   skillIds?: string[];
   imageAttachments?: CoworkImageAttachment[];
 };

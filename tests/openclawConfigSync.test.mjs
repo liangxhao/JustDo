@@ -120,7 +120,6 @@ const createSync = (tmpDir, appConfig, options = {}) => {
     },
     getCoworkConfig: () => ({
       workingDirectory: options.workingDirectory ?? '',
-      systemPrompt: options.systemPrompt ?? '',
       executionMode: options.executionMode ?? 'auto',
     }),
     getTelegramInstances: () => options.telegramInstances ?? [],
@@ -242,7 +241,6 @@ test('sync writes scheduled-task policy into managed AGENTS.md for native channe
 
   const sync = createSync(tmpDir, createAppConfig(), {
     workingDirectory: workspaceDir,
-    systemPrompt: 'Always answer in Chinese.',
   });
   const result = sync.sync('test-agents');
 

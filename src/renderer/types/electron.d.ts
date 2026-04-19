@@ -22,7 +22,6 @@ interface CoworkSession {
   status: 'idle' | 'running' | 'completed' | 'error';
   pinned: boolean;
   cwd: string;
-  systemPrompt: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   activeSkillIds: string[];
   agentId: string;
@@ -60,7 +59,6 @@ interface SessionGroup {
 
 interface CoworkConfig {
   workingDirectory: string;
-  systemPrompt: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   agentEngine: 'openclaw';
   memoryEnabled: boolean;
@@ -447,7 +445,6 @@ interface IElectronAPI {
     startSession: (options: {
       prompt: string;
       cwd?: string;
-      systemPrompt?: string;
       title?: string;
       activeSkillIds?: string[];
       agentId?: string;
@@ -462,7 +459,6 @@ interface IElectronAPI {
     continueSession: (options: {
       sessionId: string;
       prompt: string;
-      systemPrompt?: string;
       activeSkillIds?: string[];
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
     }) => Promise<{
