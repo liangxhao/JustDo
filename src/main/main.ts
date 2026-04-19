@@ -4613,15 +4613,6 @@ if (!gotTheLock) {
       console.error('[Main] initApp: syncBundledSkillsToUserData failed:', error);
     }
 
-    // Sync built-in skills to OpenClaw state directory
-    try {
-      const stateDir = getOpenClawEngineManager().getStateDir();
-      manager.syncBuiltinSkillsToOpenClaw(stateDir);
-      console.log('[Main] initApp: syncBuiltinSkillsToOpenClaw done');
-    } catch (error) {
-      console.error('[Main] initApp: syncBuiltinSkillsToOpenClaw failed:', error);
-    }
-
     try {
       const runtimeResult = await ensurePythonRuntimeReady();
       if (!runtimeResult.success) {

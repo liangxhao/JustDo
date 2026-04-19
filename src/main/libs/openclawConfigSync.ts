@@ -560,11 +560,7 @@ export class OpenClawConfigSync {
         enabled: true,
       },
       skills: {
-        load: {
-          // 指向 OpenClaw state 目录，skills 通过 SkillManager.syncBuiltinSkillsToOpenClaw 同步
-          extraDirs: [path.join(this.engineManager.getStateDir(), 'skills')],
-          watch: true,
-        },
+        // Skills 已在构建时处理，无需额外配置
       },
       cron: {
         enabled: true,

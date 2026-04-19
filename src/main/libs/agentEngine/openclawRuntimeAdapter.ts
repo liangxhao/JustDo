@@ -5282,7 +5282,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const session = this.store.getSession(sessionId);
       if (session?.messages) {
         console.log(
-          '[OpenClawRuntime] getSubagentStatuses: session.messages.length=' + session.messages.length,
+          '[OpenClawRuntime] getSubagentStatuses: session.messages.length=' +
+            session.messages.length,
         );
 
         // First pass: find all sessions_spawn tool_use messages
@@ -5294,7 +5295,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             const input = meta.toolInput as Record<string, unknown> | undefined;
             const toolUseId = meta.toolUseId || '';
             const label = typeof input?.label === 'string' && input.label ? input.label : '';
-            const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+            const agentId =
+              typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
             const task = typeof input?.task === 'string' ? input.task : '';
             // Use toolUseId as unique key (label may duplicate)
             const key = toolUseId;
@@ -5442,7 +5444,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (extracted.length > 0) return extracted;
         }
       } catch (err) {
-        console.warn('[OpenClawRuntime] getSubTaskHistory: toolCallId sessionKey query failed:', err);
+        console.warn(
+          '[OpenClawRuntime] getSubTaskHistory: toolCallId sessionKey query failed:',
+          err,
+        );
       }
     }
 
@@ -5482,7 +5487,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
         // Check if this spawn matches our target agentId (now toolUseId)
         // agentId could be toolUseId, label, or inputAgentId
-        if (toolUseId === agentId || (label === agentId || inputAgentId === agentId)) {
+        if (toolUseId === agentId || label === agentId || inputAgentId === agentId) {
           // First try in-memory toolCallId mapping
           if (toolUseId && this.toolCallIdToSessionKey.has(toolUseId)) {
             const memSessionKey = this.toolCallIdToSessionKey.get(toolUseId);

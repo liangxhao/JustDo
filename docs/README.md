@@ -32,6 +32,7 @@ docs/
 | [10-data-storage.md](architecture/10-data-storage.md) | 数据存储与 SQLite 设计 |
 | [11-security-model.md](architecture/11-security-model.md) | 安全模型与权限控制 |
 | [12-tech-stack.md](architecture/12-tech-stack.md) | 技术栈与依赖说明 |
+| [13-pure-frontend-design.md](architecture/13-pure-frontend-design.md) | 纯 OpenClaw 前端架构设计 |
 
 ### OpenClaw Patch (patches/)
 

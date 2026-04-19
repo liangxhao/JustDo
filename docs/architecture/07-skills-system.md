@@ -632,7 +632,85 @@ function SkillsSettings() {
 | `src/main/libs/skillSecurity/skillSecurityScanner.ts` | 安全扫描 |
 | `src/main/libs/skillSecurity/skillSecurityRules.ts` | 安全规则 |
 | `src/main/libs/skillSecurity/skillSecurityTypes.ts` | 安全类型 |
-| `SKILLs/skills.config.json` | Skill 配置 |
+| `resources/builtin-skills.json` | 构建时 Skills 配置 |
+| `scripts/build-openclaw-runtime.sh` | 构建脚本（处理 Skills） |
+| `SKILLs/skills.config.json` | Skill 启用/禁用配置 |
 | `SKILLs/*/SKILL.md` | Skill 定义 |
 | `scripts/build-skill-*.js` | Skill 构建脚本 |
 | `src/renderer/components/skills/SkillsSettings.tsx` | Skills UI |
+
+## 11. Skills 构建时处理
+
+Skills 在 GucciAI 构建时处理，直接写入 OpenClaw runtime 内置目录。
+
+### 11.1 构建流程
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    GucciAI 项目                              │
+│                                                             │
+│  ┌─────────────────┐  ┌─────────────────────────────────┐  │
+│  │ resources/      │  │ skills/                          │  │
+│  │ builtin-skills. │  │ (GucciAI 内置 Skills)            │  │
+│  │ json            │  │                                 │  │
+│  └─────────────────┘  └─────────────────────────────────┘  │
+│           │                          │                      │
+│           │  ┌───────────────────────────────────────────┐ │
+│           │  │ scripts/build-openclaw-runtime.sh          │ │
+│           └───────────────────────────────────────────────┘ │
+│                              │                              │
+└──────────────────────────────│──────────────────────────────┘
+                               │ 构建时处理
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   OpenClaw Runtime                           │
+│                                                             │
+│  vendor/openclaw-runtime/{platform}-{arch}/                 │
+│  ├── gateway.asar                                           │
+│  ├── skills/                                                │
+│  │   ├── create-plan/    (from GucciAI)                     │
+│  │   ├── docx/           (from GucciAI)                     │
+│  │   ├── web-search/     (from GucciAI)                     │
+│  │   └── ...                                                │
+│  └─────────────────────────────────────────────────────────┘
+```
+
+### 11.2 配置文件
+
+`resources/builtin-skills.json`:
+
+```json
+{
+  "version": 1,
+  "description": "GucciAI built-in skills configuration",
+  "skills": [
+    { "id": "create-plan", "enabled": true },
+    { "id": "docx", "enabled": true },
+    { "id": "web-search", "enabled": true }
+  ],
+  "disableOpenClawDefaults": true
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `version` | 配置版本 |
+| `skills` | 要复制的 Skills 列表 |
+| `id` | Skill ID（对应 `skills/` 目录下的子目录名） |
+| `enabled` | 是否复制该 Skill |
+| `disableOpenClawDefaults` | 是否删除 OpenClaw 默认 Skills |
+
+### 11.3 构建脚本处理
+
+在 `scripts/build-openclaw-runtime.sh` 的步骤 `[4/7b]` 中：
+
+1. 加载 `resources/builtin-skills.json` 配置
+2. 若 `disableOpenClawDefaults=true`：删除 runtime 的 `skills/` 目录所有内容
+3. 从 GucciAI `skills/` 复制配置中指定的 Skills 到 runtime 的 `skills/`
+
+### 11.4 运行时
+
+运行时无需额外配置：
+- Skills 已在 runtime 内置目录中
+- OpenClaw Gateway 自动发现内置 Skills
+- `openclaw.json` 无需 `skills.load.extraDirs`

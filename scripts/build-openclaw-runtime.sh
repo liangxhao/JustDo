@@ -161,6 +161,69 @@ rm -rf "$OUT_DIR"
 mkdir -p "$(dirname "$OUT_DIR")"
 cp -R "$PKG_DIR" "$OUT_DIR"
 
+# Process skills based on builtin-skills.json configuration
+echo "[4/7b] Processing skills from builtin-skills.json"
+node - "$ELECTRON_ROOT" "$OUT_DIR" <<'SKILLS'
+const fs = require('fs');
+const path = require('path');
+
+const electronRoot = process.argv[2];
+const runtimeRoot = process.argv[3];
+
+// Load builtin-skills.json config
+const configPath = path.join(electronRoot, 'resources', 'builtin-skills.json');
+let config = { version: 1, skills: [], disableOpenClawDefaults: false };
+try {
+  if (fs.existsSync(configPath)) {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    console.log(`[skills] Loaded config from ${configPath}`);
+  }
+} catch (error) {
+  console.warn('[skills] Failed to load builtin-skills.json:', error.message);
+}
+
+const runtimeSkillsDir = path.join(runtimeRoot, 'skills');
+const gucciAiSkillsDir = path.join(electronRoot, 'skills');
+
+// Ensure runtime skills directory exists
+if (!fs.existsSync(runtimeSkillsDir)) {
+  fs.mkdirSync(runtimeSkillsDir, { recursive: true });
+}
+
+// If configured, delete OpenClaw default skills
+if (config.disableOpenClawDefaults) {
+  console.log('[skills] Deleting OpenClaw default skills...');
+  const existingSkills = fs.readdirSync(runtimeSkillsDir, { withFileTypes: true })
+    .filter(dirent => dirent.isDirectory())
+    .map(dirent => dirent.name);
+  for (const skillName of existingSkills) {
+    const skillDir = path.join(runtimeSkillsDir, skillName);
+    fs.rmSync(skillDir, { recursive: true, force: true });
+    console.log(`[skills] Deleted: ${skillName}`);
+  }
+}
+
+// Copy skills from GucciAI skills directory based on config
+for (const skillConfig of config.skills) {
+  if (!skillConfig.enabled) {
+    console.log(`[skills] Skipping disabled skill: ${skillConfig.id}`);
+    continue;
+  }
+
+  const sourceDir = path.join(gucciAiSkillsDir, skillConfig.id);
+  if (!fs.existsSync(sourceDir)) {
+    console.warn(`[skills] Skill "${skillConfig.id}" not found in GucciAI skills directory`);
+    continue;
+  }
+
+  const targetDir = path.join(runtimeSkillsDir, skillConfig.id);
+  fs.cpSync(sourceDir, targetDir, { recursive: true, force: true });
+  console.log(`[skills] Copied: ${skillConfig.id}`);
+}
+
+console.log('[skills] Done');
+SKILLS
+
 # Save build metadata for traceability.
 # Use `node -` so stdin is treated as script and the following args remain user args.
 node - "$OUT_DIR" "$OPENCLAW_SRC" "$TARGET_ID" "$ELECTRON_ROOT" "$PATCH_HASH" <<'NODE'

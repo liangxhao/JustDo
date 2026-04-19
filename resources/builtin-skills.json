@@ -1,6 +1,15 @@
 {
   "version": 1,
-  "description": "GucciAI built-in skills configuration",
-  "skills": [],
-  "disableOpenClawDefaults": false
+  "description": "GucciAI built-in skills configuration for OpenClaw runtime",
+  "skills": [
+    { "id": "create-plan", "enabled": true },
+    { "id": "docx", "enabled": true },
+    { "id": "local-tools", "enabled": true },
+    { "id": "pdf", "enabled": true },
+    { "id": "pptx", "enabled": true },
+    { "id": "skill-creator", "enabled": true },
+    { "id": "web-search", "enabled": true },
+    { "id": "xlsx", "enabled": true }
+  ],
+  "disableOpenClawDefaults": true
 }
