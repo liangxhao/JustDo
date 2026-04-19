@@ -27,7 +27,7 @@ interface SessionGroupPanelProps {
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
   enrichedSubTasks: SubTaskInfo[];
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; parentSessionId: string } | null>
+    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string } | null>
   >;
 }
 
@@ -87,7 +87,7 @@ interface SubAgentListProps {
   currentSessionId: string | null;
   enrichedSubTasks: SubTaskInfo[];
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; parentSessionId: string } | null>
+    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string } | null>
   >;
 }
 
@@ -104,7 +104,7 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
       {enrichedSubTasks.map(sub => (
         <div
           key={sub.agentId}
-          onClick={() => setActiveSubTask({ agentId: sub.agentId, parentSessionId: sessionId })}
+          onClick={() => setActiveSubTask({ agentId: sub.agentId, displayName: sub.task, parentSessionId: sessionId })}
           className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
         >
           <span
@@ -113,16 +113,8 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
             }`}
           />
           <span className="font-medium dark:text-claude-darkText text-claude-text truncate">
-            {sub.agentId}
+            {sub.task}
           </span>
-          {sub.task && (
-            <span
-              className="dark:text-claude-darkTextSecondary text-claude-textSecondary truncate flex-1"
-              title={sub.task}
-            >
-              {sub.task}
-            </span>
-          )}
         </div>
       ))}
     </div>

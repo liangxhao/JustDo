@@ -10,6 +10,7 @@ interface SubTaskMessage {
 
 interface SubTaskDetailDrawerProps {
   agentId: string;
+  displayName?: string;
   parentSessionId: string;
   onClose: () => void;
 }
@@ -19,6 +20,7 @@ const messageCache = new Map<string, SubTaskMessage[]>();
 
 const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   agentId,
+  displayName,
   parentSessionId,
   onClose,
 }) => {
@@ -82,7 +84,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
 
   const roleLabel = (role: string) => {
     if (role === 'user') return '📋 ' + (i18nService.t('subTaskRoleUser') || 'Task Instruction');
-    if (role === 'assistant') return '🤖 ' + agentId;
+    if (role === 'assistant') return '🤖 ' + (displayName || agentId);
     if (role === 'tool') return '🔧 ' + (i18nService.t('subTaskRoleTool') || 'Tool Call');
     return role;
   };
@@ -105,7 +107,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-sm">🔍</span>
             <h3 className="text-sm font-semibold dark:text-claude-darkText text-claude-text truncate">
-              {i18nService.t('subTaskDetail') || 'Sub-task Detail'} — {agentId}
+              {i18nService.t('subTaskDetail') || 'Sub-task Detail'} — {displayName || agentId}
             </h3>
           </div>
           <button

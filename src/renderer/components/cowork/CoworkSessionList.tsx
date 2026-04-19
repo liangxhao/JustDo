@@ -52,7 +52,7 @@ interface SubAgentListProps {
   currentSessionId: string | null;
   enrichedSubTasks: SubTaskInfo[];
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; parentSessionId: string } | null>
+    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string } | null>
   >;
 }
 
@@ -69,7 +69,7 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
       {enrichedSubTasks.map(sub => (
         <div
           key={sub.agentId}
-          onClick={() => setActiveSubTask({ agentId: sub.agentId, parentSessionId: sessionId })}
+          onClick={() => setActiveSubTask({ agentId: sub.agentId, displayName: sub.task, parentSessionId: sessionId })}
           className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
         >
           <span
@@ -78,16 +78,8 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
             }`}
           />
           <span className="font-medium dark:text-claude-darkText text-claude-text truncate">
-            {sub.agentId}
+            {sub.task}
           </span>
-          {sub.task && (
-            <span
-              className="dark:text-claude-darkTextSecondary text-claude-textSecondary truncate flex-1"
-              title={sub.task}
-            >
-              {sub.task}
-            </span>
-          )}
         </div>
       ))}
     </div>
@@ -109,7 +101,7 @@ interface UngroupedDroppableZoneProps {
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; parentSessionId: string } | null>
+    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string } | null>
   >;
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
 }
@@ -342,6 +334,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const subTasks = useMemo<SubTaskInfo[]>(() => {
     if (!currentSession?.messages) return [];
     const tasks = new Map<string, SubTaskInfo>();
+
+    // First pass: find all sessions_spawn tool_use messages
     for (let i = 0; i < currentSession.messages.length; i++) {
       const msg = currentSession.messages[i];
       const meta = msg.metadata;
@@ -349,35 +343,40 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
       if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
         const input = meta.toolInput as Record<string, unknown> | undefined;
-        const agentId =
-          typeof input?.agentId === 'string' && input.agentId
-            ? input.agentId
-            : typeof input?.label === 'string' && input.label
-              ? input.label
-              : '';
+        // Use toolUseId as unique identifier (label may duplicate)
+        const toolUseId = meta.toolUseId || '';
+        const label = typeof input?.label === 'string' && input.label ? input.label : '';
+        const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
         const task = typeof input?.task === 'string' ? input.task.slice(0, 60) : '';
-        if (agentId) {
-          tasks.set(agentId, { agentId, task, status: 'running' });
-        }
-      }
-
-      if (
-        msg.type === 'tool_use' &&
-        (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')
-      ) {
-        const input = meta.toolInput as Record<string, unknown> | undefined;
-        const agentId =
-          typeof input?.agentId === 'string' && input.agentId
-            ? input.agentId
-            : typeof input?.label === 'string' && input.label
-              ? input.label
-              : '';
-        if (agentId && tasks.has(agentId)) {
-          tasks.set(agentId, { ...tasks.get(agentId)!, status: 'done' });
+        // task field stores label for display, agentId is toolUseId for unique key
+        if (toolUseId) {
+          tasks.set(toolUseId, {
+            agentId: toolUseId,
+            task: label || agentId || task,
+            status: 'running', // Initially running, will check tool_result below
+          });
         }
       }
     }
 
+    // Second pass: check for tool_result messages to determine completion
+    // A sessions_spawn is done when its tool_result exists
+    for (let i = 0; i < currentSession.messages.length; i++) {
+      const msg = currentSession.messages[i];
+      if (msg.type === 'tool_result') {
+        const meta = msg.metadata;
+        if (!meta) continue;
+        const toolUseId = meta.toolUseId as string | undefined;
+        if (toolUseId && tasks.has(toolUseId)) {
+          const existing = tasks.get(toolUseId)!;
+          if (existing.status === 'running') {
+            tasks.set(toolUseId, { ...existing, status: 'done' });
+          }
+        }
+      }
+    }
+
+    // Session completed -> all subtasks done (as fallback)
     if (currentSession.status === 'completed') {
       for (const [agentId, task] of tasks) {
         tasks.set(agentId, { ...task, status: 'done' });
@@ -389,12 +388,14 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
   // Poll backend for real-time sub agent status
   const [backendStatuses, setBackendStatuses] = useState<Record<string, 'running' | 'done'>>({});
+  const [backendDisplayLabels, setBackendDisplayLabels] = useState<Record<string, string>>({});
   const isSessionActive = currentSession?.status === 'running';
   const activeSessionId = currentSession?.id;
   const hasRunningRef = React.useRef(false);
 
   useEffect(() => {
     setBackendStatuses({});
+    setBackendDisplayLabels({});
     hasRunningRef.current = false;
   }, [activeSessionId]);
 
@@ -412,6 +413,9 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         const result = await window.electron.cowork.getSubTaskStatus(activeSessionId);
         if (result.success && result.statuses) {
           setBackendStatuses(result.statuses);
+          if (result.displayLabels) {
+            setBackendDisplayLabels(result.displayLabels);
+          }
         }
       } catch {
         /* ignore */
@@ -429,31 +433,30 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   }, [activeSessionId, subTasks.length, isSessionActive]);
 
   // Merge message-extracted subtasks and backend-discovered statuses
+  // Use backendDisplayLabels for display (key is toolUseId, unique)
   const enrichedSubTasks = useMemo(() => {
     const merged = subTasks.map(t => {
       const backendStatus = backendStatuses[t.agentId];
-      if (backendStatus === 'done' && t.status === 'running') {
-        return { ...t, status: 'done' as const };
-      }
-      if (backendStatus === 'running') {
-        return { ...t, status: 'running' as const };
-      }
-      return t;
+      const displayLabel = backendDisplayLabels[t.agentId] || t.task;
+      const status = backendStatus || t.status;
+      return { ...t, task: displayLabel, status: status as 'running' | 'done' };
     });
 
     const knownAgentIds = new Set(subTasks.map(t => t.agentId));
     for (const [agentId, status] of Object.entries(backendStatuses)) {
       if (!knownAgentIds.has(agentId)) {
-        merged.push({ agentId, task: '', status });
+        const display = backendDisplayLabels[agentId] || agentId;
+        merged.push({ agentId, task: display, status });
       }
     }
 
     return merged;
-  }, [subTasks, backendStatuses]);
+  }, [subTasks, backendStatuses, backendDisplayLabels]);
 
   // Subtask detail drawer state
   const [activeSubTask, setActiveSubTask] = useState<{
     agentId: string;
+    displayName?: string;
     parentSessionId: string;
   } | null>(null);
 
@@ -614,6 +617,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       {activeSubTask && (
         <SubTaskDetailDrawer
           agentId={activeSubTask.agentId}
+          displayName={activeSubTask.displayName}
           parentSessionId={activeSubTask.parentSessionId}
           onClose={() => setActiveSubTask(null)}
         />

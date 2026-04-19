@@ -2742,12 +2742,12 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:subTask:status', async (_event, sessionId?: string) => {
     try {
       if (!openClawRuntimeAdapter) {
-        return { success: true, statuses: {} };
+        return { success: true, statuses: {}, displayLabels: {} };
       }
-      const statuses = (openClawRuntimeAdapter as any).getSubagentStatuses(sessionId);
-      return { success: true, statuses };
+      const result = (openClawRuntimeAdapter as any).getSubagentStatuses(sessionId);
+      return { success: true, statuses: result.statuses || {}, displayLabels: result.displayLabels || {} };
     } catch (error) {
-      return { success: false, statuses: {} };
+      return { success: false, statuses: {}, displayLabels: {} };
     }
   });
 

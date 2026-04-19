@@ -621,8 +621,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly labelToSessionKey = new Map<string, string>();
   /** childSessionKey → label 反向映射 */
   private readonly sessionKeyToLabel = new Map<string, string>();
+  /** toolCallId → childSessionKey 映射，用于通过 toolUseId 查找子会话 */
+  private readonly toolCallIdToSessionKey = new Map<string, string>();
+  /** childSessionKey → toolCallId 反向映射 */
+  private readonly sessionKeyToToolCallId = new Map<string, string>();
   /** toolCallId → args 映射，用于在 result 阶段获取 sessions_spawn 的参数 */
   private readonly toolCallArgs = new Map<string, Record<string, unknown>>();
+  /** toolCallId → label 映射，用于显示名称 */
+  private readonly toolCallIdToLabel = new Map<string, string>();
 
   constructor(store: CoworkStore, engineManager: OpenClawEngineManager) {
     super();
@@ -1087,6 +1093,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.subagentStatus.clear();
         this.labelToSessionKey.clear();
         this.sessionKeyToLabel.clear();
+        this.toolCallIdToSessionKey.clear();
+        this.sessionKeyToToolCallId.clear();
+        this.toolCallIdToLabel.clear();
         this.toolCallArgs.clear();
       }, 60000);
     }
@@ -1200,6 +1209,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.subagentStatus.clear();
       this.labelToSessionKey.clear();
       this.sessionKeyToLabel.clear();
+      this.toolCallIdToSessionKey.clear();
+      this.sessionKeyToToolCallId.clear();
+      this.toolCallIdToLabel.clear();
       this.toolCallArgs.clear();
     }
 
@@ -2817,18 +2829,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         typeof savedArgs.agentId === 'string' && savedArgs.agentId ? savedArgs.agentId : null;
 
       const mappingKey = label || inputAgentId;
-      if (childSessionKey && mappingKey) {
+      // Always establish toolCallId → sessionKey mapping (toolCallId is unique)
+      if (childSessionKey && toolCallId) {
         console.log(
-          '[OpenClawRuntime] sessions_spawn mapping: label=' +
-            mappingKey +
+          '[OpenClawRuntime] sessions_spawn mapping: toolCallId=' +
+            toolCallId +
+            ' label=' +
+            (mappingKey || '(none)') +
             ' childSessionKey=' +
             childSessionKey,
         );
-        this.labelToSessionKey.set(mappingKey, childSessionKey);
-        this.sessionKeyToLabel.set(childSessionKey, mappingKey);
+        this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
+        this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
+        if (mappingKey) {
+          this.labelToSessionKey.set(mappingKey, childSessionKey);
+          this.sessionKeyToLabel.set(childSessionKey, mappingKey);
+          this.toolCallIdToLabel.set(toolCallId, mappingKey);
+        }
       } else {
         console.log(
-          '[OpenClawRuntime] sessions_spawn missing mapping: childSessionKey=' +
+          '[OpenClawRuntime] sessions_spawn missing mapping: toolCallId=' +
+            (toolCallId || '(none)') +
+            ' childSessionKey=' +
             (childSessionKey || '(none)') +
             ' mappingKey=' +
             (mappingKey || '(none)'),
@@ -5370,112 +5392,92 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * 1. 内存中的 subagentStatus（实时状态）
    * 2. CoworkStore 消息中的 sessions_spawn/sessions_resume/sessions_read（持久化状态）
    */
-  getSubagentStatuses(sessionId?: string): Record<string, 'running' | 'done'> {
-    // 如果指定了 sessionId 但不是当前编排的父会话，从数据库提取历史状态
-    if (
-      sessionId &&
-      this.orchestrationParentSessionId &&
-      sessionId !== this.orchestrationParentSessionId
-    ) {
-      // 从 CoworkStore 消息中提取子任务状态
-      const session = this.store.getSession(sessionId);
-      if (!session?.messages) return {};
+  getSubagentStatuses(sessionId?: string): {
+    statuses: Record<string, 'running' | 'done'>;
+    displayLabels: Record<string, string>;
+  } {
+    console.log(
+      '[OpenClawRuntime] getSubagentStatuses called: sessionId=' +
+        (sessionId || '(none)') +
+        ' orchestrationParentSessionId=' +
+        (this.orchestrationParentSessionId || '(none)'),
+    );
 
-      const statuses: Record<string, 'running' | 'done'> = {};
-      const spawnLabels = new Set<string>();
+    const statuses: Record<string, 'running' | 'done'> = {};
+    const displayLabels: Record<string, string> = {};
 
-      for (const msg of session.messages) {
-        const meta = msg.metadata;
-        if (!meta) continue;
-
-        if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
-          const input = meta.toolInput as Record<string, unknown> | undefined;
-          const label = typeof input?.label === 'string' && input.label ? input.label : '';
-          const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
-          const key = label || agentId;
-          if (key) {
-            spawnLabels.add(key);
-            statuses[key] = 'running'; // 默认为 running
-          }
-        }
-
-        // sessions_resume 或 sessions_read 表示子任务完成
-        if (
-          msg.type === 'tool_use' &&
-          (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')
-        ) {
-          const input = meta.toolInput as Record<string, unknown> | undefined;
-          const label = typeof input?.label === 'string' && input.label ? input.label : '';
-          const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
-          const key = label || agentId;
-          if (key && statuses[key]) {
-            statuses[key] = 'done';
-          }
-        }
-      }
-
-      // 如果会话已完成，所有子任务也标记为完成
-      if (session.status === 'completed') {
-        for (const key of spawnLabels) {
-          statuses[key] = 'done';
-        }
-      }
-
-      return statuses;
-    }
-
-    // 当前活跃会话：合并内存状态和消息状态
-    const result: Record<string, 'running' | 'done'> = {};
-
-    // 先从消息中提取
+    // 从 CoworkStore 消息中提取子任务状态（使用 toolUseId 作为唯一 key）
     if (sessionId) {
       const session = this.store.getSession(sessionId);
       if (session?.messages) {
+        console.log(
+          '[OpenClawRuntime] getSubagentStatuses: session.messages.length=' + session.messages.length,
+        );
+
+        // First pass: find all sessions_spawn tool_use messages
         for (const msg of session.messages) {
           const meta = msg.metadata;
           if (!meta) continue;
 
           if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
             const input = meta.toolInput as Record<string, unknown> | undefined;
+            const toolUseId = meta.toolUseId || '';
             const label = typeof input?.label === 'string' && input.label ? input.label : '';
-            const agentId =
-              typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
-            const key = label || agentId;
+            const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+            const task = typeof input?.task === 'string' ? input.task : '';
+            // Use toolUseId as unique key (label may duplicate)
+            const key = toolUseId;
+            // Display label: prefer label, then agentId, then task slice
+            const display = label || agentId || (task ? task.slice(0, 30) : toolUseId);
+            console.log(
+              '[OpenClawRuntime] getSubagentStatuses: sessions_spawn toolUseId=' +
+                toolUseId +
+                ' label=' +
+                label +
+                ' display=' +
+                display,
+            );
             if (key) {
-              result[key] = 'running';
-            }
-          }
-
-          if (
-            msg.type === 'tool_use' &&
-            (meta.toolName === 'sessions_resume' || meta.toolName === 'sessions_read')
-          ) {
-            const input = meta.toolInput as Record<string, unknown> | undefined;
-            const label = typeof input?.label === 'string' && input.label ? input.label : '';
-            const agentId =
-              typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
-            const key = label || agentId;
-            if (key) {
-              result[key] = 'done';
+              statuses[key] = 'running'; // Initially running, will check tool_result below
+              displayLabels[key] = display;
             }
           }
         }
 
-        // 会话完成则所有子任务完成
+        // Second pass: check for tool_result messages to determine completion
+        // A sessions_spawn is done when its tool_result exists
+        for (const msg of session.messages) {
+          if (msg.type === 'tool_result') {
+            const meta = msg.metadata;
+            if (!meta) continue;
+            const toolUseId = meta.toolUseId as string | undefined;
+            if (toolUseId && statuses[toolUseId] === 'running') {
+              statuses[toolUseId] = 'done';
+              console.log(
+                '[OpenClawRuntime] getSubagentStatuses: found tool_result for toolUseId=' +
+                  toolUseId +
+                  ' -> done',
+              );
+            }
+          }
+        }
+
+        // 会话完成则所有子任务完成（作为 fallback）
         if (session.status === 'completed') {
-          for (const key of Object.keys(result)) {
-            result[key] = 'done';
+          for (const key of Object.keys(statuses)) {
+            statuses[key] = 'done';
           }
         }
       }
     }
 
-    // 用内存状态覆盖（内存状态更实时）
-    for (const [key, status] of this.subagentStatus) {
-      result[key] = status;
-    }
-
-    return result;
+    console.log(
+      '[OpenClawRuntime] getSubagentStatuses: returning statuses=' +
+        JSON.stringify(statuses) +
+        ' displayLabels=' +
+        JSON.stringify(displayLabels),
+    );
+    return { statuses, displayLabels };
   }
 
   /**
@@ -5553,7 +5555,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
-    // Strategy 1.5: Use in-memory labelToSessionKey mapping (fastest)
+    // Strategy 1.5: Use toolCallId to find sessionKey (agentId is now toolCallId)
+    const toolCallIdSessionKey = this.toolCallIdToSessionKey.get(agentId);
+    if (toolCallIdSessionKey && this.gatewayClient) {
+      try {
+        const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
+          sessionKey: toolCallIdSessionKey,
+          limit: 100,
+        });
+        if (Array.isArray(history?.messages)) {
+          const extracted: Array<{ role: string; content: string }> = [];
+          for (const entry of extractGatewayHistoryEntries(history.messages)) {
+            extracted.push({ role: entry.role, content: entry.text });
+          }
+          if (extracted.length > 0) return extracted;
+        }
+      } catch (err) {
+        console.warn('[OpenClawRuntime] getSubTaskHistory: toolCallId sessionKey query failed:', err);
+      }
+    }
+
+    // Strategy 1.6: Use in-memory labelToSessionKey mapping (for backward compatibility)
     const cachedSessionKey = this.labelToSessionKey.get(agentId);
     if (cachedSessionKey && this.gatewayClient) {
       try {
@@ -5587,11 +5609,35 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const inputAgentId = typeof toolInput?.agentId === 'string' ? toolInput.agentId : '';
         const toolUseId = toolUse.metadata?.toolUseId;
 
-        // Check if this spawn matches our target agentId
-        if ((label === agentId || inputAgentId === agentId) && toolUseId) {
+        // Check if this spawn matches our target agentId (now toolUseId)
+        // agentId could be toolUseId, label, or inputAgentId
+        if (toolUseId === agentId || (label === agentId || inputAgentId === agentId)) {
+          // First try in-memory toolCallId mapping
+          if (toolUseId && this.toolCallIdToSessionKey.has(toolUseId)) {
+            const memSessionKey = this.toolCallIdToSessionKey.get(toolUseId);
+            if (memSessionKey) {
+              try {
+                const history = await this.gatewayClient.request<{ messages?: unknown[] }>(
+                  'chat.history',
+                  { sessionKey: memSessionKey, limit: 100 },
+                );
+                if (Array.isArray(history?.messages)) {
+                  const extracted: Array<{ role: string; content: string }> = [];
+                  for (const entry of extractGatewayHistoryEntries(history.messages)) {
+                    extracted.push({ role: entry.role, content: entry.text });
+                  }
+                  if (extracted.length > 0) return extracted;
+                }
+              } catch {
+                // Continue to next strategy
+              }
+            }
+          }
+
           // Find the corresponding tool_result
+          const effectiveToolUseId = toolUseId || agentId;
           const toolResult = parentSession.messages.find(
-            m => m.type === 'tool_result' && m.metadata?.toolUseId === toolUseId,
+            m => m.type === 'tool_result' && m.metadata?.toolUseId === effectiveToolUseId,
           );
 
           if (toolResult?.content) {

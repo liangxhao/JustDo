@@ -579,9 +579,11 @@ interface IElectronAPI {
     ) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onSessionsChanged: (callback: () => void) => () => void;
-    getSubTaskStatus: (
-      sessionId?: string,
-    ) => Promise<{ success: boolean; statuses: Record<string, 'running' | 'done'> }>;
+    getSubTaskStatus: (sessionId?: string) => Promise<{
+      success: boolean;
+      statuses: Record<string, 'running' | 'done'>;
+      displayLabels?: Record<string, string>;
+    }>;
     getSubTaskHistory: (options: {
       parentSessionId: string;
       agentId: string;
