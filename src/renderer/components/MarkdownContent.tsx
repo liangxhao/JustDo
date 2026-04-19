@@ -110,18 +110,17 @@ const encodeFileUrlsInMarkdown = (content: string): string => {
 };
 
 /**
- * Normalize multi-line display math blocks for remark-math compatibility.
- * remark-math treats $$ like code fences: opening $$ must be on its own line,
- * and closing $$ must also be on its own line.
- * LLMs often output $$content\n...\ncontent$$ which breaks parsing and corrupts
- * all subsequent markdown. This function normalizes such blocks.
+ * Normalize display math blocks for remark-math compatibility.
+ * remark-math requires $$ to be on separate lines for display mode:
+ * - `$$E = mc^2$$` inline is parsed as inline math
+ * - `$$\nE = mc^2\n$$` on separate lines is parsed as display math
+ * This function normalizes all $$ blocks to separate-line format.
  */
 const normalizeDisplayMath = (content: string): string => {
   return content.replace(/\$\$([\s\S]+?)\$\$/g, (match, inner) => {
-    if (!inner.includes('\n')) {
-      return match;
-    }
-    return `$$\n${inner.trim()}\n$$`;
+    const trimmed = inner.trim();
+    // Always put $$ on separate lines for display mode
+    return `\n$$\n${trimmed}\n$$\n`;
   });
 };
 
@@ -277,7 +276,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
     // Simple code block without language - minimal styling
     if (!match) {
       return (
-        <div className="mt-1 mb-0.5 relative group">
+        <div className="[&+&]:mt-1 relative group">
           <div className="overflow-x-auto rounded-lg dark:bg-[#282c34] bg-[#f0f2f5] text-[13px] leading-5">
             <button
               type="button"
@@ -302,7 +301,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
 
     // Code block with language - show header with language name
     return (
-      <div className="mt-1 mb-0.5 rounded overflow-hidden border border-border relative">
+      <div className="[&+&]:mt-1 rounded overflow-hidden border border-border relative">
         <div className="bg-surface-raised px-2 py-0.5 text-xs text-secondary font-medium flex items-center justify-between leading-tight">
           <span>{match[1]}</span>
           <button
@@ -346,7 +345,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
   }
 
   const inlineClassName = [
-    'inline bg-transparent px-0.5 text-[0.92em] font-mono font-medium text-foreground',
+    'inline bg-gray-500/20 dark:bg-gray-500/30 px-1 rounded text-[0.92em] font-mono font-medium text-foreground',
     normalizedClassName,
   ]
     .filter(Boolean)
@@ -743,6 +742,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
     () => normalizeDisplayMath(encodeFileUrlsInMarkdown(content)),
     [content],
   );
+
   return (
     <div className={`markdown-content text-[15px] leading-6 ${className}`}>
       <ReactMarkdown
