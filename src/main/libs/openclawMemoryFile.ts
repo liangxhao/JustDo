@@ -10,7 +10,6 @@
  */
 
 import crypto from 'crypto';
-import { app } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -417,30 +416,6 @@ export function migrateSqliteToMemoryMd(filePath: string, source: MigrationDataS
 // Bootstrap file management (IDENTITY.md, USER.md, SOUL.md)
 // ---------------------------------------------------------------------------
 
-const DEFAULT_IDENTITY_ZH =
-  '你的名字是 GucciAI，一个由网易有道开发的全场景个人助理 Agent。你 7×24 小时在线，能够自主处理日常生产力任务，包括数据分析、PPT 制作、视频生成、文档撰写、信息搜索、邮件工作流、定时任务等。你和用户共享同一个工作空间，协同完成用户的目标。';
-const DEFAULT_IDENTITY_EN =
-  "Your name is GucciAI, a full-scenario personal assistant agent developed by NetEase Youdao. You are available 24/7 and can autonomously handle everyday productivity tasks, including data analysis, PPT creation, video generation, document writing, information search, email workflows, scheduled jobs, and more. You and the user share the same workspace, collaborating to achieve the user's goals.";
-
-function getDefaultIdentity(): string {
-  try {
-    const locale = app.getLocale();
-    return locale.startsWith('zh') ? DEFAULT_IDENTITY_ZH : DEFAULT_IDENTITY_EN;
-  } catch {
-    return DEFAULT_IDENTITY_EN;
-  }
-}
-
-const BOOTSTRAP_ALLOWLIST = new Set(['IDENTITY.md', 'USER.md', 'SOUL.md']);
-
-function validateBootstrapFilename(filename: string): void {
-  if (!BOOTSTRAP_ALLOWLIST.has(filename)) {
-    throw new Error(
-      `Invalid bootstrap filename: ${filename}. Allowed: ${[...BOOTSTRAP_ALLOWLIST].join(', ')}`,
-    );
-  }
-}
-
 /**
  * Resolve the path to a bootstrap file in the workspace directory.
  */
@@ -448,26 +423,16 @@ export function resolveBootstrapFilePath(
   workingDirectory: string | undefined,
   filename: string,
 ): string {
-  validateBootstrapFilename(filename);
   const dir = (workingDirectory || '').trim();
   return path.join(dir || DEFAULT_OPENCLAW_WORKSPACE, filename);
 }
 
 /**
- * Read a bootstrap file's content. Returns default content if file doesn't exist or is empty.
+ * Read a bootstrap file's content. Returns empty string if file doesn't exist.
  */
 export function readBootstrapFile(workingDirectory: string | undefined, filename: string): string {
   const filePath = resolveBootstrapFilePath(workingDirectory, filename);
-  const content = readFileOrEmpty(filePath);
-  // Return default content if file is empty
-  if (!content.trim()) {
-    if (filename === 'IDENTITY.md') {
-      return getDefaultIdentity();
-    }
-    // USER.md and SOUL.md have no default content, return empty
-    return '';
-  }
-  return content;
+  return readFileOrEmpty(filePath);
 }
 
 /**
@@ -484,20 +449,6 @@ export function writeBootstrapFile(
   console.log(
     `${TAG} writeBootstrapFile: wrote ${filename} (${content.length} chars) to ${filePath}`,
   );
-}
-
-/**
- * Ensure IDENTITY.md exists in the workspace with built-in default content.
- * Only writes if the file doesn't exist or is empty — never overwrites user content.
- */
-export function ensureDefaultIdentity(workingDirectory: string | undefined): void {
-  const filePath = resolveBootstrapFilePath(workingDirectory, 'IDENTITY.md');
-  const existing = readFileOrEmpty(filePath);
-  if (existing.trim()) return; // already has content, don't overwrite
-  const defaultContent = getDefaultIdentity();
-  ensureDir(filePath);
-  fs.writeFileSync(filePath, defaultContent, 'utf8');
-  console.log(`${TAG} ensureDefaultIdentity: wrote default IDENTITY.md to ${filePath}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -548,16 +499,6 @@ export function syncMemoryFileOnWorkspaceChange(
 
     if (added > 0) {
       writeMemoryEntries(newPath, newEntries);
-    }
-
-    // Ensure memory/ directory exists for OpenClaw daily logs
-    const memoryDir = path.join(
-      (newWorkingDirectory || '').trim() || DEFAULT_OPENCLAW_WORKSPACE,
-      'memory',
-    );
-    if (!fs.existsSync(memoryDir)) {
-      console.log(`${TAG} Workspace sync: creating memory/ dir at ${memoryDir}`);
-      fs.mkdirSync(memoryDir, { recursive: true });
     }
 
     console.log(

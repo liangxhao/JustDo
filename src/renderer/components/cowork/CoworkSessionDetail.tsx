@@ -291,7 +291,7 @@ const composeExportCanvas = async (
   ctx.fillStyle = subtitleColor;
   ctx.font = `400 ${taglineFontSize}px ${fontStack}`;
   ctx.fillText(
-    '7×24 小时帮你干活的硬件场景个人助理，由网易有道开发',
+    '7×24 小时帮你干活的硬件场景个人助理，由GucciAI开发',
     textX,
     footerCenterY + brandFontSize / 2 + 3,
   );
