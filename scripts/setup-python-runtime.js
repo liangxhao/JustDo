@@ -22,7 +22,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'python-win');
 const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', 'python-win-runtime.zip');
 const DEFAULT_WINDOWS_EMBED_PYTHON_VERSION =
-  process.env.GUCCIAI_WINDOWS_EMBED_PYTHON_VERSION || '3.11.9';
+  process.env.GUCCIAI_WINDOWS_EMBED_PYTHON_VERSION || '3.12.10';
 const DEFAULT_WINDOWS_EMBED_PYTHON_ZIP = `python-${DEFAULT_WINDOWS_EMBED_PYTHON_VERSION}-embed-amd64.zip`;
 const DEFAULT_WINDOWS_EMBED_PYTHON_URL =
   process.env.GUCCIAI_WINDOWS_EMBED_PYTHON_URL ||
