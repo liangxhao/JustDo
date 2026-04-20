@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowUpTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 import { i18nService } from '../../services/i18n';
 import { skillService } from '../../services/skill';
@@ -30,6 +30,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   const [activeTab, setActiveTab] = useState<SkillTab>('installed');
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [skillPendingDelete, setSkillPendingDelete] = useState<Skill | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  const [importErrors, setImportErrors] = useState<{ fileName: string; error: string }[]>([]);
 
   // Gateway offline state
   const [gatewayOffline, setGatewayOffline] = useState(false);
@@ -94,6 +97,76 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     }
   };
 
+  const handleImportSkill = async () => {
+    if (readOnly || importing) return;
+
+    try {
+      setImporting(true);
+      setSkillActionError('');
+      setImportSuccess(null);
+      setImportErrors([]);
+
+      // Open file dialog for ZIP/TGZ archives (multi-select)
+      const result = await window.electron.dialog.selectFiles({
+        title: i18nService.t('selectSkillArchive'),
+        filters: [
+          { name: 'Skill Archives', extensions: ['zip', 'tgz', 'tar.gz'] },
+          { name: 'ZIP Files', extensions: ['zip'] },
+          { name: 'TGZ Files', extensions: ['tgz', 'tar.gz'] },
+        ],
+      });
+
+      if (!result.success || !result.paths || result.paths.length === 0) {
+        setImporting(false);
+        return;
+      }
+
+      // Import each skill
+      const results: { path: string; success: boolean; skillId?: string; error?: string }[] = [];
+      for (const archivePath of result.paths) {
+        const importResult = await skillService.importSkill(archivePath);
+        results.push({
+          path: archivePath,
+          success: importResult.success,
+          skillId: importResult.skillId,
+          error: importResult.error,
+        });
+      }
+
+      // Check results
+      const succeeded = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
+
+      if (succeeded.length > 0) {
+        const skillIds = succeeded
+          .map(r => r.skillId)
+          .filter(Boolean)
+          .join(', ');
+        setImportSuccess(skillIds);
+        // Reload skills
+        const loadedSkills = await skillService.loadSkills();
+        dispatch(setSkills(loadedSkills));
+        // Clear success message after 5 seconds
+        setTimeout(() => setImportSuccess(null), 5000);
+      }
+
+      if (failed.length > 0) {
+        setImportErrors(
+          failed.map(r => ({
+            fileName: r.path.split(/[/\\]/).pop() || r.path,
+            error: r.error || i18nService.t('skillImportFailed'),
+          })),
+        );
+      }
+    } catch (error) {
+      setSkillActionError(
+        error instanceof Error ? error.message : i18nService.t('skillImportFailed'),
+      );
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // Skill deletion not supported - handled via error message
   const handleCancelDeleteSkill = () => {
     setSkillPendingDelete(null);
@@ -139,6 +212,34 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
         <ErrorMessage message={skillActionError} onClose={() => setSkillActionError('')} />
       )}
 
+      {importErrors.length > 0 && (
+        <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-sm space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-medium">{i18nService.t('skillImportFailed')}</span>
+            <button
+              type="button"
+              onClick={() => setImportErrors([])}
+              className="p-1 rounded hover:bg-red-500/20 transition-colors"
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+          </div>
+          <ul className="list-disc list-inside space-y-1 text-xs">
+            {importErrors.map((err, idx) => (
+              <li key={idx}>
+                <span className="font-medium">{err.fileName}:</span> {err.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {importSuccess && (
+        <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30 text-green-600 text-sm">
+          {i18nService.t('skillImportSuccess').replace('{skillId}', importSuccess)}
+        </div>
+      )}
+
       {/* Sticky toolbar: Description + Search + Tabs */}
       <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 space-y-4 shadow-sm">
         {/* Search */}
@@ -154,6 +255,24 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
+          {/* Import button - only show in installed tab and when not readonly */}
+          {activeTab === 'installed' && !readOnly && !gatewayOffline && (
+            <Tooltip content={i18nService.t('importSkillTooltip')} position="bottom">
+              <button
+                type="button"
+                onClick={handleImportSkill}
+                disabled={importing}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl bg-surface border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors ${
+                  importing ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <ArrowUpTrayIcon className="h-4 w-4" />
+                <span>
+                  {importing ? i18nService.t('importSkillProgress') : i18nService.t('importSkill')}
+                </span>
+              </button>
+            </Tooltip>
+          )}
         </div>
 
         {/* Tabs */}

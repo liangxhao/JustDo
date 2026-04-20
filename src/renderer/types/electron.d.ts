@@ -301,6 +301,13 @@ interface IElectronAPI {
       version?: string;
       force?: boolean;
     }) => Promise<{ success: boolean; error?: string; gatewayOffline?: boolean }>;
+    // Offline skill import
+    import: (archivePath: string) => Promise<{
+      success: boolean;
+      skillId?: string;
+      error?: string;
+      skills?: Skill[];
+    }>;
     search: (options?: { query?: string; limit?: number }) => Promise<{
       success: boolean;
       results?: ClawHubSkill[];

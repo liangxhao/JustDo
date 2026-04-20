@@ -268,56 +268,12 @@ function syncSkills(configPath: string, store: SqliteStore, mode: 'merge' | 'ove
     return;
   }
 
-  const userDataSkillsDir = path.join(app.getPath('userData'), 'SKILLs');
-  if (!fs.existsSync(userDataSkillsDir)) {
-    fs.mkdirSync(userDataSkillsDir, { recursive: true });
-  }
-
-  // In overwrite mode, remove all existing non-bundled skills first
-  if (mode === 'overwrite') {
-    const existingEntries = fs.readdirSync(userDataSkillsDir, { withFileTypes: true });
-    for (const entry of existingEntries) {
-      if (!entry.isDirectory()) continue;
-      const dirPath = path.join(userDataSkillsDir, entry.name);
-      try {
-        fs.rmSync(dirPath, { recursive: true, force: true });
-      } catch (error) {
-        console.warn(`[Enterprise] failed to remove existing skill "${entry.name}":`, error);
-      }
-    }
-  }
-
-  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-  const skillNames: string[] = [];
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const src = path.join(skillsDir, entry.name);
-    const dest = path.join(userDataSkillsDir, entry.name);
-    try {
-      copyDirRecursive(src, dest);
-      skillNames.push(entry.name);
-    } catch (error) {
-      console.warn(`[Enterprise] failed to copy skill "${entry.name}":`, error);
-    }
-  }
-
-  if (skillNames.length > 0) {
-    try {
-      const existing =
-        mode === 'overwrite'
-          ? ({} as Record<string, { enabled: boolean }>)
-          : (store.get<Record<string, { enabled: boolean }>>('skills_state') ?? {});
-      for (const name of skillNames) {
-        existing[name] = { enabled: true };
-      }
-      store.set('skills_state', existing);
-    } catch (error) {
-      console.warn('[Enterprise] failed to update skills_state:', error);
-    }
-  }
-
-  console.log(`[Enterprise] synced ${skillNames.length} skill(s) (mode: ${mode})`);
+  // Skills are now managed by Gateway via skills.status RPC.
+  // Enterprise skills sync is deprecated - skills should be imported via Gateway's managed directory.
+  console.log(
+    '[Enterprise] skills/ directory found but sync is deprecated. Use Gateway skill import instead.',
+  );
+  return;
 }
 
 function copyDirRecursive(src: string, dest: string): void {

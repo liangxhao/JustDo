@@ -183,7 +183,7 @@ try {
 }
 
 const runtimeSkillsDir = path.join(runtimeRoot, 'skills');
-const gucciAiSkillsDir = path.join(electronRoot, 'skills');
+const gucciAiSkillsDir = path.join(electronRoot, 'resources', 'skills');
 
 // Ensure runtime skills directory exists
 if (!fs.existsSync(runtimeSkillsDir)) {

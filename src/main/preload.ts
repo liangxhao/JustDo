@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('electron', {
     // New: Gateway-based skill management
     install: (params: { source: 'clawhub'; slug: string; version?: string; force?: boolean }) =>
       ipcRenderer.invoke('skills:install', params),
+    // Offline import from local archive
+    import: (archivePath: string) => ipcRenderer.invoke('skills:import', archivePath),
     search: (options?: { query?: string; limit?: number }) =>
       ipcRenderer.invoke('skills:search', options || {}),
     detail: (options: { slug: string }) => ipcRenderer.invoke('skills:detail', options),

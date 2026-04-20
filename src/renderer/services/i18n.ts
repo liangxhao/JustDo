@@ -638,6 +638,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillInstallSuccess: '技能安装成功',
     skillInstallFailed: '安装失败',
     skillAlreadyInstalled: '已安装',
+    // Offline skill import
+    importSkill: '导入',
+    importSkillProgress: '导入中',
+    importSkillTooltip: '从本地压缩包导入技能（支持 ZIP、TGZ 格式）',
+    selectSkillArchive: '选择技能压缩包',
+    skillImportSuccess: '技能 {skillId} 导入成功',
+    skillImportFailed: '技能导入失败',
     skillDeleteNotSupported: '技能删除功能已禁用，请使用禁用功能替代',
     // Gateway offline
     gatewayOffline: 'Gateway 离线',
@@ -1743,6 +1750,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillInstallSuccess: 'Skill installed successfully',
     skillInstallFailed: 'Install failed',
     skillAlreadyInstalled: 'Installed',
+    // Offline skill import
+    importSkill: 'Import',
+    importSkillProgress: 'Importing',
+    importSkillTooltip: 'Import skill from local archive (ZIP, TGZ formats supported)',
+    selectSkillArchive: 'Select skill archive',
+    skillImportSuccess: 'Skill {skillId} imported successfully',
+    skillImportFailed: 'Skill import failed',
     skillDeleteNotSupported: 'Skill deletion is disabled. Please use disable instead',
     // Gateway offline
     gatewayOffline: 'Gateway Offline',

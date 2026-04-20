@@ -117,7 +117,7 @@ const encodeFileUrlsInMarkdown = (content: string): string => {
  * This function normalizes all $$ blocks to separate-line format.
  */
 const normalizeDisplayMath = (content: string): string => {
-  return content.replace(/\$\$([\s\S]+?)\$\$/g, (match, inner) => {
+  return content.replace(/\$\$([\s\S]+?)\$\$/g, (_match, inner) => {
     const trimmed = inner.trim();
     // Always put $$ on separate lines for display mode
     return `\n$$\n${trimmed}\n$$\n`;

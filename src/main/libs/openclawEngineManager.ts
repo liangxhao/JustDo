@@ -1110,22 +1110,47 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private ensureConfigFile(): void {
     ensureDir(path.dirname(this.configPath));
+    const skillsRoot = getSkillsRoot().replace(/\\/g, '/');
+
     if (!fs.existsSync(this.configPath)) {
       fs.writeFileSync(
         this.configPath,
-        JSON.stringify({ gateway: { mode: 'local' } }, null, 2) + '\n',
+        JSON.stringify(
+          {
+            gateway: { mode: 'local' },
+            skills: {
+              load: {
+                extraDirs: [skillsRoot],
+              },
+            },
+          },
+          null,
+          2,
+        ) + '\n',
         'utf8',
       );
       return;
     }
-    // Ensure gateway.mode is set even if config already exists
+    // Ensure gateway.mode is set and skills.load.extraDirs includes user skills
     try {
       const raw = fs.readFileSync(this.configPath, 'utf8');
       const config = JSON.parse(raw);
       if (!config.gateway?.mode) {
         config.gateway = { ...config.gateway, mode: 'local' };
-        fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
       }
+      // Ensure user skills directory is in extraDirs
+      if (!config.skills?.load?.extraDirs) {
+        config.skills = {
+          ...config.skills,
+          load: {
+            ...config.skills?.load,
+            extraDirs: [skillsRoot],
+          },
+        };
+      } else if (!config.skills.load.extraDirs.includes(skillsRoot)) {
+        config.skills.load.extraDirs = [...config.skills.load.extraDirs, skillsRoot];
+      }
+      fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
     } catch {
       // ignore parse errors
     }

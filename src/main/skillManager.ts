@@ -722,8 +722,28 @@ export class SkillManager {
     return path.resolve(app.getPath('userData'), SKILLS_DIR_NAME);
   }
 
+  /**
+   * Get the Gateway managed skills directory.
+   * Gateway loads skills from stateDir/skills where stateDir = userData/openclaw/state.
+   * Imported skills should be placed here so Gateway can discover them.
+   */
+  getGatewayManagedSkillsDir(): string {
+    // Gateway's stateDir is userData/openclaw/state (same as openclawEngineManager)
+    const userDataPath = app.getPath('userData');
+    const stateDir = path.join(userDataPath, 'openclaw', 'state');
+    return path.join(stateDir, 'skills');
+  }
+
   ensureSkillsRoot(): string {
     const root = this.getSkillsRoot();
+    // Don't auto-create this directory anymore.
+    // Skills are now managed by Gateway via skills.status RPC.
+    // This path is kept for backward compatibility with getSkillRoots().
+    return root;
+  }
+
+  ensureGatewayManagedSkillsDir(): string {
+    const root = this.getGatewayManagedSkillsDir();
     if (!fs.existsSync(root)) {
       fs.mkdirSync(root, { recursive: true });
     }
@@ -731,109 +751,10 @@ export class SkillManager {
   }
 
   syncBundledSkillsToUserData(): void {
-    if (!app.isPackaged) {
-      return;
-    }
-
-    console.log('[skills] syncBundledSkillsToUserData: start');
-    const userRoot = this.ensureSkillsRoot();
-    console.log('[skills] syncBundledSkillsToUserData: userRoot =', userRoot);
-    const bundledRoot = this.getBundledSkillsRoot();
-    console.log('[skills] syncBundledSkillsToUserData: bundledRoot =', bundledRoot);
-    if (!bundledRoot || bundledRoot === userRoot || !fs.existsSync(bundledRoot)) {
-      console.log(
-        '[skills] syncBundledSkillsToUserData: bundledRoot skipped (missing or same as userRoot)',
-      );
-      return;
-    }
-
-    try {
-      const bundledSkillDirs = listSkillDirs(bundledRoot);
-      console.log(
-        '[skills] syncBundledSkillsToUserData: found',
-        bundledSkillDirs.length,
-        'bundled skills',
-      );
-      bundledSkillDirs.forEach(dir => {
-        const id = path.basename(dir);
-        const targetDir = path.join(userRoot, id);
-        const targetExists = fs.existsSync(targetDir);
-
-        // Check if skill needs repair
-        let shouldRepair = false;
-        let needsCleanCopy = false;
-        if (targetExists) {
-          // Version-based update: if bundled has a version and it's newer, force update
-          const bundledVer = this.getSkillVersion(dir);
-          if (
-            bundledVer &&
-            compareVersions(bundledVer, this.getSkillVersion(targetDir) || '0.0.0') > 0
-          ) {
-            shouldRepair = true;
-            needsCleanCopy = true;
-          }
-          // web-search has specific broken checks
-          else if (id === 'web-search' && isWebSearchSkillBroken(targetDir)) {
-            shouldRepair = true;
-          }
-          // Generic check: if bundled has node_modules but target doesn't, repair it
-          else if (!this.isSkillRuntimeHealthy(targetDir, dir)) {
-            shouldRepair = true;
-          }
-        }
-
-        if (targetExists && !shouldRepair) return;
-        try {
-          console.log(
-            `[skills] syncBundledSkillsToUserData: copying "${id}" from ${dir} to ${targetDir}`,
-          );
-
-          // Preserve .env file before clean copy
-          let envBackup: Buffer | null = null;
-          const envPath = path.join(targetDir, '.env');
-          if (needsCleanCopy && fs.existsSync(envPath)) {
-            envBackup = fs.readFileSync(envPath);
-          }
-
-          // Version-based update: delete target dir first to remove stale files
-          // (e.g. old .py scripts, __pycache__, leftover package-lock.json)
-          if (needsCleanCopy) {
-            fs.rmSync(targetDir, { recursive: true, force: true });
-          }
-
-          cpRecursiveSync(dir, targetDir, {
-            dereference: true,
-            force: shouldRepair,
-          });
-
-          // Restore .env file after clean copy
-          if (envBackup !== null) {
-            fs.writeFileSync(envPath, envBackup);
-          }
-
-          console.log(`[skills] syncBundledSkillsToUserData: copied "${id}" successfully`);
-          if (shouldRepair) {
-            console.log(`[skills] Repaired bundled skill "${id}" in user data`);
-          }
-        } catch (error) {
-          console.warn(`[skills] Failed to sync bundled skill "${id}":`, error);
-        }
-      });
-
-      const bundledConfig = path.join(bundledRoot, SKILLS_CONFIG_FILE);
-      const targetConfig = path.join(userRoot, SKILLS_CONFIG_FILE);
-      if (fs.existsSync(bundledConfig)) {
-        if (!fs.existsSync(targetConfig)) {
-          console.log('[skills] syncBundledSkillsToUserData: copying skills.config.json');
-          cpRecursiveSync(bundledConfig, targetConfig);
-        } else {
-          this.mergeSkillsConfig(bundledConfig, targetConfig);
-        }
-      }
-      console.log('[skills] syncBundledSkillsToUserData: done');
-    } catch (error) {
-      console.warn('[skills] Failed to sync bundled skills:', error);
-    }
+    // Deprecated: Skills are now managed by Gateway via skills.status RPC.
+    // Bundled skills are loaded directly from Resources/SKILLs by Gateway.
+    // This function no longer creates the userData/SKILLs directory.
+    console.log('[skills] syncBundledSkillsToUserData: deprecated, skipping');
   }
 
   /**
@@ -900,10 +821,12 @@ export class SkillManager {
   }
 
   listSkills(): SkillRecord[] {
-    const primaryRoot = this.ensureSkillsRoot();
+    // Use Gateway managed skills directory as primary root
+    const gatewayRoot = this.getGatewayManagedSkillsDir();
     const state = this.loadSkillStateMap();
-    const roots = this.getSkillRoots(primaryRoot);
-    const orderedRoots = roots.filter(root => root !== primaryRoot).concat(primaryRoot);
+    const roots = this.getSkillRoots(gatewayRoot);
+    // Gateway root is last in priority (bundled skills override user skills if same ID)
+    const orderedRoots = roots.filter(root => root !== gatewayRoot).concat(gatewayRoot);
     const defaults = this.loadSkillsDefaults(roots);
     const builtInSkillIds = this.listBuiltInSkillIds();
     const skillMap = new Map<string, SkillRecord>();
@@ -972,7 +895,8 @@ export class SkillManager {
   }
 
   deleteSkill(id: string): SkillRecord[] {
-    const root = this.ensureSkillsRoot();
+    // Use Gateway managed skills directory for deletion
+    const root = this.getGatewayManagedSkillsDir();
     if (id !== path.basename(id)) {
       throw new Error('Invalid skill id');
     }
@@ -994,10 +918,187 @@ export class SkillManager {
     return this.listSkills();
   }
 
+  /**
+   * Import a skill from a compressed file (ZIP or TGZ).
+   * Extracts the archive to the Gateway managed skills directory.
+   */
+  importSkill(archivePath: string): {
+    success: boolean;
+    skillId?: string;
+    error?: string;
+    skills?: SkillRecord[];
+  } {
+    try {
+      // Use Gateway managed skills directory so imported skills are visible to Gateway
+      const root = this.ensureGatewayManagedSkillsDir();
+
+      // Validate archive exists
+      if (!fs.existsSync(archivePath)) {
+        return { success: false, error: 'Archive file not found' };
+      }
+
+      // Determine archive type
+      const ext = path.extname(archivePath).toLowerCase();
+      const isZip = ext === '.zip';
+      const isTgz = ext === '.tgz' || archivePath.toLowerCase().endsWith('.tar.gz');
+
+      if (!isZip && !isTgz) {
+        return {
+          success: false,
+          error: 'Unsupported archive format. Only .zip and .tgz/.tar.gz are supported.',
+        };
+      }
+
+      // Create temp directory for extraction (in root, not user skills)
+      const tempDir = path.join(root, '.import-temp-' + Date.now());
+      fs.mkdirSync(tempDir, { recursive: true });
+
+      try {
+        // Extract archive
+        if (isZip) {
+          this.extractZip(archivePath, tempDir);
+        } else {
+          this.extractTgz(archivePath, tempDir);
+        }
+
+        // Find skill directory (contains SKILL.md)
+        const skillDir = this.findSkillDirInExtracted(tempDir);
+        if (!skillDir) {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          return {
+            success: false,
+            error: 'No valid skill found in archive. A skill must contain a SKILL.md file.',
+          };
+        }
+
+        // Determine skill ID from directory name or SKILL.md
+        const skillId = this.determineSkillId(skillDir);
+        if (!skillId) {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          return {
+            success: false,
+            error: 'Could not determine skill ID. Check SKILL.md name field.',
+          };
+        }
+
+        // Check if skill already exists
+        const targetDir = path.join(root, skillId);
+        if (fs.existsSync(targetDir)) {
+          // Remove existing skill (allow overwrite)
+          fs.rmSync(targetDir, { recursive: true, force: true });
+        }
+
+        // Move skill to user skills directory
+        fs.renameSync(skillDir, targetDir);
+
+        // Cleanup temp directory
+        fs.rmSync(tempDir, { recursive: true, force: true });
+
+        // Enable imported skill by default
+        const state = this.loadSkillStateMap();
+        state[skillId] = { enabled: true };
+        this.saveSkillStateMap(state);
+
+        // Refresh skill list
+        this.startWatching();
+        this.notifySkillsChanged();
+        const skills = this.listSkills();
+
+        return { success: true, skillId, skills };
+      } catch (extractError) {
+        // Cleanup on error
+        if (fs.existsSync(tempDir)) {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+        throw extractError;
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to import skill';
+      console.error('[skills] importSkill error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  }
+
+  private extractZip(zipPath: string, targetDir: string): void {
+    // Use PowerShell on Windows, unzip on macOS/Linux
+    if (process.platform === 'win32') {
+      execSync(
+        `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${targetDir}' -Force"`,
+        {
+          timeout: 60000,
+        },
+      );
+    } else {
+      execSync(`unzip -o "${zipPath}" -d "${targetDir}"`, {
+        timeout: 60000,
+      });
+    }
+  }
+
+  private extractTgz(tgzPath: string, targetDir: string): void {
+    // Use tar (available on all platforms)
+    execSync(`tar -xzf "${tgzPath}" -C "${targetDir}"`, {
+      timeout: 60000,
+    });
+  }
+
+  private findSkillDirInExtracted(dir: string): string | null {
+    // Check if dir itself is a skill (contains SKILL.md)
+    if (fs.existsSync(path.join(dir, SKILL_FILE_NAME))) {
+      return dir;
+    }
+
+    // Search subdirectories for a skill
+    const entries = fs.readdirSync(dir);
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry);
+      try {
+        const stat = fs.statSync(entryPath);
+        if (stat.isDirectory()) {
+          if (fs.existsSync(path.join(entryPath, SKILL_FILE_NAME))) {
+            return entryPath;
+          }
+          // Recursively search nested directories (handle archive with nested structure)
+          const nested = this.findSkillDirInExtracted(entryPath);
+          if (nested) return nested;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  private determineSkillId(skillDir: string): string | null {
+    // Try to read SKILL.md for name field
+    const skillMdPath = path.join(skillDir, SKILL_FILE_NAME);
+    try {
+      const content = fs.readFileSync(skillMdPath, 'utf8');
+      // Parse YAML frontmatter for name
+      const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+      if (frontmatterMatch) {
+        const frontmatter = yaml.load(frontmatterMatch[1]) as Record<string, unknown> | undefined;
+        if (frontmatter?.name && typeof frontmatter.name === 'string') {
+          // Convert name to valid directory name (lowercase, replace spaces with hyphens)
+          return frontmatter.name
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, '-')
+            .replace(/-+/g, '-');
+        }
+      }
+    } catch {
+      // Fall through to directory name
+    }
+
+    // Fallback: use directory name as skill ID
+    return path.basename(skillDir);
+  }
+
   startWatching(): void {
     this.stopWatching();
-    const primaryRoot = this.ensureSkillsRoot();
-    const roots = this.getSkillRoots(primaryRoot);
+    const gatewayRoot = this.getGatewayManagedSkillsDir();
+    const roots = this.getSkillRoots(gatewayRoot);
 
     // Root-level watch: only react to directory additions/removals (new/deleted skills).
     const rootWatchHandler = (_event: string, filename: string | null) => {
@@ -1223,10 +1324,10 @@ export class SkillManager {
       return path.resolve(app.getAppPath(), SKILLS_DIR_NAME);
     }
 
-    // In development, use the project root (parent of dist-electron).
+    // In development, use resources/skills from the project root.
     // __dirname is dist-electron/, so we need to go up one level to get to project root
     const projectRoot = path.resolve(__dirname, '..');
-    return path.resolve(projectRoot, SKILLS_DIR_NAME);
+    return path.resolve(projectRoot, 'resources', SKILLS_DIR_NAME.toLowerCase());
   }
 
   getSkillConfig(skillId: string): {

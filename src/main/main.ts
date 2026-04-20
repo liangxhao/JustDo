@@ -1968,6 +1968,18 @@ if (!gotTheLock) {
     }
   });
 
+  // Offline skill import - extract local archive to user skills directory
+  ipcMain.handle('skills:import', async (_event, archivePath: string) => {
+    try {
+      const result = skillManager.importSkill(archivePath);
+      return result;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to import skill';
+      console.error('[Skills] skills:import error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  });
+
   // Deprecated handlers - no longer needed, Gateway manages everything
   // skills:delete - Gateway doesn't support delete via RPC, use file system directly or disable
   ipcMain.handle('skills:delete', async (_event, id: string) => {

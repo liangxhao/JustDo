@@ -196,6 +196,20 @@ class SkillService {
     }
   }
 
+  /** Import a skill from a local archive (ZIP or TGZ) */
+  async importSkill(
+    archivePath: string,
+  ): Promise<{ success: boolean; skillId?: string; error?: string }> {
+    try {
+      const result = await window.electron.skills.import(archivePath);
+      return { success: result.success, skillId: result.skillId, error: result.error };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to import skill';
+      console.error('Failed to import skill:', error);
+      return { success: false, error: message };
+    }
+  }
+
   getLocalizedSkillDescription(skillId: string, skillName: string, fallback: string): string {
     const localDesc = this.localSkillDescriptions.get(skillName);
     if (localDesc != null) return resolveLocalizedText(localDesc);
