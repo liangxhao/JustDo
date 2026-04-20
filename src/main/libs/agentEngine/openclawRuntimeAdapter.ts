@@ -35,6 +35,7 @@ import { extractOpenClawAssistantStreamText } from '../openclawAssistantText';
 import { isDeleteCommand, getCommandDangerLevel } from '../commandSafety';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclawConfigSync';
+import { resolveRawApiConfig } from '../claudeSettings';
 import { t } from '../../i18n';
 
 const OPENCLAW_GATEWAY_TOOL_EVENTS_CAP = 'tool-events';
@@ -1239,7 +1240,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const agentId = options.agentId || session.agentId || 'main';
     const agent = this.store.getAgent(agentId);
     const rawModel = agent?.model || '';
-    const modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
+    let modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
+    // Fallback to config default model if agent model is empty
+    if (!modelName) {
+      const apiResolution = resolveRawApiConfig();
+      const configModel = apiResolution.config?.model;
+      const providerMetadata = apiResolution.providerMetadata;
+      if (configModel) {
+        modelName = providerMetadata?.modelName || configModel;
+      }
+    }
     const sessionKey = this.toSessionKey(sessionId, agentId);
     this.rememberSessionKey(sessionId, sessionKey);
 
@@ -4935,7 +4945,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const agentId = session?.agentId || 'main';
     const agent = this.store.getAgent(agentId);
     const rawModel = agent?.model || '';
-    const modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
+    let modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
+    // Fallback to config default model if agent model is empty
+    if (!modelName) {
+      const apiResolution = resolveRawApiConfig();
+      const configModel = apiResolution.config?.model;
+      const providerMetadata = apiResolution.providerMetadata;
+      if (configModel) {
+        modelName = providerMetadata?.modelName || configModel;
+      }
+    }
     console.log(
       '[Debug:ensureActiveTurn] creating turn — sessionId:',
       sessionId,
