@@ -210,6 +210,20 @@ class SkillService {
     }
   }
 
+  /** Import a skill from a local folder */
+  async importSkillFromFolder(
+    folderPath: string,
+  ): Promise<{ success: boolean; skillId?: string; error?: string }> {
+    try {
+      const result = await window.electron.skills.importFolder(folderPath);
+      return { success: result.success, skillId: result.skillId, error: result.error };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to import skill from folder';
+      console.error('Failed to import skill from folder:', error);
+      return { success: false, error: message };
+    }
+  }
+
   getLocalizedSkillDescription(skillId: string, skillName: string, fallback: string): string {
     const localDesc = this.localSkillDescriptions.get(skillName);
     if (localDesc != null) return resolveLocalizedText(localDesc);

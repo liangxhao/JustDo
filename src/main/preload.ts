@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('skills:install', params),
     // Offline import from local archive
     import: (archivePath: string) => ipcRenderer.invoke('skills:import', archivePath),
+    // Offline import from local folder
+    importFolder: (folderPath: string) => ipcRenderer.invoke('skills:importFolder', folderPath),
     search: (options?: { query?: string; limit?: number }) =>
       ipcRenderer.invoke('skills:search', options || {}),
     detail: (options: { slug: string }) => ipcRenderer.invoke('skills:detail', options),
@@ -410,6 +412,8 @@ contextBridge.exposeInMainWorld('electron', {
       title?: string;
       filters?: { name: string; extensions: string[] }[];
     }) => ipcRenderer.invoke('dialog:selectFiles', options),
+    selectFolders: (options?: { title?: string }) =>
+      ipcRenderer.invoke('dialog:selectFolders', options),
     saveInlineFile: (options: {
       dataBase64: string;
       fileName?: string;

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { ArrowUpTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowUpTrayIcon, FolderIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 import { i18nService } from '../../services/i18n';
 import { skillService } from '../../services/skill';
@@ -167,6 +167,71 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     }
   };
 
+  const handleImportSkillFromFolder = async () => {
+    if (readOnly || importing) return;
+
+    try {
+      setImporting(true);
+      setSkillActionError('');
+      setImportSuccess(null);
+      setImportErrors([]);
+
+      // Open folder dialog for skill folders (multi-select)
+      const result = await window.electron.dialog.selectFolders({
+        title: i18nService.t('selectSkillFolder'),
+      });
+
+      if (!result.success || !result.paths || result.paths.length === 0) {
+        setImporting(false);
+        return;
+      }
+
+      // Import each skill folder
+      const results: { path: string; success: boolean; skillId?: string; error?: string }[] = [];
+      for (const folderPath of result.paths) {
+        const importResult = await skillService.importSkillFromFolder(folderPath);
+        results.push({
+          path: folderPath,
+          success: importResult.success,
+          skillId: importResult.skillId,
+          error: importResult.error,
+        });
+      }
+
+      // Check results
+      const succeeded = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
+
+      if (succeeded.length > 0) {
+        const skillIds = succeeded
+          .map(r => r.skillId)
+          .filter(Boolean)
+          .join(', ');
+        setImportSuccess(skillIds);
+        // Reload skills
+        const loadedSkills = await skillService.loadSkills();
+        dispatch(setSkills(loadedSkills));
+        // Clear success message after 5 seconds
+        setTimeout(() => setImportSuccess(null), 5000);
+      }
+
+      if (failed.length > 0) {
+        setImportErrors(
+          failed.map(r => ({
+            fileName: r.path.split(/[/\\]/).pop() || r.path,
+            error: r.error || i18nService.t('skillImportFailed'),
+          })),
+        );
+      }
+    } catch (error) {
+      setSkillActionError(
+        error instanceof Error ? error.message : i18nService.t('skillImportFailed'),
+      );
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // Skill deletion not supported - handled via error message
   const handleCancelDeleteSkill = () => {
     setSkillPendingDelete(null);
@@ -255,23 +320,42 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
-          {/* Import button - only show in installed tab and when not readonly */}
+          {/* Import buttons - only show in installed tab and when not readonly */}
           {activeTab === 'installed' && !readOnly && !gatewayOffline && (
-            <Tooltip content={i18nService.t('importSkillTooltip')} position="bottom">
-              <button
-                type="button"
-                onClick={handleImportSkill}
-                disabled={importing}
-                className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl bg-surface border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors ${
-                  importing ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-              >
-                <ArrowUpTrayIcon className="h-4 w-4" />
-                <span>
-                  {importing ? i18nService.t('importSkillProgress') : i18nService.t('importSkill')}
-                </span>
-              </button>
-            </Tooltip>
+            <>
+              <Tooltip content={i18nService.t('importSkillTooltip')} position="bottom">
+                <button
+                  type="button"
+                  onClick={handleImportSkill}
+                  disabled={importing}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl bg-surface border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors ${
+                    importing ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                >
+                  <ArrowUpTrayIcon className="h-4 w-4" />
+                  <span>
+                    {importing ? i18nService.t('importSkillProgress') : i18nService.t('importSkill')}
+                  </span>
+                </button>
+              </Tooltip>
+              <Tooltip content={i18nService.t('importSkillFolderTooltip')} position="bottom">
+                <button
+                  type="button"
+                  onClick={handleImportSkillFromFolder}
+                  disabled={importing}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl bg-surface border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors ${
+                    importing ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                >
+                  <FolderIcon className="h-4 w-4" />
+                  <span>
+                    {importing
+                      ? i18nService.t('importSkillFolderProgress')
+                      : i18nService.t('importSkillFolder')}
+                  </span>
+                </button>
+              </Tooltip>
+            </>
           )}
         </div>
 

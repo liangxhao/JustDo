@@ -1972,6 +1972,18 @@ if (!gotTheLock) {
     }
   });
 
+  // Offline skill import from folder - copy folder to user skills directory
+  ipcMain.handle('skills:importFolder', async (_event, folderPath: string) => {
+    try {
+      const result = skillManager.importSkillFromFolder(folderPath);
+      return result;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to import skill from folder';
+      console.error('[Skills] skills:importFolder error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  });
+
   // Deprecated handlers - no longer needed, Gateway manages everything
   // skills:delete - Gateway doesn't support delete via RPC, use file system directly or disable
   ipcMain.handle('skills:delete', async (_event, id: string) => {
@@ -3660,6 +3672,28 @@ if (!gotTheLock) {
         properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
         title: options?.title,
         filters: options?.filters,
+      };
+      const result = ownerWindow
+        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions);
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: true, paths: [] };
+      }
+      return { success: true, paths: result.filePaths };
+    },
+  );
+
+  ipcMain.handle(
+    'dialog:selectFolders',
+    async (event, options?: { title?: string }) => {
+      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+      const dialogOptions = {
+        properties: ['openDirectory', 'multiSelections', 'createDirectory'] as (
+          | 'openDirectory'
+          | 'multiSelections'
+          | 'createDirectory'
+        )[],
+        title: options?.title,
       };
       const result = ownerWindow
         ? await dialog.showOpenDialog(ownerWindow, dialogOptions)

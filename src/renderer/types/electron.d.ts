@@ -308,6 +308,13 @@ interface IElectronAPI {
       error?: string;
       skills?: Skill[];
     }>;
+    // Offline skill import from folder
+    importFolder: (folderPath: string) => Promise<{
+      success: boolean;
+      skillId?: string;
+      error?: string;
+      skills?: Skill[];
+    }>;
     search: (options?: { query?: string; limit?: number }) => Promise<{
       success: boolean;
       results?: ClawHubSkill[];
@@ -625,6 +632,10 @@ interface IElectronAPI {
       title?: string;
       filters?: { name: string; extensions: string[] }[];
     }) => Promise<{ success: boolean; paths: string[] }>;
+    selectFolders: (options?: { title?: string }) => Promise<{
+      success: boolean;
+      paths: string[];
+    }>;
     saveInlineFile: (options: {
       dataBase64: string;
       fileName?: string;
