@@ -14,11 +14,14 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 // @ts-ignore
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import mermaid from 'mermaid';
+import DOMPurify from 'dompurify';
 import {
   ClipboardDocumentIcon,
   CheckIcon,
   DocumentIcon,
   FolderIcon,
+  PlayIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../services/i18n';
 
@@ -192,6 +195,95 @@ function useIsDark() {
   return isDark;
 }
 
+// Initialize mermaid once
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: 'loose',
+  theme: 'default',
+});
+
+let mermaidIdCounter = 0;
+const getMermaidId = () => `mermaid-${Date.now()}-${mermaidIdCounter++}`;
+
+const MermaidRenderer: React.FC<{ code: string }> = ({ code }) => {
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isDark = useIsDark();
+
+  useEffect(() => {
+    const renderDiagram = async () => {
+      const id = getMermaidId();
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'loose',
+          theme: isDark ? 'dark' : 'default',
+        });
+        const result = await mermaid.render(id, code.trim());
+        setSvg(result.svg ?? String(result));
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Mermaid rendering failed');
+        setSvg(null);
+      }
+    };
+    renderDiagram();
+  }, [code, isDark]);
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-600 dark:text-red-400">
+        <div className="font-medium mb-1">Mermaid Error</div>
+        <pre className="whitespace-pre-wrap text-xs">{error}</pre>
+      </div>
+    );
+  }
+
+  if (!svg) {
+    return (
+      <div className="flex items-center justify-center p-4 rounded-lg bg-surface-raised border border-border">
+        <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full">
+      {/* Spacer to expand bubble width */}
+      <div className="h-0 invisible min-w-[500px]" />
+      <div
+        ref={containerRef}
+        className="overflow-x-auto rounded-lg bg-surface-raised border border-border p-4 [&_svg]:max-w-full"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    </div>
+  );
+};
+
+const HtmlRenderer: React.FC<{ code: string }> = ({ code }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sanitizedHtml = useMemo(() => {
+    return DOMPurify.sanitize(code.trim(), {
+      ADD_TAGS: ['style', 'link'],
+      ADD_ATTR: ['target', 'rel', 'style', 'class', 'id'],
+      FORCE_BODY: false,
+    });
+  }, [code]);
+
+  return (
+    <div className="w-full">
+      {/* Spacer to expand bubble width */}
+      <div className="h-0 invisible min-w-[500px]" />
+      <div
+        ref={containerRef}
+        className="overflow-x-auto overflow-y-auto max-h-[400px] rounded-lg bg-white dark:bg-gray-900 border border-border p-4 w-full"
+        dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+      />
+    </div>
+  );
+};
+
 const dispatchAppToast = (message: string): void => {
   window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
 };
@@ -214,6 +306,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
     trimmedCodeText.length <= CODE_BLOCK_CHAR_LIMIT &&
     trimmedCodeText.split('\n').length <= CODE_BLOCK_LINE_LIMIT;
   const [isCopied, setIsCopied] = useState(false);
+  const [renderRequested, setRenderRequested] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
   const isDark = useIsDark();
   const highlighterStyle = isDark
@@ -273,6 +366,168 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
   }, [trimmedCodeText]);
 
   if (!isInline) {
+    // Mermaid diagram - toggle between code and rendered view
+    if (match && match[1] === 'mermaid') {
+      const headerButtons = (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setRenderRequested(!renderRequested)}
+            className={`p-0.5 rounded hover:bg-surface-hover transition-colors ${
+              renderRequested ? 'text-primary' : 'text-primary hover:text-primary-hover'
+            }`}
+            title={
+              renderRequested
+                ? i18nService.t('showCode') || 'Show code'
+                : i18nService.t('renderDiagram') || 'Render diagram'
+            }
+            aria-label={
+              renderRequested
+                ? i18nService.t('showCode') || 'Show code'
+                : i18nService.t('renderDiagram') || 'Render diagram'
+            }
+          >
+            <PlayIcon className={`h-3.5 w-3.5 ${renderRequested ? 'rotate-90' : ''}`} />
+          </button>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="p-0.5 rounded hover:bg-surface-hover transition-colors"
+            title={i18nService.t('copyToClipboard')}
+            aria-label={i18nService.t('copyToClipboard')}
+          >
+            {isCopied ? (
+              <CheckIcon className="h-3.5 w-3.5 text-green-500" />
+            ) : (
+              <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </div>
+      );
+
+      if (renderRequested) {
+        return (
+          <div className="[&+&]:mt-1 rounded overflow-hidden border border-border">
+            <div className="bg-surface-raised px-2 py-0.5 text-xs text-secondary font-medium flex items-center justify-between leading-tight">
+              <span>mermaid (rendered)</span>
+              {headerButtons}
+            </div>
+            <MermaidRenderer code={trimmedCodeText} />
+          </div>
+        );
+      }
+      return (
+        <div className="[&+&]:mt-1 rounded overflow-hidden border border-border relative">
+          <div className="bg-surface-raised px-2 py-0.5 text-xs text-secondary font-medium flex items-center justify-between leading-tight">
+            <span>mermaid</span>
+            {headerButtons}
+          </div>
+          {shouldHighlight ? (
+            <SyntaxHighlighter
+              style={highlighterStyle}
+              language="mermaid"
+              PreTag="div"
+              customStyle={{
+                ...SYNTAX_HIGHLIGHTER_STYLE,
+                background: isDark ? '#282c34' : '#f0f2f5',
+                padding: '4px 8px',
+                margin: 0,
+                fontSize: '13px',
+              }}
+            >
+              {trimmedCodeText}
+            </SyntaxHighlighter>
+          ) : (
+            <div className="m-0 overflow-x-auto dark:bg-[#282c34] bg-[#f0f2f5] text-[13px] leading-5">
+              <code className="block px-2 py-1 font-mono dark:text-gray-100 text-gray-800 whitespace-pre">
+                {trimmedCodeText}
+              </code>
+            </div>
+          )}
+        </div>
+      );
+    }
+    // HTML - toggle between code and rendered view
+    if (match && match[1] === 'html') {
+      const headerButtons = (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setRenderRequested(!renderRequested)}
+            className={`p-0.5 rounded hover:bg-surface-hover transition-colors ${
+              renderRequested ? 'text-primary' : 'text-primary hover:text-primary-hover'
+            }`}
+            title={
+              renderRequested
+                ? i18nService.t('showCode') || 'Show code'
+                : i18nService.t('renderHtml') || 'Render HTML'
+            }
+            aria-label={
+              renderRequested
+                ? i18nService.t('showCode') || 'Show code'
+                : i18nService.t('renderHtml') || 'Render HTML'
+            }
+          >
+            <PlayIcon className={`h-3.5 w-3.5 ${renderRequested ? 'rotate-90' : ''}`} />
+          </button>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="p-0.5 rounded hover:bg-surface-hover transition-colors"
+            title={i18nService.t('copyToClipboard')}
+            aria-label={i18nService.t('copyToClipboard')}
+          >
+            {isCopied ? (
+              <CheckIcon className="h-3.5 w-3.5 text-green-500" />
+            ) : (
+              <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </div>
+      );
+
+      if (renderRequested) {
+        return (
+          <div className="[&+&]:mt-1 rounded overflow-hidden border border-border">
+            <div className="bg-surface-raised px-2 py-0.5 text-xs text-secondary font-medium flex items-center justify-between leading-tight">
+              <span>html (rendered)</span>
+              {headerButtons}
+            </div>
+            <HtmlRenderer code={trimmedCodeText} />
+          </div>
+        );
+      }
+      return (
+        <div className="[&+&]:mt-1 rounded overflow-hidden border border-border relative">
+          <div className="bg-surface-raised px-2 py-0.5 text-xs text-secondary font-medium flex items-center justify-between leading-tight">
+            <span>html</span>
+            {headerButtons}
+          </div>
+          {shouldHighlight ? (
+            <SyntaxHighlighter
+              style={highlighterStyle}
+              language="html"
+              PreTag="div"
+              customStyle={{
+                ...SYNTAX_HIGHLIGHTER_STYLE,
+                background: isDark ? '#282c34' : '#f0f2f5',
+                padding: '4px 8px',
+                margin: 0,
+                fontSize: '13px',
+              }}
+            >
+              {trimmedCodeText}
+            </SyntaxHighlighter>
+          ) : (
+            <div className="m-0 overflow-x-auto dark:bg-[#282c34] bg-[#f0f2f5] text-[13px] leading-5">
+              <code className="block px-2 py-1 font-mono dark:text-gray-100 text-gray-800 whitespace-pre">
+                {trimmedCodeText}
+              </code>
+            </div>
+          )}
+        </div>
+      );
+    }
     // Simple code block without language - minimal styling
     if (!match) {
       return (

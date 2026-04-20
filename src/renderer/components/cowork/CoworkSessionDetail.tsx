@@ -1194,7 +1194,7 @@ export const UserMessageItem: React.FC<{
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <div className="pl-4 sm:pl-8 md:pl-12">
           <div className="flex items-start gap-3 flex-row-reverse">
             {/* User avatar */}
@@ -1202,7 +1202,7 @@ export const UserMessageItem: React.FC<{
               <UserIcon className="h-4 w-4 text-primary" />
             </div>
             <div className="w-full min-w-0 flex flex-col items-end">
-              <div className="relative w-fit max-w-[42rem] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
+              <div className="relative max-w-[calc(100%-44px)] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
                 {/* Copy button — top-right inside bubble */}
                 <div className="absolute top-1.5 right-1.5">
                   <CopyButton content={message.content} visible={isHovered} />
@@ -1315,7 +1315,7 @@ const AssistantMessageItem: React.FC<{
 
       {/* Normal content */}
       {message.content && (
-        <div className="relative w-fit max-w-[42rem] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
+        <div className="relative max-w-[calc(100%-44px)] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
           {/* Copy button — top-right inside bubble */}
           {showCopyButton && (
             <div className="absolute top-1.5 right-1.5">
@@ -1381,7 +1381,7 @@ const StreamingActivityBar: React.FC<{ messages: CoworkMessage[] }> = ({ message
 
   return (
     <div className="shrink-0 animate-fade-in px-4">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <div className="streaming-bar" />
         <div className="py-1">
           <span className="text-xs text-secondary">{getStatusText()}</span>
@@ -1513,7 +1513,7 @@ const ThinkingStreamBlock: React.FC<{
   return (
     <div className="mb-2">
       <div
-        className="flex items-center gap-1.5 w-fit text-xs text-muted-foreground cursor-pointer select-none max-w-[42rem]"
+        className="flex items-center gap-1.5 w-fit max-w-[calc(100%-44px)] text-xs text-muted-foreground cursor-pointer select-none"
         onClick={handleToggle}
       >
         <ChevronRightIcon
@@ -1527,7 +1527,7 @@ const ThinkingStreamBlock: React.FC<{
         )}
       </div>
       {!localCollapsed && (
-        <div className="mt-1.5 w-fit max-w-[42rem] p-2.5 rounded-md bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100/50 dark:border-blue-900/30 max-h-64 overflow-y-auto">
+        <div className="mt-1.5 w-fit max-w-[calc(100%-44px)] p-2.5 rounded-md bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100/50 dark:border-blue-900/30 max-h-64 overflow-y-auto">
           <div className="text-xs [&_.markdown-content]:text-xs [&_.markdown-content]:text-muted-foreground [&_p]:my-0 [&_p]:leading-5 [&_div.my-0.5]:my-0 [&_div.my-0.5]:mt-0.5 [&_code]:text-[0.85em] [&_pre]:my-0 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0">
             <MarkdownContent content={thinkingContent} className="max-w-none" />
           </div>
@@ -1635,7 +1635,7 @@ export const AssistantTurnBlock: React.FC<{
 
   return (
     <div className="px-4 py-2">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <div className="flex items-start gap-3">
           {/* Assistant avatar */}
           <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
@@ -3053,7 +3053,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
       {/* Input Area */}
       <div className="p-4 shrink-0">
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w-5xl mx-auto">
           <CoworkPromptInput
             ref={promptInputRef}
             onSubmit={onContinue}
