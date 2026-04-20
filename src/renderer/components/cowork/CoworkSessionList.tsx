@@ -69,7 +69,13 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
       {enrichedSubTasks.map(sub => (
         <div
           key={sub.agentId}
-          onClick={() => setActiveSubTask({ agentId: sub.agentId, displayName: sub.task, parentSessionId: sessionId })}
+          onClick={() =>
+            setActiveSubTask({
+              agentId: sub.agentId,
+              displayName: sub.task,
+              parentSessionId: sessionId,
+            })
+          }
           className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
         >
           <span
@@ -503,30 +509,30 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="space-y-px">
-        {/* 对话分组 section */}
+        {/* 对话分组 section - always show header with create button */}
+        <div className="flex items-center justify-between px-2.5 pt-2 pb-1">
+          <span className="text-xs font-medium text-secondary">
+            {i18nService.t('groupedSessions')}
+          </span>
+          <button
+            type="button"
+            onClick={() => setIsCreateGroupOpen(true)}
+            className="h-5 w-5 inline-flex items-center justify-center rounded text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+            aria-label="Create new group"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              className="h-3.5 w-3.5"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
         {groups.length > 0 && (
           <>
-            <div className="flex items-center justify-between px-2.5 pt-2 pb-1">
-              <span className="text-xs font-medium text-secondary">
-                {i18nService.t('groupedSessions')}
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsCreateGroupOpen(true)}
-                className="h-5 w-5 inline-flex items-center justify-center rounded text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
-                aria-label="Create new group"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  className="h-3.5 w-3.5"
-                >
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-              </button>
-            </div>
             {groups.map((group, index) => {
               const groupSessions = groupedSessionsByGroupId[group.id] || [];
               const isExpanded = expandedGroupIds.includes(group.id);
