@@ -949,66 +949,93 @@ export class SkillManager {
         };
       }
 
-      // Create temp directory for extraction (in root, not user skills)
-      const tempDir = path.join(root, '.import-temp-' + Date.now());
-      fs.mkdirSync(tempDir, { recursive: true });
+      // Create temp directory for extraction with unique name
+      // Extract to a subdirectory to avoid skillDir being tempDir itself
+      const tempBase = path.join(root, `.import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+      fs.mkdirSync(tempBase, { recursive: true });
+      const extractDir = path.join(tempBase, 'extracted');
+      fs.mkdirSync(extractDir, { recursive: true });
 
       try {
-        // Extract archive
+        // Extract archive to the nested extracted directory
         if (isZip) {
-          this.extractZip(archivePath, tempDir);
+          this.extractZip(archivePath, extractDir);
         } else {
-          this.extractTgz(archivePath, tempDir);
+          this.extractTgz(archivePath, extractDir);
         }
 
-        // Find skill directory (contains SKILL.md)
-        const skillDir = this.findSkillDirInExtracted(tempDir);
+        // Find skill directory (contains SKILL.md) - will be inside extractDir, not tempBase
+        const skillDir = this.findSkillDirInExtracted(extractDir);
         if (!skillDir) {
-          fs.rmSync(tempDir, { recursive: true, force: true });
+          fs.rmSync(tempBase, { recursive: true, force: true });
           return {
             success: false,
             error: 'No valid skill found in archive. A skill must contain a SKILL.md file.',
           };
         }
 
-        // Determine skill ID from directory name or SKILL.md
-        const skillId = this.determineSkillId(skillDir);
+        // Determine skill ID from SKILL.md name field (required for imports)
+        const skillId = this.determineSkillIdFromFrontmatter(skillDir);
         if (!skillId) {
-          fs.rmSync(tempDir, { recursive: true, force: true });
+          fs.rmSync(tempBase, { recursive: true, force: true });
           return {
             success: false,
-            error: 'Could not determine skill ID. Check SKILL.md name field.',
+            error: 'Could not determine skill ID. SKILL.md must have a valid "name" field in frontmatter.',
           };
         }
 
-        // Check if skill already exists
-        const targetDir = path.join(root, skillId);
-        if (fs.existsSync(targetDir)) {
-          // Remove existing skill (allow overwrite)
-          fs.rmSync(targetDir, { recursive: true, force: true });
+        // Validate skillId is not a temporary directory name
+        if (skillId.startsWith('.') || skillId.startsWith('import-')) {
+          fs.rmSync(tempBase, { recursive: true, force: true });
+          return {
+            success: false,
+            error: `Invalid skill ID "${skillId}". SKILL.md name field must not produce hidden or temp names.`,
+          };
         }
 
-        // Move skill to user skills directory
-        fs.renameSync(skillDir, targetDir);
+        // Check if skill already exists and remove it
+        const targetDir = path.join(root, skillId);
+        if (fs.existsSync(targetDir)) {
+          // Stop watching temporarily to avoid EPERM on Windows
+          this.stopWatching();
+          try {
+            fs.rmSync(targetDir, { recursive: true, force: true });
+          } catch (rmError) {
+            // On Windows, sometimes need retry after brief delay
+            console.warn(`[skills] First removal attempt failed for ${skillId}, retrying...`);
+            try {
+              fs.rmSync(targetDir, { recursive: true, force: true });
+            } catch (retryError) {
+              // If still failing, restore watching and report error
+              this.startWatching();
+              throw new Error(`Failed to remove existing skill "${skillId}: ${retryError instanceof Error ? retryError.message : 'unknown error'}`);
+            }
+          }
+        }
+
+        // Copy skill to target directory (more reliable than rename on Windows)
+        // Using copy + remove avoids EPERM issues with locked directories
+        fs.cpSync(skillDir, targetDir, { recursive: true, force: true });
 
         // Cleanup temp directory
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        fs.rmSync(tempBase, { recursive: true, force: true });
 
         // Enable imported skill by default
         const state = this.loadSkillStateMap();
         state[skillId] = { enabled: true };
         this.saveSkillStateMap(state);
 
-        // Refresh skill list
+        // Refresh skill list (restart watching)
         this.startWatching();
         this.notifySkillsChanged();
         const skills = this.listSkills();
 
         return { success: true, skillId, skills };
       } catch (extractError) {
-        // Cleanup on error
-        if (fs.existsSync(tempDir)) {
-          fs.rmSync(tempDir, { recursive: true, force: true });
+        // Cleanup on error and restore watching
+        this.startWatching();
+        if (fs.existsSync(tempBase)) {
+          fs.rmSync(tempBase, { recursive: true, force: true });
         }
         throw extractError;
       }
@@ -1017,6 +1044,36 @@ export class SkillManager {
       console.error('[skills] importSkill error:', errorMsg);
       return { success: false, error: errorMsg };
     }
+  }
+
+  /**
+   * Determine skill ID strictly from SKILL.md frontmatter name field.
+   * Returns null if name field is missing or invalid (no fallback to directory name).
+   */
+  private determineSkillIdFromFrontmatter(skillDir: string): string | null {
+    const skillMdPath = path.join(skillDir, SKILL_FILE_NAME);
+    try {
+      const content = fs.readFileSync(skillMdPath, 'utf8');
+      // Parse YAML frontmatter for name
+      const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+      if (frontmatterMatch) {
+        const frontmatter = yaml.load(frontmatterMatch[1]) as Record<string, unknown> | undefined;
+        if (frontmatter?.name && typeof frontmatter.name === 'string') {
+          // Convert name to valid directory name (lowercase, replace spaces with hyphens)
+          const normalized = frontmatter.name
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+          if (normalized && !normalized.startsWith('.')) {
+            return normalized;
+          }
+        }
+      }
+    } catch {
+      // Fall through to return null
+    }
+    return null;
   }
 
   private extractZip(zipPath: string, targetDir: string): void {

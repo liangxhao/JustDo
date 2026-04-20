@@ -3,7 +3,6 @@
   "description": "GucciAI built-in skills configuration for OpenClaw runtime",
   "skills": [
     { "id": "agent-browser", "enabled": true },
-    { "id": "agent-memory", "enabled": true },
     { "id": "algorithmic-art", "enabled": true },
     { "id": "data-analysis", "enabled": true },
     { "id": "diagram-generator", "enabled": true },
