@@ -259,7 +259,7 @@ type SkillsConfig = {
   defaults: Record<string, SkillDefaultConfig>;
 };
 
-const SKILLS_DIR_NAME = 'SKILLs';
+const SKILLS_DIR_NAME = 'skills';
 const SKILL_FILE_NAME = 'SKILL.md';
 const SKILLS_CONFIG_FILE = 'skills.config.json';
 const SKILL_STATE_KEY = 'skills_state';
@@ -719,7 +719,9 @@ export class SkillManager {
   constructor(private getStore: () => SqliteStore) {}
 
   getSkillsRoot(): string {
-    return path.resolve(app.getPath('userData'), SKILLS_DIR_NAME);
+    // User imported skills are stored in Gateway managed directory
+    // userData/openclaw/state/skills
+    return this.getGatewayManagedSkillsDir();
   }
 
   /**
@@ -752,8 +754,8 @@ export class SkillManager {
 
   syncBundledSkillsToUserData(): void {
     // Deprecated: Skills are now managed by Gateway via skills.status RPC.
-    // Bundled skills are loaded directly from Resources/SKILLs by Gateway.
-    // This function no longer creates the userData/SKILLs directory.
+    // Bundled skills are loaded directly from Resources/skills by Gateway.
+    // This function no longer creates the userData/skills directory.
     console.log('[skills] syncBundledSkillsToUserData: deprecated, skipping');
   }
 
@@ -1145,7 +1147,8 @@ export class SkillManager {
 
       return { success: true, skillId, skills };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to import skill from folder';
+      const errorMsg =
+        error instanceof Error ? error.message : 'Failed to import skill from folder';
       console.error('[skills] importSkillFromFolder error:', errorMsg);
       return { success: false, error: errorMsg };
     }
@@ -1476,20 +1479,20 @@ export class SkillManager {
 
   private getBundledSkillsRoot(): string {
     if (app.isPackaged) {
-      // In production, bundled SKILLs should be in Resources/SKILLs.
+      // In production, bundled skills are in Resources/skills.
       const resourcesRoot = path.resolve(process.resourcesPath, SKILLS_DIR_NAME);
       if (fs.existsSync(resourcesRoot)) {
         return resourcesRoot;
       }
 
-      // Fallback for older packages where SKILLs are inside app.asar.
-      return path.resolve(app.getAppPath(), SKILLS_DIR_NAME);
+      // Fallback for older packages where skills are inside app.asar.
+      return path.resolve(app.getAppPath(), 'resources', SKILLS_DIR_NAME);
     }
 
     // In development, use resources/skills from the project root.
     // __dirname is dist-electron/, so we need to go up one level to get to project root
     const projectRoot = path.resolve(__dirname, '..');
-    return path.resolve(projectRoot, 'resources', SKILLS_DIR_NAME.toLowerCase());
+    return path.resolve(projectRoot, 'resources', SKILLS_DIR_NAME);
   }
 
   getSkillConfig(skillId: string): {

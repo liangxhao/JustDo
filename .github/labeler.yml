@@ -49,7 +49,7 @@
 "area: skills":
   - changed-files:
       - any-glob-to-any-file:
-          - "SKILLs/**"
+          - "resources/skills/**"
           - "src/main/skillManager.ts"
 
 "area: cowork":

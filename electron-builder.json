@@ -75,8 +75,8 @@
     },
     "extraResources": [
       {
-        "from": "SKILLs",
-        "to": "SKILLs",
+        "from": "resources/skills",
+        "to": "skills",
         "filter": [
           "**/*",
           "!**/.env",
@@ -168,8 +168,8 @@
     "category": "Utility",
     "extraResources": [
       {
-        "from": "SKILLs",
-        "to": "SKILLs",
+        "from": "resources/skills",
+        "to": "skills",
         "filter": [
           "**/*",
           "!**/.env",

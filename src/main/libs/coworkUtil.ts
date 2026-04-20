@@ -1454,25 +1454,26 @@ function verifyNodeEnvironment(env: Record<string, string | undefined>): void {
 }
 
 /**
- * Get SKILLs directory path (handles both development and production)
+ * Get user skills directory path.
+ * In production, user-imported skills are stored in userData/openclaw/state/skills.
+ * In development, check project resources/skills directory.
  */
 export function getSkillsRoot(): string {
   if (app.isPackaged) {
-    // In production, SKILLs are copied to userData
-    return join(app.getPath('userData'), 'SKILLs');
+    // In production, user-imported skills are in userData/openclaw/state/skills
+    return join(app.getPath('userData'), 'openclaw', 'state', 'skills');
   }
 
   // In development, __dirname can vary with bundling output (e.g. dist-electron/ or dist-electron/libs/).
-  // Resolve from several stable anchors and pick the first existing SKILLs directory.
+  // Resolve from several stable anchors and pick the first existing skills directory.
   const envRoots = [process.env.GUCCIAI_SKILLS_ROOT, process.env.SKILLS_ROOT]
     .map(value => value?.trim())
     .filter((value): value is string => Boolean(value));
   const candidates = [
     ...envRoots,
-    join(app.getAppPath(), 'SKILLs'),
-    join(process.cwd(), 'SKILLs'),
-    join(__dirname, '..', 'SKILLs'),
-    join(__dirname, '..', '..', 'SKILLs'),
+    join(app.getAppPath(), 'resources', 'skills'),
+    join(process.cwd(), 'resources', 'skills'),
+    join(__dirname, '..', '..', 'resources', 'skills'),
   ];
 
   for (const candidate of candidates) {
@@ -1481,8 +1482,8 @@ export function getSkillsRoot(): string {
     }
   }
 
-  // Final fallback for first-run dev environments where SKILLs may not exist yet.
-  return join(app.getAppPath(), 'SKILLs');
+  // Final fallback for first-run dev environments where skills may not exist yet.
+  return join(app.getAppPath(), 'resources', 'skills');
 }
 
 /**
@@ -1497,7 +1498,7 @@ export async function getEnhancedEnv(
 
   applyPackagedEnvOverrides(env);
 
-  // Inject SKILLs directory path for skill scripts.
+  // Inject skills directory path for skill scripts.
   // On Windows, normalise backslashes to forward slashes so the value is usable
   // in both Node.js (which accepts forward slashes) and bash (which treats
   // backslashes as escape characters).

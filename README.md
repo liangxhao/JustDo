@@ -161,7 +161,7 @@ src/
 ├── renderer/       # React frontend
 │   ├── App.tsx     # Root component
 │   └── components/ # Cowork UI, Settings, Artifacts
-SKILLs/             # Skill definitions
+resources/skills/   # Skill definitions
 ├── web-search/     # Web search
 ├── docx/           # Word documents
 ├── xlsx/           # Excel spreadsheets

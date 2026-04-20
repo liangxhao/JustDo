@@ -322,7 +322,7 @@ function isWithinWorkingDirectory(path: string, workingDir: string): boolean {
 
 ### 5.1 Skills 技能扩展
 
-Skills 定义在 `SKILLs/` 目录，通过 `skills.config.json` 配置：
+Skills 定义在 `resources/skills/` 目录，通过 `skills.config.json` 配置：
 
 ```json
 {
@@ -371,7 +371,7 @@ interface MCPServerConfig {
 | Cowork 配置 | SQLite | `cowork_config` 表 |
 | IM 配置 | SQLite | `im_config` 表 |
 | Agent 配置 | SQLite | `agents` 表 |
-| Skills 配置 | 文件 | `SKILLs/skills.config.json` |
+| Skills 配置 | 文件 | `resources/skills/skills.config.json` |
 | OpenClaw 版本 | package.json | `openclaw.version` |
 
 ### 6.2 国际化

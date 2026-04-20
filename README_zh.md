@@ -161,7 +161,7 @@ src/
 ├── renderer/       # React 前端
 │   ├── App.tsx     # 根组件
 │   └── components/ # Cowork UI、Settings、Artifacts
-SKILLs/             # 技能定义
+resources/skills/   # 技能定义
 ├── web-search/     # Web 搜索
 ├── docx/           # Word 文档
 ├── xlsx/           # Excel 表格

@@ -410,7 +410,7 @@ function hasCommand(command) {
 }
 
 /**
- * Install dependencies for all skills in the SKILLs directory.
+ * Install dependencies for all skills in the resources/skills directory.
  * This ensures bundled skills include node_modules for users without npm.
  */
 function installSkillDependencies() {
@@ -421,9 +421,9 @@ function installSkillDependencies() {
     return;
   }
 
-  const skillsDir = path.join(__dirname, '..', 'SKILLs');
+  const skillsDir = path.join(__dirname, '..', 'resources', 'skills');
   if (!existsSync(skillsDir)) {
-    console.log('[electron-builder-hooks] SKILLs directory not found, skipping skill dependency installation');
+    console.log('[electron-builder-hooks] resources/skills directory not found, skipping skill dependency installation');
     return;
   }
 
@@ -502,9 +502,9 @@ async function beforePack(context) {
         prefix: 'cfmind',
       },
       {
-        label: 'SKILLs',
-        dir: path.join(__dirname, '..', 'SKILLs'),
-        prefix: 'SKILLs',
+        label: 'Skills',
+        dir: path.join(__dirname, '..', 'resources', 'skills'),
+        prefix: 'skills',
       },
       {
         label: 'Python runtime',

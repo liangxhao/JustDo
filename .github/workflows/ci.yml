@@ -40,7 +40,7 @@ jobs:
               - 'electron-tsconfig.json'
               - 'src/main/preload.ts'
             skills:
-              - 'SKILLs/**'
+              - 'resources/skills/**'
             scripts:
               - 'scripts/**'
               - 'electron-builder.json'

@@ -26,12 +26,6 @@ resources/PortableGit-*.7z.exe
 resources/python-win/
 resources/python-*.zip
 
-# SKILLs runtime files
-SKILLs/**/.connection
-SKILLs/**/.server.log
-SKILLs/**/.server.pid
-SKILLs/**/.venv/
-
 package-lock.json
 
 nul

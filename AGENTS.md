@@ -35,10 +35,10 @@ Strict process isolation: Main (IPC, SQLite, engine routing) ↔ Preload (contex
 
 ### Skills System
 
-29 built-in skills, 8 enabled by default. Config: `SKILLs/skills.config.json` (new format with `version`, `description`, `defaults`).
+29 built-in skills, 8 enabled by default. Config: `resources/skills/skills.config.json` (new format with `version`, `description`, `defaults`).
 
 Key skill paths:
-- Definitions: `SKILLs/*/SKILL.md`
+- Definitions: `resources/skills/*/SKILL.md`
 - Config sync: `src/main/libs/openclawConfigSync.ts`
 - Security scan: `src/main/libs/skillSecurity/`
 

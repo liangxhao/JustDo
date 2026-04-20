@@ -398,12 +398,16 @@ export class OpenClawEngineManager extends EventEmitter {
     console.log(`[OpenClaw] compile cache dir: ${compileCacheDir}`);
     const electronNodeRuntimePath = getElectronNodeRuntimePath();
     const cliShimDir = this.ensureBundledCliShims();
-    const skillsRoot = getSkillsRoot().replace(/\\/g, '/');
+    // User imported skills are in stateDir/skills (userData/openclaw/state/skills)
+    const userSkillsDir = path.join(this.stateDir, 'skills').replace(/\\/g, '/');
+    // Bundled skills are in runtime root skills directory
+    const bundledSkillsDir = path.join(runtime.root, 'skills').replace(/\\/g, '/');
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      SKILLS_ROOT: skillsRoot,
-      GUCCIAI_SKILLS_ROOT: skillsRoot,
+      SKILLS_ROOT: userSkillsDir,
+      GUCCIAI_SKILLS_ROOT: userSkillsDir,
+      GUCCIAI_BUNDLED_SKILLS_DIR: bundledSkillsDir,
       OPENCLAW_HOME: runtime.root,
       OPENCLAW_STATE_DIR: this.stateDir,
       OPENCLAW_CONFIG_PATH: this.configPath,
@@ -1110,7 +1114,9 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private ensureConfigFile(): void {
     ensureDir(path.dirname(this.configPath));
-    const skillsRoot = getSkillsRoot().replace(/\\/g, '/');
+    // Gateway managed skills directory is stateDir/skills (userData/openclaw/state/skills)
+    // This is where user-imported skills are stored.
+    const userSkillsDir = path.join(this.stateDir, 'skills').replace(/\\/g, '/');
 
     if (!fs.existsSync(this.configPath)) {
       fs.writeFileSync(
@@ -1120,7 +1126,7 @@ export class OpenClawEngineManager extends EventEmitter {
             gateway: { mode: 'local' },
             skills: {
               load: {
-                extraDirs: [skillsRoot],
+                extraDirs: [userSkillsDir],
               },
             },
           },
@@ -1138,17 +1144,17 @@ export class OpenClawEngineManager extends EventEmitter {
       if (!config.gateway?.mode) {
         config.gateway = { ...config.gateway, mode: 'local' };
       }
-      // Ensure user skills directory is in extraDirs
+      // Ensure user skills directory (stateDir/skills) is in extraDirs
       if (!config.skills?.load?.extraDirs) {
         config.skills = {
           ...config.skills,
           load: {
             ...config.skills?.load,
-            extraDirs: [skillsRoot],
+            extraDirs: [userSkillsDir],
           },
         };
-      } else if (!config.skills.load.extraDirs.includes(skillsRoot)) {
-        config.skills.load.extraDirs = [...config.skills.load.extraDirs, skillsRoot];
+      } else if (!config.skills.load.extraDirs.includes(userSkillsDir)) {
+        config.skills.load.extraDirs = [...config.skills.load.extraDirs, userSkillsDir];
       }
       fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
     } catch {

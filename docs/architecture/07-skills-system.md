@@ -7,7 +7,7 @@ Skills 是 GucciAI 的扩展机制，每个 Skill 定义了一组特定场景下
 ### 1.1 Skill 目录结构
 
 ```
-SKILLs/
+resources/skills/
 ├── skills.config.json        # Skill 启用/禁用配置
 │
 ├── web-search/               # 网络搜索
@@ -44,7 +44,7 @@ SKILLs/
 ### 1.2 Skill 配置
 
 ```json
-// SKILLs/skills.config.json
+// resources/skills/skills.config.json
 {
   "version": 1,
   "description": "Default skill configuration for GucciAI",
@@ -174,7 +174,7 @@ class SkillManager {
   
   // 初始化
   init(): void {
-    this.skillsDir = path.join(app.getPath('userData'), 'SKILLs');
+    this.skillsDir = path.join(app.getPath('userData'), 'resources/skills');
     this.loadConfig();
     this.loadSkillDefinitions();
   }
@@ -506,7 +506,7 @@ npm run build:skills
 部分 Skill 有独立依赖：
 
 ```json
-// SKILLs/web-search/package.json
+// resources/skills/web-search/package.json
 {
   "name": "web-search-skill",
   "version": "1.0.0",
@@ -525,7 +525,7 @@ npm run build:skills
 ```typescript
 // scripts/build-skill-web-search.js
 async function buildWebSearchSkill() {
-  const skillDir = 'SKILLs/web-search';
+  const skillDir = 'resources/skills/web-search';
   
   // 1. 安装依赖
   execSync('npm install', { cwd: skillDir });
@@ -567,7 +567,7 @@ tools:
 ```javascript
 // 同步本地 Skills 到 OpenClaw extensions
 function syncLocalExtensions() {
-  const skillsDir = 'SKILLs';
+  const skillsDir = 'resources/skills';
   const openclawExtensionsDir = '../openclaw/extensions';
   
   const enabledSkills = getEnabledSkills();
@@ -634,8 +634,8 @@ function SkillsSettings() {
 | `src/main/libs/skillSecurity/skillSecurityTypes.ts` | 安全类型 |
 | `resources/builtin-skills.json` | 构建时 Skills 配置 |
 | `scripts/build-openclaw-runtime.sh` | 构建脚本（处理 Skills） |
-| `SKILLs/skills.config.json` | Skill 启用/禁用配置 |
-| `SKILLs/*/SKILL.md` | Skill 定义 |
+| `resources/skills/skills.config.json` | Skill 启用/禁用配置 |
+| `resources/skills/*/SKILL.md` | Skill 定义 |
 | `scripts/build-skill-*.js` | Skill 构建脚本 |
 | `src/renderer/components/skills/SkillsSettings.tsx` | Skills UI |
 

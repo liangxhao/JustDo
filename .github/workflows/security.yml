@@ -67,15 +67,15 @@ jobs:
       - name: Audit Skills
         run: |
           set +e  # Don't exit on error
-          
-          for skill in SKILLs/*/; do
+
+          for skill in resources/skills/*/; do
             if [ -f "$skill/package.json" ]; then
               echo ""
               echo "=== Auditing $skill ==="
               (cd "$skill" && npm install --package-lock-only 2>/dev/null && npm audit --audit-level=moderate 2>/dev/null) || echo "⚠ Audit issues found in $skill (non-blocking)"
             fi
           done
-          
+
           echo ""
           echo "=== Skill audit complete ==="
 

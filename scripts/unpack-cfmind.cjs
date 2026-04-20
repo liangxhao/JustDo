@@ -10,7 +10,7 @@
  *
  * 效果:
  *   输入: $INSTDIR/resources/win-resources.tar
- *   输出: $INSTDIR/resources/cfmind/, SKILLs/, python-win/
+ *   输出: $INSTDIR/resources/cfmind/, skills/, python-win/
  *   tar 文件由 NSIS 脚本在解压后删除
  *
  * 依赖: 从 app.asar 内加载 tar npm 包 (Electron 内置 ASAR 透明读取支持)

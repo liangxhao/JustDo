@@ -334,7 +334,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                 >
                   <ArrowUpTrayIcon className="h-4 w-4" />
                   <span>
-                    {importing ? i18nService.t('importSkillProgress') : i18nService.t('importSkill')}
+                    {importing
+                      ? i18nService.t('importSkillProgress')
+                      : i18nService.t('importSkill')}
                   </span>
                 </button>
               </Tooltip>

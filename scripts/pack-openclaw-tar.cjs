@@ -9,7 +9,7 @@
  *
  * Used by electron-builder-hooks beforePack to pack:
  *   - OpenClaw runtime (vendor/openclaw-runtime/current -> cfmind/)
- *   - SKILLs directory (SKILLs -> SKILLs/)
+ *   - Skills directory (resources/skills -> skills/)
  *   - Python runtime (resources/python-win -> python-win/)
  *
  * Usage:
@@ -220,7 +220,7 @@ function main() {
 
     const sources = [
       { dir: path.join(projectRoot, 'vendor', 'openclaw-runtime', 'current'), prefix: 'cfmind' },
-      { dir: path.join(projectRoot, 'SKILLs'), prefix: 'SKILLs' },
+      { dir: path.join(projectRoot, 'resources', 'skills'), prefix: 'skills' },
       { dir: path.join(projectRoot, 'resources', 'python-win'), prefix: 'python-win' },
     ];
 

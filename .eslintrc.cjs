@@ -28,7 +28,7 @@ module.exports = {
     'node_modules/',
     'release/',
     'build/',
-    'SKILLs/**',
+    ,
     'sandbox/**',
     'vendor/**',
   ],

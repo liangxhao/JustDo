@@ -407,7 +407,7 @@ GucciAI/
 │   ├── scheduledTask/        # 定时任务
 │   └── common/               # 公共代码
 │
-├── SKILLs/                   # Skills 定义
+├── resources/skills/                   # Skills 定义
 │   ├── skills.config.json
 │   ├── web-search/
 │   ├── docx/

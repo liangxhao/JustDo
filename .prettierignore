@@ -32,11 +32,6 @@ Thumbs.db
 *.AppImage
 *.deb
 
-# Skill build outputs
-SKILLs/**/node_modules/
-SKILLs/**/dist/
-SKILLs/**/build/
-
 # OpenClaw
 openclaw/
 resources/python-win/

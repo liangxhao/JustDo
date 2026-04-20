@@ -428,8 +428,8 @@ export class OpenClawConfigSync {
         // Still sync AGENTS.md even when API is not configured — skills/systemPrompt
         // may already be set and should be available when the user configures a model.
         const workspaceDir = (coworkConfig.workingDirectory || '').trim();
-        const resolvedWorkspaceDir =
-          workspaceDir || path.join(app.getPath('home'), '.openclaw', 'workspace');
+        const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
+        const resolvedWorkspaceDir = workspaceDir || defaultWorkspaceDir;
         const agentsMdWarning = this.syncAgentsMd(resolvedWorkspaceDir, coworkConfig);
         this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
         if (agentsMdWarning) result.agentsMdWarning = agentsMdWarning;
@@ -514,6 +514,9 @@ export class OpenClawConfigSync {
     );
 
     const workspaceDir = (coworkConfig.workingDirectory || '').trim();
+    // Default workspace to stateDir/workspace so skills are found in stateDir/skills
+    const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
+    const resolvedWorkspaceDir = workspaceDir ? path.resolve(workspaceDir) : defaultWorkspaceDir;
 
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
       isBundledPluginAvailable(id),
@@ -538,7 +541,7 @@ export class OpenClawConfigSync {
           sandbox: {
             mode: sandboxMode,
           },
-          ...(workspaceDir ? { workspace: path.resolve(workspaceDir) } : {}),
+          workspace: resolvedWorkspaceDir,
         },
         ...this.buildAgentsList(primaryModel),
       },
@@ -669,8 +672,7 @@ export class OpenClawConfigSync {
     // Sync AGENTS.md with skills routing prompt to the OpenClaw workspace directory.
     // This runs on every sync regardless of openclaw.json changes, because skills
     // may have been installed/enabled/disabled independently.
-    const resolvedWorkspaceDir =
-      workspaceDir || path.join(app.getPath('home'), '.openclaw', 'workspace');
+    // Use the same resolvedWorkspaceDir from earlier in this function.
     const agentsMdWarning = this.syncAgentsMd(resolvedWorkspaceDir, coworkConfig);
 
     // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents

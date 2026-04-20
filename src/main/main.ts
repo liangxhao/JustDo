@@ -104,7 +104,6 @@ import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
 import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';
 import { SkillManager } from './skillManager';
-import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 
@@ -1978,7 +1977,8 @@ if (!gotTheLock) {
       const result = skillManager.importSkillFromFolder(folderPath);
       return result;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to import skill from folder';
+      const errorMsg =
+        error instanceof Error ? error.message : 'Failed to import skill from folder';
       console.error('[Skills] skills:importFolder error:', errorMsg);
       return { success: false, error: errorMsg };
     }
@@ -3683,27 +3683,24 @@ if (!gotTheLock) {
     },
   );
 
-  ipcMain.handle(
-    'dialog:selectFolders',
-    async (event, options?: { title?: string }) => {
-      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-      const dialogOptions = {
-        properties: ['openDirectory', 'multiSelections', 'createDirectory'] as (
-          | 'openDirectory'
-          | 'multiSelections'
-          | 'createDirectory'
-        )[],
-        title: options?.title,
-      };
-      const result = ownerWindow
-        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
-        : await dialog.showOpenDialog(dialogOptions);
-      if (result.canceled || result.filePaths.length === 0) {
-        return { success: true, paths: [] };
-      }
-      return { success: true, paths: result.filePaths };
-    },
-  );
+  ipcMain.handle('dialog:selectFolders', async (event, options?: { title?: string }) => {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions = {
+      properties: ['openDirectory', 'multiSelections', 'createDirectory'] as (
+        | 'openDirectory'
+        | 'multiSelections'
+        | 'createDirectory'
+      )[],
+      title: options?.title,
+    };
+    const result = ownerWindow
+      ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: true, paths: [] };
+    }
+    return { success: true, paths: result.filePaths };
+  });
 
   ipcMain.handle(
     'dialog:saveInlineFile',
@@ -4367,10 +4364,6 @@ if (!gotTheLock) {
 
     stopOpenClawTokenProxy();
 
-    // Stop skill services.
-    const skillServices = getSkillServiceManager();
-    await skillServices.stopAll();
-
     if (openClawEngineManager) {
       await openClawEngineManager.stopGateway().catch(error => {
         console.error('[OpenClaw] Failed to stop gateway on quit:', error);
@@ -4640,16 +4633,6 @@ if (!gotTheLock) {
       console.log('[Main] initApp: startWatching done');
     } catch (error) {
       console.error('[Main] initApp: startWatching failed:', error);
-    }
-
-    // Start skill services (non-critical)
-    try {
-      const skillServices = getSkillServiceManager();
-      console.log('[Main] initApp: getSkillServiceManager done');
-      await skillServices.startAll();
-      console.log('[Main] initApp: skill services started');
-    } catch (error) {
-      console.error('[Main] initApp: skill services failed:', error);
     }
 
     const appConfig = getStore().get<AppConfigSettings>('app_config');

@@ -57,7 +57,7 @@
   FileWrite $2 "extract-done: $5-$4-$3 $6:$7:$8$\r$\n"
 
   ; ─── Extract combined resource archive (win-resources.tar) ───
-  ; All large resource directories (cfmind/, SKILLs/, python-win/) are packed
+  ; All large resource directories (cfmind/, skills/, python-win/) are packed
   ; into a single tar file. NSIS 7z extracts one large file almost instantly;
   ; we then unpack the tar here using Electron's Node runtime.
 

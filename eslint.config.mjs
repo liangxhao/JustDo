@@ -16,7 +16,7 @@ export default [
       'node_modules/',
       'release/',
       'build/',
-      'SKILLs/',
+      ,
       'sandbox/',
       'scripts/',
     ],
