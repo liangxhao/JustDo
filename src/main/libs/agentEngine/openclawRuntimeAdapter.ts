@@ -2504,6 +2504,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const text = typeof data.text === 'string' ? data.text : '';
     const delta = typeof data.delta === 'string' ? data.delta : '';
 
+    // If thinking stream was previously ended (tool event received), reset state
+    // to create a new thinking message for the subsequent thinking events
+    if (turn.thinkingStreamEnded) {
+      turn.currentThinkingMessageId = null;
+      turn.currentThinkingContent = '';
+      turn.thinkingStreamEnded = false;
+    }
+
     // First thinking event: create the assistant message if not exists
     if (!turn.currentThinkingMessageId) {
       // If we already have an assistantMessageId, reuse it for thinking

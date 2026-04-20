@@ -800,20 +800,27 @@ export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[]
     }
   }
 
-  // Sort assistantItems to ensure correct display order during streaming:
-  // thinking → tool_group → assistant(response) → system → tool_result
-  // This prevents tools from appearing below response text when events arrive
-  // out of order during streaming.
+  // Sort assistantItems by timestamp to maintain correct order during streaming.
+  // This handles cases where multiple thinking/tool cycles occur in one turn:
+  // thinking A (t1) → tool A (t2) → thinking B (t3) → tool B (t4)
+  // Priority-based sorting would incorrectly place thinking B before tool A.
   for (const turn of turns) {
     turn.assistantItems.sort((a, b) => {
-      const getPriority = (item: AssistantTurnItem): number => {
-        if (item.type === 'assistant' && item.message.metadata?.isThinking) return 0;
-        if (item.type === 'tool_group') return 1;
-        if (item.type === 'assistant') return 2;
-        if (item.type === 'system') return 3;
-        return 4; // tool_result
+      // Get timestamp from message or tool_group
+      const getTimestamp = (item: AssistantTurnItem): number => {
+        if (item.type === 'assistant' || item.type === 'system') {
+          return item.message.timestamp;
+        }
+        if (item.type === 'tool_group') {
+          // Use the toolUse message's timestamp
+          return item.group.toolUse.timestamp;
+        }
+        if (item.type === 'tool_result') {
+          return item.message.timestamp;
+        }
+        return 0;
       };
-      return getPriority(a) - getPriority(b);
+      return getTimestamp(a) - getTimestamp(b);
     });
   }
 
