@@ -1209,17 +1209,10 @@ const Settings: React.FC<SettingsProps> = ({
   }, [activeTab, loadCoworkMemoryData]);
 
   /**
-   * Detect OpenClaw default template content and return empty string.
-   * Templates contain YAML frontmatter and specific marker phrases.
+   * Return file content directly, showing the actual content to users.
+   * Previously hid OpenClaw default templates, but users expect to see file content.
    */
   const stripDefaultTemplate = (content: string): string => {
-    if (!content.trim()) return '';
-    const TEMPLATE_MARKERS = [
-      'Fill this in during your first conversation',
-      "You're not a chatbot. You're becoming someone",
-      "Learn about the person you're helping",
-    ];
-    if (TEMPLATE_MARKERS.some(m => content.includes(m))) return '';
     return content;
   };
 
@@ -1926,7 +1919,10 @@ const Settings: React.FC<SettingsProps> = ({
           console.warn(`Skipping unknown built-in provider: ${providerKey}`);
           continue;
         }
-        if (isCustom && !CUSTOM_PROVIDER_KEYS.includes(providerKey as typeof CUSTOM_PROVIDER_KEYS[number])) {
+        if (
+          isCustom &&
+          !CUSTOM_PROVIDER_KEYS.includes(providerKey as (typeof CUSTOM_PROVIDER_KEYS)[number])
+        ) {
           console.warn(`Skipping invalid custom provider key: ${providerKey}`);
           continue;
         }
@@ -1979,9 +1975,7 @@ const Settings: React.FC<SettingsProps> = ({
               : currentConfig.enabled,
           apiKey: apiKey ?? currentConfig.apiKey,
           baseUrl:
-            typeof providerData.baseUrl === 'string'
-              ? providerData.baseUrl
-              : currentConfig.baseUrl,
+            typeof providerData.baseUrl === 'string' ? providerData.baseUrl : currentConfig.baseUrl,
           apiFormat: getEffectiveApiFormat(
             providerKey,
             providerData.apiFormat ?? currentConfig.apiFormat,
@@ -2052,7 +2046,10 @@ const Settings: React.FC<SettingsProps> = ({
           console.warn(`Skipping unknown built-in provider: ${providerKey}`);
           continue;
         }
-        if (isCustom && !CUSTOM_PROVIDER_KEYS.includes(providerKey as typeof CUSTOM_PROVIDER_KEYS[number])) {
+        if (
+          isCustom &&
+          !CUSTOM_PROVIDER_KEYS.includes(providerKey as (typeof CUSTOM_PROVIDER_KEYS)[number])
+        ) {
           console.warn(`Skipping invalid custom provider key: ${providerKey}`);
           continue;
         }
@@ -2096,9 +2093,7 @@ const Settings: React.FC<SettingsProps> = ({
               : currentConfig.enabled,
           apiKey: apiKey ?? currentConfig.apiKey,
           baseUrl:
-            typeof providerData.baseUrl === 'string'
-              ? providerData.baseUrl
-              : currentConfig.baseUrl,
+            typeof providerData.baseUrl === 'string' ? providerData.baseUrl : currentConfig.baseUrl,
           apiFormat: getEffectiveApiFormat(
             providerKey,
             providerData.apiFormat ?? currentConfig.apiFormat,

@@ -454,11 +454,20 @@ export function resolveBootstrapFilePath(
 }
 
 /**
- * Read a bootstrap file's content. Returns empty string if file doesn't exist.
+ * Read a bootstrap file's content. Returns default content if file doesn't exist or is empty.
  */
 export function readBootstrapFile(workingDirectory: string | undefined, filename: string): string {
   const filePath = resolveBootstrapFilePath(workingDirectory, filename);
-  return readFileOrEmpty(filePath);
+  const content = readFileOrEmpty(filePath);
+  // Return default content if file is empty
+  if (!content.trim()) {
+    if (filename === 'IDENTITY.md') {
+      return getDefaultIdentity();
+    }
+    // USER.md and SOUL.md have no default content, return empty
+    return '';
+  }
+  return content;
 }
 
 /**
