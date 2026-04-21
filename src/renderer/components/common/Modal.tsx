@@ -7,6 +7,8 @@ interface ModalProps {
   overlayClassName?: string;
   onClick?: React.MouseEventHandler<HTMLDivElement>;
   children: React.ReactNode;
+  /** Custom style for modal content (e.g., for positioning) */
+  style?: React.CSSProperties;
 }
 
 /**
@@ -22,6 +24,7 @@ const Modal: React.FC<ModalProps> = ({
   overlayClassName,
   onClick,
   children,
+  style,
 }) => {
   const mouseDownOnBackdropRef = useRef(false);
 
@@ -44,6 +47,7 @@ const Modal: React.FC<ModalProps> = ({
     >
       <div
         className={className}
+        style={style}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); onClick?.(e); }}
       >
