@@ -1800,6 +1800,61 @@ if (!gotTheLock) {
   // All skill operations go through OpenClaw Gateway.
   // Gateway offline = skills unavailable, UI locked.
 
+  // Helper to resolve skill path from Gateway's potentially invalid filePath
+  // Gateway may return paths like ~/skills/{id}/SKILL.md which don't exist on disk
+  const createSkillPathResolver = () => {
+    const engineManager = getOpenClawEngineManager();
+    const stateDir = engineManager.getStateDir();
+    const userSkillsDir = path.join(stateDir, 'skills');
+    // Bundled skills are in resources/cfmind/skills when packaged
+    const bundledSkillsDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'cfmind', 'skills')
+      : path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'skills');
+
+    // Debug: Log resolver initialization
+    console.log('[Skills] createSkillPathResolver initialized:', {
+      stateDir,
+      userSkillsDir,
+      bundledSkillsDir,
+      isPackaged: app.isPackaged,
+      userSkillsDirExists: fs.existsSync(userSkillsDir),
+      bundledSkillsDirExists: fs.existsSync(bundledSkillsDir),
+    });
+
+    return (entry: import('./libs/agentEngine/types').GatewaySkillEntry): string => {
+      // First check if filePath from Gateway is valid
+      if (entry.filePath && fs.existsSync(entry.filePath)) {
+        console.log(`[Skills] Skill ${entry.skillKey}: Gateway filePath valid: ${entry.filePath}`);
+        return entry.filePath;
+      }
+
+      // Gateway returns relative path like ~/skills/{id}/SKILL.md
+      // Try to resolve from known locations
+      const skillKey = entry.skillKey;
+      const skillMdFileName = 'SKILL.md';
+
+      // Try user imported skills directory (stateDir/skills/{skillKey})
+      const userSkillPath = path.join(userSkillsDir, skillKey, skillMdFileName);
+      if (fs.existsSync(userSkillPath)) {
+        console.log(`[Skills] Skill ${skillKey}: resolved from user dir: ${userSkillPath}`);
+        return userSkillPath;
+      }
+
+      // Try bundled skills directory (resources/cfmind/skills/{skillKey})
+      const bundledSkillPath = path.join(bundledSkillsDir, skillKey, skillMdFileName);
+      if (fs.existsSync(bundledSkillPath)) {
+        console.log(`[Skills] Skill ${skillKey}: resolved from bundled dir: ${bundledSkillPath}`);
+        return bundledSkillPath;
+      }
+
+      // Fallback: return original filePath (may be invalid but preserves Gateway's intent)
+      console.warn(
+        `[Skills] Skill ${skillKey}: could not resolve, using Gateway value: ${entry.filePath}, userPath=${userSkillPath} (exists=${fs.existsSync(userSkillPath)}), bundledPath=${bundledSkillPath} (exists=${fs.existsSync(bundledSkillPath)})`,
+      );
+      return entry.filePath || path.join(userSkillsDir, skillKey, skillMdFileName);
+    };
+  };
+
   ipcMain.handle('skills:list', async () => {
     try {
       const adapter = openClawRuntimeAdapter;
@@ -1811,6 +1866,22 @@ if (!gotTheLock) {
         };
       }
       const status = await adapter.getSkillsStatus();
+      // Debug: Log Gateway response for skills
+      console.log('[Skills] Gateway skills.status response:', {
+        workspaceDir: status.workspaceDir,
+        managedSkillsDir: status.managedSkillsDir,
+        skillCount: status.skills.length,
+        firstSkill: status.skills[0]
+          ? {
+              skillKey: status.skills[0].skillKey,
+              filePath: status.skills[0].filePath,
+              baseDir: status.skills[0].baseDir,
+              source: status.skills[0].source,
+              bundled: status.skills[0].bundled,
+            }
+          : null,
+      });
+      const resolveSkillPath = createSkillPathResolver();
       const skills = status.skills.map(entry => ({
         id: entry.skillKey,
         name: entry.name,
@@ -1820,7 +1891,7 @@ if (!gotTheLock) {
         isBuiltIn: entry.bundled,
         updatedAt: Date.now(),
         prompt: '',
-        skillPath: entry.filePath,
+        skillPath: resolveSkillPath(entry),
         version: undefined as string | undefined,
         // Gateway extended fields
         source: entry.source,
@@ -1861,6 +1932,7 @@ if (!gotTheLock) {
       }
       // Refetch skill list after update
       const status = await adapter.getSkillsStatus();
+      const resolveSkillPath = createSkillPathResolver();
       const skills = status.skills.map(entry => ({
         id: entry.skillKey,
         name: entry.name,
@@ -1870,7 +1942,7 @@ if (!gotTheLock) {
         isBuiltIn: entry.bundled,
         updatedAt: Date.now(),
         prompt: '',
-        skillPath: entry.filePath,
+        skillPath: resolveSkillPath(entry),
         version: undefined as string | undefined,
         source: entry.source,
         eligible: entry.eligible,

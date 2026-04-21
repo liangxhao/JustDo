@@ -407,10 +407,20 @@ export class OpenClawEngineManager extends EventEmitter {
       ...process.env,
       SKILLS_ROOT: userSkillsDir,
       GUCCIAI_SKILLS_ROOT: userSkillsDir,
-      GUCCIAI_BUNDLED_SKILLS_DIR: bundledSkillsDir,
-      OPENCLAW_HOME: runtime.root,
+      // Gateway checks OPENCLAW_BUNDLED_SKILLS_DIR (not GUCCIAI_BUNDLED_SKILLS_DIR)
+      OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
+      // NOTE: OPENCLAW_HOME and OPENCLAW_USER_HOME are both set to a non-existent path.
+      // compactSkillPaths() uses both resolveHomeDir() (checks OPENCLAW_HOME) and
+      // resolveUserHomeDir() (checks OPENCLAW_USER_HOME). Setting both prevents
+      // any skills paths from being compacted to ~/... format.
+      // - Bundled skills (E:\...\runtime\current\skills\...) are not affected since
+      //   they don't start with the fake home path.
+      // - Managed skills (C:\Users\xxx\AppData\...\skills\...) remain as absolute
+      //   paths, making them recognizable as a distinct skills location by the Agent.
+      OPENCLAW_HOME: 'C:\\__GUCCIAI_NO_HOME__',
       OPENCLAW_STATE_DIR: this.stateDir,
       OPENCLAW_CONFIG_PATH: this.configPath,
+      OPENCLAW_USER_HOME: 'C:\\__GUCCIAI_NO_HOME__',
       OPENCLAW_GATEWAY_TOKEN: token,
       OPENCLAW_GATEWAY_PORT: String(port),
       OPENCLAW_NO_RESPAWN: '1',
@@ -427,6 +437,17 @@ export class OpenClawEngineManager extends EventEmitter {
       // This keeps plaintext credentials out of the config file on disk.
       ...this.secretEnvVars,
     };
+
+    // Debug: Log skills-related environment variables passed to Gateway
+    console.log('[OpenClaw] Skills env vars passed to Gateway:', {
+      OPENCLAW_STATE_DIR: this.stateDir,
+      OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
+      OPENCLAW_HOME: env.OPENCLAW_HOME,
+      OPENCLAW_USER_HOME: env.OPENCLAW_USER_HOME,
+      userSkillsDir,
+      runtimeRoot: runtime.root,
+      isPackaged: app.isPackaged,
+    });
 
     // Ensure the gateway process uses the host's local timezone for logging.
     // macOS does not set TZ in the environment by default (it uses NSTimeZone/ICU),

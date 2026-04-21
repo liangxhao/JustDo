@@ -5898,11 +5898,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const result = await client.request<import('./types').GatewaySkillStatus>('skills.status', {
       agentId,
     });
-    console.log(
-      '[OpenClawRuntime] getSkillsStatus: received',
-      result.skills?.length || 0,
-      'skills',
-    );
+    // Debug: Log full Gateway response including managedSkillsDir
+    console.log('[OpenClawRuntime] getSkillsStatus response:', {
+      workspaceDir: result.workspaceDir,
+      managedSkillsDir: result.managedSkillsDir,
+      skillCount: result.skills?.length || 0,
+      firstSkillPath: result.skills?.[0]?.filePath,
+      firstSkillBaseDir: result.skills?.[0]?.baseDir,
+    });
     return result;
   }
 
