@@ -19,15 +19,9 @@ type SettingsTab = 'basic' | 'skills';
 interface AgentSettingsPanelProps {
   agentId: string | null;
   onClose: () => void;
-  onSwitchAgent?: (agentId: string) => void;
 }
 
-const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({
-  agentId,
-  onClose,
-  onSwitchAgent,
-}) => {
-  const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
+const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClose }) => {
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
   const [, setAgent] = useState<Agent | null>(null);
   const [name, setName] = useState('');
@@ -285,15 +279,6 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({
             )}
           </div>
           <div className="flex gap-2">
-            {onSwitchAgent && agentId !== currentAgentId && (
-              <button
-                type="button"
-                onClick={() => onSwitchAgent(agentId)}
-                className="px-4 py-2 text-sm font-medium rounded-lg border border-primary text-primary hover:bg-primary/10 transition-colors"
-              >
-                {i18nService.t('switchToAgent') || 'Use this Agent'}
-              </button>
-            )}
             <button
               type="button"
               onClick={handleClose}

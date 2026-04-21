@@ -488,11 +488,7 @@ const SendShortcutSelect: React.FC<{ value: string; onChange: (v: string) => voi
 
 /* ── My Agents Settings Component ─────────────────────────── */
 
-interface MyAgentsSettingsProps {
-  onSwitchAgent?: (agentId: string) => void;
-}
-
-const MyAgentsSettings: React.FC<MyAgentsSettingsProps> = ({ onSwitchAgent }) => {
+const MyAgentsSettings: React.FC = () => {
   const agents = useSelector((state: RootState) => state.agent.agents);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const [presets, setPresets] = useState<PresetAgent[]>([]);
@@ -597,14 +593,7 @@ const MyAgentsSettings: React.FC<MyAgentsSettingsProps> = ({ onSwitchAgent }) =>
 
       {/* Modals */}
       <AgentCreateModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
-      <AgentSettingsPanel
-        agentId={settingsAgentId}
-        onClose={() => setSettingsAgentId(null)}
-        onSwitchAgent={id => {
-          setSettingsAgentId(null);
-          onSwitchAgent?.(id);
-        }}
-      />
+      <AgentSettingsPanel agentId={settingsAgentId} onClose={() => setSettingsAgentId(null)} />
     </div>
   );
 };
@@ -769,16 +758,19 @@ const Settings: React.FC<SettingsProps> = ({
   const dragStartRef = useRef({ mouseX: 0, mouseY: 0, modalX: 0, modalY: 0 });
 
   // Handle drag start on header
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    dragStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
-      modalX: modalPosition.x,
-      modalY: modalPosition.y,
-    };
-  }, [modalPosition]);
+  const handleDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      dragStartRef.current = {
+        mouseX: e.clientX,
+        mouseY: e.clientY,
+        modalX: modalPosition.x,
+        modalY: modalPosition.y,
+      };
+    },
+    [modalPosition],
+  );
 
   // Handle mouse move and mouse up for dragging
   useEffect(() => {
@@ -3578,10 +3570,7 @@ const Settings: React.FC<SettingsProps> = ({
       >
         {/* Left sidebar */}
         <div className="w-[220px] shrink-0 flex flex-col bg-surface-raised border-r border-border rounded-l-2xl overflow-y-auto">
-          <div
-            className="px-5 pt-5 pb-3 cursor-grab select-none"
-            onMouseDown={handleDragStart}
-          >
+          <div className="px-5 pt-5 pb-3 cursor-grab select-none" onMouseDown={handleDragStart}>
             <h2 className="text-lg font-semibold text-foreground">{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-4">

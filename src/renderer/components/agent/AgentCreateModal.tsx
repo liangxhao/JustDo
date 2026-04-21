@@ -94,7 +94,6 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
         skillIds,
       });
       if (agent) {
-        agentService.switchAgent(agent.id);
         onClose();
         resetForm();
       } else {
