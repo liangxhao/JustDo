@@ -2056,15 +2056,16 @@ if (!gotTheLock) {
     }
   });
 
-  // Deprecated handlers - no longer needed, Gateway manages everything
-  // skills:delete - Gateway doesn't support delete via RPC, use file system directly or disable
+  // skills:delete - Delete skill from Gateway managed directory
   ipcMain.handle('skills:delete', async (_event, id: string) => {
-    // Skills delete not supported via Gateway RPC
-    // User should disable skill instead
-    return {
-      success: false,
-      error: 'Skill deletion not supported. Please disable the skill instead.',
-    };
+    try {
+      const manager = getSkillManager();
+      const skills = manager.deleteSkill(id);
+      return { success: true, skills };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';
+      return { success: false, error: errorMsg };
+    }
   });
 
   // skills:getRoot - No longer needed, Gateway manages skill locations

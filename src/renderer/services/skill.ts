@@ -93,12 +93,18 @@ class SkillService {
     }
   }
 
-  async deleteSkill(_id: string): Promise<{ success: boolean; skills?: Skill[]; error?: string }> {
-    // Skill deletion not supported via Gateway - use disable instead
-    return {
-      success: false,
-      error: 'Skill deletion not supported. Please disable the skill instead.',
-    };
+  async deleteSkill(id: string): Promise<{ success: boolean; skills?: Skill[]; error?: string }> {
+    try {
+      const result = await window.electron.skills.delete(id);
+      if (result.success && result.skills) {
+        this.skills = result.skills;
+        return { success: true, skills: this.skills };
+      }
+      return { success: false, error: result.error };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete skill';
+      return { success: false, error: message };
+    }
   }
 
   async getSkillsRoot(): Promise<string | null> {

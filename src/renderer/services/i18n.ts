@@ -740,6 +740,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillDeleteConfirm: '确定删除技能“{name}”吗？',
     skillDeleteFailed: '删除技能失败',
     skillBuiltInCannotDelete: '系统内置技能不允许删除',
+    skillBuiltInDeleteHint: '系统内置技能无法通过应用删除。请手动删除文件夹。',
+    skillDeleteManualHint: '此技能无法通过应用删除，请在打开的文件夹中手动删除。',
     skillDownloadFailed: '下载技能失败',
     skillUpdateFailed: '更新技能失败',
     skillUpgrade: '更新',
@@ -1856,6 +1858,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillDeleteConfirm: 'Delete skill \"{name}\"?',
     skillDeleteFailed: 'Failed to delete skill',
     skillBuiltInCannotDelete: 'Built-in skills cannot be deleted',
+    skillBuiltInDeleteHint:
+      'Built-in skills cannot be deleted via the app. Please delete the folder manually.',
+    skillDeleteManualHint:
+      'This skill cannot be deleted via the app. Please delete it manually in the opened folder.',
     skillDownloadFailed: 'Failed to download skill',
     skillUpdateFailed: 'Failed to update skill',
     skillUpgrade: 'Update',

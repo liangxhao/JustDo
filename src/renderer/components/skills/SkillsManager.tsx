@@ -12,6 +12,7 @@ import Modal from '../common/Modal';
 import ErrorMessage from '../ErrorMessage';
 import PuzzleIcon from '../icons/PuzzleIcon';
 import SearchIcon from '../icons/SearchIcon';
+import TrashIcon from '../icons/TrashIcon';
 import Tooltip from '../ui/Tooltip';
 
 type SkillTab = 'installed' | 'marketplace';
@@ -234,6 +235,51 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
 
   // Skill deletion not supported - handled via error message
   const handleCancelDeleteSkill = () => {
+    setSkillPendingDelete(null);
+  };
+
+  // Skill action handlers
+  const handleOpenFolder = async (skill: Skill) => {
+    const skillPath = skill.skillPath;
+    const lastSep = Math.max(skillPath.lastIndexOf('/'), skillPath.lastIndexOf('\\'));
+    const skillDir = lastSep >= 0 ? skillPath.substring(0, lastSep) : skillPath;
+    await window.electron.shell.openPath(skillDir);
+  };
+
+  const handleDeleteClick = (skill: Skill) => {
+    setSkillPendingDelete(skill);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!skillPendingDelete) return;
+
+    // If built-in skill, show manual delete hint and open folder
+    if (skillPendingDelete.isBuiltIn) {
+      const skillPath = skillPendingDelete.skillPath;
+      const lastSep = Math.max(skillPath.lastIndexOf('/'), skillPath.lastIndexOf('\\'));
+      const skillDir = lastSep >= 0 ? skillPath.substring(0, lastSep) : skillPath;
+      await window.electron.shell.openPath(skillDir);
+      setSkillActionError(i18nService.t('skillBuiltInDeleteHint'));
+      setSkillPendingDelete(null);
+      return;
+    }
+
+    // Try to delete managed skill
+    const result = await skillService.deleteSkill(skillPendingDelete.id);
+    if (result.success && result.skills) {
+      dispatch(setSkills(result.skills));
+    } else {
+      // If delete failed (non-managed), show manual delete hint and open folder
+      if (result.error?.includes('not found')) {
+        const skillPath = skillPendingDelete.skillPath;
+        const lastSep = Math.max(skillPath.lastIndexOf('/'), skillPath.lastIndexOf('\\'));
+        const skillDir = lastSep >= 0 ? skillPath.substring(0, lastSep) : skillPath;
+        await window.electron.shell.openPath(skillDir);
+        setSkillActionError(i18nService.t('skillDeleteManualHint'));
+      } else {
+        setSkillActionError(result.error || i18nService.t('skillDeleteFailed'));
+      }
+    }
     setSkillPendingDelete(null);
   };
 
@@ -596,7 +642,26 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
             </div>
 
             <div className="flex items-center justify-between">
-              <div />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenFolder(selectedSkill)}
+                  className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
+                  title={i18nService.t('openFolder')}
+                >
+                  <FolderIcon className="h-3.5 w-3.5" />
+                  {i18nService.t('openFolder')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteClick(selectedSkill)}
+                  className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg text-red-500 hover:bg-red-500/10 transition-colors"
+                  title={i18nService.t('delete')}
+                >
+                  <TrashIcon className="h-3.5 w-3.5" />
+                  {i18nService.t('delete')}
+                </button>
+              </div>
               <div
                 className={`w-9 h-5 rounded-full flex items-center transition-colors flex-shrink-0 ${
                   readOnly || gatewayOffline ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
@@ -629,7 +694,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               {i18nService.t('deleteSkill')}
             </div>
             <p className="mt-2 text-sm text-secondary">
-              {i18nService.t('skillDeleteNotSupported')}
+              {skillPendingDelete.isBuiltIn
+                ? i18nService.t('skillBuiltInDeleteHint')
+                : i18nService.t('skillDeleteConfirm').replace('{name}', skillPendingDelete.name)}
             </p>
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
@@ -638,6 +705,19 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                 className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors"
               >
                 {i18nService.t('cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                  skillPendingDelete.isBuiltIn
+                    ? 'bg-surface-raised text-foreground hover:bg-border'
+                    : 'bg-red-500 text-white hover:bg-red-600'
+                }`}
+              >
+                {skillPendingDelete.isBuiltIn
+                  ? i18nService.t('openFolder')
+                  : i18nService.t('delete')}
               </button>
             </div>
           </Modal>,
