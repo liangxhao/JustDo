@@ -11,7 +11,21 @@ const models: Model[] = [
 ];
 
 describe('resolveAgentModelSelection', () => {
-  test('uses explicit agent model when present', () => {
+  test('uses explicit agent model when present (case-insensitive provider)', () => {
+    // OpenClaw uses lowercase provider IDs, so "Anthropic" should match "anthropic"
+    const result = resolveAgentModelSelection({
+      agentModel: 'Anthropic/claude-sonnet-4',
+      availableModels: models,
+      fallbackModel: models[0],
+      engine: 'openclaw',
+    });
+
+    expect(result.selectedModel?.id).toBe('claude-sonnet-4');
+    expect(result.usesFallback).toBe(false);
+    expect(result.hasInvalidExplicitModel).toBe(false);
+  });
+
+  test('uses explicit agent model with lowercase provider', () => {
     const result = resolveAgentModelSelection({
       agentModel: 'anthropic/claude-sonnet-4',
       availableModels: models,
