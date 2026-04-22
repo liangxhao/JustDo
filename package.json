@@ -4,10 +4,10 @@
   "description": "GucciAI - AI-powered assistant application",
   "author": {
     "name": "GucciAI",
-    "email": "gucciai.project@rd.netease.com"
+    "email": "liangxhao@example.com"
   },
   "license": "MIT",
-  "version": "2026.4.20",
+  "version": "2026.4.21",
   "openclaw": {
     "version": "v2026.4.11",
     "repo": "https://github.com/openclaw/openclaw.git",

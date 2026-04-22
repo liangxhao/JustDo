@@ -3649,13 +3649,18 @@ const Settings: React.FC<SettingsProps> = ({
         {isTestResultModalOpen && testResult && (
           <div
             className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
-            onClick={() => setIsTestResultModalOpen(false)}
+            onClick={e => {
+              if (e.target === e.currentTarget) {
+                setIsTestResultModalOpen(false);
+              }
+            }}
           >
             <div
               role="dialog"
               aria-modal="true"
               aria-label={i18nService.t('connectionTestResult')}
               onClick={e => e.stopPropagation()}
+              onMouseDown={e => e.stopPropagation()}
               className="w-full max-w-md rounded-2xl bg-background border-border border shadow-modal p-4"
             >
               <div className="flex items-center justify-between mb-3">
@@ -3708,12 +3713,17 @@ const Settings: React.FC<SettingsProps> = ({
         {pendingDeleteProvider && (
           <div
             className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
-            onClick={() => setPendingDeleteProvider(null)}
+            onClick={e => {
+              if (e.target === e.currentTarget) {
+                setPendingDeleteProvider(null);
+              }
+            }}
           >
             <div
               role="dialog"
               aria-modal="true"
               onClick={e => e.stopPropagation()}
+              onMouseDown={e => e.stopPropagation()}
               className="w-full max-w-sm rounded-2xl dark:bg-claude-darkSurface bg-claude-bg dark:border-claude-darkBorder border-claude-border border shadow-modal p-4"
             >
               <p className="text-sm dark:text-claude-darkText text-claude-text">
@@ -3742,7 +3752,11 @@ const Settings: React.FC<SettingsProps> = ({
         {(isAddingModel || isEditingModel) && (
           <div
             className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
-            onClick={handleCancelModelEdit}
+            onClick={e => {
+              if (e.target === e.currentTarget) {
+                handleCancelModelEdit();
+              }
+            }}
           >
             <div
               role="dialog"
@@ -3751,6 +3765,7 @@ const Settings: React.FC<SettingsProps> = ({
                 isEditingModel ? i18nService.t('editModel') : i18nService.t('addNewModel')
               }
               onClick={e => e.stopPropagation()}
+              onMouseDown={e => e.stopPropagation()}
               onKeyDown={handleModelDialogKeyDown}
               className="w-full max-w-md rounded-2xl bg-background border-border border shadow-modal p-4"
             >
@@ -3899,11 +3914,16 @@ const Settings: React.FC<SettingsProps> = ({
         {showMemoryModal && (
           <div
             className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
-            onClick={resetCoworkMemoryEditor}
+            onClick={e => {
+              if (e.target === e.currentTarget) {
+                resetCoworkMemoryEditor();
+              }
+            }}
           >
             <div
               className="bg-surface border-border border rounded-2xl shadow-xl w-full max-w-md"
               onClick={e => e.stopPropagation()}
+              onMouseDown={e => e.stopPropagation()}
             >
               <div className="px-5 pt-5 pb-4 border-b border-border">
                 <h3 className="text-base font-semibold text-foreground">
