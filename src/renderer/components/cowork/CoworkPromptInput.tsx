@@ -796,51 +796,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               />
               <div className="flex items-center justify-between px-4 pb-2 pt-1.5">
                 <div className="flex items-center gap-2 relative">
-                  {showFolderSelector && (
-                    <>
-                      <div className="flex items-center">
-                        <button
-                          ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
-                          type="button"
-                          onClick={() => setShowFolderMenu(!showFolderMenu)}
-                          className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-lg text-sm transition-colors ${
-                            showFolderRequiredWarning
-                              ? 'ring-1 ring-warning text-warning animate-shake'
-                              : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                          }`}
-                        >
-                          <FolderIcon className="h-4 w-4 flex-shrink-0" />
-                          <span className="max-w-[150px] truncate text-xs">
-                            {truncatePath(workingDirectory)}
-                          </span>
-                          {workingDirectory && (
-                            <span
-                              role="button"
-                              tabIndex={-1}
-                              onClick={e => {
-                                e.stopPropagation();
-                                handleFolderSelect('');
-                              }}
-                              className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-                            >
-                              <XMarkIcon className="h-3 w-3" />
-                            </span>
-                          )}
-                        </button>
-                      </div>
-                      <FolderSelectorPopover
-                        isOpen={showFolderMenu}
-                        onClose={() => setShowFolderMenu(false)}
-                        onSelectFolder={handleFolderSelect}
-                        anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
-                      />
-                      {showFolderRequiredWarning && (
-                        <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
-                          {i18nService.t('coworkSelectFolderFirst')}
-                        </div>
-                      )}
-                    </>
-                  )}
                   {showModelSelector && !remoteManaged && (
                     <div className="flex flex-col items-start gap-1">
                       <ModelSelector
@@ -886,6 +841,51 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         </span>
                       )}
                     </div>
+                  )}
+                  {showFolderSelector && (
+                    <>
+                      <div className="flex items-center">
+                        <button
+                          ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
+                          type="button"
+                          onClick={() => setShowFolderMenu(!showFolderMenu)}
+                          className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-lg text-sm transition-colors ${
+                            showFolderRequiredWarning
+                              ? 'ring-1 ring-warning text-warning animate-shake'
+                              : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                          }`}
+                        >
+                          <FolderIcon className="h-4 w-4 flex-shrink-0" />
+                          <span className="max-w-[150px] truncate text-xs">
+                            {truncatePath(workingDirectory)}
+                          </span>
+                          {workingDirectory && (
+                            <span
+                              role="button"
+                              tabIndex={-1}
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleFolderSelect('');
+                              }}
+                              className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                            >
+                              <XMarkIcon className="h-3 w-3" />
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                      <FolderSelectorPopover
+                        isOpen={showFolderMenu}
+                        onClose={() => setShowFolderMenu(false)}
+                        onSelectFolder={handleFolderSelect}
+                        anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
+                      />
+                      {showFolderRequiredWarning && (
+                        <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
+                          {i18nService.t('coworkSelectFolderFirst')}
+                        </div>
+                      )}
+                    </>
                   )}
                   {!remoteManaged && (
                     <button

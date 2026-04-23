@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { agentService } from '../../services/agent';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { quickActionService } from '../../services/quickAction';
@@ -19,7 +18,6 @@ import {
   setStreaming,
   updateSessionStatus,
 } from '../../store/slices/coworkSlice';
-import { setSelectedModel } from '../../store/slices/modelSlice';
 import { clearSelection, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills } from '../../store/slices/skillSlice';
 import type {
@@ -27,14 +25,11 @@ import type {
   CoworkSession,
   OpenClawEngineStatus,
 } from '../../types/cowork';
-import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import ModelSelector from '../ModelSelector';
 import { PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
-import { resolveAgentModelSelection } from './agentModelSelection';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import CoworkSessionDetail from './CoworkSessionDetail';
 
@@ -78,16 +73,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const quickActions = useSelector((state: RootState) => state.quickAction.actions);
   const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-  const agents = useSelector((state: RootState) => state.agent.agents);
-  const availableModels = useSelector((state: RootState) => state.model.availableModels);
-  const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
-  const currentAgent = agents.find(agent => agent.id === currentAgentId);
-  const { selectedModel: headerSelectedModel } = resolveAgentModelSelection({
-    agentModel: currentAgent?.model ?? '',
-    availableModels,
-    fallbackModel: globalSelectedModel,
-    engine: config.agentEngine,
-  });
 
   const buildApiConfigNotice = (
     error?: string,
@@ -495,39 +480,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             </button>
           </div>
         )}
-        <ModelSelector
-          value={isOpenClawEngine ? headerSelectedModel : globalSelectedModel}
-          onChange={async nextModel => {
-            if (!nextModel) return;
-            if (isOpenClawEngine) {
-              // Update agent model if we have a currentAgent
-              if (currentAgent) {
-                await agentService.updateAgent(currentAgent.id, {
-                  model: toOpenClawModelRef(nextModel),
-                });
-              } else {
-                // No currentAgent - update default model in app_config
-                // This will trigger syncOpenClawConfig and update openclaw.json
-                await coworkService.setDefaultModel({
-                  modelId: nextModel.id,
-                  providerKey: nextModel.providerKey,
-                });
-              }
-              // Patch session model in real-time via sessions.patch API
-              if (currentSession?.id) {
-                const modelRef = toOpenClawModelRef(nextModel);
-                if (modelRef) {
-                  await coworkService.patchSessionModel({
-                    sessionId: currentSession.id,
-                    model: modelRef,
-                  });
-                }
-              }
-            }
-            // Always update global state so the selection is persisted
-            dispatch(setSelectedModel(nextModel));
-          }}
-        />
       </div>
       <div className="non-draggable flex items-center">
         <WindowTitleBar inline />
@@ -623,6 +575,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                   await coworkService.updateConfig({ workingDirectory: dir });
                 }}
                 showFolderSelector={true}
+                showModelSelector={true}
               />
             </div>
           </div>
