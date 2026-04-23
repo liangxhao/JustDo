@@ -306,7 +306,12 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
     trimmedCodeText.length <= CODE_BLOCK_CHAR_LIMIT &&
     trimmedCodeText.split('\n').length <= CODE_BLOCK_LINE_LIMIT;
   const [isCopied, setIsCopied] = useState(false);
-  const [renderRequested, setRenderRequested] = useState(false);
+  // Default render state: mermaid renders by default, html does not
+  const [renderRequested, setRenderRequested] = useState(() => {
+    if (!match) return false;
+    const lang = match[1];
+    return lang === 'mermaid';
+  });
   const copyTimeoutRef = useRef<number | null>(null);
   const isDark = useIsDark();
   const highlighterStyle = isDark
