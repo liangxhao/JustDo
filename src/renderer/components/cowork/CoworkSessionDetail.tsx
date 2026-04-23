@@ -52,7 +52,7 @@ import TrashIcon from '../icons/TrashIcon';
 import MarkdownContent from '../MarkdownContent';
 import WindowTitleBar from '../window/WindowTitleBar';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
-import DiffView, { extractDiffFromToolInput } from './DiffView';
+import MonacoDiffView, { extractDiffFromToolInput } from './MonacoDiffView';
 import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
 
 interface CoworkSessionDetailProps {
@@ -1028,16 +1028,9 @@ const ToolCallGroup: React.FC<{
           ) : isTodoWriteTool && todoItems ? (
             <TodoWriteInputView items={todoItems} />
           ) : isEditWithDiff && diffDataList ? (
-            // Diff view for Edit/MultiEdit tools
+            // Diff view for Edit/MultiEdit tools - all edits in single window
             <div className="space-y-2">
-              {diffDataList.map((diff, idx) => (
-                <DiffView
-                  key={idx}
-                  oldStr={diff.oldStr}
-                  newStr={diff.newStr}
-                  filePath={diff.filePath}
-                />
-              ))}
+              <MonacoDiffView diffDataList={diffDataList} />
               {toolResult && (hasToolResultText || showNoDetailError) && (
                 <div>
                   <div className="text-[10px] font-medium dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70 uppercase tracking-wider mb-1">

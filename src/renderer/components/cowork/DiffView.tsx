@@ -1,31 +1,266 @@
 /**
  * DiffView Component
- * Renders a visual diff comparison for Edit/MultiEdit tool calls.
- * Supports unified and split (side-by-side) view modes.
+ * Pure React diff visualization - no external dependencies.
+ * Works offline without web workers.
+ * Supports unified (inline) and split (side-by-side) view modes.
  */
 
 import React, { useState, useMemo } from 'react';
 
-type DiffLineType = 'added' | 'removed' | 'context';
+export interface DiffData {
+  filePath?: string;
+  oldStr: string;
+  newStr: string;
+}
+
+interface DiffViewProps {
+  diffDataList: DiffData[];
+}
+
+type ViewMode = 'unified' | 'split';
+
+type DiffLineType = 'added' | 'removed' | 'context' | 'header';
 
 interface DiffLine {
   type: DiffLineType;
-  text: string;
   oldLineNo: number | null;
   newLineNo: number | null;
+  content: string;
 }
 
+const DiffView: React.FC<DiffViewProps> = ({ diffDataList }) => {
+  const [viewMode, setViewMode] = useState<ViewMode>('split');
+  const [currentEditIndex, setCurrentEditIndex] = useState(0);
+  const [isDarkMode, setIsDarkMode] = useState(() =>
+    document.documentElement.classList.contains('dark'),
+  );
+
+  // Listen for theme changes
+  React.useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDarkMode(document.documentElement.classList.contains('dark'));
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const currentDiff = diffDataList[currentEditIndex];
+  const filePath = currentDiff?.filePath;
+  const editCount = diffDataList.length;
+
+  // Compute diff lines using LCS algorithm
+  const diffLines = useMemo(() => {
+    if (!currentDiff) return [];
+    return computeDiff(currentDiff.oldStr, currentDiff.newStr);
+  }, [currentDiff]);
+
+  // Stats
+  const stats = useMemo(() => {
+    let added = 0;
+    let removed = 0;
+    for (const line of diffLines) {
+      if (line.type === 'added') added++;
+      if (line.type === 'removed') removed++;
+    }
+    return { added, removed };
+  }, [diffLines]);
+
+  // Split view pairs
+  const splitPairs = useMemo(() => {
+    if (viewMode !== 'split') return [];
+    return buildSplitPairs(diffLines);
+  }, [diffLines, viewMode]);
+
+  if (diffDataList.length === 0) return null;
+
+  const getLineColor = (type: DiffLineType) => {
+    if (isDarkMode) {
+      switch (type) {
+        case 'added':
+          return 'bg-green-500/15 text-green-400';
+        case 'removed':
+          return 'bg-red-500/15 text-red-400';
+        default:
+          return 'text-zinc-400';
+      }
+    } else {
+      switch (type) {
+        case 'added':
+          return 'bg-green-100 text-green-700';
+        case 'removed':
+          return 'bg-red-100 text-red-700';
+        default:
+          return 'text-gray-500';
+      }
+    }
+  };
+
+  const getGutterColor = (type: DiffLineType) => {
+    if (isDarkMode) {
+      switch (type) {
+        case 'added':
+          return 'text-green-500/50';
+        case 'removed':
+          return 'text-red-500/50';
+        default:
+          return 'text-zinc-600';
+      }
+    } else {
+      switch (type) {
+        case 'added':
+          return 'text-green-600';
+        case 'removed':
+          return 'text-red-600';
+        default:
+          return 'text-gray-400';
+      }
+    }
+  };
+
+  return (
+    <div className="rounded-lg overflow-hidden border dark:border-zinc-700 border-gray-200">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-1.5 dark:bg-zinc-800 bg-gray-50 border-b dark:border-zinc-700 border-gray-200">
+        <div className="flex items-center gap-2 min-w-0">
+          {filePath && (
+            <span className="text-[11px] font-mono dark:text-zinc-400 text-gray-600 truncate">
+              {filePath}
+            </span>
+          )}
+          {editCount > 1 && (
+            <span className="text-[10px] dark:text-zinc-500 text-gray-400 flex-shrink-0">
+              ({currentEditIndex + 1}/{editCount})
+            </span>
+          )}
+          <span className="flex items-center gap-1.5 text-[10px] flex-shrink-0">
+            {stats.added > 0 && (
+              <span className="text-green-600 dark:text-green-400 font-medium">+{stats.added}</span>
+            )}
+            {stats.removed > 0 && (
+              <span className="text-red-500 dark:text-red-400 font-medium">-{stats.removed}</span>
+            )}
+          </span>
+        </div>
+        {/* View mode toggle */}
+        <div className="flex items-center gap-0.5 bg-black/5 dark:bg-white/5 rounded-md p-0.5 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setViewMode('split')}
+            className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+              viewMode === 'split'
+                ? 'bg-white dark:bg-zinc-700 shadow-sm dark:text-zinc-100 text-gray-800'
+                : 'dark:text-zinc-400 text-gray-500 hover:dark:text-zinc-300 hover:text-gray-700'
+            }`}
+          >
+            Split
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('unified')}
+            className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+              viewMode === 'unified'
+                ? 'bg-white dark:bg-zinc-700 shadow-sm dark:text-zinc-100 text-gray-800'
+                : 'dark:text-zinc-400 text-gray-500 hover:dark:text-zinc-300 hover:text-gray-700'
+            }`}
+          >
+            Unified
+          </button>
+        </div>
+      </div>
+
+      {/* Edit navigation for multiple edits */}
+      {editCount > 1 && (
+        <div className="flex items-center gap-1 px-3 py-1 dark:bg-zinc-850 bg-gray-100 border-b dark:border-zinc-700/50 border-gray-200/50">
+          {diffDataList.map((_, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setCurrentEditIndex(idx)}
+              className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                idx === currentEditIndex
+                  ? 'bg-blue-500/20 dark:bg-blue-400/20 text-blue-600 dark:text-blue-400'
+                  : 'dark:text-zinc-500 text-gray-400 hover:dark:text-zinc-400 hover:text-gray-600'
+              }`}
+            >
+              Edit #{idx + 1}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Diff content */}
+      <div className="max-h-[300px] overflow-auto dark:bg-zinc-900 bg-white">
+        {viewMode === 'unified' ? (
+          <table className="w-full text-xs font-mono border-collapse">
+            <tbody>
+              {diffLines.map((line, idx) => (
+                <tr key={idx} className={getLineColor(line.type)}>
+                  <td
+                    className={`select-none text-right px-2 py-0.5 w-8 ${getGutterColor(line.type)}`}
+                  >
+                    {line.oldLineNo ?? ''}
+                  </td>
+                  <td
+                    className={`select-none text-right px-2 py-0.5 w-8 ${getGutterColor(line.type)}`}
+                  >
+                    {line.newLineNo ?? ''}
+                  </td>
+                  <td
+                    className={`select-none px-1 py-0.5 w-4 text-center ${getLineColor(line.type)}`}
+                  >
+                    {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
+                  </td>
+                  <td className="px-2 py-0.5 whitespace-pre-wrap break-all">
+                    {line.content || ' '}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <table className="w-full text-xs font-mono border-collapse table-fixed">
+            <tbody>
+              {splitPairs.map((pair, idx) => (
+                <tr key={idx}>
+                  <td
+                    className={`select-none text-right px-2 py-0.5 w-8 ${getGutterColor(pair.left?.type || 'context')} ${pair.left ? getLineColor(pair.left.type) : ''}`}
+                  >
+                    {pair.left?.oldLineNo ?? ''}
+                  </td>
+                  <td
+                    className={`px-2 py-0.5 w-1/2 whitespace-pre-wrap break-all border-r dark:border-zinc-700/50 border-gray-200/50 ${pair.left ? getLineColor(pair.left.type) : 'dark:bg-zinc-850 bg-gray-50'}`}
+                  >
+                    {pair.left?.content || ' '}
+                  </td>
+                  <td
+                    className={`select-none text-right px-2 py-0.5 w-8 ${getGutterColor(pair.right?.type || 'context')} ${pair.right ? getLineColor(pair.right.type) : ''}`}
+                  >
+                    {pair.right?.newLineNo ?? ''}
+                  </td>
+                  <td
+                    className={`px-2 py-0.5 w-1/2 whitespace-pre-wrap break-all ${pair.right ? getLineColor(pair.right.type) : 'dark:bg-zinc-850 bg-gray-50'}`}
+                  >
+                    {pair.right?.content || ' '}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+};
+
 /**
- * Compute a simple line-by-line diff between two strings.
- * Uses a basic LCS-based approach for correctness on short inputs,
- * and a greedy match for large inputs (to avoid O(n*m) memory).
+ * Compute diff using LCS (Longest Common Subsequence) algorithm.
  */
-function computeDiffLines(oldStr: string, newStr: string): DiffLine[] {
+function computeDiff(oldStr: string, newStr: string): DiffLine[] {
   const oldLines = oldStr.split('\n');
   const newLines = newStr.split('\n');
 
-  // For very large inputs, fall back to a simple greedy match
-  if (oldLines.length * newLines.length > 500_000) {
+  // For very large inputs, use greedy diff
+  if (oldLines.length * newLines.length > 100_000) {
     return greedyDiff(oldLines, newLines);
   }
 
@@ -51,14 +286,29 @@ function computeDiffLines(oldStr: string, newStr: string): DiffLine[] {
 
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-      result.push({ type: 'context', text: oldLines[i - 1], oldLineNo: i, newLineNo: j });
+      result.push({
+        type: 'context',
+        oldLineNo: i,
+        newLineNo: j,
+        content: oldLines[i - 1],
+      });
       i--;
       j--;
     } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      result.push({ type: 'added', text: newLines[j - 1], oldLineNo: null, newLineNo: j });
+      result.push({
+        type: 'added',
+        oldLineNo: null,
+        newLineNo: j,
+        content: newLines[j - 1],
+      });
       j--;
     } else {
-      result.push({ type: 'removed', text: oldLines[i - 1], oldLineNo: i, newLineNo: null });
+      result.push({
+        type: 'removed',
+        oldLineNo: i,
+        newLineNo: null,
+        content: oldLines[i - 1],
+      });
       i--;
     }
   }
@@ -66,6 +316,9 @@ function computeDiffLines(oldStr: string, newStr: string): DiffLine[] {
   return result.reverse();
 }
 
+/**
+ * Greedy diff for large inputs.
+ */
 function greedyDiff(oldLines: string[], newLines: string[]): DiffLine[] {
   const result: DiffLine[] = [];
   let oi = 0;
@@ -73,11 +326,16 @@ function greedyDiff(oldLines: string[], newLines: string[]): DiffLine[] {
 
   while (oi < oldLines.length && ni < newLines.length) {
     if (oldLines[oi] === newLines[ni]) {
-      result.push({ type: 'context', text: oldLines[oi], oldLineNo: oi + 1, newLineNo: ni + 1 });
+      result.push({
+        type: 'context',
+        oldLineNo: oi + 1,
+        newLineNo: ni + 1,
+        content: oldLines[oi],
+      });
       oi++;
       ni++;
     } else {
-      // Look ahead for a match
+      // Look ahead for matches
       let foundOld = -1;
       let foundNew = -1;
       const lookAhead = Math.min(10, Math.max(oldLines.length - oi, newLines.length - ni));
@@ -95,17 +353,37 @@ function greedyDiff(oldLines: string[], newLines: string[]): DiffLine[] {
 
       if (foundOld >= 0 && (foundNew < 0 || foundOld <= foundNew)) {
         for (let k = 0; k < foundOld; k++) {
-          result.push({ type: 'removed', text: oldLines[oi + k], oldLineNo: oi + k + 1, newLineNo: null });
+          result.push({
+            type: 'removed',
+            oldLineNo: oi + k + 1,
+            newLineNo: null,
+            content: oldLines[oi + k],
+          });
         }
         oi += foundOld;
       } else if (foundNew >= 0) {
         for (let k = 0; k < foundNew; k++) {
-          result.push({ type: 'added', text: newLines[ni + k], oldLineNo: null, newLineNo: ni + k + 1 });
+          result.push({
+            type: 'added',
+            oldLineNo: null,
+            newLineNo: ni + k + 1,
+            content: newLines[ni + k],
+          });
         }
         ni += foundNew;
       } else {
-        result.push({ type: 'removed', text: oldLines[oi], oldLineNo: oi + 1, newLineNo: null });
-        result.push({ type: 'added', text: newLines[ni], oldLineNo: null, newLineNo: ni + 1 });
+        result.push({
+          type: 'removed',
+          oldLineNo: oi + 1,
+          newLineNo: null,
+          content: oldLines[oi],
+        });
+        result.push({
+          type: 'added',
+          oldLineNo: null,
+          newLineNo: ni + 1,
+          content: newLines[ni],
+        });
         oi++;
         ni++;
       }
@@ -113,222 +391,77 @@ function greedyDiff(oldLines: string[], newLines: string[]): DiffLine[] {
   }
 
   while (oi < oldLines.length) {
-    result.push({ type: 'removed', text: oldLines[oi], oldLineNo: oi + 1, newLineNo: null });
+    result.push({
+      type: 'removed',
+      oldLineNo: oi + 1,
+      newLineNo: null,
+      content: oldLines[oi],
+    });
     oi++;
   }
+
   while (ni < newLines.length) {
-    result.push({ type: 'added', text: newLines[ni], oldLineNo: null, newLineNo: ni + 1 });
+    result.push({
+      type: 'added',
+      oldLineNo: null,
+      newLineNo: ni + 1,
+      content: newLines[ni],
+    });
     ni++;
   }
 
   return result;
 }
 
-type ViewMode = 'unified' | 'split';
+/**
+ * Build split view pairs from diff lines.
+ */
+function buildSplitPairs(
+  lines: DiffLine[],
+): Array<{ left: DiffLine | null; right: DiffLine | null }> {
+  const pairs: Array<{ left: DiffLine | null; right: DiffLine | null }> = [];
+  let i = 0;
 
-interface DiffViewProps {
-  oldStr: string;
-  newStr: string;
-  filePath?: string;
-}
+  while (i < lines.length) {
+    const line = lines[i];
 
-const LINE_COLORS: Record<DiffLineType, { bg: string; text: string; gutter: string }> = {
-  added: {
-    bg: 'bg-green-500/10 dark:bg-green-500/15',
-    text: 'text-green-700 dark:text-green-400',
-    gutter: 'text-green-600/60 dark:text-green-400/50',
-  },
-  removed: {
-    bg: 'bg-red-500/10 dark:bg-red-500/15',
-    text: 'text-red-700 dark:text-red-400',
-    gutter: 'text-red-600/60 dark:text-red-400/50',
-  },
-  context: {
-    bg: '',
-    text: 'dark:text-claude-darkTextSecondary text-claude-textSecondary',
-    gutter: 'dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40',
-  },
-};
-
-const DiffLinePrefix: Record<DiffLineType, string> = {
-  added: '+',
-  removed: '-',
-  context: ' ',
-};
-
-const DiffView: React.FC<DiffViewProps> = ({ oldStr, newStr, filePath }) => {
-  const [viewMode, setViewMode] = useState<ViewMode>('unified');
-
-  const diffLines = useMemo(() => computeDiffLines(oldStr, newStr), [oldStr, newStr]);
-
-  const stats = useMemo(() => {
-    let added = 0;
-    let removed = 0;
-    for (const line of diffLines) {
-      if (line.type === 'added') added++;
-      if (line.type === 'removed') removed++;
-    }
-    return { added, removed };
-  }, [diffLines]);
-
-  // Build split view pairs
-  const splitPairs = useMemo(() => {
-    if (viewMode !== 'split') return [];
-
-    const pairs: Array<{ left: DiffLine | null; right: DiffLine | null }> = [];
-    let i = 0;
-    while (i < diffLines.length) {
-      const line = diffLines[i];
-      if (line.type === 'context') {
-        pairs.push({ left: line, right: line });
-        i++;
-      } else if (line.type === 'removed') {
-        // Collect consecutive removed + added pairs
-        const removedBatch: DiffLine[] = [];
-        while (i < diffLines.length && diffLines[i].type === 'removed') {
-          removedBatch.push(diffLines[i]);
-          i++;
-        }
-        const addedBatch: DiffLine[] = [];
-        while (i < diffLines.length && diffLines[i].type === 'added') {
-          addedBatch.push(diffLines[i]);
-          i++;
-        }
-        const maxLen = Math.max(removedBatch.length, addedBatch.length);
-        for (let k = 0; k < maxLen; k++) {
-          pairs.push({
-            left: k < removedBatch.length ? removedBatch[k] : null,
-            right: k < addedBatch.length ? addedBatch[k] : null,
-          });
-        }
-      } else {
-        // added without preceding removed
-        pairs.push({ left: null, right: line });
+    if (line.type === 'context') {
+      pairs.push({ left: line, right: line });
+      i++;
+    } else if (line.type === 'removed') {
+      // Collect consecutive removed lines
+      const removedBatch: DiffLine[] = [];
+      while (i < lines.length && lines[i].type === 'removed') {
+        removedBatch.push(lines[i]);
         i++;
       }
+      // Collect consecutive added lines
+      const addedBatch: DiffLine[] = [];
+      while (i < lines.length && lines[i].type === 'added') {
+        addedBatch.push(lines[i]);
+        i++;
+      }
+      // Pair them up
+      const maxLen = Math.max(removedBatch.length, addedBatch.length);
+      for (let k = 0; k < maxLen; k++) {
+        pairs.push({
+          left: k < removedBatch.length ? removedBatch[k] : null,
+          right: k < addedBatch.length ? addedBatch[k] : null,
+        });
+      }
+    } else if (line.type === 'added') {
+      pairs.push({ left: null, right: line });
+      i++;
+    } else {
+      i++;
     }
-    return pairs;
-  }, [diffLines, viewMode]);
+  }
 
-  if (diffLines.length === 0) return null;
-
-  return (
-    <div className="rounded-lg overflow-hidden border dark:border-claude-darkBorder border-claude-border">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-1.5 dark:bg-claude-darkSurface bg-claude-surfaceInset border-b dark:border-claude-darkBorder border-claude-border">
-        <div className="flex items-center gap-2 min-w-0">
-          {filePath && (
-            <span className="text-[11px] font-mono dark:text-claude-darkTextSecondary text-claude-textSecondary truncate">
-              {filePath}
-            </span>
-          )}
-          <span className="flex items-center gap-1.5 text-[10px] flex-shrink-0">
-            {stats.added > 0 && (
-              <span className="text-green-600 dark:text-green-400 font-medium">+{stats.added}</span>
-            )}
-            {stats.removed > 0 && (
-              <span className="text-red-500 dark:text-red-400 font-medium">-{stats.removed}</span>
-            )}
-          </span>
-        </div>
-        {/* View mode toggle */}
-        <div className="flex items-center gap-0.5 bg-black/5 dark:bg-white/5 rounded-md p-0.5 flex-shrink-0">
-          <button
-            type="button"
-            onClick={() => setViewMode('unified')}
-            className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
-              viewMode === 'unified'
-                ? 'bg-white dark:bg-claude-darkSurfaceHover shadow-sm dark:text-claude-darkText text-claude-text'
-                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
-            }`}
-          >
-            Unified
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('split')}
-            className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
-              viewMode === 'split'
-                ? 'bg-white dark:bg-claude-darkSurfaceHover shadow-sm dark:text-claude-darkText text-claude-text'
-                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
-            }`}
-          >
-            Split
-          </button>
-        </div>
-      </div>
-
-      {/* Diff content */}
-      <div className="max-h-80 overflow-auto">
-        {viewMode === 'unified' ? (
-          <table className="w-full text-xs font-mono border-collapse">
-            <tbody>
-              {diffLines.map((line, idx) => {
-                const colors = LINE_COLORS[line.type];
-                return (
-                  <tr key={idx} className={colors.bg}>
-                    <td className={`select-none text-right px-2 py-0 w-8 ${colors.gutter}`}>
-                      {line.oldLineNo ?? ''}
-                    </td>
-                    <td className={`select-none text-right px-2 py-0 w-8 ${colors.gutter}`}>
-                      {line.newLineNo ?? ''}
-                    </td>
-                    <td className={`select-none px-1 py-0 w-4 text-center ${colors.text}`}>
-                      {DiffLinePrefix[line.type]}
-                    </td>
-                    <td className={`px-2 py-0 whitespace-pre-wrap break-all ${colors.text}`}>
-                      {line.text || '\u00A0'}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        ) : (
-          <table className="w-full text-xs font-mono border-collapse table-fixed">
-            <tbody>
-              {splitPairs.map((pair, idx) => {
-                const leftColors = pair.left ? LINE_COLORS[pair.left.type === 'context' ? 'context' : 'removed'] : LINE_COLORS.context;
-                const rightColors = pair.right ? LINE_COLORS[pair.right.type === 'context' ? 'context' : 'added'] : LINE_COLORS.context;
-                return (
-                  <tr key={idx}>
-                    {/* Left (old) */}
-                    <td className={`select-none text-right px-2 py-0 w-8 ${leftColors.gutter} ${pair.left ? leftColors.bg : ''}`}>
-                      {pair.left?.oldLineNo ?? ''}
-                    </td>
-                    <td className={`px-2 py-0 w-1/2 whitespace-pre-wrap break-all border-r dark:border-claude-darkBorder/50 border-claude-border/50 ${pair.left ? `${leftColors.bg} ${leftColors.text}` : 'dark:bg-claude-darkSurfaceInset/50 bg-claude-surfaceInset/50'}`}>
-                      {pair.left ? (pair.left.text || '\u00A0') : '\u00A0'}
-                    </td>
-                    {/* Right (new) */}
-                    <td className={`select-none text-right px-2 py-0 w-8 ${rightColors.gutter} ${pair.right ? rightColors.bg : ''}`}>
-                      {pair.right?.newLineNo ?? ''}
-                    </td>
-                    <td className={`px-2 py-0 w-1/2 whitespace-pre-wrap break-all ${pair.right ? `${rightColors.bg} ${rightColors.text}` : 'dark:bg-claude-darkSurfaceInset/50 bg-claude-surfaceInset/50'}`}>
-                      {pair.right ? (pair.right.text || '\u00A0') : '\u00A0'}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
-};
+  return pairs;
+}
 
 // --- Helpers to detect and extract diff data from tool inputs ---
 
-export interface DiffData {
-  filePath?: string;
-  oldStr: string;
-  newStr: string;
-}
-
-/**
- * Try to extract diff data from an Edit/MultiEdit tool input.
- * Returns null if the tool input does not contain recognizable diff data.
- */
 export function extractDiffFromToolInput(
   toolName: string | undefined,
   toolInput: Record<string, unknown> | undefined,
@@ -337,26 +470,121 @@ export function extractDiffFromToolInput(
   const normalized = toolName.toLowerCase().replace(/[\s_]+/g, '');
 
   if (normalized === 'edit' || normalized === 'editfile') {
-    const filePath = extractString(toolInput, ['file_path', 'path', 'filePath', 'target_file', 'targetFile']);
-    const oldStr = extractString(toolInput, ['old_str', 'old_string', 'old_text', 'oldStr', 'oldText', 'search']);
-    const newStr = extractString(toolInput, ['new_str', 'new_string', 'new_text', 'newStr', 'newText', 'replace']);
+    const filePath = extractString(toolInput, [
+      'file_path',
+      'path',
+      'filePath',
+      'target_file',
+      'targetFile',
+      'file',
+    ]);
+
+    // Try old_str/new_str format
+    const oldStr = extractString(toolInput, [
+      'old_str',
+      'old_string',
+      'old_text',
+      'oldStr',
+      'oldText',
+      'search',
+      'old',
+      'before',
+      'original',
+    ]);
+    const newStr = extractString(toolInput, [
+      'new_str',
+      'new_string',
+      'new_text',
+      'newStr',
+      'newText',
+      'replace',
+      'new',
+      'after',
+      'replacement',
+    ]);
 
     if (oldStr !== null && newStr !== null) {
       return [{ filePath: filePath ?? undefined, oldStr, newStr }];
     }
-    return null;
-  }
 
-  if (normalized === 'multiedit') {
-    const filePath = extractString(toolInput, ['file_path', 'path', 'filePath', 'target_file', 'targetFile']);
-    const edits = toolInput.edits ?? toolInput.changes ?? toolInput.operations;
+    // Check for edits array
+    const edits =
+      toolInput.edits ?? toolInput.changes ?? toolInput.operations ?? toolInput.modifications;
     if (Array.isArray(edits)) {
       const diffs: DiffData[] = [];
       for (const edit of edits) {
         if (edit && typeof edit === 'object') {
           const rec = edit as Record<string, unknown>;
-          const oldStr = extractString(rec, ['old_str', 'old_string', 'old_text', 'oldStr', 'search']);
-          const newStr = extractString(rec, ['new_str', 'new_string', 'new_text', 'newStr', 'replace']);
+          const editOldStr = extractString(rec, [
+            'old_str',
+            'old_string',
+            'old_text',
+            'oldStr',
+            'oldText',
+            'search',
+            'old',
+            'before',
+            'original',
+          ]);
+          const editNewStr = extractString(rec, [
+            'new_str',
+            'new_string',
+            'new_text',
+            'newStr',
+            'newText',
+            'replace',
+            'new',
+            'after',
+            'replacement',
+          ]);
+          if (editOldStr !== null && editNewStr !== null) {
+            diffs.push({ filePath: filePath ?? undefined, oldStr: editOldStr, newStr: editNewStr });
+          }
+        }
+      }
+      return diffs.length > 0 ? diffs : null;
+    }
+    return null;
+  }
+
+  if (normalized === 'multiedit') {
+    const filePath = extractString(toolInput, [
+      'file_path',
+      'path',
+      'filePath',
+      'target_file',
+      'targetFile',
+      'file',
+    ]);
+    const edits =
+      toolInput.edits ?? toolInput.changes ?? toolInput.operations ?? toolInput.modifications;
+    if (Array.isArray(edits)) {
+      const diffs: DiffData[] = [];
+      for (const edit of edits) {
+        if (edit && typeof edit === 'object') {
+          const rec = edit as Record<string, unknown>;
+          const oldStr = extractString(rec, [
+            'old_str',
+            'old_string',
+            'old_text',
+            'oldStr',
+            'oldText',
+            'search',
+            'old',
+            'before',
+            'original',
+          ]);
+          const newStr = extractString(rec, [
+            'new_str',
+            'new_string',
+            'new_text',
+            'newStr',
+            'newText',
+            'replace',
+            'new',
+            'after',
+            'replacement',
+          ]);
           if (oldStr !== null && newStr !== null) {
             diffs.push({ filePath: filePath ?? undefined, oldStr, newStr });
           }
