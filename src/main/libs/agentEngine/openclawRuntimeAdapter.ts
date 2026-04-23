@@ -2506,18 +2506,57 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // If thinking stream was previously ended (tool event received), reset state
     // to create a new thinking message for the subsequent thinking events
+    // Also reset assistantMessageId so the next assistant stream creates a new text message
     if (turn.thinkingStreamEnded) {
       turn.currentThinkingMessageId = null;
       turn.currentThinkingContent = '';
       turn.thinkingStreamEnded = false;
+      // Reset assistantMessageId to null so next assistant stream creates new message
+      // instead of continuing to write to the previous text message
+      turn.assistantMessageId = null;
+      // Reset segment text tracking for the new response segment
+      turn.currentAssistantSegmentText = '';
+      turn.agentAssistantTextLength = 0;
+      // Reset committedAssistantText and currentText so chat delta events
+      // for the new assistant segment don't get confused with old content
+      turn.committedAssistantText = '';
+      turn.currentText = '';
+      turn.currentContentText = '';
+      turn.currentContentBlocks = [];
+      turn.textStreamMode = 'unknown';
     }
 
     // First thinking event: create the assistant message if not exists
     if (!turn.currentThinkingMessageId) {
-      // If we already have an assistantMessageId, reuse it for thinking
-      // Otherwise create a new one
+      // If we already have an assistantMessageId, check if it's a thinking message
+      // Only reuse it if it's specifically a thinking message (isThinking: true)
+      // Otherwise, create a new message to avoid mixing thinking content with text content
       if (turn.assistantMessageId) {
-        turn.currentThinkingMessageId = turn.assistantMessageId;
+        const session = this.store.getSession(sessionId);
+        const existingMsg = session?.messages.find(m => m.id === turn.assistantMessageId);
+        const isThinkingMsg = existingMsg?.metadata?.isThinking === true;
+
+        if (isThinkingMsg) {
+          // Reuse the existing thinking message
+          turn.currentThinkingMessageId = turn.assistantMessageId;
+        } else {
+          // Existing message is a text message, create a new thinking message
+          const initialThinkingContent = text || delta || '';
+          const thinkingMessage = this.store.addMessage(sessionId, {
+            type: 'assistant',
+            content: '',
+            metadata: { isStreaming: true, isThinking: true },
+            thinkingContent: initialThinkingContent,
+            modelName: turn.modelName,
+          });
+          turn.currentThinkingMessageId = thinkingMessage.id;
+          // Don't update assistantMessageId - keep it for the text message
+          // Initialize turn state with the first text/delta content
+          turn.currentThinkingContent = initialThinkingContent;
+          this.emit('message', sessionId, thinkingMessage);
+          // Return early to skip the update logic below - the initial content is already set
+          return;
+        }
       } else {
         // Use store.addMessage to create message - it generates its own ID
         // Set initial thinkingContent to the actual content from this event
@@ -2532,7 +2571,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           modelName: turn.modelName,
         });
         turn.currentThinkingMessageId = thinkingMessage.id;
-        turn.assistantMessageId = thinkingMessage.id;
+        // IMPORTANT: Do NOT set assistantMessageId to thinking message id
+        // This prevents text content from being written to the thinking message
+        // Instead, keep assistantMessageId null so text creates a separate message
+        // turn.assistantMessageId = thinkingMessage.id; // REMOVED
         // Initialize turn state with the first text/delta content
         turn.currentThinkingContent = initialThinkingContent;
         this.emit('message', sessionId, thinkingMessage);
@@ -3170,7 +3212,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!text || !turn || !sessionId) {
       if (text) {
         console.debug(
-          '[Debug:processAssistant] skipped: text.len:',
+          '[Debug:processAgentAssistant] skipped: text.len:',
           text.length,
           'runId:',
           runId.slice(0, 8),
@@ -3185,27 +3227,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
-    // Detect text reset: new model call starts → text length drops significantly.
-    // Only trigger when hwm is meaningful (> 5 chars) to avoid false positives
-    // from early chat delta / agent event interleaving.
-    if (
-      text.length < turn.agentAssistantTextLength &&
-      turn.agentAssistantTextLength > 5 &&
-      turn.assistantMessageId
-    ) {
-      console.debug(
-        '[Debug:textReset] detected:',
-        turn.agentAssistantTextLength,
-        '->',
-        text.length,
-        'splitting. prevText:',
-        turn.currentText.slice(0, 80),
-      );
-      this.splitAssistantSegmentBeforeTool(sessionId, turn);
-      turn.agentAssistantTextLength = 0;
-    }
-
-    // Track high-water mark.
+    // Text reset detection based on length comparison is unreliable because:
+    // - Agent events and chat deltas may interleave
+    // - Events may arrive out of order
+    // - Length changes have many causes (gateway retry, content blocks, etc.)
+    // Instead, rely on runId change (in bindRunIdToTurn) to detect new replies.
+    // Only use high-water mark tracking to prevent false splits.
     turn.agentAssistantTextLength = Math.max(turn.agentAssistantTextLength, text.length);
 
     // Update turn text state and push to store.
@@ -3287,94 +3314,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private handleChatDelta(sessionId: string, turn: ActiveTurn, payload: ChatEventPayload): void {
+    const extractedText = extractGatewayMessageText(payload.message);
+
     // End thinking stream when we receive text content
+    // End thinking stream when we receive text content
+    // Chat delta events carry accumulated full run text, which includes content
+    // from all previous assistant segments. This causes content mixing when
+    // combined with committedAssistantText-based segment resolution.
+    // Instead, we rely entirely on processAgentAssistantText (agent stream events)
+    // to handle assistant text content. handleChatDelta only handles thinking finalize.
     if (!turn.thinkingStreamEnded && turn.currentThinkingMessageId) {
       turn.thinkingStreamEnded = true;
-      // Reset assistantMessageId so response text creates a new message
-      // instead of reusing the thinking message.
-      turn.assistantMessageId = null;
-      // Update thinking message metadata to mark streaming as ended
-      // Pass the final accumulated thinking content to save to database
+      // Only clear assistantMessageId if it's pointing to the thinking message.
+      if (turn.assistantMessageId === turn.currentThinkingMessageId) {
+        turn.assistantMessageId = null;
+      }
+      // Finalize thinking message
       this.finalizeThinkingMessage(
         sessionId,
         turn.currentThinkingMessageId,
         turn.currentThinkingContent,
       );
     }
-
-    const previousText = turn.currentText;
-    const previousContentText = turn.currentContentText;
-    const previousContentBlocks = [...turn.currentContentBlocks];
-    const previousSawNonTextContentBlocks = turn.sawNonTextContentBlocks;
-    const previousTextStreamMode = turn.textStreamMode;
-    const previousSegmentText = turn.currentAssistantSegmentText;
-
-    this.updateTurnTextState(turn, payload.message, { protectBoundaryDrops: true });
-
-    // Debug: log when non-text content blocks first appear during streaming
-    if (turn.sawNonTextContentBlocks && !previousSawNonTextContentBlocks) {
-      console.log(
-        '[Debug:handleChatDelta] non-text content blocks detected during streaming, sessionId:',
-        sessionId,
-      );
-      if (
-        isRecord(payload.message) &&
-        Array.isArray((payload.message as Record<string, unknown>).content)
-      ) {
-        const content = (payload.message as Record<string, unknown>).content as Array<
-          Record<string, unknown>
-        >;
-        for (const block of content) {
-          if (
-            isRecord(block) &&
-            typeof block.type === 'string' &&
-            block.type !== 'text' &&
-            block.type !== 'thinking'
-          ) {
-            console.log(
-              '[Debug:handleChatDelta] non-text block:',
-              JSON.stringify(block).slice(0, 1000),
-            );
-          }
-        }
-      }
-    }
-    const streamedText = turn.currentText;
-    if (previousText && streamedText && streamedText.length < previousText.length) {
-      turn.currentText = previousText;
-      turn.currentContentText = previousContentText;
-      turn.currentContentBlocks = previousContentBlocks;
-      turn.sawNonTextContentBlocks = previousSawNonTextContentBlocks;
-      turn.textStreamMode = previousTextStreamMode;
-      return;
-    }
-
-    if (!streamedText) return;
-    const segmentText = this.resolveAssistantSegmentText(turn, streamedText);
-    if (!segmentText) return;
-    if (segmentText === previousSegmentText && streamedText === previousText) return;
-
-    if (!turn.assistantMessageId) {
-      const assistantMessage = this.store.addMessage(sessionId, {
-        type: 'assistant',
-        content: segmentText,
-        metadata: {
-          isStreaming: true,
-          isFinal: false,
-        },
-        modelName: turn.modelName,
-      });
-      turn.assistantMessageId = assistantMessage.id;
-      turn.currentAssistantSegmentText = segmentText;
-      this.emit('message', sessionId, assistantMessage);
-      return;
-    }
-
-    if (turn.assistantMessageId && segmentText !== previousSegmentText) {
-      // Only update in-memory state; SQLite write and IPC emit are handled
-      // by processAgentAssistantText on the agent event path.
-      turn.currentAssistantSegmentText = segmentText;
-    }
+    // Do NOT process text content from chat delta events.
+    // Agent assistant stream events (processAgentAssistantText) handle all text.
   }
 
   private async handleChatFinal(
@@ -3382,25 +3345,32 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     turn: ActiveTurn,
     payload: ChatEventPayload,
   ): Promise<void> {
-    const previousText = turn.currentText;
+    // Finalize any pending thinking message before processing final text
+    if (turn.currentThinkingMessageId && !turn.thinkingStreamEnded) {
+      this.finalizeThinkingMessage(
+        sessionId,
+        turn.currentThinkingMessageId,
+        turn.currentThinkingContent,
+      );
+      turn.thinkingStreamEnded = true;
+      // Clear assistantMessageId if it was pointing to the thinking message
+      if (turn.assistantMessageId === turn.currentThinkingMessageId) {
+        turn.assistantMessageId = null;
+      }
+    }
+
+    // Chat final events carry accumulated full run text (all assistant segments),
+    // which cannot be correctly split by resolveAssistantSegmentText.
+    // Instead, we use currentAssistantSegmentText set by processAgentAssistantText
+    // (agent stream events), which correctly tracks the current segment text.
     const previousSegmentText = turn.currentAssistantSegmentText;
-    const finalText = this.resolveFinalTurnText(turn, payload.message);
     console.debug(
       '[OpenClawRuntime] handleChatFinal:',
       `sessionId=${sessionId}`,
       `runId=${payload.runId ?? turn.runId}`,
-      `message=${summarizeGatewayMessageShape(payload.message)}`,
-      `previousTextLen=${previousText.length}`,
-      `finalTextLen=${finalText.length}`,
-      `finalText="${truncate(finalText, 200)}"`,
+      `assistantMessageId=${turn.assistantMessageId ?? '(none)'}`,
+      `currentSegmentText="${truncate(previousSegmentText, 200)}"`,
     );
-    turn.currentText = finalText;
-    if (finalText && turn.currentContentBlocks.length === 0) {
-      turn.currentContentText = finalText;
-      turn.currentContentBlocks = [finalText];
-    }
-    const finalSegmentText = this.resolveAssistantSegmentText(turn, finalText);
-    turn.currentAssistantSegmentText = finalSegmentText;
 
     if (turn.assistantMessageId) {
       // Flush any pending throttled updates so store content is current.
@@ -3412,31 +3382,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.emit('messageUpdate', sessionId, turn.assistantMessageId, storeMsg.content);
       }
 
-      const persistedSegmentText = finalSegmentText || previousSegmentText;
+      // Use existing segment text from processAgentAssistantText, not from chat final
+      const persistedSegmentText = previousSegmentText;
       if (persistedSegmentText) {
+        const finalMetadata = { isStreaming: false, isFinal: true };
         this.store.updateMessage(sessionId, turn.assistantMessageId, {
-          content: persistedSegmentText,
-          metadata: {
-            isStreaming: false,
-            isFinal: true,
-          },
+          metadata: finalMetadata,
         });
-        if (persistedSegmentText !== previousSegmentText) {
-          this.emit('messageUpdate', sessionId, turn.assistantMessageId, persistedSegmentText);
-        }
+        // Emit metadata update so UI reflects the finalized state
+        this.emit('messageMetadataUpdate', sessionId, turn.assistantMessageId, finalMetadata);
       }
-    } else if (finalSegmentText) {
-      console.log(
-        '[Debug:handleChatFinal] no assistantMessageId, creating new message with finalSegmentText',
-      );
-      const reusedMessageId = this.reuseFinalAssistantMessage(sessionId, finalSegmentText);
+    } else if (previousSegmentText) {
+      // No assistantMessageId but we have segment text - create message
+      const reusedMessageId = this.reuseFinalAssistantMessage(sessionId, previousSegmentText);
       if (reusedMessageId) {
-        console.log('[Debug:handleChatFinal] reused message id:', reusedMessageId);
         turn.assistantMessageId = reusedMessageId;
       } else {
         const assistantMessage = this.store.addMessage(sessionId, {
           type: 'assistant',
-          content: finalSegmentText,
+          content: previousSegmentText,
           metadata: {
             isStreaming: false,
             isFinal: true,
@@ -3447,6 +3411,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.emit('message', sessionId, assistantMessage);
       }
     }
+
+    // Check if we need to sync with history (when no text was generated locally)
+    const finalText = this.resolveFinalTurnText(turn, payload.message);
+    turn.currentText = finalText;
 
     if (!finalText.trim()) {
       console.debug(
@@ -5195,6 +5163,56 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!normalizedRunId) return;
     const turn = this.activeTurns.get(sessionId);
     if (!turn) return;
+
+    // Check if this is a new runId (not already in knownRunIds)
+    // If so, reset text-related state to avoid false "text reset" detection
+    // that could cause incorrect message splitting
+    const isNewRunId = !turn.knownRunIds.has(normalizedRunId);
+
+    if (isNewRunId) {
+      // Finalize any pending streaming message before resetting state
+      // This ensures the old message is properly marked as final
+      // NOTE: Do NOT call flushPendingStoreUpdate here because it would write
+      // currentAssistantSegmentText (which may be truncated) to the store,
+      // overwriting the complete content. Instead, just mark metadata as final.
+      if (turn.assistantMessageId) {
+        this.clearPendingMessageUpdate(turn.assistantMessageId);
+        this.clearPendingStoreUpdate(turn.assistantMessageId);
+        const session = this.store.getSession(sessionId);
+        const existingMsg = session?.messages.find(m => m.id === turn.assistantMessageId);
+
+        if (existingMsg && existingMsg.metadata?.isStreaming) {
+          // Mark the old message as final without changing content
+          // This preserves whatever content was already in the store
+          this.store.updateMessage(sessionId, turn.assistantMessageId, {
+            metadata: { isStreaming: false, isFinal: true },
+          });
+          if (existingMsg.content) {
+            this.emit('messageUpdate', sessionId, turn.assistantMessageId, existingMsg.content);
+          }
+        }
+      }
+
+      // Finalize any pending thinking message
+      if (turn.currentThinkingMessageId) {
+        this.finalizeThinkingMessage(
+          sessionId,
+          turn.currentThinkingMessageId,
+          turn.currentThinkingContent,
+        );
+      }
+
+      // Reset text tracking state for new run
+      turn.agentAssistantTextLength = 0;
+      turn.committedAssistantText = '';
+      turn.currentAssistantSegmentText = '';
+      turn.currentText = '';
+      turn.currentThinkingMessageId = null;
+      turn.currentThinkingContent = '';
+      turn.thinkingStreamEnded = false;
+      turn.assistantMessageId = null;
+    }
+
     turn.knownRunIds.add(normalizedRunId);
     this.sessionIdByRunId.set(normalizedRunId, sessionId);
     this.flushPendingAgentEvents(sessionId, normalizedRunId);
