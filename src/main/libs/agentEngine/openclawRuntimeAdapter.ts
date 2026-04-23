@@ -397,6 +397,15 @@ const extractToolText = (payload: unknown): string => {
     }
   }
 
+  // Check for error field (common in error responses)
+  if (typeof payload.error === 'string' && payload.error.trim()) {
+    return payload.error;
+  }
+  // Also check for message field (common in error objects)
+  if (typeof payload.message === 'string' && payload.message.trim()) {
+    return payload.message;
+  }
+
   const content = payload.content;
   if (typeof content === 'string' && content.trim()) {
     return content;
@@ -3782,6 +3791,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // don't include the actual output — only the transcript does)
       this.patchToolResultsFromHistory(sessionId, history.messages);
 
+      // Patch tool_use args from history (gateway tool events don't include args)
+      this.patchToolUseArgsFromHistory(sessionId, history.messages);
+
       // For managed sessions, tool result patching is all we need.
       if (isManaged) {
         return;
@@ -4022,6 +4034,94 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  /**
+   * Extract tool_use args from chat.history messages and patch local
+   * tool_use messages that have empty or missing toolInput.
+   *
+   * The gateway WebSocket tool event (tool=start:edit) does not include args.
+   * The args live in the assistant message's toolCall content blocks in chat.history.
+   */
+  private patchToolUseArgsFromHistory(sessionId: string, historyMessages: unknown[]): void {
+    const toolArgsByCallId = new Map<string, { name: string; args: Record<string, unknown> }>();
+
+    // Scan history for toolCall content blocks in assistant messages
+    for (const raw of historyMessages) {
+      if (!isRecord(raw)) continue;
+      const message = raw as Record<string, unknown>;
+      const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
+      if (role !== 'assistant') continue;
+
+      // Content blocks with toolCall type
+      if (Array.isArray(message.content)) {
+        for (const block of message.content as Array<Record<string, unknown>>) {
+          if (!isRecord(block)) continue;
+          const blockType = typeof block.type === 'string' ? block.type.toLowerCase() : '';
+          if (blockType !== 'toolcall' && blockType !== 'tool_call' && blockType !== 'tooluse')
+            continue;
+          const toolCallId =
+            typeof block.toolCallId === 'string'
+              ? block.toolCallId
+              : typeof block.tool_call_id === 'string'
+                ? block.tool_call_id
+                : typeof block.id === 'string'
+                  ? block.id
+                  : '';
+          const name = typeof block.name === 'string' ? block.name : '';
+          const args = isRecord(block.arguments)
+            ? (block.arguments as Record<string, unknown>)
+            : isRecord(block.input)
+              ? (block.input as Record<string, unknown>)
+              : {};
+          if (name && toolCallId) {
+            toolArgsByCallId.set(toolCallId, { name, args });
+          }
+        }
+      }
+    }
+
+    if (toolArgsByCallId.size === 0) return;
+
+    // Patch local tool_use messages that have empty or missing toolInput
+    const session = this.store.getSession(sessionId);
+    if (!session) return;
+
+    let patchedCount = 0;
+    for (const msg of session.messages) {
+      if (msg.type !== 'tool_use') continue;
+      const toolUseId = msg.metadata?.toolUseId as string | undefined;
+      if (!toolUseId) continue;
+      const toolInfo = toolArgsByCallId.get(toolUseId);
+      if (!toolInfo) continue;
+
+      // Check if toolInput is empty or missing essential fields
+      const existingInput = msg.metadata?.toolInput as Record<string, unknown> | undefined;
+      const needsPatch = !existingInput || Object.keys(existingInput).length === 0;
+
+      if (needsPatch) {
+        this.store.updateMessage(sessionId, msg.id, {
+          metadata: {
+            ...msg.metadata,
+            toolName: toolInfo.name,
+            toolInput: toolInfo.args,
+          },
+        });
+        this.emit('messageMetadataUpdate', sessionId, msg.id, {
+          toolName: toolInfo.name,
+          toolInput: toolInfo.args,
+        });
+        patchedCount++;
+      }
+    }
+    if (patchedCount > 0) {
+      console.log(
+        '[patchToolUseArgs] patched',
+        patchedCount,
+        'tool_use messages for sessionId:',
+        sessionId,
+      );
+    }
+  }
+
   private async syncFinalAssistantWithHistory(sessionId: string, turn: ActiveTurn): Promise<void> {
     console.log('[Debug:syncFinal] start — sessionId:', sessionId, 'sessionKey:', turn.sessionKey);
     const client = this.gatewayClient;
@@ -4148,6 +4248,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // do not include the actual output text).
       if (historyMessages) {
         this.patchToolResultsFromHistory(sessionId, historyMessages);
+        // Patch tool_use args from history (gateway tool events don't include args)
+        this.patchToolUseArgsFromHistory(sessionId, historyMessages);
       }
 
       if (!historyMessages || !canonicalText) {
