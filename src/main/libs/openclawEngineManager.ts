@@ -409,18 +409,15 @@ export class OpenClawEngineManager extends EventEmitter {
       GUCCIAI_SKILLS_ROOT: userSkillsDir,
       // Gateway checks OPENCLAW_BUNDLED_SKILLS_DIR (not GUCCIAI_BUNDLED_SKILLS_DIR)
       OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
-      // NOTE: OPENCLAW_HOME and OPENCLAW_USER_HOME are both set to a non-existent path.
-      // compactSkillPaths() uses both resolveHomeDir() (checks OPENCLAW_HOME) and
-      // resolveUserHomeDir() (checks OPENCLAW_USER_HOME). Setting both prevents
-      // any skills paths from being compacted to ~/... format.
-      // - Bundled skills (E:\...\runtime\current\skills\...) are not affected since
-      //   they don't start with the fake home path.
-      // - Managed skills (C:\Users\xxx\AppData\...\skills\...) remain as absolute
-      //   paths, making them recognizable as a distinct skills location by the Agent.
-      OPENCLAW_HOME: 'C:\\__GUCCIAI_NO_HOME__',
+      // NOTE: OPENCLAW_HOME and OPENCLAW_USER_HOME are NOT set here.
+      // This allows them to use the default user home directory (C:\Users\xxx).
+      // Skills paths in AppData (C:\Users\xxx\AppData\...\skills) won't be compacted
+      // to ~/... format because AppData is NOT a subdirectory of the home directory
+      // (the path is C:\Users\xxx\AppData, not C:\Users\xxx\AppData).
+      // Bundled skills (E:\...\runtime\current\skills) also won't be compacted.
+      // This prevents creation of __GUCCIAI_NO_HOME__ folder on C: drive root.
       OPENCLAW_STATE_DIR: this.stateDir,
       OPENCLAW_CONFIG_PATH: this.configPath,
-      OPENCLAW_USER_HOME: 'C:\\__GUCCIAI_NO_HOME__',
       OPENCLAW_GATEWAY_TOKEN: token,
       OPENCLAW_GATEWAY_PORT: String(port),
       OPENCLAW_NO_RESPAWN: '1',
@@ -442,8 +439,7 @@ export class OpenClawEngineManager extends EventEmitter {
     console.log('[OpenClaw] Skills env vars passed to Gateway:', {
       OPENCLAW_STATE_DIR: this.stateDir,
       OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
-      OPENCLAW_HOME: env.OPENCLAW_HOME,
-      OPENCLAW_USER_HOME: env.OPENCLAW_USER_HOME,
+      // OPENCLAW_HOME and OPENCLAW_USER_HOME are inherited from process.env (default user home)
       userSkillsDir,
       runtimeRoot: runtime.root,
       isPackaged: app.isPackaged,
