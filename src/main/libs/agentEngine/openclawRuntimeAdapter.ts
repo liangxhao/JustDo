@@ -4004,18 +4004,26 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (toolResultsByCallId.size === 0) return;
 
-    // Patch local tool_result messages that have empty content
+    // Patch local tool_result messages with content from history.
+    // Gateway tool events often return only short meta info (e.g., "success")
+    // instead of actual tool output. Always try to patch with the full output
+    // from history, which contains the real stdout/stderr for Bash commands.
     const session = this.store.getSession(sessionId);
     if (!session) return;
 
     let patchedCount = 0;
     for (const msg of session.messages) {
       if (msg.type !== 'tool_result') continue;
-      if (msg.content?.trim()) continue;
       const toolUseId = msg.metadata?.toolUseId as string | undefined;
       if (!toolUseId) continue;
       const result = toolResultsByCallId.get(toolUseId);
       if (!result) continue;
+
+      // Only patch if history has meaningful content different from current.
+      // Skip if current content is identical to history (avoid redundant updates).
+      const currentContent = msg.content?.trim() ?? '';
+      const historyContent = result.text.trim();
+      if (currentContent === historyContent) continue;
 
       this.store.updateMessage(sessionId, msg.id, {
         content: result.text,

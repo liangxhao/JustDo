@@ -992,41 +992,55 @@ const ToolCallGroup: React.FC<{
       {isExpanded && (
         <div className="ml-4 mt-2">
           {isBashTool ? (
-            // Terminal-style display for Bash commands
-            <div className="rounded-lg overflow-hidden border border-border">
-              {/* Terminal header */}
-              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surfaceInset">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                <span className="ml-2 text-[10px] text-secondary font-medium">Terminal</span>
-              </div>
-              {/* Terminal content */}
-              <div className="bg-surface-inset px-3 py-3 max-h-72 overflow-y-auto font-mono text-xs">
-                {toolInputDisplay && (
-                  <div className="text-foreground">
-                    <span className="text-primary select-none">$ </span>
-                    <span className="whitespace-pre-wrap break-words">{toolInputDisplay}</span>
+            // Terminal-style display for Bash commands - separate input/output boxes
+            <div className="space-y-2">
+              {/* Command input box */}
+              {toolInputDisplay && (
+                <div className="rounded-lg overflow-hidden border border-border">
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surfaceInset">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                    <span className="ml-2 text-[10px] text-secondary font-medium">Command</span>
                   </div>
-                )}
-                {toolResult && (hasToolResultText || showNoDetailError) && (
-                  <div
-                    className={`mt-1.5 whitespace-pre-wrap break-words ${
-                      isToolError
-                        ? 'text-red-400'
-                        : hasToolResultText
-                          ? 'text-secondary'
-                          : 'text-muted italic'
-                    }`}
-                  >
-                    {displayToolResult}
+                  <div className="bg-surface-inset px-3 py-3 font-mono text-xs">
+                    <div className="text-foreground">
+                      <span className="text-primary select-none">$ </span>
+                      <span className="whitespace-pre-wrap break-words">{toolInputDisplay}</span>
+                    </div>
                   </div>
-                )}
-                {!toolResult && (
-                  <div className="text-muted mt-1.5 italic">
-                    {i18nService.t('coworkToolRunning')}
-                  </div>
-                )}
+                </div>
+              )}
+              {/* Result output box */}
+              <div className="rounded-lg overflow-hidden border border-border">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surfaceInset">
+                  <span className="text-[10px] text-secondary font-medium">Output</span>
+                  {toolResult && (isToolError ? (
+                    <span className="ml-auto text-[10px] text-red-500">Error</span>
+                  ) : (
+                    <span className="ml-auto text-[10px] text-green-500">Success</span>
+                  ))}
+                </div>
+                <div className="bg-surface-inset px-3 py-3 max-h-72 overflow-y-auto font-mono text-xs">
+                  {toolResult && (hasToolResultText || showNoDetailError) && (
+                    <div
+                      className={`whitespace-pre-wrap break-words ${
+                        isToolError
+                          ? 'text-red-400'
+                          : hasToolResultText
+                            ? 'text-secondary'
+                            : 'text-muted italic'
+                      }`}
+                    >
+                      {displayToolResult}
+                    </div>
+                  )}
+                  {!toolResult && (
+                    <div className="text-muted italic">
+                      {i18nService.t('coworkToolRunning')}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : isTodoWriteTool && todoItems ? (
@@ -1341,9 +1355,7 @@ const AssistantMessageItem: React.FC<{
             </div>
           )}
           {/* Inline canvas previews from MEDIA: paths */}
-          {previews.length > 0 && (
-            <InlineCanvasPreviews previews={previews} />
-          )}
+          {previews.length > 0 && <InlineCanvasPreviews previews={previews} />}
           {/* Markdown content with MEDIA: stripped */}
           {strippedText && (
             <MarkdownContent
