@@ -1,4 +1,5 @@
 import type { PermissionResult } from './libs/agentEngine/types';
+import type { CoworkMessage } from './coworkStore';
 import type { WebContents } from 'electron';
 import {
   app,
@@ -1231,6 +1232,94 @@ const bindCoworkRuntimeForwarder = (): void => {
       win.webContents.send('cowork:stream:error', { sessionId, error });
     });
   });
+
+  // Subagent streaming events
+  runtime.on('subagentMessage', (parentSessionId: string, agentId: string, message: unknown) => {
+    const safeMessage = sanitizeCoworkMessageForIpc(message as CoworkMessage);
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach(win => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:subagent:message', {
+          parentSessionId,
+          agentId,
+          message: safeMessage,
+        });
+      } catch (error) {
+        console.error('Failed to forward subagent message:', error);
+      }
+    });
+  });
+
+  runtime.on(
+    'subagentMessageUpdate',
+    (parentSessionId: string, agentId: string, messageId: string, content: string) => {
+      const safeContent = truncateIpcString(content, IPC_UPDATE_CONTENT_MAX_CHARS);
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach(win => {
+        if (win.isDestroyed()) return;
+        try {
+          win.webContents.send('cowork:subagent:messageUpdate', {
+            parentSessionId,
+            agentId,
+            messageId,
+            content: safeContent,
+          });
+        } catch (error) {
+          console.error('Failed to forward subagent message update:', error);
+        }
+      });
+    },
+  );
+
+  runtime.on(
+    'subagentThinkingUpdate',
+    (parentSessionId: string, agentId: string, messageId: string, thinkingDelta: string) => {
+      const safeDelta = truncateIpcString(thinkingDelta, IPC_UPDATE_CONTENT_MAX_CHARS);
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach(win => {
+        if (win.isDestroyed()) return;
+        try {
+          win.webContents.send('cowork:subagent:thinkingUpdate', {
+            parentSessionId,
+            agentId,
+            messageId,
+            thinkingDelta: safeDelta,
+          });
+        } catch (error) {
+          console.error('Failed to forward subagent thinking update:', error);
+        }
+      });
+    },
+  );
+
+  runtime.on(
+    'subagentToolResult',
+    (
+      parentSessionId: string,
+      agentId: string,
+      toolUseId: string,
+      result: string,
+      isError: boolean,
+    ) => {
+      const safeResult = truncateIpcString(result, IPC_UPDATE_CONTENT_MAX_CHARS);
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach(win => {
+        if (win.isDestroyed()) return;
+        try {
+          win.webContents.send('cowork:subagent:toolResult', {
+            parentSessionId,
+            agentId,
+            toolUseId,
+            result: safeResult,
+            isError,
+          });
+        } catch (error) {
+          console.error('Failed to forward subagent tool result:', error);
+        }
+      });
+    },
+  );
 
   coworkRuntimeForwarderBound = true;
 };

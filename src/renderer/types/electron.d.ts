@@ -30,12 +30,27 @@ interface CoworkSession {
   updatedAt: number;
 }
 
+interface CoworkMessageMetadata {
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
+  toolResult?: string;
+  toolUseId?: string | null;
+  error?: string;
+  isError?: boolean;
+  isStreaming?: boolean;
+  isFinal?: boolean;
+  skillIds?: string[];
+  [key: string]: unknown;
+}
+
 interface CoworkMessage {
   id: string;
   type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
   content: string;
   timestamp: number;
-  metadata?: Record<string, unknown>;
+  metadata?: CoworkMessageMetadata;
+  thinkingContent?: string;
+  modelName?: string;
 }
 
 interface CoworkSessionSummary {
@@ -589,6 +604,39 @@ interface IElectronAPI {
     ) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onSessionsChanged: (callback: () => void) => () => void;
+    // Subagent streaming events
+    onSubagentMessage: (
+      callback: (data: {
+        parentSessionId: string;
+        agentId: string;
+        message: CoworkMessage;
+      }) => void,
+    ) => () => void;
+    onSubagentMessageUpdate: (
+      callback: (data: {
+        parentSessionId: string;
+        agentId: string;
+        messageId: string;
+        content: string;
+      }) => void,
+    ) => () => void;
+    onSubagentThinkingUpdate: (
+      callback: (data: {
+        parentSessionId: string;
+        agentId: string;
+        messageId: string;
+        thinkingDelta: string;
+      }) => void,
+    ) => () => void;
+    onSubagentToolResult: (
+      callback: (data: {
+        parentSessionId: string;
+        agentId: string;
+        toolUseId: string;
+        result: string;
+        isError: boolean;
+      }) => void,
+    ) => () => void;
     getSubTaskStatus: (sessionId?: string) => Promise<{
       success: boolean;
       statuses: Record<string, 'running' | 'done'>;
@@ -600,7 +648,7 @@ interface IElectronAPI {
       sessionKey?: string;
     }) => Promise<{
       success: boolean;
-      messages?: Array<{ role: string; content: string }>;
+      messages?: CoworkMessage[];
       error?: string;
     }>;
   };

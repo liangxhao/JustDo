@@ -1015,11 +1015,12 @@ const ToolCallGroup: React.FC<{
               <div className="rounded-lg overflow-hidden border border-border">
                 <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surfaceInset">
                   <span className="text-[10px] text-secondary font-medium">Output</span>
-                  {toolResult && (isToolError ? (
-                    <span className="ml-auto text-[10px] text-red-500">Error</span>
-                  ) : (
-                    <span className="ml-auto text-[10px] text-green-500">Success</span>
-                  ))}
+                  {toolResult &&
+                    (isToolError ? (
+                      <span className="ml-auto text-[10px] text-red-500">Error</span>
+                    ) : (
+                      <span className="ml-auto text-[10px] text-green-500">Success</span>
+                    ))}
                 </div>
                 <div className="bg-surface-inset px-3 py-3 max-h-72 overflow-y-auto font-mono text-xs">
                   {toolResult && (hasToolResultText || showNoDetailError) && (
@@ -1036,9 +1037,7 @@ const ToolCallGroup: React.FC<{
                     </div>
                   )}
                   {!toolResult && (
-                    <div className="text-muted italic">
-                      {i18nService.t('coworkToolRunning')}
-                    </div>
+                    <div className="text-muted italic">{i18nService.t('coworkToolRunning')}</div>
                   )}
                 </div>
               </div>

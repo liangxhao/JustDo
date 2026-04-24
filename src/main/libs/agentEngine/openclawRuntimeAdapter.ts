@@ -87,6 +87,40 @@ type AgentEventPayload = {
   err?: boolean;
 };
 
+/**
+ * Convert simple role/content format to CoworkMessage format
+ */
+function convertToCoworkMessage(
+  msg: { role: string; content: string },
+  index: number,
+): CoworkMessage {
+  const msgType: CoworkMessage['type'] =
+    msg.role === 'assistant'
+      ? 'assistant'
+      : msg.role === 'user'
+        ? 'user'
+        : msg.role === 'tool_use'
+          ? 'tool_use'
+          : msg.role === 'tool_result'
+            ? 'tool_result'
+            : 'system';
+  return {
+    id: `subagent-msg-${index}-${Date.now()}`,
+    type: msgType,
+    content: msg.content,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Convert array of simple role/content messages to CoworkMessage[]
+ */
+function convertToCoworkMessages(
+  messages: Array<{ role: string; content: string }>,
+): CoworkMessage[] {
+  return messages.map((msg, idx) => convertToCoworkMessage(msg, idx));
+}
+
 type ExecApprovalRequestedPayload = {
   id?: string;
   request?: {
@@ -2105,6 +2139,345 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
       }
 
+      // 处理子 Agent 的 thinking/assistant/tool/user/item/command_output 事件（无 sessionId）
+      if (
+        sessionKey &&
+        sessionKey.includes(':subagent:') &&
+        (stream === 'thinking' ||
+          stream === 'assistant' ||
+          stream === 'tool' ||
+          stream === 'tools' ||
+          stream === 'user' ||
+          stream === 'item' ||
+          stream === 'command_output')
+      ) {
+        const mappedLabel = this.sessionKeyToLabel.get(sessionKey);
+        const storageKey = sessionKey || mappedLabel;
+        // Get the toolCallId for IPC emission (frontend expects toolCallId as agentId)
+        // First try direct mapping, then fallback to reverse lookup from parent session
+        let emitAgentId =
+          (storageKey ? this.sessionKeyToToolCallId.get(storageKey) : undefined) || '';
+        if (!emitAgentId && storageKey && this.orchestrationParentSessionId) {
+          // Fallback: find toolCallId from parent session's sessions_spawn results
+          emitAgentId = this.findToolCallIdByChildSessionKey(storageKey) || storageKey;
+        }
+        if (!emitAgentId) {
+          emitAgentId = storageKey || '';
+        }
+        if (storageKey && storageKey !== 'main-agent') {
+          console.log(
+            '[OpenClawRuntime] subagent event (no sessionId): capturing ' +
+              stream +
+              ' for storageKey=' +
+              storageKey +
+              ' emitAgentId=' +
+              emitAgentId +
+              ' data=' +
+              JSON.stringify(agentPayload.data).slice(0, 200),
+          );
+          // 初始化存储结构
+          if (!this.subagentMessages.has(storageKey)) {
+            this.subagentMessages.set(storageKey, []);
+          }
+          const msgs = this.subagentMessages.get(storageKey)!;
+          const subData = isRecord(agentPayload.data)
+            ? (agentPayload.data as Record<string, unknown>)
+            : null;
+          const eventText = typeof subData?.text === 'string' ? subData.text : '';
+
+          if (stream === 'user' && eventText) {
+            const msgId = `subagent-user-${Date.now()}-${msgs.length}`;
+            msgs.push({ role: 'user', content: eventText });
+            // Emit IPC event for streaming
+            if (this.orchestrationParentSessionId) {
+              this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                id: msgId,
+                type: 'user',
+                content: eventText,
+                timestamp: Date.now(),
+              });
+            }
+          } else if (stream === 'assistant' && eventText) {
+            // 找最后一个 assistant 消息或创建新的
+            const lastAssistant = msgs.filter(m => m.role === 'assistant').pop();
+            const msgId = lastAssistant
+              ? `subagent-assistant-${Date.now()}-${msgs.length - 1}`
+              : `subagent-assistant-${Date.now()}-${msgs.length}`;
+            if (lastAssistant) {
+              const prevContent = lastAssistant.content;
+              lastAssistant.content = eventText.startsWith(prevContent)
+                ? eventText
+                : prevContent + eventText;
+              // Emit update event
+              if (this.orchestrationParentSessionId) {
+                this.emit(
+                  'subagentMessageUpdate',
+                  this.orchestrationParentSessionId,
+                  emitAgentId,
+                  msgId,
+                  lastAssistant.content,
+                );
+              }
+            } else {
+              msgs.push({ role: 'assistant', content: eventText });
+              // Emit new message event
+              if (this.orchestrationParentSessionId) {
+                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                  id: msgId,
+                  type: 'assistant',
+                  content: eventText,
+                  timestamp: Date.now(),
+                });
+              }
+            }
+          } else if (stream === 'thinking') {
+            const thinkingDelta = typeof subData?.delta === 'string' ? subData.delta : '';
+            const thinkingText = typeof subData?.text === 'string' ? subData.text : '';
+            const msgId = `subagent-thinking-${Date.now()}`;
+            // 将 thinking 添加到最后一个 assistant 消息
+            const lastAssistant = msgs.filter(m => m.role === 'assistant').pop();
+            if (lastAssistant) {
+              lastAssistant.content = thinkingDelta || thinkingText;
+            } else {
+              msgs.push({ role: 'assistant', content: thinkingDelta || thinkingText });
+            }
+            // Emit thinking update event
+            if (this.orchestrationParentSessionId && (thinkingDelta || thinkingText)) {
+              this.emit(
+                'subagentThinkingUpdate',
+                this.orchestrationParentSessionId,
+                emitAgentId,
+                msgId,
+                thinkingDelta || thinkingText,
+              );
+            }
+          } else if (stream === 'tool' || stream === 'tools') {
+            const toolPhase = typeof subData?.phase === 'string' ? subData.phase : '';
+            const toolName = typeof subData?.name === 'string' ? subData.name : '';
+            const toolCallId = typeof subData?.toolCallId === 'string' ? subData.toolCallId : '';
+            if (toolPhase === 'start' && toolName) {
+              const msgId = `subagent-tool-${toolCallId || Date.now()}`;
+              const toolContent = `Using tool: ${toolName}\n\nInput: ${JSON.stringify(subData?.args || {}, null, 2)}`;
+              msgs.push({
+                role: 'tool_use',
+                content: toolContent,
+              });
+              // Emit tool_use message
+              if (this.orchestrationParentSessionId) {
+                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                  id: msgId,
+                  type: 'tool_use',
+                  content: toolContent,
+                  timestamp: Date.now(),
+                  metadata: {
+                    toolName,
+                    toolUseId: toolCallId,
+                    toolInput: subData?.args,
+                  },
+                });
+              }
+            } else if (toolPhase === 'result' && toolCallId) {
+              const resultText = typeof subData?.result === 'string' ? subData.result : '';
+              const isError = Boolean(subData?.isError);
+              msgs.push({ role: 'tool_result', content: resultText });
+              // Emit tool_result
+              if (this.orchestrationParentSessionId) {
+                this.emit(
+                  'subagentToolResult',
+                  this.orchestrationParentSessionId,
+                  emitAgentId,
+                  toolCallId,
+                  resultText,
+                  isError,
+                );
+              }
+            }
+          } else if (stream === 'item') {
+            // item stream 包含 tool 执行的详细信息
+            // 数据结构: { itemId, phase: 'start'|'update'|'end', kind: 'tool'|'command', title, status, name, meta (string), toolCallId }
+            const itemKind = typeof subData?.kind === 'string' ? subData.kind : '';
+            const itemPhase = typeof subData?.phase === 'string' ? subData.phase : '';
+            const itemId = typeof subData?.itemId === 'string' ? subData.itemId : '';
+            const itemName = typeof subData?.name === 'string' ? subData.name : '';
+            const itemStatus = typeof subData?.status === 'string' ? subData.status : '';
+            const itemTitle = typeof subData?.title === 'string' ? subData.title : '';
+            const itemToolCallId =
+              typeof subData?.toolCallId === 'string' ? subData.toolCallId : itemId;
+            // meta is a string in OpenClaw AgentItemEventData, parse it as JSON if possible
+            const metaRaw = typeof subData?.meta === 'string' ? subData.meta : '';
+            let itemMeta: Record<string, unknown> = {};
+            if (metaRaw) {
+              try {
+                itemMeta = JSON.parse(metaRaw) as Record<string, unknown>;
+              } catch {
+                // meta may not be JSON, use it as plain text
+              }
+            }
+            // Also check if meta is already an object (legacy/alternative format)
+            if (!Object.keys(itemMeta).length && isRecord(subData?.meta)) {
+              itemMeta = subData.meta as Record<string, unknown>;
+            }
+
+            console.log(
+              '[OpenClawRuntime] item event: kind=' +
+                itemKind +
+                ' phase=' +
+                itemPhase +
+                ' name=' +
+                itemName +
+                ' title=' +
+                itemTitle +
+                ' toolCallId=' +
+                itemToolCallId +
+                ' status=' +
+                itemStatus +
+                ' metaRaw=' +
+                metaRaw.slice(0, 100),
+            );
+
+            if (itemKind === 'tool') {
+              const effectiveToolCallId = itemToolCallId || itemId;
+              if (itemPhase === 'start') {
+                // 工具开始执行
+                const msgId = `subagent-tool-${effectiveToolCallId || Date.now()}`;
+                const toolInput = isRecord(itemMeta?.args)
+                  ? itemMeta.args
+                  : isRecord(itemMeta?.input)
+                    ? itemMeta.input
+                    : {};
+                const toolContent = `Using tool: ${itemName}\n${itemTitle}\n\nInput: ${JSON.stringify(toolInput, null, 2)}`;
+                msgs.push({
+                  role: 'tool_use',
+                  content: toolContent,
+                });
+                // Emit tool_use message
+                if (this.orchestrationParentSessionId) {
+                  this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                    id: msgId,
+                    type: 'tool_use',
+                    content: toolContent,
+                    timestamp: Date.now(),
+                    metadata: {
+                      toolName: itemName,
+                      toolUseId: effectiveToolCallId,
+                      toolInput,
+                      status: itemStatus,
+                    },
+                  });
+                }
+              } else if (itemPhase === 'end') {
+                // 工具执行结束
+                // 从 meta.result/output 获取结果，或使用 title/summary
+                const resultContent =
+                  typeof itemMeta?.result === 'string'
+                    ? itemMeta.result
+                    : typeof itemMeta?.output === 'string'
+                      ? itemMeta.output
+                      : typeof subData?.summary === 'string'
+                        ? subData.summary
+                        : itemTitle;
+                const isError =
+                  itemStatus === 'failed' || itemStatus === 'error' || Boolean(itemMeta?.is_error);
+                const resultText = isError ? `Error: ${resultContent}` : resultContent;
+                msgs.push({
+                  role: 'tool_result',
+                  content: resultText,
+                });
+                // Emit tool_result
+                if (this.orchestrationParentSessionId) {
+                  this.emit(
+                    'subagentToolResult',
+                    this.orchestrationParentSessionId,
+                    emitAgentId,
+                    effectiveToolCallId,
+                    resultContent,
+                    isError,
+                  );
+                }
+              }
+            }
+            // 兼容旧数据结构: type === 'tool_use'|'tool_result'
+            const itemType = typeof subData?.type === 'string' ? subData.type : '';
+            const toolUseId =
+              typeof subData?.tool_use_id === 'string' ? subData.tool_use_id : itemId;
+
+            if (itemType === 'tool_use' && itemName) {
+              const toolInput = isRecord(subData?.input) ? subData.input : {};
+              const toolContent = `Using tool: ${itemName}\n\nInput: ${JSON.stringify(toolInput, null, 2)}`;
+              msgs.push({
+                role: 'tool_use',
+                content: toolContent,
+              });
+              // Emit tool_use message
+              if (this.orchestrationParentSessionId) {
+                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                  id: `subagent-item-${itemId || Date.now()}`,
+                  type: 'tool_use',
+                  content: toolContent,
+                  timestamp: Date.now(),
+                  metadata: {
+                    toolName: itemName,
+                    toolUseId: itemId,
+                    toolInput,
+                  },
+                });
+              }
+            } else if (itemType === 'tool_result' && toolUseId) {
+              const resultContent = typeof subData?.content === 'string' ? subData.content : '';
+              const isError = Boolean(subData?.is_error);
+              const resultText = isError ? `Error: ${resultContent}` : resultContent;
+              msgs.push({
+                role: 'tool_result',
+                content: resultText,
+              });
+              // Emit tool_result
+              if (this.orchestrationParentSessionId) {
+                this.emit(
+                  'subagentToolResult',
+                  this.orchestrationParentSessionId,
+                  emitAgentId,
+                  toolUseId,
+                  resultContent,
+                  isError,
+                );
+              }
+            }
+          } else if (stream === 'command_output') {
+            // command_output 是工具执行的输出，追加到最后一个 tool_result
+            const outputText = typeof subData?.text === 'string' ? subData.text : '';
+            if (outputText) {
+              const lastToolResult = msgs.filter(m => m.role === 'tool_result').pop();
+              if (lastToolResult) {
+                lastToolResult.content = lastToolResult.content + '\n' + outputText;
+                // Emit update for tool_result content
+                if (this.orchestrationParentSessionId) {
+                  // Find the toolUseId for the last tool_result
+                  const lastToolUse = msgs.filter(m => m.role === 'tool_use').pop();
+                  const toolUseId =
+                    typeof lastToolUse?.content?.match(
+                      /tool[_-]?(?:use|call)?[id:]?\s*([a-f0-9-]+)/i,
+                    )?.[1] === 'string'
+                      ? lastToolUse.content.match(
+                          /tool[_-]?(?:use|call)?[id:]?\s*([a-f0-9-]+)/i,
+                        )?.[1]
+                      : '';
+                  if (toolUseId) {
+                    this.emit(
+                      'subagentToolResult',
+                      this.orchestrationParentSessionId,
+                      emitAgentId,
+                      toolUseId,
+                      lastToolResult.content,
+                      false,
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
       console.log(
         '[Debug:handleAgentEvent] no sessionId, dropping event. runId:',
         runId,
@@ -2181,9 +2554,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.lastAgentSeqByRunId.set(runId, seq);
     }
 
-    // 捕获子 Agent 事件 (stream 格式: 'assistant' | 'user' | 'tool' | 'tools')
+    // 捕获子 Agent 事件 (stream 格式: 'assistant' | 'user' | 'tool' | 'tools' | 'item' | 'command_output')
     // sessionKey 格式: agent:${agentId}:subagent:${uuid} 或 channel:main-agent
-    if (stream === 'assistant' || stream === 'user' || stream === 'tool' || stream === 'tools') {
+    if (
+      stream === 'assistant' ||
+      stream === 'user' ||
+      stream === 'tool' ||
+      stream === 'tools' ||
+      stream === 'item' ||
+      stream === 'command_output'
+    ) {
       // 从 sessionKey 中提取 agentId: agent:${agentId}:subagent:${uuid} -> ${agentId}
       const agentIdMatch = sessionKey?.match(/^agent:([^:]+):/);
       const extractedAgentId = agentIdMatch ? agentIdMatch[1] : null;
@@ -2191,7 +2571,49 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // 使用 sessionKey → label 映射找到正确的 label
       const mappedLabel = sessionKey ? this.sessionKeyToLabel.get(sessionKey) : null;
       // 优先使用映射的 label，否则使用提取的 agentId
-      const storageKey = mappedLabel || extractedAgentId;
+      const storageKey = mappedLabel || extractedAgentId || sessionKey;
+      // Get toolCallId for IPC emission (frontend expects toolCallId as agentId)
+      // First try direct mapping from sessionKey, then from storageKey, then fallback to reverse lookup
+      let emitAgentId =
+        (sessionKey ? this.sessionKeyToToolCallId.get(sessionKey) : undefined) ||
+        (storageKey ? this.sessionKeyToToolCallId.get(storageKey) : undefined) ||
+        '';
+      if (!emitAgentId && sessionKey && this.orchestrationParentSessionId) {
+        // Fallback: find toolCallId from parent session's sessions_spawn results
+        emitAgentId = this.findToolCallIdByChildSessionKey(sessionKey) || '';
+        console.log(
+          '[OpenClawRuntime] emitAgentId fallback lookup: sessionKey=' +
+            sessionKey +
+            ' found=' +
+            emitAgentId,
+        );
+      }
+      if (!emitAgentId && storageKey && this.orchestrationParentSessionId) {
+        emitAgentId = this.findToolCallIdByChildSessionKey(storageKey) || '';
+        console.log(
+          '[OpenClawRuntime] emitAgentId fallback lookup (storageKey): storageKey=' +
+            storageKey +
+            ' found=' +
+            emitAgentId,
+        );
+      }
+      if (!emitAgentId) {
+        emitAgentId = storageKey || '';
+        console.log(
+          '[OpenClawRuntime] emitAgentId final fallback: using storageKey=' + emitAgentId,
+        );
+      }
+
+      console.log(
+        '[OpenClawRuntime] emitAgentId result: sessionKey=' +
+          (sessionKey || '(none)') +
+          ' storageKey=' +
+          (storageKey || '(none)') +
+          ' emitAgentId=' +
+          emitAgentId +
+          ' sessionKeyToToolCallId=' +
+          JSON.stringify(Array.from(this.sessionKeyToToolCallId.entries()).slice(0, 5)),
+      );
 
       // 调试日志
       if (sessionKey && sessionKey.includes('subagent')) {
@@ -2204,6 +2626,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             mappedLabel +
             ' storageKey=' +
             storageKey +
+            ' emitAgentId=' +
+            emitAgentId +
             ' stream=' +
             stream,
         );
@@ -2228,11 +2652,39 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               eventText.startsWith(lastMsg.content)
             ) {
               lastMsg.content = eventText;
+              // Emit update event
+              if (this.orchestrationParentSessionId && emitAgentId) {
+                this.emit(
+                  'subagentMessageUpdate',
+                  this.orchestrationParentSessionId,
+                  emitAgentId,
+                  `subagent-${role}-${Date.now()}`,
+                  eventText,
+                );
+              }
             } else if (!lastMsg.content.startsWith(eventText)) {
               msgs.push({ role, content: eventText });
+              // Emit new message event
+              if (this.orchestrationParentSessionId && emitAgentId) {
+                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                  id: `subagent-${role}-${Date.now()}-${msgs.length}`,
+                  type: role,
+                  content: eventText,
+                  timestamp: Date.now(),
+                });
+              }
             }
           } else {
             msgs.push({ role, content: eventText });
+            // Emit new message event
+            if (this.orchestrationParentSessionId && emitAgentId) {
+              this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                id: `subagent-${role}-${Date.now()}-${msgs.length}`,
+                type: role,
+                content: eventText,
+                timestamp: Date.now(),
+              });
+            }
           }
         } else if (stream === 'tool' || stream === 'tools') {
           if (subData) {
@@ -2253,6 +2705,120 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 else if (filePath) toolSummary += `: ${filePath}`;
               }
               msgs.push({ role: 'tool', content: toolSummary });
+              // Emit tool_use message
+              if (this.orchestrationParentSessionId && emitAgentId) {
+                const toolCallId =
+                  typeof subData?.toolCallId === 'string' ? subData.toolCallId : '';
+                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                  id: `subagent-tool-${toolCallId || Date.now()}`,
+                  type: 'tool_use',
+                  content: toolSummary,
+                  timestamp: Date.now(),
+                  metadata: {
+                    toolName,
+                    toolUseId: toolCallId,
+                    toolInput: subData.args,
+                  },
+                });
+              }
+            }
+          }
+        } else if (stream === 'item') {
+          // item stream: tool execution details
+          // Data structure: { itemId, phase: 'start'|'update'|'end', kind: 'tool'|'command', title, status, name, meta (string), toolCallId }
+          if (subData) {
+            const itemKind = typeof subData.kind === 'string' ? subData.kind : '';
+            const itemPhase = typeof subData.phase === 'string' ? subData.phase : '';
+            const itemId = typeof subData.itemId === 'string' ? subData.itemId : '';
+            const itemName = typeof subData.name === 'string' ? subData.name : '';
+            const itemStatus = typeof subData.status === 'string' ? subData.status : '';
+            const itemTitle = typeof subData.title === 'string' ? subData.title : '';
+            const itemToolCallId =
+              typeof subData.toolCallId === 'string' ? subData.toolCallId : itemId;
+            // meta is a string in OpenClaw AgentItemEventData, parse it as JSON if possible
+            const metaRaw = typeof subData.meta === 'string' ? subData.meta : '';
+            let itemMeta: Record<string, unknown> = {};
+            if (metaRaw) {
+              try {
+                itemMeta = JSON.parse(metaRaw) as Record<string, unknown>;
+              } catch {
+                // meta may not be JSON, ignore
+              }
+            }
+            if (!Object.keys(itemMeta).length && isRecord(subData.meta)) {
+              itemMeta = subData.meta as Record<string, unknown>;
+            }
+
+            console.log(
+              '[OpenClawRuntime] subagent item event (with sessionId): kind=' +
+                itemKind +
+                ' phase=' +
+                itemPhase +
+                ' name=' +
+                itemName +
+                ' title=' +
+                itemTitle +
+                ' toolCallId=' +
+                itemToolCallId +
+                ' status=' +
+                itemStatus,
+            );
+
+            if (itemKind === 'tool') {
+              const effectiveToolCallId = itemToolCallId || itemId;
+              if (itemPhase === 'start') {
+                const msgId = `subagent-tool-${effectiveToolCallId || Date.now()}`;
+                const toolInput = isRecord(itemMeta?.args)
+                  ? itemMeta.args
+                  : isRecord(itemMeta?.input)
+                    ? itemMeta.input
+                    : {};
+                const toolContent = `Using tool: ${itemName}\n${itemTitle}\n\nInput: ${JSON.stringify(toolInput, null, 2)}`;
+                msgs.push({
+                  role: 'tool_use',
+                  content: toolContent,
+                });
+                if (this.orchestrationParentSessionId && emitAgentId) {
+                  this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                    id: msgId,
+                    type: 'tool_use',
+                    content: toolContent,
+                    timestamp: Date.now(),
+                    metadata: {
+                      toolName: itemName,
+                      toolUseId: effectiveToolCallId,
+                      toolInput,
+                      status: itemStatus,
+                    },
+                  });
+                }
+              } else if (itemPhase === 'end') {
+                const resultContent =
+                  typeof itemMeta?.result === 'string'
+                    ? itemMeta.result
+                    : typeof itemMeta?.output === 'string'
+                      ? itemMeta.output
+                      : typeof subData.summary === 'string'
+                        ? subData.summary
+                        : itemTitle;
+                const isError =
+                  itemStatus === 'failed' || itemStatus === 'error' || Boolean(itemMeta?.is_error);
+                const resultText = isError ? `Error: ${resultContent}` : resultContent;
+                msgs.push({
+                  role: 'tool_result',
+                  content: resultText,
+                });
+                if (this.orchestrationParentSessionId && emitAgentId) {
+                  this.emit(
+                    'subagentToolResult',
+                    this.orchestrationParentSessionId,
+                    emitAgentId,
+                    effectiveToolCallId,
+                    resultContent,
+                    isError,
+                  );
+                }
+              }
             }
           }
         }
@@ -2789,13 +3355,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             ' mappingKey=' +
             (mappingKey || '(none)'),
         );
+        // Save toolCallId → label mapping for later use
+        if (toolCallId && mappingKey) {
+          this.toolCallIdToLabel.set(toolCallId, mappingKey);
+        }
         // When childSessionKey is missing from gateway tool event, query sessions.list
         // to get child session info and establish mapping
         // Get parent sessionKey from the event or store
         const parentSessionKey = turn.sessionKey;
         if (mappingKey && parentSessionKey && this.gatewayClient) {
           // Async query - don't block the event processing
-          void this.querySubagentSessionKey(mappingKey, parentSessionKey);
+          void this.querySubagentSessionKey(mappingKey, parentSessionKey, toolCallId);
         }
       }
       // 清理保存的 args
@@ -3494,7 +4064,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
-    this.store.updateSession(sessionId, { status: 'completed' });
+    // Check if any subagents are still running - if so, keep session in 'running' status
+    const hasRunningSubagents = Array.from(this.subagentStatus.values()).some(
+      status => status === 'running',
+    );
+    const finalStatus = hasRunningSubagents ? 'running' : 'completed';
+    console.log(
+      '[OpenClawRuntime] handleChatFinal: sessionId=' +
+        sessionId +
+        ' hasRunningSubagents=' +
+        hasRunningSubagents +
+        ' finalStatus=' +
+        finalStatus,
+    );
+    this.store.updateSession(sessionId, { status: finalStatus });
     this.emit('complete', sessionId, payload.runId ?? turn.runId);
     this.cleanupSessionTurn(sessionId);
     this.resolveTurn(sessionId);
@@ -5415,13 +5998,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       '[OpenClawRuntime] getSubagentStatuses called: sessionId=' +
         (sessionId || '(none)') +
         ' orchestrationParentSessionId=' +
-        (this.orchestrationParentSessionId || '(none)'),
+        (this.orchestrationParentSessionId || '(none)') +
+        ' subagentStatus.size=' +
+        this.subagentStatus.size,
     );
 
     const statuses: Record<string, 'running' | 'done'> = {};
     const displayLabels: Record<string, string> = {};
+    const toolUseIdToLabel = new Map<string, string>();
 
-    // 从 CoworkStore 消息中提取子任务状态（使用 toolUseId 作为唯一 key）
+    // 从 CoworkStore 消息中提取子任务（使用 toolUseId 作为唯一 key）
     if (sessionId) {
       const session = this.store.getSession(sessionId);
       if (session?.messages) {
@@ -5455,34 +6041,61 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 display,
             );
             if (key) {
-              statuses[key] = 'running'; // Initially running, will check tool_result below
+              // Default to running, will override from memory status below
+              statuses[key] = 'running';
               displayLabels[key] = display;
+              if (label) {
+                toolUseIdToLabel.set(key, label);
+              }
             }
           }
         }
 
-        // Second pass: check for tool_result messages to determine completion
-        // A sessions_spawn is done when its tool_result exists
-        for (const msg of session.messages) {
-          if (msg.type === 'tool_result') {
-            const meta = msg.metadata;
-            if (!meta) continue;
-            const toolUseId = meta.toolUseId as string | undefined;
-            if (toolUseId && statuses[toolUseId] === 'running') {
-              statuses[toolUseId] = 'done';
+        // Override statuses from in-memory subagentStatus Map (real-time lifecycle events)
+        // This is the authoritative source - subagentStatus is updated by lifecycle 'start'/'end' events
+        for (const [toolUseId, label] of toolUseIdToLabel) {
+          const memoryStatus = this.subagentStatus.get(label);
+          if (memoryStatus) {
+            statuses[toolUseId] = memoryStatus;
+            console.log(
+              '[OpenClawRuntime] getSubagentStatuses: override from memory toolUseId=' +
+                toolUseId +
+                ' label=' +
+                label +
+                ' status=' +
+                memoryStatus,
+            );
+          }
+        }
+
+        // Also check toolCallIdToLabel mapping for any additional subagents
+        for (const [toolCallId, label] of this.toolCallIdToLabel) {
+          if (!statuses[toolCallId]) {
+            const memoryStatus = this.subagentStatus.get(label);
+            if (memoryStatus) {
+              statuses[toolCallId] = memoryStatus;
+              displayLabels[toolCallId] = label;
               console.log(
-                '[OpenClawRuntime] getSubagentStatuses: found tool_result for toolUseId=' +
-                  toolUseId +
-                  ' -> done',
+                '[OpenClawRuntime] getSubagentStatuses: found from toolCallIdToLabel toolCallId=' +
+                  toolCallId +
+                  ' label=' +
+                  label +
+                  ' status=' +
+                  memoryStatus,
               );
             }
           }
         }
 
-        // 会话完成则所有子任务完成（作为 fallback）
+        // Session completed -> all subagents done (fallback only if no memory status)
+        // Only apply this fallback when we don't have real-time status from memory
         if (session.status === 'completed') {
           for (const key of Object.keys(statuses)) {
-            statuses[key] = 'done';
+            // Only set to done if we don't have a memory status (which means lifecycle event never came)
+            const label = toolUseIdToLabel.get(key) || this.toolCallIdToLabel.get(key);
+            if (!label || !this.subagentStatus.has(label)) {
+              statuses[key] = 'done';
+            }
           }
         }
       }
@@ -5501,7 +6114,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Query sessions.list to find subagent sessionKey and establish mapping.
    * Called when gateway tool event doesn't contain childSessionKey directly.
    */
-  private async querySubagentSessionKey(label: string, parentSessionKey: string): Promise<void> {
+  private async querySubagentSessionKey(
+    label: string,
+    parentSessionKey: string,
+    toolCallId?: string,
+  ): Promise<void> {
     if (!this.gatewayClient) return;
 
     try {
@@ -5520,14 +6137,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         );
 
         if (matchingChild && matchingChild.key) {
+          const childSessionKey = matchingChild.key;
           console.log(
             '[OpenClawRuntime] querySubagentSessionKey: found mapping label=' +
               label +
               ' childSessionKey=' +
-              matchingChild.key,
+              childSessionKey +
+              ' toolCallId=' +
+              (toolCallId || '(none)'),
           );
-          this.labelToSessionKey.set(label, matchingChild.key);
-          this.sessionKeyToLabel.set(matchingChild.key, label);
+          this.labelToSessionKey.set(label, childSessionKey);
+          this.sessionKeyToLabel.set(childSessionKey, label);
+          // Also establish toolCallId mappings if toolCallId is provided
+          if (toolCallId) {
+            this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
+            this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
+            this.toolCallIdToLabel.set(toolCallId, label);
+          }
           // Set status to running since we found it
           this.subagentStatus.set(label, 'running');
         }
@@ -5538,13 +6164,46 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   /**
+   * Find toolCallId by childSessionKey from parent session's sessions_spawn results.
+   * Used when mapping isn't established yet (race condition between subagent events and spawn result).
+   */
+  private findToolCallIdByChildSessionKey(childSessionKey: string): string | null {
+    if (!this.orchestrationParentSessionId) return null;
+
+    const parentSession = this.store.getSession(this.orchestrationParentSessionId);
+    if (!parentSession?.messages) return null;
+
+    // Find sessions_spawn tool_result messages that contain this childSessionKey
+    for (const msg of parentSession.messages) {
+      if (msg.type === 'tool_result' && msg.metadata?.toolName === 'sessions_spawn') {
+        const toolUseId = msg.metadata?.toolUseId;
+        const result = msg.metadata?.toolResult;
+        if (
+          toolUseId &&
+          isRecord(result) &&
+          (result.childSessionKey === childSessionKey ||
+            result.sessionKey === childSessionKey ||
+            result.key === childSessionKey)
+        ) {
+          // Found matching result - establish mapping and return
+          this.toolCallIdToSessionKey.set(toolUseId, childSessionKey);
+          this.sessionKeyToToolCallId.set(childSessionKey, toolUseId);
+          return toolUseId;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * 获取子 Agent 消息历史
    */
   async getSubTaskHistory(
     parentSessionId: string,
     agentId: string,
     sessionKey?: string,
-  ): Promise<Array<{ role: string; content: string }>> {
+  ): Promise<CoworkMessage[]> {
     // 确保 gateway client 已准备好（重启后可能未初始化）
     try {
       await this.ensureGatewayClientReady();
@@ -5565,7 +6224,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           for (const entry of extractGatewayHistoryEntries(history.messages)) {
             extracted.push({ role: entry.role, content: entry.text });
           }
-          if (extracted.length > 0) return extracted;
+          if (extracted.length > 0) return convertToCoworkMessages(extracted);
         }
       } catch (err) {
         console.warn('[OpenClawRuntime] getSubTaskHistory: gateway query failed:', err);
@@ -5585,7 +6244,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           for (const entry of extractGatewayHistoryEntries(history.messages)) {
             extracted.push({ role: entry.role, content: entry.text });
           }
-          if (extracted.length > 0) return extracted;
+          if (extracted.length > 0) return convertToCoworkMessages(extracted);
         }
       } catch (err) {
         console.warn(
@@ -5608,7 +6267,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           for (const entry of extractGatewayHistoryEntries(history.messages)) {
             extracted.push({ role: entry.role, content: entry.text });
           }
-          if (extracted.length > 0) return extracted;
+          if (extracted.length > 0) return convertToCoworkMessages(extracted);
         }
       } catch (err) {
         console.warn('[OpenClawRuntime] getSubTaskHistory: cached sessionKey query failed:', err);
@@ -5646,7 +6305,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   for (const entry of extractGatewayHistoryEntries(history.messages)) {
                     extracted.push({ role: entry.role, content: entry.text });
                   }
-                  if (extracted.length > 0) return extracted;
+                  if (extracted.length > 0) return convertToCoworkMessages(extracted);
                 }
               } catch {
                 // Continue to next strategy
@@ -5681,7 +6340,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   for (const entry of extractGatewayHistoryEntries(history.messages)) {
                     extracted.push({ role: entry.role, content: entry.text });
                   }
-                  if (extracted.length > 0) return extracted;
+                  if (extracted.length > 0) return convertToCoworkMessages(extracted);
                 }
               }
             } catch {
@@ -5736,7 +6395,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               for (const entry of extractGatewayHistoryEntries(history.messages)) {
                 extracted.push({ role: entry.role, content: entry.text });
               }
-              if (extracted.length > 0) return extracted;
+              if (extracted.length > 0) return convertToCoworkMessages(extracted);
             }
           }
         }
@@ -5746,8 +6405,47 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     // Strategy 3: Check in-memory subagentMessages (fallback for messages captured during streaming)
-    const messages = this.subagentMessages.get(agentId);
-    return messages ?? [];
+    // First try direct lookup
+    const directMessages = this.subagentMessages.get(agentId);
+    if (directMessages && directMessages.length > 0) {
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: found in-memory messages for agentId=' + agentId,
+      );
+      return convertToCoworkMessages(directMessages);
+    }
+
+    // Then try via toolCallIdToSessionKey mapping
+    const sessionKeyFromToolCallId = this.toolCallIdToSessionKey.get(agentId);
+    if (sessionKeyFromToolCallId) {
+      const mappedMessages = this.subagentMessages.get(sessionKeyFromToolCallId);
+      if (mappedMessages && mappedMessages.length > 0) {
+        console.log(
+          '[OpenClawRuntime] getSubTaskHistory: found in-memory messages via mapping toolCallId=' +
+            agentId +
+            ' → sessionKey=' +
+            sessionKeyFromToolCallId,
+        );
+        return convertToCoworkMessages(mappedMessages);
+      }
+    }
+
+    // Then try via labelToSessionKey mapping
+    const sessionKeyFromLabel = this.labelToSessionKey.get(agentId);
+    if (sessionKeyFromLabel) {
+      const mappedMessages = this.subagentMessages.get(sessionKeyFromLabel);
+      if (mappedMessages && mappedMessages.length > 0) {
+        console.log(
+          '[OpenClawRuntime] getSubTaskHistory: found in-memory messages via mapping label=' +
+            agentId +
+            ' → sessionKey=' +
+            sessionKeyFromLabel,
+        );
+        return convertToCoworkMessages(mappedMessages);
+      }
+    }
+
+    console.log('[OpenClawRuntime] getSubTaskHistory: no messages found for agentId=' + agentId);
+    return [];
   }
 
   /**

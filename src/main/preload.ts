@@ -383,6 +383,79 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:sessions:changed', handler);
       return () => ipcRenderer.removeListener('cowork:sessions:changed', handler);
     },
+    // Subagent streaming event listeners
+    onSubagentMessage: (
+      callback: (data: { parentSessionId: string; agentId: string; message: any }) => void,
+    ) => {
+      const handler = (
+        _event: any,
+        data: { parentSessionId: string; agentId: string; message: any },
+      ) => callback(data);
+      ipcRenderer.on('cowork:subagent:message', handler);
+      return () => ipcRenderer.removeListener('cowork:subagent:message', handler);
+    },
+    onSubagentMessageUpdate: (
+      callback: (data: {
+        parentSessionId: string;
+        agentId: string;
+        messageId: string;
+        content: string;
+      }) => void,
+    ) => {
+      const handler = (
+        _event: any,
+        data: {
+          parentSessionId: string;
+          agentId: string;
+          messageId: string;
+          content: string;
+        },
+      ) => callback(data);
+      ipcRenderer.on('cowork:subagent:messageUpdate', handler);
+      return () => ipcRenderer.removeListener('cowork:subagent:messageUpdate', handler);
+    },
+    onSubagentThinkingUpdate: (
+      callback: (data: {
+        parentSessionId: string;
+        agentId: string;
+        messageId: string;
+        thinkingDelta: string;
+      }) => void,
+    ) => {
+      const handler = (
+        _event: any,
+        data: {
+          parentSessionId: string;
+          agentId: string;
+          messageId: string;
+          thinkingDelta: string;
+        },
+      ) => callback(data);
+      ipcRenderer.on('cowork:subagent:thinkingUpdate', handler);
+      return () => ipcRenderer.removeListener('cowork:subagent:thinkingUpdate', handler);
+    },
+    onSubagentToolResult: (
+      callback: (data: {
+        parentSessionId: string;
+        agentId: string;
+        toolUseId: string;
+        result: string;
+        isError: boolean;
+      }) => void,
+    ) => {
+      const handler = (
+        _event: any,
+        data: {
+          parentSessionId: string;
+          agentId: string;
+          toolUseId: string;
+          result: string;
+          isError: boolean;
+        },
+      ) => callback(data);
+      ipcRenderer.on('cowork:subagent:toolResult', handler);
+      return () => ipcRenderer.removeListener('cowork:subagent:toolResult', handler);
+    },
     getSubTaskStatus: (sessionId?: string) =>
       ipcRenderer.invoke('cowork:subTask:status', sessionId),
     getSubTaskHistory: (options: {
