@@ -34,6 +34,8 @@ interface CoworkState {
   config: CoworkConfig;
   /** Global toggle for thinking content visibility - true = expanded, false = collapsed */
   thinkingExpanded: boolean;
+  /** Global toggle for tool calls visibility - true = expanded (show), false = collapsed (hide) */
+  toolExpanded: boolean;
 }
 
 const initialState: CoworkState = {
@@ -61,6 +63,7 @@ const initialState: CoworkState = {
     skipMissedJobs: false,
   },
   thinkingExpanded: true, // Default to expanded (浅蓝色)
+  toolExpanded: true, // Default to expanded (浅蓝色)
 };
 
 const markSessionRead = (state: CoworkState, sessionId: string | null) => {
@@ -367,6 +370,10 @@ const coworkSlice = createSlice({
       state.thinkingExpanded = !state.thinkingExpanded;
     },
 
+    toggleToolExpanded(state) {
+      state.toolExpanded = !state.toolExpanded;
+    },
+
     // Session Group actions
     setGroups(state, action: PayloadAction<SessionGroup[]>) {
       state.groups = action.payload;
@@ -453,6 +460,7 @@ export const {
   updateConfig,
   clearCurrentSession,
   toggleThinkingExpanded,
+  toggleToolExpanded,
   // Session Group actions
   setGroups,
   addGroup,

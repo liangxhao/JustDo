@@ -26,12 +26,13 @@ import {
   selectLastMessageContent,
   selectCurrentMessagesLength,
   selectThinkingExpanded,
+  selectToolExpanded,
 } from '../../store/selectors/coworkSelectors';
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
-import { toggleThinkingExpanded } from '../../store/slices/coworkSlice';
+import { toggleThinkingExpanded, toggleToolExpanded } from '../../store/slices/coworkSlice';
 import type {
   CoworkMessage,
   CoworkMessageMetadata,
@@ -41,6 +42,7 @@ import type { Skill } from '../../types/skill';
 import { getCompactFolderName } from '../../utils/path';
 import Modal from '../common/Modal';
 import BrainIcon from '../icons/BrainIcon';
+import ToolIcon from '../icons/ToolIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
@@ -1204,7 +1206,8 @@ export const UserMessageItem: React.FC<{
               <UserIcon className="h-4 w-4 text-primary" />
             </div>
             <div className="w-full min-w-0 flex flex-col items-end">
-              <div className="relative max-w-[calc(100%-44px)] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
+              {/* User message bubble: w-fit for adaptive width, max-w for right boundary */}
+              <div className="relative w-fit max-w-[calc(100%-44px)] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
                 {/* Copy button — top-right inside bubble */}
                 <div className="absolute top-1.5 right-1.5">
                   <CopyButton content={message.content} visible={isHovered} />
@@ -1313,14 +1316,13 @@ const AssistantMessageItem: React.FC<{
   const hasThinking = message.thinkingContent && message.thinkingContent.length > 0;
 
   // Decide bubble width based on content:
-  // - Only images: w-fit (bubble width = image width, no extra space)
-  // - Has text: max-w (bubble can expand, images centered inside)
-  const hasText = strippedText && strippedText.trim().length > 0;
-  const bubbleWidthClass = hasText ? 'max-w-[calc(100%-44px)]' : 'w-fit';
+  // - w-fit: bubble width follows content (adaptive)
+  // - max-w-[calc(100%-44px)]: never exceeds the right boundary (aligned with avatar)
+  const bubbleWidthClass = 'w-fit max-w-[calc(100%-44px)]';
 
   return (
     <div
-      className="relative space-y-2"
+      className="relative"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -1329,7 +1331,9 @@ const AssistantMessageItem: React.FC<{
 
       {/* Normal content */}
       {(message.content || previews.length > 0) && (
-        <div className={`relative rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle ${bubbleWidthClass}`}>
+        <div
+          className={`relative rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle ${bubbleWidthClass}`}
+        >
           {/* Copy button — top-right inside bubble */}
           {showCopyButton && (
             <div className="absolute top-1.5 right-1.5">
@@ -1337,11 +1341,8 @@ const AssistantMessageItem: React.FC<{
             </div>
           )}
           {/* Inline canvas previews from MEDIA: paths */}
-          {/* Only center when bubble has max-w (i.e., has text content) */}
           {previews.length > 0 && (
-            <div className={hasText ? 'flex justify-center' : ''}>
-              <InlineCanvasPreviews previews={previews} />
-            </div>
+            <InlineCanvasPreviews previews={previews} />
           )}
           {/* Markdown content with MEDIA: stripped */}
           {strippedText && (
@@ -1568,6 +1569,7 @@ export const AssistantTurnBlock: React.FC<{
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
   sessionId?: string;
+  toolExpanded?: boolean;
 }> = ({
   turn,
   resolveLocalFilePath,
@@ -1575,8 +1577,15 @@ export const AssistantTurnBlock: React.FC<{
   showTypingIndicator = false,
   showCopyButtons = true,
   sessionId,
+  toolExpanded = true,
 }) => {
-  const visibleAssistantItems = getVisibleAssistantItems(turn.assistantItems);
+  const baseVisibleItems = getVisibleAssistantItems(turn.assistantItems);
+  // Filter out tool-related items when toolExpanded is false
+  const isToolRelatedItem = (item: AssistantTurnItem): boolean =>
+    item.type === 'tool_group' || item.type === 'tool_result';
+  const visibleAssistantItems = toolExpanded
+    ? baseVisibleItems
+    : baseVisibleItems.filter(item => !isToolRelatedItem(item));
 
   const renderSystemMessage = (message: CoworkMessage) => {
     const isError = !hasText(message.content) && typeof message.metadata?.error === 'string';
@@ -1665,7 +1674,8 @@ export const AssistantTurnBlock: React.FC<{
           <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
             <SparklesIcon className="h-4 w-4 text-purple-500" />
           </div>
-          <div className="min-w-0 px-0 py-3 space-y-3">
+          {/* Content area with fixed width to prevent layout shift */}
+          <div className="w-full min-w-0 px-0 py-3 space-y-3">
             {visibleAssistantItems.map((item, index) => {
               if (item.type === 'assistant') {
                 // Check if there are any tool_group items after this assistant message
@@ -1735,6 +1745,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const lastMessageContent = useSelector(selectLastMessageContent);
   const messagesLength = useSelector(selectCurrentMessagesLength);
   const thinkingExpanded = useSelector(selectThinkingExpanded);
+  const toolExpanded = useSelector(selectToolExpanded);
   const skills = useSelector((state: RootState) => state.skill.skills);
   const detailRootRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -2498,6 +2509,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             showTypingIndicator
             showCopyButtons={!isStreaming}
             sessionId={sessionId}
+            toolExpanded={toolExpanded}
           />
         </div>
       );
@@ -2547,6 +2559,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 showTypingIndicator={showTypingIndicator}
                 showCopyButtons={!isStreaming}
                 sessionId={sessionId}
+                toolExpanded={toolExpanded}
               />
             </div>
           )}
@@ -2635,6 +2648,23 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             }
           >
             <BrainIcon className="h-4 w-4" />
+          </button>
+
+          {/* Tool calls toggle button */}
+          <button
+            type="button"
+            onClick={() => dispatch(toggleToolExpanded())}
+            className={`p-1.5 rounded-lg transition-colors ${
+              toolExpanded
+                ? 'text-blue-400 hover:bg-blue-400/10'
+                : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+            }`}
+            aria-label={
+              toolExpanded ? i18nService.t('hideToolCalls') : i18nService.t('showToolCalls')
+            }
+            title={toolExpanded ? i18nService.t('hideToolCalls') : i18nService.t('showToolCalls')}
+          >
+            <ToolIcon className="h-4 w-4" />
           </button>
 
           {/* Menu button */}
