@@ -54,6 +54,8 @@ import WindowTitleBar from '../window/WindowTitleBar';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import MonacoDiffView, { extractDiffFromToolInput } from './MonacoDiffView';
 import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
+import InlineCanvasPreviews from './InlineCanvasPreviews';
+import { extractCanvasShortcodes } from '../../utils/canvasShortcode';
 
 interface CoworkSessionDetailProps {
   onContinue: (
@@ -1301,8 +1303,20 @@ const AssistantMessageItem: React.FC<{
   }, [sessionId, message.id]);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
 
+  // Extract canvas shortcodes for inline preview rendering
+  // Use default gateway port for [embed] URLs; MEDIA: paths don't need it
+  const { text: strippedText, previews } = useMemo(() => {
+    return extractCanvasShortcodes(displayContent, 42879);
+  }, [displayContent]);
+
   // Check if thinking content exists
   const hasThinking = message.thinkingContent && message.thinkingContent.length > 0;
+
+  // Decide bubble width based on content:
+  // - Only images: w-fit (bubble width = image width, no extra space)
+  // - Has text: max-w (bubble can expand, images centered inside)
+  const hasText = strippedText && strippedText.trim().length > 0;
+  const bubbleWidthClass = hasText ? 'max-w-[calc(100%-44px)]' : 'w-fit';
 
   return (
     <div
@@ -1314,20 +1328,30 @@ const AssistantMessageItem: React.FC<{
       {hasThinking && <ThinkingStreamBlock messageId={message.id} />}
 
       {/* Normal content */}
-      {message.content && (
-        <div className="relative max-w-[calc(100%-44px)] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
+      {(message.content || previews.length > 0) && (
+        <div className={`relative rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle ${bubbleWidthClass}`}>
           {/* Copy button — top-right inside bubble */}
           {showCopyButton && (
             <div className="absolute top-1.5 right-1.5">
               <CopyButton content={displayContent} visible={isHovered} />
             </div>
           )}
-          <MarkdownContent
-            content={displayContent}
-            className="max-w-none break-words"
-            resolveLocalFilePath={resolveLocalFilePath}
-            showRevealInFolderAction
-          />
+          {/* Inline canvas previews from MEDIA: paths */}
+          {/* Only center when bubble has max-w (i.e., has text content) */}
+          {previews.length > 0 && (
+            <div className={hasText ? 'flex justify-center' : ''}>
+              <InlineCanvasPreviews previews={previews} />
+            </div>
+          )}
+          {/* Markdown content with MEDIA: stripped */}
+          {strippedText && (
+            <MarkdownContent
+              content={strippedText}
+              className="max-w-none break-words"
+              resolveLocalFilePath={resolveLocalFilePath}
+              showRevealInFolderAction
+            />
+          )}
         </div>
       )}
       <div className="flex items-center gap-1.5 pl-4">

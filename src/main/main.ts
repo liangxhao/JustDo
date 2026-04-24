@@ -4519,9 +4519,14 @@ if (!gotTheLock) {
     console.log('[Main] initApp: default project dir ensured');
 
     // 注册 localfile:// 自定义协议，用于安全加载本地文件（图片等）
+    // Three slashes needed: localfile:///C:/Users/... gives pathname /C:/Users/...
     protocol.handle('localfile', request => {
       const url = new URL(request.url);
-      const filePath = decodeURIComponent(url.pathname);
+      let filePath = decodeURIComponent(url.pathname);
+      // Strip leading slash for Windows paths (e.g., /C:/Users/... -> C:/Users/...)
+      if (filePath.startsWith('/') && filePath.match(/^\/[A-Za-z]:\//)) {
+        filePath = filePath.slice(1);
+      }
       return net.fetch(`file://${filePath}`);
     });
 

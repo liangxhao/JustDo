@@ -818,9 +818,11 @@ const createMarkdownComponents = (
     </td>
   ),
   img: ({ node, className, src, alt, ...props }: any) => {
+    // Convert file:// to localfile:/// (three slashes needed for Windows paths)
+    // file:///C:/Users/... -> localfile:///C:/Users/... gives pathname /C:/Users/...
     const resolvedSrc =
       typeof src === 'string' && src.startsWith('file://')
-        ? src.replace(/^file:\/\//, 'localfile://')
+        ? src.replace(/^file:\/\//, 'localfile:///')
         : src;
     return (
       <img className="max-w-full h-auto rounded-xl my-4" src={resolvedSrc} alt={alt} {...props} />
