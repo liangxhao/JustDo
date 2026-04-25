@@ -7,6 +7,7 @@ import {
   buildDisplayItems,
   buildConversationTurns,
   hasRenderableAssistantContent,
+  ToolCallGroup,
 } from './CoworkSessionDetail';
 import { extractCanvasShortcodes } from '../../utils/canvasShortcode';
 
@@ -92,11 +93,26 @@ const SubagentAssistantMessage: React.FC<{ message: CoworkMessage }> = ({ messag
 
 /** Simple user message display */
 const SubagentUserMessage: React.FC<{ message: CoworkMessage }> = ({ message }) => {
+  // Check if this is a Subagent Context message (initial prompt sent to subagent)
+  const isSubagentContext = Boolean(message.metadata?.isSubagentContext);
+
   return (
     <div className="py-2 px-4">
       <div className="max-w-full">
         <div className="pl-4">
-          <div className="relative rounded-2xl px-4 py-2 bg-muted/30 text-foreground shadow-subtle">
+          {isSubagentContext && (
+            <div className="text-xs text-muted mb-1 flex items-center gap-1">
+              <span>📋</span>
+              <span className="font-medium">Subagent Context</span>
+            </div>
+          )}
+          <div
+            className={`relative rounded-2xl px-4 py-2 text-foreground shadow-subtle ${
+              isSubagentContext
+                ? 'bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/50'
+                : 'bg-muted/30'
+            }`}
+          >
             <MarkdownContent
               content={message.content}
               className="max-w-none break-words prose prose-sm dark:prose-invert"
@@ -131,14 +147,14 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   displayName,
   parentSessionId,
   onClose,
-  isRunning,
+  isRunning: initialIsRunning,
 }) => {
-  // Debug log for isRunning
+  // Debug log for props
   console.log(
     '[SubTaskDetailDrawer] props: agentId=' +
       agentId +
-      ' isRunning=' +
-      isRunning +
+      ' initialIsRunning=' +
+      initialIsRunning +
       ' parentSessionId=' +
       parentSessionId,
   );
@@ -149,6 +165,9 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   const [messages, setMessages] = useState<CoworkMessage[]>(cached ?? []);
   const [loading, setLoading] = useState(!cached || cached.length === 0);
   const [error, setError] = useState<string | null>(null);
+
+  // Track actual running state internally (may differ from initial prop)
+  const [isRunning, setIsRunning] = useState(initialIsRunning);
 
   // Width state for resizable drawer
   const [drawerWidth, setDrawerWidth] = useState(480);
@@ -297,6 +316,32 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     return () => {};
   }, [fetchHistory, isRunning]);
 
+  // Poll subagent status to detect completion
+  useEffect(() => {
+    if (!isRunning) return;
+
+    const checkStatus = async () => {
+      try {
+        const result = await coworkService.getSubTaskStatus(parentSessionId);
+        const currentStatus = result.statuses[agentId];
+        if (currentStatus === 'done') {
+          setIsRunning(false);
+          // Also refresh history once when done
+          fetchHistory();
+        }
+      } catch {
+        // Ignore status check errors
+      }
+    };
+
+    // Check status every 3 seconds
+    const statusTimer = setInterval(checkStatus, 3000);
+    // Also check immediately
+    checkStatus();
+
+    return () => clearInterval(statusTimer);
+  }, [isRunning, parentSessionId, agentId, fetchHistory]);
+
   // Escape key handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -433,31 +478,28 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
                 {msg.type === 'user' && <SubagentUserMessage message={msg} />}
                 {msg.type === 'assistant' && <SubagentAssistantMessage message={msg} />}
                 {msg.type === 'tool_use' && (
-                  <div className="px-4 py-2 bg-amber-50/60 dark:bg-amber-950/20 rounded-lg">
-                    <div className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">
-                      🔧 {msg.metadata?.toolName || 'Tool Call'}
-                    </div>
-                    <div className="text-xs text-muted">
-                      {msg.metadata?.toolInput
-                        ? JSON.stringify(msg.metadata.toolInput, null, 2)
-                        : msg.content}
-                    </div>
+                  <div className="px-4 py-1">
+                    <ToolCallGroup
+                      group={{ type: 'tool_group', toolUse: msg }}
+                      isLastInSequence={true}
+                    />
                   </div>
                 )}
-                {msg.type === 'tool_result' && (
-                  <div
-                    className={`px-4 py-2 rounded-lg ${msg.metadata?.isError ? 'bg-red-50/60 dark:bg-red-950/20' : 'bg-green-50/60 dark:bg-green-950/20'}`}
-                  >
-                    <div
-                      className={`text-xs font-medium mb-1 ${msg.metadata?.isError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}
-                    >
-                      {msg.metadata?.isError ? '❌ Error' : '✅ Result'}
+                {msg.type === 'tool_result' &&
+                  !messages.some(
+                    m => m.type === 'tool_use' && m.metadata?.toolUseId === msg.metadata?.toolUseId,
+                  ) && (
+                    <div className="px-4 py-1">
+                      <ToolCallGroup
+                        group={{
+                          type: 'tool_group',
+                          toolUse: { ...msg, type: 'tool_use' } as CoworkMessage,
+                          toolResult: msg,
+                        }}
+                        isLastInSequence={true}
+                      />
                     </div>
-                    <div className="text-xs text-muted whitespace-pre-wrap">
-                      {msg.content || msg.metadata?.toolResult || ''}
-                    </div>
-                  </div>
-                )}
+                  )}
               </div>
             ))}
 
@@ -488,57 +530,33 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
                         }
 
                         if (item.type === 'tool_group') {
-                          const { toolUse, toolResult } = item.group;
                           return (
-                            <div key={`tool-${toolUse.id}`} className="space-y-1">
-                              {/* Tool use */}
-                              <div className="px-3 py-2 bg-amber-50/60 dark:bg-amber-950/20 rounded-lg">
-                                <div className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">
-                                  🔧 {toolUse.metadata?.toolName || 'Tool'}
-                                </div>
-                                {toolUse.metadata?.toolInput && (
-                                  <div className="text-xs text-muted overflow-x-auto">
-                                    <pre className="whitespace-pre-wrap">
-                                      {JSON.stringify(toolUse.metadata.toolInput, null, 2)}
-                                    </pre>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Tool result */}
-                              {toolResult && (
-                                <div
-                                  className={`px-3 py-2 rounded-lg ${toolResult.metadata?.isError ? 'bg-red-50/60 dark:bg-red-950/20' : 'bg-green-50/60 dark:bg-green-950/20'}`}
-                                >
-                                  <div
-                                    className={`text-xs font-medium mb-1 ${toolResult.metadata?.isError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}
-                                  >
-                                    {toolResult.metadata?.isError ? '❌ Error' : '✅ Result'}
-                                  </div>
-                                  <div className="text-xs text-muted whitespace-pre-wrap overflow-x-auto max-h-48">
-                                    {toolResult.content || toolResult.metadata?.toolResult || ''}
-                                  </div>
-                                </div>
-                              )}
+                            <div key={`tool-${item.group.toolUse.id}`} className="px-2 py-1">
+                              <ToolCallGroup group={item.group} isLastInSequence={true} />
                             </div>
                           );
                         }
 
-                        // Orphan tool result
+                        // Orphan tool result - use toolName from tool_result's metadata if available
                         if (item.type === 'tool_result') {
                           return (
-                            <div
-                              key={item.message.id}
-                              className={`px-3 py-2 rounded-lg ${item.message.metadata?.isError ? 'bg-red-50/60 dark:bg-red-950/20' : 'bg-green-50/60 dark:bg-green-950/20'}`}
-                            >
-                              <div
-                                className={`text-xs font-medium mb-1 ${item.message.metadata?.isError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}
-                              >
-                                {item.message.metadata?.isError ? '❌ Error' : '✅ Result'}
-                              </div>
-                              <div className="text-xs text-muted whitespace-pre-wrap">
-                                {item.message.content || ''}
-                              </div>
+                            <div key={item.message.id} className="px-2 py-1">
+                              <ToolCallGroup
+                                group={{
+                                  type: 'tool_group',
+                                  toolUse: {
+                                    ...item.message,
+                                    type: 'tool_use',
+                                    metadata: {
+                                      toolName: item.message.metadata?.toolName ?? 'Unknown Tool',
+                                      toolUseId: item.message.metadata?.toolUseId,
+                                      toolInput: item.message.metadata?.toolInput ?? {},
+                                    },
+                                  } as CoworkMessage,
+                                  toolResult: item.message,
+                                }}
+                                isLastInSequence={true}
+                              />
                             </div>
                           );
                         }

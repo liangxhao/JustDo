@@ -476,6 +476,12 @@ const disableGpu =
 const reloadOnChildProcessGone =
   process.env.ELECTRON_RELOAD_ON_CHILD_PROCESS_GONE === '1' ||
   process.env.ELECTRON_RELOAD_ON_CHILD_PROCESS_GONE === 'true';
+
+// 开发环境启用远程调试端口，用于 MCP 连接 (chrome-devtools-mcp)
+if (isDev) {
+  app.commandLine.appendSwitch('remote-debugging-port', '9222');
+}
+
 const TITLEBAR_HEIGHT = 48;
 const TITLEBAR_COLORS = {
   dark: { color: '#0F1117', symbolColor: '#E4E5E9' },

@@ -34,7 +34,12 @@ interface GroupListProps {
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
   enrichedSubTasks: SubTaskInfo[];
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; parentSessionId: string } | null>
+    React.SetStateAction<{
+      agentId: string;
+      displayName?: string;
+      parentSessionId: string;
+      isRunning: boolean;
+    } | null>
   >;
 }
 

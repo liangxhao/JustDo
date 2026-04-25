@@ -52,7 +52,7 @@ interface SubAgentListProps {
   currentSessionId: string | null;
   enrichedSubTasks: SubTaskInfo[];
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string } | null>
+    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string; isRunning: boolean } | null>
   >;
 }
 
@@ -74,6 +74,7 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
               agentId: sub.agentId,
               displayName: sub.task,
               parentSessionId: sessionId,
+              isRunning: sub.status === 'running',
             })
           }
           className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
@@ -107,7 +108,7 @@ interface UngroupedDroppableZoneProps {
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string } | null>
+    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string; isRunning: boolean } | null>
   >;
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
 }
@@ -464,6 +465,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     agentId: string;
     displayName?: string;
     parentSessionId: string;
+    isRunning: boolean;
   } | null>(null);
 
   if (unGroupedSessions.length === 0 && sessions.length === 0) {
@@ -625,6 +627,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           agentId={activeSubTask.agentId}
           displayName={activeSubTask.displayName}
           parentSessionId={activeSubTask.parentSessionId}
+          isRunning={activeSubTask.isRunning}
           onClose={() => setActiveSubTask(null)}
         />
       )}
