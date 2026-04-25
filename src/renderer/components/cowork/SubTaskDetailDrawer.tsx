@@ -150,6 +150,11 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   const [loading, setLoading] = useState(!cached || cached.length === 0);
   const [error, setError] = useState<string | null>(null);
 
+  // Width state for resizable drawer
+  const [drawerWidth, setDrawerWidth] = useState(480);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeRef = useRef<HTMLDivElement>(null);
+
   const isFirstLoad = useRef(!cached || cached.length === 0);
   const contentRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(messages.length);
@@ -301,17 +306,62 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
+  // Resize handlers for draggable width adjustment
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      // Calculate new width from right edge (drawer is right-aligned)
+      const newWidth = window.innerWidth - e.clientX;
+      // Clamp width between min (320) and max (90% of viewport)
+      const minWidth = 320;
+      const maxWidth = window.innerWidth * 0.9;
+      setDrawerWidth(Math.max(minWidth, Math.min(maxWidth, newWidth)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+  }, []);
+
   // Build display items and conversation turns
   const displayItems = useMemo(() => buildDisplayItems(messages), [messages]);
   const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
 
   return (
-    <div className="fixed inset-0 z-50 flex" onClick={onClose}>
+    <div className="fixed inset-0 top-12 z-50 flex" onClick={onClose}>
       <div className="flex-1 bg-black/30" />
       <div
-        className="w-[480px] max-w-[90vw] h-full flex flex-col dark:bg-claude-darkBg bg-claude-bg shadow-2xl animate-slide-in-right"
+        className="relative flex flex-col dark:bg-claude-darkBg bg-claude-bg shadow-2xl animate-slide-in-right"
+        style={{ width: drawerWidth, maxWidth: '90vw' }}
         onClick={e => e.stopPropagation()}
       >
+        {/* Resize handle - draggable edge on the left */}
+        <div
+          ref={resizeRef}
+          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-claude-accent/30 active:bg-claude-accent/50 transition-colors z-10"
+          onMouseDown={startResize}
+        />
+
         <div className="flex items-center justify-between px-4 py-3 border-b dark:border-claude-darkBorder border-claude-border">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-sm">🔍</span>
