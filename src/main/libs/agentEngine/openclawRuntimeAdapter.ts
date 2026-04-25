@@ -6837,52 +6837,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             entries.map(e => ({ role: e.role, textLen: e.text?.length, hasMeta: !!e.metadata })),
           );
           if (entries.length > 0) {
-            const historyMessages = convertEntriesToCoworkMessages(entries);
+            let historyMessages = convertEntriesToCoworkMessages(entries);
             // Patch tool_use toolInput from assistant messages' toolCall blocks
             // Gateway tool events don't include args, but they exist in assistant content blocks
             this.patchToolInputFromHistoryRaw(historyMessages, history?.messages);
             // 如果有 Subagent Context 消息，将其添加到历史消息的最前面
             if (subagentContextMsg) {
-              // 避免重复：如果历史中已有相同内容的 user 消息，跳过
               const contextContent = subagentContextMsg.content;
-              const contextContentType = typeof contextContent;
-              const contextContentPreview =
-                typeof contextContent === 'string'
-                  ? contextContent.slice(0, 50)
-                  : JSON.stringify(contextContent).slice(0, 50);
-              console.log(
-                '[OpenClawRuntime] getSubTaskHistory Strategy 1: checking for duplicate Subagent Context',
-                'contextType=' + contextContentType,
-                'contextPreview=' + contextContentPreview,
-              );
-              // Debug: log all user messages in history
-              const userMsgs = historyMessages.filter(m => m.type === 'user');
-              console.log(
-                '[OpenClawRuntime] getSubTaskHistory Strategy 1: user messages in history:',
-                userMsgs.length,
-                userMsgs.map(m => ({
-                  contentPreview:
-                    typeof m.content === 'string'
-                      ? m.content.slice(0, 50)
-                      : JSON.stringify(m.content).slice(0, 50),
-                })),
-              );
-              const hasDuplicate = historyMessages.some(
-                m => m.type === 'user' && m.content === contextContent,
-              );
-              console.log(
-                '[OpenClawRuntime] getSubTaskHistory Strategy 1: hasDuplicate=' + hasDuplicate,
-              );
-              if (!hasDuplicate) {
-                const contextCoworkMsg: CoworkMessage = {
-                  id: `subagent-context-${Date.now()}`,
-                  type: 'user',
-                  content: contextContent,
-                  timestamp: Date.now() - 100,
-                  metadata: subagentContextMsg.metadata,
-                };
-                historyMessages.unshift(contextCoworkMsg);
+              // Skip the first user message from Gateway history (it's the duplicate Subagent Context without metadata)
+              const firstUserIndex = historyMessages.findIndex(m => m.type === 'user');
+              if (
+                firstUserIndex !== -1 &&
+                !historyMessages[firstUserIndex].metadata?.isSubagentContext
+              ) {
+                historyMessages.splice(firstUserIndex, 1);
               }
+              // Add the in-memory Subagent Context message with correct metadata (blue background + 📋 label)
+              const contextCoworkMsg: CoworkMessage = {
+                id: `subagent-context-${Date.now()}`,
+                type: 'user',
+                content: contextContent,
+                timestamp: Date.now() - 100,
+                metadata: subagentContextMsg.metadata,
+              };
+              historyMessages.unshift(contextCoworkMsg);
             }
             return historyMessages;
           }
@@ -6938,56 +6916,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             entries.slice(0, 3).map(e => ({ role: e.role, textLen: e.text?.length })),
           );
           if (entries.length > 0) {
-            const historyMessages = convertEntriesToCoworkMessages(entries);
+            let historyMessages = convertEntriesToCoworkMessages(entries);
             // Patch toolInput from assistant toolCall blocks
             this.patchToolInputFromHistoryRaw(historyMessages, history.messages);
 
             // Add Subagent Context message to the front if available
             if (subagentContextMsg) {
               const contextContent = subagentContextMsg.content;
-              const contextContentType = typeof contextContent;
-              const contextContentPreview =
-                typeof contextContent === 'string'
-                  ? contextContent.slice(0, 50)
-                  : JSON.stringify(contextContent).slice(0, 50);
-              console.log(
-                '[OpenClawRuntime] getSubTaskHistory Strategy 0: checking for duplicate Subagent Context',
-                'contextType=' + contextContentType,
-                'contextPreview=' + contextContentPreview,
-              );
-              // Debug: log all user messages in history
-              const userMsgs = historyMessages.filter(m => m.type === 'user');
-              console.log(
-                '[OpenClawRuntime] getSubTaskHistory Strategy 0: user messages in history:',
-                userMsgs.length,
-                userMsgs.map(m => ({
-                  contentPreview:
-                    typeof m.content === 'string'
-                      ? m.content.slice(0, 50)
-                      : JSON.stringify(m.content).slice(0, 50),
-                })),
-              );
-              const hasDuplicate = historyMessages.some(
-                m => m.type === 'user' && m.content === contextContent,
-              );
-              console.log(
-                '[OpenClawRuntime] getSubTaskHistory Strategy 0: hasDuplicate=' + hasDuplicate,
-              );
-              if (!hasDuplicate) {
-                const contextCoworkMsg: CoworkMessage = {
-                  id: `subagent-context-${Date.now()}`,
-                  type: 'user',
-                  content: contextContent,
-                  timestamp: Date.now() - 100,
-                  metadata: subagentContextMsg.metadata,
-                };
-                historyMessages.unshift(contextCoworkMsg);
-                console.log(
-                  '[OpenClawRuntime] getSubTaskHistory: added Subagent Context to history (total ' +
-                    historyMessages.length +
-                    ' msgs)',
-                );
+              // Skip the first user message from Gateway history (it's the duplicate Subagent Context without metadata)
+              const firstUserIndex = historyMessages.findIndex(m => m.type === 'user');
+              if (
+                firstUserIndex !== -1 &&
+                !historyMessages[firstUserIndex].metadata?.isSubagentContext
+              ) {
+                historyMessages.splice(firstUserIndex, 1);
               }
+              // Add the in-memory Subagent Context message with correct metadata (blue background + 📋 label)
+              const contextCoworkMsg: CoworkMessage = {
+                id: `subagent-context-${Date.now()}`,
+                type: 'user',
+                content: contextContent,
+                timestamp: Date.now() - 100,
+                metadata: subagentContextMsg.metadata,
+              };
+              historyMessages.unshift(contextCoworkMsg);
             }
             return historyMessages;
           }
