@@ -2105,48 +2105,56 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // 即使没有 sessionId，也处理子 Agent 的生命周期事件
       // 使用 sessionKeyToLabel 映射获取 agentId/label
       if (sessionKey && stream === 'lifecycle') {
-        // Try to get agentId from sessionKeyToLabel mapping
-        let agentIdOrLabel = this.sessionKeyToLabel.get(sessionKey);
+        // Try to get toolCallId from sessionKeyToToolCallId mapping first
+        // toolCallId is the unique identifier, label is only for display
+        let toolCallId = this.sessionKeyToToolCallId.get(sessionKey);
         // Also try with 'subagent:' prefix (gateway might use short format)
-        if (!agentIdOrLabel && sessionKey.startsWith('subagent:')) {
+        if (!toolCallId && sessionKey.startsWith('subagent:')) {
           const fullSessionKey = 'agent:main:' + sessionKey;
-          agentIdOrLabel = this.sessionKeyToLabel.get(fullSessionKey);
+          toolCallId = this.sessionKeyToToolCallId.get(fullSessionKey);
         }
-        // Also try reverse lookup: extract UUID from sessionKey and find matching label
-        if (!agentIdOrLabel) {
-          // sessionKey format: 'agent:main:subagent:UUID' or 'subagent:UUID'
-          const uuidMatch = sessionKey.match(/subagent:([a-f0-9-]+)/i);
-          if (uuidMatch) {
-            // Try to find a label whose childSessionKey contains this UUID
-            for (const [label, childKey] of this.labelToSessionKey) {
-              if (childKey && childKey.includes(uuidMatch[1])) {
-                agentIdOrLabel = label;
-                break;
-              }
-            }
-          }
+        // If still no mapping and we have pending toolCallIds, try to establish mapping
+        // This handles the case where sessions_spawn result didn't return childSessionKey
+        if (!toolCallId && this.pendingToolCallIds.size > 0) {
+          // For the first pending toolCallId, establish the mapping
+          // (assuming single subagent at a time for simplicity)
+          const pendingId = Array.from(this.pendingToolCallIds)[0];
+          console.log(
+            '[OpenClawRuntime] subagent lifecycle: establishing mapping from pending toolCallId=' +
+              pendingId +
+              ' to sessionKey=' +
+              sessionKey,
+          );
+          this.toolCallIdToSessionKey.set(pendingId, sessionKey);
+          this.sessionKeyToToolCallId.set(sessionKey, pendingId);
+          toolCallId = pendingId;
+          this.pendingToolCallIds.delete(pendingId);
         }
+        // Get display label for logging only (not used as key)
+        const displayLabel = this.toolCallIdToLabel.get(toolCallId || '') || '';
         // phase 在 data 字段中，不是顶层属性
         const data = agentPayload.data;
         const phase = isRecord(data) && typeof data.phase === 'string' ? data.phase.trim() : '';
-        if (agentIdOrLabel) {
+        if (toolCallId) {
           console.log(
-            '[OpenClawRuntime] subagent lifecycle (no sessionId): agentId=' +
-              agentIdOrLabel +
+            '[OpenClawRuntime] subagent lifecycle (no sessionId): toolCallId=' +
+              toolCallId +
+              ' label=' +
+              (displayLabel || '(none)') +
               ' phase=' +
               phase +
               ' sessionKey=' +
               sessionKey,
           );
           if (phase === 'start' || phase === 'running') {
-            this.subagentStatus.set(agentIdOrLabel, 'running');
+            this.subagentStatus.set(toolCallId, 'running');
           } else if (
             phase === 'end' ||
             phase === 'completed' ||
             phase === 'stopped' ||
             phase === 'error'
           ) {
-            this.subagentStatus.set(agentIdOrLabel, 'done');
+            this.subagentStatus.set(toolCallId, 'done');
           }
         } else {
           console.log(
@@ -2154,10 +2162,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               sessionKey +
               ' phase=' +
               phase +
-              ' labelToSessionKeys=' +
-              Array.from(this.labelToSessionKey.entries())
-                .map(([k, v]) => `${k}:${v}`)
-                .join(','),
+              ' pendingToolCallIds=' +
+              Array.from(this.pendingToolCallIds).join(','),
           );
         }
       }
@@ -3456,71 +3462,78 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       };
       this.toolCallArgs.set(toolCallId, savedInfo);
 
-      const agentId =
-        typeof args.agentId === 'string' && args.agentId
-          ? args.agentId
-          : typeof args.label === 'string' && args.label
-            ? args.label
+      // label is only for display, toolCallId is the unique identifier
+      const displayLabel =
+        typeof args.label === 'string' && args.label
+          ? args.label
+          : typeof args.agentId === 'string' && args.agentId
+            ? args.agentId
             : metaLabel || '';
-      if (agentId) {
-        this.subagentStatus.set(agentId, 'running');
-        // 建立 toolCallId ↔ label 双向映射（在 result 阶段之前）
-        this.toolCallIdToLabel.set(toolCallId, agentId);
-        this.labelToToolCallId.set(agentId, toolCallId);
-        // 标记此 toolCallId 正在等待 sessionKey
-        this.pendingToolCallIds.add(toolCallId);
-        // 预先初始化 subagentMessages，以 toolCallId 为 key
-        if (!this.subagentMessages.has(toolCallId)) {
-          this.subagentMessages.set(toolCallId, []);
-        }
-        // 添加初始化指令作为第一条 user 消息 ([Subagent Context])
-        // Use extracted promptText (from args.task, args.prompt or meta field)
+
+      // Always establish toolCallId mappings - toolCallId is the unique key
+      this.subagentStatus.set(toolCallId, 'running');
+      this.pendingToolCallIds.add(toolCallId);
+
+      // Store display label for later use (not used as key)
+      if (displayLabel) {
+        this.toolCallIdToLabel.set(toolCallId, displayLabel);
+      }
+
+      // 预先初始化 subagentMessages，以 toolCallId 为 key
+      if (!this.subagentMessages.has(toolCallId)) {
+        this.subagentMessages.set(toolCallId, []);
+      }
+      // 添加初始化指令作为第一条 user 消息 ([Subagent Context])
+      // Use extracted promptText (from args.task, args.prompt or meta field)
+      console.log(
+        '[OpenClawRuntime] sessions_spawn start: toolCallId=' +
+          toolCallId +
+          ' displayLabel=' +
+          (displayLabel || '(none)') +
+          ' promptText (len=' +
+          promptText.length +
+          '): ' +
+          (promptText.length > 100 ? promptText.slice(0, 100) + '...' : promptText || '(empty)'),
+      );
+      if (promptText) {
+        const msgs = this.subagentMessages.get(toolCallId)!;
+        const contextMsg = {
+          role: 'user',
+          content: `[Subagent Context]\n\n${promptText}`,
+          metadata: {
+            isSubagentContext: true,
+            label: displayLabel,
+          },
+        };
+        msgs.push(contextMsg);
         console.log(
-          '[OpenClawRuntime] sessions_spawn start: extracted promptText (len=' +
-            promptText.length +
-            '): ' +
-            (promptText.length > 100 ? promptText.slice(0, 100) + '...' : promptText || '(empty)'),
+          '[OpenClawRuntime] sessions_spawn start: added subagent context message to msgs (len=' +
+            msgs.length +
+            ')',
         );
-        if (promptText) {
-          const msgs = this.subagentMessages.get(toolCallId)!;
-          const contextMsg = {
-            role: 'user',
-            content: `[Subagent Context]\n\n${promptText}`,
-            metadata: {
-              isSubagentContext: true,
-              label: agentId,
-            },
-          };
-          msgs.push(contextMsg);
-          console.log(
-            '[OpenClawRuntime] sessions_spawn start: added subagent context message to msgs (len=' +
-              msgs.length +
-              ')',
-          );
-          // Emit IPC event for this context message
-          if (this.orchestrationParentSessionId) {
-            this.emit('subagentMessage', this.orchestrationParentSessionId, toolCallId, {
-              id: `subagent-context-${Date.now()}`,
-              type: 'user',
-              content: contextMsg.content,
-              timestamp: Date.now(),
-              metadata: contextMsg.metadata,
-            });
-          }
-          console.log(
-            '[OpenClawRuntime] sessions_spawn start: added subagent context message (len=' +
-              promptText.length +
-              ')',
-          );
+        // Emit IPC event for this context message
+        if (this.orchestrationParentSessionId) {
+          this.emit('subagentMessage', this.orchestrationParentSessionId, toolCallId, {
+            id: `subagent-context-${Date.now()}`,
+            type: 'user',
+            content: contextMsg.content,
+            timestamp: Date.now(),
+            metadata: contextMsg.metadata,
+          });
         }
         console.log(
-          '[OpenClawRuntime] sessions_spawn start: toolCallId=' +
-            toolCallId +
-            ' label=' +
-            agentId +
-            ' (established early mapping)',
+          '[OpenClawRuntime] sessions_spawn start: added subagent context message (len=' +
+            promptText.length +
+            ')',
         );
       }
+      console.log(
+        '[OpenClawRuntime] sessions_spawn start: toolCallId=' +
+          toolCallId +
+          ' displayLabel=' +
+          (displayLabel || '(none)') +
+          ' (established early mapping, pending sessionKey)',
+      );
     }
 
     // 当 sessions_spawn 返回结果时，建立 label → childSessionKey 映射
@@ -6534,38 +6547,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
 
         // Override statuses from in-memory subagentStatus Map (real-time lifecycle events)
-        // This is the authoritative source - subagentStatus is updated by lifecycle 'start'/'end' events
-        for (const [toolUseId, label] of toolUseIdToLabel) {
-          const memoryStatus = this.subagentStatus.get(label);
+        // subagentStatus uses toolCallId as key (label is only for display)
+        for (const toolCallId of toolUseIdToLabel.keys()) {
+          // Check subagentStatus with toolCallId first
+          const memoryStatus = this.subagentStatus.get(toolCallId);
           if (memoryStatus) {
-            statuses[toolUseId] = memoryStatus;
+            statuses[toolCallId] = memoryStatus;
             console.log(
-              '[OpenClawRuntime] getSubagentStatuses: override from memory toolUseId=' +
-                toolUseId +
-                ' label=' +
-                label +
+              '[OpenClawRuntime] getSubagentStatuses: override from memory toolCallId=' +
+                toolCallId +
                 ' status=' +
                 memoryStatus,
             );
           }
         }
 
-        // Also check toolCallIdToLabel mapping for any additional subagents
-        for (const [toolCallId, label] of this.toolCallIdToLabel) {
-          if (!statuses[toolCallId]) {
-            const memoryStatus = this.subagentStatus.get(label);
-            if (memoryStatus) {
-              statuses[toolCallId] = memoryStatus;
-              displayLabels[toolCallId] = label;
-              console.log(
-                '[OpenClawRuntime] getSubagentStatuses: found from toolCallIdToLabel toolCallId=' +
-                  toolCallId +
-                  ' label=' +
-                  label +
-                  ' status=' +
-                  memoryStatus,
-              );
-            }
+        // Also check pendingToolCallIds and direct toolCallId keys in subagentStatus
+        for (const [key, status] of this.subagentStatus) {
+          if (!statuses[key] && key.startsWith('call_')) {
+            statuses[key] = status;
+            const display = this.toolCallIdToLabel.get(key) || key;
+            displayLabels[key] = display;
+            console.log(
+              '[OpenClawRuntime] getSubagentStatuses: found from subagentStatus key=' +
+                key +
+                ' status=' +
+                status,
+            );
           }
         }
 
@@ -6573,9 +6581,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // Only apply this fallback when we don't have real-time status from memory
         if (session.status === 'completed') {
           for (const key of Object.keys(statuses)) {
-            // Only set to done if we don't have a memory status (which means lifecycle event never came)
-            const label = toolUseIdToLabel.get(key) || this.toolCallIdToLabel.get(key);
-            if (!label || !this.subagentStatus.has(label)) {
+            // Check subagentStatus directly with toolCallId
+            if (!this.subagentStatus.has(key)) {
               statuses[key] = 'done';
             }
           }
