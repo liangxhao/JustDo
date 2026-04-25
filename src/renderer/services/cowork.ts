@@ -198,8 +198,11 @@ class CoworkService {
     this.streamListenerCleanups.push(permissionDismissCleanup);
 
     // Complete listener
-    const completeCleanup = cowork.onStreamComplete(({ sessionId }) => {
-      store.dispatch(updateSessionStatus({ sessionId, status: 'completed' }));
+    const completeCleanup = cowork.onStreamComplete(({ sessionId, finalStatus }) => {
+      // Use finalStatus from backend if provided (includes subagent status check)
+      // If not provided, default to 'completed' (backward compatibility)
+      const status: 'idle' | 'running' | 'completed' | 'error' = finalStatus ?? 'completed';
+      store.dispatch(updateSessionStatus({ sessionId, status }));
     });
     this.streamListenerCleanups.push(completeCleanup);
 

@@ -178,7 +178,11 @@ export interface CoworkRuntimeEvents {
   ) => void;
   thinkingUpdate: (sessionId: string, messageId: string, thinkingDelta: string) => void;
   permissionRequest: (sessionId: string, request: PermissionRequest) => void;
-  complete: (sessionId: string, claudeSessionId: string | null) => void;
+  complete: (
+    sessionId: string,
+    claudeSessionId: string | null,
+    finalStatus?: 'idle' | 'running' | 'completed' | 'error',
+  ) => void;
   error: (sessionId: string, error: string) => void;
   sessionStopped: (sessionId: string) => void;
   // Subagent streaming events

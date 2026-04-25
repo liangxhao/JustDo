@@ -366,9 +366,9 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('cowork:stream:permissionDismiss', handler);
     },
     onStreamComplete: (
-      callback: (data: { sessionId: string; claudeSessionId: string | null }) => void,
+      callback: (data: { sessionId: string; claudeSessionId: string | null; finalStatus?: string }) => void,
     ) => {
-      const handler = (_event: any, data: { sessionId: string; claudeSessionId: string | null }) =>
+      const handler = (_event: any, data: { sessionId: string; claudeSessionId: string | null; finalStatus?: string }) =>
         callback(data);
       ipcRenderer.on('cowork:stream:complete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:complete', handler);

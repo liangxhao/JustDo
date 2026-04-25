@@ -600,7 +600,11 @@ interface IElectronAPI {
     ) => () => void;
     onStreamPermissionDismiss: (callback: (data: { requestId: string }) => void) => () => void;
     onStreamComplete: (
-      callback: (data: { sessionId: string; claudeSessionId: string | null }) => void,
+      callback: (data: {
+        sessionId: string;
+        claudeSessionId: string | null;
+        finalStatus?: 'idle' | 'running' | 'completed' | 'error';
+      }) => void,
     ) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onSessionsChanged: (callback: () => void) => () => void;

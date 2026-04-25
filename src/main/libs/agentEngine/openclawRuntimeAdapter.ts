@@ -4424,7 +4424,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         finalStatus,
     );
     this.store.updateSession(sessionId, { status: finalStatus });
-    this.emit('complete', sessionId, payload.runId ?? turn.runId);
+    this.emit('complete', sessionId, payload.runId ?? turn.runId, finalStatus);
     this.cleanupSessionTurn(sessionId);
     this.resolveTurn(sessionId);
   }
@@ -4441,7 +4441,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         modelName: turn.modelName,
       });
       this.emit('message', sessionId, hintMessage);
-      this.emit('complete', sessionId, turn.runId);
+      this.emit('complete', sessionId, turn.runId, 'idle');
     }
     const abortedSessionKey = turn.sessionKey;
     this.cleanupSessionTurn(sessionId);
@@ -6547,9 +6547,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
 
         // Override statuses from in-memory subagentStatus Map (real-time lifecycle events)
-        // subagentStatus uses toolCallId as key (label is only for display)
-        for (const toolCallId of toolUseIdToLabel.keys()) {
-          // Check subagentStatus with toolCallId first
+        // subagentStatus uses toolCallId as key
+        // Check ALL toolCallIds from messages, not just those with labels
+        for (const toolCallId of Object.keys(statuses)) {
           const memoryStatus = this.subagentStatus.get(toolCallId);
           if (memoryStatus) {
             statuses[toolCallId] = memoryStatus;
