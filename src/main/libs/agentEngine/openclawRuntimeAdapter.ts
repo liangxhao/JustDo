@@ -6656,7 +6656,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             this.toolCallIdToLabel.set(toolCallId, label);
           }
           // Set status to running since we found it
-          this.subagentStatus.set(label, 'running');
+          // IMPORTANT: Only use toolCallId as key, NOT label!
+          // label is for display only, toolCallId is the unique identifier
           if (toolCallId) {
             this.subagentStatus.set(toolCallId, 'running');
           }
