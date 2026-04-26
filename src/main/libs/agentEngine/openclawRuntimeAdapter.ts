@@ -676,9 +676,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly subagentStatus = new Map<string, 'running' | 'done'>();
   /** 编排父会话 ID，用于隔离会话 */
   private orchestrationParentSessionId: string | null = null;
-  /** label → childSessionKey 映射，用于关联子任务和消息 */
-  private readonly labelToSessionKey = new Map<string, string>();
-  /** childSessionKey → label 反向映射 */
+  /** childSessionKey → label 反向映射（用于显示） */
   private readonly sessionKeyToLabel = new Map<string, string>();
   /** toolCallId → childSessionKey 映射，用于通过 toolUseId 查找子会话 */
   private readonly toolCallIdToSessionKey = new Map<string, string>();
@@ -1153,7 +1151,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.subagentMessages.clear();
         // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
         // These are needed for other sessions' subagent status display
-        this.labelToSessionKey.clear();
         this.sessionKeyToLabel.clear();
         this.toolCallArgs.clear();
         // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
@@ -1269,11 +1266,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     //
     // Only clear transient data used for real-time message streaming:
     // - subagentMessages: only for streaming new messages
-    // - labelToSessionKey/sessionKeyToLabel: for routing messages to subagent sessions
+    // - sessionKeyToLabel: for routing messages to subagent sessions
     // - toolCallArgs: temporary args storage
     if (previousOrchestrationSessionId && previousOrchestrationSessionId !== sessionId) {
       this.subagentMessages.clear();
-      this.labelToSessionKey.clear();
       this.sessionKeyToLabel.clear();
       this.toolCallArgs.clear();
       // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
@@ -3665,7 +3661,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
         this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
         if (mappingKey) {
-          this.labelToSessionKey.set(mappingKey, childSessionKey);
           this.sessionKeyToLabel.set(childSessionKey, mappingKey);
           this.toolCallIdToLabel.set(toolCallId, mappingKey);
         }
@@ -3722,7 +3717,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             childSessionKey = foundSessionKey;
             // Re-run the mapping logic with found sessionKey
             if (mappingKey) {
-              this.labelToSessionKey.set(mappingKey, childSessionKey);
               this.sessionKeyToLabel.set(childSessionKey, mappingKey);
               this.toolCallIdToLabel.set(toolCallId, mappingKey);
             }
@@ -6776,7 +6770,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               ' toolCallId=' +
               (toolCallId || '(none)'),
           );
-          this.labelToSessionKey.set(label, childSessionKey);
           this.sessionKeyToLabel.set(childSessionKey, label);
           // Also establish toolCallId mappings if toolCallId is provided
           if (toolCallId) {
@@ -6928,19 +6921,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // 先获取 in-memory 的 Subagent Context 消息（用于显示启动指令）
     // 查找所有可能的 in-memory 消息来源
     const sessionKeyFromToolCallId = this.toolCallIdToSessionKey.get(agentId);
-    const sessionKeyFromLabel = this.labelToSessionKey.get(agentId);
 
     const directMessages = this.subagentMessages.get(agentId);
     const mappedMessages = sessionKeyFromToolCallId
       ? this.subagentMessages.get(sessionKeyFromToolCallId)
       : null;
-    const labelMappedMessages = sessionKeyFromLabel
-      ? this.subagentMessages.get(sessionKeyFromLabel)
-      : null;
 
     // 获取 Subagent Context 消息（第一条 user 消息，带有 isSubagentContext 标记）
     const subagentContextMsg = (() => {
-      const candidates = [directMessages, mappedMessages, labelMappedMessages];
+      const candidates = [directMessages, mappedMessages];
       for (const msgs of candidates) {
         if (msgs && msgs.length > 0) {
           const contextMsg = msgs.find(m => m.role === 'user' && m.metadata?.isSubagentContext);
@@ -7011,16 +7000,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // If we have Subagent Context, use Gateway history for complete messages
     const inMemoryMessages =
       (directMessages && directMessages.length > 0 ? directMessages : null) ||
-      (mappedMessages && mappedMessages.length > 0 ? mappedMessages : null) ||
-      (labelMappedMessages && labelMappedMessages.length > 0 ? labelMappedMessages : null);
+      (mappedMessages && mappedMessages.length > 0 ? mappedMessages : null);
 
     // Find sessionKey to query Gateway history
     const effectiveSessionKey =
       sessionKey ||
       sessionKeyFromToolCallId ||
-      sessionKeyFromLabel ||
-      this.toolCallIdToSessionKey.get(agentId) ||
-      this.labelToSessionKey.get(agentId);
+      this.toolCallIdToSessionKey.get(agentId);
 
     if (effectiveSessionKey && this.gatewayClient) {
       try {
@@ -7128,33 +7114,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           '[OpenClawRuntime] getSubTaskHistory: toolCallId sessionKey query failed:',
           err,
         );
-      }
-    }
-
-    // Strategy 1.6: Use in-memory labelToSessionKey mapping (for backward compatibility)
-    const cachedSessionKey = this.labelToSessionKey.get(agentId);
-    if (cachedSessionKey && this.gatewayClient) {
-      try {
-        const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
-          sessionKey: cachedSessionKey,
-          limit: 100,
-        });
-        console.log(
-          '[OpenClawRuntime] getSubTaskHistory strategy 1.6: sessionKey=' +
-            cachedSessionKey +
-            ' messagesLen=' +
-            (history?.messages?.length ?? 0),
-        );
-        if (Array.isArray(history?.messages) && history.messages.length > 0) {
-          const entries = extractGatewayHistoryEntries(history.messages);
-          if (entries.length > 0) {
-            const msgs = convertEntriesToCoworkMessages(entries);
-            this.patchToolInputFromHistoryRaw(msgs, history.messages);
-            return msgs;
-          }
-        }
-      } catch (err) {
-        console.warn('[OpenClawRuntime] getSubTaskHistory: cached sessionKey query failed:', err);
       }
     }
 
@@ -7276,11 +7235,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
         const childSessions = sessionsResult?.sessions;
         if (Array.isArray(childSessions) && childSessions.length > 0) {
-          // 建立所有子会话的 sessionKey → label 映射
+          // 建立所有子会话的 sessionKey → label 映射（用于显示）
           for (const cs of childSessions) {
             if (cs.key && cs.label) {
               this.sessionKeyToLabel.set(cs.key, cs.label);
-              this.labelToSessionKey.set(cs.label, cs.key);
             }
           }
 
