@@ -7,6 +7,7 @@ import { pathToFileURL } from 'url';
 import type { PermissionResult } from './types';
 import type {
   CoworkMessage,
+  CoworkMessageMetadata,
   CoworkSession,
   CoworkSessionStatus,
   CoworkExecutionMode,
@@ -2207,6 +2208,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             phase === 'error'
           ) {
             this.subagentStatus.set(toolCallId, 'done');
+            this.persistSubagentStatus(toolCallId, 'done');
           }
         } else {
           console.log(
@@ -3239,6 +3241,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               phase === 'error'
             ) {
               this.subagentStatus.set(toolCallId, 'done');
+              this.persistSubagentStatus(toolCallId, 'done');
             }
           }
         } else {
@@ -3253,6 +3256,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             phase === 'error'
           ) {
             this.subagentStatus.set(toolCallId, 'done');
+            this.persistSubagentStatus(toolCallId, 'done');
           }
         }
       }
@@ -6558,11 +6562,41 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   /**
+   * 持久化子 Agent 状态到 tool_use message 的 metadata
+   * 用于重启后恢复状态
+   */
+  private persistSubagentStatus(toolCallId: string, status: 'running' | 'done'): void {
+    if (!this.orchestrationParentSessionId) return;
+    const session = this.store.getSession(this.orchestrationParentSessionId);
+    if (!session?.messages) return;
+
+    // Find the tool_use message with matching toolUseId
+    for (const msg of session.messages) {
+      if (
+        msg.type === 'tool_use' &&
+        msg.metadata?.toolName === 'sessions_spawn' &&
+        msg.metadata?.toolUseId === toolCallId
+      ) {
+        // Update metadata with subagentStatus
+        const updatedMetadata = {
+          ...msg.metadata,
+          subagentStatus: status,
+        };
+        this.store.updateMessage(this.orchestrationParentSessionId, msg.id, {
+          metadata: updatedMetadata as CoworkMessageMetadata,
+        });
+        break;
+      }
+    }
+  }
+
+  /**
    * 获取子 Agent 状态
    * @param sessionId 可选，指定父会话 ID 进行过滤
    * 状态来源：
-   * 1. 内存中的 subagentStatus（实时状态）
-   * 2. CoworkStore 消息中的 sessions_spawn/sessions_resume/sessions_read（持久化状态）
+   * 1. tool_use message metadata 中的 subagentStatus（持久化状态，重启后恢复）
+   * 2. 内存中的 subagentStatus（实时状态，覆盖持久化状态）
+   * 3. CoworkStore 消息中的 sessions_spawn/sessions_resume/sessions_read（默认 running）
    */
   getSubagentStatuses(sessionId?: string): {
     statuses: Record<string, 'running' | 'done'>;
@@ -6615,8 +6649,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 display,
             );
             if (key) {
-              // Default to running, will override from memory status and tool_result below
-              statuses[key] = 'running';
+              // Check for persisted status in metadata (from previous session)
+              // This allows status recovery after restart
+              const persistedStatus = meta.subagentStatus as 'running' | 'done' | undefined;
+              if (persistedStatus === 'running' || persistedStatus === 'done') {
+                statuses[key] = persistedStatus;
+              } else {
+                // Default to running if no persisted status
+                statuses[key] = 'running';
+              }
               displayLabels[key] = display;
               if (label) {
                 toolUseIdToLabel.set(key, label);
