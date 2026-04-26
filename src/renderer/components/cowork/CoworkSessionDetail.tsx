@@ -902,6 +902,9 @@ const TodoWriteInputView: React.FC<{ items: ParsedTodoItem[] }> = ({ items }) =>
   );
 };
 
+// Module-level Map to persist tool expand state across re-renders
+const toolExpandStateMap = new Map<string, boolean>();
+
 export const ToolCallGroup: React.FC<{
   group: ToolGroupItem;
   isLastInSequence?: boolean;
@@ -927,7 +930,11 @@ export const ToolCallGroup: React.FC<{
   const showNoDetailError = isToolError && !hasToolResultText;
   const toolResultFallback = showNoDetailError ? i18nService.t('coworkToolNoErrorDetail') : '';
   const displayToolResult = hasToolResultText ? toolResultDisplay : toolResultFallback;
-  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Use toolUse.id as key for persisting expand state
+  const toolKey = toolUse.id;
+  const persistedExpanded = toolExpandStateMap.get(toolKey) ?? false;
+  const [isExpanded, setIsExpanded] = useState(persistedExpanded);
   const resultLineCount = hasToolResultText ? getToolResultLineCount(toolResultDisplay) : 0;
   const toolResultSummary =
     isCronTool && hasToolResultText
@@ -951,7 +958,11 @@ export const ToolCallGroup: React.FC<{
         <div className="absolute left-[3.5px] top-[14px] bottom-[-8px] w-px bg-border" />
       )}
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => {
+          const newExpanded = !isExpanded;
+          setIsExpanded(newExpanded);
+          toolExpandStateMap.set(toolKey, newExpanded);
+        }}
         className="w-full flex items-start gap-2 text-left group relative z-10"
       >
         <span

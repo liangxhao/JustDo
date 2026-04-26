@@ -1146,15 +1146,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (this.orchestrationParentSessionId === sessionId) {
       this.orchestrationParentSessionId = null;
       // 保留消息和状态一段时间供 UI 查询，延迟清理
+      // CRITICAL: Only clear transient data, keep subagentStatus and mappings
+      // for other sessions to display their subagent status correctly
       setTimeout(() => {
         this.subagentMessages.clear();
-        this.subagentStatus.clear();
+        // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
+        // These are needed for other sessions' subagent status display
         this.labelToSessionKey.clear();
         this.sessionKeyToLabel.clear();
-        this.toolCallIdToSessionKey.clear();
-        this.sessionKeyToToolCallId.clear();
-        this.toolCallIdToLabel.clear();
         this.toolCallArgs.clear();
+        // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
       }, 60000);
     }
 
@@ -1260,16 +1261,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const previousOrchestrationSessionId = this.orchestrationParentSessionId;
     this.orchestrationParentSessionId = sessionId;
 
-    // 只有当切换到不同的 session 时才清空状态
+    // CRITICAL: Do NOT clear subagentStatus, toolCallIdToSessionKey, toolCallIdToLabel
+    // These mappings are needed by getSubagentStatuses to filter subagents by session.
+    // Clearing them would cause other sessions' subagents to lose their 'done' status
+    // and default to 'running' when displayed.
+    //
+    // Only clear transient data used for real-time message streaming:
+    // - subagentMessages: only for streaming new messages
+    // - labelToSessionKey/sessionKeyToLabel: for routing messages to subagent sessions
+    // - toolCallArgs: temporary args storage
     if (previousOrchestrationSessionId && previousOrchestrationSessionId !== sessionId) {
       this.subagentMessages.clear();
-      this.subagentStatus.clear();
       this.labelToSessionKey.clear();
       this.sessionKeyToLabel.clear();
-      this.toolCallIdToSessionKey.clear();
-      this.sessionKeyToToolCallId.clear();
-      this.toolCallIdToLabel.clear();
       this.toolCallArgs.clear();
+      // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
+      // These are needed to correctly display subagent status for OTHER sessions
     }
 
     if (this.activeTurns.has(sessionId)) {
@@ -2113,22 +2120,67 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           const fullSessionKey = 'agent:main:' + sessionKey;
           toolCallId = this.sessionKeyToToolCallId.get(fullSessionKey);
         }
-        // If still no mapping and we have pending toolCallIds, try to establish mapping
-        // This handles the case where sessions_spawn result didn't return childSessionKey
-        if (!toolCallId && this.pendingToolCallIds.size > 0) {
-          // For the first pending toolCallId, establish the mapping
-          // (assuming single subagent at a time for simplicity)
-          const pendingId = Array.from(this.pendingToolCallIds)[0];
-          console.log(
-            '[OpenClawRuntime] subagent lifecycle: establishing mapping from pending toolCallId=' +
-              pendingId +
-              ' to sessionKey=' +
-              sessionKey,
-          );
-          this.toolCallIdToSessionKey.set(pendingId, sessionKey);
-          this.sessionKeyToToolCallId.set(sessionKey, pendingId);
-          toolCallId = pendingId;
-          this.pendingToolCallIds.delete(pendingId);
+        // If still no mapping, try to extract label from sessionKey and use labelToToolCallId
+        // sessionKey format: agent:main:subagent:<uuid> or subagent:<uuid>
+        // But sometimes sessionKey contains the label (e.g., agent:main:gucciai:<sessionId>:<label>)
+        if (!toolCallId) {
+          // Extract sessionId from sessionKey for cross-session validation
+          let extractedSessionId: string | null = null;
+          const sessionKeyParts = sessionKey.split(':');
+          const gucciaiIdx = sessionKeyParts.indexOf('gucciai');
+          if (gucciaiIdx !== -1 && gucciaiIdx + 1 < sessionKeyParts.length) {
+            extractedSessionId = sessionKeyParts[gucciaiIdx + 1];
+          }
+
+          // Try to match by label from sessionKeyToLabel reverse lookup
+          const labelFromKey = this.sessionKeyToLabel.get(sessionKey);
+          if (labelFromKey) {
+            const candidateToolCallId = this.labelToToolCallId.get(labelFromKey);
+            if (candidateToolCallId) {
+              // Verify this toolCallId belongs to the same session
+              const toolCallSessionKey = this.toolCallIdToSessionKey.get(candidateToolCallId);
+              if (
+                !extractedSessionId ||
+                !toolCallSessionKey ||
+                toolCallSessionKey.includes(extractedSessionId)
+              ) {
+                toolCallId = candidateToolCallId;
+              }
+            }
+          }
+        }
+        // Fallback: scan all labels for a match with sessionKey
+        // sessionKey might contain the label substring
+        // IMPORTANT: Must verify the matched toolCallId belongs to THIS sessionKey's session
+        // to prevent cross-session status corruption (different sessions may have same label)
+        if (!toolCallId) {
+          // Extract sessionId from sessionKey if possible
+          // Format: agent:main:gucciai:<sessionId>:... or agent:main:subagent:<uuid>
+          let extractedSessionId: string | null = null;
+          const sessionKeyParts = sessionKey.split(':');
+          // Check for 'gucciai' prefix format: agent:main:gucciai:<sessionId>:<label>
+          const gucciaiIdx = sessionKeyParts.indexOf('gucciai');
+          if (gucciaiIdx !== -1 && gucciaiIdx + 1 < sessionKeyParts.length) {
+            extractedSessionId = sessionKeyParts[gucciaiIdx + 1];
+          }
+
+          for (const [label, id] of this.labelToToolCallId) {
+            if (sessionKey.includes(label) || label.includes(sessionKey.split(':').pop() || '')) {
+              // Verify this toolCallId belongs to the same session to prevent cross-session corruption
+              const toolCallSessionKey = this.toolCallIdToSessionKey.get(id);
+              if (
+                !extractedSessionId ||
+                !toolCallSessionKey ||
+                toolCallSessionKey.includes(extractedSessionId)
+              ) {
+                toolCallId = id;
+                // Establish the sessionKey -> toolCallId mapping for future events
+                this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
+                this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
+                break;
+              }
+            }
+          }
         }
         // Get display label for logging only (not used as key)
         const displayLabel = this.toolCallIdToLabel.get(toolCallId || '') || '';
@@ -3160,28 +3212,49 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!isRecord(data)) return;
     const phase = typeof data.phase === 'string' ? data.phase.trim() : '';
 
-    // 调试：打印 lifecycle 事件
-    console.log(
-      '[OpenClawRuntime] lifecycle event: phase=' +
-        phase +
-        ' agentId=' +
-        (typeof data.agentId === 'string' ? data.agentId : '(none)') +
-        ' keys=' +
-        Object.keys(data).join(','),
-    );
-
     // 捕获子 Agent 生命周期事件
+    // IMPORTANT: agentId may be a label (not unique across sessions)
+    // We need to verify this agentId belongs to THIS session before updating status
     const agentId = typeof data.agentId === 'string' ? data.agentId : undefined;
     if (agentId && agentId !== 'main-agent') {
-      if (phase === 'start' || phase === 'running') {
-        this.subagentStatus.set(agentId, 'running');
-      } else if (
-        phase === 'end' ||
-        phase === 'completed' ||
-        phase === 'stopped' ||
-        phase === 'error'
-      ) {
-        this.subagentStatus.set(agentId, 'done');
+      // Try to find the toolCallId for this agentId/label
+      const toolCallId = this.labelToToolCallId.get(agentId);
+      if (toolCallId) {
+        // Verify this toolCallId belongs to the current session
+        const toolCallSessionKey = this.toolCallIdToSessionKey.get(toolCallId);
+        const currentSessionKey = `agent:main:gucciai:${sessionId}`;
+        if (toolCallSessionKey) {
+          // Check if toolCallId's sessionKey matches current session
+          if (
+            toolCallSessionKey.startsWith(currentSessionKey) ||
+            toolCallSessionKey.includes(sessionId)
+          ) {
+            // Update status using toolCallId as key (unique)
+            if (phase === 'start' || phase === 'running') {
+              this.subagentStatus.set(toolCallId, 'running');
+            } else if (
+              phase === 'end' ||
+              phase === 'completed' ||
+              phase === 'stopped' ||
+              phase === 'error'
+            ) {
+              this.subagentStatus.set(toolCallId, 'done');
+            }
+          }
+        } else {
+          // No sessionKey mapping yet - this is expected for newly spawned subagents
+          // Update status using toolCallId as key
+          if (phase === 'start' || phase === 'running') {
+            this.subagentStatus.set(toolCallId, 'running');
+          } else if (
+            phase === 'end' ||
+            phase === 'completed' ||
+            phase === 'stopped' ||
+            phase === 'error'
+          ) {
+            this.subagentStatus.set(toolCallId, 'done');
+          }
+        }
       }
     }
 
@@ -3477,6 +3550,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Store display label for later use (not used as key)
       if (displayLabel) {
         this.toolCallIdToLabel.set(toolCallId, displayLabel);
+        // Also establish label -> toolCallId mapping for lifecycle event handling
+        // Lifecycle events may arrive before sessions_spawn result returns childSessionKey
+        // So we need to be able to match by label
+        this.labelToToolCallId.set(displayLabel, toolCallId);
       }
 
       // 预先初始化 subagentMessages，以 toolCallId 为 key
@@ -3667,16 +3744,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // 当 sessions_resume 或 sessions_read 完成时，标记子任务完成
     if ((toolName === 'sessions_resume' || toolName === 'sessions_read') && phase === 'result') {
-      // Get agentId from args or meta field
+      // Get agentId from args or meta field - this is a label, not unique
       const args = isRecord(data.args) ? (data.args as Record<string, unknown>) : {};
-      const agentId =
+      const label =
         typeof args.agentId === 'string' && args.agentId
           ? args.agentId
           : typeof args.label === 'string' && args.label
             ? args.label
             : metaLabel || '';
-      if (agentId && this.subagentStatus.has(agentId)) {
-        this.subagentStatus.set(agentId, 'done');
+      // Find the toolCallId for this label
+      const toolCallId = label ? this.labelToToolCallId.get(label) : undefined;
+      if (toolCallId && this.subagentStatus.has(toolCallId)) {
+        this.subagentStatus.set(toolCallId, 'done');
       }
     }
 
@@ -6536,7 +6615,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 display,
             );
             if (key) {
-              // Default to running, will override from memory status below
+              // Default to running, will override from memory status and tool_result below
               statuses[key] = 'running';
               displayLabels[key] = display;
               if (label) {
@@ -6546,47 +6625,56 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           }
         }
 
+        // NOTE: We do NOT use tool_result to determine subagent completion status.
+        // tool_result for sessions_spawn only indicates that the spawn call succeeded
+        // (the subagent was successfully started), NOT that the subagent has finished running.
+        // The actual subagent completion is tracked via lifecycle events (agent.stopped/agent.completed)
+        // which update the subagentStatus Map.
+
         // Override statuses from in-memory subagentStatus Map (real-time lifecycle events)
-        // subagentStatus uses toolCallId as key
-        // Check ALL toolCallIds from messages, not just those with labels
+        // subagentStatus uses toolCallId as key and is the authoritative source for subagent status.
+        // Lifecycle events (agent.started -> 'running', agent.stopped/agent.completed -> 'done')
+        // are the only reliable indicators of actual subagent state.
         for (const toolCallId of Object.keys(statuses)) {
           const memoryStatus = this.subagentStatus.get(toolCallId);
           if (memoryStatus) {
+            // Memory status from lifecycle events is authoritative
             statuses[toolCallId] = memoryStatus;
-            console.log(
-              '[OpenClawRuntime] getSubagentStatuses: override from memory toolCallId=' +
-                toolCallId +
-                ' status=' +
-                memoryStatus,
-            );
           }
         }
 
         // Also check pendingToolCallIds and direct toolCallId keys in subagentStatus
+        // But only include those that belong to THIS session (prevent cross-session leakage)
+        const currentSessionKey = sessionId ? `agent:main:gucciai:${sessionId}` : null;
         for (const [key, status] of this.subagentStatus) {
           if (!statuses[key] && key.startsWith('call_')) {
+            // Check if this toolCallId belongs to the current session
+            const toolCallSessionKey = this.toolCallIdToSessionKey.get(key);
+            // MUST have toolCallSessionKey mapping to verify session ownership
+            // If no mapping exists, SKIP to prevent cross-session leakage
+            if (!toolCallSessionKey) {
+              continue;
+            }
+            if (currentSessionKey) {
+              // Only include if it belongs to the current session
+              if (
+                !toolCallSessionKey.startsWith(currentSessionKey) &&
+                !toolCallSessionKey.includes(sessionId)
+              ) {
+                continue;
+              }
+            }
             statuses[key] = status;
             const display = this.toolCallIdToLabel.get(key) || key;
             displayLabels[key] = display;
-            console.log(
-              '[OpenClawRuntime] getSubagentStatuses: found from subagentStatus key=' +
-                key +
-                ' status=' +
-                status,
-            );
           }
         }
 
-        // Session completed -> all subagents done (fallback only if no memory status)
-        // Only apply this fallback when we don't have real-time status from memory
-        if (session.status === 'completed') {
-          for (const key of Object.keys(statuses)) {
-            // Check subagentStatus directly with toolCallId
-            if (!this.subagentStatus.has(key)) {
-              statuses[key] = 'done';
-            }
-          }
-        }
+        // NOTE: We no longer use session.completed as a fallback to mark subagents as 'done'.
+        // The subagentStatus Map (real-time lifecycle events) and tool_result messages
+        // are the authoritative sources for subagent completion status.
+        // Removing this fallback prevents marking newly started subagents as 'done'
+        // when the session status might be stale or from a previous run.
       }
     }
 

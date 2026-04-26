@@ -52,7 +52,12 @@ interface SubAgentListProps {
   currentSessionId: string | null;
   enrichedSubTasks: SubTaskInfo[];
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string; isRunning: boolean } | null>
+    React.SetStateAction<{
+      agentId: string;
+      displayName?: string;
+      parentSessionId: string;
+      isRunning: boolean;
+    } | null>
   >;
 }
 
@@ -108,7 +113,12 @@ interface UngroupedDroppableZoneProps {
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string; isRunning: boolean } | null>
+    React.SetStateAction<{
+      agentId: string;
+      displayName?: string;
+      parentSessionId: string;
+      isRunning: boolean;
+    } | null>
   >;
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
 }
@@ -383,12 +393,11 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       }
     }
 
-    // Session completed -> all subtasks done (as fallback)
-    if (currentSession.status === 'completed') {
-      for (const [agentId, task] of tasks) {
-        tasks.set(agentId, { ...task, status: 'done' });
-      }
-    }
+    // NOTE: We no longer use session.completed as a fallback to mark all subtasks as 'done'.
+    // The backend's getSubagentStatuses (via backendStatuses) is the authoritative source
+    // for subagent status. When backendStatuses is available, it will override frontend
+    // extraction status in enrichedSubTasks. This prevents showing 'completed' for
+    // running subagents when the session status might be stale in Redux.
 
     return Array.from(tasks.values());
   }, [currentSession?.messages, currentSession?.status]);
@@ -441,6 +450,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
   // Merge message-extracted subtasks and backend-discovered statuses
   // Use backendDisplayLabels for display (key is toolUseId, unique)
+  // IMPORTANT: Only include subtasks that exist in the current session's messages
+  // to prevent cross-session subagent display
   const enrichedSubTasks = useMemo(() => {
     const merged = subTasks.map(t => {
       const backendStatus = backendStatuses[t.agentId];
@@ -449,14 +460,9 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       return { ...t, task: displayLabel, status: status as 'running' | 'done' };
     });
 
-    const knownAgentIds = new Set(subTasks.map(t => t.agentId));
-    for (const [agentId, status] of Object.entries(backendStatuses)) {
-      if (!knownAgentIds.has(agentId)) {
-        const display = backendDisplayLabels[agentId] || agentId;
-        merged.push({ agentId, task: display, status });
-      }
-    }
-
+    // Do NOT add backendStatuses items that don't exist in subTasks
+    // This prevents cross-session subagent display when backendStatuses
+    // might contain stale data from previous session polls
     return merged;
   }, [subTasks, backendStatuses, backendDisplayLabels]);
 
