@@ -2179,6 +2179,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             }
           }
         }
+        // Final fallback: if sessionKey is a subagent and we have pending toolCallIds,
+        // use the first pending toolCallId and establish the mapping.
+        // This handles cases where gateway strips result.childSessionKey from tool events.
+        if (!toolCallId && sessionKey.includes(':subagent:') && this.pendingToolCallIds.size > 0) {
+          // Take the first pending toolCallId (typically only one pending per lifecycle event)
+          const pendingId = Array.from(this.pendingToolCallIds)[0];
+          console.log(
+            '[OpenClawRuntime] subagent lifecycle fallback: assigning pending toolCallId=' +
+              pendingId +
+              ' to sessionKey=' +
+              sessionKey,
+          );
+          toolCallId = pendingId;
+          // Establish bidirectional mapping
+          this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
+          this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
+          // Remove from pending since mapping is now established
+          this.pendingToolCallIds.delete(toolCallId);
+        }
         // Get display label for logging only (not used as key)
         const displayLabel = this.toolCallIdToLabel.get(toolCallId || '') || '';
         // phase 在 data 字段中，不是顶层属性
