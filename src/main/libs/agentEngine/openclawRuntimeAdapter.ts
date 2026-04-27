@@ -2180,29 +2180,44 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           }
         }
         // Final fallback: if sessionKey is a subagent and we have pending toolCallIds,
-        // use the first pending toolCallId and establish the mapping.
+        // use the first UNMAPPED pending toolCallId and establish the mapping.
         // This handles cases where gateway strips result.childSessionKey from tool events.
         if (!toolCallId && sessionKey.includes(':subagent:') && this.pendingToolCallIds.size > 0) {
-          // Take the first pending toolCallId (typically only one pending per lifecycle event)
-          const pendingId = Array.from(this.pendingToolCallIds)[0];
-          console.log(
-            '[OpenClawRuntime] subagent lifecycle fallback: assigning pending toolCallId=' +
-              pendingId +
-              ' to sessionKey=' +
-              sessionKey,
+          // Filter to only pending toolCallIds that haven't been mapped yet
+          // This prevents race condition when multiple subagents start concurrently
+          const unmappedPendingIds = Array.from(this.pendingToolCallIds).filter(
+            id => !this.toolCallIdToSessionKey.has(id),
           );
-          toolCallId = pendingId;
-          // Establish bidirectional mapping
-          this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
-          this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
-          // Remove from pending since mapping is now established
-          this.pendingToolCallIds.delete(toolCallId);
+          if (unmappedPendingIds.length > 0) {
+            const pendingId = unmappedPendingIds[0];
+            console.log(
+              '[OpenClawRuntime] subagent lifecycle fallback: assigning pending toolCallId=' +
+                pendingId +
+                ' to sessionKey=' +
+                sessionKey +
+                ' (unmapped pending count: ' +
+                unmappedPendingIds.length +
+                ')',
+            );
+            toolCallId = pendingId;
+            // Establish bidirectional mapping
+            this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
+            this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
+            // Remove from pending since mapping is now established
+            this.pendingToolCallIds.delete(toolCallId);
+          } else {
+            console.log(
+              '[OpenClawRuntime] subagent lifecycle fallback: no unmapped pending toolCallIds available for sessionKey=' +
+                sessionKey +
+                ' (all ' +
+                this.pendingToolCallIds.size +
+                ' pending IDs are already mapped)',
+            );
+          }
         }
         // Get display label for logging only (not used as key)
         const displayLabel = this.toolCallIdToLabel.get(toolCallId || '') || '';
-        // phase 在 data 字段中，不是顶层属性
-        const data = agentPayload.data;
-        const phase = isRecord(data) && typeof data.phase === 'string' ? data.phase.trim() : '';
+        // phase already extracted above for logging
         if (toolCallId) {
           console.log(
             '[OpenClawRuntime] subagent lifecycle (no sessionId): toolCallId=' +
@@ -7023,9 +7038,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Find sessionKey to query Gateway history
     const effectiveSessionKey =
-      sessionKey ||
-      sessionKeyFromToolCallId ||
-      this.toolCallIdToSessionKey.get(agentId);
+      sessionKey || sessionKeyFromToolCallId || this.toolCallIdToSessionKey.get(agentId);
 
     if (effectiveSessionKey && this.gatewayClient) {
       try {
