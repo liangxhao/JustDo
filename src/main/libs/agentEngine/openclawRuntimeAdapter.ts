@@ -3248,7 +3248,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // IMPORTANT: agentId may be a label (not unique across sessions)
     // We need to verify this agentId belongs to THIS session before updating status
     const agentId = typeof data.agentId === 'string' ? data.agentId : undefined;
-    if (agentId && agentId !== 'main-agent') {
+    const isMainAgent = !agentId || agentId === 'main-agent';
+
+    if (!isMainAgent) {
       // Try to find the toolCallId for this agentId/label
       const toolCallId = this.labelToToolCallId.get(agentId);
       if (toolCallId) {
@@ -3292,7 +3294,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
-    if (phase === 'start') {
+    // Main agent lifecycle events control session status
+    // Only set status on lifecycle start to ensure running state when main agent begins.
+    // Do NOT set 'completed' on lifecycle end - let handleChatFinal decide the final status.
+    // This prevents status flicker (lifecycle end -> completed -> chat final -> running)
+    // when main agent has follow-up runs after processing subagent results.
+    if (isMainAgent && phase === 'start') {
       this.store.updateSession(sessionId, { status: 'running' });
     }
   }
@@ -4493,8 +4500,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // This happens with qwen3.5-plus under very large context (~380K tokens).
     // Signal: turn.currentText is empty AND there was at least one tool call in the run.
     // IMPORTANT: Skip this check if subagents are still running - the model is waiting for them.
-    const hasRunningSubagents = Array.from(this.subagentStatus.values()).some(
-      status => status === 'running',
+    // Only check subagents belonging to THIS session using toolCallIdToSessionKey mapping.
+    const currentSessionKeyPrefix = `agent:main:gucciai:${sessionId}`;
+    const hasRunningSubagents = Array.from(this.subagentStatus.entries()).some(
+      ([toolCallId, status]) => {
+        if (status !== 'running') return false;
+        const sessionKey = this.toolCallIdToSessionKey.get(toolCallId);
+        return sessionKey?.startsWith(currentSessionKeyPrefix) || sessionKey?.includes(sessionId);
+      },
     );
     const sessionAfterReconcile = this.store.getSession(sessionId);
     if (sessionAfterReconcile && !hasRunningSubagents) {
@@ -4523,14 +4536,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
-    // Check if any subagents are still running - if so, keep session in 'running' status
-    // (hasRunningSubagents already computed above for thinking-only check)
-    const finalStatus = hasRunningSubagents ? 'running' : 'completed';
+    // Check if any subagents are still running - if so, keep session in 'running' status.
+    // Also, if subagents were involved (even if all completed), keep 'running' status
+    // because the main agent is still processing results and may have follow-up runs.
+    // We use a delayed check to determine if the main agent truly finished:
+    // after cleanup, if no new turn is created within 500ms, mark as 'completed'.
+    const hadSubagentToolCalls =
+      sessionAfterReconcile?.messages.some(
+        m => m.type === 'tool_use' && m.metadata?.toolName === 'sessions_spawn',
+      ) ?? false;
+    const shouldKeepRunning = hasRunningSubagents || hadSubagentToolCalls;
+    const finalStatus = shouldKeepRunning ? 'running' : 'completed';
     console.log(
       '[OpenClawRuntime] handleChatFinal: sessionId=' +
         sessionId +
         ' hasRunningSubagents=' +
         hasRunningSubagents +
+        ' hadSubagentToolCalls=' +
+        hadSubagentToolCalls +
         ' finalStatus=' +
         finalStatus,
     );
@@ -4538,6 +4561,73 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.emit('complete', sessionId, payload.runId ?? turn.runId, finalStatus);
     this.cleanupSessionTurn(sessionId);
     this.resolveTurn(sessionId);
+
+    // Delayed check: if subagents were involved and no new turn was created within 500ms,
+    // the main agent has truly finished processing all results. Mark as 'completed'.
+    if (shouldKeepRunning) {
+      setTimeout(() => {
+        // Check session's current status - only update if still 'running'
+        // (avoid overwriting 'idle' from stopSession or 'error' from handleChatError)
+        const session = this.store.getSession(sessionId);
+        const currentStatus = session?.status;
+        if (currentStatus !== 'running') {
+          console.log(
+            '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
+              sessionId +
+              ' currentStatus=' +
+              currentStatus +
+              ' -> skip (not running)',
+          );
+          return;
+        }
+
+        // If a new turn was created (follow-up run started), keep running status.
+        // Lifecycle start event will already have set status to 'running'.
+        const hasNewTurn = this.activeTurns.has(sessionId);
+        if (hasNewTurn) {
+          console.log(
+            '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
+              sessionId +
+              ' hasNewTurn=' +
+              hasNewTurn +
+              ' -> skip (new turn started)',
+          );
+          return;
+        }
+
+        // Check if any subagents of THIS session are still running.
+        // Use toolCallIdToSessionKey to filter subagents belonging to this session.
+        const currentSessionKeyPrefix = `agent:main:gucciai:${sessionId}`;
+        const stillHasRunningSubagents = Array.from(this.subagentStatus.entries()).some(
+          ([toolCallId, status]) => {
+            if (status !== 'running') return false;
+            const sessionKey = this.toolCallIdToSessionKey.get(toolCallId);
+            // Check if this subagent belongs to the current session
+            return sessionKey?.startsWith(currentSessionKeyPrefix) || sessionKey?.includes(sessionId);
+          },
+        );
+        if (!stillHasRunningSubagents) {
+          console.log(
+            '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
+              sessionId +
+              ' hasNewTurn=' +
+              hasNewTurn +
+              ' stillHasRunningSubagents=' +
+              stillHasRunningSubagents +
+              ' -> completed',
+          );
+          this.store.updateSession(sessionId, { status: 'completed' });
+        } else {
+          console.log(
+            '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
+              sessionId +
+              ' stillHasRunningSubagents=' +
+              stillHasRunningSubagents +
+              ' -> keep running',
+          );
+        }
+      }, 500);
+    }
   }
 
   private handleChatAborted(sessionId: string, turn: ActiveTurn): void {
