@@ -558,6 +558,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkAddImage: '添加图片',
     coworkInputFileLabel: '输入文件',
     coworkAttachmentRemove: '移除',
+    // Context menu
+    contextMenuCut: '剪切',
+    contextMenuCopy: '复制',
+    contextMenuPaste: '粘贴',
+    contextMenuSelectAll: '全选',
     coworkShareSession: '分享',
     coworkExportImageInProgress: '正在导出图片...',
     coworkExportImageSuccess: '图片导出成功',
@@ -1666,6 +1671,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkAddImage: 'Add Image',
     coworkInputFileLabel: 'Input file',
     coworkAttachmentRemove: 'Remove',
+    // Context menu
+    contextMenuCut: 'Cut',
+    contextMenuCopy: 'Copy',
+    contextMenuPaste: 'Paste',
+    contextMenuSelectAll: 'Select All',
     coworkShareSession: 'Share',
     coworkExportImageInProgress: 'Exporting image...',
     coworkExportImageSuccess: 'Image exported successfully',

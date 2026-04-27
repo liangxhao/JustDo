@@ -1,6 +1,6 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { agentService } from '../../services/agent';
@@ -161,6 +161,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const folderButtonRef = useRef<HTMLButtonElement>(null);
     const dragDepthRef = useRef(0);
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+    const contextMenuRef = useRef<HTMLDivElement>(null);
 
     // 暴露方法给父组件
     React.useImperativeHandle(ref, () => ({
@@ -721,6 +723,156 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       [disabled, handleIncomingFiles, isStreaming],
     );
 
+    // Context menu handling for textarea
+    const handleContextMenu = useCallback((event: React.MouseEvent<HTMLTextAreaElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      // Calculate menu position
+      const x = event.clientX;
+      const y = event.clientY;
+
+      // Adjust position if near screen edges
+      const menuWidth = 140;
+      const menuHeight = 100;
+      const adjustedX = x + menuWidth > window.innerWidth ? x - menuWidth : x;
+      const adjustedY = y + menuHeight > window.innerHeight ? y - menuHeight : y;
+
+      setContextMenuPos({ x: adjustedX, y: adjustedY });
+    }, []);
+
+    const closeContextMenu = useCallback(() => {
+      setContextMenuPos(null);
+    }, []);
+
+    // Close context menu on click outside or scroll
+    useEffect(() => {
+      if (!contextMenuPos) return;
+
+      const handleClickOutside = (event: MouseEvent) => {
+        const target = event.target as Node;
+        if (!contextMenuRef.current?.contains(target)) {
+          closeContextMenu();
+        }
+      };
+
+      const handleScroll = () => {
+        closeContextMenu();
+      };
+
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+          closeContextMenu();
+        }
+      };
+
+      document.addEventListener('mousedown', handleClickOutside);
+      window.addEventListener('scroll', handleScroll, true);
+      window.addEventListener('resize', handleScroll);
+      document.addEventListener('keydown', handleKeyDown);
+
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        window.removeEventListener('scroll', handleScroll, true);
+        window.removeEventListener('resize', handleScroll);
+        document.removeEventListener('keydown', handleKeyDown);
+      };
+    }, [contextMenuPos, closeContextMenu]);
+
+    const handleContextMenuAction = useCallback(
+      async (action: 'cut' | 'copy' | 'paste' | 'selectAll') => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        closeContextMenu();
+        textarea.focus();
+
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const selectedText = value.substring(start, end);
+        const hasSelection = start !== end;
+
+        switch (action) {
+          case 'cut':
+            if (hasSelection) {
+              await navigator.clipboard.writeText(selectedText);
+              const newValue = value.substring(0, start) + value.substring(end);
+              setValue(newValue);
+              // Reset selection to start position
+              requestAnimationFrame(() => {
+                textarea.selectionStart = start;
+                textarea.selectionEnd = start;
+              });
+            }
+            break;
+
+          case 'copy':
+            if (hasSelection) {
+              await navigator.clipboard.writeText(selectedText);
+            }
+            break;
+
+          case 'paste':
+            try {
+              const clipText = await navigator.clipboard.readText();
+              if (clipText) {
+                const newValue = value.substring(0, start) + clipText + value.substring(end);
+                setValue(newValue);
+                requestAnimationFrame(() => {
+                  const newPos = start + clipText.length;
+                  textarea.selectionStart = newPos;
+                  textarea.selectionEnd = newPos;
+                });
+              }
+            } catch {
+              // Clipboard read permission denied or empty
+            }
+            break;
+
+          case 'selectAll':
+            requestAnimationFrame(() => {
+              textarea.selectionStart = 0;
+              textarea.selectionEnd = value.length;
+            });
+            break;
+        }
+      },
+      [value, setValue, closeContextMenu],
+    );
+
+    const contextMenuItems = useMemo(() => {
+      // Directly read textarea selection at render time when menu is open
+      const textarea = textareaRef.current;
+      const start = textarea?.selectionStart ?? 0;
+      const end = textarea?.selectionEnd ?? 0;
+      const hasSelection = contextMenuPos ? start !== end : false;
+
+      return [
+        {
+          action: 'cut' as const,
+          label: i18nService.t('contextMenuCut'),
+          disabled: !hasSelection || disabled,
+        },
+        {
+          action: 'copy' as const,
+          label: i18nService.t('contextMenuCopy'),
+          disabled: !hasSelection,
+        },
+        {
+          action: 'paste' as const,
+          label: i18nService.t('contextMenuPaste'),
+          disabled: disabled || isStreaming,
+        },
+        {
+          action: 'selectAll' as const,
+          label: i18nService.t('contextMenuSelectAll'),
+          disabled: value.length === 0,
+        },
+      ];
+    }, [disabled, isStreaming, value, contextMenuPos]);
+
     const canSubmit =
       !disabled && !agentModelIsInvalid && (!!value.trim() || attachments.length > 0);
     const enhancedContainerClass = isDraggingFiles
@@ -788,6 +940,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 onChange={e => setValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
+                onContextMenu={handleContextMenu}
                 placeholder={placeholder}
                 disabled={disabled}
                 rows={isLarge ? 2 : 1}
@@ -934,6 +1087,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 onChange={e => setValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
+                onContextMenu={handleContextMenu}
                 placeholder={placeholder}
                 disabled={disabled}
                 rows={1}
@@ -979,6 +1133,36 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             </>
           )}
         </div>
+
+        {/* Context menu for textarea */}
+        {contextMenuPos && (
+          <div
+            ref={contextMenuRef}
+            className="fixed z-50 min-w-[140px] rounded-lg border border-border bg-surface shadow-lg overflow-hidden py-1"
+            style={{ top: contextMenuPos.y, left: contextMenuPos.x }}
+            role="menu"
+          >
+            {contextMenuItems.map(item => (
+              <button
+                key={item.action}
+                type="button"
+                onClick={() => {
+                  if (!item.disabled) {
+                    handleContextMenuAction(item.action);
+                  }
+                }}
+                className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
+                  item.disabled
+                    ? 'text-gray-400 dark:text-gray-500'
+                    : 'text-foreground hover:bg-surface-raised'
+                }`}
+                role="menuitem"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   },
