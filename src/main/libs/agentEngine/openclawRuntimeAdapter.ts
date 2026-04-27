@@ -714,8 +714,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly toolCallArgs = new Map<string, Record<string, unknown>>();
   /** toolCallId → label 映射，用于显示名称 */
   private readonly toolCallIdToLabel = new Map<string, string>();
-  /** label → toolCallId 反向映射，用于在 sessions_spawn 开始时建立 */
-  private readonly labelToToolCallId = new Map<string, string>();
   /** 正在等待 sessionKey 的 toolCallId 集合 */
   private readonly pendingToolCallIds = new Set<string>();
 
@@ -2145,68 +2143,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           const fullSessionKey = 'agent:main:' + sessionKey;
           toolCallId = this.sessionKeyToToolCallId.get(fullSessionKey);
         }
-        // If still no mapping, try to extract label from sessionKey and use labelToToolCallId
-        // sessionKey format: agent:main:subagent:<uuid> or subagent:<uuid>
-        // But sometimes sessionKey contains the label (e.g., agent:main:gucciai:<sessionId>:<label>)
-        if (!toolCallId) {
-          // Extract sessionId from sessionKey for cross-session validation
-          let extractedSessionId: string | null = null;
-          const sessionKeyParts = sessionKey.split(':');
-          const gucciaiIdx = sessionKeyParts.indexOf('gucciai');
-          if (gucciaiIdx !== -1 && gucciaiIdx + 1 < sessionKeyParts.length) {
-            extractedSessionId = sessionKeyParts[gucciaiIdx + 1];
-          }
-
-          // Try to match by label from sessionKeyToLabel reverse lookup
-          const labelFromKey = this.sessionKeyToLabel.get(sessionKey);
-          if (labelFromKey) {
-            const candidateToolCallId = this.labelToToolCallId.get(labelFromKey);
-            if (candidateToolCallId) {
-              // Verify this toolCallId belongs to the same session
-              const toolCallSessionKey = this.toolCallIdToSessionKey.get(candidateToolCallId);
-              if (
-                !extractedSessionId ||
-                !toolCallSessionKey ||
-                toolCallSessionKey.includes(extractedSessionId)
-              ) {
-                toolCallId = candidateToolCallId;
-              }
-            }
-          }
-        }
-        // Fallback: scan all labels for a match with sessionKey
-        // sessionKey might contain the label substring
-        // IMPORTANT: Must verify the matched toolCallId belongs to THIS sessionKey's session
-        // to prevent cross-session status corruption (different sessions may have same label)
-        if (!toolCallId) {
-          // Extract sessionId from sessionKey if possible
-          // Format: agent:main:gucciai:<sessionId>:... or agent:main:subagent:<uuid>
-          let extractedSessionId: string | null = null;
-          const sessionKeyParts = sessionKey.split(':');
-          // Check for 'gucciai' prefix format: agent:main:gucciai:<sessionId>:<label>
-          const gucciaiIdx = sessionKeyParts.indexOf('gucciai');
-          if (gucciaiIdx !== -1 && gucciaiIdx + 1 < sessionKeyParts.length) {
-            extractedSessionId = sessionKeyParts[gucciaiIdx + 1];
-          }
-
-          for (const [label, id] of this.labelToToolCallId) {
-            if (sessionKey.includes(label) || label.includes(sessionKey.split(':').pop() || '')) {
-              // Verify this toolCallId belongs to the same session to prevent cross-session corruption
-              const toolCallSessionKey = this.toolCallIdToSessionKey.get(id);
-              if (
-                !extractedSessionId ||
-                !toolCallSessionKey ||
-                toolCallSessionKey.includes(extractedSessionId)
-              ) {
-                toolCallId = id;
-                // Establish the sessionKey -> toolCallId mapping for future events
-                this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
-                this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
-                break;
-              }
-            }
-          }
-        }
         // Final fallback: if sessionKey is a subagent and we have pending toolCallIds,
         // use the first UNMAPPED pending toolCallId and establish the mapping.
         // This handles cases where gateway strips result.childSessionKey from tool events.
@@ -2301,23 +2237,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         //           4. pending toolCallIds check (for events before sessionKey mapping established)
         let emitAgentId =
           (storageKey ? this.sessionKeyToToolCallId.get(storageKey) : undefined) || '';
-        // If no direct mapping, try label → toolCallId
-        if (!emitAgentId && mappedLabel) {
-          emitAgentId = this.labelToToolCallId.get(mappedLabel) || '';
-        }
-        // If still no mapping, try reverse lookup
+        // If no direct mapping, try reverse lookup
         if (!emitAgentId && storageKey && this.orchestrationParentSessionId) {
           emitAgentId = this.findToolCallIdByChildSessionKey(storageKey) || '';
-        }
-        // If still no mapping, check if any pending toolCallId has this label
-        if (!emitAgentId && mappedLabel) {
-          for (const pendingId of this.pendingToolCallIds) {
-            const pendingLabel = this.toolCallIdToLabel.get(pendingId);
-            if (pendingLabel === mappedLabel) {
-              emitAgentId = pendingId;
-              break;
-            }
-          }
         }
         // Final fallback: use storageKey (sessionKey) - this might not match frontend's agentId
         if (!emitAgentId) {
@@ -2797,45 +2719,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         (sessionKey ? this.sessionKeyToToolCallId.get(sessionKey) : undefined) ||
         (storageKey ? this.sessionKeyToToolCallId.get(storageKey) : undefined) ||
         '';
-      // If no direct mapping, try label → toolCallId
-      if (!emitAgentId && mappedLabel) {
-        emitAgentId = this.labelToToolCallId.get(mappedLabel) || '';
-      }
-      if (!emitAgentId && sessionKey && this.orchestrationParentSessionId) {
-        // Fallback: find toolCallId from parent session's sessions_spawn results
-        emitAgentId = this.findToolCallIdByChildSessionKey(sessionKey) || '';
-        console.log(
-          '[OpenClawRuntime] emitAgentId fallback lookup: sessionKey=' +
-            sessionKey +
-            ' found=' +
-            emitAgentId,
-        );
-      }
-      if (!emitAgentId && storageKey && this.orchestrationParentSessionId) {
-        emitAgentId = this.findToolCallIdByChildSessionKey(storageKey) || '';
-        console.log(
-          '[OpenClawRuntime] emitAgentId fallback lookup (storageKey): storageKey=' +
-            storageKey +
-            ' found=' +
-            emitAgentId,
-        );
-      }
-      // If still no mapping, check if any pending toolCallId has this label
-      if (!emitAgentId && mappedLabel) {
-        for (const pendingId of this.pendingToolCallIds) {
-          const pendingLabel = this.toolCallIdToLabel.get(pendingId);
-          if (pendingLabel === mappedLabel) {
-            emitAgentId = pendingId;
-            console.log(
-              '[OpenClawRuntime] emitAgentId found in pending: label=' +
-                mappedLabel +
-                ' toolCallId=' +
-                pendingId,
-            );
-            break;
-          }
-        }
-      }
       if (!emitAgentId) {
         emitAgentId = storageKey || '';
         console.log(
@@ -3108,6 +2991,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const hasToolShape =
       isRecord(agentPayload.data) && typeof agentPayload.data.toolCallId === 'string';
 
+    // Extract sessionKey from payload for lifecycle events
+    let sessionKey =
+      typeof agentPayload.sessionKey === 'string'
+        ? agentPayload.sessionKey.trim()
+        : typeof (agentPayload as Record<string, unknown>).session === 'string'
+          ? ((agentPayload as Record<string, unknown>).session as string).trim()
+          : '';
+    // Normalize subagent sessionKey: if it starts with 'subagent:', add 'agent:main:' prefix
+    if (sessionKey && sessionKey.startsWith('subagent:') && !sessionKey.startsWith('agent:')) {
+      sessionKey = 'agent:main:' + sessionKey;
+    }
+
     // End thinking stream when we receive non-thinking streams (tool/lifecycle)
     if (stream !== 'thinking' && !turn.thinkingStreamEnded && turn.currentThinkingMessageId) {
       turn.thinkingStreamEnded = true;
@@ -3148,7 +3043,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
     if (stream === 'lifecycle') {
-      this.handleAgentLifecycleEvent(sessionId, agentPayload.data);
+      this.handleAgentLifecycleEvent(sessionId, sessionKey, agentPayload.data);
     }
   }
 
@@ -3268,56 +3163,36 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return lastMessage.id;
   }
 
-  private handleAgentLifecycleEvent(sessionId: string, data: unknown): void {
+  private handleAgentLifecycleEvent(sessionId: string, sessionKey: string, data: unknown): void {
     if (!isRecord(data)) return;
     const phase = typeof data.phase === 'string' ? data.phase.trim() : '';
 
     // 捕获子 Agent 生命周期事件
-    // IMPORTANT: agentId may be a label (not unique across sessions)
-    // We need to verify this agentId belongs to THIS session before updating status
+    // Use sessionKey to find toolCallId (unique), NOT agentId/label (not unique across sessions)
     const agentId = typeof data.agentId === 'string' ? data.agentId : undefined;
     const isMainAgent = !agentId || agentId === 'main-agent';
 
-    if (!isMainAgent) {
-      // Try to find the toolCallId for this agentId/label
-      const toolCallId = this.labelToToolCallId.get(agentId);
+    if (!isMainAgent && sessionKey) {
+      // Normalize sessionKey: if it starts with 'subagent:', add 'agent:main:' prefix
+      let normalizedSessionKey = sessionKey;
+      if (sessionKey.startsWith('subagent:') && !sessionKey.startsWith('agent:')) {
+        normalizedSessionKey = 'agent:main:' + sessionKey;
+      }
+
+      // Try to find toolCallId by sessionKey (unique identifier)
+      const toolCallId = this.sessionKeyToToolCallId.get(normalizedSessionKey);
       if (toolCallId) {
-        // Verify this toolCallId belongs to the current session
-        const toolCallSessionKey = this.toolCallIdToSessionKey.get(toolCallId);
-        const currentSessionKey = `agent:main:gucciai:${sessionId}`;
-        if (toolCallSessionKey) {
-          // Check if toolCallId's sessionKey matches current session
-          if (
-            toolCallSessionKey.startsWith(currentSessionKey) ||
-            toolCallSessionKey.includes(sessionId)
-          ) {
-            // Update status using toolCallId as key (unique)
-            if (phase === 'start' || phase === 'running') {
-              this.subagentStatus.set(toolCallId, 'running');
-            } else if (
-              phase === 'end' ||
-              phase === 'completed' ||
-              phase === 'stopped' ||
-              phase === 'error'
-            ) {
-              this.subagentStatus.set(toolCallId, 'done');
-              this.persistSubagentStatus(toolCallId, 'done');
-            }
-          }
-        } else {
-          // No sessionKey mapping yet - this is expected for newly spawned subagents
-          // Update status using toolCallId as key
-          if (phase === 'start' || phase === 'running') {
-            this.subagentStatus.set(toolCallId, 'running');
-          } else if (
-            phase === 'end' ||
-            phase === 'completed' ||
-            phase === 'stopped' ||
-            phase === 'error'
-          ) {
-            this.subagentStatus.set(toolCallId, 'done');
-            this.persistSubagentStatus(toolCallId, 'done');
-          }
+        // Update status using toolCallId as key (unique)
+        if (phase === 'start' || phase === 'running') {
+          this.subagentStatus.set(toolCallId, 'running');
+        } else if (
+          phase === 'end' ||
+          phase === 'completed' ||
+          phase === 'stopped' ||
+          phase === 'error'
+        ) {
+          this.subagentStatus.set(toolCallId, 'done');
+          this.persistSubagentStatus(toolCallId, 'done');
         }
       }
     }
@@ -3619,10 +3494,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Store display label for later use (not used as key)
       if (displayLabel) {
         this.toolCallIdToLabel.set(toolCallId, displayLabel);
-        // Also establish label -> toolCallId mapping for lifecycle event handling
-        // Lifecycle events may arrive before sessions_spawn result returns childSessionKey
-        // So we need to be able to match by label
-        this.labelToToolCallId.set(displayLabel, toolCallId);
       }
 
       // 预先初始化 subagentMessages，以 toolCallId 为 key
@@ -3807,23 +3678,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       // 清理保存的 args
       this.toolCallArgs.delete(toolCallId);
-    }
-
-    // 当 sessions_resume 或 sessions_read 完成时，标记子任务完成
-    if ((toolName === 'sessions_resume' || toolName === 'sessions_read') && phase === 'result') {
-      // Get agentId from args or meta field - this is a label, not unique
-      const args = isRecord(data.args) ? (data.args as Record<string, unknown>) : {};
-      const label =
-        typeof args.agentId === 'string' && args.agentId
-          ? args.agentId
-          : typeof args.label === 'string' && args.label
-            ? args.label
-            : metaLabel || '';
-      // Find the toolCallId for this label
-      const toolCallId = label ? this.labelToToolCallId.get(label) : undefined;
-      if (toolCallId && this.subagentStatus.has(toolCallId)) {
-        this.subagentStatus.set(toolCallId, 'done');
-      }
     }
 
     if (toolName.toLowerCase() === 'browser') {
@@ -4631,7 +4485,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             if (status !== 'running') return false;
             const sessionKey = this.toolCallIdToSessionKey.get(toolCallId);
             // Check if this subagent belongs to the current session
-            return sessionKey?.startsWith(currentSessionKeyPrefix) || sessionKey?.includes(sessionId);
+            return (
+              sessionKey?.startsWith(currentSessionKeyPrefix) || sessionKey?.includes(sessionId)
+            );
           },
         );
         if (!stillHasRunningSubagents) {
@@ -4645,6 +4501,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               ' -> completed',
           );
           this.store.updateSession(sessionId, { status: 'completed' });
+          // Emit complete event to notify frontend of the status change
+          // Use null for runId since this is a delayed update, not a new run completion
+          this.emit('complete', sessionId, null, 'completed');
         } else {
           console.log(
             '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
