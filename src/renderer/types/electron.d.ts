@@ -595,6 +595,9 @@ interface IElectronAPI {
         metadata: Record<string, unknown>;
       }) => void,
     ) => () => void;
+    onStreamMessageDelete: (
+      callback: (data: { sessionId: string; messageId: string }) => void,
+    ) => () => void;
     onStreamPermission: (
       callback: (data: { sessionId: string; request: CoworkPermissionRequest }) => void,
     ) => () => void;

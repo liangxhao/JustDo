@@ -176,6 +176,7 @@ export interface CoworkRuntimeEvents {
     messageId: string,
     metadata: Partial<CoworkMessage['metadata']>,
   ) => void;
+  messageDelete: (sessionId: string, messageId: string) => void;
   thinkingUpdate: (sessionId: string, messageId: string, thinkingDelta: string) => void;
   permissionRequest: (sessionId: string, request: PermissionRequest) => void;
   complete: (

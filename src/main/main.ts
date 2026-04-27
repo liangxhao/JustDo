@@ -1,5 +1,3 @@
-import type { PermissionResult } from './libs/agentEngine/types';
-import type { CoworkMessage } from './coworkStore';
 import type { WebContents } from 'electron';
 import {
   app,
@@ -28,6 +26,7 @@ import { PlatformRegistry } from '../shared/platform';
 import { AgentManager } from './agentManager';
 import { APP_NAME } from './appConstants';
 import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
+import type { CoworkMessage } from './coworkStore';
 import { CoworkStore } from './coworkStore';
 import { GroupStore } from './groupStore';
 import { setLanguage, t } from './i18n';
@@ -41,6 +40,7 @@ import {
   CoworkEngineRouter,
   OpenClawRuntimeAdapter,
 } from './libs/agentEngine';
+import type { PermissionResult } from './libs/agentEngine/types';
 import {
   clearServerModelMetadata,
   getCurrentApiConfig,
@@ -1187,6 +1187,21 @@ const bindCoworkRuntimeForwarder = (): void => {
       });
     },
   );
+
+  runtime.on('messageDelete', (sessionId: string, messageId: string) => {
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach(win => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send('cowork:stream:messageDelete', {
+          sessionId,
+          messageId,
+        });
+      } catch (error) {
+        console.error('Failed to forward cowork message delete:', error);
+      }
+    });
+  });
 
   runtime.on('permissionRequest', (sessionId: string, request: unknown) => {
     if (runtime.getSessionConfirmationMode(sessionId) === 'text') {

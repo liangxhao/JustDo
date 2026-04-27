@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 
 // 暴露安全的 API 到渲染进程
@@ -354,6 +355,11 @@ contextBridge.exposeInMainWorld('electron', {
       ) => callback(data);
       ipcRenderer.on('cowork:stream:messageMetadataUpdate', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageMetadataUpdate', handler);
+    },
+    onStreamMessageDelete: (callback: (data: { sessionId: string; messageId: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; messageId: string }) => callback(data);
+      ipcRenderer.on('cowork:stream:messageDelete', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:messageDelete', handler);
     },
     onStreamPermission: (callback: (data: { sessionId: string; request: any }) => void) => {
       const handler = (_event: any, data: { sessionId: string; request: any }) => callback(data);

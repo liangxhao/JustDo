@@ -4,19 +4,34 @@ import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
-import type { PermissionResult } from './types';
+
 import type {
+  CoworkExecutionMode,
   CoworkMessage,
   CoworkMessageMetadata,
   CoworkSession,
   CoworkSessionStatus,
-  CoworkExecutionMode,
   CoworkStore,
 } from '../../coworkStore';
+import { t } from '../../i18n';
+import { resolveRawApiConfig } from '../claudeSettings';
+import { getCommandDangerLevel,isDeleteCommand } from '../commandSafety';
+import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
+import { extractOpenClawAssistantStreamText } from '../openclawAssistantText';
+import {
+  buildManagedSessionKey,
+  isCronSessionKey,
+  isManagedSessionKey,
+  type OpenClawChannelSessionSync,
+  parseManagedSessionKey,
+} from '../openclawChannelSessionSync';
+import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclawConfigSync';
 import {
   OpenClawEngineManager,
   type OpenClawGatewayConnectionInfo,
 } from '../openclawEngineManager';
+import { extractGatewayHistoryEntries, extractGatewayMessageText } from '../openclawHistory';
+import type { PermissionResult } from './types';
 import type {
   CoworkContinueOptions,
   CoworkRuntime,
@@ -24,20 +39,6 @@ import type {
   CoworkStartOptions,
   PermissionRequest,
 } from './types';
-import {
-  buildManagedSessionKey,
-  type OpenClawChannelSessionSync,
-  isManagedSessionKey,
-  parseManagedSessionKey,
-  isCronSessionKey,
-} from '../openclawChannelSessionSync';
-import { extractGatewayHistoryEntries, extractGatewayMessageText } from '../openclawHistory';
-import { extractOpenClawAssistantStreamText } from '../openclawAssistantText';
-import { isDeleteCommand, getCommandDangerLevel } from '../commandSafety';
-import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
-import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclawConfigSync';
-import { resolveRawApiConfig } from '../claudeSettings';
-import { t } from '../../i18n';
 
 const OPENCLAW_GATEWAY_TOOL_EVENTS_CAP = 'tool-events';
 const GATEWAY_READY_TIMEOUT_MS = 15_000;
@@ -2149,11 +2150,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // use the first UNMAPPED pending toolCallId and establish the mapping.
         // This handles cases where gateway strips result.childSessionKey from tool events.
         if (!toolCallId && sessionKey.includes(':subagent:') && this.pendingToolCallIds.size > 0) {
-          // Filter to only pending toolCallIds that haven't been mapped yet
-          // This prevents race condition when multiple subagents start concurrently
-          const unmappedPendingIds = Array.from(this.pendingToolCallIds).filter(
-            id => !this.toolCallIdToSessionKey.has(id),
-          );
+          // Filter to only pending toolCallIds that haven't been mapped to a childSessionKey.
+          // NOTE: toolCallIdToSessionKey may contain temporary mappings to parentSessionKey
+          // (set during sessions_spawn start), which should NOT count as "mapped" here.
+          // We only consider a toolCallId as mapped when it maps to a childSessionKey (contains :subagent:).
+          const unmappedPendingIds = Array.from(this.pendingToolCallIds).filter(id => {
+            const mappedSessionKey = this.toolCallIdToSessionKey.get(id);
+            // Unmapped if: no mapping OR mapping points to parent session (not child subagent)
+            return !mappedSessionKey || !mappedSessionKey.includes(':subagent:');
+          });
           if (unmappedPendingIds.length > 0) {
             const pendingId = unmappedPendingIds[0];
             console.log(
@@ -4043,6 +4048,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private resolveAssistantSegmentText(turn: ActiveTurn, fullText: string): string {
+    // Filter out OpenClaw special marker "NO_REPLY" (no text reply, only tool calls)
+    if (fullText.trim() === 'NO_REPLY') {
+      return '';
+    }
     const normalizedFullText = fullText.trim();
     const committed = turn.committedAssistantText;
     if (!normalizedFullText) {
@@ -4202,6 +4211,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
+    // Check if segment text is a possible truncated special marker prefix
+    // "NO_REPLY" may be truncated by OpenClaw gateway during streaming
+    // Skip message creation/update if text might be incomplete marker
+    const NO_REPLY_MARKER = 'NO_REPLY';
+    const segmentText = turn.currentAssistantSegmentText;
+    const isPossibleNoReplyPrefix =
+      segmentText &&
+      segmentText.length <= NO_REPLY_MARKER.length &&
+      NO_REPLY_MARKER.startsWith(segmentText.trim()) &&
+      segmentText.trim().length > 0;
+
+    if (isPossibleNoReplyPrefix) {
+      // Don't create/update message for possible truncated marker
+      // Will be handled correctly in handleChatFinal with chat.history sync
+      console.debug(
+        '[OpenClawRuntime] processAgentAssistant: skipping for possible truncated marker',
+        `segment="${segmentText.trim()}"`,
+      );
+      return;
+    }
+
     if (!turn.assistantMessageId && turn.currentAssistantSegmentText) {
       // Create a new message for the new text segment (after split or thinking end).
       const assistantMessage = this.store.addMessage(sessionId, {
@@ -4337,22 +4367,40 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.emit('messageMetadataUpdate', sessionId, turn.assistantMessageId, finalMetadata);
       }
     } else if (previousSegmentText) {
-      // No assistantMessageId but we have segment text - create message
-      const reusedMessageId = this.reuseFinalAssistantMessage(sessionId, previousSegmentText);
-      if (reusedMessageId) {
-        turn.assistantMessageId = reusedMessageId;
+      // Check if segment text is a possible truncated special marker prefix
+      // "NO_REPLY" may be truncated by OpenClaw gateway, showing only "NO"
+      // In this case, don't create message yet - let syncFinal handle it
+      const NO_REPLY_MARKER = 'NO_REPLY';
+      const isPossibleNoReplyPrefix =
+        previousSegmentText.length <= NO_REPLY_MARKER.length &&
+        NO_REPLY_MARKER.startsWith(previousSegmentText.trim()) &&
+        previousSegmentText.trim().length > 0;
+
+      if (isPossibleNoReplyPrefix) {
+        console.debug(
+          '[OpenClawRuntime] handleChatFinal: skipping message creation for possible truncated marker',
+          `segment="${previousSegmentText.trim()}"`,
+          'will sync with chat.history',
+        );
+        // Don't create message - let syncFinal get complete text from history
       } else {
-        const assistantMessage = this.store.addMessage(sessionId, {
-          type: 'assistant',
-          content: previousSegmentText,
-          metadata: {
-            isStreaming: false,
-            isFinal: true,
-          },
-          modelName: turn.modelName,
-        });
-        turn.assistantMessageId = assistantMessage.id;
-        this.emit('message', sessionId, assistantMessage);
+        // No assistantMessageId but we have segment text - create message
+        const reusedMessageId = this.reuseFinalAssistantMessage(sessionId, previousSegmentText);
+        if (reusedMessageId) {
+          turn.assistantMessageId = reusedMessageId;
+        } else {
+          const assistantMessage = this.store.addMessage(sessionId, {
+            type: 'assistant',
+            content: previousSegmentText,
+            metadata: {
+              isStreaming: false,
+              isFinal: true,
+            },
+            modelName: turn.modelName,
+          });
+          turn.assistantMessageId = assistantMessage.id;
+          this.emit('message', sessionId, assistantMessage);
+        }
       }
     }
 
@@ -4360,11 +4408,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const finalText = this.resolveFinalTurnText(turn, payload.message);
     turn.currentText = finalText;
 
-    if (!finalText.trim()) {
+    // Special marker detection: "NO_REPLY" may be truncated by OpenClaw gateway
+    // If text is a prefix of "NO_REPLY", force sync to get complete text
+    const NO_REPLY_MARKER = 'NO_REPLY';
+    const isNoReplyPrefix =
+      finalText.length <= NO_REPLY_MARKER.length &&
+      NO_REPLY_MARKER.startsWith(finalText.trim()) &&
+      finalText.trim().length > 0;
+
+    if (!finalText.trim() || isNoReplyPrefix) {
       console.debug(
-        '[OpenClawRuntime] handleChatFinal: final payload had no text, falling back to chat.history sync',
+        '[OpenClawRuntime] handleChatFinal: falling back to chat.history sync',
         `sessionId=${sessionId}`,
         `runId=${payload.runId ?? turn.runId}`,
+        isNoReplyPrefix
+          ? `reason=possible_truncated_marker("${finalText.trim()}")`
+          : 'reason=no_text',
       );
       await this.syncFinalAssistantWithHistory(sessionId, turn);
     }
@@ -5476,7 +5535,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       turn.currentText = canonicalText;
       turn.currentAssistantSegmentText = canonicalSegmentText;
 
+      // Handle "NO_REPLY" special marker: clear any previously created message
+      // If canonicalSegmentText is empty (filtered out "NO_REPLY"), we should
+      // delete any message created during streaming that may have partial marker content
       if (!canonicalSegmentText) {
+        if (turn.assistantMessageId) {
+          // Delete the message created during streaming (may have "NO" partial marker)
+          this.store.deleteMessage(sessionId, turn.assistantMessageId);
+          this.emit('messageDelete', sessionId, turn.assistantMessageId);
+          turn.assistantMessageId = null;
+        }
         return;
       }
 

@@ -1,49 +1,50 @@
 import { flushSync } from 'react-dom';
+
+import { classifyErrorKey } from '../../common/coworkErrorClassify';
 import { store } from '../store';
 import {
-  setSessions,
-  setCurrentSession,
+  addGroup,
+  addMessage,
   addSession,
-  updateSessionStatus,
+  clearCurrentSession,
+  clearPendingPermissions,
+  deleteGroup as deleteGroupAction,
+  deleteMessage as deleteMessageAction,
   deleteSession as deleteSessionAction,
   deleteSessions as deleteSessionsAction,
-  addMessage,
-  updateMessageContent,
-  updateMessageThinkingContent,
-  updateMessageMetadata,
-  deleteMessage as deleteMessageAction,
-  setStreaming,
-  setRemoteManaged,
-  updateSessionPinned,
-  updateSessionTitle,
-  enqueuePendingPermission,
   dequeuePendingPermission,
-  clearPendingPermissions,
-  setConfig,
-  clearCurrentSession,
-  setGroups,
-  addGroup,
-  updateGroup,
-  deleteGroup as deleteGroupAction,
+  enqueuePendingPermission,
   moveSessionToGroup,
+  setConfig,
+  setCurrentSession,
+  setGroups,
+  setRemoteManaged,
+  setSessions,
+  setStreaming,
+  updateGroup,
+  updateMessageContent,
+  updateMessageMetadata,
+  updateMessageThinkingContent,
+  updateSessionPinned,
+  updateSessionStatus,
+  updateSessionTitle,
 } from '../store/slices/coworkSlice';
 import type {
-  CoworkSession,
-  CoworkMessage,
-  CoworkConfigUpdate,
   CoworkApiConfig,
-  CoworkUserMemoryEntry,
-  CoworkMemoryStats,
-  CoworkPermissionResult,
-  OpenClawEngineStatus,
-  CoworkStartOptions,
+  CoworkConfigUpdate,
   CoworkContinueOptions,
-  SessionGroup,
+  CoworkMemoryStats,
+  CoworkMessage,
+  CoworkPermissionResult,
+  CoworkSession,
+  CoworkStartOptions,
+  CoworkUserMemoryEntry,
   CreateGroupInput,
+  OpenClawEngineStatus,
+  SessionGroup,
   UpdateGroupInput,
 } from '../types/cowork';
 import { i18nService } from './i18n';
-import { classifyErrorKey } from '../../common/coworkErrorClassify';
 
 const classifyError = (error: string): string => {
   const key = classifyErrorKey(error);
@@ -176,6 +177,14 @@ class CoworkService {
       },
     );
     this.streamListenerCleanups.push(messageMetadataUpdateCleanup);
+
+    // Message delete listener (for removing messages like filtered "NO_REPLY" markers)
+    const messageDeleteCleanup = cowork.onStreamMessageDelete(({ sessionId, messageId }) => {
+      flushSync(() => {
+        store.dispatch(deleteMessageAction({ sessionId, messageId }));
+      });
+    });
+    this.streamListenerCleanups.push(messageDeleteCleanup);
 
     // Permission request listener
     const permissionCleanup = cowork.onStreamPermission(({ sessionId, request }) => {
