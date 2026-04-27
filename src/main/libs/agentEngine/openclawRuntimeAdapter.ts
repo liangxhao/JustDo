@@ -89,16 +89,37 @@ type AgentEventPayload = {
 };
 
 /**
+ * Generate stable message id from entry data
+ * Uses toolUseId for tool messages, otherwise uses role + content hash
+ */
+function generateStableMessageId(
+  entry: { role: string; text: string; metadata?: Record<string, unknown> },
+  index: number,
+): string {
+  // For tool_use and tool_result, use toolUseId from metadata (stable across refreshes)
+  if (entry.role === 'tool_use' || entry.role === 'tool_result') {
+    const toolUseId = entry.metadata?.toolUseId;
+    if (typeof toolUseId === 'string' && toolUseId) {
+      return `subagent-${entry.role}-${toolUseId}`;
+    }
+  }
+  // For other messages, use role + index + content prefix (stable if order unchanged)
+  const contentPrefix = entry.text.slice(0, 50).replace(/\s+/g, '-');
+  return `subagent-msg-${entry.role}-${index}-${contentPrefix}`;
+}
+
+/**
  * Convert GatewayHistoryEntry array to CoworkMessage array
  */
 function convertEntriesToCoworkMessages(
   entries: Array<{ role: string; text: string; metadata?: Record<string, unknown> }>,
 ): CoworkMessage[] {
+  const now = Date.now();
   return entries.map((entry, idx) => ({
-    id: `subagent-msg-${idx}-${Date.now()}`,
+    id: generateStableMessageId(entry, idx),
     type: entry.role as CoworkMessage['type'],
     content: entry.text,
-    timestamp: Date.now(),
+    timestamp: now,
     metadata: entry.metadata,
   }));
 }
@@ -120,11 +141,18 @@ function convertToCoworkMessage(
           : msg.role === 'tool_result'
             ? 'tool_result'
             : 'system';
+  const now = Date.now();
+  // Generate stable id using metadata.toolUseId or content prefix
+  const toolUseId = msg.metadata?.toolUseId;
+  const stableId =
+    typeof toolUseId === 'string' && toolUseId
+      ? `subagent-${msg.role}-${toolUseId}`
+      : `subagent-msg-${msg.role}-${index}-${msg.content.slice(0, 50).replace(/\s+/g, '-')}`;
   return {
-    id: `subagent-msg-${index}-${Date.now()}`,
+    id: stableId,
     type: msgType,
     content: msg.content,
-    timestamp: Date.now(),
+    timestamp: now,
     metadata: msg.metadata,
   };
 }

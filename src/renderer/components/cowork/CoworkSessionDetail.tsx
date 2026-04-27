@@ -931,8 +931,9 @@ export const ToolCallGroup: React.FC<{
   const toolResultFallback = showNoDetailError ? i18nService.t('coworkToolNoErrorDetail') : '';
   const displayToolResult = hasToolResultText ? toolResultDisplay : toolResultFallback;
 
-  // Use toolUse.id as key for persisting expand state
-  const toolKey = toolUse.id;
+  // Use metadata.toolUseId as stable key (persists across refreshes), fallback to toolUse.id
+  // This is critical for subagent drawer which refreshes messages periodically
+  const toolKey = (toolUse.metadata?.toolUseId as string) ?? toolUse.id;
   const persistedExpanded = toolExpandStateMap.get(toolKey) ?? false;
   const [isExpanded, setIsExpanded] = useState(persistedExpanded);
   const resultLineCount = hasToolResultText ? getToolResultLineCount(toolResultDisplay) : 0;
