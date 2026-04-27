@@ -710,6 +710,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly toolCallIdToSessionKey = new Map<string, string>();
   /** childSessionKey → toolCallId 反向映射 */
   private readonly sessionKeyToToolCallId = new Map<string, string>();
+  /** toolCallId → parentSessionId 映射，用于判断subagent属于哪个主session */
+  private readonly toolCallIdToParentSessionId = new Map<string, string>();
   /** toolCallId → args 映射，用于在 result 阶段获取 sessions_spawn 的参数 */
   private readonly toolCallArgs = new Map<string, Record<string, unknown>>();
   /** toolCallId → label 映射，用于显示名称 */
@@ -1285,7 +1287,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const previousOrchestrationSessionId = this.orchestrationParentSessionId;
     this.orchestrationParentSessionId = sessionId;
 
-    // CRITICAL: Do NOT clear subagentStatus, toolCallIdToSessionKey, toolCallIdToLabel
+    // CRITICAL: Do NOT clear subagentStatus, toolCallIdToSessionKey, toolCallIdToLabel, toolCallIdToParentSessionId
     // These mappings are needed by getSubagentStatuses to filter subagents by session.
     // Clearing them would cause other sessions' subagents to lose their 'done' status
     // and default to 'running' when displayed.
@@ -1298,7 +1300,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.subagentMessages.clear();
       this.sessionKeyToLabel.clear();
       this.toolCallArgs.clear();
-      // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
+      // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel, toolCallIdToParentSessionId
       // These are needed to correctly display subagent status for OTHER sessions
     }
 
@@ -3491,6 +3493,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.subagentStatus.set(toolCallId, 'running');
       this.pendingToolCallIds.add(toolCallId);
 
+      // Establish temporary mapping for hasRunningSubagents check in handleChatFinal.
+      // This ensures the main session stays 'running' while subagent executes.
+      // Will be updated with actual childSessionKey when tool result arrives.
+      const currentSessionKey = turn.sessionKey;
+      if (currentSessionKey) {
+        this.toolCallIdToSessionKey.set(toolCallId, currentSessionKey);
+        console.log(
+          '[OpenClawRuntime] sessions_spawn start: established temporary mapping toolCallId=' +
+            toolCallId +
+            ' -> sessionKey=' +
+            currentSessionKey +
+            ' (will be updated when result arrives)',
+        );
+      }
+
+      // Track parent session ID for hasRunningSubagents check.
+      // This is the authoritative mapping - toolCallIdToSessionKey may be updated to childSessionKey.
+      this.toolCallIdToParentSessionId.set(toolCallId, sessionId);
+
       // Store display label for later use (not used as key)
       if (displayLabel) {
         this.toolCallIdToLabel.set(toolCallId, displayLabel);
@@ -4382,13 +4403,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // This happens with qwen3.5-plus under very large context (~380K tokens).
     // Signal: turn.currentText is empty AND there was at least one tool call in the run.
     // IMPORTANT: Skip this check if subagents are still running - the model is waiting for them.
-    // Only check subagents belonging to THIS session using toolCallIdToSessionKey mapping.
-    const currentSessionKeyPrefix = `agent:main:gucciai:${sessionId}`;
+    // Use toolCallIdToParentSessionId to check subagents belonging to THIS session.
     const hasRunningSubagents = Array.from(this.subagentStatus.entries()).some(
       ([toolCallId, status]) => {
         if (status !== 'running') return false;
-        const sessionKey = this.toolCallIdToSessionKey.get(toolCallId);
-        return sessionKey?.startsWith(currentSessionKeyPrefix) || sessionKey?.includes(sessionId);
+        const parentSessionId = this.toolCallIdToParentSessionId.get(toolCallId);
+        return parentSessionId === sessionId;
       },
     );
     const sessionAfterReconcile = this.store.getSession(sessionId);
@@ -4478,16 +4498,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
 
         // Check if any subagents of THIS session are still running.
-        // Use toolCallIdToSessionKey to filter subagents belonging to this session.
-        const currentSessionKeyPrefix = `agent:main:gucciai:${sessionId}`;
+        // Use toolCallIdToParentSessionId to filter subagents belonging to this session.
         const stillHasRunningSubagents = Array.from(this.subagentStatus.entries()).some(
           ([toolCallId, status]) => {
             if (status !== 'running') return false;
-            const sessionKey = this.toolCallIdToSessionKey.get(toolCallId);
-            // Check if this subagent belongs to the current session
-            return (
-              sessionKey?.startsWith(currentSessionKeyPrefix) || sessionKey?.includes(sessionId)
-            );
+            const parentSessionId = this.toolCallIdToParentSessionId.get(toolCallId);
+            return parentSessionId === sessionId;
           },
         );
         if (!stillHasRunningSubagents) {
