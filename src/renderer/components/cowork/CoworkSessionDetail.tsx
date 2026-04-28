@@ -1575,8 +1575,8 @@ const ThinkingStreamBlock: React.FC<{
         )}
       </div>
       {!localCollapsed && (
-        <div className="mt-1.5 w-fit max-w-[calc(100%-44px)] p-2.5 rounded-md bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100/50 dark:border-blue-900/30 max-h-64 overflow-y-auto">
-          <div className="text-xs [&_.markdown-content]:text-xs [&_.markdown-content]:text-muted-foreground [&_p]:my-0 [&_p]:leading-5 [&_div.my-0.5]:my-0 [&_div.my-0.5]:mt-0.5 [&_code]:text-[0.85em] [&_pre]:my-0 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0">
+        <div className="mt-1.5 w-fit max-w-[calc(100%-44px)] p-2.5 rounded-md bg-slate-100/60 dark:bg-slate-800/20 border border-slate-200/50 dark:border-slate-700/30 max-h-64 overflow-y-auto">
+          <div className="text-xs text-gray-500 [&_.markdown-content]:text-xs [&_.markdown-content_p]:!text-gray-500 [&_.markdown-content_strong]:!text-gray-600 [&_.markdown-content_li]:!text-gray-500 [&_.markdown-content_ul]:!text-gray-500 [&_.markdown-content_ol]:!text-gray-500 [&_p]:my-0 [&_p]:leading-5 [&_div.my-0.5]:my-0 [&_div.my-0.5]:mt-0.5 [&_code]:text-[0.85em] [&_pre]:my-0 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0">
             <MarkdownContent content={thinkingContent} className="max-w-none" />
           </div>
         </div>

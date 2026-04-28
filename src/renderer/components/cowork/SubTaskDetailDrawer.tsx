@@ -33,16 +33,16 @@ const SubagentThinkingBlock: React.FC<{ content: string }> = ({ content }) => {
       <button
         type="button"
         onClick={() => setCollapsed(!collapsed)}
-        className="w-full text-left px-3 py-2 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/50"
+        className="w-full text-left px-3 py-2 rounded-xl bg-slate-100/60 dark:bg-slate-800/20 border border-slate-200/50 dark:border-slate-700/30"
       >
-        <div className="flex items-center gap-2 text-xs font-medium text-blue-600 dark:text-blue-400">
+        <div className="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-gray-400">
           <span>💭</span>
           <span>{i18nService.t('coworkThinking') || 'Thinking'}</span>
-          <span className="ml-auto text-blue-400 dark:text-blue-500">{collapsed ? '▶' : '▼'}</span>
+          <span className="ml-auto text-gray-400 dark:text-gray-500">{collapsed ? '▶' : '▼'}</span>
         </div>
       </button>
       {!collapsed && (
-        <div className="mt-1 px-3 py-2 text-xs text-blue-700/80 dark:text-blue-300/80 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+        <div className="mt-1 px-3 py-2 text-xs text-gray-500 dark:text-gray-500 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
           {content}
         </div>
       )}
@@ -109,7 +109,7 @@ const SubagentUserMessage: React.FC<{ message: CoworkMessage }> = ({ message }) 
           <div
             className={`relative rounded-2xl px-4 py-2 text-foreground shadow-subtle ${
               isSubagentContext
-                ? 'bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/50'
+                ? 'bg-blue-100/50 dark:bg-blue-900/30 border border-blue-200/60 dark:border-blue-800/40'
                 : 'bg-muted/30'
             }`}
           >
