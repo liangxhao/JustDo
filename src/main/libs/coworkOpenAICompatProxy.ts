@@ -197,11 +197,6 @@ export function setCoworkProxySessionId(sessionId: string | null): void {
 }
 const MAX_TOOL_CALL_EXTRA_CONTENT_CACHE = 1024;
 
-// Regex to strip Claude SDK-injected time context prefix from user messages
-const TIME_CONTEXT_PREFIX_RE = /^\[.*?\]\s*##\s*Local Time Context[\s\S]*?(?=\n\S|$)/;
-// Regex to strip "Sender (untrusted metadata):" JSON block prefix
-const METADATA_PREFIX_RE = /^Sender \(untrusted metadata\):\s*```json\s*\{[^}]*}\s*```\s*/s;
-
 function extractLastUserMessageText(body: unknown): string | null {
   const obj = toOptionalObject(body);
   if (!obj) return null;
@@ -225,7 +220,7 @@ function extractLastUserMessageText(body: unknown): string | null {
       }
     }
     if (text) {
-      text = text.replace(METADATA_PREFIX_RE, '').replace(TIME_CONTEXT_PREFIX_RE, '').trim();
+      text = text.trim();
       if (text.length > 100) text = text.substring(0, 100);
       return text || null;
     }
