@@ -674,9 +674,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   /** Gateway tick heartbeat watchdog state */
   private lastTickTimestamp = 0;
+  /** Last time we received any agent event — used to detect false tick timeout during heavy activity. */
+  private lastAgentActivityTimestamp = 0;
   private tickWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly TICK_WATCHDOG_INTERVAL_MS = 60_000; // check every 60s
   private static readonly TICK_TIMEOUT_MS = 90_000; // 3 tick cycles (30s each) without response → dead
+  /** Agent activity within this window proves connection is alive even without tick. */
+  private static readonly AGENT_ACTIVITY_ALIVE_WINDOW_MS = 60_000; // 60s
 
   /** Throttle state for messageUpdate IPC emissions during streaming */
   private lastMessageUpdateEmitTime: Map<string, number> = new Map();
@@ -1674,6 +1678,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.clear();
     this.browserPrewarmAttempted = false;
     this.lastTickTimestamp = 0;
+    this.lastAgentActivityTimestamp = 0;
     // Clear messageUpdate throttle state
     for (const timer of this.pendingMessageUpdateTimer.values()) {
       clearTimeout(timer);
@@ -1807,11 +1812,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private checkTickHealth(): void {
     if (this.lastTickTimestamp <= 0) return;
-    const elapsed = Date.now() - this.lastTickTimestamp;
-    if (elapsed <= OpenClawRuntimeAdapter.TICK_TIMEOUT_MS) return;
+    const now = Date.now();
+    const tickElapsed = now - this.lastTickTimestamp;
+    const agentElapsed = now - this.lastAgentActivityTimestamp;
+
+    // If we received agent events recently, the connection is alive even without tick.
+    // This handles the case where tick events are dropped due to dropIfSlow during heavy activity.
+    if (agentElapsed <= OpenClawRuntimeAdapter.AGENT_ACTIVITY_ALIVE_WINDOW_MS) {
+      // Connection is alive — update tick timestamp to prevent false timeout trigger
+      this.lastTickTimestamp = now;
+      console.log(
+        `[TickWatchdog] tick missing for ${Math.round(tickElapsed / 1000)}s but agent activity detected (${Math.round(agentElapsed / 1000)}s ago) — connection is alive, suppressing reconnect`,
+      );
+      return;
+    }
+
+    if (tickElapsed <= OpenClawRuntimeAdapter.TICK_TIMEOUT_MS) return;
 
     console.warn(
-      `[TickWatchdog] no tick received for ${Math.round(elapsed / 1000)}s (threshold: ${OpenClawRuntimeAdapter.TICK_TIMEOUT_MS / 1000}s) — connection is likely dead, triggering reconnect`,
+      `[TickWatchdog] no tick received for ${Math.round(tickElapsed / 1000)}s (threshold: ${OpenClawRuntimeAdapter.TICK_TIMEOUT_MS / 1000}s) and no agent activity for ${Math.round(agentElapsed / 1000)}s — connection is likely dead, triggering reconnect`,
     );
     this.cancelGatewayReconnect();
     this.stopGatewayClient();
@@ -2033,6 +2052,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (event.event === 'agent') {
+      // Agent events prove the connection is alive even when tick is dropped due to dropIfSlow.
+      this.lastAgentActivityTimestamp = Date.now();
       // Process thinking events first (before assistant text) to ensure correct display order.
       // Thinking should appear in UI before or alongside the reply text.
       this.processAgentThinkingEvent(event.payload);
@@ -7519,6 +7540,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       .replace(/^["'`"''']+/, '')
       .replace(/["'`"''']+$/, '')
       .trim();
+
+    // Only use first line (model may return multi-line content)
+    title = title.split(/\r?\n/)[0].trim();
+
+    // Strip suffix after dash/hyphen (e.g., "Sorting Algorithms - Part 1/2")
+    const dashMatch = title.match(/^(.+?)[-—–.]/);
+    if (dashMatch?.[1]) {
+      title = dashMatch[1].trim();
+    }
 
     if (!title) return fallback;
     if (title.length > maxChars) {
