@@ -15,7 +15,7 @@ import type {
 } from '../../coworkStore';
 import { t } from '../../i18n';
 import { resolveRawApiConfig } from '../claudeSettings';
-import { getCommandDangerLevel,isDeleteCommand } from '../commandSafety';
+import { getCommandDangerLevel, isDeleteCommand } from '../commandSafety';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import { extractOpenClawAssistantStreamText } from '../openclawAssistantText';
 import {
@@ -3758,6 +3758,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (!turn.toolUseMessageIdByToolCallId.has(toolCallId)) {
+      // Split assistant segment before creating tool_use message.
+      // This finalizes the current assistant text message and resets assistantMessageId,
+      // so the next assistant stream event creates a new message.
+      this.splitAssistantSegmentBeforeTool(sessionId, turn);
+
       // For sessions_spawn, use saved args from toolCallArgs map if data.args is empty
       // Gateway format { tool: 'start:sessions_spawn', call: 'xxx', meta: 'label xxx' } may lack args
       let effectiveArgs = toToolInputRecord(data.args);

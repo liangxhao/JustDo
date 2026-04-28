@@ -209,7 +209,11 @@ const coworkSlice = createSlice({
       if (state.currentSession?.id === sessionId) {
         const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
         if (messageIndex !== -1) {
-          state.currentSession.messages[messageIndex].content = content;
+          // Create a new messages array reference to trigger useMemo recalculation
+          // This is necessary because useMemo depends on the messages array reference
+          state.currentSession.messages = state.currentSession.messages.map((msg, idx) =>
+            idx === messageIndex ? { ...msg, content } : msg,
+          );
         }
       }
 
