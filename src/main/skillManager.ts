@@ -930,12 +930,15 @@ export class SkillManager {
     error?: string;
     skills?: SkillRecord[];
   } {
+    console.log('[skills] importSkill: starting import for path:', archivePath);
     try {
       // Use Gateway managed skills directory so imported skills are visible to Gateway
       const root = this.ensureGatewayManagedSkillsDir();
+      console.log('[skills] importSkill: root directory:', root);
 
       // Validate archive exists
       if (!fs.existsSync(archivePath)) {
+        console.log('[skills] importSkill: archive not found:', archivePath);
         return { success: false, error: 'Archive file not found' };
       }
 
@@ -943,8 +946,10 @@ export class SkillManager {
       const ext = path.extname(archivePath).toLowerCase();
       const isZip = ext === '.zip';
       const isTgz = ext === '.tgz' || archivePath.toLowerCase().endsWith('.tar.gz');
+      console.log('[skills] importSkill: archive type:', isZip ? 'ZIP' : 'TGZ');
 
       if (!isZip && !isTgz) {
+        console.log('[skills] importSkill: unsupported archive format:', ext);
         return {
           success: false,
           error: 'Unsupported archive format. Only .zip and .tgz/.tar.gz are supported.',
@@ -957,31 +962,39 @@ export class SkillManager {
         root,
         `.import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       );
+      console.log('[skills] importSkill: temp directory:', tempBase);
       fs.mkdirSync(tempBase, { recursive: true });
       const extractDir = path.join(tempBase, 'extracted');
       fs.mkdirSync(extractDir, { recursive: true });
 
       try {
         // Extract archive to the nested extracted directory
+        console.log('[skills] importSkill: extracting archive');
         if (isZip) {
           this.extractZip(archivePath, extractDir);
         } else {
           this.extractTgz(archivePath, extractDir);
         }
+        console.log('[skills] importSkill: extraction completed');
 
         // Find skill directory (contains SKILL.md) - will be inside extractDir, not tempBase
+        console.log('[skills] importSkill: searching for SKILL.md in extracted content');
         const skillDir = this.findSkillDirInExtracted(extractDir);
         if (!skillDir) {
+          console.log('[skills] importSkill: SKILL.md not found in archive');
           fs.rmSync(tempBase, { recursive: true, force: true });
           return {
             success: false,
             error: 'No valid skill found in archive. A skill must contain a SKILL.md file.',
           };
         }
+        console.log('[skills] importSkill: found skill directory:', skillDir);
 
         // Determine skill ID from SKILL.md name field (required for imports)
+        console.log('[skills] importSkill: determining skill ID from frontmatter');
         const skillId = this.determineSkillIdFromFrontmatter(skillDir);
         if (!skillId) {
+          console.log('[skills] importSkill: could not determine skill ID');
           fs.rmSync(tempBase, { recursive: true, force: true });
           return {
             success: false,
@@ -989,9 +1002,11 @@ export class SkillManager {
               'Could not determine skill ID. SKILL.md must have a valid "name" field in frontmatter.',
           };
         }
+        console.log('[skills] importSkill: determined skill ID:', skillId);
 
         // Validate skillId is not a temporary directory name
         if (skillId.startsWith('.') || skillId.startsWith('import-')) {
+          console.log('[skills] importSkill: invalid skill ID:', skillId);
           fs.rmSync(tempBase, { recursive: true, force: true });
           return {
             success: false,
@@ -1001,10 +1016,13 @@ export class SkillManager {
 
         // Check if skill already exists and remove it
         const targetDir = path.join(root, skillId);
+        console.log('[skills] importSkill: target directory:', targetDir);
         if (fs.existsSync(targetDir)) {
           // Stop watching temporarily to avoid EPERM on Windows
+          console.log('[skills] importSkill: stopping watcher for removal');
           this.stopWatching();
           try {
+            console.log('[skills] importSkill: removing existing skill');
             fs.rmSync(targetDir, { recursive: true, force: true });
           } catch (rmError) {
             // On Windows, sometimes need retry after brief delay
@@ -1013,6 +1031,7 @@ export class SkillManager {
               fs.rmSync(targetDir, { recursive: true, force: true });
             } catch (retryError) {
               // If still failing, restore watching and report error
+              console.error('[skills] importSkill: retry failed:', retryError);
               this.startWatching();
               throw new Error(
                 `Failed to remove existing skill "${skillId}: ${retryError instanceof Error ? retryError.message : 'unknown error'}`,
@@ -1023,9 +1042,18 @@ export class SkillManager {
 
         // Copy skill to target directory (more reliable than rename on Windows)
         // Using copy + remove avoids EPERM issues with locked directories
-        fs.cpSync(skillDir, targetDir, { recursive: true, force: true });
+        console.log('[skills] importSkill: copying skill to target');
+        try {
+          fs.cpSync(skillDir, targetDir, { recursive: true, force: true });
+        } catch (cpError) {
+          console.error('[skills] importSkill: copy error:', cpError);
+          this.startWatching();
+          throw cpError;
+        }
+        console.log('[skills] importSkill: copy completed successfully');
 
         // Cleanup temp directory
+        console.log('[skills] importSkill: cleaning up temp directory');
         fs.rmSync(tempBase, { recursive: true, force: true });
 
         // Enable imported skill by default
@@ -1034,13 +1062,16 @@ export class SkillManager {
         this.saveSkillStateMap(state);
 
         // Refresh skill list (restart watching)
+        console.log('[skills] importSkill: restarting watcher and notifying changes');
         this.startWatching();
         this.notifySkillsChanged();
         const skills = this.listSkills();
+        console.log('[skills] importSkill: import completed successfully');
 
         return { success: true, skillId, skills };
       } catch (extractError) {
         // Cleanup on error and restore watching
+        console.error('[skills] importSkill: extraction/process error:', extractError);
         this.startWatching();
         if (fs.existsSync(tempBase)) {
           fs.rmSync(tempBase, { recursive: true, force: true });
@@ -1049,7 +1080,7 @@ export class SkillManager {
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to import skill';
-      console.error('[skills] importSkill error:', errorMsg);
+      console.error('[skills] importSkill error:', errorMsg, error);
       return { success: false, error: errorMsg };
     }
   }
@@ -1064,12 +1095,15 @@ export class SkillManager {
     error?: string;
     skills?: SkillRecord[];
   } {
+    console.log('[skills] importSkillFromFolder: starting import for path:', folderPath);
     try {
       // Use Gateway managed skills directory so imported skills are visible to Gateway
       const root = this.ensureGatewayManagedSkillsDir();
+      console.log('[skills] importSkillFromFolder: root directory:', root);
 
       // Validate folder exists
       if (!fs.existsSync(folderPath)) {
+        console.log('[skills] importSkillFromFolder: folder not found:', folderPath);
         return { success: false, error: 'Folder not found' };
       }
 
@@ -1077,15 +1111,19 @@ export class SkillManager {
       try {
         const stat = fs.statSync(folderPath);
         if (!stat.isDirectory()) {
+          console.log('[skills] importSkillFromFolder: path is not a directory:', folderPath);
           return { success: false, error: 'Selected path is not a folder' };
         }
-      } catch {
+      } catch (statError) {
+        console.error('[skills] importSkillFromFolder: stat error:', statError);
         return { success: false, error: 'Cannot access folder' };
       }
 
       // Check if folder contains SKILL.md
       const skillMdPath = path.join(folderPath, SKILL_FILE_NAME);
+      console.log('[skills] importSkillFromFolder: checking for SKILL.md at:', skillMdPath);
       if (!fs.existsSync(skillMdPath)) {
+        console.log('[skills] importSkillFromFolder: SKILL.md not found');
         return {
           success: false,
           error: 'No valid skill found in folder. A skill must contain a SKILL.md file.',
@@ -1093,17 +1131,21 @@ export class SkillManager {
       }
 
       // Determine skill ID from SKILL.md name field (required for imports)
+      console.log('[skills] importSkillFromFolder: determining skill ID from frontmatter');
       const skillId = this.determineSkillIdFromFrontmatter(folderPath);
       if (!skillId) {
+        console.log('[skills] importSkillFromFolder: could not determine skill ID');
         return {
           success: false,
           error:
             'Could not determine skill ID. SKILL.md must have a valid "name" field in frontmatter.',
         };
       }
+      console.log('[skills] importSkillFromFolder: determined skill ID:', skillId);
 
       // Validate skillId is not a temporary directory name
       if (skillId.startsWith('.') || skillId.startsWith('import-')) {
+        console.log('[skills] importSkillFromFolder: invalid skill ID:', skillId);
         return {
           success: false,
           error: `Invalid skill ID "${skillId}". SKILL.md name field must not produce hidden or temp names.`,
@@ -1112,10 +1154,13 @@ export class SkillManager {
 
       // Check if skill already exists and remove it
       const targetDir = path.join(root, skillId);
+      console.log('[skills] importSkillFromFolder: target directory:', targetDir);
       if (fs.existsSync(targetDir)) {
         // Stop watching temporarily to avoid EPERM on Windows
+        console.log('[skills] importSkillFromFolder: stopping watcher for removal');
         this.stopWatching();
         try {
+          console.log('[skills] importSkillFromFolder: removing existing skill');
           fs.rmSync(targetDir, { recursive: true, force: true });
         } catch (rmError) {
           // On Windows, sometimes need retry after brief delay
@@ -1124,6 +1169,7 @@ export class SkillManager {
             fs.rmSync(targetDir, { recursive: true, force: true });
           } catch (retryError) {
             // If still failing, restore watching and report error
+            console.error('[skills] importSkillFromFolder: retry failed:', retryError);
             this.startWatching();
             throw new Error(
               `Failed to remove existing skill "${skillId}: ${retryError instanceof Error ? retryError.message : 'unknown error'}`,
@@ -1133,7 +1179,15 @@ export class SkillManager {
       }
 
       // Copy skill folder to target directory
-      fs.cpSync(folderPath, targetDir, { recursive: true, force: true });
+      console.log('[skills] importSkillFromFolder: copying folder to target');
+      try {
+        fs.cpSync(folderPath, targetDir, { recursive: true, force: true });
+      } catch (cpError) {
+        console.error('[skills] importSkillFromFolder: copy error:', cpError);
+        this.startWatching();
+        throw cpError;
+      }
+      console.log('[skills] importSkillFromFolder: copy completed successfully');
 
       // Enable imported skill by default
       const state = this.loadSkillStateMap();
@@ -1141,15 +1195,17 @@ export class SkillManager {
       this.saveSkillStateMap(state);
 
       // Refresh skill list (restart watching)
+      console.log('[skills] importSkillFromFolder: restarting watcher and notifying changes');
       this.startWatching();
       this.notifySkillsChanged();
       const skills = this.listSkills();
+      console.log('[skills] importSkillFromFolder: import completed successfully');
 
       return { success: true, skillId, skills };
     } catch (error) {
       const errorMsg =
         error instanceof Error ? error.message : 'Failed to import skill from folder';
-      console.error('[skills] importSkillFromFolder error:', errorMsg);
+      console.error('[skills] importSkillFromFolder error:', errorMsg, error);
       return { success: false, error: errorMsg };
     }
   }
@@ -1187,15 +1243,19 @@ export class SkillManager {
   private extractZip(zipPath: string, targetDir: string): void {
     // Use PowerShell on Windows, unzip on macOS/Linux
     if (process.platform === 'win32') {
+      // Use -LiteralPath for paths with special characters (Chinese, spaces, etc.)
+      // Double-quote paths inside the command and set encoding to utf8 for proper character handling
       execSync(
-        `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${targetDir}' -Force"`,
+        `powershell -Command "Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${targetDir}' -Force"`,
         {
           timeout: 60000,
+          encoding: 'utf8',
         },
       );
     } else {
       execSync(`unzip -o "${zipPath}" -d "${targetDir}"`, {
         timeout: 60000,
+        encoding: 'utf8',
       });
     }
   }
@@ -1204,6 +1264,7 @@ export class SkillManager {
     // Use tar (available on all platforms)
     execSync(`tar -xzf "${tgzPath}" -C "${targetDir}"`, {
       timeout: 60000,
+      encoding: 'utf8',
     });
   }
 
@@ -1343,8 +1404,12 @@ export class SkillManager {
 
   private notifySkillsChanged(): void {
     BrowserWindow.getAllWindows().forEach(win => {
-      if (!win.isDestroyed()) {
-        win.webContents.send('skills:changed');
+      try {
+        if (!win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+          win.webContents.send('skills:changed');
+        }
+      } catch (error) {
+        console.warn('[skills] Failed to notify window:', error);
       }
     });
     // Notify external listeners (e.g. OpenClaw AGENTS.md sync)
