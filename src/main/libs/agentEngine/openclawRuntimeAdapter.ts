@@ -128,7 +128,6 @@ function convertEntriesToCoworkMessages(
 /**
  * Mark the first user message as Subagent Context if it starts with [Subagent Context].
  * Used when memory is cleared after restart to restore the blue background styling.
- * Also extracts user task from Gateway's full format to show simplified version.
  */
 function markSubagentContextMessage(messages: CoworkMessage[]): CoworkMessage[] {
   if (messages.length === 0) return messages;
@@ -142,37 +141,9 @@ function markSubagentContextMessage(messages: CoworkMessage[]): CoworkMessage[] 
   if (!content || !content.startsWith('[Subagent Context]')) return messages;
   if (firstUserMsg.metadata?.isSubagentContext) return messages; // Already marked
 
-  // Extract user task from content
-  // Format 1 (memory): "[Subagent Context]\n\n{userTask}"
-  // Format 2 (Gateway): "[Subagent Context] You are running as a subagent... [Subagent Task]: {userTask}"
-  let displayContent = content;
-
-  // Try to extract from Gateway format: "[Subagent Task]: xxx"
-  const taskMatch = content.match(/\[Subagent Task\]:\s*(.+?)(?:\n|$)/i);
-  if (taskMatch && taskMatch[1]) {
-    displayContent = `[Subagent Context]\n\n${taskMatch[1].trim()}`;
-    console.log(
-      '[markSubagentContextMessage] extracted user task from Gateway format:',
-      taskMatch[1].trim(),
-    );
-  } else if (content.startsWith('[Subagent Context]\n\n')) {
-    // Already in simplified format, just keep it
-    displayContent = content;
-  } else {
-    // Unknown format, try to extract after first newline
-    const lines = content.split('\n');
-    if (lines.length > 2) {
-      // Skip "[Subagent Context]" and system prompt, find user content
-      const afterContext = lines.slice(2).join('\n');
-      if (afterContext.trim()) {
-        displayContent = `[Subagent Context]\n\n${afterContext.trim()}`;
-      }
-    }
-  }
-
+  // Only mark the flag, keep original content
   messages[firstUserIndex] = {
     ...firstUserMsg,
-    content: displayContent,
     metadata: {
       ...firstUserMsg.metadata,
       isSubagentContext: true,
