@@ -34,6 +34,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   const [importing, setImporting] = useState(false);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<{ fileName: string; error: string }[]>([]);
+  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
 
   // Gateway offline state
   const [gatewayOffline, setGatewayOffline] = useState(false);
@@ -268,6 +269,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     const result = await skillService.deleteSkill(skillPendingDelete.id);
     if (result.success && result.skills) {
       dispatch(setSkills(result.skills));
+      // Show success message and close detail modal
+      setDeleteSuccess(skillPendingDelete.name);
+      setSelectedSkill(null);
+      setSkillPendingDelete(null);
+      // Clear success message after 3 seconds
+      setTimeout(() => setDeleteSuccess(null), 3000);
     } else {
       // If delete failed (non-managed), show manual delete hint and open folder
       if (result.error?.includes('not found')) {
@@ -279,8 +286,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       } else {
         setSkillActionError(result.error || i18nService.t('skillDeleteFailed'));
       }
+      setSkillPendingDelete(null);
     }
-    setSkillPendingDelete(null);
   };
 
   // Render skill eligibility status
@@ -348,6 +355,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       {importSuccess && (
         <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30 text-green-600 text-sm">
           {i18nService.t('skillImportSuccess').replace('{skillId}', importSuccess)}
+        </div>
+      )}
+
+      {deleteSuccess && (
+        <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30 text-green-600 text-sm">
+          {i18nService.t('skillDeleteSuccess').replace('{name}', deleteSuccess)}
         </div>
       )}
 
