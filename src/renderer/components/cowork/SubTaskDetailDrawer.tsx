@@ -11,6 +11,70 @@ import {
 } from './CoworkSessionDetail';
 import { extractCanvasShortcodes } from '../../utils/canvasShortcode';
 
+// Copy button component for subagent messages
+const CopyButton: React.FC<{
+  content: string;
+  visible: boolean;
+}> = ({ content, visible }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={`p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-all duration-200 ${
+        visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      }`}
+      title={i18nService.t('copyToClipboard')}
+    >
+      {copied ? (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="w-3.5 h-3.5 text-green-500"
+          aria-hidden="true"
+        >
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+      ) : (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="w-3.5 h-3.5 text-[var(--icon-secondary)]"
+          aria-hidden="true"
+        >
+          <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+        </svg>
+      )}
+    </button>
+  );
+};
+
 interface SubTaskDetailDrawerProps {
   agentId: string;
   displayName?: string;
@@ -53,6 +117,7 @@ const SubagentThinkingBlock: React.FC<{ content: string }> = ({ content }) => {
 /** Simple assistant message with thinking and content */
 const SubagentAssistantMessage: React.FC<{ message: CoworkMessage }> = ({ message }) => {
   const hasThinking = message.thinkingContent && message.thinkingContent.length > 0;
+  const [isHovered, setIsHovered] = useState(false);
 
   // Extract canvas shortcodes for inline preview rendering
   const { text: strippedText, previews } = useMemo(() => {
@@ -60,13 +125,21 @@ const SubagentAssistantMessage: React.FC<{ message: CoworkMessage }> = ({ messag
   }, [message.content]);
 
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       {/* Thinking block */}
       {hasThinking && <SubagentThinkingBlock content={message.thinkingContent!} />}
 
       {/* Content */}
       {(message.content || previews.length > 0) && (
         <div className="relative rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle w-fit max-w-full">
+          {/* Copy button — top-right inside bubble */}
+          <div className="absolute top-1.5 right-1.5">
+            <CopyButton content={strippedText || message.content} visible={isHovered} />
+          </div>
           {previews.length > 0 && (
             <div className="mb-2">
               {previews.map((preview, idx) => (
@@ -95,9 +168,14 @@ const SubagentAssistantMessage: React.FC<{ message: CoworkMessage }> = ({ messag
 const SubagentUserMessage: React.FC<{ message: CoworkMessage }> = ({ message }) => {
   // Check if this is a Subagent Context message (initial prompt sent to subagent)
   const isSubagentContext = Boolean(message.metadata?.isSubagentContext);
+  const [isHovered, setIsHovered] = useState(false);
 
   return (
-    <div className="py-2 px-4">
+    <div
+      className="py-2 px-4"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       <div className="max-w-full">
         <div className="pl-4">
           {isSubagentContext && (
@@ -113,6 +191,10 @@ const SubagentUserMessage: React.FC<{ message: CoworkMessage }> = ({ message }) 
                 : 'bg-muted/30'
             }`}
           >
+            {/* Copy button — top-right inside bubble */}
+            <div className="absolute top-1.5 right-1.5">
+              <CopyButton content={message.content} visible={isHovered} />
+            </div>
             <MarkdownContent
               content={message.content}
               className="max-w-none break-words prose prose-sm dark:prose-invert"
