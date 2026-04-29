@@ -23,7 +23,6 @@ import {
   XCircleIcon,
   CubeIcon,
   CpuChipIcon,
-  UserCircleIcon,
   ArrowTopRightOnSquareIcon,
 } from '@heroicons/react/24/outline';
 import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
@@ -65,7 +64,6 @@ type TabType =
   | 'coworkAgentEngine'
   | 'model'
   | 'coworkMemory'
-  | 'coworkAgent'
   | 'myAgents'
   | 'skills'
   | 'mcp'
@@ -797,10 +795,6 @@ const Settings: React.FC<SettingsProps> = ({
       document.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isDragging]);
-  const [bootstrapIdentity, setBootstrapIdentity] = useState<string>('');
-  const [bootstrapUser, setBootstrapUser] = useState<string>('');
-  const [bootstrapSoul, setBootstrapSoul] = useState<string>('');
-  const [bootstrapLoaded, setBootstrapLoaded] = useState<boolean>(false);
   const [openClawEngineStatus, setOpenClawEngineStatus] = useState<OpenClawEngineStatus | null>(
     null,
   );
@@ -1247,27 +1241,6 @@ const Settings: React.FC<SettingsProps> = ({
    * Return file content directly, showing the actual content to users.
    * Previously hid OpenClaw default templates, but users expect to see file content.
    */
-  const stripDefaultTemplate = (content: string): string => {
-    return content;
-  };
-
-  useEffect(() => {
-    if (activeTab !== 'coworkAgent') return;
-    if (!bootstrapLoaded) {
-      void (async () => {
-        const [identity, user, soul] = await Promise.all([
-          coworkService.readBootstrapFile('IDENTITY.md'),
-          coworkService.readBootstrapFile('USER.md'),
-          coworkService.readBootstrapFile('SOUL.md'),
-        ]);
-        setBootstrapIdentity(stripDefaultTemplate(identity));
-        setBootstrapUser(stripDefaultTemplate(user));
-        setBootstrapSoul(stripDefaultTemplate(soul));
-        setBootstrapLoaded(true);
-      })();
-    }
-  }, [activeTab, bootstrapLoaded]);
-
   const resetCoworkMemoryEditor = () => {
     setCoworkMemoryEditingId(null);
     setCoworkMemoryDraftText('');
@@ -1458,18 +1431,6 @@ const Settings: React.FC<SettingsProps> = ({
         });
         if (!updated) {
           throw new Error(i18nService.t('coworkConfigSaveFailed'));
-        }
-      }
-
-      // Save bootstrap files (IDENTITY.md, USER.md, SOUL.md) only if loaded
-      if (bootstrapLoaded) {
-        const results = await Promise.all([
-          coworkService.writeBootstrapFile('IDENTITY.md', bootstrapIdentity),
-          coworkService.writeBootstrapFile('USER.md', bootstrapUser),
-          coworkService.writeBootstrapFile('SOUL.md', bootstrapSoul),
-        ]);
-        if (results.some(r => !r)) {
-          throw new Error(i18nService.t('coworkBootstrapSaveFailed'));
         }
       }
 
@@ -2211,11 +2172,6 @@ const Settings: React.FC<SettingsProps> = ({
         key: 'coworkMemory' as TabType,
         label: i18nService.t('coworkMemoryTitle'),
         icon: <BrainIcon className="h-5 w-5" />,
-      },
-      {
-        key: 'coworkAgent' as TabType,
-        label: i18nService.t('coworkAgentTab'),
-        icon: <UserCircleIcon className="h-5 w-5" />,
       },
       {
         key: 'myAgents' as TabType,
@@ -3389,75 +3345,6 @@ const Settings: React.FC<SettingsProps> = ({
                   )}
                 </div>
               </div>
-            </div>
-          </div>
-        );
-
-      case 'coworkAgent':
-        return (
-          <div className="space-y-6">
-            {/* Agent Settings (IDENTITY.md + SOUL.md) */}
-            <div className="space-y-4 rounded-xl border px-4 py-4 border-border">
-              <div className="text-sm font-medium text-foreground">
-                {i18nService.t('coworkBootstrapAgentSectionTitle')}
-              </div>
-              {[
-                {
-                  filename: 'IDENTITY.md',
-                  titleKey: 'coworkBootstrapIdentityTitle',
-                  hintKey: 'coworkBootstrapIdentityHint',
-                  value: bootstrapIdentity,
-                  setter: setBootstrapIdentity,
-                },
-                {
-                  filename: 'SOUL.md',
-                  titleKey: 'coworkBootstrapSoulTitle',
-                  hintKey: 'coworkBootstrapSoulHint',
-                  value: bootstrapSoul,
-                  setter: setBootstrapSoul,
-                },
-              ].map(({ filename, titleKey, hintKey, value, setter }) => (
-                <div key={filename} className="space-y-2">
-                  <div className="text-xs font-medium text-secondary">
-                    {i18nService.t(titleKey)}
-                    <span className="ml-1.5 font-normal opacity-60">
-                      （{i18nService.t('coworkBootstrapStoragePath')}：
-                      <span className="font-mono">
-                        {joinWorkspacePath(coworkConfig.workingDirectory, filename)}
-                      </span>
-                      ）
-                    </span>
-                  </div>
-                  <textarea
-                    value={value}
-                    onChange={e => setter(e.target.value)}
-                    rows={3}
-                    className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface text-foreground resize-y"
-                    placeholder={i18nService.t(hintKey)}
-                  />
-                </div>
-              ))}
-            </div>
-
-            {/* User Profile (USER.md) */}
-            <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
-              <div className="text-sm font-medium text-foreground">
-                {i18nService.t('coworkBootstrapUserTitle')}
-                <span className="ml-1.5 text-xs font-normal opacity-60 text-secondary">
-                  （{i18nService.t('coworkBootstrapStoragePath')}：
-                  <span className="font-mono">
-                    {joinWorkspacePath(coworkConfig.workingDirectory, 'USER.md')}
-                  </span>
-                  ）
-                </span>
-              </div>
-              <textarea
-                value={bootstrapUser}
-                onChange={e => setBootstrapUser(e.target.value)}
-                rows={3}
-                className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface text-foreground resize-y"
-                placeholder={i18nService.t('coworkBootstrapUserHint')}
-              />
             </div>
           </div>
         );

@@ -342,16 +342,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayPortHint:
       '内置 OpenClaw 的网关服务端口。如果与其他 OpenClaw 冲突，可修改此端口。',
     coworkMemoryTitle: '记忆',
-    coworkAgentTab: '主 Agent',
-    coworkBootstrapAgentSectionTitle: 'Agent 设定',
-    coworkBootstrapIdentityTitle: 'Agent 身份',
-    coworkBootstrapIdentityHint: 'Agent 的基本信息（名字、emoji、头像等元数据）',
-    coworkBootstrapUserTitle: '用户档案',
-    coworkBootstrapUserHint: '关于你自己的信息（姓名、偏好等），Agent 会记住你。',
-    coworkBootstrapSoulTitle: 'Agent 人设',
-    coworkBootstrapSoulHint: 'Agent 的性格、语气和行为准则。会强制 Agent 遵循此设定。',
-    coworkBootstrapStoragePath: '存储路径',
-    coworkBootstrapSaveFailed: 'Agent 设定保存失败',
     coworkMemoryEnabled: '启用用户记忆',
     coworkMemoryEnabledHint: 'OpenClaw 会自动索引 MEMORY.md 文件，为 Agent 提供长期记忆检索。',
     coworkMemoryFilePath: '记忆文件路径',
@@ -1441,18 +1431,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayPortHint:
       'Gateway service port for the built-in OpenClaw. Modify if it conflicts with other OpenClaw installations.',
     coworkMemoryTitle: 'Memory',
-    coworkAgentTab: 'Main Agent',
-    coworkBootstrapAgentSectionTitle: 'Agent Settings',
-    coworkBootstrapIdentityTitle: 'Agent Identity',
-    coworkBootstrapIdentityHint: 'Agent metadata (name, emoji, avatar, etc.)',
-    coworkBootstrapUserTitle: 'User Profile',
-    coworkBootstrapUserHint:
-      'Information about yourself (name, preferences, etc.) that the Agent will remember.',
-    coworkBootstrapSoulTitle: 'Agent Persona',
-    coworkBootstrapSoulHint:
-      'Agent personality, tone, and behavior guidelines. The Agent will be instructed to follow this.',
-    coworkBootstrapStoragePath: 'Storage path',
-    coworkBootstrapSaveFailed: 'Failed to save agent settings',
     coworkMemoryEnabled: 'Enable user memories',
     coworkMemoryEnabledHint:
       'OpenClaw automatically indexes MEMORY.md for long-term memory retrieval by the Agent.',

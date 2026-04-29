@@ -707,24 +707,6 @@ class CoworkService {
     return result.stats;
   }
 
-  async readBootstrapFile(filename: string): Promise<string> {
-    const api = window.electron?.cowork?.readBootstrapFile;
-    if (!api) return '';
-    const result = await api(filename);
-    if (!result?.success) {
-      console.warn(`[CoworkService] readBootstrapFile: failed to read ${filename}`, result?.error);
-      return '';
-    }
-    return result.content || '';
-  }
-
-  async writeBootstrapFile(filename: string, content: string): Promise<boolean> {
-    const api = window.electron?.cowork?.writeBootstrapFile;
-    if (!api) return false;
-    const result = await api(filename, content);
-    return Boolean(result?.success);
-  }
-
   onOpenClawEngineStatus(callback: (status: OpenClawEngineStatus) => void): () => void {
     this.setupOpenClawEngineListeners();
     this.openClawStatusListeners.add(callback);
