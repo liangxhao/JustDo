@@ -49,7 +49,13 @@ export const GROUP_COLORS = [
 ];
 
 // Cowork message types
-export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
+export type CoworkMessageType =
+  | 'user'
+  | 'assistant'
+  | 'tool_use'
+  | 'tool_result'
+  | 'system'
+  | 'subagent_completion';
 
 // Cowork execution mode
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';

@@ -881,7 +881,7 @@ class CoworkService {
 
   // Get subagent status for a session
   async getSubTaskStatus(sessionId?: string): Promise<{
-    statuses: Record<string, 'running' | 'done'>;
+    statuses: Record<string, 'pending' | 'running' | 'done'>;
     displayLabels?: Record<string, string>;
   }> {
     const cowork = window.electron?.cowork;

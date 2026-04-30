@@ -387,7 +387,12 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 className="flex-1 min-w-0 rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               />
             ) : (
-              <Tooltip content={session.title} position="top" delay={500} className="flex-1 min-w-0">
+              <Tooltip
+                content={session.title}
+                position="top"
+                delay={500}
+                className="flex-1 min-w-0"
+              >
                 <h3 className="text-xs font-medium text-foreground truncate">{session.title}</h3>
               </Tooltip>
             )}

@@ -6,7 +6,7 @@ import CoworkSessionItem from './CoworkSessionItem';
 interface SubTaskInfo {
   agentId: string;
   task: string;
-  status: 'running' | 'done';
+  status: 'pending' | 'running' | 'done';
   sessionKey?: string;
 }
 
@@ -27,7 +27,12 @@ interface SessionGroupPanelProps {
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
   enrichedSubTasks: SubTaskInfo[];
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string; isRunning: boolean } | null>
+    React.SetStateAction<{
+      agentId: string;
+      displayName?: string;
+      parentSessionId: string;
+      status: 'pending' | 'running' | 'done';
+    } | null>
   >;
 }
 
@@ -87,7 +92,12 @@ interface SubAgentListProps {
   currentSessionId: string | null;
   enrichedSubTasks: SubTaskInfo[];
   setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{ agentId: string; displayName?: string; parentSessionId: string; isRunning: boolean } | null>
+    React.SetStateAction<{
+      agentId: string;
+      displayName?: string;
+      parentSessionId: string;
+      status: 'pending' | 'running' | 'done';
+    } | null>
   >;
 }
 
@@ -104,12 +114,23 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
       {enrichedSubTasks.map(sub => (
         <div
           key={sub.agentId}
-          onClick={() => setActiveSubTask({ agentId: sub.agentId, displayName: sub.task, parentSessionId: sessionId, isRunning: sub.status === 'running' })}
+          onClick={() =>
+            setActiveSubTask({
+              agentId: sub.agentId,
+              displayName: sub.task,
+              parentSessionId: sessionId,
+              status: sub.status,
+            })
+          }
           className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
         >
           <span
             className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-              sub.status === 'done' ? 'bg-green-500' : 'bg-blue-500 animate-pulse'
+              sub.status === 'done'
+                ? 'bg-green-500'
+                : sub.status === 'pending'
+                  ? 'bg-orange-500 animate-pulse'
+                  : 'bg-blue-500 animate-pulse'
             }`}
           />
           <span className="font-medium dark:text-claude-darkText text-claude-text truncate">

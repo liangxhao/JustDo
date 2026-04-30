@@ -7,7 +7,7 @@ import SessionGroupPanel from './SessionGroupPanel';
 interface SubTaskInfo {
   agentId: string;
   task: string;
-  status: 'running' | 'done';
+  status: 'pending' | 'running' | 'done';
   sessionKey?: string;
 }
 
@@ -38,7 +38,7 @@ interface GroupListProps {
       agentId: string;
       displayName?: string;
       parentSessionId: string;
-      isRunning: boolean;
+      status: 'pending' | 'running' | 'done';
     } | null>
   >;
 }

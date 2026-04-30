@@ -1115,18 +1115,58 @@ const bindCoworkRuntimeForwarder = (): void => {
       typeof message === 'object' && message && 'type' in message
         ? (message as { type?: unknown }).type
         : undefined;
+    const messageId = (message as CoworkMessage)?.id;
     console.log(
       '[CoworkForwarder] forwarding message: sessionId=',
       sessionId,
       'type=',
       messageType,
+      'id=',
+      messageId,
       'windowCount=',
       windows.length,
     );
+
+    // Persist message to CoworkStore so it survives session reloads
+    // Only persist certain message types (not streaming intermediate messages)
+    if (
+      messageType === 'subagent_completion' ||
+      messageType === 'assistant' ||
+      messageType === 'system' ||
+      messageType === 'user'
+    ) {
+      try {
+        getCoworkStore().insertMessageWithId(sessionId, message as CoworkMessage);
+        console.log(
+          '[CoworkForwarder] persisted message to CoworkStore: sessionId=',
+          sessionId,
+          'type=',
+          messageType,
+          'id=',
+          messageId,
+        );
+      } catch (err) {
+        console.error('[CoworkForwarder] failed to persist message:', err);
+      }
+    }
+
     windows.forEach(win => {
       if (win.isDestroyed()) return;
       try {
-        win.webContents.send('cowork:stream:message', { sessionId, message: safeMessage });
+        const sentResult = win.webContents.send('cowork:stream:message', {
+          sessionId,
+          message: safeMessage,
+        });
+        console.log(
+          '[CoworkForwarder] IPC sent: sessionId=',
+          sessionId,
+          'type=',
+          messageType,
+          'webContentsId=',
+          win.webContents.id,
+          'success=',
+          sentResult === undefined ? 'true' : 'false',
+        );
       } catch (error) {
         console.error('Failed to forward cowork message:', error);
       }
@@ -1217,26 +1257,29 @@ const bindCoworkRuntimeForwarder = (): void => {
     });
   });
 
-  runtime.on('complete', (sessionId: string, claudeSessionId: string | null, finalStatus?: string) => {
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      win.webContents.send('cowork:stream:complete', { sessionId, claudeSessionId, finalStatus });
-    });
-    // If session used a server model, notify renderer to refresh quota
-    try {
-      const apiConfig = resolveCurrentApiConfig();
-      if (apiConfig.providerMetadata?.providerName === 'gucciai-server') {
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach(win => {
-          if (win.isDestroyed()) return;
-          win.webContents.send('auth:quotaChanged');
-        });
+  runtime.on(
+    'complete',
+    (sessionId: string, claudeSessionId: string | null, finalStatus?: string) => {
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach(win => {
+        if (win.isDestroyed()) return;
+        win.webContents.send('cowork:stream:complete', { sessionId, claudeSessionId, finalStatus });
+      });
+      // If session used a server model, notify renderer to refresh quota
+      try {
+        const apiConfig = resolveCurrentApiConfig();
+        if (apiConfig.providerMetadata?.providerName === 'gucciai-server') {
+          const windows = BrowserWindow.getAllWindows();
+          windows.forEach(win => {
+            if (win.isDestroyed()) return;
+            win.webContents.send('auth:quotaChanged');
+          });
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
-    }
-  });
+    },
+  );
 
   runtime.on('error', (sessionId: string, error: string) => {
     // Mark session as error in store so the .catch() fallback can detect duplicates.

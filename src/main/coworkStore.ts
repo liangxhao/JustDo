@@ -306,7 +306,13 @@ function shouldAutoDeleteMemoryText(text: string): boolean {
 
 // Types mirroring src/types/cowork.ts for main process use
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
-export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
+export type CoworkMessageType =
+  | 'user'
+  | 'assistant'
+  | 'tool_use'
+  | 'tool_result'
+  | 'system'
+  | 'subagent_completion';
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
 export type CoworkAgentEngine = 'openclaw';
 
@@ -868,6 +874,52 @@ export class CoworkStore {
       // Include modelName if provided (used to display which model generated this message)
       ...(message.modelName ? { modelName: message.modelName } : {}),
     };
+  }
+
+  /**
+   * Insert a message with a pre-existing ID (used for runtime-emitted messages that need to persist).
+   * Returns the inserted message or the existing one if already present.
+   */
+  insertMessageWithId(sessionId: string, message: CoworkMessage): CoworkMessage {
+    // Check if message already exists
+    const existing = this.db
+      .prepare('SELECT * FROM cowork_messages WHERE id = ?')
+      .get(message.id) as CoworkMessage | undefined;
+    if (existing) {
+      return existing;
+    }
+
+    const seqRow = this.db
+      .prepare(
+        'SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM cowork_messages WHERE session_id = ?',
+      )
+      .get(sessionId) as { next_seq: number } | undefined;
+    const sequence = seqRow?.next_seq ?? 1;
+
+    this.db
+      .prepare(
+        `
+      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence, thinking_content, model_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      )
+      .run(
+        message.id,
+        sessionId,
+        message.type,
+        message.content,
+        message.metadata ? JSON.stringify(message.metadata) : null,
+        message.timestamp,
+        sequence,
+        message.thinkingContent || null,
+        message.modelName || null,
+      );
+
+    this.db
+      .prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?')
+      .run(message.timestamp, sessionId);
+
+    return message;
   }
 
   /**

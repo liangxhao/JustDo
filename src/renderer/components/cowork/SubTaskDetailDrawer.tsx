@@ -80,7 +80,7 @@ interface SubTaskDetailDrawerProps {
   displayName?: string;
   parentSessionId: string;
   onClose: () => void;
-  isRunning?: boolean;
+  status: 'pending' | 'running' | 'done';
 }
 
 /** Module-level cache so re-opening a drawer doesn't flash "loading" */
@@ -229,14 +229,14 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   displayName,
   parentSessionId,
   onClose,
-  isRunning: initialIsRunning,
+  status: initialStatus,
 }) => {
   // Debug log for props
   console.log(
     '[SubTaskDetailDrawer] props: agentId=' +
       agentId +
-      ' initialIsRunning=' +
-      initialIsRunning +
+      ' initialStatus=' +
+      initialStatus +
       ' parentSessionId=' +
       parentSessionId,
   );
@@ -248,8 +248,9 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   const [loading, setLoading] = useState(!cached || cached.length === 0);
   const [error, setError] = useState<string | null>(null);
 
-  // Track actual running state internally (may differ from initial prop)
-  const [isRunning, setIsRunning] = useState(initialIsRunning);
+  // Track actual status internally (may differ from initial prop)
+  const [status, setStatus] = useState<'pending' | 'running' | 'done'>(initialStatus);
+  const isRunning = status === 'running' || status === 'pending';
 
   // Width state for resizable drawer
   const [drawerWidth, setDrawerWidth] = useState(480);
@@ -406,10 +407,12 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       try {
         const result = await coworkService.getSubTaskStatus(parentSessionId);
         const currentStatus = result.statuses[agentId];
-        if (currentStatus === 'done') {
-          setIsRunning(false);
-          // Also refresh history once when done
-          fetchHistory();
+        if (currentStatus) {
+          setStatus(currentStatus as 'pending' | 'running' | 'done');
+          if (currentStatus === 'done') {
+            // Also refresh history once when done
+            fetchHistory();
+          }
         }
       } catch {
         // Ignore status check errors
@@ -495,10 +498,23 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
             <h3 className="text-sm font-semibold dark:text-claude-darkText text-claude-text truncate">
               {i18nService.t('subTaskDetail') || 'Sub-task Detail'} — {displayName || agentId}
             </h3>
-            {isRunning && (
+            {/* Status indicator synced with breathing light */}
+            {status === 'running' && (
               <span className="inline-flex items-center gap-1 ml-2 text-xs text-blue-500">
-                <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                <span className="inline-block w-3 h-3 bg-blue-500 rounded-full animate-pulse" />
                 {i18nService.t('subTaskRunning') || 'Running'}
+              </span>
+            )}
+            {status === 'pending' && (
+              <span className="inline-flex items-center gap-1 ml-2 text-xs text-orange-500">
+                <span className="inline-block w-3 h-3 bg-orange-500 rounded-full animate-pulse" />
+                {i18nService.t('subTaskPending') || 'Pending'}
+              </span>
+            )}
+            {status === 'done' && (
+              <span className="inline-flex items-center gap-1 ml-2 text-xs text-green-500">
+                <span className="inline-block w-3 h-3 bg-green-500 rounded-full" />
+                {i18nService.t('subTaskDone') || 'Done'}
               </span>
             )}
           </div>
@@ -542,7 +558,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
             </div>
           )}
 
-          {!loading && !error && messages.length === 0 && (
+          {!loading && !error && messages.length === 0 && status !== 'pending' && (
             <div className="text-center py-8">
               <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
                 {i18nService.t('subTaskNoHistory') || 'No conversation history'}

@@ -45,7 +45,7 @@ interface CoworkMessageMetadata {
 
 interface CoworkMessage {
   id: string;
-  type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
+  type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'subagent_completion';
   content: string;
   timestamp: number;
   metadata?: CoworkMessageMetadata;
@@ -639,7 +639,7 @@ interface IElectronAPI {
     ) => () => void;
     getSubTaskStatus: (sessionId?: string) => Promise<{
       success: boolean;
-      statuses: Record<string, 'running' | 'done'>;
+      statuses: Record<string, 'pending' | 'running' | 'done'>;
       displayLabels?: Record<string, string>;
     }>;
     getSubTaskHistory: (options: {

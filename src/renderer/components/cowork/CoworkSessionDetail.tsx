@@ -12,6 +12,7 @@ import { ShareIcon } from '@heroicons/react/20/solid';
 import {
   CheckIcon,
   ChevronRightIcon,
+  CogIcon,
   DocumentArrowDownIcon,
   PhotoIcon,
   SparklesIcon,
@@ -689,7 +690,8 @@ export type AssistantTurnItem =
   | { type: 'assistant'; message: CoworkMessage }
   | { type: 'system'; message: CoworkMessage }
   | { type: 'tool_group'; group: ToolGroupItem }
-  | { type: 'tool_result'; message: CoworkMessage };
+  | { type: 'tool_result'; message: CoworkMessage }
+  | { type: 'subagent_completion'; message: CoworkMessage };
 
 export type ConversationTurn = {
   id: string;
@@ -788,6 +790,11 @@ export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[]
       continue;
     }
 
+    if (message.type === 'subagent_completion') {
+      turn.assistantItems.push({ type: 'subagent_completion', message });
+      continue;
+    }
+
     if (message.type === 'tool_result') {
       turn.assistantItems.push({ type: 'tool_result', message });
       continue;
@@ -812,7 +819,11 @@ export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[]
     turn.assistantItems.sort((a, b) => {
       // Get timestamp from message or tool_group
       const getTimestamp = (item: AssistantTurnItem): number => {
-        if (item.type === 'assistant' || item.type === 'system') {
+        if (
+          item.type === 'assistant' ||
+          item.type === 'system' ||
+          item.type === 'subagent_completion'
+        ) {
           return item.message.timestamp;
         }
         if (item.type === 'tool_group') {
@@ -844,7 +855,7 @@ const isRenderableAssistantOrSystemMessage = (message: CoworkMessage): boolean =
 };
 
 const isVisibleAssistantTurnItem = (item: AssistantTurnItem): boolean => {
-  if (item.type === 'assistant' || item.type === 'system') {
+  if (item.type === 'assistant' || item.type === 'system' || item.type === 'subagent_completion') {
     return isRenderableAssistantOrSystemMessage(item.message);
   }
   if (item.type === 'tool_result') {
@@ -1397,6 +1408,102 @@ const AssistantMessageItem: React.FC<{
   );
 };
 
+/**
+ * Subagent completion message item - displays when a subagent completes its task.
+ * Uses a distinct avatar (CogIcon) to differentiate from main assistant messages.
+ */
+const SubagentCompletionMessageItem: React.FC<{
+  message: CoworkMessage;
+  mapDisplayText?: (value: string) => string;
+}> = ({ message, mapDisplayText }) => {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
+
+  // Extract subagent info from metadata
+  const taskLabel = (message.metadata?.taskLabel as string) || 'Subagent Task';
+  const status = (message.metadata?.status as string) || 'completed';
+  const sessionKey = (message.metadata?.sessionKey as string) || '';
+
+  // Status color
+  const statusColor =
+    status.toLowerCase() === 'completed' || status.toLowerCase() === 'success'
+      ? 'text-green-500'
+      : status.toLowerCase() === 'error' || status.toLowerCase() === 'failed'
+        ? 'text-red-500'
+        : 'text-secondary';
+
+  // Generate collapsed summary (first 100 chars or "View result" placeholder)
+  const collapsedSummary =
+    displayContent.length > 100
+      ? displayContent.slice(0, 100).replace(/\n/g, ' ') + '...'
+      : displayContent
+        ? 'Click to view result'
+        : 'Task completed';
+
+  // Content line count estimate (for deciding if collapse is needed)
+  const lineCount = displayContent ? displayContent.split('\n').length : 0;
+  const shouldCollapse = displayContent.length > 100 || lineCount > 3;
+
+  return (
+    <div
+      className="relative px-4 py-2"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <div className="max-w-5xl mx-auto">
+        <div className="flex items-start gap-3">
+          {/* Subagent avatar - CogIcon in teal/green color */}
+          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-teal-500/10 flex items-center justify-center">
+            <CogIcon className="h-4 w-4 text-teal-500" />
+          </div>
+          {/* Content area */}
+          <div className="w-full min-w-0">
+            {/* Header: task label and status - clickable to expand/collapse */}
+            <button
+              type="button"
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="flex items-center gap-2 mb-1.5 cursor-pointer hover:opacity-80 transition-opacity"
+            >
+              <span className="text-xs font-medium text-teal-600">{taskLabel}</span>
+              <span className={`text-xs ${statusColor}`}>{status}</span>
+              {sessionKey && (
+                <span className="text-xs text-muted truncate max-w-[120px]">{sessionKey}</span>
+              )}
+              {/* Expand/collapse indicator */}
+              {shouldCollapse && (
+                <span className="text-xs text-muted ml-1">{isExpanded ? '▼' : '▶'}</span>
+              )}
+            </button>
+            {/* Result content */}
+            {displayContent && (
+              <div className="relative rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle w-fit max-w-[calc(100%-44px)]">
+                <CopyButton content={displayContent} visible={isHovered && isExpanded} />
+                {isExpanded ? (
+                  <MarkdownContent
+                    content={displayContent}
+                    className="max-w-none break-words text-sm"
+                  />
+                ) : (
+                  <div
+                    className="text-sm text-secondary cursor-pointer hover:text-foreground transition-colors"
+                    onClick={() => setIsExpanded(true)}
+                  >
+                    {collapsedSummary}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="flex items-center gap-1.5 mt-1 pl-4">
+              <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Streaming activity bar shown between messages and input
 const StreamingActivityBar: React.FC<{ messages: CoworkMessage[] }> = ({ messages }) => {
   // Walk messages backwards to find the latest tool_use without a paired tool_result
@@ -1739,6 +1846,16 @@ export const AssistantTurnBlock: React.FC<{
                   return null;
                 }
                 return <div key={item.message.id}>{systemMessage}</div>;
+              }
+
+              if (item.type === 'subagent_completion') {
+                return (
+                  <SubagentCompletionMessageItem
+                    key={item.message.id}
+                    message={item.message}
+                    mapDisplayText={mapDisplayText}
+                  />
+                );
               }
 
               return <div key={item.message.id}>{renderOrphanToolResult(item.message)}</div>;

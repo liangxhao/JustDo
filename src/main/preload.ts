@@ -354,7 +354,8 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('cowork:stream:messageMetadataUpdate', handler);
     },
     onStreamMessageDelete: (callback: (data: { sessionId: string; messageId: string }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; messageId: string }) => callback(data);
+      const handler = (_event: any, data: { sessionId: string; messageId: string }) =>
+        callback(data);
       ipcRenderer.on('cowork:stream:messageDelete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageDelete', handler);
     },
@@ -369,10 +370,16 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('cowork:stream:permissionDismiss', handler);
     },
     onStreamComplete: (
-      callback: (data: { sessionId: string; claudeSessionId: string | null; finalStatus?: string }) => void,
+      callback: (data: {
+        sessionId: string;
+        claudeSessionId: string | null;
+        finalStatus?: string;
+      }) => void,
     ) => {
-      const handler = (_event: any, data: { sessionId: string; claudeSessionId: string | null; finalStatus?: string }) =>
-        callback(data);
+      const handler = (
+        _event: any,
+        data: { sessionId: string; claudeSessionId: string | null; finalStatus?: string },
+      ) => callback(data);
       ipcRenderer.on('cowork:stream:complete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:complete', handler);
     },
