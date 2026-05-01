@@ -2489,6 +2489,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               );
               return;
             }
+            // Skip if already done (don't override completion with late start/running event)
+            if (this.subagentStatus.get(toolCallId) === 'done') {
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle: ignoring start/running for completed toolCallId=' +
+                  toolCallId,
+              );
+              return;
+            }
             // Remove from pending since subagent is now running
             this.pendingToolCallIds.delete(toolCallId);
             this.pendingEntryTimestamps.delete(toolCallId);
@@ -2595,8 +2603,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           const emitAgentId = subagentUuid;
 
           if (phase === 'start' || phase === 'running') {
-            // Skip if already running
-            if (this.subagentStatus.get(emitAgentId) === 'running') return;
+            // Skip if already running or done (don't override completion with late start/running)
+            const existingStatus = this.subagentStatus.get(emitAgentId);
+            if (existingStatus === 'running' || existingStatus === 'done') return;
             // Skip if already marked as failed
             if (this.failedSubagentIds.has(emitAgentId)) return;
 
@@ -7942,8 +7951,45 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // subagentStatus uses toolCallId as key and is the authoritative source for subagent status.
         // Lifecycle events (agent.started -> 'running', agent.stopped/agent.completed -> 'done')
         // are the only reliable indicators of actual subagent state.
+
+        // Helper: find lifecycle status for a message key, handling key format mismatches.
+        // The sessions_spawn message uses toolUseId (e.g. 'call_xxx') as key, while
+        // lifecycle events may use a different key (e.g. raw UUID). We need to bridge
+        // between these formats.
+        const findLifecycleStatus = (
+          msgKey: string,
+        ): 'pending' | 'running' | 'done' | null => {
+          // Direct match first
+          const direct = this.subagentStatus.get(msgKey);
+          if (direct) return direct;
+
+          // Extract UUID-like portion from msgKey for cross-format matching
+          const uuidMatch = msgKey.match(
+            /([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i,
+          );
+          if (!uuidMatch) return null;
+          const uuid = uuidMatch[1];
+
+          // Check if any subagentStatus key matches this UUID
+          for (const [sk, sv] of this.subagentStatus) {
+            if (sk === uuid || sk.includes(uuid)) return sv;
+          }
+
+          // Check sessionKey mapping: does any subagentStatus key map to the same sessionKey?
+          const msgSessionKey = this.toolCallIdToSessionKey.get(msgKey);
+          if (msgSessionKey) {
+            const viaSessionKey = this.sessionKeyToToolCallId.get(msgSessionKey);
+            if (viaSessionKey && viaSessionKey !== msgKey) {
+              const viaStatus = this.subagentStatus.get(viaSessionKey);
+              if (viaStatus) return viaStatus;
+            }
+          }
+
+          return null;
+        };
+
         for (const toolCallId of Object.keys(statuses)) {
-          const memoryStatus = this.subagentStatus.get(toolCallId);
+          const memoryStatus = findLifecycleStatus(toolCallId);
           if (memoryStatus) {
             // Memory status from lifecycle events is authoritative
             statuses[toolCallId] = memoryStatus;
