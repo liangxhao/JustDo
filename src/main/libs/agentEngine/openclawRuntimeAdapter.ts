@@ -926,6 +926,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     string,
     Array<{ role: string; content: string; metadata?: Record<string, unknown> }>
   >();
+
+  // Track which non-thinking stream types we've already logged (avoid spam)
+  private readonly _loggedThinkingStreamTypes = new Set<string>();
+  /** Dedup set for tool events: same (phase + toolCallId) arriving via stream=tool and stream=item. */
+  private readonly _processedToolEvents = new Set<string>();
+  /** Track toolUseIds created from subagent handler to avoid duplicate messages in main session */
+  private readonly _announceToolMessages = new Set<string>();
   /** 子 Agent 完成状态: agentId/label → 'pending' | 'running' | 'done' */
   private readonly subagentStatus = new Map<string, 'pending' | 'running' | 'done'>();
   /** 失败的子 Agent toolCallId 集合（启动失败，应从显示列表中移除） */
@@ -944,14 +951,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly toolCallArgs = new Map<string, Record<string, unknown>>();
   /** toolCallId → label 映射，用于显示名称 */
   private readonly toolCallIdToLabel = new Map<string, string>();
+  /** subagent UUID → label mapping (for nested subagents identified by sessionKey UUID) */
+  private readonly subagentUuidToLabel = new Map<string, string>();
   /** 正在等待 sessionKey 的 toolCallId 集合 */
   private readonly pendingToolCallIds = new Set<string>();
-  /** Embedded agent status: sessionKey → 'running' | 'done' (for agents created without sessions_spawn) */
-  private readonly embeddedAgentStatus = new Map<string, 'running' | 'done'>();
-  /** Embedded agent labels: sessionKey → label (queried from sessions.list) */
-  private readonly embeddedAgentLabels = new Map<string, string>();
-  /** Failed embedded agents: sessionKey (to filter from display after error) */
-  private readonly failedEmbeddedAgents = new Set<string>();
+  /** Pending subagent timeout: toolCallId → timestamp when it entered pending state */
+  private readonly pendingEntryTimestamps = new Map<string, number>();
+  private static readonly PENDING_TIMEOUT_MS = 30_000; // 30s without lifecycle events → failed
+  /** Subagent activity tracker: toolCallId → last seen activity timestamp.
+   *  Used to detect stuck subagents — if no activity within the timeout window,
+   *  the subagent is marked as failed regardless of its 'running' status. */
+  private readonly subagentLastActivity = new Map<string, number>();
+  private static readonly SUBAGENT_IDLE_MS = 180_000; // 3min of no activity → considered stuck
+
+  /** Cross-reference: UUID → call_... toolCallId.
+   *  Nested lifecycle phase=start uses sessionKey UUID as key, but context messages
+   *  are stored under call_... keys by the sessions_spawn handler. This map bridges
+   *  the gap so getSubTaskHistory can find context when queried by UUID. */
+  private readonly uuidToToolCallId = new Map<string, string>();
 
   constructor(store: CoworkStore, engineManager: OpenClawEngineManager) {
     super();
@@ -1415,6 +1432,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // These are needed for other sessions' subagent status display
         this.sessionKeyToLabel.clear();
         this.toolCallArgs.clear();
+        this._announceToolMessages.clear();
         // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
       }, 60000);
     }
@@ -2436,6 +2454,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
             // Remove from pending since mapping is now established
             this.pendingToolCallIds.delete(toolCallId);
+            this.pendingEntryTimestamps.delete(toolCallId);
           } else {
             console.log(
               '[OpenClawRuntime] subagent lifecycle fallback: no unmapped pending toolCallIds available for sessionKey=' +
@@ -2472,7 +2491,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             }
             // Remove from pending since subagent is now running
             this.pendingToolCallIds.delete(toolCallId);
+            this.pendingEntryTimestamps.delete(toolCallId);
             this.subagentStatus.set(toolCallId, 'running');
+            this.subagentLastActivity.set(toolCallId, Date.now());
           } else if (phase === 'end' || phase === 'completed' || phase === 'stopped') {
             // Skip if already marked as failed
             if (this.failedSubagentIds.has(toolCallId)) {
@@ -2485,6 +2506,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             }
             this.subagentStatus.set(toolCallId, 'done');
             this.persistSubagentStatus(toolCallId, 'done');
+            this.subagentLastActivity.delete(toolCallId);
+
+            // Also clean up any parallel UUID entry created by the nested lifecycle handler.
+            // The phase=start for nested subagents goes through the nested handler (line 2563)
+            // which uses sessionKey's UUID as key, while phase=end comes through this main
+            // handler with a resolved toolCallId. This leaves a dangling 'running' UUID entry
+            // that gets incorrectly killed by the idle timeout.
+            if (sessionKey && sessionKey.includes(':subagent:')) {
+              const subagentUuid = sessionKey.split(':subagent:')[1] || '';
+              if (subagentUuid && subagentUuid !== toolCallId) {
+                const uuidStatus = this.subagentStatus.get(subagentUuid);
+                if (uuidStatus === 'running') {
+                  console.log(
+                    '[OpenClawRuntime] subagent lifecycle: cleaning up dangling UUID entry uuid=' +
+                      subagentUuid +
+                      ' toolCallId=' +
+                      toolCallId,
+                  );
+                  this.subagentStatus.delete(subagentUuid);
+                  this.subagentLastActivity.delete(subagentUuid);
+                }
+              }
+            }
 
             // Emit subagent_completion message to parent session
             // This allows the frontend to display completion with the subagent avatar
@@ -2537,94 +2581,162 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             this.failedSubagentIds.add(toolCallId);
             this.subagentStatus.delete(toolCallId);
             this.pendingToolCallIds.delete(toolCallId);
+            this.pendingEntryTimestamps.delete(toolCallId);
+            this.subagentLastActivity.delete(toolCallId);
             this.toolCallIdToSessionKey.delete(toolCallId);
             this.toolCallIdToParentSessionId.delete(toolCallId);
             this.toolCallIdToLabel.delete(toolCallId);
             this.subagentMessages.delete(toolCallId);
           }
-        } else {
-          // No toolCallId found - this is an embedded agent (created without sessions_spawn)
-          // Track it using sessionKey as the identifier
-          console.log(
-            '[OpenClawRuntime] subagent lifecycle (no sessionId): NO MAPPING FOUND - tracking as embedded agent sessionKey=' +
-              sessionKey +
-              ' phase=' +
-              phase +
-              ' pendingToolCallIds=' +
-              Array.from(this.pendingToolCallIds).join(','),
-          );
-          // Track embedded agent status using sessionKey
+        } else if (sessionKey && sessionKey.includes(':subagent:')) {
+          // No toolCallId but this is a subagent (spawned by a subagent, not directly by main agent).
+          // Use the subagent UUID portion as the tracking key.
+          const subagentUuid = sessionKey.split(':subagent:')[1] || sessionKey;
+          const emitAgentId = subagentUuid;
+
           if (phase === 'start' || phase === 'running') {
-            // Skip if already marked as failed (retry after error should not re-add)
-            if (this.failedEmbeddedAgents.has(sessionKey)) {
-              console.log(
-                '[OpenClawRuntime] embedded agent lifecycle: ignoring start/running for failed sessionKey=' +
-                  sessionKey +
-                  ' (already in failedEmbeddedAgents)',
-              );
-              return;
-            }
-            this.embeddedAgentStatus.set(sessionKey, 'running');
-            // Query label asynchronously if not already known
-            if (!this.embeddedAgentLabels.has(sessionKey)) {
-              void this.queryEmbeddedAgentLabel(sessionKey);
-            }
-          } else if (phase === 'end' || phase === 'completed' || phase === 'stopped') {
+            // Skip if already running
+            if (this.subagentStatus.get(emitAgentId) === 'running') return;
             // Skip if already marked as failed
-            if (this.failedEmbeddedAgents.has(sessionKey)) {
-              console.log(
-                '[OpenClawRuntime] embedded agent lifecycle: ignoring end for failed sessionKey=' +
-                  sessionKey +
-                  ' (already in failedEmbeddedAgents)',
-              );
-              return;
-            }
-            this.embeddedAgentStatus.set(sessionKey, 'done');
+            if (this.failedSubagentIds.has(emitAgentId)) return;
 
-            // Emit subagent_completion message for embedded agent
+            this.pendingToolCallIds.delete(emitAgentId);
+            this.pendingEntryTimestamps.delete(emitAgentId);
+            this.subagentStatus.set(emitAgentId, 'running');
+            this.subagentLastActivity.set(emitAgentId, Date.now());
+            this.sessionKeyToToolCallId.set(sessionKey, emitAgentId);
+            this.toolCallIdToSessionKey.set(emitAgentId, sessionKey);
+
+            // Also try to find a matching call_... toolCallId from pending entries
+            // that has the same sessionKey mapping. This lets us cross-reference
+            // context messages stored under call_... keys when queried by UUID.
+            for (const [pendingId, pendingKey] of this.toolCallIdToSessionKey.entries()) {
+              if (pendingKey && pendingKey.includes(':subagent:') && pendingKey === sessionKey) {
+                this.uuidToToolCallId.set(emitAgentId, pendingId);
+                console.log(
+                  '[OpenClawRuntime] subagent lifecycle (nested): linked UUID=' +
+                    emitAgentId +
+                    ' to toolCallId=' +
+                    pendingId,
+                );
+                break;
+              }
+            }
+            // Nested subagents belong to the orchestration parent session
             if (this.orchestrationParentSessionId) {
-              const label = this.embeddedAgentLabels.get(sessionKey) || 'Embedded Agent';
-
-              // Get result content from subagentMessages
-              const msgs = this.subagentMessages.get(sessionKey) || [];
-              const lastAssistantMsg = msgs.filter(m => m.role === 'assistant').pop();
-              const resultContent = lastAssistantMsg?.content || '';
-
-              console.log(
-                '[OpenClawRuntime] embedded agent lifecycle: emitting completion for sessionKey=' +
-                  sessionKey +
-                  ' label=' +
-                  label +
-                  ' resultLength=' +
-                  resultContent.length,
-              );
-
-              const completionMessage = {
-                id: `embedded-completion-${sessionKey}-${Date.now()}`,
-                type: 'subagent_completion',
-                role: 'assistant',
-                content: resultContent || `Embedded agent "${label}" completed.`,
-                timestamp: Date.now(),
-                metadata: {
-                  taskLabel: label,
-                  status: phase === 'stopped' ? 'stopped' : 'completed',
-                  sessionKey,
-                  isEmbedded: true,
-                },
-              };
-
-              this.emit('message', this.orchestrationParentSessionId, completionMessage);
+              this.toolCallIdToParentSessionId.set(emitAgentId, this.orchestrationParentSessionId);
             }
-          } else if (phase === 'error') {
-            // Embedded agent failed - add to failedEmbeddedAgents and remove from tracking
+
+            // Extract label from multiple sources for nested subagents
+            // 1. sessionKeyToLabel (set by sessions_spawn result from parent)
+            // 2. subagentUuidToLabel (from previous sessions.list query or tool event)
+            // 3. emitAgentId's existing label (may have been set by tool event)
+            // 4. event data.meta (format: 'label xxx, task yyy')
+            // 5. event data.name or data.label field
+            // 6. UUID fallback
+            let nestedLabel: string | null = this.sessionKeyToLabel.get(sessionKey) || null;
+            if (!nestedLabel) {
+              nestedLabel = this.subagentUuidToLabel.get(subagentUuid) || null;
+            }
+            if (!nestedLabel) {
+              nestedLabel = this.toolCallIdToLabel.get(emitAgentId) || null;
+            }
+            if (!nestedLabel) {
+              const metaField = typeof data.meta === 'string' ? data.meta.trim() : '';
+              if (metaField) {
+                const labelMatch = metaField.match(/label\s+([^,]+)/);
+                if (labelMatch && labelMatch[1]) {
+                  nestedLabel = labelMatch[1].trim();
+                }
+              }
+            }
+            if (!nestedLabel) {
+              const dataName = typeof data.name === 'string' ? data.name.trim() : '';
+              const dataLabel = typeof data.label === 'string' ? data.label.trim() : '';
+              nestedLabel = dataLabel || dataName || null;
+            }
+            const displayLabel = nestedLabel || subagentUuid;
+            if (!this.toolCallIdToLabel.has(emitAgentId)) {
+              this.toolCallIdToLabel.set(emitAgentId, displayLabel);
+            }
+            // Store UUID → label mapping for direct lookup by lifecycle events
+            if (nestedLabel) {
+              this.subagentUuidToLabel.set(subagentUuid, nestedLabel);
+            }
+            // If no label found, query sessions.list to resolve
+            if (!nestedLabel && this.gatewayClient) {
+              // Construct the correct parent session key for the query.
+              // sessionKey format: agent:main:subagent:UUID (top-level)
+              // or agent:main:gucciai:parentId:subagent:childId (nested)
+              // For top-level: parent = agent:main:gucciai:{sessionId}
+              // For nested: parent = agent:main:gucciai:{parentId}
+              let queryParentKey: string | null = null;
+              if (this.orchestrationParentSessionId) {
+                queryParentKey = 'agent:main:gucciai:' + this.orchestrationParentSessionId;
+              } else if (sessionKey) {
+                // Try to extract parent from nested sessionKey
+                // Format: agent:main:gucciai:parentId:subagent:childId
+                const gucciaiMatch = sessionKey.match(/^agent:main:gucciai:([^:]+):subagent:/);
+                if (gucciaiMatch) {
+                  queryParentKey = 'agent:main:gucciai:' + gucciaiMatch[1];
+                }
+              }
+              if (queryParentKey) {
+                console.log(
+                  '[OpenClawRuntime] nested subagent: no label for UUID=' +
+                    subagentUuid +
+                    ', querying sessions.list with parentKey=' +
+                    queryParentKey,
+                );
+                void this.queryNestedSubagentLabel(subagentUuid, queryParentKey, emitAgentId);
+              }
+            }
             console.log(
-              '[OpenClawRuntime] embedded agent lifecycle error: marking failed sessionKey=' +
+              '[OpenClawRuntime] subagent lifecycle (nested): START toolCallId=' +
+                emitAgentId +
+                ' label=' +
+                displayLabel +
+                ' sessionKey=' +
                 sessionKey,
             );
-            this.failedEmbeddedAgents.add(sessionKey);
-            this.embeddedAgentStatus.delete(sessionKey);
-            this.embeddedAgentLabels.delete(sessionKey);
+          } else if (phase === 'end' || phase === 'completed' || phase === 'stopped') {
+            if (this.failedSubagentIds.has(emitAgentId)) return;
+            this.subagentStatus.set(emitAgentId, 'done');
+            this.persistSubagentStatus(emitAgentId, 'done');
+            this.subagentLastActivity.delete(emitAgentId);
+            console.log(
+              '[OpenClawRuntime] subagent lifecycle (nested): DONE toolCallId=' +
+                emitAgentId +
+                ' sessionKey=' +
+                sessionKey,
+            );
+          } else if (phase === 'error') {
+            this.failedSubagentIds.add(emitAgentId);
+            this.subagentStatus.delete(emitAgentId);
+            this.pendingToolCallIds.delete(emitAgentId);
+            this.pendingEntryTimestamps.delete(emitAgentId);
+            this.subagentLastActivity.delete(emitAgentId);
+            this.toolCallIdToSessionKey.delete(emitAgentId);
+            this.sessionKeyToToolCallId.delete(sessionKey);
+            this.toolCallIdToParentSessionId.delete(emitAgentId);
+            this.toolCallIdToLabel.delete(emitAgentId);
+            this.subagentMessages.delete(sessionKey);
+            console.log(
+              '[OpenClawRuntime] subagent lifecycle (nested): ERROR toolCallId=' +
+                emitAgentId +
+                ' sessionKey=' +
+                sessionKey,
+            );
           }
+        } else {
+          // No toolCallId and not a subagent — lifecycle event for an agent not spawned via sessions_spawn.
+          // These are not tracked in the subagent list; they run as implicit children.
+          console.log(
+            '[OpenClawRuntime] subagent lifecycle (no toolCallId): ignoring untracked sessionKey=' +
+              sessionKey +
+              ' phase=' +
+              phase,
+          );
         }
       }
 
@@ -2737,6 +2849,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // 只处理 subagent sessionKey（格式: agent:*:subagent:*）
         // 使用直接匹配而非排除逻辑，更健壮且能处理未来边缘情况
         if (sessionKey?.includes(':subagent:')) {
+          // Record activity to reset idle timeout for this subagent
+          if (emitAgentId) {
+            this.touchSubagentActivity(emitAgentId);
+          }
+
           console.log(
             '[OpenClawRuntime] subagent event (no sessionId): capturing ' +
               stream +
@@ -2774,6 +2891,42 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               });
             }
           } else if (stream === 'assistant' && eventText) {
+            // Check for truncated NO_REPLY markers (OpenClaw special marker)
+            // When detected, query chat.history to get complete text before showing
+            const trimmedEventText = eventText.trim();
+            const NO_REPLY_MARKER = 'NO_REPLY';
+            const isFullNoReply = /^NO_REPLY$/i.test(trimmedEventText);
+            if (isFullNoReply) {
+              // Full NO_REPLY confirmed - skip entirely
+              return;
+            }
+            const isPossibleNoReply =
+              trimmedEventText.length <= NO_REPLY_MARKER.length &&
+              NO_REPLY_MARKER.startsWith(trimmedEventText) &&
+              trimmedEventText.length > 0;
+
+            if (isPossibleNoReply) {
+              // Possible truncated prefix - query history to resolve
+              if (this.orchestrationParentSessionId && emitAgentId && this.gatewayClient) {
+                console.log(
+                  '[OpenClawRuntime] subagent assistant: possible truncated NO_REPLY="' +
+                    trimmedEventText +
+                    '", syncing with history',
+                );
+                const subagentSessionKey = sessionKey;
+                void this.syncSubagentNoReply(
+                  storageKey,
+                  emitAgentId,
+                  subagentSessionKey,
+                  msgs,
+                  trimmedEventText,
+                );
+              }
+              return;
+            }
+
+            // Normal text - proceed with message creation
+
             // Check if the last message is tool_result - if so, start a new assistant message
             const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
             const isAfterToolResult = lastMsg && lastMsg.role === 'tool_result';
@@ -2869,6 +3022,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                     toolInput: subData?.args,
                   },
                 });
+                // Also add to main session's store so it appears in the conversation
+                if (
+                  toolName === 'sessions_spawn' ||
+                  toolName === 'sessions_resume' ||
+                  toolName === 'sessions_read'
+                ) {
+                  const mainToolUseId = toolCallId || emitAgentId;
+                  if (mainToolUseId && !this._announceToolMessages.has(mainToolUseId + ':use')) {
+                    this._announceToolMessages.add(mainToolUseId + ':use');
+                    this.store.addMessage(this.orchestrationParentSessionId, {
+                      type: 'tool_use',
+                      content: `Using tool: ${toolName}`,
+                      metadata: {
+                        toolName,
+                        toolInput: isRecord(subData?.args)
+                          ? (subData.args as Record<string, unknown>)
+                          : {},
+                        toolUseId: mainToolUseId,
+                      },
+                    });
+                  }
+                }
               }
             } else if (toolPhase === 'result' && toolCallId) {
               const resultText = typeof subData?.result === 'string' ? subData.result : '';
@@ -2893,6 +3068,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   resultText,
                   isError,
                 );
+                // Also add to main session's store for sessions_spawn results
+                if (
+                  toolName === 'sessions_spawn' ||
+                  toolName === 'sessions_resume' ||
+                  toolName === 'sessions_read'
+                ) {
+                  const mainToolUseId = toolCallId || emitAgentId;
+                  if (mainToolUseId && !this._announceToolMessages.has(mainToolUseId + ':result')) {
+                    this._announceToolMessages.add(mainToolUseId + ':result');
+                    this.store.addMessage(this.orchestrationParentSessionId, {
+                      type: 'tool_result',
+                      content: resultText,
+                      metadata: {
+                        toolUseId: mainToolUseId,
+                        toolName,
+                        toolResult:
+                          typeof subData?.result === 'string'
+                            ? subData.result
+                            : JSON.stringify(subData?.result ?? ''),
+                        isError,
+                      },
+                    });
+                  }
+                }
               }
             }
           } else if (stream === 'item') {
@@ -2974,6 +3173,26 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                       status: itemStatus,
                     },
                   });
+                  // Also add to main session's store for sessions_spawn
+                  if (
+                    itemName === 'sessions_spawn' ||
+                    itemName === 'sessions_resume' ||
+                    itemName === 'sessions_read'
+                  ) {
+                    const mainToolUseId = effectiveToolCallId || emitAgentId;
+                    if (mainToolUseId && !this._announceToolMessages.has(mainToolUseId + ':use')) {
+                      this._announceToolMessages.add(mainToolUseId + ':use');
+                      this.store.addMessage(this.orchestrationParentSessionId, {
+                        type: 'tool_use',
+                        content: `Using tool: ${itemName}`,
+                        metadata: {
+                          toolName: itemName,
+                          toolInput,
+                          toolUseId: mainToolUseId,
+                        },
+                      });
+                    }
+                  }
                 }
 
                 // Track nested sessions_spawn (subagent spawning another subagent)
@@ -3014,6 +3233,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   // Set status to pending
                   this.subagentStatus.set(effectiveToolCallId, 'pending');
                   this.pendingToolCallIds.add(effectiveToolCallId);
+                  this.pendingEntryTimestamps.set(effectiveToolCallId, Date.now());
 
                   // Map to parent's sessionKey (temporary, will be updated when tool result arrives)
                   if (sessionKey) {
@@ -3058,9 +3278,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                     };
                     nestedMsgs.push(nestedContextMsg);
                     console.log(
-                      '[OpenClawRuntime] nested sessions_spawn: added context message (len=' +
-                        nestedPromptText.length +
-                        ')',
+                      '[OpenClawRuntime] nested sessions_spawn: added context message, key=' +
+                        effectiveToolCallId +
+                        ' content starts with "' +
+                        nestedContextMsg.content.slice(0, 60) +
+                        '" msgsLen=' +
+                        nestedMsgs.length,
                     );
                   }
                 }
@@ -3098,6 +3321,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                     resultContent,
                     isError,
                   );
+                  // Also add to main session's store for sessions_spawn results
+                  if (
+                    itemName === 'sessions_spawn' ||
+                    itemName === 'sessions_resume' ||
+                    itemName === 'sessions_read'
+                  ) {
+                    const mainToolUseId = effectiveToolCallId || emitAgentId;
+                    if (
+                      mainToolUseId &&
+                      !this._announceToolMessages.has(mainToolUseId + ':result')
+                    ) {
+                      this._announceToolMessages.add(mainToolUseId + ':result');
+                      this.store.addMessage(this.orchestrationParentSessionId, {
+                        type: 'tool_result',
+                        content: resultText,
+                        metadata: {
+                          toolUseId: mainToolUseId,
+                          toolName: itemName,
+                          toolResult: resultContent,
+                          isError,
+                        },
+                      });
+                    }
+                  }
                 }
               }
             }
@@ -3349,6 +3596,41 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
         if ((stream === 'assistant' || stream === 'user') && eventText.length > 0) {
           const role = stream;
+
+          // Check for truncated NO_REPLY markers (OpenClaw special marker)
+          // When detected, query chat.history to get complete text before showing
+          if (role === 'assistant') {
+            const trimmedEventText = eventText.trim();
+            const NO_REPLY_MARKER = 'NO_REPLY';
+            const isFullNoReply = /^NO_REPLY$/i.test(trimmedEventText);
+            if (isFullNoReply) {
+              return;
+            }
+            const isPossibleNoReply =
+              trimmedEventText.length <= NO_REPLY_MARKER.length &&
+              NO_REPLY_MARKER.startsWith(trimmedEventText) &&
+              trimmedEventText.length > 0;
+
+            if (isPossibleNoReply) {
+              // Possible truncated prefix - query history to resolve
+              if (emitAgentId && this.gatewayClient) {
+                console.log(
+                  '[OpenClawRuntime] subagent assistant (sessionId): possible truncated NO_REPLY="' +
+                    trimmedEventText +
+                    '", syncing with history',
+                );
+                void this.syncSubagentNoReply(
+                  storageKey,
+                  emitAgentId,
+                  sessionKey,
+                  msgs,
+                  trimmedEventText,
+                );
+              }
+              return;
+            }
+          }
+
           const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
           if (lastMsg && lastMsg.role === role) {
             if (
@@ -3623,26 +3905,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.handleAgentToolEvent(sessionId, turn, agentPayload.data);
       }
       return;
-    }
-
-    // Handle stream=item for main session - this includes nested subagent spawns
-    // Nested spawns from subagents use stream=item format instead of stream=tool
-    // The sessionKey will be the main sessionKey, not a subagent sessionKey
-    if (stream === 'item') {
-      const itemData = isRecord(agentPayload.data) ? agentPayload.data : null;
-      const itemKind = typeof itemData?.kind === 'string' ? itemData.kind : '';
-      const itemPhase = typeof itemData?.phase === 'string' ? itemData.phase : '';
-      const itemName = typeof itemData?.name === 'string' ? itemData.name : '';
-      const itemToolCallId = typeof itemData?.toolCallId === 'string' ? itemData.toolCallId : '';
-      const metaRaw = typeof itemData?.meta === 'string' ? itemData.meta : '';
-      let itemMeta: Record<string, unknown> = {};
-      if (metaRaw) {
-        try {
-          itemMeta = JSON.parse(metaRaw) as Record<string, unknown>;
-        } catch {
-          // meta may not be JSON
-        }
-      }
     }
 
     if (stream === 'lifecycle') {
@@ -3966,6 +4228,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private handleAgentToolEvent(sessionId: string, turn: ActiveTurn, data: unknown): void {
     if (!isRecord(data)) return;
 
+    // Dedup: both stream=tool and stream=item can carry the same tool event
+    // (e.g. sessions_spawn announced back to main session). Skip if already processed.
+    const quickToolCallId = typeof data.toolCallId === 'string' ? data.toolCallId.trim() : '';
+    const quickToolField = typeof data.tool === 'string' ? data.tool.trim() : '';
+    const quickCall = typeof data.call === 'string' ? data.call.trim() : '';
+    const quickPhase =
+      typeof data.phase === 'string'
+        ? data.phase.trim() === 'end'
+          ? 'result'
+          : data.phase.trim()
+        : quickToolField.includes(':')
+          ? quickToolField.split(':')[0] === 'end'
+            ? 'result'
+            : quickToolField.split(':')[0]
+          : '';
+    const quickDedupToolCallId = quickToolCallId || quickCall;
+    if (quickPhase && quickDedupToolCallId) {
+      const dedupKey = quickPhase + ':' + quickDedupToolCallId;
+      if (this._processedToolEvents.has(dedupKey)) {
+        return;
+      }
+      this._processedToolEvents.add(dedupKey);
+    }
+
     // Gateway may return tool events in two formats:
     // 1. Standard format: { phase, name, toolCallId, args, result, ... }
     // 2. Gateway format: { tool: 'result:sessions_spawn', call: 'xxx', meta: 'label xxx', err: false }
@@ -4097,6 +4383,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Lifecycle phase=start will change status from pending to running
       this.subagentStatus.set(toolCallId, 'pending');
       this.pendingToolCallIds.add(toolCallId);
+      this.pendingEntryTimestamps.set(toolCallId, Date.now());
 
       // Establish temporary mapping for hasRunningSubagents check in handleChatFinal.
       // This ensures the main session stays 'running' while subagent executes.
@@ -4280,32 +4567,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (mappingKey) {
           this.sessionKeyToLabel.set(childSessionKey, mappingKey);
           this.toolCallIdToLabel.set(toolCallId, mappingKey);
-        }
-
-        // Check if this sessionKey was tracked as embedded agent and merge status
-        const embeddedStatus = this.embeddedAgentStatus.get(childSessionKey);
-        if (embeddedStatus) {
-          console.log(
-            '[OpenClawRuntime] sessions_spawn: merging embedded agent status. childSessionKey=' +
-              childSessionKey +
-              ' embeddedStatus=' +
-              embeddedStatus +
-              ' toolCallId=' +
-              toolCallId,
-          );
-          this.subagentStatus.set(toolCallId, embeddedStatus);
-          this.embeddedAgentStatus.delete(childSessionKey);
-          // Copy label from embedded agent if available
-          const embeddedLabel = this.embeddedAgentLabels.get(childSessionKey);
-          if (embeddedLabel && !mappingKey) {
-            this.toolCallIdToLabel.set(toolCallId, embeddedLabel);
-            this.sessionKeyToLabel.set(childSessionKey, embeddedLabel);
+          // Also store UUID → label mapping for lifecycle event lookup
+          // childSessionKey format: agent:main:subagent:xxx or similar
+          const uuidMatch = childSessionKey.match(/subagent[:\-]([a-f0-9-]{36})$/i);
+          if (uuidMatch && uuidMatch[1]) {
+            this.subagentUuidToLabel.set(uuidMatch[1], mappingKey);
           }
-          this.embeddedAgentLabels.delete(childSessionKey);
         }
 
         // 从 pendingToolCallIds 中移除
         this.pendingToolCallIds.delete(toolCallId);
+        this.pendingEntryTimestamps.delete(toolCallId);
         // 将以 toolCallId 为 key 的消息复制到 sessionKey 为 key 的存储
         const pendingMsgs = this.subagentMessages.get(toolCallId);
         if (pendingMsgs && pendingMsgs.length > 0) {
@@ -4363,6 +4635,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
             this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
             this.pendingToolCallIds.delete(toolCallId);
+            this.pendingEntryTimestamps.delete(toolCallId);
             console.log(
               '[OpenClawRuntime] sessions_spawn: established mapping via CoworkStore toolCallId=' +
                 toolCallId +
@@ -4385,6 +4658,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             this.failedSubagentIds.add(toolCallId);
             this.subagentStatus.delete(toolCallId);
             this.pendingToolCallIds.delete(toolCallId);
+            this.pendingEntryTimestamps.delete(toolCallId);
             this.toolCallIdToSessionKey.delete(toolCallId);
             this.toolCallIdToParentSessionId.delete(toolCallId);
             if (mappingKey) {
@@ -4414,6 +4688,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.failedSubagentIds.add(toolCallId);
       this.subagentStatus.delete(toolCallId);
       this.pendingToolCallIds.delete(toolCallId);
+      this.pendingEntryTimestamps.delete(toolCallId);
       // Clean up any temporary mappings
       this.toolCallIdToSessionKey.delete(toolCallId);
       this.toolCallIdToParentSessionId.delete(toolCallId);
@@ -4672,7 +4947,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const runId = typeof chatPayload.runId === 'string' ? chatPayload.runId.trim() : '';
     // Debug logging for runId diagnosis (after runId is declared)
-    console.log(
+    console.debug(
       '[Debug:handleChatEvent] turn found, sessionId:',
       sessionId,
       'turn.runId:',
@@ -4694,7 +4969,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // This mimics OpenClaw webchat behavior: skip deltas, add final messages without affecting current streaming state.
     // Reference: openclaw/ui/src/ui/controllers/chat.ts handleChatEvent
     if (runId && turn.runId && runId !== turn.runId) {
-      console.log(
+      console.debug(
         '[OpenClawRuntime] handleChatEvent: different runId detected, runId=' +
           runId +
           ' turn.runId=' +
@@ -4714,9 +4989,59 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           const role = typeof finalMessage.role === 'string' ? finalMessage.role.toLowerCase() : '';
           if (role === 'assistant') {
             const text = extractMessageText(finalMessage).trim();
-            // Skip silent replies (NO_REPLY)
-            if (text && !/^NO_REPLY$/i.test(text.trim())) {
-              console.log(
+            // Skip silent replies (NO_REPLY) — also handle truncated versions
+            // that OpenClaw gateway may produce during streaming (e.g. "NO", "NO_RE").
+            // For truncated prefixes, query the subagent's chat.history to confirm
+            // before skipping, to avoid suppressing legitimate short replies.
+            const NO_REPLY_MARKER = 'NO_REPLY';
+            const isFullNoReply = text.length > 0 && /^NO_REPLY$/i.test(text);
+            const isTruncatedNoReply =
+              text.length > 0 &&
+              text.length <= NO_REPLY_MARKER.length &&
+              NO_REPLY_MARKER.startsWith(text.toUpperCase()) &&
+              !isFullNoReply;
+
+            if (isFullNoReply) {
+              // Confirmed NO_REPLY marker - skip entirely
+              console.debug(
+                '[OpenClawRuntime] handleChatEvent: skipping NO_REPLY final from different runId',
+              );
+            } else if (isTruncatedNoReply && this.gatewayClient) {
+              // Possible truncated prefix — extract subagent sessionKey from runId
+              // and query chat.history to confirm before deciding to skip.
+              // runId format: announce:v1:agent:main:subagent:{uuid}:{runUuid}
+              const subagentUuidMatch = runId.match(/subagent[:\-]([a-f0-9-]{36})/i);
+              if (subagentUuidMatch) {
+                const subagentSessionKey = 'agent:main:subagent:' + subagentUuidMatch[1];
+                console.debug(
+                  '[OpenClawRuntime] handleChatEvent: possible truncated NO_REPLY="' +
+                    text +
+                    '", querying subagent history to confirm',
+                );
+                void this.syncFinalNoReplyWithHistory(
+                  sessionId,
+                  subagentSessionKey,
+                  text,
+                  turn.modelName,
+                );
+              } else {
+                // Can't extract subagent UUID — show the text as-is since we can't confirm
+                console.debug(
+                  '[OpenClawRuntime] handleChatEvent: showing truncated text (no subagent UUID in runId), text="' +
+                    text.slice(0, 50) +
+                    '"',
+                );
+                const assistantMessage = this.store.addMessage(sessionId, {
+                  type: 'assistant',
+                  content: text,
+                  metadata: { isStreaming: false, isFinal: true },
+                  modelName: turn.modelName,
+                });
+                this.emit('message', sessionId, assistantMessage);
+              }
+            } else if (text) {
+              // Normal text - add the message
+              console.debug(
                 '[OpenClawRuntime] handleChatEvent: adding final message from different runId, text="' +
                   text.slice(0, 50) +
                   '"',
@@ -4856,14 +5181,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private processAgentThinkingEvent(payload: unknown): void {
     if (!isRecord(payload)) return;
     const p = payload as Record<string, unknown>;
-    if (p.stream !== 'thinking') return;
+    const streamType = typeof p.stream === 'string' ? p.stream : '';
+    if (streamType !== 'thinking') {
+      // Only log non-thinking agent streams once per type to avoid spam
+      if (streamType && !this._loggedThinkingStreamTypes.has(streamType)) {
+        this._loggedThinkingStreamTypes.add(streamType);
+        console.log(
+          '[OpenClawRuntime] processThinking: received non-thinking stream=' +
+            streamType +
+            ' (keys: ' +
+            Object.keys(p).join(',') +
+            ')',
+        );
+      }
+      return;
+    }
+    console.log(
+      '[OpenClawRuntime] processThinking: received thinking event, runId=' +
+        (typeof p.runId === 'string' ? p.runId.slice(0, 8) : '(none)') +
+        ' sessionKey=' +
+        (typeof p.sessionKey === 'string' ? p.sessionKey.slice(0, 30) : '(none)'),
+    );
 
     const dataField = isRecord(p.data) ? (p.data as Record<string, unknown>) : p;
     const text = typeof dataField.text === 'string' ? dataField.text : '';
     const delta = typeof dataField.delta === 'string' ? dataField.delta : '';
 
     const runId = typeof p.runId === 'string' ? p.runId.trim() : '';
-    const sessionKey = typeof p.sessionKey === 'string' ? p.sessionKey.trim() : '';
+    // Gateway agent events use 'session' field, not 'sessionKey'
+    const sessionKey =
+      (typeof p.sessionKey === 'string' ? p.sessionKey.trim() : '') ||
+      (typeof p.session === 'string' ? p.session.trim() : '');
     let sessionId = runId ? this.sessionIdByRunId.get(runId) : undefined;
     if (!sessionId && sessionKey) {
       sessionId = this.resolveSessionIdBySessionKey(sessionKey) ?? undefined;
@@ -4887,8 +5235,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const turn = sessionId ? this.activeTurns.get(sessionId) : undefined;
 
     if (!turn || !sessionId) {
-      console.debug(
-        '[Debug:processThinking] skipped: runId:',
+      console.log(
+        '[OpenClawRuntime] processThinking: SKIPPED - no turn/session, runId:',
         runId.slice(0, 8),
         'sessionKey:',
         sessionKey,
@@ -4926,12 +5274,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const p = payload as Record<string, unknown>;
     if (p.stream !== 'assistant') return;
 
+    const runId = typeof p.runId === 'string' ? p.runId.trim() : '';
+    // Gateway agent events use 'session' field, not 'sessionKey'
+    const sessionKey =
+      (typeof p.sessionKey === 'string' ? p.sessionKey.trim() : '') ||
+      (typeof p.session === 'string' ? p.session.trim() : '');
+    console.log(
+      '[OpenClawRuntime] processAssistantText: received assistant event, runId=' +
+        runId.slice(0, 8) +
+        ' sessionKey=' +
+        sessionKey.slice(0, 30),
+    );
+
     const dataField = isRecord(p.data) ? (p.data as Record<string, unknown>) : p;
     const text =
       extractOpenClawAssistantStreamText(dataField) || extractOpenClawAssistantStreamText(p);
 
-    const runId = typeof p.runId === 'string' ? p.runId.trim() : '';
-    const sessionKey = typeof p.sessionKey === 'string' ? p.sessionKey.trim() : '';
     let sessionId = runId ? this.sessionIdByRunId.get(runId) : undefined;
     if (!sessionId && sessionKey) {
       sessionId = this.resolveSessionIdBySessionKey(sessionKey) ?? undefined;
@@ -7527,7 +7885,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (sessionId) {
       const session = this.store.getSession(sessionId);
       if (session?.messages) {
-        console.log(
+        console.debug(
           '[OpenClawRuntime] getSubagentStatuses: session.messages.length=' +
             session.messages.length,
         );
@@ -7548,7 +7906,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             const key = toolUseId;
             // Display label: prefer label, then agentId, then task slice
             const display = label || agentId || (task ? task.slice(0, 30) : toolUseId);
-            console.log(
+            console.debug(
               '[OpenClawRuntime] getSubagentStatuses: sessions_spawn toolUseId=' +
                 toolUseId +
                 ' label=' +
@@ -7595,7 +7953,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // Also check pendingToolCallIds and direct toolCallId keys in subagentStatus
         // But only include those that belong to THIS session (prevent cross-session leakage)
         // DEBUG: Log all toolCallId mappings for debugging
-        console.log(
+        console.debug(
           '[OpenClawRuntime] getSubagentStatuses: checking subagentStatus Map, size=' +
             this.subagentStatus.size +
             ' sessionId=' +
@@ -7603,11 +7961,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         );
         const currentSessionKey = sessionId ? `agent:main:gucciai:${sessionId}` : null;
         for (const [key, status] of this.subagentStatus) {
-          if (!statuses[key] && key.startsWith('call_')) {
+          if (!statuses[key] && (key.startsWith('call_') || key.includes('-'))) {
             // Check if this toolCallId belongs to the current session
             const toolCallSessionKey = this.toolCallIdToSessionKey.get(key);
             const parentSessionId = this.toolCallIdToParentSessionId.get(key);
-            console.log(
+            console.debug(
               '[OpenClawRuntime] getSubagentStatuses: toolCallId=' +
                 key +
                 ' status=' +
@@ -7627,7 +7985,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   toolCallSessionKey.includes(sessionId))) ||
               (parentSessionId && parentSessionId === sessionId);
             if (currentSessionKey && !belongsToCurrentSession) {
-              console.log(
+              console.debug(
                 '[OpenClawRuntime] getSubagentStatuses: SKIP toolCallId=' +
                   key +
                   ' (session mismatch: toolCallSessionKey=' +
@@ -7639,14 +7997,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               );
               continue;
             }
-            console.log(
+            console.debug(
               '[OpenClawRuntime] getSubagentStatuses: INCLUDE toolCallId=' +
                 key +
                 ' status=' +
                 status,
             );
             statuses[key] = status;
-            const display = this.toolCallIdToLabel.get(key) || key;
+            const display =
+              this.toolCallIdToLabel.get(key) || this.subagentUuidToLabel.get(key) || key;
             displayLabels[key] = display;
           }
         }
@@ -7656,43 +8015,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // are the authoritative sources for subagent completion status.
         // Removing this fallback prevents marking newly started subagents as 'done'
         // when the session status might be stale or from a previous run.
-
-        // Merge embedded agents (created without sessions_spawn, no toolCallId)
-        // These use sessionKey as the identifier
-        for (const [sessionKey, status] of this.embeddedAgentStatus) {
-          // Skip if already marked as failed
-          if (this.failedEmbeddedAgents.has(sessionKey)) continue;
-          // Only include embedded agents belonging to this session
-          if (currentSessionKey) {
-            // Check if sessionKey starts with currentSessionKey prefix (agent:main:gucciai:sessionId)
-            // and contains ':subagent:' to confirm it's a child session
-            if (
-              !sessionKey.startsWith(currentSessionKey.replace(':gucciai:', ':')) ||
-              !sessionKey.includes(':subagent:')
-            ) {
-              continue;
-            }
-          }
-          // Use sessionKey as key, but shorten for display (extract UUID or use label)
-          const label = this.embeddedAgentLabels.get(sessionKey);
-          // Extract short identifier from sessionKey for display
-          const shortKey = sessionKey.includes(':subagent:')
-            ? sessionKey.split(':subagent:')[1]?.slice(0, 8) || sessionKey.slice(-8)
-            : sessionKey.slice(-12);
-          const display = label || `embedded-${shortKey}`;
-          // Use sessionKey as key to differentiate from toolCallId-based keys
-          const key = sessionKey;
-          statuses[key] = status;
-          displayLabels[key] = display;
-          console.log(
-            '[OpenClawRuntime] getSubagentStatuses: embedded agent sessionKey=' +
-              sessionKey +
-              ' status=' +
-              status +
-              ' display=' +
-              display,
-          );
-        }
       }
     }
 
@@ -7700,6 +8022,60 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     for (const failedId of this.failedSubagentIds) {
       delete statuses[failedId];
       delete displayLabels[failedId];
+    }
+
+    // Check for stuck pending subagents: if a subagent has been in pending state
+    // for too long without any lifecycle events, mark it as silently failed
+    // (spawn returned ok but no session was actually created)
+    const now = Date.now();
+    for (const pendingId of this.pendingToolCallIds) {
+      const entryTime = this.pendingEntryTimestamps.get(pendingId);
+      if (entryTime && now - entryTime > OpenClawRuntimeAdapter.PENDING_TIMEOUT_MS) {
+        // Only mark as failed if it belongs to current session
+        if (sessionId) {
+          const parentSessionId = this.toolCallIdToParentSessionId.get(pendingId);
+          if (parentSessionId && parentSessionId !== sessionId) continue;
+        }
+        console.log(
+          '[OpenClawRuntime] getSubagentStatuses: pending subagent timed out after ' +
+            Math.round((now - entryTime) / 1000) +
+            's, marking as failed: toolCallId=' +
+            pendingId,
+        );
+        this.failedSubagentIds.add(pendingId);
+        this.subagentStatus.delete(pendingId);
+        this.pendingEntryTimestamps.delete(pendingId);
+      }
+    }
+    // Clean up expired entries from failedSubagentIds
+    for (const failedId of this.failedSubagentIds) {
+      this.pendingToolCallIds.delete(failedId);
+      this.pendingEntryTimestamps.delete(failedId);
+      this.subagentLastActivity.delete(failedId);
+    }
+
+    // Check for stuck running subagents: if a subagent has been in running state
+    // with no internal activity for too long, the gateway likely dropped events.
+    // Mark as silently failed to prevent permanent "running" display.
+    for (const [runningId, runningStatus] of this.subagentStatus.entries()) {
+      if (runningStatus !== 'running') continue;
+      const lastActive = this.subagentLastActivity.get(runningId);
+      if (lastActive && now - lastActive > OpenClawRuntimeAdapter.SUBAGENT_IDLE_MS) {
+        // Only apply if it belongs to current session
+        if (sessionId) {
+          const parentSessionId = this.toolCallIdToParentSessionId.get(runningId);
+          if (parentSessionId && parentSessionId !== sessionId) continue;
+        }
+        console.log(
+          '[OpenClawRuntime] getSubagentStatuses: running subagent idle for ' +
+            Math.round((now - lastActive) / 1000) +
+            's, marking as failed: toolCallId=' +
+            runningId,
+        );
+        this.failedSubagentIds.add(runningId);
+        this.subagentStatus.delete(runningId);
+        this.subagentLastActivity.delete(runningId);
+      }
     }
 
     // Add pending subagents (in pendingToolCallIds but not yet mapped to sessionKey)
@@ -7717,9 +8093,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Mark as pending (queued, waiting for execution)
       statuses[pendingId] = 'pending';
       // Get display label
-      const label = this.toolCallIdToLabel.get(pendingId);
+      const label =
+        this.toolCallIdToLabel.get(pendingId) || this.subagentUuidToLabel.get(pendingId);
       displayLabels[pendingId] = label || pendingId;
-      console.log(
+      console.debug(
         '[OpenClawRuntime] getSubagentStatuses: pending subagent toolCallId=' +
           pendingId +
           ' label=' +
@@ -7789,6 +8166,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               (toolCallId || '(none)'),
           );
           this.sessionKeyToLabel.set(childSessionKey, label);
+          // Also extract UUID and store for lifecycle event lookup
+          const uuidMatch = childSessionKey.match(/subagent[:\-]([a-f0-9-]{36})$/i);
+          if (uuidMatch && uuidMatch[1]) {
+            this.subagentUuidToLabel.set(uuidMatch[1], label);
+          }
           // Also establish toolCallId mappings if toolCallId is provided
           if (toolCallId) {
             this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
@@ -7829,72 +8211,249 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   /**
-   * Query sessions.list to get label for an embedded agent (created without sessions_spawn).
-   * Embedded agents don't have toolCallId, so we use sessionKey as the identifier.
+   * Sync with gateway history to resolve a possible truncated NO_REPLY marker
+   * in a subagent's assistant stream. Queries chat.history, checks if the final
+   * text is "NO_REPLY", and only creates a message if there's real content.
    */
-  private async queryEmbeddedAgentLabel(sessionKey: string): Promise<void> {
+  private async syncSubagentNoReply(
+    storageKey: string,
+    emitAgentId: string,
+    sessionKey: string,
+    msgs: Array<{ role: string; content: string }>,
+    partialText: string,
+  ): Promise<void> {
     if (!this.gatewayClient) return;
 
     try {
-      // Extract the session ID from sessionKey (format: agent:main:subagent:UUID)
-      const sessionIdMatch = sessionKey.match(/subagent:([a-f0-9-]+)$/i);
-      const sessionId = sessionIdMatch ? sessionIdMatch[1] : null;
+      const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
+        sessionKey,
+        limit: 10,
+      });
 
-      if (!sessionId) {
-        console.log(
-          '[OpenClawRuntime] queryEmbeddedAgentLabel: could not extract sessionId from sessionKey=' +
-            sessionKey,
-        );
+      const historyMessages = history?.messages;
+      if (!Array.isArray(historyMessages) || historyMessages.length === 0) {
         return;
       }
 
-      // Get session info from gateway
-      const sessionInfo = await this.gatewayClient.request<{
-        key?: string;
-        label?: string;
-        spawnedBy?: string;
-        status?: string;
-      }>('sessions.get', { key: sessionKey });
+      // Find the last assistant message from history
+      for (let i = historyMessages.length - 1; i >= 0; i--) {
+        const msg = historyMessages[i];
+        if (!isRecord(msg)) continue;
+        const role = typeof msg.role === 'string' ? msg.role.trim().toLowerCase() : '';
+        if (role !== 'assistant') continue;
 
-      if (sessionInfo?.label) {
+        const text = extractMessageText(msg).trim();
+        if (!text) continue;
+
+        // Check if this is a NO_REPLY marker
+        if (/^NO_REPLY$/i.test(text)) {
+          console.log(
+            '[OpenClawRuntime] syncSubagentNoReply: confirmed NO_REPLY for agentId=' +
+              emitAgentId +
+              ', skipping',
+          );
+          return;
+        }
+
+        // Real content found - create the message
         console.log(
-          '[OpenClawRuntime] queryEmbeddedAgentLabel: found label=' +
-            sessionInfo.label +
-            ' for sessionKey=' +
-            sessionKey,
+          '[OpenClawRuntime] syncSubagentNoReply: found real content for agentId=' +
+            emitAgentId +
+            ', text="' +
+            text.slice(0, 100) +
+            '"',
         );
-        this.embeddedAgentLabels.set(sessionKey, sessionInfo.label);
-        this.sessionKeyToLabel.set(sessionKey, sessionInfo.label);
-      } else {
-        // Try to get label from sessions.list if sessions.get doesn't return label
-        const parentSessionKey = sessionKey.replace(/:subagent:.+$/, '');
-        const sessionsResult = await this.gatewayClient.request<{
-          sessions?: Array<{ key: string; label?: string }>;
-        }>('sessions.list', {
-          spawnedBy: parentSessionKey,
-          limit: 20,
+        const newMsg = { role: 'assistant', content: text };
+        msgs.push(newMsg);
+        if (this.orchestrationParentSessionId) {
+          this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+            id: `subagent-assistant-synced-${Date.now()}`,
+            type: 'assistant',
+            content: text,
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+    } catch (err) {
+      console.warn('[OpenClawRuntime] syncSubagentNoReply failed:', err);
+    }
+  }
+
+  /**
+   * Sleep helper for retry delays.
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Record subagent activity to reset the idle timeout.
+   * Should be called whenever we see any event from a running subagent.
+   */
+  private touchSubagentActivity(toolCallId: string): void {
+    this.subagentLastActivity.set(toolCallId, Date.now());
+  }
+
+  /**
+   * Retry wrapper for querying subagent chat.history.
+   * Retries up to `retries` times with `delayMs` between attempts.
+   * Returns the last result even if all attempts yield empty messages.
+   */
+  private async querySubagentHistoryWithRetry(
+    sessionKey: string,
+    retries: number,
+    delayMs: number,
+  ): Promise<{ messages?: unknown[] }> {
+    if (!this.gatewayClient) return {};
+
+    let result: { messages?: unknown[] } = {};
+    for (let i = 0; i <= retries; i++) {
+      try {
+        result = await this.gatewayClient.request('chat.history', {
+          sessionKey,
+          limit: 10,
         });
+        const msgs = result?.messages;
+        if (Array.isArray(msgs) && msgs.length > 0) {
+          return result;
+        }
+      } catch {
+        // Transient error — retry again
+      }
+      if (i < retries) {
+        await this.sleep(delayMs);
+      }
+    }
+    return result;
+  }
 
-        const matchingSession = sessionsResult?.sessions?.find(s => s.key === sessionKey);
+  /**
+   * Query subagent chat.history to resolve a possible truncated NO_REPLY marker
+   * in a different-runId final event. Retries once to handle slow history flush.
+   * Only adds a message to the parent session if history confirms real content
+   * (not NO_REPLY). Falls back to showing partialText as-is if history remains
+   * empty after retry — better to show "NO" than to lose real content.
+   */
+  private async syncFinalNoReplyWithHistory(
+    parentSessionId: string,
+    subagentSessionKey: string,
+    partialText: string,
+    modelName?: string,
+  ): Promise<void> {
+    if (!this.gatewayClient) return;
 
-        if (matchingSession?.label) {
+    try {
+      const history = await this.querySubagentHistoryWithRetry(
+        subagentSessionKey,
+        1, // one retry
+        1000, // 1s between attempts
+      );
+
+      const historyMessages = history?.messages;
+      if (!Array.isArray(historyMessages) || historyMessages.length === 0) {
+        // History still empty after retry — fall back to showing text as-is.
+        // This avoids losing legitimate short replies like "NO" when the
+        // model response hasn't flushed yet.
+        console.log(
+          '[OpenClawRuntime] syncFinalNoReplyWithHistory: history empty after retry for sessionKey=' +
+            subagentSessionKey +
+            ', showing text as-is',
+        );
+        const assistantMessage = this.store.addMessage(parentSessionId, {
+          type: 'assistant',
+          content: partialText,
+          metadata: { isStreaming: false, isFinal: true },
+          modelName,
+        });
+        this.emit('message', parentSessionId, assistantMessage);
+        return;
+      }
+
+      // Find the last assistant message from history
+      for (let i = historyMessages.length - 1; i >= 0; i--) {
+        const msg = historyMessages[i];
+        if (!isRecord(msg)) continue;
+        const role = typeof msg.role === 'string' ? msg.role.trim().toLowerCase() : '';
+        if (role !== 'assistant') continue;
+
+        const text = extractMessageText(msg).trim();
+        if (!text) continue;
+
+        // Check if this is a NO_REPLY marker
+        if (/^NO_REPLY$/i.test(text)) {
           console.log(
-            '[OpenClawRuntime] queryEmbeddedAgentLabel: found label via sessions.list=' +
-              matchingSession.label +
-              ' for sessionKey=' +
-              sessionKey,
+            '[OpenClawRuntime] syncFinalNoReplyWithHistory: confirmed NO_REPLY for sessionKey=' +
+              subagentSessionKey +
+              ', skipping',
           );
-          this.embeddedAgentLabels.set(sessionKey, matchingSession.label);
-          this.sessionKeyToLabel.set(sessionKey, matchingSession.label);
-        } else {
+          return;
+        }
+
+        // Real content found - add to parent session
+        console.log(
+          '[OpenClawRuntime] syncFinalNoReplyWithHistory: found real content for sessionKey=' +
+            subagentSessionKey +
+            ', text="' +
+            text.slice(0, 100) +
+            '"',
+        );
+        const assistantMessage = this.store.addMessage(parentSessionId, {
+          type: 'assistant',
+          content: text,
+          metadata: { isStreaming: false, isFinal: true },
+          modelName,
+        });
+        this.emit('message', parentSessionId, assistantMessage);
+        return;
+      }
+    } catch (err) {
+      console.warn('[OpenClawRuntime] syncFinalNoReplyWithHistory failed:', err);
+    }
+  }
+
+  /**
+   * Query sessions.list to find the label for a nested subagent identified by UUID.
+   * Used when lifecycle START event fires before the tool event provides label info.
+   */
+  private async queryNestedSubagentLabel(
+    subagentUuid: string,
+    parentSessionKey: string,
+    toolCallId?: string,
+  ): Promise<void> {
+    if (!this.gatewayClient) return;
+
+    try {
+      const sessionsResult = await this.gatewayClient.request<{
+        sessions?: Array<{ key: string; label?: string; spawnedBy?: string; spawnedAt?: number }>;
+      }>('sessions.list', {
+        spawnedBy: parentSessionKey,
+        limit: 50,
+      });
+
+      const childSessions = sessionsResult?.sessions;
+      if (Array.isArray(childSessions) && childSessions.length > 0) {
+        // Find the child session whose key contains our UUID
+        const matchingChild = childSessions.find(
+          cs => cs.key.includes(subagentUuid) || cs.key.endsWith(subagentUuid),
+        );
+
+        if (matchingChild && matchingChild.label) {
+          const label = matchingChild.label;
           console.log(
-            '[OpenClawRuntime] queryEmbeddedAgentLabel: no label found for sessionKey=' +
-              sessionKey,
+            '[OpenClawRuntime] queryNestedSubagentLabel: resolved UUID=' +
+              subagentUuid +
+              ' -> label=' +
+              label,
           );
+          this.subagentUuidToLabel.set(subagentUuid, label);
+          if (toolCallId) {
+            this.toolCallIdToLabel.set(toolCallId, label);
+          }
         }
       }
     } catch (err) {
-      console.warn('[OpenClawRuntime] queryEmbeddedAgentLabel failed:', err);
+      console.warn('[OpenClawRuntime] queryNestedSubagentLabel failed:', err);
     }
   }
 
@@ -8043,8 +8602,55 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (contextMsg) return contextMsg;
         }
       }
+      // Fallback: try uuidToToolCallId cross-reference for nested subagents.
+      // Context messages are stored under call_... keys, but agentId may be UUID.
+      const linkedToolCallId = this.uuidToToolCallId.get(agentId);
+      if (linkedToolCallId) {
+        const linkedMsgs = this.subagentMessages.get(linkedToolCallId);
+        if (linkedMsgs && linkedMsgs.length > 0) {
+          const contextMsg = linkedMsgs.find(
+            m => m.role === 'user' && m.metadata?.isSubagentContext,
+          );
+          if (contextMsg) {
+            console.log(
+              '[OpenClawRuntime] getSubTaskHistory: found context via uuidToToolCallId agentId=' +
+                agentId +
+                ' -> toolCallId=' +
+                linkedToolCallId,
+            );
+            return contextMsg;
+          }
+        }
+      }
       return null;
     })();
+
+    // Debug: log lookup state for subagent context
+    const allMsgKeys = [...this.subagentMessages.keys()];
+    console.log(
+      '[OpenClawRuntime] getSubTaskHistory context lookup: agentId=' +
+        agentId +
+        ' directMessages=' +
+        (directMessages ? directMessages.length : 'null') +
+        ' mappedMessages=' +
+        (mappedMessages ? mappedMessages.length : 'null') +
+        ' sessionKeyFromToolCallId=' +
+        (sessionKeyFromToolCallId || 'null') +
+        ' allSubagentMessagesKeys=[' +
+        allMsgKeys.join(', ') +
+        ']',
+    );
+    if (subagentContextMsg) {
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory subagentContextMsg found: content starts with "' +
+          subagentContextMsg.content.slice(0, 50) +
+          '"',
+      );
+    } else {
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory NO subagentContextMsg found, will use markSubagentContextMessage fallback',
+      );
+    }
 
     // Strategy 1: If sessionKey is provided, use it directly
     if (sessionKey && this.gatewayClient) {
@@ -8077,6 +8683,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             // 如果有 Subagent Context 消息，将其添加到历史消息的最前面
             if (subagentContextMsg) {
               const contextContent = subagentContextMsg.content;
+              console.log(
+                '[OpenClawRuntime] getSubTaskHistory Strategy 1: prepending context msg, startsWith "' +
+                  contextContent.slice(0, 50) +
+                  '"',
+              );
               // Skip the first user message from Gateway history (it's the duplicate Subagent Context without metadata)
               const firstUserIndex = historyMessages.findIndex(m => m.type === 'user');
               if (
@@ -8158,6 +8769,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             // Add Subagent Context message to the front if available
             if (subagentContextMsg) {
               const contextContent = subagentContextMsg.content;
+              console.log(
+                '[OpenClawRuntime] getSubTaskHistory Strategy 0: prepending context msg, startsWith "' +
+                  contextContent.slice(0, 50) +
+                  '"',
+              );
               // Skip the first user message from Gateway history (it's the duplicate Subagent Context without metadata)
               const firstUserIndex = historyMessages.findIndex(m => m.type === 'user');
               if (
