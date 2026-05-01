@@ -261,6 +261,12 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   const contentRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(messages.length);
   const streamCleanupRef = useRef<(() => void) | null>(null);
+  // Prevent double fetch when status transitions to 'done'
+  const hasFetchedOnCompletion = useRef(false);
+  // Reset completion flag when switching to a different subagent
+  useEffect(() => {
+    hasFetchedOnCompletion.current = false;
+  }, [cacheKey]);
 
   // Auto-scroll when new messages arrive
   useEffect(() => {
@@ -295,7 +301,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       setLoading(false);
       isFirstLoad.current = false;
     }
-  }, [parentSessionId, agentId, cacheKey, messages.length]);
+  }, [parentSessionId, agentId, cacheKey]);
 
   // Set up streaming listeners when running
   useEffect(() => {
@@ -383,22 +389,6 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     return () => {};
   }, [isRunning, parentSessionId, agentId, cacheKey]);
 
-  // Initial load (only if not running or no cached data)
-  useEffect(() => {
-    if (!isRunning || messages.length === 0) {
-      fetchHistory();
-    }
-  }, [fetchHistory, isRunning, messages.length]);
-
-  // Polling when running (for fallback if streaming misses anything)
-  useEffect(() => {
-    if (isRunning) {
-      const timer = setInterval(fetchHistory, 5000);
-      return () => clearInterval(timer);
-    }
-    return () => {};
-  }, [fetchHistory, isRunning]);
-
   // Poll subagent status to detect completion
   useEffect(() => {
     if (!isRunning) return;
@@ -409,8 +399,9 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
         const currentStatus = result.statuses[agentId];
         if (currentStatus) {
           setStatus(currentStatus as 'pending' | 'running' | 'done');
-          if (currentStatus === 'done') {
-            // Also refresh history once when done
+          if (currentStatus === 'done' && !hasFetchedOnCompletion.current) {
+            // Fetch history once when done — prevent double-fetch via the isRunning effect below
+            hasFetchedOnCompletion.current = true;
             fetchHistory();
           }
         }
@@ -426,6 +417,20 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
 
     return () => clearInterval(statusTimer);
   }, [isRunning, parentSessionId, agentId, fetchHistory]);
+
+  // Initial load and final refresh when subagent completes
+  useEffect(() => {
+    if (!isRunning) {
+      // Subagent finished — fetch final history if we haven't already from the completion effect
+      if (!hasFetchedOnCompletion.current) {
+        hasFetchedOnCompletion.current = true;
+        fetchHistory();
+      }
+    } else if (messages.length === 0) {
+      // Running but no messages yet — initial load
+      fetchHistory();
+    }
+  }, [isRunning, messages.length, fetchHistory]);
 
   // Escape key handler
   useEffect(() => {
