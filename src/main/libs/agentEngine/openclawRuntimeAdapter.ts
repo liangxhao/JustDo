@@ -937,8 +937,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly subagentStatus = new Map<string, 'pending' | 'running' | 'done'>();
   /** 失败的子 Agent toolCallId 集合（启动失败，应从显示列表中移除） */
   private readonly failedSubagentIds = new Set<string>();
+  /** 成功 spawn 的子 Agent toolCallId 集合（spawn 返回 isError=false），生命周期 error 不标记这些为失败 */
+  private readonly successfulSpawnToolCallIds = new Set<string>();
   /** 编排父会话 ID，用于隔离会话 */
   private orchestrationParentSessionId: string | null = null;
+  /** 主 agent 生命周期是否已结束（用于不同 runId final 事件后的完成检查） */
+  private mainAgentLifecycleEnded = false;
   /** childSessionKey → label 反向映射（用于显示） */
   private readonly sessionKeyToLabel = new Map<string, string>();
   /** toolCallId → childSessionKey 映射，用于通过 toolUseId 查找子会话 */
@@ -2521,6 +2525,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             this.subagentStatus.set(toolCallId, 'done');
             this.persistSubagentStatus(toolCallId, 'done');
             this.subagentLastActivity.delete(toolCallId);
+            this.checkAllSubagentsDone();
 
             // Also clean up any parallel UUID entry created by the nested lifecycle handler.
             // The phase=start for nested subagents goes through the nested handler (line 2563)
@@ -2584,23 +2589,39 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               this.emit('message', this.orchestrationParentSessionId, completionMessage);
             }
           } else if (phase === 'error') {
-            // Subagent failed to start or crashed - add to failedSubagentIds
-            // getSubagentStatuses will filter it out from display
-            console.log(
-              '[OpenClawRuntime] subagent lifecycle error: marking failed toolCallId=' +
-                toolCallId +
-                ' label=' +
-                (displayLabel || '(none)'),
-            );
-            this.failedSubagentIds.add(toolCallId);
-            this.subagentStatus.delete(toolCallId);
-            this.pendingToolCallIds.delete(toolCallId);
-            this.pendingEntryTimestamps.delete(toolCallId);
-            this.subagentLastActivity.delete(toolCallId);
-            this.toolCallIdToSessionKey.delete(toolCallId);
-            this.toolCallIdToParentSessionId.delete(toolCallId);
-            this.toolCallIdToLabel.delete(toolCallId);
-            this.subagentMessages.delete(toolCallId);
+            // Subagent lifecycle error: only mark as failed if spawn itself failed.
+            // If the spawn result was successful (isError=false), a transient lifecycle error
+            // should not remove the subagent from the list.
+            if (this.successfulSpawnToolCallIds.has(toolCallId)) {
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle error but spawn succeeded, keeping in list: toolCallId=' +
+                  toolCallId +
+                  ' label=' +
+                  (displayLabel || '(none)'),
+              );
+              // Still mark as done so checkAllSubagentsDone can proceed
+              this.subagentStatus.set(toolCallId, 'done');
+              this.persistSubagentStatus(toolCallId, 'done');
+              this.pendingToolCallIds.delete(toolCallId);
+              this.checkAllSubagentsDone();
+            } else {
+              // Spawn failed - remove from display
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle error: marking failed toolCallId=' +
+                  toolCallId +
+                  ' label=' +
+                  (displayLabel || '(none)'),
+              );
+              this.failedSubagentIds.add(toolCallId);
+              this.subagentStatus.delete(toolCallId);
+              this.pendingToolCallIds.delete(toolCallId);
+              this.pendingEntryTimestamps.delete(toolCallId);
+              this.subagentLastActivity.delete(toolCallId);
+              this.toolCallIdToSessionKey.delete(toolCallId);
+              this.toolCallIdToParentSessionId.delete(toolCallId);
+              this.toolCallIdToLabel.delete(toolCallId);
+              this.subagentMessages.delete(toolCallId);
+            }
           }
         } else if (sessionKey && sessionKey.includes(':subagent:')) {
           // No toolCallId but this is a subagent (spawned by a subagent, not directly by main agent).
@@ -2678,6 +2699,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             if (nestedLabel) {
               this.subagentUuidToLabel.set(subagentUuid, nestedLabel);
             }
+            // Persist nested spawn to parent session so it survives restart
+            this.persistNestedSubagentSpawn(emitAgentId, displayLabel, sessionKey);
             // If no label found, query sessions.list to resolve
             if (!nestedLabel && this.gatewayClient) {
               // Construct the correct parent session key for the query.
@@ -2719,6 +2742,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             this.subagentStatus.set(emitAgentId, 'done');
             this.persistSubagentStatus(emitAgentId, 'done');
             this.subagentLastActivity.delete(emitAgentId);
+            this.checkAllSubagentsDone();
             console.log(
               '[OpenClawRuntime] subagent lifecycle (nested): DONE toolCallId=' +
                 emitAgentId +
@@ -2726,22 +2750,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 sessionKey,
             );
           } else if (phase === 'error') {
-            this.failedSubagentIds.add(emitAgentId);
-            this.subagentStatus.delete(emitAgentId);
-            this.pendingToolCallIds.delete(emitAgentId);
-            this.pendingEntryTimestamps.delete(emitAgentId);
-            this.subagentLastActivity.delete(emitAgentId);
-            this.toolCallIdToSessionKey.delete(emitAgentId);
-            this.sessionKeyToToolCallId.delete(sessionKey);
-            this.toolCallIdToParentSessionId.delete(emitAgentId);
-            this.toolCallIdToLabel.delete(emitAgentId);
-            this.subagentMessages.delete(sessionKey);
-            console.log(
-              '[OpenClawRuntime] subagent lifecycle (nested): ERROR toolCallId=' +
-                emitAgentId +
-                ' sessionKey=' +
-                sessionKey,
-            );
+            // Nested subagent lifecycle error: if already marked done from a prior
+            // completed/stopped event, don't overwrite with failure.
+            if (this.subagentStatus.get(emitAgentId) === 'done') {
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle (nested): error but already done, keeping: emitAgentId=' +
+                  emitAgentId +
+                  ' sessionKey=' +
+                  sessionKey,
+              );
+            } else {
+              this.failedSubagentIds.add(emitAgentId);
+              this.subagentStatus.delete(emitAgentId);
+              this.pendingToolCallIds.delete(emitAgentId);
+              this.pendingEntryTimestamps.delete(emitAgentId);
+              this.subagentLastActivity.delete(emitAgentId);
+              this.toolCallIdToSessionKey.delete(emitAgentId);
+              this.sessionKeyToToolCallId.delete(sessionKey);
+              this.toolCallIdToParentSessionId.delete(emitAgentId);
+              this.toolCallIdToLabel.delete(emitAgentId);
+              this.subagentMessages.delete(sessionKey);
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle (nested): ERROR toolCallId=' +
+                  emitAgentId +
+                  ' sessionKey=' +
+                  sessionKey,
+              );
+            }
           }
         } else {
           // No toolCallId and not a subagent — lifecycle event for an agent not spawned via sessions_spawn.
@@ -4125,6 +4160,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         ) {
           this.subagentStatus.set(toolCallId, 'done');
           this.persistSubagentStatus(toolCallId, 'done');
+          if (phase !== 'error') {
+            this.checkAllSubagentsDone();
+          }
         }
       }
     }
@@ -4136,6 +4174,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // when main agent has follow-up runs after processing subagent results.
     if (isMainAgent && phase === 'start') {
       this.store.updateSession(sessionId, { status: 'running' });
+      this.mainAgentLifecycleEnded = false;
+    }
+    if (isMainAgent && phase === 'end') {
+      this.mainAgentLifecycleEnded = true;
+      // Check if all subagents are already done. If so, finalize immediately.
+      // If not, checkAllSubagentsDone will handle it when subagents complete.
+      // This also covers the case where the last chat event comes from a different
+      // runId (subagent announce) and returns early without calling handleChatFinal.
+      this.checkAllSubagentsDone();
     }
   }
 
@@ -4631,6 +4678,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
         this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
         this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
+        // Track that this subagent had a successful spawn result
+        if (toolCallId) {
+          this.successfulSpawnToolCallIds.add(toolCallId);
+        }
         if (mappingKey) {
           this.sessionKeyToLabel.set(childSessionKey, mappingKey);
           this.toolCallIdToLabel.set(toolCallId, mappingKey);
@@ -5100,6 +5151,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               this.emit('message', sessionId, assistantMessage);
             }
           }
+        }
+        // Safety net: if main agent lifecycle has ended and all subagents are done,
+        // finalize the session. This handles the case where the last chat event
+        // comes from a different runId (e.g., subagent announce) and handleChatFinal
+        // is never called for the main agent's runId.
+        if (this.mainAgentLifecycleEnded && sessionId === this.orchestrationParentSessionId) {
+          console.log(
+            '[OpenClawRuntime] handleChatEvent: different runId final + main agent lifecycle ended, finalizing: sessionId=' +
+              sessionId,
+          );
+          this.activeTurns.delete(sessionId);
+          this.checkAllSubagentsDone();
         }
         // Don't modify turn state, don't cleanup, just return
         return;
@@ -7900,6 +7963,137 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   /**
+   * Check if all tracked subagents for the orchestration session are 'done'.
+   * Only updates session status to 'completed' when BOTH:
+   * 1. All subagents are done
+   * 2. The main agent itself has no pending output (no active turn / not streaming)
+   * This prevents premature completion when the main agent is still processing
+   * subagent results or producing follow-up output.
+   */
+  private checkAllSubagentsDone(): void {
+    if (!this.orchestrationParentSessionId) return;
+
+    // Check in-memory subagentStatus Map - this is the authoritative source
+    const hasAnyNonDone = Array.from(this.subagentStatus.entries()).some(([toolCallId, status]) => {
+      const parentSessionId = this.toolCallIdToParentSessionId.get(toolCallId);
+      // Only count subagents belonging to this orchestration session
+      if (parentSessionId !== this.orchestrationParentSessionId) return false;
+      return status !== 'done';
+    });
+
+    if (!hasAnyNonDone) {
+      // Verify there's at least one subagent tracked
+      const hasAnySubagent = Array.from(this.subagentStatus.keys()).some(
+        toolCallId =>
+          this.toolCallIdToParentSessionId.get(toolCallId) === this.orchestrationParentSessionId,
+      );
+
+      if (hasAnySubagent) {
+        // Also check that the main agent itself has no pending output.
+        // If the main agent lifecycle has ended (phase=end), we trust that
+        // it's done even if activeTurns hasn't been cleaned up yet (e.g., when
+        // the last chat event came from a different runId and returned early).
+        const mainAgentActive = this.activeTurns.has(this.orchestrationParentSessionId);
+        if (mainAgentActive && !this.mainAgentLifecycleEnded) {
+          console.log(
+            '[OpenClawRuntime] checkAllSubagentsDone: all subagents done but main agent still active, deferring completion: sessionId=' +
+              this.orchestrationParentSessionId,
+          );
+          return;
+        }
+
+        console.log(
+          '[OpenClawRuntime] checkAllSubagentsDone: all subagents completed and main agent idle, updating session status to completed: sessionId=' +
+            this.orchestrationParentSessionId,
+        );
+        this.store.updateSession(this.orchestrationParentSessionId, {
+          status: 'completed',
+        });
+        this.emit('complete', this.orchestrationParentSessionId, null, 'completed');
+      }
+    }
+  }
+
+  /**
+   * Persist a nested subagent spawn event to the parent session.
+   * When a subagent spawns another subagent (nested), the sessions_spawn
+   * tool_use message lives in the subagent session, not the parent.
+   * This method creates a synthetic entry in the parent session's messages
+   * so that getSubagentStatuses can discover it after restart.
+   */
+  private persistNestedSubagentSpawn(toolCallId: string, label: string, sessionKey: string): void {
+    if (!this.orchestrationParentSessionId) return;
+    const session = this.store.getSession(this.orchestrationParentSessionId);
+    if (!session?.messages) return;
+
+    // Check if already persisted (prevent duplicates)
+    const alreadyExists = session.messages.some(
+      msg =>
+        msg.type === 'tool_use' &&
+        msg.metadata?.toolName === 'sessions_spawn' &&
+        msg.metadata?.toolUseId === toolCallId,
+    );
+    if (alreadyExists) return;
+
+    console.log(
+      '[OpenClawRuntime] persistNestedSubagentSpawn: toolCallId=' +
+        toolCallId +
+        ' label=' +
+        label +
+        ' sessionKey=' +
+        sessionKey,
+    );
+
+    // Create a synthetic tool_use message in the parent session
+    // Note: addMessage generates its own id and timestamp, so we omit those
+    this.store.addMessage(this.orchestrationParentSessionId, {
+      type: 'tool_use',
+      content: '',
+      metadata: {
+        toolName: 'sessions_spawn',
+        toolUseId: toolCallId,
+        label,
+        sessionKey,
+        subagentStatus: 'running',
+        isNestedSpawn: true,
+        toolInput: { label, toolCallId },
+      },
+    });
+  }
+
+  /**
+   * Update the label in a synthetic nested spawn message.
+   * Called when queryNestedSubagentLabel resolves a label after the initial
+   * synthetic message was created with a UUID placeholder.
+   */
+  private updateNestedSpawnLabel(toolCallId: string, label: string): void {
+    if (!this.orchestrationParentSessionId) return;
+    const session = this.store.getSession(this.orchestrationParentSessionId);
+    if (!session?.messages) return;
+
+    const targetMsg = session.messages.find(
+      msg =>
+        msg.type === 'tool_use' &&
+        msg.metadata?.toolName === 'sessions_spawn' &&
+        msg.metadata?.toolUseId === toolCallId,
+    );
+    if (!targetMsg) return;
+
+    console.log(
+      '[OpenClawRuntime] updateNestedSpawnLabel: toolCallId=' + toolCallId + ' newLabel=' + label,
+    );
+
+    const updated = {
+      ...targetMsg.metadata,
+      label,
+      toolInput: { ...targetMsg.metadata?.toolInput, label },
+    };
+    this.store.updateMessage(this.orchestrationParentSessionId, targetMsg.id, {
+      metadata: updated,
+    });
+  }
+
+  /**
    * 获取子 Agent 状态
    * @param sessionId 可选，指定父会话 ID 进行过滤
    * 状态来源：
@@ -8557,6 +8751,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.subagentUuidToLabel.set(subagentUuid, label);
           if (toolCallId) {
             this.toolCallIdToLabel.set(toolCallId, label);
+            // Also update the synthetic tool_use message label in the parent session
+            this.updateNestedSpawnLabel(toolCallId, label);
           }
         }
       }

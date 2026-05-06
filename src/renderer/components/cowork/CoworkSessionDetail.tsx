@@ -1433,13 +1433,11 @@ const SubagentCompletionMessageItem: React.FC<{
         ? 'text-red-500'
         : 'text-secondary';
 
-  // Generate collapsed summary (first 100 chars or "View result" placeholder)
+  // Generate collapsed summary (first 100 chars of actual content, or fallback text)
   const collapsedSummary =
     displayContent.length > 100
       ? displayContent.slice(0, 100).replace(/\n/g, ' ') + '...'
-      : displayContent
-        ? 'Click to view result'
-        : 'Task completed';
+      : displayContent || 'Task completed';
 
   // Content line count estimate (for deciding if collapse is needed)
   const lineCount = displayContent ? displayContent.split('\n').length : 0;
