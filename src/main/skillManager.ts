@@ -1044,7 +1044,7 @@ export class SkillManager {
         // Using copy + remove avoids EPERM issues with locked directories
         console.log('[skills] importSkill: copying skill to target');
         try {
-          fs.cpSync(skillDir, targetDir, { recursive: true, force: true });
+          cpRecursiveSync(skillDir, targetDir, { force: true });
         } catch (cpError) {
           console.error('[skills] importSkill: copy error:', cpError);
           this.startWatching();
@@ -1181,7 +1181,7 @@ export class SkillManager {
       // Copy skill folder to target directory
       console.log('[skills] importSkillFromFolder: copying folder to target');
       try {
-        fs.cpSync(folderPath, targetDir, { recursive: true, force: true });
+        cpRecursiveSync(folderPath, targetDir, { force: true });
       } catch (cpError) {
         console.error('[skills] importSkillFromFolder: copy error:', cpError);
         this.startWatching();
@@ -1655,11 +1655,9 @@ export class SkillManager {
 
     try {
       console.log(`[skills] Repairing ${skillId} from bundled resources...`);
-      fs.cpSync(bundledPath, skillPath, {
-        recursive: true,
+      cpRecursiveSync(bundledPath, skillPath, {
         dereference: true,
         force: true,
-        errorOnExist: false,
       });
       console.log(`[skills] Repaired ${skillId} from bundled resources`);
       return true;
