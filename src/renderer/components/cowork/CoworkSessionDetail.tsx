@@ -1477,8 +1477,10 @@ const SubagentCompletionMessageItem: React.FC<{
             </button>
             {/* Result content */}
             {displayContent && (
-              <div className="relative rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle w-fit max-w-[calc(100%-44px)]">
-                <CopyButton content={displayContent} visible={isHovered && isExpanded} />
+              <div className="relative rounded-2xl px-4 py-2 bg-surface text-foreground shadow-subtle w-fit max-w-[calc(100%-44px)]">
+                <div className="absolute top-1.5 right-1.5">
+                  <CopyButton content={displayContent} visible={isHovered && isExpanded} />
+                </div>
                 {isExpanded ? (
                   <MarkdownContent
                     content={displayContent}
