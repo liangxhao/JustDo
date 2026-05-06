@@ -542,6 +542,12 @@ export class OpenClawConfigSync {
             mode: sandboxMode,
           },
           workspace: resolvedWorkspaceDir,
+          subagents: {
+            maxSpawnDepth: 1,
+            maxChildrenPerAgent: 5,
+            maxConcurrent: 8,
+            runTimeoutSeconds: 900,
+          },
         },
         ...this.buildAgentsList(primaryModel),
       },
