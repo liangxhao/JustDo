@@ -2592,7 +2592,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             // Subagent lifecycle error: only mark as failed if spawn itself failed.
             // If the spawn result was successful (isError=false), a transient lifecycle error
             // should not remove the subagent from the list.
-            if (this.successfulSpawnToolCallIds.has(toolCallId)) {
+            // The toolCallId in lifecycle events may differ from the spawn toolCallId
+            // (lifecycle uses UUID while spawn uses call_ ID). Check label mapping to bridge.
+            const lifecycleLabel = this.toolCallIdToLabel.get(toolCallId) || displayLabel || '';
+            const spawnSucceeded =
+              this.successfulSpawnToolCallIds.has(toolCallId) ||
+              (lifecycleLabel &&
+                Array.from(this.successfulSpawnToolCallIds).some(
+                  spawnId => this.toolCallIdToLabel.get(spawnId) === lifecycleLabel,
+                ));
+            if (spawnSucceeded) {
               console.log(
                 '[OpenClawRuntime] subagent lifecycle error but spawn succeeded, keeping in list: toolCallId=' +
                   toolCallId +
@@ -4593,6 +4602,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // 当 sessions_spawn 返回结果时，建立 label → childSessionKey 映射
     if (toolName === 'sessions_spawn' && phase === 'result' && !data.isError && !data.err) {
+      // Track successful spawn immediately — needed so lifecycle error handler
+      // doesn't remove it from the list when childSessionKey is unavailable.
+      if (toolCallId) {
+        this.successfulSpawnToolCallIds.add(toolCallId);
+      }
+
       // Try to get childSessionKey from various sources
       let childSessionKey: string | null = null;
 
@@ -4678,10 +4693,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
         this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
         this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
-        // Track that this subagent had a successful spawn result
-        if (toolCallId) {
-          this.successfulSpawnToolCallIds.add(toolCallId);
-        }
         if (mappingKey) {
           this.sessionKeyToLabel.set(childSessionKey, mappingKey);
           this.toolCallIdToLabel.set(toolCallId, mappingKey);
@@ -8749,6 +8760,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               label,
           );
           this.subagentUuidToLabel.set(subagentUuid, label);
+          // Also add UUID to successfulSpawnToolCallIds so the lifecycle
+          // error handler can find it (lifecycle events use UUID as toolCallId).
+          this.successfulSpawnToolCallIds.add(subagentUuid);
           if (toolCallId) {
             this.toolCallIdToLabel.set(toolCallId, label);
             // Also update the synthetic tool_use message label in the parent session
