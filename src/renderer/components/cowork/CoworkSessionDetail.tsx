@@ -1433,12 +1433,6 @@ const SubagentCompletionMessageItem: React.FC<{
         ? 'text-red-500'
         : 'text-secondary';
 
-  // Generate collapsed summary (first 100 chars of actual content, or fallback text)
-  const collapsedSummary =
-    displayContent.length > 100
-      ? displayContent.slice(0, 100).replace(/\n/g, ' ') + '...'
-      : displayContent || 'Task completed';
-
   // Content line count estimate (for deciding if collapse is needed)
   const lineCount = displayContent ? displayContent.split('\n').length : 0;
   const shouldCollapse = displayContent.length > 100 || lineCount > 3;
@@ -1457,41 +1451,74 @@ const SubagentCompletionMessageItem: React.FC<{
           </div>
           {/* Content area */}
           <div className="w-full min-w-0">
-            {/* Header: task label and status - clickable to expand/collapse */}
-            <button
-              type="button"
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="flex items-center gap-2 mb-1.5 cursor-pointer hover:opacity-80 transition-opacity"
-            >
-              <span className="text-xs font-medium text-teal-600">{taskLabel}</span>
-              <span className={`text-xs ${statusColor}`}>{status}</span>
-              {sessionKey && (
-                <span className="text-xs text-muted truncate max-w-[120px]">{sessionKey}</span>
-              )}
-              {/* Expand/collapse indicator */}
-              {shouldCollapse && (
-                <span className="text-xs text-muted ml-1">{isExpanded ? '▼' : '▶'}</span>
-              )}
-            </button>
-            {/* Result content */}
-            {displayContent && (
-              <div className="relative rounded-2xl px-4 py-2 bg-surface text-foreground shadow-subtle w-fit max-w-[calc(100%-44px)]">
-                <div className="absolute top-1.5 right-1.5">
-                  <CopyButton content={displayContent} visible={isHovered && isExpanded} />
-                </div>
-                {isExpanded ? (
-                  <MarkdownContent
-                    content={displayContent}
-                    className="max-w-none break-words text-sm"
-                  />
-                ) : (
-                  <div
-                    className="text-sm text-secondary cursor-pointer hover:text-foreground transition-colors"
-                    onClick={() => setIsExpanded(true)}
-                  >
-                    {collapsedSummary}
+            {/* Header row when collapsed: label + status + indicator + single-line markdown in bubble */}
+            {shouldCollapse && !isExpanded && (
+              <div className="flex items-center gap-2 mb-1.5 max-w-[calc(100%-44px)]">
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded(true)}
+                  className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                >
+                  <span className="text-xs font-medium text-teal-600">{taskLabel}</span>
+                  <span className={`text-xs ${statusColor}`}>{status}</span>
+                  {sessionKey && (
+                    <span className="text-xs text-muted truncate max-w-[120px]">{sessionKey}</span>
+                  )}
+                  <span className="text-xs text-muted ml-1">▶</span>
+                </button>
+                {/* Bubble-wrapped single-line markdown with right-edge fade */}
+                <div
+                  className="relative flex-1 min-w-0 cursor-pointer rounded-2xl px-4 py-2 bg-surface text-secondary shadow-subtle hover:text-foreground transition-colors"
+                  onClick={() => setIsExpanded(true)}
+                >
+                  <div className="single-line-markdown mask-fade-right">
+                    <MarkdownContent content={displayContent} className="max-w-none break-words" />
                   </div>
+                  {/* Chevron icon at right edge — visual affordance for "click to expand" */}
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">
+                    ›
+                  </span>
+                </div>
+              </div>
+            )}
+            {/* Header row when expanded: clickable to collapse */}
+            {shouldCollapse && isExpanded && (
+              <button
+                type="button"
+                onClick={() => setIsExpanded(false)}
+                className="flex items-center gap-2 mb-1.5 cursor-pointer hover:opacity-80 transition-opacity"
+              >
+                <span className="text-xs font-medium text-teal-600">{taskLabel}</span>
+                <span className={`text-xs ${statusColor}`}>{status}</span>
+                {sessionKey && (
+                  <span className="text-xs text-muted truncate max-w-[120px]">{sessionKey}</span>
                 )}
+                <span className="text-xs text-muted ml-1">▼</span>
+              </button>
+            )}
+            {/* Short content (no collapse needed): header + inline markdown */}
+            {!shouldCollapse && displayContent && (
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-xs font-medium text-teal-600">{taskLabel}</span>
+                <span className={`text-xs ${statusColor}`}>{status}</span>
+                {sessionKey && (
+                  <span className="text-xs text-muted truncate max-w-[120px]">{sessionKey}</span>
+                )}
+                <div className="text-sm text-secondary inline-flex items-center">
+                  <MarkdownContent content={displayContent} className="max-w-none break-words" />
+                </div>
+              </div>
+            )}
+            {/* Expanded full content — shown below the header when expanded */}
+            {isExpanded && displayContent && (
+              <div className="relative rounded-2xl px-4 py-2 bg-surface text-foreground shadow-subtle w-fit max-w-[calc(100%-44px)] mt-1">
+                <div className="absolute top-1.5 right-1.5">
+                  <CopyButton content={displayContent} visible={isHovered} />
+                </div>
+                <MarkdownContent
+                  content={displayContent}
+                  className="max-w-none break-words text-sm"
+                />
               </div>
             )}
             <div className="flex items-center gap-1.5 mt-1 pl-4">
