@@ -108,25 +108,10 @@ export interface CoworkConfig {
   workingDirectory: string;
   executionMode: CoworkExecutionMode;
   agentEngine: CoworkAgentEngine;
-  memoryEnabled: boolean;
-  memoryImplicitUpdateEnabled: boolean;
-  memoryLlmJudgeEnabled: boolean;
-  memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
-  memoryUserMemoriesMaxItems: number;
 }
 
 export type CoworkConfigUpdate = Partial<
-  Pick<
-    CoworkConfig,
-    | 'workingDirectory'
-    | 'executionMode'
-    | 'agentEngine'
-    | 'memoryEnabled'
-    | 'memoryImplicitUpdateEnabled'
-    | 'memoryLlmJudgeEnabled'
-    | 'memoryGuardLevel'
-    | 'memoryUserMemoriesMaxItems'
-  >
+  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine'>
 >;
 
 export interface CoworkApiConfig {
@@ -150,20 +135,6 @@ export interface OpenClawEngineStatus {
   progressPercent?: number;
   message?: string;
   canRetry: boolean;
-}
-
-export interface CoworkUserMemoryEntry {
-  id: string;
-  text: string;
-}
-
-export interface CoworkMemoryStats {
-  total: number;
-  created: number;
-  stale: number;
-  deleted: number;
-  explicit: number;
-  implicit: number;
 }
 
 // Cowork pending permission request

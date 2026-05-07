@@ -76,40 +76,11 @@ interface CoworkConfig {
   workingDirectory: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   agentEngine: 'openclaw';
-  memoryEnabled: boolean;
-  memoryImplicitUpdateEnabled: boolean;
-  memoryLlmJudgeEnabled: boolean;
-  memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
-  memoryUserMemoriesMaxItems: number;
 }
 
 type CoworkConfigUpdate = Partial<
-  Pick<
-    CoworkConfig,
-    | 'workingDirectory'
-    | 'executionMode'
-    | 'agentEngine'
-    | 'memoryEnabled'
-    | 'memoryImplicitUpdateEnabled'
-    | 'memoryLlmJudgeEnabled'
-    | 'memoryGuardLevel'
-    | 'memoryUserMemoriesMaxItems'
-  >
+  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine'>
 >;
-
-interface CoworkUserMemoryEntry {
-  id: string;
-  text: string;
-}
-
-interface CoworkMemoryStats {
-  total: number;
-  created: number;
-  stale: number;
-  deleted: number;
-  explicit: number;
-  implicit: number;
-}
 
 interface CoworkPermissionRequest {
   sessionId: string;
@@ -563,20 +534,6 @@ interface IElectronAPI {
       modelId: string;
       providerKey?: string;
     }) => Promise<{ success: boolean; error?: string }>;
-    listMemoryEntries: (input: {
-      query?: string;
-      limit?: number;
-      offset?: number;
-    }) => Promise<{ success: boolean; entries?: CoworkUserMemoryEntry[]; error?: string }>;
-    createMemoryEntry: (input: {
-      text: string;
-    }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
-    updateMemoryEntry: (input: {
-      id: string;
-      text: string;
-    }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
-    deleteMemoryEntry: (input: { id: string }) => Promise<{ success: boolean; error?: string }>;
-    getMemoryStats: () => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
     onStreamMessage: (
       callback: (data: { sessionId: string; message: CoworkMessage }) => void,
     ) => () => void;
@@ -839,35 +796,6 @@ interface IElectronAPI {
       refreshToken: string,
     ) => Promise<{ success: boolean; data?: QwenOAuthToken; error?: string }>;
     onOAuthProgress: (callback: (message: string) => void) => () => void;
-  };
-  githubCopilot: {
-    requestDeviceCode: () => Promise<{
-      userCode: string;
-      verificationUri: string;
-      deviceCode: string;
-      interval: number;
-      expiresIn: number;
-    }>;
-    pollForToken: (
-      deviceCode: string,
-      interval: number,
-      expiresIn: number,
-    ) => Promise<{
-      success: boolean;
-      token?: string;
-      githubUser?: string;
-      baseUrl?: string;
-      error?: string;
-    }>;
-    cancelPolling: () => Promise<void>;
-    signOut: () => Promise<void>;
-    refreshToken: () => Promise<{
-      success: boolean;
-      token?: string;
-      baseUrl?: string;
-      error?: string;
-    }>;
-    onTokenUpdated: (callback: (data: { token: string; baseUrl: string }) => void) => () => void;
   };
 }
 

@@ -525,7 +525,13 @@ export type ProviderRawConfig = {
   apiKey: string;
   apiType: 'anthropic' | 'openai';
   codingPlanEnabled: boolean;
-  models: Array<{ id: string; name?: string; supportsImage?: boolean; contextLength?: number; maxTokens?: number }>;
+  models: Array<{
+    id: string;
+    name?: string;
+    supportsImage?: boolean;
+    contextLength?: number;
+    maxTokens?: number;
+  }>;
   displayName?: string; // 新增：用于 OpenClaw 配置中的 providerId
 };
 
@@ -602,16 +608,4 @@ export function getProviderDisplayNameMap(): Record<string, string> {
   }
 
   return result;
-}
-
-/**
- * Returns the long-lived GitHub OAuth token used by OpenClaw's built-in
- * github-copilot provider to exchange for short-lived Copilot API tokens.
- * OpenClaw reads this from the COPILOT_GITHUB_TOKEN env var.
- */
-export function getCopilotGithubToken(): string | null {
-  const sqliteStore = getStore();
-  if (!sqliteStore) return null;
-  const token = sqliteStore.get<string>('github_copilot_github_token');
-  return token?.trim() || null;
 }

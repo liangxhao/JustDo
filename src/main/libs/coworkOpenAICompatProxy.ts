@@ -965,9 +965,7 @@ function normalizeMaxTokensFieldForOpenAIProvider(
  * Ensure `max_completion_tokens` is set from `max_tokens` when present
  * so thinking models don't fall back to an internal default.
  */
-function ensureMaxCompletionTokensForThinkingModels(
-  openAIRequest: Record<string, unknown>,
-): void {
+function ensureMaxCompletionTokensForThinkingModels(openAIRequest: Record<string, unknown>): void {
   const maxTokens = openAIRequest.max_tokens;
   if (typeof maxTokens !== 'number' || !Number.isFinite(maxTokens)) {
     return;
@@ -2360,111 +2358,6 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     writeJSON(res, 200, {
       input_tokens: estimateAnthropicCountTokensRequestInputTokens(parsedRequestBody),
     });
-    return;
-  }
-
-  // Dedicated Copilot passthrough route. OpenClaw is configured with
-  // baseUrl = http://127.0.0.1:PORT/v1/copilot so it sends requests here.
-  // This route manages the Copilot token lifecycle independently of upstreamConfig
-  // and injects the required IDE headers (Editor-Version etc.) before forwarding
-  // to the real GitHub Copilot API.
-  if (
-    method === 'POST' &&
-    (url.pathname === '/v1/copilot/chat/completions' ||
-      url.pathname === '/copilot/chat/completions')
-  ) {
-    let body = '';
-    try {
-      body = await readRequestBody(req);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Invalid request body';
-      writeJSON(res, 400, createAnthropicErrorBody(message, 'invalid_request_error'));
-      return;
-    }
-
-    const { getCurrentCopilotToken, refreshCopilotTokenNow } =
-      await import('./copilotTokenManager');
-
-    let tokenState = getCurrentCopilotToken();
-    if (!tokenState) {
-      try {
-        tokenState = await refreshCopilotTokenNow();
-      } catch (err) {
-        console.warn(
-          '[CoworkProxy] Copilot passthrough: no token available and refresh failed:',
-          err,
-        );
-        writeJSON(
-          res,
-          503,
-          createAnthropicErrorBody('Copilot token unavailable', 'service_unavailable'),
-        );
-        return;
-      }
-    }
-
-    const copilotBaseUrl = tokenState.baseUrl.replace(/\/+$/, '');
-    const copilotUrl = copilotBaseUrl.endsWith('/chat/completions')
-      ? copilotBaseUrl
-      : `${copilotBaseUrl}/chat/completions`;
-
-    const buildCopilotHeaders = (token: string): Record<string, string> => ({
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      'Copilot-Integration-Id': 'vscode-chat',
-      'Editor-Version': 'vscode/1.96.2',
-      'Editor-Plugin-Version': 'copilot-chat/0.26.7',
-      'User-Agent': 'GitHubCopilotChat/0.26.7',
-      'Openai-Intent': 'conversation-panel',
-    });
-
-    console.log(`[CoworkProxy] Copilot passthrough → ${copilotUrl}`);
-    let upstreamResponse = await session.defaultSession.fetch(copilotUrl, {
-      method: 'POST',
-      headers: buildCopilotHeaders(tokenState.copilotToken),
-      body,
-    });
-
-    // Auto-retry once on auth error by refreshing the short-lived token
-    if (upstreamResponse.status === 401 || upstreamResponse.status === 403) {
-      console.log(
-        '[CoworkProxy] Copilot passthrough: auth error, refreshing token and retrying...',
-      );
-      try {
-        const refreshed = await refreshCopilotTokenNow();
-        const newCopilotUrl = refreshed.baseUrl.replace(/\/+$/, '').endsWith('/chat/completions')
-          ? refreshed.baseUrl.replace(/\/+$/, '')
-          : `${refreshed.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-        upstreamResponse = await session.defaultSession.fetch(newCopilotUrl, {
-          method: 'POST',
-          headers: buildCopilotHeaders(refreshed.copilotToken),
-          body,
-        });
-        console.log(`[CoworkProxy] Copilot passthrough: retry status=${upstreamResponse.status}`);
-      } catch (refreshErr) {
-        console.warn('[CoworkProxy] Copilot passthrough: token refresh failed:', refreshErr);
-      }
-    }
-
-    res.writeHead(upstreamResponse.status, {
-      'Content-Type': upstreamResponse.headers.get('content-type') || 'application/json',
-      'Transfer-Encoding': upstreamResponse.headers.get('transfer-encoding') || '',
-    });
-    if (upstreamResponse.body) {
-      const reader = upstreamResponse.body.getReader();
-      const pump = async (): Promise<void> => {
-        const { done, value } = await reader.read();
-        if (done) {
-          res.end();
-          return;
-        }
-        res.write(Buffer.from(value));
-        return pump();
-      };
-      await pump();
-    } else {
-      res.end();
-    }
     return;
   }
 

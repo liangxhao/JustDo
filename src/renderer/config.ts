@@ -315,7 +315,13 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai' | 'gemini';
       codingPlanEnabled?: boolean;
-      models?: Array<{ id: string; name: string; supportsImage?: boolean; contextLength?: number; maxTokens?: number }>;
+      models?: Array<{
+        id: string;
+        name: string;
+        supportsImage?: boolean;
+        contextLength?: number;
+        maxTokens?: number;
+      }>;
     }
   > = {};
 

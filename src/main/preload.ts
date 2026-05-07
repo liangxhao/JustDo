@@ -288,33 +288,9 @@ contextBridge.exposeInMainWorld('electron', {
       workingDirectory?: string;
       executionMode?: 'auto' | 'local' | 'sandbox';
       agentEngine?: 'openclaw';
-      memoryEnabled?: boolean;
-      memoryImplicitUpdateEnabled?: boolean;
-      memoryLlmJudgeEnabled?: boolean;
-      memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
-      memoryUserMemoriesMaxItems?: number;
     }) => ipcRenderer.invoke('cowork:config:set', config),
     setDefaultModel: (options: { modelId: string; providerKey?: string }) =>
       ipcRenderer.invoke('config:setDefaultModel', options),
-    listMemoryEntries: (input: {
-      query?: string;
-      status?: 'created' | 'stale' | 'deleted' | 'all';
-      includeDeleted?: boolean;
-      limit?: number;
-      offset?: number;
-    }) => ipcRenderer.invoke('cowork:memory:listEntries', input),
-    createMemoryEntry: (input: { text: string; confidence?: number; isExplicit?: boolean }) =>
-      ipcRenderer.invoke('cowork:memory:createEntry', input),
-    updateMemoryEntry: (input: {
-      id: string;
-      text?: string;
-      confidence?: number;
-      status?: 'created' | 'stale' | 'deleted';
-      isExplicit?: boolean;
-    }) => ipcRenderer.invoke('cowork:memory:updateEntry', input),
-    deleteMemoryEntry: (input: { id: string }) =>
-      ipcRenderer.invoke('cowork:memory:deleteEntry', input),
-    getMemoryStats: () => ipcRenderer.invoke('cowork:memory:getStats'),
     // Stream event listeners
     onStreamMessage: (callback: (data: { sessionId: string; message: any }) => void) => {
       const handler = (_event: any, data: { sessionId: string; message: any }) => callback(data);
@@ -589,42 +565,6 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, message: string) => callback(message);
       ipcRenderer.on('qwen:oauth:progress', handler);
       return () => ipcRenderer.removeListener('qwen:oauth:progress', handler);
-    },
-  },
-  githubCopilot: {
-    requestDeviceCode: () =>
-      ipcRenderer.invoke('github-copilot:request-device-code') as Promise<{
-        userCode: string;
-        verificationUri: string;
-        deviceCode: string;
-        interval: number;
-        expiresIn: number;
-      }>,
-    pollForToken: (deviceCode: string, interval: number, expiresIn: number) =>
-      ipcRenderer.invoke('github-copilot:poll-for-token', {
-        deviceCode,
-        interval,
-        expiresIn,
-      }) as Promise<{
-        success: boolean;
-        token?: string;
-        githubUser?: string;
-        baseUrl?: string;
-        error?: string;
-      }>,
-    cancelPolling: () => ipcRenderer.invoke('github-copilot:cancel-polling') as Promise<void>,
-    signOut: () => ipcRenderer.invoke('github-copilot:sign-out') as Promise<void>,
-    refreshToken: () =>
-      ipcRenderer.invoke('github-copilot:refresh-token') as Promise<{
-        success: boolean;
-        token?: string;
-        baseUrl?: string;
-        error?: string;
-      }>,
-    onTokenUpdated: (callback: (data: { token: string; baseUrl: string }) => void) => {
-      const handler = (_event: unknown, data: { token: string; baseUrl: string }) => callback(data);
-      ipcRenderer.on('github-copilot:token-updated', handler);
-      return () => ipcRenderer.removeListener('github-copilot:token-updated', handler);
     },
   },
 });

@@ -89,18 +89,6 @@ function setupDb(): void {
     );
   `);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS cowork_user_memories (
-      id TEXT PRIMARY KEY,
-      text TEXT NOT NULL,
-      fingerprint TEXT NOT NULL DEFAULT '',
-      confidence REAL NOT NULL DEFAULT 0.5,
-      is_explicit INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at INTEGER NOT NULL
-    );
-  `);
-
   // CoworkStore only needs (db)
   store = new CoworkStore(db);
 }
@@ -151,17 +139,17 @@ test('getSession returns all messages when one has corrupt metadata', () => {
   expect(session!.messages).toHaveLength(3);
 
   // Valid metadata preserved
-  const validMsg = session!.messages.find((m) => m.id === 'msg-valid')!;
+  const validMsg = session!.messages.find(m => m.id === 'msg-valid')!;
   expect(validMsg.metadata).toEqual({ key: 'value' });
 
   // Corrupt metadata discarded
-  const corruptMsg = session!.messages.find((m) => m.id === 'msg-corrupt')!;
+  const corruptMsg = session!.messages.find(m => m.id === 'msg-corrupt')!;
   expect(corruptMsg.metadata).toBeUndefined();
   expect(corruptMsg.content).toBe('do something');
   expect(corruptMsg.type).toBe('tool_use');
 
   // Null metadata → undefined
-  const nullMsg = session!.messages.find((m) => m.id === 'msg-null')!;
+  const nullMsg = session!.messages.find(m => m.id === 'msg-null')!;
   expect(nullMsg.metadata).toBeUndefined();
 });
 
@@ -234,7 +222,12 @@ test('backfillEmptyAgentModels assigns the current default model to empty agents
 
   expect(store.backfillEmptyAgentModels('deepseek-v3.2')).toBe(2);
 
-  const rows = (db.prepare(`SELECT id, model FROM agents ORDER BY id`).all() as Array<{ id: string; model: string }>).map((r) => [r.id, r.model]);
+  const rows = (
+    db.prepare(`SELECT id, model FROM agents ORDER BY id`).all() as Array<{
+      id: string;
+      model: string;
+    }>
+  ).map(r => [r.id, r.model]);
   expect(rows).toEqual([
     ['main', 'deepseek-v3.2'],
     ['stockexpert', 'qwen3.5-plus'],

@@ -431,14 +431,10 @@ export class OpenClawConfigSync {
         // Write a minimal config so the gateway can start — it just won't have
         // any model provider until the user configures one.
         const result = this.writeMinimalConfig(configPath, reason);
-        // Still sync AGENTS.md even when API is not configured — skills/systemPrompt
-        // may already be set and should be available when the user configures a model.
         const workspaceDir = (coworkConfig.workingDirectory || '').trim();
         const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
         const resolvedWorkspaceDir = workspaceDir || defaultWorkspaceDir;
-        const agentsMdWarning = this.syncAgentsMd(resolvedWorkspaceDir, coworkConfig);
         this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
-        if (agentsMdWarning) result.agentsMdWarning = agentsMdWarning;
         return result;
       }
     }
@@ -688,12 +684,6 @@ export class OpenClawConfigSync {
     // never triggers approval-pending for any command.
     this.ensureExecApprovalDefaults();
 
-    // Sync AGENTS.md with skills routing prompt to the OpenClaw workspace directory.
-    // This runs on every sync regardless of openclaw.json changes, because skills
-    // may have been installed/enabled/disabled independently.
-    // Use the same resolvedWorkspaceDir from earlier in this function.
-    const agentsMdWarning = this.syncAgentsMd(resolvedWorkspaceDir, coworkConfig);
-
     // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
     this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
 
@@ -701,7 +691,6 @@ export class OpenClawConfigSync {
       ok: true,
       changed: configChanged || sessionStoreChanged,
       configPath,
-      ...(agentsMdWarning ? { agentsMdWarning } : {}),
     };
   }
 
@@ -944,49 +933,6 @@ export class OpenClawConfigSync {
     }
 
     return anyChanged;
-  }
-
-  /**
-   * Sync AGENTS.md to the OpenClaw workspace directory.
-   * 不注入任何 GucciAI managed content，只移除已存在的 managed section。
-   */
-  private syncAgentsMd(workspaceDir: string, _coworkConfig: CoworkConfig): string | undefined {
-    const MARKER = '<!-- GucciAI managed: do not edit below this line -->';
-
-    try {
-      ensureDir(workspaceDir);
-      const agentsMdPath = path.join(workspaceDir, 'AGENTS.md');
-
-      // Read existing file
-      let existingContent = '';
-      try {
-        existingContent = fs.readFileSync(agentsMdPath, 'utf8');
-      } catch {
-        // File doesn't exist — 不创建，让 OpenClaw 自己管理
-        return;
-      }
-
-      // 移除 GucciAI managed section（如果存在）
-      const markerIdx = existingContent.indexOf(MARKER);
-      if (markerIdx >= 0) {
-        const userContent = existingContent.slice(0, markerIdx).trimEnd();
-        if (userContent) {
-          this.atomicWriteFile(agentsMdPath, userContent + '\n');
-        } else {
-          // 只有 managed section — 删除文件
-          try {
-            fs.unlinkSync(agentsMdPath);
-          } catch {
-            /* already gone */
-          }
-        }
-      }
-      // 不注入任何 managed content
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.warn('[OpenClawConfigSync] Failed to sync AGENTS.md:', msg);
-      return msg;
-    }
   }
 
   /**

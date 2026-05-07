@@ -152,8 +152,6 @@ src/main/
     ├── openclawEngineManager.ts     # OpenClaw 管理
     ├── openclawConfigSync.ts        # 配置同步
     ├── openclawChannelSessionSync.ts # Channel 同步
-    ├── coworkMemoryExtractor.ts     # 记忆提取
-    ├── coworkMemoryJudge.ts         # 记忆判断
     └── skillSecurity/               # Skills 安全
 ```
 

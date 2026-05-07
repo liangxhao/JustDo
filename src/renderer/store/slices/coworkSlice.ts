@@ -55,11 +55,6 @@ const initialState: CoworkState = {
     workingDirectory: '',
     executionMode: 'local',
     agentEngine: 'openclaw',
-    memoryEnabled: true,
-    memoryImplicitUpdateEnabled: true,
-    memoryLlmJudgeEnabled: false,
-    memoryGuardLevel: 'strict',
-    memoryUserMemoriesMaxItems: 12,
   },
   thinkingExpanded: true, // Default to expanded (浅蓝色)
   toolExpanded: true, // Default to expanded (浅蓝色)

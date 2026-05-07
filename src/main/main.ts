@@ -50,16 +50,9 @@ import {
   setStoreGetter,
   updateServerModelMetadata,
 } from './libs/claudeSettings';
-import {
-  clearCopilotTokenState,
-  initCopilotTokenManager,
-  refreshCopilotTokenNow,
-  setCopilotTokenState,
-} from './libs/copilotTokenManager';
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import {
-  registerProxyTokenRefresher,
   startCoworkOpenAICompatProxy,
   stopCoworkOpenAICompatProxy,
 } from './libs/coworkOpenAICompatProxy';
@@ -81,16 +74,6 @@ import {
 import type { McpBridgeConfig } from './libs/openclawConfigSync';
 import { buildProviderSelection, OpenClawConfigSync } from './libs/openclawConfigSync';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclawEngineManager';
-import {
-  addMemoryEntry,
-  deleteMemoryEntry,
-  migrateSqliteToMemoryMd,
-  readMemoryEntries,
-  resolveMemoryFilePath,
-  searchMemoryEntries,
-  syncMemoryFileOnWorkspaceChange,
-  updateMemoryEntry,
-} from './libs/openclawMemoryFile';
 import { stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import {
@@ -110,8 +93,6 @@ import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 app.setName(APP_NAME);
 
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
-const MIN_MEMORY_USER_MEMORIES_MAX_ITEMS = 1;
-const MAX_MEMORY_USER_MEMORIES_MAX_ITEMS = 60;
 const IPC_MESSAGE_CONTENT_MAX_CHARS = 120_000;
 const IPC_UPDATE_CONTENT_MAX_CHARS = 120_000;
 const IPC_STRING_MAX_CHARS = 4_000;
@@ -708,7 +689,6 @@ let openClawConfigSync: OpenClawConfigSync | null = null;
 let openClawBootstrapPromise: Promise<OpenClawEngineStatus> | null = null;
 let openClawStatusForwarderBound = false;
 let coworkRuntimeForwarderBound = false;
-let memoryMigrationDone = false;
 let preventSleepBlockerId: number | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
@@ -870,10 +850,6 @@ const getCoworkStore = () => {
   if (!coworkStore) {
     const sqliteStore = getStore();
     coworkStore = new CoworkStore(sqliteStore.getDatabase());
-    const cleaned = coworkStore.autoDeleteNonPersonalMemories();
-    if (cleaned > 0) {
-      console.info(`[cowork-memory] Auto-deleted ${cleaned} non-personal/procedural memories`);
-    }
   }
   return coworkStore;
 };
@@ -1948,7 +1924,7 @@ if (!gotTheLock) {
   ipcMain.handle('app:getOpenclawVersion', () => {
     try {
       const pkg = JSON.parse(
-        require('fs').readFileSync(require('path').join(app.getAppPath(), 'package.json'), 'utf-8')
+        require('fs').readFileSync(require('path').join(app.getAppPath(), 'package.json'), 'utf-8'),
       );
       return pkg.openclaw?.version ?? 'unknown';
     } catch {
@@ -3337,150 +3313,6 @@ if (!gotTheLock) {
   });
 
   ipcMain.handle(
-    'cowork:memory:listEntries',
-    async (
-      _event,
-      input: {
-        query?: string;
-        status?: 'created' | 'stale' | 'deleted' | 'all';
-        includeDeleted?: boolean;
-        limit?: number;
-        offset?: number;
-      },
-    ) => {
-      try {
-        const config = getCoworkStore().getConfig();
-        const filePath = resolveMemoryFilePath(config.workingDirectory);
-
-        // Lazy migration: SQLite → MEMORY.md (one-time, cached in memory)
-        if (!memoryMigrationDone) {
-          migrateSqliteToMemoryMd(filePath, {
-            isMigrationDone: () =>
-              getStore().get<string>('openclawMemory.migration.v1.completed') === '1',
-            markMigrationDone: () => {
-              getStore().set('openclawMemory.migration.v1.completed', '1');
-              memoryMigrationDone = true;
-            },
-            getActiveMemoryTexts: () => {
-              return getCoworkStore()
-                .listUserMemories({ status: 'all', includeDeleted: false, limit: 200 })
-                .map(m => m.text);
-            },
-          });
-          // Even if migration found nothing, skip future checks this session
-          memoryMigrationDone = true;
-        }
-
-        const query = input?.query?.trim() || '';
-        const entries = query ? searchMemoryEntries(filePath, query) : readMemoryEntries(filePath);
-        return { success: true, entries };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to list memory entries',
-        };
-      }
-    },
-  );
-  ipcMain.handle(
-    'cowork:memory:createEntry',
-    async (
-      _event,
-      input: {
-        text: string;
-        confidence?: number;
-        isExplicit?: boolean;
-      },
-    ) => {
-      try {
-        const config = getCoworkStore().getConfig();
-        const filePath = resolveMemoryFilePath(config.workingDirectory);
-        const entry = addMemoryEntry(filePath, input.text);
-        return { success: true, entry };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to create memory entry',
-        };
-      }
-    },
-  );
-  ipcMain.handle(
-    'cowork:memory:updateEntry',
-    async (
-      _event,
-      input: {
-        id: string;
-        text?: string;
-        confidence?: number;
-        status?: 'created' | 'stale' | 'deleted';
-        isExplicit?: boolean;
-      },
-    ) => {
-      try {
-        const config = getCoworkStore().getConfig();
-        const filePath = resolveMemoryFilePath(config.workingDirectory);
-        if (!input.text) {
-          return { success: false, error: 'Memory text is required' };
-        }
-        const entry = updateMemoryEntry(filePath, input.id, input.text);
-        if (!entry) {
-          return { success: false, error: 'Memory entry not found' };
-        }
-        return { success: true, entry };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to update memory entry',
-        };
-      }
-    },
-  );
-  ipcMain.handle(
-    'cowork:memory:deleteEntry',
-    async (
-      _event,
-      input: {
-        id: string;
-      },
-    ) => {
-      try {
-        const config = getCoworkStore().getConfig();
-        const filePath = resolveMemoryFilePath(config.workingDirectory);
-        const success = deleteMemoryEntry(filePath, input.id);
-        return success ? { success: true } : { success: false, error: 'Memory entry not found' };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to delete memory entry',
-        };
-      }
-    },
-  );
-  ipcMain.handle('cowork:memory:getStats', async () => {
-    try {
-      const config = getCoworkStore().getConfig();
-      const filePath = resolveMemoryFilePath(config.workingDirectory);
-      const entries = readMemoryEntries(filePath);
-      return {
-        success: true,
-        stats: {
-          total: entries.length,
-          created: entries.length,
-          stale: 0,
-          deleted: 0,
-          explicit: entries.length,
-          implicit: 0,
-        },
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get memory stats',
-      };
-    }
-  });
-  ipcMain.handle(
     'cowork:config:set',
     async (
       _event,
@@ -3488,11 +3320,6 @@ if (!gotTheLock) {
         workingDirectory?: string;
         executionMode?: 'auto' | 'local' | 'sandbox';
         agentEngine?: CoworkAgentEngine;
-        memoryEnabled?: boolean;
-        memoryImplicitUpdateEnabled?: boolean;
-        memoryLlmJudgeEnabled?: boolean;
-        memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
-        memoryUserMemoriesMaxItems?: number;
       },
     ) => {
       try {
@@ -3501,42 +3328,10 @@ if (!gotTheLock) {
             ? 'local'
             : config.executionMode;
         const normalizedAgentEngine = config.agentEngine === 'openclaw' ? 'openclaw' : undefined;
-        const normalizedMemoryEnabled =
-          typeof config.memoryEnabled === 'boolean' ? config.memoryEnabled : undefined;
-        const normalizedMemoryImplicitUpdateEnabled =
-          typeof config.memoryImplicitUpdateEnabled === 'boolean'
-            ? config.memoryImplicitUpdateEnabled
-            : undefined;
-        const normalizedMemoryLlmJudgeEnabled =
-          typeof config.memoryLlmJudgeEnabled === 'boolean'
-            ? config.memoryLlmJudgeEnabled
-            : undefined;
-        const normalizedMemoryGuardLevel =
-          config.memoryGuardLevel === 'strict' ||
-          config.memoryGuardLevel === 'standard' ||
-          config.memoryGuardLevel === 'relaxed'
-            ? config.memoryGuardLevel
-            : undefined;
-        const normalizedMemoryUserMemoriesMaxItems =
-          typeof config.memoryUserMemoriesMaxItems === 'number' &&
-          Number.isFinite(config.memoryUserMemoriesMaxItems)
-            ? Math.max(
-                MIN_MEMORY_USER_MEMORIES_MAX_ITEMS,
-                Math.min(
-                  MAX_MEMORY_USER_MEMORIES_MAX_ITEMS,
-                  Math.floor(config.memoryUserMemoriesMaxItems),
-                ),
-              )
-            : undefined;
         const normalizedConfig: Parameters<CoworkStore['setConfig']>[0] = {
-          ...config,
+          workingDirectory: config.workingDirectory,
           executionMode: normalizedExecutionMode,
           agentEngine: normalizedAgentEngine,
-          memoryEnabled: normalizedMemoryEnabled,
-          memoryImplicitUpdateEnabled: normalizedMemoryImplicitUpdateEnabled,
-          memoryLlmJudgeEnabled: normalizedMemoryLlmJudgeEnabled,
-          memoryGuardLevel: normalizedMemoryGuardLevel,
-          memoryUserMemoriesMaxItems: normalizedMemoryUserMemoriesMaxItems,
         };
         const previousConfig = getCoworkStore().getConfig();
         const previousWorkingDir = previousConfig.workingDirectory;
@@ -3546,14 +3341,6 @@ if (!gotTheLock) {
           normalizedConfig.workingDirectory !== previousWorkingDir
         ) {
           getSkillManager().handleWorkingDirectoryChange();
-          // Sync MEMORY.md to new workspace directory
-          const syncResult = syncMemoryFileOnWorkspaceChange(
-            previousWorkingDir,
-            normalizedConfig.workingDirectory,
-          );
-          if (syncResult.error) {
-            console.warn('[OpenClaw Memory] Workspace sync failed:', syncResult.error);
-          }
         }
 
         const nextConfig = getCoworkStore().getConfig();
@@ -3714,79 +3501,6 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to request permission',
-      };
-    }
-  });
-
-  // GitHub Copilot device code authentication handlers
-  ipcMain.handle('github-copilot:request-device-code', async () => {
-    const { requestDeviceCode } = await import('./libs/githubCopilotAuth');
-    try {
-      const result = await requestDeviceCode();
-      return {
-        userCode: result.user_code,
-        verificationUri: result.verification_uri,
-        deviceCode: result.device_code,
-        interval: result.interval,
-        expiresIn: result.expires_in,
-      };
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Failed to request device code');
-    }
-  });
-
-  ipcMain.handle(
-    'github-copilot:poll-for-token',
-    async (
-      _event,
-      {
-        deviceCode,
-        interval,
-        expiresIn,
-      }: { deviceCode: string; interval: number; expiresIn: number },
-    ) => {
-      const { pollForAccessToken, getCopilotToken, getGitHubUser } =
-        await import('./libs/githubCopilotAuth');
-      try {
-        const githubAccessToken = await pollForAccessToken(deviceCode, interval, expiresIn);
-        const githubUser = await getGitHubUser(githubAccessToken);
-        const {
-          token: copilotToken,
-          expiresAt,
-          baseUrl,
-        } = await getCopilotToken(githubAccessToken);
-        // Store the GitHub access token for later token refresh
-        getStore().set('github_copilot_github_token', githubAccessToken);
-        // Register with the token manager for automatic refresh
-        setCopilotTokenState({ copilotToken, baseUrl, expiresAt, githubToken: githubAccessToken });
-        return { success: true, token: copilotToken, githubUser, baseUrl };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Authentication failed',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('github-copilot:cancel-polling', async () => {
-    const { cancelPolling } = await import('./libs/githubCopilotAuth');
-    cancelPolling();
-  });
-
-  ipcMain.handle('github-copilot:sign-out', async () => {
-    getStore().delete('github_copilot_github_token');
-    clearCopilotTokenState();
-  });
-
-  ipcMain.handle('github-copilot:refresh-token', async () => {
-    try {
-      const state = await refreshCopilotTokenNow();
-      return { success: true, token: state.copilotToken, baseUrl: state.baseUrl };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Token refresh failed',
       };
     }
   });
@@ -4075,25 +3789,6 @@ if (!gotTheLock) {
     }
   });
 
-  // Helper: detect if a URL belongs to GitHub Copilot and apply token refresh on 401.
-  const isCopilotUrl = (url: string) => url.includes('githubcopilot.com');
-  const retryCopilotWithRefreshedToken = async (opts: {
-    url: string;
-    method: string;
-    headers: Record<string, string>;
-    body?: string;
-  }): Promise<{ headers: Record<string, string>; retried: boolean }> => {
-    try {
-      const state = await refreshCopilotTokenNow();
-      const refreshedHeaders = { ...opts.headers, Authorization: `Bearer ${state.copilotToken}` };
-      console.log('[CopilotRetry] token refreshed, retrying request');
-      return { headers: refreshedHeaders, retried: true };
-    } catch (err) {
-      console.warn('[CopilotRetry] token refresh failed, not retrying:', err);
-      return { headers: opts.headers, retried: false };
-    }
-  };
-
   // API 代理处理程序 - 解决 CORS 问题
   ipcMain.handle(
     'api:fetch',
@@ -4144,21 +3839,6 @@ if (!gotTheLock) {
           typeof result.data === 'object' ? JSON.stringify(result.data) : result.data,
         );
 
-        // Auto-retry once for Copilot 401/403
-        if (
-          !result.ok &&
-          (result.status === 401 || result.status === 403) &&
-          isCopilotUrl(options.url)
-        ) {
-          console.log('[api:fetch] Copilot auth error, attempting token refresh and retry');
-          const { headers: refreshedHeaders, retried } =
-            await retryCopilotWithRefreshedToken(options);
-          if (retried) {
-            result = await doFetch(refreshedHeaders);
-            console.log(`[api:fetch] retry -> ${result.status} ${result.statusText}`);
-          }
-        }
-
         return result;
       } catch (error) {
         console.error(
@@ -4202,26 +3882,6 @@ if (!gotTheLock) {
           body: options.body,
           signal: controller.signal,
         });
-
-        // Auto-retry once for Copilot 401/403
-        if (
-          !response.ok &&
-          (response.status === 401 || response.status === 403) &&
-          isCopilotUrl(options.url)
-        ) {
-          console.log('[api:stream] Copilot auth error, attempting token refresh and retry');
-          const { headers: refreshedHeaders, retried } =
-            await retryCopilotWithRefreshedToken(options);
-          if (retried) {
-            response = await session.defaultSession.fetch(options.url, {
-              method: options.method,
-              headers: refreshedHeaders,
-              body: options.body,
-              signal: controller.signal,
-            });
-            console.log(`[api:stream] retry -> ${response.status} ${response.statusText}`);
-          }
-        }
 
         if (!response.ok) {
           const errorData = await response.text();
@@ -4714,38 +4374,6 @@ if (!gotTheLock) {
     // Inject store getter into claudeSettings
     setStoreGetter(() => store);
 
-    // Initialize Copilot token manager and restore token state if available
-    initCopilotTokenManager(getStore);
-    const storedGithubToken = getStore().get('github_copilot_github_token') as string | undefined;
-    if (storedGithubToken) {
-      import('./libs/githubCopilotAuth')
-        .then(({ getCopilotToken }) =>
-          getCopilotToken(storedGithubToken).then(({ token, expiresAt, baseUrl }) => {
-            setCopilotTokenState({
-              copilotToken: token,
-              baseUrl,
-              expiresAt,
-              githubToken: storedGithubToken,
-            });
-            console.log('[Main] restored Copilot token state from stored GitHub token');
-          }),
-        )
-        .catch(err => {
-          console.warn('[Main] failed to restore Copilot token on startup:', err);
-        });
-    }
-
-    registerProxyTokenRefresher('github-copilot', async () => {
-      try {
-        const { refreshCopilotTokenNow } = await import('./libs/copilotTokenManager');
-        const refreshed = await refreshCopilotTokenNow();
-        return refreshed.copilotToken;
-      } catch (err) {
-        console.warn('[Auth] Copilot proxy token refresh failed:', err);
-        return null;
-      }
-    });
-
     // Enterprise config sync — must run before openclawConfigSync
     // so enterprise data is in SQLite when the config is generated.
     const enterpriseConfigPath = resolveEnterpriseConfigPath();
@@ -4848,8 +4476,7 @@ if (!gotTheLock) {
     const manager = getSkillManager();
     console.log('[Main] initApp: getSkillManager done');
 
-    // When skills change (install/enable/disable/delete), re-sync AGENTS.md
-    // so OpenClaw's agents pick up the latest skill list.
+    // When skills change (install/enable/disable/delete), re-sync OpenClaw config
     manager.onSkillsChanged(() => {
       syncOpenClawConfig({ reason: 'skills-changed' }).catch(error => {
         console.warn('[Main] Failed to sync OpenClaw config after skills change:', error);
