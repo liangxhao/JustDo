@@ -331,9 +331,8 @@ export const buildProviderSelection = (options: {
   // defaults (e.g. 8192 for max_completion_tokens) which can conflict with
   // thinking model budgets.
   const effectiveContextWindow =
-    options.contextLength ?? descriptor.modelDefaults?.contextWindow;
-  const effectiveMaxTokens =
-    options.maxTokens ?? descriptor.modelDefaults?.maxTokens ?? 32_000;
+    options.contextLength ?? descriptor.modelDefaults?.contextWindow ?? 200_000;
+  const effectiveMaxTokens = options.maxTokens ?? descriptor.modelDefaults?.maxTokens ?? 32_000;
 
   return {
     providerId: effectiveProviderId,

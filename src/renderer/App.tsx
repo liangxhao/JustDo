@@ -15,14 +15,12 @@ import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
 import { configService } from './services/config';
-import { apiService } from './services/api';
 import { themeService } from './services/theme';
 import { coworkService } from './services/cowork';
 import { scheduledTaskService } from './services/scheduledTask';
 import { defaultConfig, getProviderDisplayName } from './config';
 import { setAvailableModels, setSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
-import type { ApiConfig } from './services/api';
 import type { CoworkPermissionResult } from './types/cowork';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from './services/i18n';
@@ -102,11 +100,6 @@ const App: React.FC = () => {
 
         console.info('[App] initializeApp: configService.getConfig');
         const config = await configService.getConfig();
-        const apiConfig: ApiConfig = {
-          apiKey: config.api.key,
-          baseUrl: config.api.baseUrl,
-        };
-        apiService.setConfig(apiConfig);
 
         // 从 providers 配置中加载可用模型列表到 Redux
         const providerModels: {
@@ -316,10 +309,6 @@ const App: React.FC = () => {
   const handleCloseSettings = () => {
     setShowSettings(false);
     const config = configService.getConfig();
-    apiService.setConfig({
-      apiKey: config.api.key,
-      baseUrl: config.api.baseUrl,
-    });
 
     if (config.providers) {
       const allModels: {

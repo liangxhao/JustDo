@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Modal from './common/Modal';
 import { configService } from '../services/config';
-import { apiService } from '../services/api';
 import { themeService } from '../services/theme';
 import { i18nService, LanguageType } from '../services/i18n';
 import {
@@ -1278,12 +1277,6 @@ const Settings: React.FC<SettingsProps> = ({
 
       // 应用语言
       i18nService.setLanguage(language, { persist: false });
-
-      // Set API with the primary provider
-      apiService.setConfig({
-        apiKey: primaryProvider.apiKey,
-        baseUrl: primaryProvider.baseUrl,
-      });
 
       // 更新 Redux store 中的可用模型列表
       const allModels: {
