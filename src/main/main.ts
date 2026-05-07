@@ -1945,6 +1945,16 @@ if (!gotTheLock) {
   );
 
   ipcMain.handle('app:getVersion', () => app.getVersion());
+  ipcMain.handle('app:getOpenclawVersion', () => {
+    try {
+      const pkg = JSON.parse(
+        require('fs').readFileSync(require('path').join(app.getAppPath(), 'package.json'), 'utf-8')
+      );
+      return pkg.openclaw?.version ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  });
   ipcMain.handle('app:getSystemLocale', () => app.getLocale());
 
   // Skills IPC handlers - Gateway RPC based

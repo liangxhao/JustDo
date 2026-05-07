@@ -523,6 +523,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    getOpenclawVersion: () => ipcRenderer.invoke('app:getOpenclawVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
   },
   log: {

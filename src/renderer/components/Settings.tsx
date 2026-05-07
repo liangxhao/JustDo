@@ -68,7 +68,8 @@ type TabType =
   | 'skills'
   | 'mcp'
   | 'im'
-  | 'shortcuts';
+  | 'shortcuts'
+  | 'help';
 
 export type SettingsOpenOptions = {
   initialTab?: TabType;
@@ -694,10 +695,19 @@ const Settings: React.FC<SettingsProps> = ({
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
   const [isImportingProviders, setIsImportingProviders] = useState(false);
   const [isExportingProviders, setIsExportingProviders] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>('unknown');
+  const [openclawVersion, setOpenclawVersion] = useState<string>('unknown');
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const didSaveRef = useRef(false);
+
+  useEffect(() => {
+    if (activeTab === 'help') {
+      window.electron.appInfo.getVersion().then(setAppVersion);
+      window.electron.appInfo.getOpenclawVersion().then(setOpenclawVersion);
+    }
+  }, [activeTab]);
 
   // Add state for active provider
   const [activeProvider, setActiveProvider] = useState<ProviderType>(getDefaultActiveProvider());
@@ -2300,6 +2310,26 @@ const Settings: React.FC<SettingsProps> = ({
           </svg>
         ),
       },
+      {
+        key: 'help' as TabType,
+        label: i18nService.t('help'),
+        icon: (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="h-5 w-5"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
+            />
+          </svg>
+        ),
+      },
     ];
     // Filter out tabs hidden by enterprise config
     // Filter out tabs with 'hide' action in enterprise config
@@ -3491,6 +3521,32 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           </div>
         );
+
+      case 'help': {
+        return (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-semibold text-foreground mb-4">
+                {i18nService.t('about')}
+              </h3>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between py-2 border-b border-border/50">
+                  <span className="text-sm text-secondary">{i18nService.t('appName')}</span>
+                  <span className="text-sm font-medium text-foreground">GucciAI</span>
+                </div>
+                <div className="flex items-center justify-between py-2 border-b border-border/50">
+                  <span className="text-sm text-secondary">{i18nService.t('appVersion')}</span>
+                  <span className="text-sm font-medium text-foreground">{appVersion}</span>
+                </div>
+                <div className="flex items-center justify-between py-2 border-b border-border/50">
+                  <span className="text-sm text-secondary">{i18nService.t('openclawVersion')}</span>
+                  <span className="text-sm font-medium text-foreground">{openclawVersion}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
 
       default:
         return null;

@@ -717,6 +717,7 @@ interface IElectronAPI {
   };
   appInfo: {
     getVersion: () => Promise<string>;
+    getOpenclawVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
   };
   log: {
