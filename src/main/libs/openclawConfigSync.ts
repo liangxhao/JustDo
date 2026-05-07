@@ -326,6 +326,15 @@ export const buildProviderSelection = (options: {
     ? descriptor.resolveModelReasoning(options.modelId, !!options.codingPlanEnabled)
     : descriptor.modelDefaults?.reasoning;
 
+  // Fallback defaults when the user hasn't explicitly set these values in Settings.
+  // Without defaults, OpenClaw and providers fall back to their own internal
+  // defaults (e.g. 8192 for max_completion_tokens) which can conflict with
+  // thinking model budgets.
+  const effectiveContextWindow =
+    options.contextLength ?? descriptor.modelDefaults?.contextWindow;
+  const effectiveMaxTokens =
+    options.maxTokens ?? descriptor.modelDefaults?.maxTokens ?? 32_000;
+
   return {
     providerId: effectiveProviderId,
     legacyModelId: options.modelId,
@@ -344,14 +353,8 @@ export const buildProviderSelection = (options: {
           input: modelInput,
           ...(reasoning !== undefined ? { reasoning } : { reasoning: true }),
           ...(descriptor.modelDefaults?.cost ? { cost: descriptor.modelDefaults.cost } : {}),
-          ...(descriptor.modelDefaults?.contextWindow
-            ? { contextWindow: descriptor.modelDefaults.contextWindow }
-            : {}),
-          ...(options.contextLength ? { contextWindow: options.contextLength } : {}),
-          ...(descriptor.modelDefaults?.maxTokens
-            ? { maxTokens: descriptor.modelDefaults.maxTokens }
-            : {}),
-          ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}),
+          ...(effectiveContextWindow ? { contextWindow: effectiveContextWindow } : {}),
+          ...(effectiveMaxTokens ? { maxTokens: effectiveMaxTokens } : {}),
         },
       ],
     },

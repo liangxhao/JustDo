@@ -958,6 +958,28 @@ function normalizeMaxTokensFieldForOpenAIProvider(
 }
 
 /**
+ * For thinking models, `max_completion_tokens` covers both reasoning and
+ * output text. Some providers (e.g. MiniMax via Bailian) use a default
+ * value that conflicts with their internal `thinking_budget`.
+ *
+ * Ensure `max_completion_tokens` is set from `max_tokens` when present
+ * so thinking models don't fall back to an internal default.
+ */
+function ensureMaxCompletionTokensForThinkingModels(
+  openAIRequest: Record<string, unknown>,
+): void {
+  const maxTokens = openAIRequest.max_tokens;
+  if (typeof maxTokens !== 'number' || !Number.isFinite(maxTokens)) {
+    return;
+  }
+  // Only set max_completion_tokens if not already present, so we don't
+  // override an explicit value from the original request.
+  if (openAIRequest.max_completion_tokens === undefined) {
+    openAIRequest.max_completion_tokens = maxTokens;
+  }
+}
+
+/**
  * Merge multiple system messages into a single one at the beginning.
  * Some OpenAI-compatible providers (e.g. MiniMax) reject requests containing
  * more than one system message, returning error 2013 "invalid chat setting".
@@ -2641,6 +2663,10 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
   if (upstreamAPIType === 'chat_completions') {
     normalizeMaxTokensFieldForOpenAIProvider(openAIRequest, upstreamConfig.provider);
+    // Ensure max_completion_tokens is set from max_tokens for all providers,
+    // not just OpenAI. Thinking models need this to avoid defaulting to an
+    // internal value (8192) that conflicts with thinking_budget.
+    ensureMaxCompletionTokensForThinkingModels(openAIRequest);
   }
 
   // Some providers (e.g. MiniMax) reject requests with multiple system messages.
@@ -2655,7 +2681,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   const stream = Boolean(upstreamRequest.stream);
 
   console.log(
-    `[CoworkProxy] Upstream: apiType=${upstreamAPIType}, model=${upstreamRequest.model}, stream=${stream}, provider=${upstreamConfig.provider}`,
+    `[CoworkProxy] Upstream: apiType=${upstreamAPIType}, model=${upstreamRequest.model}, stream=${stream}, provider=${upstreamConfig.provider}, max_tokens=${openAIRequest.max_tokens ?? 'unset'}, max_completion_tokens=${openAIRequest.max_completion_tokens ?? 'unset'}`,
   );
 
   const headers: Record<string, string> = {
