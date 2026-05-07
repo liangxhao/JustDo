@@ -473,7 +473,6 @@ export interface CoworkConfig {
   memoryLlmJudgeEnabled: boolean;
   memoryGuardLevel: CoworkMemoryGuardLevel;
   memoryUserMemoriesMaxItems: number;
-  skipMissedJobs: boolean;
 }
 
 export type CoworkConfigUpdate = Partial<
@@ -487,7 +486,6 @@ export type CoworkConfigUpdate = Partial<
     | 'memoryLlmJudgeEnabled'
     | 'memoryGuardLevel'
     | 'memoryUserMemoriesMaxItems'
-    | 'skipMissedJobs'
   >
 >;
 
@@ -1101,7 +1099,6 @@ export class CoworkStore {
       'memoryLlmJudgeEnabled',
       'memoryGuardLevel',
       'memoryUserMemoriesMaxItems',
-      'skipMissedJobs',
     ] as const;
     const configRows = this.getAll<{ key: string; value: string }>(
       `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
@@ -1126,7 +1123,6 @@ export class CoworkStore {
       memoryUserMemoriesMaxItems: clampMemoryUserMemoriesMaxItems(
         Number(cfg.get('memoryUserMemoriesMaxItems')),
       ),
-      skipMissedJobs: parseBooleanConfig(cfg.get('skipMissedJobs'), false),
     };
   }
 
@@ -1244,20 +1240,6 @@ export class CoworkStore {
       `,
         )
         .run(String(clampMemoryUserMemoriesMaxItems(config.memoryUserMemoriesMaxItems)), now);
-    }
-
-    if (config.skipMissedJobs !== undefined) {
-      this.db
-        .prepare(
-          `
-        INSERT INTO cowork_config (key, value, updated_at)
-        VALUES ('skipMissedJobs', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          updated_at = excluded.updated_at
-      `,
-        )
-        .run(config.skipMissedJobs ? '1' : '0', now);
     }
   }
 

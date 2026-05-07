@@ -60,7 +60,6 @@ const initialState: CoworkState = {
     memoryLlmJudgeEnabled: false,
     memoryGuardLevel: 'strict',
     memoryUserMemoriesMaxItems: 12,
-    skipMissedJobs: false,
   },
   thinkingExpanded: true, // Default to expanded (浅蓝色)
   toolExpanded: true, // Default to expanded (浅蓝色)

@@ -736,9 +736,6 @@ const Settings: React.FC<SettingsProps> = ({
   const [coworkAgentEngine, setCoworkAgentEngine] = useState<CoworkAgentEngine>(
     coworkConfig.agentEngine || 'openclaw',
   );
-  const [skipMissedJobs, setSkipMissedJobs] = useState<boolean>(
-    coworkConfig.skipMissedJobs ?? false,
-  );
 
   // Drag to reposition state
   const [modalPosition, setModalPosition] = useState({ x: 0, y: 0 });
@@ -795,8 +792,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   useEffect(() => {
     setCoworkAgentEngine(coworkConfig.agentEngine || 'openclaw');
-    setSkipMissedJobs(coworkConfig.skipMissedJobs ?? false);
-  }, [coworkConfig.agentEngine, coworkConfig.skipMissedJobs]);
+  }, [coworkConfig.agentEngine]);
 
   useEffect(() => {
     let active = true;
@@ -1154,9 +1150,7 @@ const Settings: React.FC<SettingsProps> = ({
     });
   };
 
-  const hasCoworkConfigChanges =
-    coworkAgentEngine !== coworkConfig.agentEngine ||
-    skipMissedJobs !== (coworkConfig.skipMissedJobs ?? false);
+  const hasCoworkConfigChanges = coworkAgentEngine !== coworkConfig.agentEngine;
   const isOpenClawAgentEngine = coworkAgentEngine === 'openclaw';
 
   const openClawProgressPercent = useMemo(() => {
@@ -1319,7 +1313,6 @@ const Settings: React.FC<SettingsProps> = ({
       if (hasCoworkConfigChanges) {
         const updated = await coworkService.updateConfig({
           agentEngine: coworkAgentEngine,
-          skipMissedJobs,
         });
         if (!updated) {
           throw new Error(i18nService.t('coworkConfigSaveFailed'));
@@ -2348,35 +2341,6 @@ const Settings: React.FC<SettingsProps> = ({
                   <span
                     className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                       useSystemProxy ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </label>
-            </div>
-
-            {/* Skip Missed Jobs Section */}
-            <div>
-              <h4 className="text-sm font-medium text-foreground mb-3">
-                {i18nService.t('skipMissedJobs')}
-              </h4>
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-sm text-secondary">
-                  {i18nService.t('skipMissedJobsDescription')}
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={skipMissedJobs}
-                  onClick={() => {
-                    setSkipMissedJobs(prev => !prev);
-                  }}
-                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-                    skipMissedJobs ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      skipMissedJobs ? 'translate-x-6' : 'translate-x-1'
                     }`}
                   />
                 </button>

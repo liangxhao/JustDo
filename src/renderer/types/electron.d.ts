@@ -81,7 +81,6 @@ interface CoworkConfig {
   memoryLlmJudgeEnabled: boolean;
   memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
   memoryUserMemoriesMaxItems: number;
-  skipMissedJobs: boolean;
 }
 
 type CoworkConfigUpdate = Partial<
@@ -522,9 +521,7 @@ interface IElectronAPI {
     listSessions: (
       agentId?: string,
     ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
-    getContextUsage: (
-      sessionId: string,
-    ) => Promise<{
+    getContextUsage: (sessionId: string) => Promise<{
       success: boolean;
       totalTokens?: number;
       contextTokens?: number;

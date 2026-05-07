@@ -113,7 +113,6 @@ export interface CoworkConfig {
   memoryLlmJudgeEnabled: boolean;
   memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
   memoryUserMemoriesMaxItems: number;
-  skipMissedJobs: boolean;
 }
 
 export type CoworkConfigUpdate = Partial<
@@ -127,7 +126,6 @@ export type CoworkConfigUpdate = Partial<
     | 'memoryLlmJudgeEnabled'
     | 'memoryGuardLevel'
     | 'memoryUserMemoriesMaxItems'
-    | 'skipMissedJobs'
   >
 >;
 

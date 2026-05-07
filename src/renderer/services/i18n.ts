@@ -862,8 +862,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     useSystemProxyDescription: '开启后网络请求将跟随系统代理（保存后生效）',
     preventSleep: '防止休眠',
     preventSleepDescription: '防止系统在应用运行时进入睡眠模式',
-    skipMissedJobs: '跳过未执行任务',
-    skipMissedJobsDescription: '启动时跳过离线期间未触发的定时任务，不补充执行（保存后生效）',
 
     // 定时任务
     scheduledTasks: '定时任务',
@@ -2084,9 +2082,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'When enabled, network requests follow system proxy settings (applies after Save)',
     preventSleep: 'Prevent Sleep',
     preventSleepDescription: 'Prevent the system from sleeping while the app is running',
-    skipMissedJobs: 'Skip Missed Scheduled Jobs',
-    skipMissedJobsDescription:
-      'Skip jobs that were missed while the app was offline (applies after Save)',
 
     // Scheduled Tasks
     scheduledTasks: 'Scheduled Tasks',
