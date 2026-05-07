@@ -1422,20 +1422,7 @@ const SubagentCompletionMessageItem: React.FC<{
 
   // Extract subagent info from metadata
   const taskLabel = (message.metadata?.taskLabel as string) || 'Subagent Task';
-  const status = (message.metadata?.status as string) || 'completed';
   const sessionKey = (message.metadata?.sessionKey as string) || '';
-
-  // Status color
-  const statusColor =
-    status.toLowerCase() === 'completed' || status.toLowerCase() === 'success'
-      ? 'text-green-500'
-      : status.toLowerCase() === 'error' || status.toLowerCase() === 'failed'
-        ? 'text-red-500'
-        : 'text-secondary';
-
-  // Content line count estimate (for deciding if collapse is needed)
-  const lineCount = displayContent ? displayContent.split('\n').length : 0;
-  const shouldCollapse = displayContent.length > 100 || lineCount > 3;
 
   return (
     <div
@@ -1451,20 +1438,30 @@ const SubagentCompletionMessageItem: React.FC<{
           </div>
           {/* Content area */}
           <div className="w-full min-w-0">
-            {/* Header row when collapsed: label + status + indicator + single-line markdown in bubble */}
-            {shouldCollapse && !isExpanded && (
+            {/* Header row when collapsed: name+id on left, single-line markdown bubble on right */}
+            {!isExpanded && (
               <div className="flex items-center gap-2 mb-1.5 max-w-[calc(100%-44px)]">
+                {/* Subagent name + id — two-line stack on the left */}
                 <button
                   type="button"
                   onClick={() => setIsExpanded(true)}
-                  className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                  className="flex flex-col shrink-0 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
+                  title={`${taskLabel}${sessionKey ? '\n' + sessionKey : ''}`}
                 >
-                  <span className="text-xs font-medium text-teal-600">{taskLabel}</span>
-                  <span className={`text-xs ${statusColor}`}>{status}</span>
+                  <span
+                    className="text-xs font-medium text-teal-600 truncate max-w-[140px]"
+                    title={taskLabel}
+                  >
+                    {taskLabel}
+                  </span>
                   {sessionKey && (
-                    <span className="text-xs text-muted truncate max-w-[120px]">{sessionKey}</span>
+                    <span
+                      className="text-[10px] text-muted truncate max-w-[140px]"
+                      title={sessionKey}
+                    >
+                      {sessionKey}
+                    </span>
                   )}
-                  <span className="text-xs text-muted ml-1">▶</span>
                 </button>
                 {/* Bubble-wrapped single-line markdown with right-edge fade */}
                 <div
@@ -1482,32 +1479,29 @@ const SubagentCompletionMessageItem: React.FC<{
               </div>
             )}
             {/* Header row when expanded: clickable to collapse */}
-            {shouldCollapse && isExpanded && (
+            {isExpanded && (
               <button
                 type="button"
                 onClick={() => setIsExpanded(false)}
-                className="flex items-center gap-2 mb-1.5 cursor-pointer hover:opacity-80 transition-opacity"
+                className="flex flex-col mb-1.5 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                title={`${taskLabel}${sessionKey ? '\n' + sessionKey : ''}`}
               >
-                <span className="text-xs font-medium text-teal-600">{taskLabel}</span>
-                <span className={`text-xs ${statusColor}`}>{status}</span>
+                <span
+                  className="text-xs font-medium text-teal-600 truncate max-w-[200px]"
+                  title={taskLabel}
+                >
+                  {taskLabel}
+                </span>
                 {sessionKey && (
-                  <span className="text-xs text-muted truncate max-w-[120px]">{sessionKey}</span>
+                  <span
+                    className="text-[10px] text-muted truncate max-w-[200px]"
+                    title={sessionKey}
+                  >
+                    {sessionKey}
+                  </span>
                 )}
-                <span className="text-xs text-muted ml-1">▼</span>
+                <span className="text-[10px] text-muted">▼</span>
               </button>
-            )}
-            {/* Short content (no collapse needed): header + inline markdown */}
-            {!shouldCollapse && displayContent && (
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="text-xs font-medium text-teal-600">{taskLabel}</span>
-                <span className={`text-xs ${statusColor}`}>{status}</span>
-                {sessionKey && (
-                  <span className="text-xs text-muted truncate max-w-[120px]">{sessionKey}</span>
-                )}
-                <div className="text-sm text-secondary inline-flex items-center">
-                  <MarkdownContent content={displayContent} className="max-w-none break-words" />
-                </div>
-              </div>
             )}
             {/* Expanded full content — shown below the header when expanded */}
             {isExpanded && displayContent && (
