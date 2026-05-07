@@ -284,6 +284,7 @@ export const buildProviderSelection = (options: {
   supportsImage?: boolean;
   modelName?: string;
   displayName?: string; // 用于 OpenClaw 配置中的 providerId（仅对 custom provider 有效）
+  contextLength?: number; // 用户配置的上下文窗口长度
 }): OpenClawProviderSelection => {
   const providerName = options.providerName ?? '';
   const displayName = options.displayName?.trim();
@@ -345,6 +346,7 @@ export const buildProviderSelection = (options: {
           ...(descriptor.modelDefaults?.contextWindow
             ? { contextWindow: descriptor.modelDefaults.contextWindow }
             : {}),
+          ...(options.contextLength ? { contextWindow: options.contextLength } : {}),
           ...(descriptor.modelDefaults?.maxTokens
             ? { maxTokens: descriptor.modelDefaults.maxTokens }
             : {}),
@@ -465,6 +467,7 @@ export class OpenClawConfigSync {
         supportsImage: apiResolution.providerMetadata?.supportsImage,
         modelName: apiResolution.providerMetadata?.modelName,
         displayName: apiResolution.providerMetadata?.displayName, // 传递 displayName
+        contextLength: apiResolution.providerMetadata?.contextLength,
       });
       primaryModel = providerSelection.primaryModel;
 
@@ -480,6 +483,7 @@ export class OpenClawConfigSync {
             supportsImage: m.supportsImage,
             modelName: m.name,
             displayName: p.displayName, // 传递 displayName
+            contextLength: m.contextLength,
           });
           if (!allProvidersMap[sel.providerId]) {
             allProvidersMap[sel.providerId] = { ...sel.providerConfig, models: [] };

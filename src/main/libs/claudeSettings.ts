@@ -15,6 +15,7 @@ type ProviderModel = {
   id: string;
   name?: string;
   supportsImage?: boolean;
+  contextLength?: number;
 };
 
 type ProviderConfig = {
@@ -44,6 +45,7 @@ export type ApiConfigResolution = {
     supportsImage?: boolean;
     modelName?: string;
     displayName?: string; // 新增：用于 OpenClaw providerId
+    contextLength?: number; // 用户配置的上下文窗口长度
   };
 };
 
@@ -108,6 +110,7 @@ type MatchedProvider = {
   baseURL: string;
   supportsImage?: boolean;
   modelName?: string;
+  contextLength?: number; // 用户配置的上下文窗口长度
 };
 
 function getEffectiveProviderApiFormat(
@@ -236,6 +239,7 @@ function resolveMatchedProvider(appConfig: AppConfig): {
       baseURL,
       supportsImage: matchedModel?.supportsImage,
       modelName: matchedModel?.name,
+      contextLength: matchedModel?.contextLength,
     },
   };
 }
@@ -306,6 +310,7 @@ export function resolveCurrentApiConfig(
         providerName: matched.providerName,
         codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
         supportsImage: matched.supportsImage,
+        contextLength: matched.contextLength,
       },
     };
   }
@@ -343,6 +348,7 @@ export function resolveCurrentApiConfig(
     providerMetadata: {
       providerName: matched.providerName,
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
+      contextLength: matched.contextLength,
     },
   };
 }
@@ -444,6 +450,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       supportsImage: matched.supportsImage,
       modelName: matched.modelName,
       displayName: matched.providerConfig.displayName?.trim(), // 新增：用于 OpenClaw providerId
+      contextLength: matched.contextLength,
     },
   };
 }
@@ -511,7 +518,7 @@ export type ProviderRawConfig = {
   apiKey: string;
   apiType: 'anthropic' | 'openai';
   codingPlanEnabled: boolean;
-  models: Array<{ id: string; name?: string; supportsImage?: boolean }>;
+  models: Array<{ id: string; name?: string; supportsImage?: boolean; contextLength?: number }>;
   displayName?: string; // 新增：用于 OpenClaw 配置中的 providerId
 };
 
