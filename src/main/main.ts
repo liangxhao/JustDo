@@ -2855,6 +2855,7 @@ if (!gotTheLock) {
           key: string;
           totalTokens?: number;
           contextTokens?: number;
+          totalTokensFresh?: boolean;
         }>;
       }>('sessions.list', { agentId: 'main', limit: 50 });
       const session = result.sessions?.find(s => s.key === sessionKey);
@@ -2865,6 +2866,7 @@ if (!gotTheLock) {
         success: true,
         totalTokens: session.totalTokens ?? 0,
         contextTokens: session.contextTokens ?? 0,
+        totalTokensFresh: session.totalTokensFresh ?? true,
       };
     } catch (error) {
       return {

@@ -169,6 +169,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [contextUsage, setContextUsage] = useState<{
       totalTokens: number;
       contextTokens: number;
+      totalTokensFresh: boolean;
     } | null>(null);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -927,6 +928,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             setContextUsage({
               totalTokens: result.totalTokens,
               contextTokens: result.contextTokens,
+              totalTokensFresh: result.totalTokensFresh ?? true,
             });
           }
         } catch {
@@ -1099,12 +1101,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <PaperClipIcon className="h-4 w-4" />
                     </button>
                   )}
-                  {contextUsage && contextUsage.contextTokens > 0 && (
-                    <span className="text-[11px] font-medium text-foreground/70 tabular-nums select-none rounded-md border border-border/50 bg-surface-raised px-1.5 py-0.5">
-                      {formatContextLength(contextUsage.totalTokens)}/
-                      {formatContextLength(contextUsage.contextTokens)}
-                    </span>
-                  )}
+                  {contextUsage &&
+                    contextUsage.totalTokensFresh &&
+                    contextUsage.contextTokens > 0 && (
+                      <span className="text-[11px] font-medium text-foreground/70 tabular-nums select-none rounded-md border border-border/50 bg-surface-raised px-1.5 py-0.5">
+                        {formatContextLength(contextUsage.totalTokens)}/
+                        {formatContextLength(contextUsage.contextTokens)}
+                      </span>
+                    )}
                   {!remoteManaged && <ActiveSkillBadge />}
                 </div>
                 <div className="flex items-center gap-2">
@@ -1159,12 +1163,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   >
                     <PaperClipIcon className="h-4 w-4" />
                   </button>
-                  {contextUsage && contextUsage.contextTokens > 0 && (
-                    <span className="flex-shrink-0 text-[11px] font-medium text-foreground/70 tabular-nums select-none rounded-md border border-border/50 bg-surface-raised px-1.5 py-0.5">
-                      {formatContextLength(contextUsage.totalTokens)}/
-                      {formatContextLength(contextUsage.contextTokens)}
-                    </span>
-                  )}
+                  {contextUsage &&
+                    contextUsage.totalTokensFresh &&
+                    contextUsage.contextTokens > 0 && (
+                      <span className="flex-shrink-0 text-[11px] font-medium text-foreground/70 tabular-nums select-none rounded-md border border-border/50 bg-surface-raised px-1.5 py-0.5">
+                        {formatContextLength(contextUsage.totalTokens)}/
+                        {formatContextLength(contextUsage.contextTokens)}
+                      </span>
+                    )}
                 </div>
               )}
 
