@@ -522,6 +522,14 @@ interface IElectronAPI {
     listSessions: (
       agentId?: string,
     ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    getContextUsage: (
+      sessionId: string,
+    ) => Promise<{
+      success: boolean;
+      totalTokens?: number;
+      contextTokens?: number;
+      error?: string;
+    }>;
     deleteMessage: (
       sessionId: string,
       messageId: string,

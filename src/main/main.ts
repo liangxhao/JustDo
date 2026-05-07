@@ -2854,6 +2854,40 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
+    try {
+      if (!openClawRuntimeAdapter) {
+        return { success: false, error: 'OpenClaw runtime adapter not available' };
+      }
+      const gatewayClient = openClawRuntimeAdapter.getGatewayClient();
+      if (!gatewayClient) {
+        return { success: false, error: 'Gateway client not connected' };
+      }
+      const sessionKey = `agent:main:gucciai:${sessionId}`;
+      const result = await gatewayClient.request<{
+        sessions?: Array<{
+          key: string;
+          totalTokens?: number;
+          contextTokens?: number;
+        }>;
+      }>('sessions.list', { agentId: 'main', limit: 50 });
+      const session = result.sessions?.find(s => s.key === sessionKey);
+      if (!session) {
+        return { success: false, error: 'Session not found in gateway' };
+      }
+      return {
+        success: true,
+        totalTokens: session.totalTokens ?? 0,
+        contextTokens: session.contextTokens ?? 0,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get context usage',
+      };
+    }
+  });
+
   // Session Group IPC handlers
   ipcMain.handle('sessionGroup:list', async () => {
     try {

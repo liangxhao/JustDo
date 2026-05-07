@@ -107,6 +107,7 @@ interface ProviderDefInput {
     readonly id: string;
     readonly name: string;
     readonly supportsImage: boolean;
+    readonly contextLength?: number;
   }[];
   /**
    * Coding Plan dedicated model list (only meaningful when codingPlanSupported=true).
@@ -117,6 +118,7 @@ interface ProviderDefInput {
     readonly id: string;
     readonly name: string;
     readonly supportsImage: boolean;
+    readonly contextLength?: number;
   }[];
   /**
    * The OpenClaw gateway provider ID used when building model refs (e.g. "provider/modelId").
@@ -187,11 +189,13 @@ export interface ProviderDef {
     readonly id: string;
     readonly name: string;
     readonly supportsImage: boolean;
+    readonly contextLength?: number;
   }[];
   readonly codingPlanModels?: readonly {
     readonly id: string;
     readonly name: string;
     readonly supportsImage: boolean;
+    readonly contextLength?: number;
   }[];
   readonly openClawProviderId: OpenClawProviderId;
 }

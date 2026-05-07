@@ -113,6 +113,16 @@ interface CoworkPromptInputProps {
   remoteManaged?: boolean;
 }
 
+const formatContextLength = (tokens: number): string => {
+  if (tokens >= 1_000_000)
+    return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (tokens >= 1_000) {
+    const k = tokens / 1_000;
+    return `${parseFloat(k.toFixed(1))}k`;
+  }
+  return `${tokens}`;
+};
+
 const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInputProps>(
   (props, ref) => {
     const {
@@ -156,6 +166,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
     const [isAddingFile, setIsAddingFile] = useState(false);
     const [imageVisionHint, setImageVisionHint] = useState(false);
+    const [contextUsage, setContextUsage] = useState<{
+      totalTokens: number;
+      contextTokens: number;
+    } | null>(null);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
@@ -894,6 +908,39 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => window.removeEventListener('config-updated', syncFromConfig);
     }, []);
 
+    // Poll context usage from OpenClaw gateway
+    useEffect(() => {
+      if (!sessionId || isStreaming) {
+        setContextUsage(null);
+        return;
+      }
+      let cancelled = false;
+      const fetchUsage = async () => {
+        try {
+          const result = await window.electron.cowork.getContextUsage(sessionId);
+          if (
+            !cancelled &&
+            result.success &&
+            result.totalTokens != null &&
+            result.contextTokens != null
+          ) {
+            setContextUsage({
+              totalTokens: result.totalTokens,
+              contextTokens: result.contextTokens,
+            });
+          }
+        } catch {
+          // silently fail — context usage is a nice-to-have
+        }
+      };
+      void fetchUsage();
+      const timer = setInterval(fetchUsage, 5000);
+      return () => {
+        cancelled = true;
+        clearInterval(timer);
+      };
+    }, [sessionId, isStreaming]);
+
     return (
       <div className="relative">
         {attachments.length > 0 && (
@@ -1052,6 +1099,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <PaperClipIcon className="h-4 w-4" />
                     </button>
                   )}
+                  {contextUsage && contextUsage.contextTokens > 0 && (
+                    <span className="text-[11px] font-medium text-foreground/70 tabular-nums select-none rounded-md border border-border/50 bg-surface-raised px-1.5 py-0.5">
+                      {formatContextLength(contextUsage.totalTokens)}/
+                      {formatContextLength(contextUsage.contextTokens)}
+                    </span>
+                  )}
                   {!remoteManaged && <ActiveSkillBadge />}
                 </div>
                 <div className="flex items-center gap-2">
@@ -1106,6 +1159,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   >
                     <PaperClipIcon className="h-4 w-4" />
                   </button>
+                  {contextUsage && contextUsage.contextTokens > 0 && (
+                    <span className="flex-shrink-0 text-[11px] font-medium text-foreground/70 tabular-nums select-none rounded-md border border-border/50 bg-surface-raised px-1.5 py-0.5">
+                      {formatContextLength(contextUsage.totalTokens)}/
+                      {formatContextLength(contextUsage.contextTokens)}
+                    </span>
+                  )}
                 </div>
               )}
 

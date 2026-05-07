@@ -13,6 +13,7 @@ export interface AppConfig {
       id: string;
       name: string;
       supportsImage?: boolean;
+      contextLength?: number;
     }>;
     defaultModel: string;
     defaultModelProvider?: string;
@@ -29,6 +30,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     deepseek: {
@@ -40,6 +42,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     moonshot: {
@@ -53,6 +56,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     zhipu: {
@@ -66,6 +70,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     minimax: {
@@ -83,6 +88,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     youdaozhiyun: {
@@ -94,6 +100,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     qwen: {
@@ -118,6 +125,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     openrouter: {
@@ -129,6 +137,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     gemini: {
@@ -140,6 +149,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     anthropic: {
@@ -151,6 +161,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     volcengine: {
@@ -164,6 +175,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     xiaomi: {
@@ -175,6 +187,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     stepfun: {
@@ -186,6 +199,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     'github-copilot': {
@@ -197,6 +211,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     ollama: {
@@ -208,6 +223,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     custom: {
@@ -219,6 +235,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
     [key: string]: {
@@ -243,6 +260,7 @@ export interface AppConfig {
         id: string;
         name: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }>;
     };
   };
@@ -279,7 +297,7 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai' | 'gemini';
       codingPlanEnabled?: boolean;
-      models?: Array<{ id: string; name: string; supportsImage?: boolean }>;
+      models?: Array<{ id: string; name: string; supportsImage?: boolean; contextLength?: number }>;
     }
   > = {};
 

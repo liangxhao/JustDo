@@ -7,6 +7,7 @@ export interface Model {
   provider?: string; // 模型所属的提供商
   providerKey?: string; // 模型所属的提供商 key（用于唯一标识）
   supportsImage?: boolean;
+  contextLength?: number; // 模型支持的上下文窗口长度（token 数量）
   isServerModel?: boolean; // 是否为服务端套餐模型
   serverApiFormat?: string; // 服务端模型的 API 格式 ("openai" | "anthropic")
 }
@@ -17,7 +18,7 @@ export function getModelIdentityKey(model: Pick<Model, 'id' | 'providerKey'>): s
 
 export function isSameModelIdentity(
   modelA: Pick<Model, 'id' | 'providerKey'>,
-  modelB: Pick<Model, 'id' | 'providerKey'>
+  modelB: Pick<Model, 'id' | 'providerKey'>,
 ): boolean {
   if (modelA.id !== modelB.id) {
     return false;
@@ -42,6 +43,7 @@ function buildInitialModels(): Model[] {
             provider: getProviderDisplayName(providerName, config),
             providerKey: providerName,
             supportsImage: model.supportsImage ?? false,
+            contextLength: model.contextLength,
           });
         });
       }
@@ -61,10 +63,12 @@ interface ModelState {
 
 const initialState: ModelState = {
   // 使用 config 中的默认模型
-  selectedModel: availableModels.find(
-    model => model.id === defaultConfig.model.defaultModel
-      && (!defaultModelProvider || model.providerKey === defaultModelProvider)
-  ) || availableModels[0],
+  selectedModel:
+    availableModels.find(
+      model =>
+        model.id === defaultConfig.model.defaultModel &&
+        (!defaultModelProvider || model.providerKey === defaultModelProvider),
+    ) || availableModels[0],
   availableModels: availableModels,
 };
 
@@ -83,7 +87,9 @@ const modelSlice = createSlice({
       availableModels = state.availableModels;
       // 同步选中模型信息，确保名称与最新配置一致
       if (state.availableModels.length > 0) {
-        const matchedModel = state.availableModels.find(m => isSameModelIdentity(m, state.selectedModel));
+        const matchedModel = state.availableModels.find(m =>
+          isSameModelIdentity(m, state.selectedModel),
+        );
         if (matchedModel) {
           state.selectedModel = matchedModel;
         } else {
@@ -99,7 +105,9 @@ const modelSlice = createSlice({
       availableModels = state.availableModels;
       // 同步选中模型信息（如 supportsImage 等属性可能随服务端更新）
       if (state.availableModels.length > 0) {
-        const matchedModel = state.availableModels.find(m => isSameModelIdentity(m, state.selectedModel));
+        const matchedModel = state.availableModels.find(m =>
+          isSameModelIdentity(m, state.selectedModel),
+        );
         if (matchedModel) {
           state.selectedModel = matchedModel;
         } else {
@@ -107,7 +115,7 @@ const modelSlice = createSlice({
         }
       }
     },
-    clearServerModels: (state) => {
+    clearServerModels: state => {
       state.availableModels = state.availableModels.filter(m => !m.isServerModel);
       availableModels = state.availableModels;
       // 如果当前选中的是服务端模型，切换到第一个可用模型
@@ -118,5 +126,6 @@ const modelSlice = createSlice({
   },
 });
 
-export const { setSelectedModel, setAvailableModels, setServerModels, clearServerModels } = modelSlice.actions;
-export default modelSlice.reducer; 
+export const { setSelectedModel, setAvailableModels, setServerModels, clearServerModels } =
+  modelSlice.actions;
+export default modelSlice.reducer;

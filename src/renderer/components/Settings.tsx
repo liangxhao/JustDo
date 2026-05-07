@@ -650,6 +650,14 @@ const UninstalledPresetCard: React.FC<{
   </div>
 );
 
+/** Format context length number to a human-readable string like "200k" */
+const formatContextLength = (tokens: number): string => {
+  if (tokens >= 1_000_000)
+    return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (tokens >= 1_000) return `${tokens / 1_000}k`;
+  return `${tokens}`;
+};
+
 const Settings: React.FC<SettingsProps> = ({
   onClose,
   initialTab,
@@ -719,6 +727,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [newModelName, setNewModelName] = useState('');
   const [newModelId, setNewModelId] = useState('');
   const [newModelSupportsImage, setNewModelSupportsImage] = useState(false);
+  const [newModelContextLength, setNewModelContextLength] = useState<number | undefined>(undefined);
   const [modelFormError, setModelFormError] = useState<string | null>(null);
 
   // State for displayName validation
@@ -1406,6 +1415,7 @@ const Settings: React.FC<SettingsProps> = ({
         provider?: string;
         providerKey?: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }[] = [];
       Object.entries(normalizedProviders).forEach(([providerName, config]) => {
         if (config.enabled && config.models) {
@@ -1416,6 +1426,7 @@ const Settings: React.FC<SettingsProps> = ({
               provider: getProviderDisplayName(providerName, config),
               providerKey: providerName,
               supportsImage: model.supportsImage ?? false,
+              contextLength: model.contextLength,
             });
           });
         }
@@ -1452,6 +1463,7 @@ const Settings: React.FC<SettingsProps> = ({
       setNewModelName('');
       setNewModelId('');
       setNewModelSupportsImage(false);
+      setNewModelContextLength(undefined);
       setModelFormError(null);
     }
     setActiveTab(tab);
@@ -1497,16 +1509,23 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelName('');
     setNewModelId('');
     setNewModelSupportsImage(false);
+    setNewModelContextLength(undefined);
     setModelFormError(null);
   };
 
-  const handleEditModel = (modelId: string, modelName: string, supportsImage?: boolean) => {
+  const handleEditModel = (
+    modelId: string,
+    modelName: string,
+    supportsImage?: boolean,
+    contextLength?: number,
+  ) => {
     setIsAddingModel(false);
     setIsEditingModel(true);
     setEditingModelId(modelId);
     setNewModelName(modelName);
     setNewModelId(modelId);
     setNewModelSupportsImage(!!supportsImage);
+    setNewModelContextLength(contextLength);
     setModelFormError(null);
   };
 
@@ -1562,6 +1581,7 @@ const Settings: React.FC<SettingsProps> = ({
       id: modelId,
       name: modelName,
       supportsImage: newModelSupportsImage,
+      ...(newModelContextLength !== undefined ? { contextLength: newModelContextLength } : {}),
     };
     const updatedModels =
       isEditingModel && editingModelId
@@ -1582,6 +1602,7 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelName('');
     setNewModelId('');
     setNewModelSupportsImage(false);
+    setNewModelContextLength(undefined);
     setModelFormError(null);
   };
 
@@ -1592,6 +1613,7 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelName('');
     setNewModelId('');
     setNewModelSupportsImage(false);
+    setNewModelContextLength(undefined);
     setModelFormError(null);
   };
 
@@ -3306,10 +3328,20 @@ const Settings: React.FC<SettingsProps> = ({
                               {i18nService.t('imageInput')}
                             </span>
                           )}
+                          {model.contextLength && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-raised text-secondary">
+                              {formatContextLength(model.contextLength)}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() =>
-                              handleEditModel(model.id, model.name, model.supportsImage)
+                              handleEditModel(
+                                model.id,
+                                model.name,
+                                model.supportsImage,
+                                model.contextLength,
+                              )
                             }
                             className="p-0.5 text-secondary hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
                           >
@@ -3760,6 +3792,25 @@ const Settings: React.FC<SettingsProps> = ({
                     </div>
                   </>
                 )}
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">
+                    {i18nService.t('contextLength')}
+                  </label>
+                  <input
+                    type="number"
+                    value={newModelContextLength ?? ''}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setNewModelContextLength(val === '' ? undefined : parseInt(val, 10));
+                    }}
+                    className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
+                    placeholder="200000"
+                    min={0}
+                  />
+                  <p className="mt-1 text-[11px] text-muted">
+                    {i18nService.t('contextLengthHint')}
+                  </p>
+                </div>
                 <div className="flex items-center space-x-2">
                   <input
                     id={`${activeProvider}-supportsImage`}

@@ -115,18 +115,25 @@ const App: React.FC = () => {
           provider?: string;
           providerKey?: string;
           supportsImage?: boolean;
+          contextLength?: number;
         }[] = [];
         if (config.providers) {
           Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
             if (providerConfig.enabled && providerConfig.models) {
               providerConfig.models.forEach(
-                (model: { id: string; name: string; supportsImage?: boolean }) => {
+                (model: {
+                  id: string;
+                  name: string;
+                  supportsImage?: boolean;
+                  contextLength?: number;
+                }) => {
                   providerModels.push({
                     id: model.id,
                     name: model.name,
                     provider: getProviderDisplayName(providerName, providerConfig),
                     providerKey: providerName,
                     supportsImage: model.supportsImage ?? false,
+                    contextLength: model.contextLength,
                   });
                 },
               );
@@ -138,6 +145,7 @@ const App: React.FC = () => {
           name: model.name,
           providerKey: undefined,
           supportsImage: model.supportsImage ?? false,
+          contextLength: model.contextLength,
         }));
         const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
         if (resolvedModels.length > 0) {
@@ -316,17 +324,24 @@ const App: React.FC = () => {
         provider?: string;
         providerKey?: string;
         supportsImage?: boolean;
+        contextLength?: number;
       }[] = [];
       Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
         if (providerConfig.enabled && providerConfig.models) {
           providerConfig.models.forEach(
-            (model: { id: string; name: string; supportsImage?: boolean }) => {
+            (model: {
+              id: string;
+              name: string;
+              supportsImage?: boolean;
+              contextLength?: number;
+            }) => {
               allModels.push({
                 id: model.id,
                 name: model.name,
                 provider: getProviderDisplayName(providerName, providerConfig),
                 providerKey: providerName,
                 supportsImage: model.supportsImage ?? false,
+                contextLength: model.contextLength,
               });
             },
           );
