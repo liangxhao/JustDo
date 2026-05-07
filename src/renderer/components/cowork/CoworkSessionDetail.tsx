@@ -1243,7 +1243,7 @@ export const UserMessageItem: React.FC<{
             </div>
             <div className="w-full min-w-0 flex flex-col items-end">
               {/* User message bubble: w-fit for adaptive width, max-w for right boundary */}
-              <div className="relative w-fit max-w-[calc(100%-44px)] rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
+              <div className="relative w-fit max-w-[calc(100%-44px)] rounded-2xl px-4 py-2.5 bg-chat-user text-foreground shadow-subtle">
                 {/* Copy button — top-right inside bubble */}
                 <div className="absolute top-1.5 right-1.5">
                   <CopyButton content={message.content} visible={isHovered} />

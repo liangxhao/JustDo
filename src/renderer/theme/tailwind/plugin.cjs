@@ -76,6 +76,12 @@ module.exports = plugin(function () {
           accentLight:       'var(--gucciai-primary)',
           accentMuted:       'var(--gucciai-primary-muted)',
         },
+        chat: {
+          user:        'var(--gucciai-chat-user)',
+          'user-fg':   'var(--gucciai-chat-user-foreground)',
+          bot:         'var(--gucciai-chat-bot)',
+          'bot-fg':    'var(--gucciai-chat-bot-foreground)',
+        },
         secondary: {
           DEFAULT: 'var(--gucciai-text-secondary)',
           dark:    'var(--gucciai-border)',
