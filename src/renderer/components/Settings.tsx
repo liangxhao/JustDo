@@ -30,18 +30,12 @@ import { UserGroupIcon, PlusIcon } from '@heroicons/react/24/outline';
 import PlusCircleIcon from './icons/PlusCircleIcon';
 import TrashIcon from './icons/TrashIcon';
 import PencilIcon from './icons/PencilIcon';
-import BrainIcon from './icons/BrainIcon';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../store';
 import { setAvailableModels } from '../store/slices/modelSlice';
 import { selectCoworkConfig } from '../store/selectors/coworkSelectors';
 import ThemedSelect from './ui/ThemedSelect';
-import type {
-  CoworkAgentEngine,
-  OpenClawEngineStatus,
-  CoworkUserMemoryEntry,
-  CoworkMemoryStats,
-} from '../types/cowork';
+import type { CoworkAgentEngine, OpenClawEngineStatus } from '../types/cowork';
 import AgentCreateModal from './agent/AgentCreateModal';
 import AgentSettingsPanel from './agent/AgentSettingsPanel';
 import SkillsManager from './skills/SkillsManager';
@@ -63,7 +57,6 @@ type TabType =
   | 'general'
   | 'coworkAgentEngine'
   | 'model'
-  | 'coworkMemory'
   | 'myAgents'
   | 'skills'
   | 'mcp'
@@ -303,16 +296,6 @@ const getDefaultActiveProvider = (): ProviderType => {
   const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
   const firstEnabledProvider = providerKeys.find(providerKey => providers[providerKey]?.enabled);
   return firstEnabledProvider ?? providerKeys[0];
-};
-
-/** Join workspace directory with a filename using platform-aware separator. */
-const joinWorkspacePath = (dir: string | undefined, filename: string): string => {
-  const base = dir?.trim() || '~/.openclaw/workspace';
-  const sep = window.electron.platform === 'win32' ? '\\' : '/';
-  // Normalize: if base already ends with a separator, don't double it
-  return base.endsWith(sep) || base.endsWith('/') || base.endsWith('\\')
-    ? `${base}${filename}`
-    : `${base}${sep}${filename}`;
 };
 
 // System shortcuts that should not be captured (clipboard, undo, select-all, quit, etc.)
@@ -753,22 +736,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [coworkAgentEngine, setCoworkAgentEngine] = useState<CoworkAgentEngine>(
     coworkConfig.agentEngine || 'openclaw',
   );
-  const [coworkMemoryEnabled, setCoworkMemoryEnabled] = useState<boolean>(
-    coworkConfig.memoryEnabled ?? true,
-  );
-  const [coworkMemoryLlmJudgeEnabled, setCoworkMemoryLlmJudgeEnabled] = useState<boolean>(
-    coworkConfig.memoryLlmJudgeEnabled ?? false,
-  );
   const [skipMissedJobs, setSkipMissedJobs] = useState<boolean>(
     coworkConfig.skipMissedJobs ?? false,
   );
-  const [coworkMemoryEntries, setCoworkMemoryEntries] = useState<CoworkUserMemoryEntry[]>([]);
-  const [coworkMemoryStats, setCoworkMemoryStats] = useState<CoworkMemoryStats | null>(null);
-  const [coworkMemoryListLoading, setCoworkMemoryListLoading] = useState<boolean>(false);
-  const [coworkMemoryQuery, setCoworkMemoryQuery] = useState<string>('');
-  const [coworkMemoryEditingId, setCoworkMemoryEditingId] = useState<string | null>(null);
-  const [coworkMemoryDraftText, setCoworkMemoryDraftText] = useState<string>('');
-  const [showMemoryModal, setShowMemoryModal] = useState<boolean>(false);
 
   // Drag to reposition state
   const [modalPosition, setModalPosition] = useState({ x: 0, y: 0 });
@@ -825,15 +795,8 @@ const Settings: React.FC<SettingsProps> = ({
 
   useEffect(() => {
     setCoworkAgentEngine(coworkConfig.agentEngine || 'openclaw');
-    setCoworkMemoryEnabled(coworkConfig.memoryEnabled ?? true);
-    setCoworkMemoryLlmJudgeEnabled(coworkConfig.memoryLlmJudgeEnabled ?? false);
     setSkipMissedJobs(coworkConfig.skipMissedJobs ?? false);
-  }, [
-    coworkConfig.agentEngine,
-    coworkConfig.memoryEnabled,
-    coworkConfig.memoryLlmJudgeEnabled,
-    coworkConfig.skipMissedJobs,
-  ]);
+  }, [coworkConfig.agentEngine, coworkConfig.skipMissedJobs]);
 
   useEffect(() => {
     let active = true;
@@ -1193,8 +1156,6 @@ const Settings: React.FC<SettingsProps> = ({
 
   const hasCoworkConfigChanges =
     coworkAgentEngine !== coworkConfig.agentEngine ||
-    coworkMemoryEnabled !== coworkConfig.memoryEnabled ||
-    coworkMemoryLlmJudgeEnabled !== coworkConfig.memoryLlmJudgeEnabled ||
     skipMissedJobs !== (coworkConfig.skipMissedJobs ?? false);
   const isOpenClawAgentEngine = coworkAgentEngine === 'openclaw';
 
@@ -1232,99 +1193,10 @@ const Settings: React.FC<SettingsProps> = ({
     }
   };
 
-  const loadCoworkMemoryData = useCallback(async () => {
-    setCoworkMemoryListLoading(true);
-    try {
-      const [entries, stats] = await Promise.all([
-        coworkService.listMemoryEntries({
-          query: coworkMemoryQuery.trim() || undefined,
-        }),
-        coworkService.getMemoryStats(),
-      ]);
-      setCoworkMemoryEntries(entries);
-      setCoworkMemoryStats(stats);
-    } catch (loadError) {
-      console.error('Failed to load cowork memory data:', loadError);
-      setCoworkMemoryEntries([]);
-      setCoworkMemoryStats(null);
-    } finally {
-      setCoworkMemoryListLoading(false);
-    }
-  }, [coworkMemoryQuery]);
-
-  useEffect(() => {
-    if (activeTab !== 'coworkMemory') return;
-    void loadCoworkMemoryData();
-  }, [activeTab, loadCoworkMemoryData]);
-
   /**
    * Return file content directly, showing the actual content to users.
    * Previously hid OpenClaw default templates, but users expect to see file content.
    */
-  const resetCoworkMemoryEditor = () => {
-    setCoworkMemoryEditingId(null);
-    setCoworkMemoryDraftText('');
-    setShowMemoryModal(false);
-  };
-
-  const handleSaveCoworkMemoryEntry = async () => {
-    const text = coworkMemoryDraftText.trim();
-    if (!text) return;
-
-    setCoworkMemoryListLoading(true);
-    try {
-      if (coworkMemoryEditingId) {
-        await coworkService.updateMemoryEntry({
-          id: coworkMemoryEditingId,
-          text,
-        });
-      } else {
-        await coworkService.createMemoryEntry({
-          text,
-        });
-      }
-      resetCoworkMemoryEditor();
-      await loadCoworkMemoryData();
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : i18nService.t('coworkMemoryCrudSaveFailed'),
-      );
-    } finally {
-      setCoworkMemoryListLoading(false);
-    }
-  };
-
-  const handleEditCoworkMemoryEntry = (entry: CoworkUserMemoryEntry) => {
-    setCoworkMemoryEditingId(entry.id);
-    setCoworkMemoryDraftText(entry.text);
-    setShowMemoryModal(true);
-  };
-
-  const handleDeleteCoworkMemoryEntry = async (entry: CoworkUserMemoryEntry) => {
-    setCoworkMemoryListLoading(true);
-    try {
-      await coworkService.deleteMemoryEntry({ id: entry.id });
-      if (coworkMemoryEditingId === entry.id) {
-        resetCoworkMemoryEditor();
-      }
-      await loadCoworkMemoryData();
-    } catch (deleteError) {
-      setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : i18nService.t('coworkMemoryCrudDeleteFailed'),
-      );
-    } finally {
-      setCoworkMemoryListLoading(false);
-    }
-  };
-
-  const handleOpenCoworkMemoryModal = () => {
-    resetCoworkMemoryEditor();
-    setShowMemoryModal(true);
-  };
 
   // Toggle provider enabled status
   const toggleProviderEnabled = (provider: ProviderType) => {
@@ -1447,8 +1319,6 @@ const Settings: React.FC<SettingsProps> = ({
       if (hasCoworkConfigChanges) {
         const updated = await coworkService.updateConfig({
           agentEngine: coworkAgentEngine,
-          memoryEnabled: coworkMemoryEnabled,
-          memoryLlmJudgeEnabled: coworkMemoryLlmJudgeEnabled,
           skipMissedJobs,
         });
         if (!updated) {
@@ -2218,11 +2088,6 @@ const Settings: React.FC<SettingsProps> = ({
         icon: <CubeIcon className="h-5 w-5" />,
       },
       {
-        key: 'coworkMemory' as TabType,
-        label: i18nService.t('coworkMemoryTitle'),
-        icon: <BrainIcon className="h-5 w-5" />,
-      },
-      {
         key: 'myAgents' as TabType,
         label: i18nService.t('myAgents'),
         icon: <UserGroupIcon className="h-5 w-5" />,
@@ -2834,106 +2699,6 @@ const Settings: React.FC<SettingsProps> = ({
                 </div>
               </div>
             )}
-          </div>
-        );
-
-      case 'coworkMemory':
-        return (
-          <div className="space-y-6">
-            {/* Section 1: Long-term Memory (MEMORY.md) */}
-            <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
-              <div className="text-sm font-medium text-foreground">
-                {i18nService.t('coworkMemoryTitle')}
-              </div>
-              {/* Memory toggle hidden – always enabled by default */}
-              <div className="mt-2 text-xs text-secondary">
-                <span className="font-medium">{i18nService.t('coworkMemoryFilePath')}:</span>{' '}
-                <span className="break-all font-mono opacity-80">
-                  {joinWorkspacePath(coworkConfig.workingDirectory, 'MEMORY.md')}
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-4 rounded-xl border px-4 py-4 border-border">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium text-foreground">
-                    {i18nService.t('coworkMemoryCrudTitle')}
-                  </div>
-                  <div className="text-xs text-secondary">
-                    {i18nService.t('coworkMemoryManageHint')}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleOpenCoworkMemoryModal}
-                  className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm transition-colors active:scale-[0.98]"
-                >
-                  <PlusCircleIcon className="h-4 w-4 mr-1.5" />
-                  {i18nService.t('coworkMemoryCrudCreate')}
-                </button>
-              </div>
-
-              {coworkMemoryStats && (
-                <div className="text-xs text-secondary">
-                  {`${i18nService.t('coworkMemoryTotalLabel')}: ${coworkMemoryStats.total}`}
-                </div>
-              )}
-
-              <input
-                type="text"
-                value={coworkMemoryQuery}
-                onChange={event => setCoworkMemoryQuery(event.target.value)}
-                placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
-                className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface"
-              />
-
-              <div className="rounded-lg border border-border">
-                {coworkMemoryListLoading ? (
-                  <div className="px-3 py-3 text-xs text-secondary">{i18nService.t('loading')}</div>
-                ) : coworkMemoryEntries.length === 0 ? (
-                  <div className="px-3 py-3 text-xs text-secondary">
-                    {i18nService.t('coworkMemoryEmpty')}
-                  </div>
-                ) : (
-                  <div className="divide-y divide-border">
-                    {coworkMemoryEntries.map(entry => (
-                      <div
-                        key={entry.id}
-                        className="px-3 py-3 text-xs hover:bg-surface-raised transition-colors"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-foreground break-words">
-                              {entry.text}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleEditCoworkMemoryEntry(entry)}
-                              className="rounded border px-2 py-1 border-border text-foreground hover:bg-surface-raised transition-colors"
-                            >
-                              {i18nService.t('edit')}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void handleDeleteCoworkMemoryEntry(entry);
-                              }}
-                              className="rounded border px-2 py-1 text-red-500 border-border hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60 transition-colors"
-                              disabled={coworkMemoryListLoading}
-                            >
-                              {i18nService.t('delete')}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         );
 
@@ -3905,9 +3670,7 @@ const Settings: React.FC<SettingsProps> = ({
                     placeholder="32000"
                     min={0}
                   />
-                  <p className="mt-1 text-[11px] text-muted">
-                    {i18nService.t('maxTokensHint')}
-                  </p>
+                  <p className="mt-1 text-[11px] text-muted">{i18nService.t('maxTokensHint')}</p>
                 </div>
                 <div className="flex items-center space-x-2">
                   <input
@@ -3940,69 +3703,6 @@ const Settings: React.FC<SettingsProps> = ({
                   className="px-3 py-1.5 text-xs text-white bg-primary hover:bg-primary-hover rounded-xl active:scale-[0.98]"
                 >
                   {i18nService.t('save')}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Memory Modal */}
-        {showMemoryModal && (
-          <div
-            className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
-            onClick={e => {
-              if (e.target === e.currentTarget) {
-                resetCoworkMemoryEditor();
-              }
-            }}
-          >
-            <div
-              className="bg-surface border-border border rounded-2xl shadow-xl w-full max-w-md"
-              onClick={e => e.stopPropagation()}
-              onMouseDown={e => e.stopPropagation()}
-            >
-              <div className="px-5 pt-5 pb-4 border-b border-border">
-                <h3 className="text-base font-semibold text-foreground">
-                  {coworkMemoryEditingId
-                    ? i18nService.t('coworkMemoryCrudUpdate')
-                    : i18nService.t('coworkMemoryCrudCreate')}
-                </h3>
-              </div>
-
-              <div className="px-5 py-4 space-y-4">
-                {coworkMemoryEditingId && (
-                  <div className="rounded-lg border px-2 py-1 text-xs border-border text-secondary">
-                    {i18nService.t('coworkMemoryEditingTag')}
-                  </div>
-                )}
-                <textarea
-                  value={coworkMemoryDraftText}
-                  onChange={event => setCoworkMemoryDraftText(event.target.value)}
-                  placeholder={i18nService.t('coworkMemoryCrudTextPlaceholder')}
-                  autoFocus
-                  className="min-h-[200px] w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface text-foreground focus:border-primary focus:ring-1 focus:ring-primary/30"
-                />
-              </div>
-
-              <div className="flex justify-end space-x-2 px-5 pb-5">
-                <button
-                  type="button"
-                  onClick={resetCoworkMemoryEditor}
-                  className="px-3 py-1.5 text-sm text-foreground hover:bg-surface-raised rounded-xl border border-border transition-colors"
-                >
-                  {i18nService.t('cancel')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleSaveCoworkMemoryEntry();
-                  }}
-                  disabled={!coworkMemoryDraftText.trim() || coworkMemoryListLoading}
-                  className="px-3 py-1.5 text-sm text-white bg-primary hover:bg-primary-hover rounded-xl disabled:opacity-60 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
-                >
-                  {coworkMemoryEditingId
-                    ? i18nService.t('save')
-                    : i18nService.t('coworkMemoryCrudCreate')}
                 </button>
               </div>
             </div>
