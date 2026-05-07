@@ -285,6 +285,7 @@ export const buildProviderSelection = (options: {
   modelName?: string;
   displayName?: string; // 用于 OpenClaw 配置中的 providerId（仅对 custom provider 有效）
   contextLength?: number; // 用户配置的上下文窗口长度
+  maxTokens?: number; // 用户配置的最大输出 token 数量
 }): OpenClawProviderSelection => {
   const providerName = options.providerName ?? '';
   const displayName = options.displayName?.trim();
@@ -341,7 +342,7 @@ export const buildProviderSelection = (options: {
           name: providerModelName,
           api,
           input: modelInput,
-          ...(reasoning !== undefined ? { reasoning } : {}),
+          ...(reasoning !== undefined ? { reasoning } : { reasoning: true }),
           ...(descriptor.modelDefaults?.cost ? { cost: descriptor.modelDefaults.cost } : {}),
           ...(descriptor.modelDefaults?.contextWindow
             ? { contextWindow: descriptor.modelDefaults.contextWindow }
@@ -350,6 +351,7 @@ export const buildProviderSelection = (options: {
           ...(descriptor.modelDefaults?.maxTokens
             ? { maxTokens: descriptor.modelDefaults.maxTokens }
             : {}),
+          ...(options.maxTokens ? { maxTokens: options.maxTokens } : {}),
         },
       ],
     },
@@ -468,6 +470,7 @@ export class OpenClawConfigSync {
         modelName: apiResolution.providerMetadata?.modelName,
         displayName: apiResolution.providerMetadata?.displayName, // 传递 displayName
         contextLength: apiResolution.providerMetadata?.contextLength,
+        maxTokens: apiResolution.providerMetadata?.maxTokens,
       });
       primaryModel = providerSelection.primaryModel;
 
@@ -484,6 +487,7 @@ export class OpenClawConfigSync {
             modelName: m.name,
             displayName: p.displayName, // 传递 displayName
             contextLength: m.contextLength,
+            maxTokens: m.maxTokens,
           });
           if (!allProvidersMap[sel.providerId]) {
             allProvidersMap[sel.providerId] = { ...sel.providerConfig, models: [] };
@@ -531,6 +535,7 @@ export class OpenClawConfigSync {
     const managedConfig: Record<string, unknown> = {
       gateway: {
         mode: 'local',
+        bind: 'loopback',
       },
       models: {
         mode: 'replace',
@@ -567,6 +572,9 @@ export class OpenClawConfigSync {
           search: {
             enabled: false,
           },
+        },
+        loopDetection: {
+          enabled: true,
         },
       },
       browser: {

@@ -728,6 +728,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [newModelId, setNewModelId] = useState('');
   const [newModelSupportsImage, setNewModelSupportsImage] = useState(false);
   const [newModelContextLength, setNewModelContextLength] = useState<number | undefined>(undefined);
+  const [newModelMaxTokens, setNewModelMaxTokens] = useState<number | undefined>(undefined);
   const [modelFormError, setModelFormError] = useState<string | null>(null);
 
   // State for displayName validation
@@ -1510,6 +1511,7 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelId('');
     setNewModelSupportsImage(false);
     setNewModelContextLength(undefined);
+    setNewModelMaxTokens(undefined);
     setModelFormError(null);
   };
 
@@ -1518,6 +1520,7 @@ const Settings: React.FC<SettingsProps> = ({
     modelName: string,
     supportsImage?: boolean,
     contextLength?: number,
+    maxTokens?: number,
   ) => {
     setIsAddingModel(false);
     setIsEditingModel(true);
@@ -1526,6 +1529,7 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelId(modelId);
     setNewModelSupportsImage(!!supportsImage);
     setNewModelContextLength(contextLength);
+    setNewModelMaxTokens(maxTokens);
     setModelFormError(null);
   };
 
@@ -1577,11 +1581,22 @@ const Settings: React.FC<SettingsProps> = ({
       return;
     }
 
+    // Validate contextLength > maxTokens
+    if (
+      newModelContextLength !== undefined &&
+      newModelMaxTokens !== undefined &&
+      newModelContextLength <= newModelMaxTokens
+    ) {
+      setModelFormError('Context length must be greater than max tokens');
+      return;
+    }
+
     const nextModel = {
       id: modelId,
       name: modelName,
       supportsImage: newModelSupportsImage,
       ...(newModelContextLength !== undefined ? { contextLength: newModelContextLength } : {}),
+      ...(newModelMaxTokens !== undefined ? { maxTokens: newModelMaxTokens } : {}),
     };
     const updatedModels =
       isEditingModel && editingModelId
@@ -1603,6 +1618,7 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelId('');
     setNewModelSupportsImage(false);
     setNewModelContextLength(undefined);
+    setNewModelMaxTokens(undefined);
     setModelFormError(null);
   };
 
@@ -1614,6 +1630,7 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelId('');
     setNewModelSupportsImage(false);
     setNewModelContextLength(undefined);
+    setNewModelMaxTokens(undefined);
     setModelFormError(null);
   };
 
@@ -3333,6 +3350,11 @@ const Settings: React.FC<SettingsProps> = ({
                               {formatContextLength(model.contextLength)}
                             </span>
                           )}
+                          {model.maxTokens && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-raised text-secondary">
+                              {formatContextLength(model.maxTokens)}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() =>
@@ -3341,6 +3363,7 @@ const Settings: React.FC<SettingsProps> = ({
                                 model.name,
                                 model.supportsImage,
                                 model.contextLength,
+                                model.maxTokens,
                               )
                             }
                             className="p-0.5 text-secondary hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
@@ -3809,6 +3832,25 @@ const Settings: React.FC<SettingsProps> = ({
                   />
                   <p className="mt-1 text-[11px] text-muted">
                     {i18nService.t('contextLengthHint')}
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">
+                    {i18nService.t('maxTokens')}
+                  </label>
+                  <input
+                    type="number"
+                    value={newModelMaxTokens ?? ''}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setNewModelMaxTokens(val === '' ? undefined : parseInt(val, 10));
+                    }}
+                    className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
+                    placeholder="32000"
+                    min={0}
+                  />
+                  <p className="mt-1 text-[11px] text-muted">
+                    {i18nService.t('maxTokensHint')}
                   </p>
                 </div>
                 <div className="flex items-center space-x-2">

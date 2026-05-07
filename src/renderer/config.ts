@@ -14,6 +14,7 @@ export interface AppConfig {
       name: string;
       supportsImage?: boolean;
       contextLength?: number;
+      maxTokens?: number;
     }>;
     defaultModel: string;
     defaultModelProvider?: string;
@@ -31,6 +32,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     deepseek: {
@@ -43,6 +45,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     moonshot: {
@@ -57,6 +60,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     zhipu: {
@@ -71,6 +75,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     minimax: {
@@ -89,6 +94,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     youdaozhiyun: {
@@ -101,6 +107,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     qwen: {
@@ -126,6 +133,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     openrouter: {
@@ -138,6 +146,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     gemini: {
@@ -150,6 +159,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     anthropic: {
@@ -162,6 +172,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     volcengine: {
@@ -176,6 +187,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     xiaomi: {
@@ -188,6 +200,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     stepfun: {
@@ -200,6 +213,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     'github-copilot': {
@@ -212,6 +226,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     ollama: {
@@ -224,6 +239,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     custom: {
@@ -236,6 +252,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
     [key: string]: {
@@ -261,6 +278,7 @@ export interface AppConfig {
         name: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }>;
     };
   };
@@ -297,7 +315,7 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai' | 'gemini';
       codingPlanEnabled?: boolean;
-      models?: Array<{ id: string; name: string; supportsImage?: boolean; contextLength?: number }>;
+      models?: Array<{ id: string; name: string; supportsImage?: boolean; contextLength?: number; maxTokens?: number }>;
     }
   > = {};
 

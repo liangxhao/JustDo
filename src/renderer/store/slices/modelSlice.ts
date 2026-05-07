@@ -8,6 +8,7 @@ export interface Model {
   providerKey?: string; // 模型所属的提供商 key（用于唯一标识）
   supportsImage?: boolean;
   contextLength?: number; // 模型支持的上下文窗口长度（token 数量）
+  maxTokens?: number; // 模型最大输出 token 数量，默认 32k
   isServerModel?: boolean; // 是否为服务端套餐模型
   serverApiFormat?: string; // 服务端模型的 API 格式 ("openai" | "anthropic")
 }
@@ -44,6 +45,7 @@ function buildInitialModels(): Model[] {
             providerKey: providerName,
             supportsImage: model.supportsImage ?? false,
             contextLength: model.contextLength,
+            maxTokens: model.maxTokens,
           });
         });
       }

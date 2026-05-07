@@ -116,6 +116,7 @@ const App: React.FC = () => {
           providerKey?: string;
           supportsImage?: boolean;
           contextLength?: number;
+          maxTokens?: number;
         }[] = [];
         if (config.providers) {
           Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
@@ -126,6 +127,7 @@ const App: React.FC = () => {
                   name: string;
                   supportsImage?: boolean;
                   contextLength?: number;
+                  maxTokens?: number;
                 }) => {
                   providerModels.push({
                     id: model.id,
@@ -134,6 +136,7 @@ const App: React.FC = () => {
                     providerKey: providerName,
                     supportsImage: model.supportsImage ?? false,
                     contextLength: model.contextLength,
+                    maxTokens: model.maxTokens,
                   });
                 },
               );
@@ -146,6 +149,7 @@ const App: React.FC = () => {
           providerKey: undefined,
           supportsImage: model.supportsImage ?? false,
           contextLength: model.contextLength,
+          maxTokens: model.maxTokens,
         }));
         const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
         if (resolvedModels.length > 0) {
@@ -325,6 +329,7 @@ const App: React.FC = () => {
         providerKey?: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }[] = [];
       Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
         if (providerConfig.enabled && providerConfig.models) {
@@ -334,6 +339,7 @@ const App: React.FC = () => {
               name: string;
               supportsImage?: boolean;
               contextLength?: number;
+              maxTokens?: number;
             }) => {
               allModels.push({
                 id: model.id,
@@ -342,6 +348,7 @@ const App: React.FC = () => {
                 providerKey: providerName,
                 supportsImage: model.supportsImage ?? false,
                 contextLength: model.contextLength,
+                maxTokens: model.maxTokens,
               });
             },
           );

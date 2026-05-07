@@ -16,6 +16,7 @@ type ProviderModel = {
   name?: string;
   supportsImage?: boolean;
   contextLength?: number;
+  maxTokens?: number;
 };
 
 type ProviderConfig = {
@@ -25,7 +26,7 @@ type ProviderConfig = {
   apiFormat?: 'anthropic' | 'openai' | 'native';
   codingPlanEnabled?: boolean;
   models?: ProviderModel[];
-displayName?: string; // 用于 OpenClaw providerId
+  displayName?: string; // 用于 OpenClaw providerId
 };
 
 type AppConfig = {
@@ -46,6 +47,7 @@ export type ApiConfigResolution = {
     modelName?: string;
     displayName?: string; // 新增：用于 OpenClaw providerId
     contextLength?: number; // 用户配置的上下文窗口长度
+    maxTokens?: number; // 用户配置的最大输出 token 数量
   };
 };
 
@@ -111,6 +113,7 @@ type MatchedProvider = {
   supportsImage?: boolean;
   modelName?: string;
   contextLength?: number; // 用户配置的上下文窗口长度
+  maxTokens?: number; // 用户配置的最大输出 token 数量
 };
 
 function getEffectiveProviderApiFormat(
@@ -240,6 +243,7 @@ function resolveMatchedProvider(appConfig: AppConfig): {
       supportsImage: matchedModel?.supportsImage,
       modelName: matchedModel?.name,
       contextLength: matchedModel?.contextLength,
+      maxTokens: matchedModel?.maxTokens,
     },
   };
 }
@@ -311,6 +315,7 @@ export function resolveCurrentApiConfig(
         codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
         supportsImage: matched.supportsImage,
         contextLength: matched.contextLength,
+        maxTokens: matched.maxTokens,
       },
     };
   }
@@ -349,6 +354,7 @@ export function resolveCurrentApiConfig(
       providerName: matched.providerName,
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
       contextLength: matched.contextLength,
+      maxTokens: matched.maxTokens,
     },
   };
 }
@@ -451,6 +457,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       modelName: matched.modelName,
       displayName: matched.providerConfig.displayName?.trim(), // 新增：用于 OpenClaw providerId
       contextLength: matched.contextLength,
+      maxTokens: matched.maxTokens,
     },
   };
 }
@@ -518,7 +525,7 @@ export type ProviderRawConfig = {
   apiKey: string;
   apiType: 'anthropic' | 'openai';
   codingPlanEnabled: boolean;
-  models: Array<{ id: string; name?: string; supportsImage?: boolean; contextLength?: number }>;
+  models: Array<{ id: string; name?: string; supportsImage?: boolean; contextLength?: number; maxTokens?: number }>;
   displayName?: string; // 新增：用于 OpenClaw 配置中的 providerId
 };
 
