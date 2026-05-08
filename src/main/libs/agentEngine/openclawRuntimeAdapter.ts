@@ -6124,6 +6124,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const session = this.store.getSession(sessionId);
         const currentStatus = session?.status;
         if (currentStatus !== 'running') {
+          // Session was already finalized by another path (checkAllSubagentsDone, stopSession, etc).
+          // Clean up any stale activeTurns entry that could block future messages.
+          if (this.activeTurns.has(sessionId)) {
+            console.log(
+              '[OpenClawRuntime] handleChatFinal delayed check: cleaning up stale activeTurns: sessionId=' +
+                sessionId,
+            );
+            this.cleanupSessionTurn(sessionId);
+          }
           console.log(
             '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
               sessionId +
@@ -8339,6 +8348,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               sessionId,
           );
           return;
+        }
+
+        // When lifecycle ended but activeTurns wasn't cleaned up (e.g., announce
+        // follow-up runs that skip handleChatFinal), clean it up now to prevent
+        // "Session is still running" errors on next user message.
+        if (mainAgentActive && this.mainAgentLifecycleEnded) {
+          console.log(
+            '[OpenClawRuntime] checkAllSubagentsDone: cleaning up stale activeTurns for completed session: sessionId=' +
+              sessionId,
+          );
+          this.cleanupSessionTurn(sessionId);
         }
 
         console.log(
