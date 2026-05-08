@@ -1033,8 +1033,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * have active subagents concurrently.
    */
   private resolveSubagentParentSessionId(agentId: string): string | null {
+    // Prefer per-subagent mapping — this is the authoritative source
     const mappedParent = this.toolCallIdToParentSessionId.get(agentId);
     if (mappedParent) return mappedParent;
+    // Fallback: if only one orchestration session exists, use it safely
+    if (this.orchestrationSessionIds.size === 1) {
+      return Array.from(this.orchestrationSessionIds)[0];
+    }
+    // Multiple concurrent sessions — do NOT guess, return null
     return this.orchestrationParentSessionId;
   }
 
@@ -1482,9 +1488,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.orchestrationSessionIds.delete(sessionId);
     if (this.orchestrationParentSessionId === sessionId) {
       this.orchestrationParentSessionId =
-        this.orchestrationSessionIds.size > 0
-          ? Array.from(this.orchestrationSessionIds)[0]
-          : null;
+        this.orchestrationSessionIds.size > 0 ? Array.from(this.orchestrationSessionIds)[0] : null;
       // 保留消息和状态一段时间供 UI 查询，延迟清理
       // CRITICAL: Only clear transient data, keep subagentStatus and mappings
       // for other sessions to display their subagent status correctly
@@ -2611,8 +2615,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             }
 
             // Emit subagent_completion message to parent session
-            // This allows the frontend to display completion with the subagent avatar
-            if (this.orchestrationParentSessionId) {
+            // Use per-session mapping to avoid cross-session contamination
+            const completionParentId =
+              this.toolCallIdToParentSessionId.get(toolCallId) || this.orchestrationParentSessionId;
+            if (completionParentId) {
               const label = this.toolCallIdToLabel.get(toolCallId) || displayLabel || 'Subagent';
               const childSessionKey = this.toolCallIdToSessionKey.get(toolCallId) || '';
 
@@ -2731,9 +2737,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 break;
               }
             }
-            // Nested subagents belong to the orchestration parent session
-            if (this.orchestrationParentSessionId) {
-              this.toolCallIdToParentSessionId.set(emitAgentId, this.orchestrationParentSessionId);
+            // Nested subagents: find the correct parent session by looking up
+            // which GUI session the spawning subagent belongs to.
+            // Do NOT use the global orchestrationParentSessionId — it can be
+            // contaminated by concurrent sessions.
+            const nestedParentSessionId = this.findParentSessionIdForNested(
+              emitAgentId,
+              sessionKey,
+            );
+            if (nestedParentSessionId) {
+              this.toolCallIdToParentSessionId.set(emitAgentId, nestedParentSessionId);
             }
 
             // Extract label from multiple sources for nested subagents
@@ -2777,20 +2790,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             // If no label found, query sessions.list to resolve
             if (!nestedLabel && this.gatewayClient) {
               // Construct the correct parent session key for the query.
-              // sessionKey format: agent:main:subagent:UUID (top-level)
-              // or agent:main:gucciai:parentId:subagent:childId (nested)
-              // For top-level: parent = agent:main:gucciai:{sessionId}
-              // For nested: parent = agent:main:gucciai:{parentId}
+              // Prefer per-session lookup over global to avoid cross-session contamination.
               let queryParentKey: string | null = null;
-              if (this.orchestrationParentSessionId) {
-                queryParentKey = 'agent:main:gucciai:' + this.orchestrationParentSessionId;
-              } else if (sessionKey) {
-                // Try to extract parent from nested sessionKey
-                // Format: agent:main:gucciai:parentId:subagent:childId
+              // First try: extract from sessionKey directly (for nested format)
+              if (sessionKey) {
                 const gucciaiMatch = sessionKey.match(/^agent:main:gucciai:([^:]+):subagent:/);
                 if (gucciaiMatch) {
                   queryParentKey = 'agent:main:gucciai:' + gucciaiMatch[1];
                 }
+              }
+              // Second try: use the per-session parent mapping we just established
+              if (!queryParentKey && nestedParentSessionId) {
+                queryParentKey = 'agent:main:gucciai:' + nestedParentSessionId;
+              }
+              // Fallback: global (only if no per-session info available)
+              if (!queryParentKey && this.orchestrationParentSessionId) {
+                queryParentKey = 'agent:main:gucciai:' + this.orchestrationParentSessionId;
               }
               if (queryParentKey) {
                 console.log(
@@ -8248,8 +8263,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * 用于重启后恢复状态
    */
   private persistSubagentStatus(toolCallId: string, status: 'running' | 'done'): void {
-    if (!this.orchestrationParentSessionId) return;
-    const session = this.store.getSession(this.orchestrationParentSessionId);
+    // Use per-session mapping instead of global to avoid cross-session contamination
+    const parentSessionId =
+      this.toolCallIdToParentSessionId.get(toolCallId) || this.orchestrationParentSessionId;
+    if (!parentSessionId) return;
+    const session = this.store.getSession(parentSessionId);
     if (!session?.messages) return;
 
     // Find the tool_use message with matching toolUseId
@@ -8264,7 +8282,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           ...msg.metadata,
           subagentStatus: status,
         };
-        this.store.updateMessage(this.orchestrationParentSessionId, msg.id, {
+        this.store.updateMessage(parentSessionId, msg.id, {
           metadata: updatedMetadata as CoworkMessageMetadata,
         });
         break;
@@ -8343,8 +8361,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * so that getSubagentStatuses can discover it after restart.
    */
   private persistNestedSubagentSpawn(toolCallId: string, label: string, sessionKey: string): void {
-    if (!this.orchestrationParentSessionId) return;
-    const session = this.store.getSession(this.orchestrationParentSessionId);
+    // Use per-session mapping instead of global to avoid cross-session contamination
+    const parentSessionId =
+      this.toolCallIdToParentSessionId.get(toolCallId) ||
+      this.findParentSessionIdForNested(toolCallId, sessionKey);
+    if (!parentSessionId) return;
+    const session = this.store.getSession(parentSessionId);
     if (!session?.messages) return;
 
     // Check if already persisted (prevent duplicates)
@@ -8361,13 +8383,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         toolCallId +
         ' label=' +
         label +
+        ' parentSessionId=' +
+        parentSessionId +
         ' sessionKey=' +
         sessionKey,
     );
 
     // Create a synthetic tool_use message in the parent session
     // Note: addMessage generates its own id and timestamp, so we omit those
-    this.store.addMessage(this.orchestrationParentSessionId, {
+    this.store.addMessage(parentSessionId, {
       type: 'tool_use',
       content: '',
       metadata: {
@@ -8388,8 +8412,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * synthetic message was created with a UUID placeholder.
    */
   private updateNestedSpawnLabel(toolCallId: string, label: string): void {
-    if (!this.orchestrationParentSessionId) return;
-    const session = this.store.getSession(this.orchestrationParentSessionId);
+    // Use per-session mapping instead of global to avoid cross-session contamination
+    const parentSessionId =
+      this.toolCallIdToParentSessionId.get(toolCallId) || this.orchestrationParentSessionId;
+    if (!parentSessionId) return;
+    const session = this.store.getSession(parentSessionId);
     if (!session?.messages) return;
 
     const targetMsg = session.messages.find(
@@ -8409,7 +8436,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       label,
       toolInput: { ...targetMsg.metadata?.toolInput, label },
     };
-    this.store.updateMessage(this.orchestrationParentSessionId, targetMsg.id, {
+    this.store.updateMessage(parentSessionId, targetMsg.id, {
       metadata: updated,
     });
   }
@@ -8777,6 +8804,46 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   /**
+   * Find the correct parent GUI session ID for a nested subagent.
+   * Searches per-session mappings instead of using the global orchestrationParentSessionId,
+   * which can be contaminated by concurrent sessions.
+   */
+  private findParentSessionIdForNested(emitAgentId: string, sessionKey?: string): string | null {
+    // Try 1: Check if any top-level subagent's sessionKey contains this nested subagent
+    // Nested subagents are children of top-level subagents, so their parent GUI session
+    // is the same as the spawning subagent's parent.
+    for (const [tcId, parentSessId] of this.toolCallIdToParentSessionId) {
+      const childKey = this.toolCallIdToSessionKey.get(tcId);
+      if (childKey && childKey.includes(':subagent:')) {
+        // This is a top-level subagent — check if the nested subagent's sessionKey
+        // shares the same parent context
+        if (sessionKey && childKey && sessionKey.includes(childKey.split(':subagent:')[0])) {
+          return parentSessId;
+        }
+      }
+    }
+
+    // Try 2: Check if the sessionKey itself encodes a gucciai parent
+    if (sessionKey) {
+      const gucciaiMatch = sessionKey.match(/^agent:main:gucciai:([^:]+)/);
+      if (gucciaiMatch) {
+        return gucciaiMatch[1];
+      }
+    }
+
+    // Try 3: Check if any running subagent's sessionKey matches our nested subagent's context
+    for (const [sk, tcId] of this.sessionKeyToToolCallId) {
+      if (sk.includes(':subagent:') && sk.includes(emitAgentId)) {
+        const parentId = this.toolCallIdToParentSessionId.get(tcId);
+        if (parentId) return parentId;
+      }
+    }
+
+    // Fallback: use global (only if no per-session info found)
+    return this.orchestrationParentSessionId;
+  }
+
+  /**
    * Query sessions.list to find subagent sessionKey and establish mapping.
    * Called when gateway tool event doesn't contain childSessionKey directly.
    * NOTE: Only use label for matching, no fallback to avoid mapping confusion.
@@ -9131,27 +9198,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Used when mapping isn't established yet (race condition between subagent events and spawn result).
    */
   private findToolCallIdByChildSessionKey(childSessionKey: string): string | null {
-    if (!this.orchestrationParentSessionId) return null;
+    // Search across all orchestration sessions instead of using the global
+    // to avoid cross-session contamination when multiple GUI sessions are concurrent
+    for (const parentSessionId of this.orchestrationSessionIds) {
+      const parentSession = this.store.getSession(parentSessionId);
+      if (!parentSession?.messages) continue;
 
-    const parentSession = this.store.getSession(this.orchestrationParentSessionId);
-    if (!parentSession?.messages) return null;
-
-    // Find sessions_spawn tool_result messages that contain this childSessionKey
-    for (const msg of parentSession.messages) {
-      if (msg.type === 'tool_result' && msg.metadata?.toolName === 'sessions_spawn') {
-        const toolUseId = msg.metadata?.toolUseId;
-        const result = msg.metadata?.toolResult;
-        if (
-          toolUseId &&
-          isRecord(result) &&
-          (result.childSessionKey === childSessionKey ||
-            result.sessionKey === childSessionKey ||
-            result.key === childSessionKey)
-        ) {
-          // Found matching result - establish mapping and return
-          this.toolCallIdToSessionKey.set(toolUseId, childSessionKey);
-          this.sessionKeyToToolCallId.set(childSessionKey, toolUseId);
-          return toolUseId;
+      // Find sessions_spawn tool_result messages that contain this childSessionKey
+      for (const msg of parentSession.messages) {
+        if (msg.type === 'tool_result' && msg.metadata?.toolName === 'sessions_spawn') {
+          const toolUseId = msg.metadata?.toolUseId;
+          const result = msg.metadata?.toolResult;
+          if (
+            toolUseId &&
+            isRecord(result) &&
+            (result.childSessionKey === childSessionKey ||
+              result.sessionKey === childSessionKey ||
+              result.key === childSessionKey)
+          ) {
+            // Found matching result - establish mapping and return
+            this.toolCallIdToSessionKey.set(toolUseId, childSessionKey);
+            this.sessionKeyToToolCallId.set(childSessionKey, toolUseId);
+            return toolUseId;
+          }
         }
       }
     }
@@ -9165,65 +9234,67 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Uses toolCallId as unique identifier instead of unreliable label matching.
    */
   private findChildSessionKeyByToolCallId(toolCallId: string): string | null {
-    if (!this.orchestrationParentSessionId) return null;
+    // Search across all orchestration sessions instead of using the global
+    // to avoid cross-session contamination when multiple GUI sessions are concurrent
+    for (const parentSessionId of this.orchestrationSessionIds) {
+      const parentSession = this.store.getSession(parentSessionId);
+      if (!parentSession?.messages) continue;
 
-    const parentSession = this.store.getSession(this.orchestrationParentSessionId);
-    if (!parentSession?.messages) return null;
-
-    // Find sessions_spawn tool_result messages that match this toolCallId
-    for (const msg of parentSession.messages) {
-      if (
-        msg.type === 'tool_result' &&
-        msg.metadata?.toolName === 'sessions_spawn' &&
-        msg.metadata?.toolUseId === toolCallId
-      ) {
-        // Parse result to find childSessionKey
-        const result = msg.metadata?.toolResult;
-        if (isRecord(result)) {
-          const childSessionKey =
-            typeof result.childSessionKey === 'string'
-              ? result.childSessionKey
-              : typeof result.sessionKey === 'string'
-                ? result.sessionKey
-                : typeof result.key === 'string'
-                  ? result.key
-                  : null;
-          if (childSessionKey) {
-            // Found matching result - establish mapping and return
-            this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
-            this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
-            console.log(
-              '[OpenClawRuntime] findChildSessionKeyByToolCallId: found mapping toolCallId=' +
-                toolCallId +
-                ' childSessionKey=' +
-                childSessionKey,
-            );
-            return childSessionKey;
-          }
-        }
-        // Also try parsing content as JSON (legacy format)
-        if (typeof msg.content === 'string') {
-          try {
-            const parsed = JSON.parse(msg.content);
+      // Find sessions_spawn tool_result messages that match this toolCallId
+      for (const msg of parentSession.messages) {
+        if (
+          msg.type === 'tool_result' &&
+          msg.metadata?.toolName === 'sessions_spawn' &&
+          msg.metadata?.toolUseId === toolCallId
+        ) {
+          // Parse result to find childSessionKey
+          const result = msg.metadata?.toolResult;
+          if (isRecord(result)) {
             const childSessionKey =
-              typeof parsed.childSessionKey === 'string'
-                ? parsed.childSessionKey
-                : typeof parsed.sessionKey === 'string'
-                  ? parsed.sessionKey
-                  : null;
+              typeof result.childSessionKey === 'string'
+                ? result.childSessionKey
+                : typeof result.sessionKey === 'string'
+                  ? result.sessionKey
+                  : typeof result.key === 'string'
+                    ? result.key
+                    : null;
             if (childSessionKey) {
+              // Found matching result - establish mapping and return
               this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
               this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
               console.log(
-                '[OpenClawRuntime] findChildSessionKeyByToolCallId: found mapping from content toolCallId=' +
+                '[OpenClawRuntime] findChildSessionKeyByToolCallId: found mapping toolCallId=' +
                   toolCallId +
                   ' childSessionKey=' +
                   childSessionKey,
               );
               return childSessionKey;
             }
-          } catch {
-            // Content not JSON, ignore
+          }
+          // Also try parsing content as JSON (legacy format)
+          if (typeof msg.content === 'string') {
+            try {
+              const parsed = JSON.parse(msg.content);
+              const childSessionKey =
+                typeof parsed.childSessionKey === 'string'
+                  ? parsed.childSessionKey
+                  : typeof parsed.sessionKey === 'string'
+                    ? parsed.sessionKey
+                    : null;
+              if (childSessionKey) {
+                this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
+                this.sessionKeyToToolCallId.set(childSessionKey, toolCallId);
+                console.log(
+                  '[OpenClawRuntime] findChildSessionKeyByToolCallId: found mapping from content toolCallId=' +
+                    toolCallId +
+                    ' childSessionKey=' +
+                    childSessionKey,
+                );
+                return childSessionKey;
+              }
+            } catch {
+              // Content not JSON, ignore
+            }
           }
         }
       }
