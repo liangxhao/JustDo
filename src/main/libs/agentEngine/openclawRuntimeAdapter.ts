@@ -4833,6 +4833,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 childSessionKey,
             );
           }
+          // If not found in CoworkStore either, try querying the gateway's
+          // sessions.list API as a final fallback. This is needed because the
+          // gateway strips childSessionKey from tool events.
+          if (toolCallId && mappingKey) {
+            const parentSessionKey = this.toolCallIdToSessionKey.get(toolCallId);
+            if (parentSessionKey) {
+              // Fire-and-forget: query runs in background and will update
+              // mappings when it resolves
+              this.querySubagentSessionKey(mappingKey, parentSessionKey, toolCallId).catch(err => {
+                console.warn(
+                  '[OpenClawRuntime] sessions_spawn: querySubagentSessionKey background call failed:',
+                  err,
+                );
+              });
+            }
+          }
           // If not found in CoworkStore either, keep as pending — lifecycle
           // events will resolve it. Do NOT mark as failed.
         }
@@ -5913,8 +5929,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Delayed check: if subagents were involved and no new turn was created within 500ms,
     // the main agent has truly finished processing all results. Mark as 'completed'.
+    // Use a retry loop (not single-shot) because subagents may take a long time to
+    // complete and their lifecycle 'end' events arrive asynchronously.
     if (shouldKeepRunning) {
-      setTimeout(() => {
+      const MAX_RETRY_MS = 300_000; // 5 minutes cap
+      const RETRY_INTERVAL_MS = 2_000; // check every 2s
+      const startTime = Date.now();
+
+      const checkSubagentsAndFinalize = () => {
         // Check session's current status - only update if still 'running'
         // (avoid overwriting 'idle' from stopSession or 'error' from handleChatError)
         const session = this.store.getSession(sessionId);
@@ -5967,16 +5989,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           // Emit complete event to notify frontend of the status change
           // Use null for runId since this is a delayed update, not a new run completion
           this.emit('complete', sessionId, null, 'completed');
-        } else {
+        } else if (Date.now() - startTime < MAX_RETRY_MS) {
+          // Subagents still running and within retry window — check again
           console.log(
             '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
               sessionId +
               ' stillHasRunningSubagents=' +
               stillHasRunningSubagents +
-              ' -> keep running',
+              ' -> retry in ' +
+              RETRY_INTERVAL_MS +
+              'ms',
           );
+          setTimeout(checkSubagentsAndFinalize, RETRY_INTERVAL_MS);
+        } else {
+          // Timed out — force complete to prevent stuck sessions
+          console.log(
+            '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
+              sessionId +
+              ' timed out after ' +
+              MAX_RETRY_MS +
+              'ms, forcing completed',
+          );
+          this.store.updateSession(sessionId, { status: 'completed' });
+          this.emit('complete', sessionId, null, 'completed');
         }
-      }, 500);
+      };
+
+      setTimeout(checkSubagentsAndFinalize, 500);
     }
   }
 
