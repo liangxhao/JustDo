@@ -23,6 +23,9 @@ interface CoworkSessionItemProps {
   onToggleSelection: () => void;
   onEnterBatchMode: () => void;
   onMoveToGroup?: (groupId: string | null) => void;
+  hasSubagents?: boolean;
+  subagentsCollapsed?: boolean;
+  onToggleSubagentCollapse?: () => void;
 }
 
 const statusLabels: Record<CoworkSessionStatus, string> = {
@@ -82,6 +85,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   onToggleSelection,
   onEnterBatchMode,
   onMoveToGroup,
+  hasSubagents = false,
+  subagentsCollapsed = false,
+  onToggleSubagentCollapse,
 }) => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -387,14 +393,40 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 className="flex-1 min-w-0 rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               />
             ) : (
-              <Tooltip
-                content={session.title}
-                position="top"
-                delay={500}
-                className="flex-1 min-w-0"
-              >
-                <h3 className="text-xs font-medium text-foreground truncate">{session.title}</h3>
-              </Tooltip>
+              <div className="flex-1 min-w-0 flex items-center gap-1">
+                <Tooltip
+                  content={session.title}
+                  position="top"
+                  delay={500}
+                  className="flex-1 min-w-0"
+                >
+                  <h3 className="text-xs font-medium text-foreground truncate">{session.title}</h3>
+                </Tooltip>
+                {hasSubagents && onToggleSubagentCollapse && (
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation();
+                      onToggleSubagentCollapse();
+                    }}
+                    className="flex-shrink-0 p-1 rounded text-secondary hover:text-foreground hover:bg-black/[0.06] dark:hover:bg-white/[0.06] transition-colors"
+                    title={subagentsCollapsed ? 'Show subagents' : 'Hide subagents'}
+                    aria-label={subagentsCollapsed ? 'Show subagents' : 'Hide subagents'}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={`w-3.5 h-3.5 transition-transform duration-150 ${subagentsCollapsed ? '-rotate-90' : 'rotate-0'}`}
+                    >
+                      <path d="M9 18l6-6-6-6" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             )}
           </div>
           <div className="flex items-center gap-2 text-[9px] text-secondary">

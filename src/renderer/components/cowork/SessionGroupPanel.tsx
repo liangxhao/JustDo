@@ -34,6 +34,8 @@ interface SessionGroupPanelProps {
       status: 'pending' | 'running' | 'done';
     } | null>
   >;
+  collapsedSubagentSessions: Set<string>;
+  onToggleSubagentCollapse: (sessionId: string) => void;
 }
 
 const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
@@ -53,6 +55,8 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   onMoveToGroup,
   enrichedSubTasks,
   setActiveSubTask,
+  collapsedSubagentSessions,
+  onToggleSubagentCollapse,
 }) => {
   if (!isExpanded || sessions.length === 0) return null;
 
@@ -73,12 +77,16 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
             onToggleSelection={() => onToggleSelection(session.id)}
             onEnterBatchMode={() => onEnterBatchMode(session.id)}
             onMoveToGroup={groupId => onMoveToGroup(session.id, groupId)}
+            hasSubagents={enrichedSubTasks.length > 0}
+            subagentsCollapsed={collapsedSubagentSessions.has(session.id)}
+            onToggleSubagentCollapse={() => onToggleSubagentCollapse(session.id)}
           />
           <SubAgentList
             sessionId={session.id}
             currentSessionId={currentSessionId}
             enrichedSubTasks={enrichedSubTasks}
             setActiveSubTask={setActiveSubTask}
+            isCollapsed={collapsedSubagentSessions.has(session.id)}
           />
         </React.Fragment>
       ))}
@@ -99,6 +107,7 @@ interface SubAgentListProps {
       status: 'pending' | 'running' | 'done';
     } | null>
   >;
+  isCollapsed?: boolean;
 }
 
 const SubAgentList: React.FC<SubAgentListProps> = ({
@@ -106,8 +115,9 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
   currentSessionId,
   enrichedSubTasks,
   setActiveSubTask,
+  isCollapsed = false,
 }) => {
-  if (sessionId !== currentSessionId || enrichedSubTasks.length === 0) return null;
+  if (sessionId !== currentSessionId || enrichedSubTasks.length === 0 || isCollapsed) return null;
 
   return (
     <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">

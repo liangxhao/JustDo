@@ -41,6 +41,8 @@ interface GroupListProps {
       status: 'pending' | 'running' | 'done';
     } | null>
   >;
+  collapsedSubagentSessions: Set<string>;
+  onToggleSubagentCollapse: (sessionId: string) => void;
 }
 
 const GroupListItem: React.FC<GroupListProps> = ({
@@ -66,6 +68,8 @@ const GroupListItem: React.FC<GroupListProps> = ({
   onMoveToGroup,
   enrichedSubTasks,
   setActiveSubTask,
+  collapsedSubagentSessions,
+  onToggleSubagentCollapse,
 }) => {
   if (sessions.length === 0) return null;
 
@@ -99,6 +103,8 @@ const GroupListItem: React.FC<GroupListProps> = ({
         onMoveToGroup={onMoveToGroup}
         enrichedSubTasks={enrichedSubTasks}
         setActiveSubTask={setActiveSubTask}
+        collapsedSubagentSessions={collapsedSubagentSessions}
+        onToggleSubagentCollapse={onToggleSubagentCollapse}
       />
     </>
   );

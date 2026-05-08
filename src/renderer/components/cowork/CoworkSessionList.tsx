@@ -59,6 +59,7 @@ interface SubAgentListProps {
       status: 'pending' | 'running' | 'done';
     } | null>
   >;
+  isCollapsed?: boolean;
 }
 
 const SubAgentList: React.FC<SubAgentListProps> = ({
@@ -66,8 +67,9 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
   currentSessionId,
   enrichedSubTasks,
   setActiveSubTask,
+  isCollapsed = false,
 }) => {
-  if (sessionId !== currentSessionId || enrichedSubTasks.length === 0) return null;
+  if (sessionId !== currentSessionId || enrichedSubTasks.length === 0 || isCollapsed) return null;
 
   return (
     <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
@@ -125,6 +127,8 @@ interface UngroupedDroppableZoneProps {
     } | null>
   >;
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
+  collapsedSubagentSessions: Set<string>;
+  onToggleSubagentCollapse: (sessionId: string) => void;
 }
 
 const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
@@ -143,6 +147,8 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   onEnterBatchMode,
   setActiveSubTask,
   onMoveToGroup,
+  collapsedSubagentSessions,
+  onToggleSubagentCollapse,
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id: 'ungrouped' });
 
@@ -171,12 +177,16 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
                 await coworkService.moveSessionToGroup(session.id, groupId);
                 onMoveToGroup(session.id, groupId);
               }}
+              hasSubagents={enrichedSubTasks.length > 0}
+              subagentsCollapsed={collapsedSubagentSessions.has(session.id)}
+              onToggleSubagentCollapse={() => onToggleSubagentCollapse(session.id)}
             />
             <SubAgentList
               sessionId={session.id}
               currentSessionId={currentSessionId}
               enrichedSubTasks={enrichedSubTasks}
               setActiveSubTask={setActiveSubTask}
+              isCollapsed={collapsedSubagentSessions.has(session.id)}
             />
           </React.Fragment>
         ))}
@@ -286,6 +296,23 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
   // Group handlers
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+
+  // Subagent collapse state per session
+  const [collapsedSubagentSessions, setCollapsedSubagentSessions] = useState<Set<string>>(
+    new Set(),
+  );
+
+  const handleToggleSubagentCollapse = (sessionId: string) => {
+    setCollapsedSubagentSessions(prev => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  };
 
   const handleToggleGroupExpand = (groupId: string) => {
     dispatch(toggleGroupExpanded(groupId));
@@ -613,6 +640,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     }}
                     enrichedSubTasks={enrichedSubTasks}
                     setActiveSubTask={setActiveSubTask}
+                    collapsedSubagentSessions={collapsedSubagentSessions}
+                    onToggleSubagentCollapse={handleToggleSubagentCollapse}
                   />
                 </React.Fragment>
               );
@@ -640,6 +669,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
             await coworkService.moveSessionToGroup(sessionId, groupId);
             dispatch(moveSessionToGroup({ sessionId, groupId }));
           }}
+          collapsedSubagentSessions={collapsedSubagentSessions}
+          onToggleSubagentCollapse={handleToggleSubagentCollapse}
         />
       </div>
 
