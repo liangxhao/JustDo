@@ -1420,6 +1420,14 @@ const SubagentCompletionMessageItem: React.FC<{
   const [isExpanded, setIsExpanded] = useState(false);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
 
+  // For collapsed view: extract only the first line so multi-line content
+  // shows just the first line (not all lines compressed into one).
+  const collapsedContent = React.useMemo(() => {
+    const text = mapDisplayText ? mapDisplayText(message.content) : message.content;
+    const firstLine = text.split('\n')[0]?.trim() || '';
+    return firstLine;
+  }, [mapDisplayText, message.content]);
+
   // Extract subagent info from metadata
   const taskLabel = (message.metadata?.taskLabel as string) || 'Subagent Task';
   const sessionKey = (message.metadata?.sessionKey as string) || '';
@@ -1469,7 +1477,7 @@ const SubagentCompletionMessageItem: React.FC<{
                   onClick={() => setIsExpanded(true)}
                 >
                   <div className="single-line-markdown mask-fade-right">
-                    <MarkdownContent content={displayContent} className="max-w-none break-words" />
+                    <MarkdownContent content={collapsedContent} className="max-w-none" />
                   </div>
                   {/* Chevron icon at right edge — visual affordance for "click to expand" */}
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">

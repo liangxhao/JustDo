@@ -304,6 +304,8 @@ select::-ms-expand {
 .single-line-markdown .markdown-content * {
   white-space: nowrap !important;
   display: inline !important;
+  font-weight: normal !important;
+  font-size: inherit !important;
 }
 
 .single-line-markdown .markdown-content br {
