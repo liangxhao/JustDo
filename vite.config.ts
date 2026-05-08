@@ -82,6 +82,8 @@ export default defineConfig({
     alias: {
       '@shared': path.resolve(__dirname, './src/shared'),
       '@': path.resolve(__dirname, './src/renderer'),
+      // Use mermaid core build (no dynamic imports, all diagrams statically bundled)
+      mermaid: 'mermaid/dist/mermaid.core.mjs',
     },
   },
   build: {
