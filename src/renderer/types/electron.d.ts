@@ -602,7 +602,7 @@ interface IElectronAPI {
     ) => () => void;
     getSubTaskStatus: (sessionId?: string) => Promise<{
       success: boolean;
-      statuses: Record<string, 'pending' | 'running' | 'done'>;
+      statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
       displayLabels?: Record<string, string>;
     }>;
     getSubTaskHistory: (options: {

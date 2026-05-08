@@ -80,7 +80,7 @@ interface SubTaskDetailDrawerProps {
   displayName?: string;
   parentSessionId: string;
   onClose: () => void;
-  status: 'pending' | 'running' | 'done';
+  status: 'pending' | 'running' | 'done' | 'failed';
 }
 
 /** Module-level cache so re-opening a drawer doesn't flash "loading" */
@@ -249,7 +249,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Track actual status internally (may differ from initial prop)
-  const [status, setStatus] = useState<'pending' | 'running' | 'done'>(initialStatus);
+  const [status, setStatus] = useState<'pending' | 'running' | 'done' | 'failed'>(initialStatus);
   const isRunning = status === 'running' || status === 'pending';
 
   // Width state for resizable drawer
@@ -520,6 +520,12 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
               <span className="inline-flex items-center gap-1 ml-2 text-xs text-green-500">
                 <span className="inline-block w-3 h-3 bg-green-500 rounded-full" />
                 {i18nService.t('subTaskDone') || 'Done'}
+              </span>
+            )}
+            {status === 'failed' && (
+              <span className="inline-flex items-center gap-1 ml-2 text-xs text-red-500">
+                <span className="inline-block w-3 h-3 bg-red-500 rounded-full" />
+                {i18nService.t('subTaskFailed') || 'Failed'}
               </span>
             )}
           </div>

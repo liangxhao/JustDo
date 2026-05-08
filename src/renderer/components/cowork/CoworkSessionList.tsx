@@ -32,77 +32,12 @@ import type {
 import CoworkSessionItem from './CoworkSessionItem';
 import SessionGroupHeader from './SessionGroupHeader';
 import SessionGroupPanel from './SessionGroupPanel';
+import SubAgentList, { SubTaskInfo } from './SubAgentList';
 import CreateGroupModal from './CreateGroupModal';
 import SubTaskDetailDrawer from './SubTaskDetailDrawer';
 import { i18nService } from '../../services/i18n';
 import { coworkService } from '../../services/cowork';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-
-/** 从 sessions_spawn 工具调用中提取的子任务信息 */
-interface SubTaskInfo {
-  agentId: string;
-  task: string;
-  status: 'pending' | 'running' | 'done';
-  sessionKey?: string;
-}
-
-/** Subagent list for a given session — reusable across grouped and ungrouped areas */
-interface SubAgentListProps {
-  sessionId: string;
-  currentSessionId: string | null;
-  enrichedSubTasks: SubTaskInfo[];
-  setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{
-      agentId: string;
-      displayName?: string;
-      parentSessionId: string;
-      status: 'pending' | 'running' | 'done';
-    } | null>
-  >;
-  isCollapsed?: boolean;
-}
-
-const SubAgentList: React.FC<SubAgentListProps> = ({
-  sessionId,
-  currentSessionId,
-  enrichedSubTasks,
-  setActiveSubTask,
-  isCollapsed = false,
-}) => {
-  if (sessionId !== currentSessionId || enrichedSubTasks.length === 0 || isCollapsed) return null;
-
-  return (
-    <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
-      {enrichedSubTasks.map(sub => (
-        <div
-          key={sub.agentId}
-          onClick={() =>
-            setActiveSubTask({
-              agentId: sub.agentId,
-              displayName: sub.task,
-              parentSessionId: sessionId,
-              status: sub.status,
-            })
-          }
-          className="flex items-center gap-2 py-1 px-2 rounded-md text-xs transition-colors cursor-pointer hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
-        >
-          <span
-            className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-              sub.status === 'done'
-                ? 'bg-green-500'
-                : sub.status === 'pending'
-                  ? 'bg-orange-500 animate-pulse'
-                  : 'bg-blue-500 animate-pulse'
-            }`}
-          />
-          <span className="font-medium dark:text-claude-darkText text-claude-text truncate">
-            {sub.task}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-};
 
 interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
@@ -123,7 +58,7 @@ interface UngroupedDroppableZoneProps {
       agentId: string;
       displayName?: string;
       parentSessionId: string;
-      status: 'pending' | 'running' | 'done';
+      status: 'pending' | 'running' | 'done' | 'failed';
     } | null>
   >;
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
@@ -441,7 +376,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
   // Poll backend for real-time sub agent status
   const [backendStatuses, setBackendStatuses] = useState<
-    Record<string, 'pending' | 'running' | 'done'>
+    Record<string, 'pending' | 'running' | 'done' | 'failed'>
   >({});
   const [backendDisplayLabels, setBackendDisplayLabels] = useState<Record<string, string>>({});
   const isSessionActive = currentSession?.status === 'running';
@@ -501,7 +436,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       const merged: Array<{
         agentId: string;
         task: string;
-        status: 'pending' | 'running' | 'done';
+        status: 'pending' | 'running' | 'done' | 'failed';
         sessionKey?: string;
       }> = [];
 
@@ -512,7 +447,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         merged.push({
           agentId,
           task: displayLabel,
-          status: status as 'pending' | 'running' | 'done',
+          status: status as 'pending' | 'running' | 'done' | 'failed',
         });
       }
 
@@ -532,7 +467,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     agentId: string;
     displayName?: string;
     parentSessionId: string;
-    status: 'pending' | 'running' | 'done';
+    status: 'pending' | 'running' | 'done' | 'failed';
   } | null>(null);
 
   if (unGroupedSessions.length === 0 && sessions.length === 0) {

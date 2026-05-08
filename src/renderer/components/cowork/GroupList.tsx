@@ -2,14 +2,7 @@ import React from 'react';
 import type { SessionGroup, CoworkSessionSummary } from '../../types/cowork';
 import SessionGroupHeader from './SessionGroupHeader';
 import SessionGroupPanel from './SessionGroupPanel';
-
-/** Subtask info shape matching CoworkSessionList */
-interface SubTaskInfo {
-  agentId: string;
-  task: string;
-  status: 'pending' | 'running' | 'done';
-  sessionKey?: string;
-}
+import { SubTaskInfo } from './SubAgentList';
 
 interface GroupListProps {
   group: SessionGroup;
@@ -38,7 +31,7 @@ interface GroupListProps {
       agentId: string;
       displayName?: string;
       parentSessionId: string;
-      status: 'pending' | 'running' | 'done';
+      status: 'pending' | 'running' | 'done' | 'failed';
     } | null>
   >;
   collapsedSubagentSessions: Set<string>;
