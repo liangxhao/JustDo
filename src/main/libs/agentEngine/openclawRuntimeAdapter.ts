@@ -874,10 +874,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Tool events (session.tool) from announcing subagents arrive before the chat
    * final text message. We buffer them so the announce text displays first.
    */
-  private readonly bufferedToolEventsByRunId = new Map<
-    string,
-    { payload: unknown }[]
-  >();
+  private readonly bufferedToolEventsByRunId = new Map<string, { payload: unknown }[]>();
   /** Timeout handles for buffered tool events (safety net if chat final never arrives). */
   private readonly bufferedToolTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lastAgentSeqByRunId = new Map<string, number>();
@@ -982,7 +979,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly failedSubagentIds = new Set<string>();
   /** 成功 spawn 的子 Agent toolCallId 集合（spawn 返回 isError=false），生命周期 error 不标记这些为失败 */
   private readonly successfulSpawnToolCallIds = new Set<string>();
-  /** 编排父会话 ID，用于隔离会话 */
+  /** Per-session orchestration tracking: sessionId -> true. Replaces single-value orchestrationParentSessionId to support concurrent sessions. */
+  private readonly orchestrationSessionIds = new Set<string>();
+  /** @deprecated Use orchestrationSessionIds instead. Kept for backward compat with getSubagentStatuses caller. */
   private orchestrationParentSessionId: string | null = null;
   /** 主 agent 生命周期是否已结束（用于不同 runId final 事件后的完成检查） */
   private mainAgentLifecycleEnded = false;
@@ -1479,9 +1478,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // (e.g. from POPO/Telegram channels) don't re-create the ActiveTurn.
     this.stoppedSessions.set(sessionId, Date.now());
 
-    // 清理编排状态
+    // 清理编排状态（per-session tracking）
+    this.orchestrationSessionIds.delete(sessionId);
     if (this.orchestrationParentSessionId === sessionId) {
-      this.orchestrationParentSessionId = null;
+      this.orchestrationParentSessionId =
+        this.orchestrationSessionIds.size > 0
+          ? Array.from(this.orchestrationSessionIds)[0]
+          : null;
       // 保留消息和状态一段时间供 UI 查询，延迟清理
       // CRITICAL: Only clear transient data, keep subagentStatus and mappings
       // for other sessions to display their subagent status correctly
@@ -1592,11 +1595,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
 
-    // 设置编排父会话 ID
+    // 设置编排父会话 ID（per-session tracking）
     // 注意：不清空之前的子 Agent 数据，因为同一会话可能有多个 turn，
     // 每个 turn 可能启动新的 subagent，之前的 subagent 状态应保留
-    const previousOrchestrationSessionId = this.orchestrationParentSessionId;
-    this.orchestrationParentSessionId = sessionId;
+    this.orchestrationSessionIds.add(sessionId);
+    this.orchestrationParentSessionId = sessionId; // backward compat for getSubagentStatuses
 
     // CRITICAL: Do NOT clear subagentStatus, toolCallIdToSessionKey, toolCallIdToLabel, toolCallIdToParentSessionId
     // These mappings are needed by getSubagentStatuses to filter subagents by session.
@@ -1607,7 +1610,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // - subagentMessages: only for streaming new messages
     // - sessionKeyToLabel: for routing messages to subagent sessions
     // - toolCallArgs: temporary args storage
-    if (previousOrchestrationSessionId && previousOrchestrationSessionId !== sessionId) {
+    // Only clear if there are other tracked sessions (switching between concurrent sessions)
+    if (this.orchestrationSessionIds.size > 1) {
       this.subagentMessages.clear();
       this.sessionKeyToLabel.clear();
       this.toolCallArgs.clear();
@@ -4035,7 +4039,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const itemToolCallId = typeof subData.toolCallId === 'string' ? subData.toolCallId : '';
         const itemMetaRaw = typeof subData.meta === 'string' ? subData.meta : '';
 
-        if (itemKind === 'tool' && itemPhase === 'start' && itemToolCallId && itemName === 'sessions_spawn') {
+        if (
+          itemKind === 'tool' &&
+          itemPhase === 'start' &&
+          itemToolCallId &&
+          itemName === 'sessions_spawn'
+        ) {
           // Extract label and task from meta or item data
           let itemLabel = '';
           let itemTask = '';
@@ -6110,8 +6119,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           return;
         }
 
-        // If a new turn was created (follow-up run started), keep running status.
-        // Lifecycle start event will already have set status to 'running'.
+        // If a new turn was created (follow-up run started), defer to checkAllSubagentsDone
+        // which handles per-session completion tracking. Then reschedule to check again
+        // after the new turn potentially completes.
         const hasNewTurn = this.activeTurns.has(sessionId);
         if (hasNewTurn) {
           console.log(
@@ -6119,8 +6129,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               sessionId +
               ' hasNewTurn=' +
               hasNewTurn +
-              ' -> skip (new turn started)',
+              ' -> deferring to checkAllSubagentsDone, will retry',
           );
+          this.checkAllSubagentsDone();
+          // Reschedule the delayed check in case the new turn also spawns subagents
+          setTimeout(checkSubagentsAndFinalize, RETRY_INTERVAL_MS);
           return;
         }
 
@@ -8260,7 +8273,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   /**
-   * Check if all tracked subagents for the orchestration session are 'done'.
+   * Check if all tracked subagents for each orchestration session are 'done'.
    * Only updates session status to 'completed' when BOTH:
    * 1. All subagents are done
    * 2. The main agent itself has no pending output (no active turn / not streaming)
@@ -8268,21 +8281,32 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * subagent results or producing follow-up output.
    */
   private checkAllSubagentsDone(): void {
-    if (!this.orchestrationParentSessionId) return;
+    // Check ALL tracked orchestration sessions (not just the most recent one)
+    for (const sessionId of this.orchestrationSessionIds) {
+      this.checkSessionSubagentsDone(sessionId);
+    }
+    // Also check the legacy single-value for backward compat
+    if (
+      this.orchestrationParentSessionId &&
+      !this.orchestrationSessionIds.has(this.orchestrationParentSessionId)
+    ) {
+      this.checkSessionSubagentsDone(this.orchestrationParentSessionId);
+    }
+  }
 
+  private checkSessionSubagentsDone(sessionId: string): void {
     // Check in-memory subagentStatus Map - this is the authoritative source
     const hasAnyNonDone = Array.from(this.subagentStatus.entries()).some(([toolCallId, status]) => {
       const parentSessionId = this.toolCallIdToParentSessionId.get(toolCallId);
       // Only count subagents belonging to this orchestration session
-      if (parentSessionId !== this.orchestrationParentSessionId) return false;
+      if (parentSessionId !== sessionId) return false;
       return status !== 'done';
     });
 
     if (!hasAnyNonDone) {
       // Verify there's at least one subagent tracked
       const hasAnySubagent = Array.from(this.subagentStatus.keys()).some(
-        toolCallId =>
-          this.toolCallIdToParentSessionId.get(toolCallId) === this.orchestrationParentSessionId,
+        toolCallId => this.toolCallIdToParentSessionId.get(toolCallId) === sessionId,
       );
 
       if (hasAnySubagent) {
@@ -8290,23 +8314,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // If the main agent lifecycle has ended (phase=end), we trust that
         // it's done even if activeTurns hasn't been cleaned up yet (e.g., when
         // the last chat event came from a different runId and returned early).
-        const mainAgentActive = this.activeTurns.has(this.orchestrationParentSessionId);
+        const mainAgentActive = this.activeTurns.has(sessionId);
         if (mainAgentActive && !this.mainAgentLifecycleEnded) {
           console.log(
             '[OpenClawRuntime] checkAllSubagentsDone: all subagents done but main agent still active, deferring completion: sessionId=' +
-              this.orchestrationParentSessionId,
+              sessionId,
           );
           return;
         }
 
         console.log(
           '[OpenClawRuntime] checkAllSubagentsDone: all subagents completed and main agent idle, updating session status to completed: sessionId=' +
-            this.orchestrationParentSessionId,
+            sessionId,
         );
-        this.store.updateSession(this.orchestrationParentSessionId, {
+        this.store.updateSession(sessionId, {
           status: 'completed',
         });
-        this.emit('complete', this.orchestrationParentSessionId, null, 'completed');
+        this.emit('complete', sessionId, null, 'completed');
       }
     }
   }
