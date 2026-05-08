@@ -280,7 +280,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkHistory: '最近对话',
     groupedSessions: '对话分组',
     coworkNoSessions: '暂无最近对话',
-    coworkNoSessionsHint: '在右侧输入框中开始你的第一个对话',
 
     // 会话分组
     rename: '重命名',
@@ -1299,7 +1298,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkHistory: 'Recent Chats',
     groupedSessions: 'Groups',
     coworkNoSessions: 'No chats yet',
-    coworkNoSessionsHint: 'Start your first conversation in the input box',
 
     // Session Groups
     rename: 'Rename',

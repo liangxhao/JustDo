@@ -27,7 +27,7 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
   onCreate,
   existingColors,
 }) => {
-  const defaultColor = useMemo(() => getDefaultColor(existingColors), []);
+  const defaultColor = useMemo(() => getDefaultColor(existingColors), [existingColors]);
   const [name, setName] = useState('');
   const [color, setColor] = useState(defaultColor);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -38,7 +38,7 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
       setName('');
       setColor(getDefaultColor(existingColors));
     }
-  }, [isOpen, existingColors]);
+  }, [isOpen]);
 
   const handleCreate = () => {
     if (name.trim()) {
@@ -76,7 +76,7 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
         />
 
         <label className="form-label">{i18nService.t('groupColor')}</label>
-        <div className="color-picker-row">
+        <div className="color-picker-row px-3">
           {GROUP_COLORS.map(c => (
             <div
               key={c}

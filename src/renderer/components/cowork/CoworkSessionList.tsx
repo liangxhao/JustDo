@@ -125,11 +125,6 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
             />
           </React.Fragment>
         ))}
-        {unGroupedSessions.length === 0 && (
-          <div className="px-2.5 py-4 text-center text-xs text-secondary">
-            {i18nService.t('coworkNoSessionsHint') || 'Drop sessions here to ungroup'}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -502,9 +497,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         <ChatBubbleLeftRightIcon className="h-10 w-10 dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40 mb-3" />
         <p className="text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
           {i18nService.t('coworkNoSessions')}
-        </p>
-        <p className="text-xs dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70 text-center">
-          {i18nService.t('coworkNoSessionsHint')}
         </p>
       </div>
     );

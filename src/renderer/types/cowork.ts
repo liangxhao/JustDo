@@ -28,24 +28,24 @@ export interface UpdateGroupInput {
   sortOrder?: number;
 }
 
-// Group color presets
+// Group color presets — bright modern palette with emoji icons
 export const GROUP_COLORS = [
-  '#ef4444', // red
-  '#f97316', // orange
-  '#eab308', // yellow
-  '#84cc16', // lime
-  '#22c55e', // green
-  '#14b8a6', // teal
-  '#06b6d4', // cyan
-  '#3b82f6', // blue
-  '#6366f1', // indigo
-  '#8b5cf6', // violet
-  '#a855f7', // purple
-  '#d946ef', // fuchsia
-  '#ec4899', // pink
-  '#f43f5e', // rose
-  '#78716c', // stone
-  '#64748b', // slate
+  '#f87171', // coral red
+  '#fb923c', // tangerine
+  '#fbbf24', // sunflower
+  '#a3e635', // lime
+  '#34d399', // emerald
+  '#22d3ee', // sky cyan
+  '#60a5fa', // cerulean
+  '#818cf8', // periwinkle
+  '#c084fc', // lavender
+  '#e879f9', // orchid
+  '#f472b6', // rose
+  '#a78bfa', // amethyst
+  '#4ade80', // spring green
+  '#94a3b8', // steel
+  '#78716c', // warm gray
+  '#d4d4d8', // light gray
 ];
 
 // Cowork message types
