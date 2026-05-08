@@ -1465,7 +1465,7 @@ const SubagentCompletionMessageItem: React.FC<{
                 </button>
                 {/* Bubble-wrapped single-line markdown with right-edge fade */}
                 <div
-                  className="relative flex-1 min-w-0 cursor-pointer rounded-2xl px-4 py-2 bg-surface text-secondary shadow-subtle hover:text-foreground transition-colors"
+                  className="relative w-fit min-w-0 max-w-[calc(100%-48px)] cursor-pointer rounded-2xl px-4 py-2 bg-surface text-secondary shadow-subtle hover:text-foreground transition-colors"
                   onClick={() => setIsExpanded(true)}
                 >
                   <div className="single-line-markdown mask-fade-right">

@@ -578,6 +578,34 @@ const extractTextBlocksAndSignals = (
 };
 
 /**
+ * Extract thinking (reasoning) content from a gateway message.
+ * Gateway messages may have content as an array of blocks, where
+ * thinking blocks have type='thinking' with a 'thinking' or 'text' field.
+ */
+const extractThinkingContent = (message: unknown): string => {
+  if (!isRecord(message)) return '';
+  const content = message.content;
+  if (!Array.isArray(content)) return '';
+
+  const thinkingParts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+    if (block.type === 'thinking') {
+      const thinking =
+        typeof block.thinking === 'string'
+          ? block.thinking
+          : typeof block.text === 'string'
+            ? block.text
+            : '';
+      if (thinking) {
+        thinkingParts.push(thinking);
+      }
+    }
+  }
+  return thinkingParts.join('\n');
+};
+
+/**
  * Extract file paths from assistant "message" tool calls in chat.history.
  * Only scans messages after the last user message (current turn).
  * The model sends files to Telegram using: toolCall { name: "message", arguments: { action: "send", filePath: "..." } }
@@ -837,6 +865,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly sessionIdByRunId = new Map<string, string>();
   private readonly pendingAgentEventsByRunId = new Map<string, AgentEventPayload[]>();
   private readonly lastChatSeqByRunId = new Map<string, number>();
+  /** Track processed announce runId finals to prevent duplicate message creation. */
+  private readonly processedAnnounceRunIds = new Set<string>();
+  /** Accumulated thinking content from subagent announce runs, keyed by runId. */
+  private readonly subagentThinkingByRunId = new Map<string, string>();
   private readonly lastAgentSeqByRunId = new Map<string, number>();
   private readonly pendingApprovals = new Map<string, PendingApprovalEntry>();
   private readonly pendingTurns = new Map<
@@ -982,6 +1014,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   setChannelSessionSync(sync: OpenClawChannelSessionSync): void {
     this.channelSessionSync = sync;
+  }
+
+  /**
+   * Resolve the correct parent session ID for a subagent.
+   * Uses per-subagent mapping (toolCallIdToParentSessionId) when available,
+   * falling back to orchestrationParentSessionId for compatibility.
+   * This prevents cross-session message leakage when multiple sessions
+   * have active subagents concurrently.
+   */
+  private resolveSubagentParentSessionId(agentId: string): string | null {
+    const mappedParent = this.toolCallIdToParentSessionId.get(agentId);
+    if (mappedParent) return mappedParent;
+    return this.orchestrationParentSessionId;
   }
 
   /**
@@ -2586,7 +2631,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 },
               };
 
-              this.emit('message', this.orchestrationParentSessionId, completionMessage);
+              const parentSessionId = this.resolveSubagentParentSessionId(toolCallId);
+              if (parentSessionId) {
+                this.emit('message', parentSessionId, completionMessage);
+              }
             }
           } else if (phase === 'error') {
             // Subagent lifecycle error: only mark as failed if spawn itself failed.
@@ -2941,8 +2989,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             const newMsg = { role: 'user', content: eventText };
             msgs.push(newMsg);
             // Emit IPC event for streaming
-            if (this.orchestrationParentSessionId) {
-              this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+            const parentSessionId = this.resolveSubagentParentSessionId(emitAgentId);
+            if (parentSessionId) {
+              this.emit('subagentMessage', parentSessionId, emitAgentId, {
                 id: msgId,
                 type: 'user',
                 content: eventText,
@@ -3006,10 +3055,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 ? eventText
                 : prevContent + eventText;
               // Emit update event
-              if (this.orchestrationParentSessionId) {
+              const parentSessionId = this.resolveSubagentParentSessionId(emitAgentId);
+              if (parentSessionId) {
                 this.emit(
                   'subagentMessageUpdate',
-                  this.orchestrationParentSessionId,
+                  parentSessionId,
                   emitAgentId,
                   msgId,
                   lastAssistant.content,
@@ -3020,8 +3070,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               const newMsg = { role: 'assistant', content: eventText };
               msgs.push(newMsg);
               // Emit new message event
-              if (this.orchestrationParentSessionId) {
-                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+              const parentSessionId = this.resolveSubagentParentSessionId(emitAgentId);
+              if (parentSessionId) {
+                this.emit('subagentMessage', parentSessionId, emitAgentId, {
                   id: msgId,
                   type: 'assistant',
                   content: eventText,
@@ -3042,10 +3093,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               msgs.push({ role: 'assistant', content: thinkingContent });
             }
             // Emit thinking update event
-            if (this.orchestrationParentSessionId && thinkingContent) {
+            const thinkingParentSessionId = this.resolveSubagentParentSessionId(emitAgentId);
+            if (thinkingParentSessionId && thinkingContent) {
               this.emit(
                 'subagentThinkingUpdate',
-                this.orchestrationParentSessionId,
+                thinkingParentSessionId,
                 emitAgentId,
                 msgId,
                 thinkingContent,
@@ -3069,8 +3121,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               };
               msgs.push(toolMsg);
               // Emit tool_use message
-              if (this.orchestrationParentSessionId) {
-                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+              const toolParentSessionId = this.resolveSubagentParentSessionId(emitAgentId);
+              if (toolParentSessionId) {
+                this.emit('subagentMessage', toolParentSessionId, emitAgentId, {
                   id: msgId,
                   type: 'tool_use',
                   content: toolContent,
@@ -3090,7 +3143,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   const mainToolUseId = toolCallId || emitAgentId;
                   if (mainToolUseId && !this._announceToolMessages.has(mainToolUseId + ':use')) {
                     this._announceToolMessages.add(mainToolUseId + ':use');
-                    this.store.addMessage(this.orchestrationParentSessionId, {
+                    this.store.addMessage(toolParentSessionId, {
                       type: 'tool_use',
                       content: `Using tool: ${toolName}`,
                       metadata: {
@@ -3118,7 +3171,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               };
               msgs.push(resultMsg);
               // Emit tool_result
-              if (this.orchestrationParentSessionId) {
+              const resultParentSessionId = this.resolveSubagentParentSessionId(emitAgentId);
+              if (resultParentSessionId) {
                 this.emit(
                   'subagentToolResult',
                   this.orchestrationParentSessionId,
@@ -3136,7 +3190,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   const mainToolUseId = toolCallId || emitAgentId;
                   if (mainToolUseId && !this._announceToolMessages.has(mainToolUseId + ':result')) {
                     this._announceToolMessages.add(mainToolUseId + ':result');
-                    this.store.addMessage(this.orchestrationParentSessionId, {
+                    this.store.addMessage(resultParentSessionId, {
                       type: 'tool_result',
                       content: resultText,
                       metadata: {
@@ -3219,8 +3273,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 };
                 msgs.push(toolMsg);
                 // Emit tool_use message
-                if (this.orchestrationParentSessionId) {
-                  this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                const itemParentSessionId = this.resolveSubagentParentSessionId(emitAgentId);
+                if (itemParentSessionId) {
+                  this.emit('subagentMessage', itemParentSessionId, emitAgentId, {
                     id: msgId,
                     type: 'tool_use',
                     content: toolContent,
@@ -3241,7 +3296,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                     const mainToolUseId = effectiveToolCallId || emitAgentId;
                     if (mainToolUseId && !this._announceToolMessages.has(mainToolUseId + ':use')) {
                       this._announceToolMessages.add(mainToolUseId + ':use');
-                      this.store.addMessage(this.orchestrationParentSessionId, {
+                      this.store.addMessage(itemParentSessionId, {
                         type: 'tool_use',
                         content: `Using tool: ${itemName}`,
                         metadata: {
@@ -3371,10 +3426,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 };
                 msgs.push(resultMsg);
                 // Emit tool_result
-                if (this.orchestrationParentSessionId) {
+                const resultParentSessionId2 = this.resolveSubagentParentSessionId(emitAgentId);
+                if (resultParentSessionId2) {
                   this.emit(
                     'subagentToolResult',
-                    this.orchestrationParentSessionId,
+                    resultParentSessionId2,
                     emitAgentId,
                     effectiveToolCallId,
                     resultContent,
@@ -3392,7 +3448,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                       !this._announceToolMessages.has(mainToolUseId + ':result')
                     ) {
                       this._announceToolMessages.add(mainToolUseId + ':result');
-                      this.store.addMessage(this.orchestrationParentSessionId, {
+                      this.store.addMessage(resultParentSessionId2, {
                         type: 'tool_result',
                         content: resultText,
                         metadata: {
@@ -3420,8 +3476,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 content: toolContent,
               });
               // Emit tool_use message
-              if (this.orchestrationParentSessionId) {
-                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+              const itemParentSessionId2 = this.resolveSubagentParentSessionId(emitAgentId);
+              if (itemParentSessionId2) {
+                this.emit('subagentMessage', itemParentSessionId2, emitAgentId, {
                   id: `subagent-item-${itemId || Date.now()}`,
                   type: 'tool_use',
                   content: toolContent,
@@ -3711,8 +3768,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               const newMsg = { role, content: eventText };
               msgs.push(newMsg);
               // Emit new message event
-              if (this.orchestrationParentSessionId && emitAgentId) {
-                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+              const sessParentId1 = this.resolveSubagentParentSessionId(emitAgentId);
+              if (sessParentId1 && emitAgentId) {
+                this.emit('subagentMessage', sessParentId1, emitAgentId, {
                   id: `subagent-${role}-${Date.now()}-${msgs.length}`,
                   type: role,
                   content: eventText,
@@ -3724,8 +3782,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             const newMsg = { role, content: eventText };
             msgs.push(newMsg);
             // Emit new message event
-            if (this.orchestrationParentSessionId && emitAgentId) {
-              this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+            const sessParentId2 = this.resolveSubagentParentSessionId(emitAgentId);
+            if (sessParentId2 && emitAgentId) {
+              this.emit('subagentMessage', sessParentId2, emitAgentId, {
                 id: `subagent-${role}-${Date.now()}-${msgs.length}`,
                 type: role,
                 content: eventText,
@@ -3763,8 +3822,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               };
               msgs.push(toolMsg);
               // Emit tool_use message
-              if (this.orchestrationParentSessionId && emitAgentId) {
-                this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+              const toolParentSessionId3 = this.resolveSubagentParentSessionId(emitAgentId);
+              if (toolParentSessionId3 && emitAgentId) {
+                this.emit('subagentMessage', toolParentSessionId3, emitAgentId, {
                   id: `subagent-tool-${toolCallId || Date.now()}`,
                   type: 'tool_use',
                   content: toolSummary,
@@ -3840,8 +3900,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   },
                 };
                 msgs.push(toolMsg);
-                if (this.orchestrationParentSessionId && emitAgentId) {
-                  this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+                const itemParentSessionId4 = this.resolveSubagentParentSessionId(emitAgentId);
+                if (itemParentSessionId4 && emitAgentId) {
+                  this.emit('subagentMessage', itemParentSessionId4, emitAgentId, {
                     id: msgId,
                     type: 'tool_use',
                     content: toolContent,
@@ -4576,8 +4637,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             ')',
         );
         // Emit IPC event for this context message
-        if (this.orchestrationParentSessionId) {
-          this.emit('subagentMessage', this.orchestrationParentSessionId, toolCallId, {
+        const contextParentSessionId = this.resolveSubagentParentSessionId(toolCallId);
+        if (contextParentSessionId) {
+          this.emit('subagentMessage', contextParentSessionId, toolCallId, {
             id: `subagent-context-${Date.now()}`,
             type: 'user',
             content: contextMsg.content,
@@ -5091,11 +5153,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (state === 'final') {
         // For final events from different runId, just add the message without modifying turn state
         // This prevents duplicate messages when main agent yields/resumes during subagent waits
+
+        // Deduplication: skip if this runId's final was already processed
+        if (this.processedAnnounceRunIds.has(runId)) {
+          console.debug(
+            '[OpenClawRuntime] handleChatEvent: skipping already-processed announce runId final, runId=' +
+              runId.slice(0, 20),
+          );
+          return;
+        }
+        this.processedAnnounceRunIds.add(runId);
+
         const finalMessage = chatPayload.message;
         if (finalMessage && isRecord(finalMessage)) {
           const role = typeof finalMessage.role === 'string' ? finalMessage.role.toLowerCase() : '';
           if (role === 'assistant') {
             const text = extractMessageText(finalMessage).trim();
+            // Combine thinking from the final message blocks with accumulated
+            // thinking from subagent announce runs (streamed via separate events).
+            let thinking = extractThinkingContent(finalMessage);
+            const subagentThinking = this.subagentThinkingByRunId.get(runId);
+            if (subagentThinking) {
+              thinking = thinking ? thinking + '\n' + subagentThinking : subagentThinking;
+            }
             // Skip silent replies (NO_REPLY) — also handle truncated versions
             // that OpenClaw gateway may produce during streaming (e.g. "NO", "NO_RE").
             // For truncated prefixes, query the subagent's chat.history to confirm
@@ -5143,6 +5223,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   content: text,
                   metadata: { isStreaming: false, isFinal: true },
                   modelName: turn.modelName,
+                  ...(thinking ? { thinkingContent: thinking } : {}),
                 });
                 this.emit('message', sessionId, assistantMessage);
               }
@@ -5151,13 +5232,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               console.debug(
                 '[OpenClawRuntime] handleChatEvent: adding final message from different runId, text="' +
                   text.slice(0, 50) +
-                  '"',
+                  '"' +
+                  (thinking ? ' (with thinking)' : ''),
               );
               const assistantMessage = this.store.addMessage(sessionId, {
                 type: 'assistant',
                 content: text,
                 metadata: { isStreaming: false, isFinal: true },
                 modelName: turn.modelName,
+                ...(thinking ? { thinkingContent: thinking } : {}),
               });
               this.emit('message', sessionId, assistantMessage);
             }
@@ -5367,15 +5450,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
-    // Skip thinking events from a different runId (e.g., sub-agent announce while main agent is running).
-    // This prevents thinking messages being created for announce events.
+    // Accumulate thinking events from subagent announce runs (different runId).
+    // The accumulated thinking is retrieved when the subagent's chat final event is processed.
     if (runId && turn.runId && runId !== turn.runId) {
-      console.log(
-        '[OpenClawRuntime] processThinking: skipping event from different runId, runId=' +
-          runId.slice(0, 20) +
-          ' turn.runId=' +
-          turn.runId.slice(0, 20),
-      );
+      const dataField = isRecord(p.data) ? (p.data as Record<string, unknown>) : null;
+      if (dataField) {
+        const text = typeof dataField.text === 'string' ? dataField.text : '';
+        const delta = typeof dataField.delta === 'string' ? dataField.delta : '';
+        const current = this.subagentThinkingByRunId.get(runId) || '';
+        // Use text as authoritative full content, fall back to delta appending
+        if (text) {
+          this.subagentThinkingByRunId.set(runId, text);
+        } else if (delta) {
+          this.subagentThinkingByRunId.set(runId, current + delta);
+        }
+      }
       return;
     }
 
@@ -8578,8 +8667,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         );
         const newMsg = { role: 'assistant', content: text };
         msgs.push(newMsg);
-        if (this.orchestrationParentSessionId) {
-          this.emit('subagentMessage', this.orchestrationParentSessionId, emitAgentId, {
+        const syncParentSessionId = this.resolveSubagentParentSessionId(emitAgentId);
+        if (syncParentSessionId) {
+          this.emit('subagentMessage', syncParentSessionId, emitAgentId, {
             id: `subagent-assistant-synced-${Date.now()}`,
             type: 'assistant',
             content: text,

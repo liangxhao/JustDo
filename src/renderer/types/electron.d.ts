@@ -496,6 +496,7 @@ interface IElectronAPI {
       success: boolean;
       totalTokens?: number;
       contextTokens?: number;
+      totalTokensFresh?: boolean;
       error?: string;
     }>;
     deleteMessage: (
