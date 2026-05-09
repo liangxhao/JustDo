@@ -1004,6 +1004,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   /** Pending subagent timeout: toolCallId → timestamp when it entered pending state */
   private readonly pendingEntryTimestamps = new Map<string, number>();
   private static readonly PENDING_TIMEOUT_MS = 30_000; // 30s without lifecycle events → failed
+  /** Subagent idle timeout: if a subagent in 'running' state has no activity for this duration,
+   *  mark it as failed. This catches cases where the gateway stops sending events (e.g. quota
+   *  exceeded as the last event) but the subagent internally completed. 10 minutes is conservative
+   *  enough to avoid false positives for legitimate long-running tasks with intermittent activity. */
+  private static readonly SUBAGENT_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
   /** Subagent activity tracker: toolCallId → last seen activity timestamp.
    *  Used to detect stuck subagents — if no activity within the timeout window,
    *  the subagent is marked as failed regardless of its 'running' status. */
@@ -5443,6 +5448,51 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // Flush any buffered tool events from this announce runId so they
         // display after the announce text message.
         this.flushBufferedToolEventsForRunId(sessionId, turn, runId);
+
+        // Mark the subagent as done when an announce run completes successfully.
+        // Lifecycle events may only fire phase=start/error during quota retries,
+        // with no phase=end. The announce completion via chat final is the
+        // authoritative signal that the subagent finished.
+        if (runId && runId.includes(':subagent:')) {
+          const subagentUuidMatch = runId.match(/subagent[:\-]([a-f0-9-]{36})/i);
+          if (subagentUuidMatch) {
+            const subagentUuid = subagentUuidMatch[1];
+            const subagentSessionKey = 'agent:main:subagent:' + subagentUuid;
+            let toolCallId = this.sessionKeyToToolCallId.get(subagentSessionKey);
+            // Fallback: try without the prefix
+            if (!toolCallId) {
+              const shortKey = 'subagent:' + subagentUuid;
+              toolCallId = this.sessionKeyToToolCallId.get(shortKey);
+            }
+            // Fallback: search subagentStatus keys that contain the UUID
+            if (!toolCallId) {
+              for (const [key, status] of this.subagentStatus) {
+                if (key.includes(subagentUuid) && status !== 'done' && status !== 'failed') {
+                  toolCallId = key;
+                  break;
+                }
+              }
+            }
+            if (toolCallId) {
+              const currentStatus = this.subagentStatus.get(toolCallId);
+              if (currentStatus !== 'done' && currentStatus !== 'failed') {
+                console.log(
+                  '[OpenClawRuntime] announce completion: marking subagent as done toolCallId=' +
+                    toolCallId +
+                    ' uuid=' +
+                    subagentUuid +
+                    ' was=' +
+                    (currentStatus || '(none)'),
+                );
+                this.subagentStatus.set(toolCallId, 'done');
+                this.persistSubagentStatus(toolCallId, 'done');
+                this.pendingToolCallIds.delete(toolCallId);
+                this.pendingEntryTimestamps.delete(toolCallId);
+                this.checkAllSubagentsDone();
+              }
+            }
+          }
+        }
 
         // Safety net: if main agent lifecycle has ended and all subagents are done,
         // finalize the session. This handles the case where the last chat event
