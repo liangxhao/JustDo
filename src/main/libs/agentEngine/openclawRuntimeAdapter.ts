@@ -1014,6 +1014,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    *  the subagent is marked as failed regardless of its 'running' status. */
   private readonly subagentLastActivity = new Map<string, number>();
 
+  /** Track toolCallIds that were created via item-level handler (stream=item).
+   *  These spawns come from announce runs and may not have lifecycle events.
+   *  Used for orphan detection in getSubagentStatuses. */
+  private readonly itemLevelSpawnedToolCallIds = new Set<string>();
+
   /** Cross-reference: UUID → call_... toolCallId.
    *  Nested lifecycle phase=start uses sessionKey UUID as key, but context messages
    *  are stored under call_... keys by the sessions_spawn handler. This map bridges
@@ -4096,7 +4101,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           );
 
           if (!this.subagentStatus.has(itemToolCallId)) {
-            this.subagentStatus.set(itemToolCallId, 'running');
+            this.subagentStatus.set(itemToolCallId, 'pending');
+            this.pendingToolCallIds.add(itemToolCallId);
+            this.pendingEntryTimestamps.set(itemToolCallId, Date.now());
             this.toolCallIdToLabel.set(itemToolCallId, displayLabel);
             this.toolCallIdToParentSessionId.set(itemToolCallId, sessionId);
             if (sessionKey) this.toolCallIdToSessionKey.set(itemToolCallId, sessionKey);
@@ -4104,11 +4111,73 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               label: itemLabel,
               task: itemTask,
             });
+            // Track as item-level spawn for orphan detection
+            this.itemLevelSpawnedToolCallIds.add(itemToolCallId);
+
+            // Initialize subagentMessages for this toolCallId
+            if (!this.subagentMessages.has(itemToolCallId)) {
+              this.subagentMessages.set(itemToolCallId, []);
+            }
+
+            // Create a tool_use message so the spawn appears in the main message list
+            // Matches the format used by handleAgentToolEvent (line ~5155)
+            const effectiveArgs: Record<string, unknown> = {
+              label: itemLabel,
+              task: itemTask,
+            };
+            const toolUseMessage = this.store.addMessage(sessionId, {
+              type: 'tool_use',
+              content: `Using tool: sessions_spawn`,
+              metadata: {
+                toolName: 'sessions_spawn',
+                toolInput: effectiveArgs,
+                toolUseId: itemToolCallId,
+              },
+            });
+            turn.toolUseMessageIdByToolCallId.set(itemToolCallId, toolUseMessage.id);
+            this.emit('message', sessionId, toolUseMessage);
+
+            console.log(
+              '[OpenClawRuntime] item-level sessions_spawn: created tool_use message toolCallId=' +
+                itemToolCallId +
+                ' messageId=' +
+                toolUseMessage.id,
+            );
+
+            // Emit subagent context message (matches stream=tool path at line ~4830)
+            if (itemTask) {
+              const contextMsg = {
+                role: 'user',
+                content: `[Subagent Context]\n\n${itemTask}`,
+                metadata: {
+                  isSubagentContext: true,
+                  label: displayLabel,
+                },
+              };
+              const msgs = this.subagentMessages.get(itemToolCallId)!;
+              msgs.push(contextMsg);
+
+              // Emit IPC event for the context message
+              this.emit('subagentMessage', sessionId, itemToolCallId, {
+                id: `subagent-context-${Date.now()}`,
+                type: 'user',
+                content: contextMsg.content,
+                timestamp: Date.now(),
+                metadata: contextMsg.metadata,
+              });
+
+              console.log(
+                '[OpenClawRuntime] item-level sessions_spawn: emitted subagent context toolCallId=' +
+                  itemToolCallId,
+              );
+            }
           }
         }
 
-        // Update childSessionKey mapping when item phase is 'end' and result contains it
+        // Handle item-level sessions_spawn result (phase=end)
+        // Create tool_result message matching handleAgentToolEvent format (line ~5187)
         if (itemKind === 'tool' && itemPhase === 'end' && itemToolCallId && itemMetaRaw) {
+          // Update childSessionKey mapping when result contains it
           try {
             const itemMetaParsed = JSON.parse(itemMetaRaw) as Record<string, unknown>;
             const childSessionKey =
@@ -4117,6 +4186,74 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 : '';
             if (childSessionKey && this.toolCallIdToSessionKey.get(itemToolCallId)) {
               this.toolCallIdToSessionKey.set(itemToolCallId, childSessionKey);
+            }
+
+            // Check if spawn succeeded (no error in result)
+            const isError =
+              typeof itemMetaParsed.isError === 'boolean' ? itemMetaParsed.isError : false;
+
+            if (!isError && this.itemLevelSpawnedToolCallIds.has(itemToolCallId)) {
+              // Build result content for the tool_result message
+              const resultContent = JSON.stringify({
+                childSessionKey: childSessionKey || '(unknown)',
+                status: 'ok',
+              });
+
+              const toolInputForResult: Record<string, unknown> = {};
+              if (this.toolCallArgs.has(itemToolCallId)) {
+                const saved = this.toolCallArgs.get(itemToolCallId);
+                if (saved) {
+                  Object.assign(toolInputForResult, saved);
+                }
+              }
+
+              const existingResultMessageId =
+                turn.toolResultMessageIdByToolCallId.get(itemToolCallId);
+              if (existingResultMessageId) {
+                // Update existing streaming result
+                this.store.updateMessage(sessionId, existingResultMessageId, {
+                  content: resultContent,
+                  metadata: {
+                    toolResult: resultContent,
+                    toolUseId: itemToolCallId,
+                    toolName: 'sessions_spawn',
+                    toolInput: toolInputForResult,
+                    isError: false,
+                    isStreaming: false,
+                    isFinal: true,
+                  },
+                });
+              } else {
+                // Create new tool_result message
+                const resultMessage = this.store.addMessage(sessionId, {
+                  type: 'tool_result',
+                  content: resultContent,
+                  metadata: {
+                    toolResult: resultContent,
+                    toolUseId: itemToolCallId,
+                    toolName: 'sessions_spawn',
+                    toolInput: toolInputForResult,
+                    isError: false,
+                    isStreaming: false,
+                    isFinal: true,
+                  },
+                });
+                turn.toolResultMessageIdByToolCallId.set(itemToolCallId, resultMessage.id);
+                this.emit('message', sessionId, resultMessage);
+              }
+
+              // Mark as running since spawn succeeded and lifecycle events may follow
+              if (this.subagentStatus.get(itemToolCallId) === 'pending') {
+                this.subagentStatus.set(itemToolCallId, 'running');
+                this.subagentLastActivity.set(itemToolCallId, Date.now());
+              }
+
+              console.log(
+                '[OpenClawRuntime] item-level sessions_spawn result: created tool_result toolCallId=' +
+                  itemToolCallId +
+                  ' childSessionKey=' +
+                  (childSessionKey || '(unknown)'),
+              );
             }
           } catch {
             // meta may not be JSON
@@ -5544,6 +5681,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 this.pendingEntryTimestamps.delete(toolCallId);
                 this.checkAllSubagentsDone();
               }
+            } else {
+              console.log(
+                '[OpenClawRuntime] announce completion: lookup FAILED for uuid=' +
+                  subagentUuid +
+                  '. sessionKeyToToolCallId keys=' +
+                  Array.from(this.sessionKeyToToolCallId.keys()).join(',') +
+                  ' subagentStatus keys=' +
+                  Array.from(this.subagentStatus.keys()).slice(0, 20).join(','),
+              );
             }
           }
         }
@@ -8993,6 +9139,53 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             ' label=' +
             displayLabels[toolCallId],
         );
+      }
+
+      // Detect item-level spawns that are stuck as 'running' with no tool_result message.
+      // These are spawns from announce runs that the gateway prunes as orphans.
+      // Without a lifecycle end event, they stay 'running' indefinitely.
+      const orphanIdleThreshold = Date.now() - 60 * 1000; // 60 seconds without activity
+
+      // Build a Set of toolUseIds that have tool_result messages in this session
+      const toolResultToolUseIds = new Set<string>();
+      const sess = this.store.getSession(sessionId);
+      if (sess?.messages) {
+        for (const msg of sess.messages) {
+          if (msg.type === 'tool_result' && msg.metadata?.toolUseId) {
+            toolResultToolUseIds.add(msg.metadata.toolUseId as string);
+          }
+        }
+      }
+
+      for (const itemToolCallId of this.itemLevelSpawnedToolCallIds) {
+        if (!statuses[itemToolCallId]) continue; // not yet in this session's statuses
+        if (statuses[itemToolCallId] === 'done' || statuses[itemToolCallId] === 'failed') continue;
+
+        // Check if a tool_result message was ever created
+        const hasToolResult = toolResultToolUseIds.has(itemToolCallId);
+        const hasLifecycleEnd = (() => {
+          const status = this.subagentStatus.get(itemToolCallId);
+          return status === 'done' || status === 'failed';
+        })();
+
+        const lastActivity = this.subagentLastActivity.get(itemToolCallId) || 0;
+        const isStuck = !hasToolResult && !hasLifecycleEnd && lastActivity < orphanIdleThreshold;
+
+        if (isStuck) {
+          console.log(
+            '[OpenClawRuntime] getSubagentStatuses: marking item-level orphan as failed toolCallId=' +
+              itemToolCallId +
+              ' label=' +
+              (this.toolCallIdToLabel.get(itemToolCallId) || '(unknown)') +
+              ' reason=no tool_result, no lifecycle end, last activity=' +
+              (lastActivity > 0
+                ? Math.round((Date.now() - lastActivity) / 1000) + 's ago'
+                : 'never'),
+          );
+          statuses[itemToolCallId] = 'failed';
+          this.subagentStatus.set(itemToolCallId, 'failed');
+          this.failedSubagentIds.add(itemToolCallId);
+        }
       }
     }
 
