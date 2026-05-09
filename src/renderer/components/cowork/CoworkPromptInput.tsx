@@ -911,7 +911,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     // Poll context usage from OpenClaw gateway
     useEffect(() => {
-      if (!sessionId || isStreaming) {
+      if (!sessionId) {
         setContextUsage(null);
         return;
       }
@@ -936,7 +936,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         }
       };
       void fetchUsage();
-      const timer = setInterval(fetchUsage, 5000);
+      const interval = isStreaming ? 1000 : 5000;
+      const timer = setInterval(fetchUsage, interval);
       return () => {
         cancelled = true;
         clearInterval(timer);
