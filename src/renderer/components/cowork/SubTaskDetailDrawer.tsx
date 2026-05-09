@@ -253,7 +253,11 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   const isRunning = status === 'running' || status === 'pending';
 
   // Width state for resizable drawer
-  const [drawerWidth, setDrawerWidth] = useState(480);
+  // Default: 40% of the main content area width (excluding sidebar)
+  // Recalculates on window resize, maximize/restore, sidebar toggle
+  const [drawerWidth, setDrawerWidth] = useState(400);
+  const defaultWidthRef = useRef(400);
+  const userOffsetRef = useRef(0); // drawerWidth - defaultWidth, set on user drag
   const [isResizing, setIsResizing] = useState(false);
   const resizeRef = useRef<HTMLDivElement>(null);
 
@@ -441,22 +445,61 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
+  // Auto-size: default to 40% of main content area width (excluding sidebar)
+  // Recalculates on window resize, maximize/restore. Preserves user drag offset.
+  const DEFAULT_RATIO = 0.4;
+  const MIN_WIDTH = 320;
+
+  // Measure the content panel width (the flex-1 div containing the session UI)
+  const measureContentWidth = useCallback((): number => {
+    // The content area is the flex-1 sibling of the sidebar inside the
+    // `flex.flex-1` container at App.tsx:497.
+    // It has padding: py-1.5 pr-1.5 (6px on top/bottom, 6px right).
+    // Its computed width = full container width - sidebar width - 6px(pr).
+    // But the simplest reliable approach: find the div with class containing
+    // "flex-1 min-w-0 py-1.5 pr-1.5" and read its clientWidth.
+    const candidates = document.querySelectorAll('.flex-1.min-w-0.py-1\\.5.pr-1\\.5');
+    if (candidates.length > 0) {
+      const el = candidates[candidates.length - 1] as HTMLElement;
+      return el.clientWidth;
+    }
+    // Fallback: assume sidebar is w-60 (240px) or w-0 (collapsed),
+    // content = window.innerWidth - sidebar - padding
+    const isSidebarCollapsed = !!document.querySelector('.w-0')?.matches(':scope');
+    const sidebarWidth = isSidebarCollapsed ? 0 : 240;
+    return window.innerWidth - sidebarWidth - 6; // 6px for pr-1.5
+  }, []);
+
+  // Calculate and apply default width from current content area
+  const recalcDefaultWidth = useCallback(() => {
+    const contentWidth = measureContentWidth();
+    const newDefault = Math.max(MIN_WIDTH, Math.round(contentWidth * DEFAULT_RATIO));
+    defaultWidthRef.current = newDefault;
+    // If user has dragged, preserve offset; otherwise use default
+    setDrawerWidth(newDefault + userOffsetRef.current);
+  }, [measureContentWidth]);
+
+  // Initial calc + listen for window resize (covers maximize/restore, drag resize)
+  useEffect(() => {
+    recalcDefaultWidth();
+    window.addEventListener('resize', recalcDefaultWidth);
+    return () => window.removeEventListener('resize', recalcDefaultWidth);
+  }, [recalcDefaultWidth]);
+
   // Resize handlers for draggable width adjustment
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
-      // Calculate new width from right edge (drawer is right-aligned)
       const newWidth = window.innerWidth - e.clientX;
-      // Clamp width between min (320) and max (90% of viewport)
-      const minWidth = 320;
-      const maxWidth = window.innerWidth * 0.9;
-      setDrawerWidth(Math.max(minWidth, Math.min(maxWidth, newWidth)));
+      setDrawerWidth(Math.max(MIN_WIDTH, newWidth));
     };
 
     const handleMouseUp = () => {
       setIsResizing(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      // Record user offset so recalcDefaultWidth preserves it
+      userOffsetRef.current = drawerWidth - defaultWidthRef.current;
     };
 
     if (isResizing) {
@@ -470,7 +513,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizing]);
+  }, [isResizing, drawerWidth]);
 
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

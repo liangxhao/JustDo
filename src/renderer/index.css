@@ -277,7 +277,7 @@ select::-ms-expand {
 }
 
 .session-group-header .group-name {
-  @apply text-xs font-normal text-secondary truncate flex-1;
+  @apply text-xs font-normal text-foreground truncate;
 }
 
 .session-group-header .group-count {

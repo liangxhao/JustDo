@@ -9,6 +9,7 @@ interface SessionGroupPanelProps {
   groups: SessionGroup[];
   isExpanded: boolean;
   currentSessionId: string | null;
+  activeSessionId: string | undefined;
   unreadSessionIds: string[];
   isBatchMode: boolean;
   selectedIds: Set<string>;
@@ -37,6 +38,7 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   groups,
   isExpanded,
   currentSessionId,
+  activeSessionId,
   unreadSessionIds,
   isBatchMode,
   selectedIds,
@@ -70,7 +72,7 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
             onToggleSelection={() => onToggleSelection(session.id)}
             onEnterBatchMode={() => onEnterBatchMode(session.id)}
             onMoveToGroup={groupId => onMoveToGroup(session.id, groupId)}
-            hasSubagents={enrichedSubTasks.length > 0}
+            hasSubagents={session.id === activeSessionId && enrichedSubTasks.length > 0}
             subagentsCollapsed={collapsedSubagentSessions.has(session.id)}
             onToggleSubagentCollapse={() => onToggleSubagentCollapse(session.id)}
           />

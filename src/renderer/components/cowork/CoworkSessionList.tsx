@@ -43,6 +43,7 @@ interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
   unreadSessionIdSet: Set<string>;
   currentSessionId: string | null;
+  activeSessionId: string | undefined;
   isBatchMode: boolean;
   selectedIds: Set<string>;
   showBatchOption?: boolean;
@@ -70,6 +71,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   unGroupedSessions,
   unreadSessionIdSet,
   currentSessionId,
+  activeSessionId,
   isBatchMode,
   selectedIds,
   showBatchOption,
@@ -112,7 +114,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
                 await coworkService.moveSessionToGroup(session.id, groupId);
                 onMoveToGroup(session.id, groupId);
               }}
-              hasSubagents={enrichedSubTasks.length > 0}
+              hasSubagents={session.id === activeSessionId && enrichedSubTasks.length > 0}
               subagentsCollapsed={collapsedSubagentSessions.has(session.id)}
               onToggleSubagentCollapse={() => onToggleSubagentCollapse(session.id)}
             />
@@ -553,6 +555,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     groups={groups}
                     isExpanded={isExpanded}
                     currentSessionId={currentSessionId}
+                    activeSessionId={activeSessionId}
                     unreadSessionIds={unreadSessionIds}
                     isBatchMode={isBatchMode}
                     selectedIds={selectedIds}
@@ -581,6 +584,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           unGroupedSessions={unGroupedSessions}
           unreadSessionIdSet={unreadSessionIdSet}
           currentSessionId={currentSessionId}
+          activeSessionId={activeSessionId}
           isBatchMode={isBatchMode}
           selectedIds={selectedIds}
           showBatchOption={showBatchOption}

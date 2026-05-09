@@ -10,6 +10,7 @@ interface GroupListProps {
   groups: SessionGroup[];
   isExpanded: boolean;
   currentSessionId: string | null;
+  activeSessionId: string | undefined;
   unreadSessionIds: string[];
   isBatchMode: boolean;
   selectedIds: Set<string>;
@@ -44,6 +45,7 @@ const GroupListItem: React.FC<GroupListProps> = ({
   groups,
   isExpanded,
   currentSessionId,
+  activeSessionId,
   unreadSessionIds,
   isBatchMode,
   selectedIds,
@@ -85,6 +87,7 @@ const GroupListItem: React.FC<GroupListProps> = ({
         groups={groups}
         isExpanded={isExpanded}
         currentSessionId={currentSessionId}
+        activeSessionId={activeSessionId}
         unreadSessionIds={unreadSessionIds}
         isBatchMode={isBatchMode}
         selectedIds={selectedIds}
