@@ -25,6 +25,7 @@ import {
   updateMessageContent,
   updateMessageMetadata,
   updateMessageThinkingContent,
+  updateMessageUsage,
   updateSessionPinned,
   updateSessionStatus,
   updateSessionTitle,
@@ -167,10 +168,14 @@ class CoworkService {
     this.streamListenerCleanups.push(thinkingUpdateCleanup);
 
     // Message metadata update listener (for status changes like isStreaming)
+    // Also carries optional usage data from reconcileWithHistory.
     const messageMetadataUpdateCleanup = cowork.onStreamMessageMetadataUpdate(
-      ({ sessionId, messageId, metadata }) => {
+      ({ sessionId, messageId, metadata, usage }) => {
         flushSync(() => {
           store.dispatch(updateMessageMetadata({ sessionId, messageId, metadata }));
+          if (usage) {
+            store.dispatch(updateMessageUsage({ sessionId, messageId, usage }));
+          }
         });
       },
     );

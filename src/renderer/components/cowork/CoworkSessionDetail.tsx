@@ -1205,6 +1205,14 @@ const formatTimestamp = (ts: number): string => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 };
 
+// Format token count to compact display (e.g., 128000 -> "128k", 4200 -> "4.2k")
+const formatTokenCount = (n: number): string => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 10_000) return `${Math.round(n / 1_000)}k`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(n);
+};
+
 export const UserMessageItem: React.FC<{
   message: CoworkMessage;
   skills: Skill[];
@@ -1394,6 +1402,23 @@ const AssistantMessageItem: React.FC<{
           <span className="text-[10px] text-secondary">{message.modelName}</span>
         )}
         <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
+        {message.usage && (
+          <span className="text-[10px] text-muted tabular-nums">
+            {message.usage.input != null && (
+              <>
+                <span title={`Input tokens: ${message.usage.input}`}>
+                  ↑{formatTokenCount(message.usage.input)}
+                </span>
+                {message.usage.output != null && <span className="mx-0.5">·</span>}
+              </>
+            )}
+            {message.usage.output != null && (
+              <span title={`Output tokens: ${message.usage.output}`}>
+                ↓{formatTokenCount(message.usage.output)}
+              </span>
+            )}
+          </span>
+        )}
         <button
           onClick={handleDelete}
           className={`p-0.5 rounded transition-colors ${

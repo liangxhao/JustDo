@@ -5427,21 +5427,75 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 this.emit('message', sessionId, assistantMessage);
               }
             } else if (text) {
-              // Normal text - add the message
-              console.debug(
-                '[OpenClawRuntime] handleChatEvent: adding final message from different runId, text="' +
-                  text.slice(0, 50) +
-                  '"' +
-                  (thinking ? ' (with thinking)' : ''),
-              );
-              const assistantMessage = this.store.addMessage(sessionId, {
-                type: 'assistant',
-                content: text,
-                metadata: { isStreaming: false, isFinal: true },
-                modelName: turn.modelName,
-                ...(thinking ? { thinkingContent: thinking } : {}),
-              });
-              this.emit('message', sessionId, assistantMessage);
+              // Normal text from different runId - only emit as regular assistant message
+              // if subagent streaming did not already capture it. Otherwise we get duplicate.
+              if (runId.includes(':subagent:')) {
+                const subagentUuidMatch2 = runId.match(/subagent[:\-]([a-f0-9-]{36})/i);
+                if (subagentUuidMatch2) {
+                  const subagentSessionKey2 = 'agent:main:subagent:' + subagentUuidMatch2[1];
+                  const msgs2 = this.subagentMessages.get(subagentSessionKey2);
+                  const streamedAssistant2 = msgs2?.filter(m => m.role === 'assistant').pop();
+                  if (
+                    streamedAssistant2 &&
+                    streamedAssistant2.content &&
+                    streamedAssistant2.content.length > 0
+                  ) {
+                    console.log(
+                      '[OpenClawRuntime] handleChatEvent: different runId normal text but subagent already has streamed content for sessionKey=' +
+                        subagentSessionKey2 +
+                        ', skipping (avoids duplicate)',
+                    );
+                  } else {
+                    // Subagent has no streamed content — show as regular assistant message
+                    console.debug(
+                      '[OpenClawRuntime] handleChatEvent: adding final message from different runId (subagent, no streaming), text="' +
+                        text.slice(0, 50) +
+                        '"' +
+                        (thinking ? ' (with thinking)' : ''),
+                    );
+                    const assistantMessage = this.store.addMessage(sessionId, {
+                      type: 'assistant',
+                      content: text,
+                      metadata: { isStreaming: false, isFinal: true },
+                      modelName: turn.modelName,
+                      ...(thinking ? { thinkingContent: thinking } : {}),
+                    });
+                    this.emit('message', sessionId, assistantMessage);
+                  }
+                } else {
+                  // Can't extract subagent UUID — show as-is
+                  console.debug(
+                    '[OpenClawRuntime] handleChatEvent: adding final message from different runId, text="' +
+                      text.slice(0, 50) +
+                      '"' +
+                      (thinking ? ' (with thinking)' : ''),
+                  );
+                  const assistantMessage = this.store.addMessage(sessionId, {
+                    type: 'assistant',
+                    content: text,
+                    metadata: { isStreaming: false, isFinal: true },
+                    modelName: turn.modelName,
+                    ...(thinking ? { thinkingContent: thinking } : {}),
+                  });
+                  this.emit('message', sessionId, assistantMessage);
+                }
+              } else {
+                // Not a subagent runId — show as-is
+                console.debug(
+                  '[OpenClawRuntime] handleChatEvent: adding final message from different runId, text="' +
+                    text.slice(0, 50) +
+                    '"' +
+                    (thinking ? ' (with thinking)' : ''),
+                );
+                const assistantMessage = this.store.addMessage(sessionId, {
+                  type: 'assistant',
+                  content: text,
+                  metadata: { isStreaming: false, isFinal: true },
+                  modelName: turn.modelName,
+                  ...(thinking ? { thinkingContent: thinking } : {}),
+                });
+                this.emit('message', sessionId, assistantMessage);
+              }
             }
           }
         }
@@ -6553,8 +6607,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Patch tool_use args from history (gateway tool events don't include args)
       this.patchToolUseArgsFromHistory(sessionId, history.messages);
 
-      // For managed sessions, tool result patching is all we need.
+      // For managed sessions, patch usage from history and return.
+      // Managed sessions don't need the full message reconciliation (user/assistant
+      // messages are already correct from the CoworkForwarder), but usage data
+      // only exists in chat.history — so we must patch it here.
       if (isManaged) {
+        this.patchUsageFromHistory(sessionId, history.messages);
         return;
       }
 
@@ -6588,6 +6646,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         role: 'user' | 'assistant';
         text: string;
         modelName?: string;
+        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
       }> = [];
       for (const message of history.messages) {
         if (!isRecord(message)) continue;
@@ -6596,10 +6655,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         let text = extractMessageText(message).trim();
         if (!text) continue;
         if (isDiscord) text = stripDiscordMentions(text);
+
+        // Extract usage from gateway message (if assistant)
+        const usage =
+          role === 'assistant' && message.usage
+            ? (message.usage as {
+                input?: number;
+                output?: number;
+                cacheRead?: number;
+                cacheWrite?: number;
+              })
+            : undefined;
+
         authoritativeEntries.push({
           role: role as 'user' | 'assistant',
           text,
           ...(role === 'assistant' ? { modelName: sessionModelName } : {}),
+          ...(usage ? { usage } : {}),
         });
       }
 
@@ -6636,7 +6708,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
       }
 
-      // Compare: if already in sync, skip the expensive replace
+      // Compare: if already in sync, skip the expensive replace — but still
+      // patch usage into assistant messages that are missing it.
       const isInSync =
         localEntries.length === authoritativeEntries.length &&
         localEntries.every(
@@ -6652,6 +6725,42 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           'entries:',
           localEntries.length,
         );
+
+        // Patch usage into local assistant messages that are missing it.
+        // Since isInSync guarantees same order, walk both arrays in parallel.
+        const localSession = this.store.getSession(sessionId);
+        if (localSession) {
+          let patchedAny = false;
+          let authAssistantIdx = 0;
+          for (const msg of localSession.messages) {
+            if (msg.type !== 'assistant') continue;
+            // Find the next assistant entry in authoritative
+            while (
+              authAssistantIdx < authoritativeEntries.length &&
+              authoritativeEntries[authAssistantIdx].role !== 'assistant'
+            ) {
+              authAssistantIdx++;
+            }
+            if (authAssistantIdx >= authoritativeEntries.length) break;
+            const authEntry = authoritativeEntries[authAssistantIdx];
+            authAssistantIdx++;
+
+            if (authEntry.usage && !msg.usage) {
+              this.store.updateMessage(sessionId, msg.id, {
+                usage: authEntry.usage,
+              });
+              patchedAny = true;
+            }
+          }
+          if (patchedAny) {
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (!win.isDestroyed()) {
+                win.webContents.send('cowork:sessions:changed');
+              }
+            }
+          }
+        }
+
         this.channelSyncCursor.set(sessionId, authoritativeEntries.length);
         return;
       }
@@ -6886,6 +6995,74 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         'tool_use messages for sessionId:',
         sessionId,
       );
+    }
+  }
+
+  /**
+   * Patch usage data into local assistant messages from gateway chat.history.
+   * For managed sessions, full message reconciliation is skipped, but usage
+   * data (token counts) only exists in chat.history — this method extracts
+   * and patches it by matching assistant messages on content text.
+   */
+  private patchUsageFromHistory(sessionId: string, historyMessages: unknown[]): void {
+    // Build a map of assistant text -> usage from gateway history
+    const usageByText = new Map<
+      string,
+      { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+    >();
+    for (const raw of historyMessages) {
+      if (!isRecord(raw)) continue;
+      const role = typeof raw.role === 'string' ? raw.role.trim().toLowerCase() : '';
+      if (role !== 'assistant') continue;
+      const text = extractMessageText(raw).trim();
+      if (!text) continue;
+      const usage = isRecord(raw.usage)
+        ? {
+            input: typeof raw.usage.input === 'number' ? raw.usage.input : undefined,
+            output: typeof raw.usage.output === 'number' ? raw.usage.output : undefined,
+            cacheRead: typeof raw.usage.cacheRead === 'number' ? raw.usage.cacheRead : undefined,
+            cacheWrite: typeof raw.usage.cacheWrite === 'number' ? raw.usage.cacheWrite : undefined,
+          }
+        : undefined;
+      if (usage) {
+        usageByText.set(text, usage);
+      }
+    }
+
+    if (usageByText.size === 0) return;
+
+    // Patch local assistant messages missing usage
+    const session = this.store.getSession(sessionId);
+    if (!session) return;
+
+    let patchedAny = false;
+    for (const msg of session.messages) {
+      if (msg.type !== 'assistant') continue;
+      if (msg.usage) continue; // already has usage
+      const trimmedContent = msg.content.trim();
+      if (!trimmedContent) continue;
+      const usage = usageByText.get(trimmedContent);
+      if (!usage) continue;
+
+      this.store.updateMessage(sessionId, msg.id, { usage });
+      // Emit via messageMetadataUpdate so renderer gets real-time notification
+      // (extends the metadata event to also carry usage data)
+      this.emit(
+        'messageMetadataUpdate',
+        sessionId,
+        msg.id,
+        { isStreaming: false, isFinal: true },
+        { usage },
+      );
+      patchedAny = true;
+    }
+
+    if (patchedAny) {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('cowork:sessions:changed');
+        }
+      }
     }
   }
 
@@ -9156,6 +9333,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // History still empty after retry — fall back to showing text as-is.
         // This avoids losing legitimate short replies like "NO" when the
         // model response hasn't flushed yet.
+        // But if subagent streaming already captured content, skip to avoid duplicate.
+        const storageKey = subagentSessionKey;
+        const msgs = this.subagentMessages.get(storageKey);
+        const streamedAssistant = msgs?.filter(m => m.role === 'assistant').pop();
+        if (
+          streamedAssistant &&
+          streamedAssistant.content &&
+          streamedAssistant.content.length > 0
+        ) {
+          console.log(
+            '[OpenClawRuntime] syncFinalNoReplyWithHistory: history empty but subagent already has streamed content for sessionKey=' +
+              subagentSessionKey +
+              ', skipping (avoids duplicate)',
+          );
+          return;
+        }
         console.log(
           '[OpenClawRuntime] syncFinalNoReplyWithHistory: history empty after retry for sessionKey=' +
             subagentSessionKey +
@@ -9191,7 +9384,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           return;
         }
 
-        // Real content found - add to parent session
+        // Real content found - add to parent session ONLY if subagent streaming
+        // did not already capture it. Otherwise we get duplicate display:
+        // the subagent_completion message AND this regular assistant message.
+        const storageKey = subagentSessionKey;
+        const msgs = this.subagentMessages.get(storageKey);
+        const streamedAssistant = msgs?.filter(m => m.role === 'assistant').pop();
+        if (
+          streamedAssistant &&
+          streamedAssistant.content &&
+          streamedAssistant.content.length > 0
+        ) {
+          console.log(
+            '[OpenClawRuntime] syncFinalNoReplyWithHistory: subagent already has streamed content for sessionKey=' +
+              subagentSessionKey +
+              ', skipping (avoids duplicate)',
+          );
+          return;
+        }
+
         console.log(
           '[OpenClawRuntime] syncFinalNoReplyWithHistory: found real content for sessionKey=' +
             subagentSessionKey +

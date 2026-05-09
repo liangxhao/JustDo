@@ -76,6 +76,14 @@ export interface CoworkMessageMetadata {
   [key: string]: unknown;
 }
 
+// Token usage for a single message
+export interface TokenUsage {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
 // Cowork message
 export interface CoworkMessage {
   id: string;
@@ -85,6 +93,7 @@ export interface CoworkMessage {
   metadata?: CoworkMessageMetadata;
   thinkingContent?: string; // Accumulated thinking content during streaming
   modelName?: string; // Model that generated this message (for assistant messages)
+  usage?: TokenUsage; // Token usage for assistant messages
 }
 
 // Cowork session

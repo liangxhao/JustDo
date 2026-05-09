@@ -1185,7 +1185,14 @@ const bindCoworkRuntimeForwarder = (): void => {
 
   runtime.on(
     'messageMetadataUpdate',
-    (sessionId: string, messageId: string, metadata: Record<string, unknown>) => {
+    (
+      sessionId: string,
+      messageId: string,
+      metadata: Record<string, unknown>,
+      extra?: {
+        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+      },
+    ) => {
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
         if (win.isDestroyed()) return;
@@ -1194,6 +1201,7 @@ const bindCoworkRuntimeForwarder = (): void => {
             sessionId,
             messageId,
             metadata,
+            ...extra,
           });
         } catch (error) {
           console.error('Failed to forward cowork message metadata update:', error);

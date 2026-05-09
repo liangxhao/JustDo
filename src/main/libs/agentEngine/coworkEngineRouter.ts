@@ -158,10 +158,20 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
       this.emit('thinkingUpdate', sessionId, messageId, thinkingDelta);
     });
 
-    runtime.on('messageMetadataUpdate', (sessionId, messageId, metadata) => {
-      this.sessionEngine.set(sessionId, 'openclaw');
-      this.emit('messageMetadataUpdate', sessionId, messageId, metadata);
-    });
+    runtime.on(
+      'messageMetadataUpdate',
+      (
+        sessionId,
+        messageId,
+        metadata,
+        extra?: {
+          usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+        },
+      ) => {
+        this.sessionEngine.set(sessionId, 'openclaw');
+        this.emit('messageMetadataUpdate', sessionId, messageId, metadata, extra);
+      },
+    );
 
     runtime.on('permissionRequest', (sessionId, request) => {
       this.sessionEngine.set(sessionId, 'openclaw');

@@ -268,6 +268,26 @@ const coworkSlice = createSlice({
       }
     },
 
+    updateMessageUsage(
+      state,
+      action: PayloadAction<{
+        sessionId: string;
+        messageId: string;
+        usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+      }>,
+    ) {
+      const { sessionId, messageId, usage } = action.payload;
+
+      if (state.currentSession?.id === sessionId) {
+        const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
+        if (messageIndex !== -1) {
+          state.currentSession.messages = state.currentSession.messages.map((msg, idx) =>
+            idx === messageIndex ? { ...msg, usage } : msg,
+          );
+        }
+      }
+    },
+
     setStreaming(state, action: PayloadAction<boolean>) {
       state.isStreaming = action.payload;
     },
@@ -446,6 +466,7 @@ export const {
   updateMessageContent,
   updateMessageThinkingContent,
   updateMessageMetadata,
+  updateMessageUsage,
   deleteMessage,
   setStreaming,
   setRemoteManaged,

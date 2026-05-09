@@ -43,6 +43,13 @@ interface CoworkMessageMetadata {
   [key: string]: unknown;
 }
 
+interface TokenUsage {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
 interface CoworkMessage {
   id: string;
   type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'subagent_completion';
@@ -51,6 +58,7 @@ interface CoworkMessage {
   metadata?: CoworkMessageMetadata;
   thinkingContent?: string;
   modelName?: string;
+  usage?: TokenUsage;
 }
 
 interface CoworkSessionSummary {
@@ -549,6 +557,7 @@ interface IElectronAPI {
         sessionId: string;
         messageId: string;
         metadata: Record<string, unknown>;
+        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
       }) => void,
     ) => () => void;
     onStreamMessageDelete: (

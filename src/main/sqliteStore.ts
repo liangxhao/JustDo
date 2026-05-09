@@ -181,6 +181,11 @@ export class SqliteStore {
       if (!msgColNames.includes('model_name')) {
         this.db.exec('ALTER TABLE cowork_messages ADD COLUMN model_name TEXT');
       }
+
+      // Migration: Add usage column to cowork_messages (stored as JSON)
+      if (!msgColNames.includes('usage')) {
+        this.db.exec('ALTER TABLE cowork_messages ADD COLUMN usage TEXT');
+      }
     } catch {
       // Column already exists or migration not needed.
     }
