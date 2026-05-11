@@ -869,6 +869,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly processedAnnounceRunIds = new Set<string>();
   /** Accumulated thinking content from subagent announce runs, keyed by runId. */
   private readonly subagentThinkingByRunId = new Map<string, string>();
+  /** Accumulated chat text from announce runIds (different from main turn.runId).
+   *  Delta events from announce runs carry accumulated text; we store it here
+   *  and create streaming messages so the UI shows announce text progressively
+   *  instead of only when the final event arrives. */
+  private readonly announceTextByRunId = new Map<string, string>();
+  /** Message ID for the streaming announce message per runId, for updates. */
+  private readonly announceMessageByRunId = new Map<string, string>();
   /**
    * Buffered tool events from announce runIds, keyed by runId.
    * Tool events (session.tool) from announcing subagents arrive before the chat
@@ -2812,10 +2819,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           const emitAgentId = subagentUuid;
 
           // Compute parent session ID upfront — needed by temporal matching in both phase=start and phase=end.
-          const nestedParentSessionId = this.findParentSessionIdForNested(
-            emitAgentId,
-            sessionKey,
-          );
+          const nestedParentSessionId = this.findParentSessionIdForNested(emitAgentId, sessionKey);
 
           if (phase === 'start' || phase === 'running') {
             // Skip if already running or done (don't override completion with late start/running)
@@ -4376,12 +4380,36 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                   itemToolCallId,
               );
             }
+
+            // Query sessions.list to discover the child session and establish the
+            // childSessionKey → toolCallId mapping. This is needed because announce
+            // runs' stream=item events don't carry childSessionKey in their meta,
+            // and stream=tool result events from announce runs don't reach GucciAI.
+            // Without this mapping, lifecycle events (which use UUID format) cannot
+            // be matched to the call_xxx toolCallId registered by this handler.
+            const parentKey = sessionKey || `agent:main:gucciai:${sessionId}`;
+            if (displayLabel && parentKey) {
+              this.querySubagentSessionKey(displayLabel, parentKey, itemToolCallId).catch(err =>
+                console.log(
+                  '[OpenClawRuntime] item-level sessions_spawn: sessions.list query failed toolCallId=' +
+                    itemToolCallId +
+                    ' error=' +
+                    (err instanceof Error ? err.message : String(err)),
+                ),
+              );
+            }
           }
         }
 
-        // Handle item-level sessions_spawn result (phase=end)
-        // Create tool_result message matching handleAgentToolEvent format (line ~5187)
-        if (itemKind === 'tool' && itemPhase === 'end' && itemToolCallId && itemMetaRaw) {
+        // Handle item-level sessions_spawn result (phase=end for lifecycle items,
+        // phase=result for tool items — the gateway uses different phase names
+        // depending on item kind).
+        if (
+          itemKind === 'tool' &&
+          (itemPhase === 'end' || itemPhase === 'result') &&
+          itemToolCallId &&
+          itemMetaRaw
+        ) {
           // Update childSessionKey mapping when result contains it
           try {
             const itemMetaParsed = JSON.parse(itemMetaRaw) as Record<string, unknown>;
@@ -4391,6 +4419,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 : '';
             if (childSessionKey && this.toolCallIdToSessionKey.get(itemToolCallId)) {
               this.toolCallIdToSessionKey.set(itemToolCallId, childSessionKey);
+            }
+
+            // Map the subagent UUID to its toolCallId so the announce completion
+            // handler can find it (announcing subagents' spawns come through
+            // stream=item and are stored under call_xxx keys, not UUID keys).
+            if (childSessionKey) {
+              const uuidMatch = childSessionKey.match(/subagent[:\-]([a-f0-9-]{36})/i);
+              if (uuidMatch) {
+                const subagentUuid = uuidMatch[1];
+                this.uuidToToolCallId.set(subagentUuid, itemToolCallId);
+                console.log(
+                  '[OpenClawRuntime] item-level result: mapped uuid=' +
+                    subagentUuid.slice(0, 8) +
+                    ' → toolCallId=' +
+                    itemToolCallId.slice(0, 20),
+                );
+              }
             }
 
             // Check if spawn succeeded (no error in result)
@@ -4473,6 +4518,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const isToolStream = stream === 'tool' || stream === 'tools' || (!stream && hasToolShape);
     const eventRunId = typeof agentPayload.runId === 'string' ? agentPayload.runId.trim() : '';
     if (isToolStream && eventRunId && turn.runId && eventRunId !== turn.runId) {
+      // Still buffer the event so message display order is correct
       let buffered = this.bufferedToolEventsByRunId.get(eventRunId) || [];
       buffered.push({ payload: agentPayload });
       this.bufferedToolEventsByRunId.set(eventRunId, buffered);
@@ -5688,7 +5734,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           state,
       );
       if (state === 'delta') {
-        // Skip delta events from different runId - they don't affect current streaming state
+        // Accumulate delta text from different runId (announce subagent)
+        // so the UI streams announce text progressively instead of waiting
+        // for the final event. Matches openclaw webchat chatStream behavior.
+        const deltaMessage = chatPayload.message;
+        if (deltaMessage && isRecord(deltaMessage)) {
+          const role = typeof deltaMessage.role === 'string' ? deltaMessage.role.toLowerCase() : '';
+          if (role === 'assistant') {
+            const deltaText = extractMessageText(deltaMessage);
+            if (deltaText && deltaText.trim()) {
+              this.announceTextByRunId.set(runId, deltaText.trim());
+            }
+          }
+        }
         return;
       }
       if (state === 'final') {
@@ -5704,6 +5762,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           return;
         }
         this.processedAnnounceRunIds.add(runId);
+
+        // Flush accumulated announce streaming text as a message before
+        // processing the final. This ensures partial text from delta events
+        // is visible in the UI.
+        const accumulatedText = this.announceTextByRunId.get(runId);
+        let alreadyEmittedAnnounceText = false;
+        if (accumulatedText && accumulatedText.length > 0) {
+          const streamingMessage = this.store.addMessage(sessionId, {
+            type: 'assistant',
+            content: accumulatedText,
+            metadata: { isStreaming: false, isFinal: true },
+            modelName: turn.modelName,
+          });
+          this.emit('message', sessionId, streamingMessage);
+          alreadyEmittedAnnounceText = true;
+          console.log(
+            '[OpenClawRuntime] handleChatEvent: emitted announce text (len=' +
+              accumulatedText.length +
+              ') from accumulated deltas for runId=' +
+              runId.slice(0, 20),
+          );
+        }
+        this.announceTextByRunId.delete(runId);
 
         const finalMessage = chatPayload.message;
         if (finalMessage && isRecord(finalMessage)) {
@@ -5790,9 +5871,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                       .filter(m => m.role === 'assistant')
                       .map(m => (typeof m.content === 'string' ? m.content : ''))
                       .join('\n');
-                    if (allStreamedContent.includes(text)) {
+                    if (alreadyEmittedAnnounceText || allStreamedContent.includes(text)) {
                       console.log(
-                        '[OpenClawRuntime] handleChatEvent: announce text already in streamed content, skipping sessionKey=' +
+                        '[OpenClawRuntime] handleChatEvent: announce text already handled, skipping sessionKey=' +
                           subagentSessionKey2,
                       );
                     } else {
@@ -5813,8 +5894,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                       });
                       this.emit('message', sessionId, assistantMessage);
                     }
-                  } else {
-                    // Subagent has no streamed content — show as regular assistant message
+                  } else if (!alreadyEmittedAnnounceText) {
+                    // Subagent has no streamed content AND we haven't already emitted from deltas — show as regular assistant message
                     console.debug(
                       '[OpenClawRuntime] handleChatEvent: adding final message from different runId (subagent, no streaming), text="' +
                         text.slice(0, 50) +
@@ -5829,6 +5910,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                       ...(thinking ? { thinkingContent: thinking } : {}),
                     });
                     this.emit('message', sessionId, assistantMessage);
+                  } else {
+                    console.log(
+                      '[OpenClawRuntime] handleChatEvent: subagent no streamed content but already emitted from deltas, skipping sessionKey=' +
+                        subagentSessionKey2,
+                    );
                   }
                 } else {
                   // Can't extract subagent UUID — show as-is
@@ -5885,6 +5971,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             if (!toolCallId) {
               const shortKey = 'subagent:' + subagentUuid;
               toolCallId = this.sessionKeyToToolCallId.get(shortKey);
+            }
+            // Fallback: direct UUID → toolCallId mapping (populated by item-level
+            // result handler when childSessionKey is extracted from meta)
+            if (!toolCallId) {
+              toolCallId = this.uuidToToolCallId.get(subagentUuid);
+              if (toolCallId) {
+                console.log(
+                  '[OpenClawRuntime] announce completion: found toolCallId via uuidToToolCallId uuid=' +
+                    subagentUuid.slice(0, 8) +
+                    ' toolCallId=' +
+                    toolCallId.slice(0, 20),
+                );
+              }
             }
             // Fallback: search subagentStatus keys that contain the UUID
             if (!toolCallId) {
@@ -9248,7 +9347,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                     ) {
                       // Found the spawn — now check if there's a result containing this child
                       for (const resultMsg of session.messages) {
-                        if (resultMsg.type !== 'tool_result' || resultMsg.metadata?.toolName !== 'sessions_spawn') continue;
+                        if (
+                          resultMsg.type !== 'tool_result' ||
+                          resultMsg.metadata?.toolName !== 'sessions_spawn'
+                        )
+                          continue;
                         if (resultMsg.metadata?.toolUseId !== completionToolCallId) continue;
                         const result = resultMsg.metadata?.toolResult;
                         if (!isRecord(result)) continue;
@@ -9679,7 +9782,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Detect item-level spawns that are stuck as 'running' with no tool_result message.
       // These are spawns from announce runs that the gateway prunes as orphans.
       // Without a lifecycle end event, they stay 'running' indefinitely.
-      const orphanIdleThreshold = Date.now() - 60 * 1000; // 60 seconds without activity
+      // Item-level spawns (from announcing subagents): mark as failed only if
+      // they've been stuck for a long time. The item-level handler creates tool_result
+      // messages, so the grace period gives those events time to arrive.
+      const orphanGracePeriod = Date.now() - 60 * 1000; // 60 seconds without entry/activity
 
       // Build a Set of toolUseIds that have tool_result messages in this session
       const toolResultToolUseIds = new Set<string>();
@@ -9720,7 +9826,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         })();
 
         const lastActivity = this.subagentLastActivity.get(itemToolCallId) || 0;
-        const isStuck = !hasToolResult && !hasLifecycleEnd && lastActivity < orphanIdleThreshold;
+        // For item-level spawns, use the pending entry timestamp as fallback
+        // since lastActivity is only set in the result handler. We need to
+        // wait long enough for the phase=end/result event to arrive.
+        const entryTime = this.pendingEntryTimestamps.get(itemToolCallId) || 0;
+        const effectiveLastActivity = lastActivity > 0 ? lastActivity : entryTime;
+        // Grace period: don't mark as failed until at least 60 seconds after
+        // the spawn was created. This gives the phase=end/result event time
+        // to arrive before the orphan detection kicks in.
+        const isStuck =
+          !hasToolResult && !hasLifecycleEnd && effectiveLastActivity < orphanGracePeriod;
 
         if (isStuck) {
           console.log(
