@@ -22,50 +22,8 @@ import {
   type OpenClawGatewayConnectionInfo,
 } from '../../openclawEngineManager';
 import { GatewayWatchdog, type WatchdogCallbacks } from './watchdog';
-
-const GATEWAY_READY_TIMEOUT_MS = 15_000;
-const CHANNEL_SESSION_DISCOVERY_LIMIT = 200;
-
-// Internal runtime context markers from OpenClaw
-const INTERNAL_RUNTIME_CONTEXT_BEGIN = '<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>';
-
-type GatewayEventFrame = {
-  event: string;
-  seq?: number;
-  payload?: unknown;
-};
-
-export type GatewayClientLike = {
-  start: () => void;
-  stop: () => void;
-  request: <T = Record<string, unknown>>(
-    method: string,
-    params?: unknown,
-    opts?: { expectFinal?: boolean },
-  ) => Promise<T>;
-};
-
-type GatewayClientCtor = new (options: Record<string, unknown>) => GatewayClientLike;
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-};
-
-const waitWithTimeout = async (promise: Promise<void>, timeoutMs: number): Promise<void> => {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<void>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Gateway handshake timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-  try {
-    await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
-};
+import type { GatewayEventFrame, GatewayClientLike, GatewayClientCtor } from './types';
+import { isRecord, waitWithTimeout, GATEWAY_READY_TIMEOUT_MS, CHANNEL_SESSION_DISCOVERY_LIMIT } from '../utils/gatewayHelpers';
 
 export interface ConnectionManagerCallbacks {
   handleGatewayEvent(event: GatewayEventFrame): void;

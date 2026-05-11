@@ -9,6 +9,7 @@ import type { CoworkStore } from '../../../coworkStore';
 import { t } from '../../../i18n';
 import { getCommandDangerLevel, isDeleteCommand } from '../../commandSafety';
 import type { PermissionRequest, PermissionResult } from '../types';
+import { isRecord } from '../utils/gatewayHelpers';
 
 type ExecApprovalRequestedPayload = {
   id?: string;
@@ -47,10 +48,6 @@ export interface ApprovalHandlerCallbacks {
   resolveChannelSession(sessionKey: string): string | null;
   get heartbeatSessionKeys(): Set<string>;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-};
 
 export class ApprovalHandler {
   private readonly pendingApprovals = new Map<string, PendingApprovalEntry>();
