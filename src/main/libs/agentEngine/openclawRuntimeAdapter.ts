@@ -1616,7 +1616,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (this.activeTurns.has(sessionId)) {
-      throw new Error(`Session ${sessionId} is still running.`);
+      // If the main agent lifecycle has ended and all subagents are done,
+      // the turn is stale (leftover from a previous run). Clean it up
+      // instead of throwing, so the user can start a new turn.
+      if (this.mainAgentLifecycleEnded) {
+        console.log(
+          '[OpenClawRuntime] runTurn: cleaning up stale activeTurn for session with ended lifecycle, sessionId=' +
+            sessionId,
+        );
+        this.cleanupSessionTurn(sessionId);
+      } else {
+        throw new Error(`Session ${sessionId} is still running.`);
+      }
     }
 
     const session = this.store.getSession(sessionId);
@@ -5384,6 +5395,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // is visible in the UI.
         const accumulatedText = this.announceTextByRunId.get(runId);
         let alreadyEmittedAnnounceText = false;
+        let announceStreamingMessageId: string | null = null;
         if (accumulatedText && accumulatedText.length > 0) {
           const streamingMessage = this.store.addMessage(sessionId, {
             type: 'assistant',
@@ -5392,6 +5404,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             modelName: turn.modelName,
           });
           this.emit('message', sessionId, streamingMessage);
+          announceStreamingMessageId = streamingMessage.id;
           alreadyEmittedAnnounceText = true;
           console.log(
             '[OpenClawRuntime] handleChatEvent: emitted announce text (len=' +
@@ -5413,6 +5426,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             const subagentThinking = this.subagentThinkingByRunId.get(runId);
             if (subagentThinking) {
               thinking = thinking ? thinking + '\n' + subagentThinking : subagentThinking;
+            }
+            this.subagentThinkingByRunId.delete(runId);
+
+            // If a streaming message was already emitted (from accumulated deltas),
+            // update it with thinking content now that we have it from the final.
+            // The messageUpdate IPC only carries text content, so we also notify
+            // the renderer to re-read the session (which includes thinkingContent).
+            if (announceStreamingMessageId && thinking) {
+              this.store.updateMessage(sessionId, announceStreamingMessageId, {
+                thinkingContent: thinking,
+              });
+              for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) {
+                  win.webContents.send('cowork:sessions:changed');
+                }
+              }
             }
             // Skip silent replies (NO_REPLY) — also handle truncated versions
             // that OpenClaw gateway may produce during streaming (e.g. "NO", "NO_RE").
@@ -5636,18 +5665,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           }
         }
 
-        // Safety net: if main agent lifecycle has ended and all subagents are done,
-        // finalize the session. This handles the case where the last chat event
-        // comes from a different runId (e.g., subagent announce) and handleChatFinal
-        // is never called for the main agent's runId.
-        if (this.mainAgentLifecycleEnded && sessionId === this.orchestrationParentSessionId) {
-          console.log(
-            '[OpenClawRuntime] handleChatEvent: different runId final + main agent lifecycle ended, finalizing: sessionId=' +
-              sessionId,
-          );
-          this.activeTurns.delete(sessionId);
-          this.checkAllSubagentsDone();
-        }
+        // NOTE: Do NOT delete activeTurns or call checkAllSubagentsDone here.
+        // The main agent may have a follow-up turn after the subagent completes
+        // (e.g., processing tool_result and producing a final response).
+        // Premature ActiveTurn deletion causes the follow-up turn to lose
+        // thinking/streaming because handleChatEvent/processAgentAssistantText
+        // skip events when no ActiveTurn exists.
+        // Session finalization is handled by:
+        // - main agent lifecycle end (line 4442) → checkAllSubagentsDone
+        // - subagent lifecycle end (line 4421) → checkAllSubagentsDone
+        // - handleChatFinal (line 6216) → activeTurns.delete + reconcileWithHistory
         // Don't modify turn state, don't cleanup, just return
         return;
       }
@@ -6107,21 +6134,32 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (turn.assistantMessageId) {
       this.clearPendingMessageUpdate(turn.assistantMessageId);
-      const storeSession = this.store.getSession(sessionId);
-      const storeMsg = storeSession?.messages.find(m => m.id === turn.assistantMessageId);
-      if (storeMsg?.content) {
-        this.emit('messageUpdate', sessionId, turn.assistantMessageId, storeMsg.content);
-      }
 
-      // Use existing segment text from processAgentAssistantText, not from chat final
+      // Use existing segment text from processAgentAssistantText, not from chat final.
+      // During streaming, the store is NOT updated (only IPC emit) — so reading from
+      // the store would return stale initial content (first token), causing a visible
+      // flash where the UI reverts before reconcileWithHistory replaces it.
       const persistedSegmentText = previousSegmentText;
       if (persistedSegmentText) {
-        const finalMetadata = { isStreaming: false, isFinal: true };
+        // Update BOTH content and metadata in the store so the final state is consistent.
         this.store.updateMessage(sessionId, turn.assistantMessageId, {
-          metadata: finalMetadata,
+          content: persistedSegmentText,
+          metadata: { isStreaming: false, isFinal: true },
         });
+        // Emit the full streamed content (not store content) to prevent UI flash
+        this.emit('messageUpdate', sessionId, turn.assistantMessageId, persistedSegmentText);
         // Emit metadata update so UI reflects the finalized state
-        this.emit('messageMetadataUpdate', sessionId, turn.assistantMessageId, finalMetadata);
+        this.emit('messageMetadataUpdate', sessionId, turn.assistantMessageId, {
+          isStreaming: false,
+          isFinal: true,
+        });
+      } else {
+        // No streamed text — emit whatever is in the store as a fallback
+        const storeSession = this.store.getSession(sessionId);
+        const storeMsg = storeSession?.messages.find(m => m.id === turn.assistantMessageId);
+        if (storeMsg?.content) {
+          this.emit('messageUpdate', sessionId, turn.assistantMessageId, storeMsg.content);
+        }
       }
     } else if (previousSegmentText) {
       // Check if segment text is a possible truncated special marker prefix
@@ -8654,16 +8692,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           return;
         }
 
-        // When lifecycle ended but activeTurns wasn't cleaned up (e.g., announce
-        // follow-up runs that skip handleChatFinal), clean it up now to prevent
-        // "Session is still running" errors on next user message.
-        if (mainAgentActive && this.mainAgentLifecycleEnded) {
-          console.log(
-            '[OpenClawRuntime] checkAllSubagentsDone: cleaning up stale activeTurns for completed session: sessionId=' +
-              sessionId,
-          );
-          this.cleanupSessionTurn(sessionId);
-        }
+        // NOTE: Do NOT delete activeTurns here. The main agent may have a follow-up
+        // turn processing subagent results. Premature ActiveTurn deletion causes the
+        // follow-up turn to lose thinking/streaming.
+        // Stale ActiveTurn cleanup is handled by runTurn() when the user sends a
+        // new message (it calls cleanupSessionTurn before starting a new turn).
 
         console.log(
           '[OpenClawRuntime] checkAllSubagentsDone: all subagents completed and main agent idle, updating session status to completed: sessionId=' +
@@ -9153,9 +9186,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (!uuidMatch) return null;
           const uuid = uuidMatch[1];
 
-          // Check if any subagentStatus key matches this UUID
+          // Check if any subagentStatus key matches this UUID.
+          // Only match entries that belong to the current session to prevent
+          // cross-session subagent leakage.
           for (const [sk, sv] of this.subagentStatus) {
-            if (sk === uuid || sk.includes(uuid)) return sv;
+            if (sk === uuid || sk.includes(uuid)) {
+              // Verify session ownership
+              if (sessionId) {
+                const skParentId = this.toolCallIdToParentSessionId.get(sk);
+                if (skParentId && skParentId !== sessionId) continue;
+              }
+              return sv;
+            }
           }
 
           // Check sessionKey mapping: does any subagentStatus key map to the same sessionKey?
