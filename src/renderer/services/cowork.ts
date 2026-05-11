@@ -772,9 +772,6 @@ class CoworkService {
     parentSessionId: string,
     callbacks: {
       onMessage: (agentId: string, message: CoworkMessage) => void;
-      onMessageUpdate: (agentId: string, messageId: string, content: string) => void;
-      onThinkingUpdate: (agentId: string, messageId: string, thinkingDelta: string) => void;
-      onToolResult: (agentId: string, toolUseId: string, result: string, isError: boolean) => void;
     },
   ): () => void {
     const cowork = window.electron?.cowork;
@@ -789,30 +786,6 @@ class CoworkService {
       }
     });
     cleanups.push(messageCleanup);
-
-    // Subagent message update listener
-    const messageUpdateCleanup = cowork.onSubagentMessageUpdate(data => {
-      if (data.parentSessionId === parentSessionId) {
-        callbacks.onMessageUpdate(data.agentId, data.messageId, data.content);
-      }
-    });
-    cleanups.push(messageUpdateCleanup);
-
-    // Subagent thinking update listener
-    const thinkingUpdateCleanup = cowork.onSubagentThinkingUpdate(data => {
-      if (data.parentSessionId === parentSessionId) {
-        callbacks.onThinkingUpdate(data.agentId, data.messageId, data.thinkingDelta);
-      }
-    });
-    cleanups.push(thinkingUpdateCleanup);
-
-    // Subagent tool result listener
-    const toolResultCleanup = cowork.onSubagentToolResult(data => {
-      if (data.parentSessionId === parentSessionId) {
-        callbacks.onToolResult(data.agentId, data.toolUseId, data.result, data.isError);
-      }
-    });
-    cleanups.push(toolResultCleanup);
 
     // Return cleanup function
     return () => {

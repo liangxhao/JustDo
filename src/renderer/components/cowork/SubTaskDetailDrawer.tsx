@@ -330,57 +330,6 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
             });
           }
         },
-        onMessageUpdate: (streamAgentId, messageId, content) => {
-          if (streamAgentId === agentId) {
-            setMessages(prev => {
-              const updated = prev.map(m => (m.id === messageId ? { ...m, content } : m));
-              messageCache.set(cacheKey, updated);
-              return updated;
-            });
-          }
-        },
-        onThinkingUpdate: (streamAgentId, messageId, thinkingDelta) => {
-          if (streamAgentId === agentId) {
-            setMessages(prev => {
-              const updated = prev.map(m =>
-                m.id === messageId
-                  ? { ...m, thinkingContent: (m.thinkingContent || '') + thinkingDelta }
-                  : m,
-              );
-              messageCache.set(cacheKey, updated);
-              return updated;
-            });
-          }
-        },
-        onToolResult: (streamAgentId, toolUseId, result, isError) => {
-          if (streamAgentId === agentId) {
-            setMessages(prev => {
-              // Find tool_use message and add result
-              const updated = prev.map(m => {
-                if (m.type === 'tool_use' && m.metadata?.toolUseId === toolUseId) {
-                  // Find the corresponding tool_result or create one
-                  return m;
-                }
-                return m;
-              });
-              // Add tool_result message
-              const toolResultMsg: CoworkMessage = {
-                id: `tool-result-${toolUseId}-${Date.now()}`,
-                type: 'tool_result',
-                content: result,
-                timestamp: Date.now(),
-                metadata: {
-                  toolUseId,
-                  isError,
-                  isFinal: true,
-                },
-              };
-              const newMessages = [...updated, toolResultMsg];
-              messageCache.set(cacheKey, newMessages);
-              return newMessages;
-            });
-          }
-        },
       });
 
       return () => {

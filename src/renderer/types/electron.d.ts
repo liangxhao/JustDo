@@ -584,31 +584,6 @@ interface IElectronAPI {
         message: CoworkMessage;
       }) => void,
     ) => () => void;
-    onSubagentMessageUpdate: (
-      callback: (data: {
-        parentSessionId: string;
-        agentId: string;
-        messageId: string;
-        content: string;
-      }) => void,
-    ) => () => void;
-    onSubagentThinkingUpdate: (
-      callback: (data: {
-        parentSessionId: string;
-        agentId: string;
-        messageId: string;
-        thinkingDelta: string;
-      }) => void,
-    ) => () => void;
-    onSubagentToolResult: (
-      callback: (data: {
-        parentSessionId: string;
-        agentId: string;
-        toolUseId: string;
-        result: string;
-        isError: boolean;
-      }) => void,
-    ) => () => void;
     getSubTaskStatus: (sessionId?: string) => Promise<{
       success: boolean;
       statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
