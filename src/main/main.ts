@@ -2990,7 +2990,7 @@ if (!gotTheLock) {
       if (!openClawRuntimeAdapter) {
         return { success: true, statuses: {}, displayLabels: {} };
       }
-      const result = (openClawRuntimeAdapter as any).getSubagentStatuses(sessionId);
+      const result = await (openClawRuntimeAdapter as any).getSubagentStatuses(sessionId);
       return {
         success: true,
         statuses: result.statuses || {},

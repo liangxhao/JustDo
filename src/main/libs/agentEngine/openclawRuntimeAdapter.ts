@@ -2515,23 +2515,116 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             return !mappedSessionKey || !mappedSessionKey.includes(':subagent:');
           });
           if (unmappedPendingIds.length > 0) {
-            const pendingId = unmappedPendingIds[0];
-            console.log(
-              '[OpenClawRuntime] subagent lifecycle fallback: assigning pending toolCallId=' +
-                pendingId +
-                ' to sessionKey=' +
-                sessionKey +
-                ' (unmapped pending count: ' +
-                unmappedPendingIds.length +
-                ')',
-            );
-            toolCallId = pendingId;
-            // Establish bidirectional mapping
-            this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
-            this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
-            // Remove from pending since mapping is now established
-            this.pendingToolCallIds.delete(toolCallId);
-            this.pendingEntryTimestamps.delete(toolCallId);
+            // Extract the UUID from the incoming sessionKey to find the correct match.
+            // Item-level spawns register with call_xxx toolCallIds but lack childSessionKey.
+            // When lifecycle events arrive, sessionKey contains the UUID which may match
+            // a pending entry directly or via partial matching.
+            const uuidMatch = sessionKey.match(/subagent[:\-]([a-f0-9-]{36})/i);
+            let pendingId: string | undefined;
+            if (uuidMatch) {
+              const uuid = uuidMatch[1];
+              // First: check if the UUID itself is a pending toolCallId (short UUID format)
+              if (unmappedPendingIds.includes(uuid)) {
+                pendingId = uuid;
+                console.log(
+                  '[OpenClawRuntime] subagent lifecycle fallback: UUID match uuid=' + uuid,
+                );
+              } else {
+                // Second: search pending IDs whose existing sessionKey mapping contains this UUID
+                // (handles cases where toolCallIdToSessionKey was set during item-level spawn)
+                for (const id of unmappedPendingIds) {
+                  const existingMapping = this.toolCallIdToSessionKey.get(id);
+                  if (existingMapping && existingMapping.includes(uuid)) {
+                    pendingId = id;
+                    console.log(
+                      '[OpenClawRuntime] subagent lifecycle fallback: partial UUID match toolCallId=' +
+                        id +
+                        ' existingMapping=' +
+                        existingMapping,
+                    );
+                    break;
+                  }
+                }
+              }
+            }
+            // Only use first unmapped if no UUID was found in sessionKey at all
+            // (pure random UUID fallback — very unlikely but keep for safety).
+            // When a subagent UUID IS present, let the nested handler (line 2754)
+            // do the proper matching via sessionKey or temporal+parent logic.
+            if (!pendingId && !uuidMatch) {
+              pendingId = unmappedPendingIds[0];
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle fallback: no UUID in sessionKey, using first unmapped toolCallId=' +
+                  pendingId,
+              );
+            }
+            if (!pendingId) {
+              // Diagnostic: log state to understand why UUID matching failed
+              const uuid = uuidMatch?.[1] || '(none)';
+              const pendingList = Array.from(this.pendingToolCallIds).join(',');
+              const unmappedList = unmappedPendingIds.join(',');
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle fallback: UUID present but no match, skipping — uuid=' +
+                  uuid +
+                  ' pendingToolCallIds=' +
+                  pendingList +
+                  ' unmappedPendingIds=' +
+                  unmappedList,
+              );
+              // Do NOT set toolCallId here; the nested handler will do proper matching.
+
+              // Secondary fallback: search for call_xxx entries by label + parent session.
+              // Announcing spawns may not be in pendingToolCallIds if they weren't seen
+              // as stream=item events from the main session. Find them via label matching.
+              if (sessionKey.includes(':subagent:')) {
+                const subagentUuidFromKey = sessionKey.split(':subagent:')[1] || '';
+                // Try to find a matching call_xxx by checking subagentUuidToLabel or
+                // toolCallIdToLabel for the same subagent UUID.
+                if (subagentUuidFromKey) {
+                  const labelFromUuid = this.subagentUuidToLabel.get(subagentUuidFromKey);
+                  if (labelFromUuid) {
+                    for (const [callId, callLabel] of this.toolCallIdToLabel.entries()) {
+                      if (!callId.startsWith('call_')) continue;
+                      if (callLabel !== labelFromUuid) continue;
+                      // Found matching label — verify parent session alignment
+                      const parentId = this.toolCallIdToParentSessionId.get(callId);
+                      if (parentId && parentId === this.orchestrationParentSessionId) {
+                        toolCallId = callId;
+                        console.log(
+                          '[OpenClawRuntime] subagent lifecycle fallback: label match sessionKey=' +
+                            sessionKey +
+                            ' toolCallId=' +
+                            callId +
+                            ' label=' +
+                            labelFromUuid,
+                        );
+                        this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
+                        this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
+                        this.uuidToToolCallId.set(subagentUuidFromKey, toolCallId);
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle fallback: assigning pending toolCallId=' +
+                  pendingId +
+                  ' to sessionKey=' +
+                  sessionKey +
+                  ' (unmapped pending count: ' +
+                  unmappedPendingIds.length +
+                  ')',
+              );
+              toolCallId = pendingId;
+              // Establish bidirectional mapping
+              this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
+              this.sessionKeyToToolCallId.set(sessionKey, toolCallId);
+              // Remove from pending since mapping is now established
+              this.pendingToolCallIds.delete(toolCallId);
+              this.pendingEntryTimestamps.delete(toolCallId);
+            }
           } else {
             console.log(
               '[OpenClawRuntime] subagent lifecycle fallback: no unmapped pending toolCallIds available for sessionKey=' +
@@ -2718,6 +2811,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           const subagentUuid = sessionKey.split(':subagent:')[1] || sessionKey;
           const emitAgentId = subagentUuid;
 
+          // Compute parent session ID upfront — needed by temporal matching in both phase=start and phase=end.
+          const nestedParentSessionId = this.findParentSessionIdForNested(
+            emitAgentId,
+            sessionKey,
+          );
+
           if (phase === 'start' || phase === 'running') {
             // Skip if already running or done (don't override completion with late start/running)
             const existingStatus = this.subagentStatus.get(emitAgentId);
@@ -2747,14 +2846,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 break;
               }
             }
-            // Nested subagents: find the correct parent session by looking up
-            // which GUI session the spawning subagent belongs to.
-            // Do NOT use the global orchestrationParentSessionId — it can be
-            // contaminated by concurrent sessions.
-            const nestedParentSessionId = this.findParentSessionIdForNested(
-              emitAgentId,
-              sessionKey,
-            );
             if (nestedParentSessionId) {
               this.toolCallIdToParentSessionId.set(emitAgentId, nestedParentSessionId);
             }
@@ -2795,6 +2886,67 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             if (nestedLabel) {
               this.subagentUuidToLabel.set(subagentUuid, nestedLabel);
             }
+
+            // Try to link this UUID to its corresponding call_xxx toolCallId.
+            // Item-level spawns register with call_xxx toolCallIds but lack childSessionKey,
+            // so the existing sessionKey match at line 2777 fails. Use temporal+parent
+            // matching instead — find the most recent pending call_xxx entry that belongs
+            // to the same parent session and hasn't been linked to another UUID yet.
+            if (nestedParentSessionId) {
+              // Build a Set of UUIDs already linked to a call_xxx toolCallId
+              const linkedUuids = new Set<string>();
+              for (const [, callId] of this.uuidToToolCallId.entries()) {
+                linkedUuids.add(callId);
+              }
+              // Find candidate call_xxx entries: same parent, pending, not linked, not mapped to child
+              const candidates: Array<{ id: string; time: number }> = [];
+              for (const pendingId of this.pendingToolCallIds) {
+                if (!pendingId.startsWith('call_')) continue;
+                if (linkedUuids.has(pendingId)) continue;
+                const parentSessionId = this.toolCallIdToParentSessionId.get(pendingId);
+                if (parentSessionId !== nestedParentSessionId) continue;
+                const mappedKey = this.toolCallIdToSessionKey.get(pendingId);
+                if (mappedKey && mappedKey.includes(':subagent:')) continue; // already mapped to child
+                const entryTime = this.pendingEntryTimestamps.get(pendingId) || 0;
+                candidates.push({ id: pendingId, time: entryTime });
+              }
+              if (candidates.length > 0) {
+                // Pick the most recent candidate (temporal proximity)
+                candidates.sort((a, b) => b.time - a.time);
+                const matchedCallId = candidates[0].id;
+                this.uuidToToolCallId.set(emitAgentId, matchedCallId);
+                console.log(
+                  '[OpenClawRuntime] subagent lifecycle (nested): temporal link UUID=' +
+                    emitAgentId +
+                    ' -> toolCallId=' +
+                    matchedCallId +
+                    ' parentSessionId=' +
+                    nestedParentSessionId,
+                );
+              } else {
+                // Secondary fallback: search all call_xxx entries by parent session.
+                // Announcing spawns may not be in pendingToolCallIds.
+                for (const [callId, callLabel] of this.toolCallIdToLabel.entries()) {
+                  if (!callId.startsWith('call_')) continue;
+                  if (linkedUuids.has(callId)) continue;
+                  const parentId = this.toolCallIdToParentSessionId.get(callId);
+                  if (parentId !== nestedParentSessionId) continue;
+                  const mappedKey = this.toolCallIdToSessionKey.get(callId);
+                  if (mappedKey && mappedKey.includes(':subagent:')) continue;
+                  this.uuidToToolCallId.set(emitAgentId, callId);
+                  console.log(
+                    '[OpenClawRuntime] subagent lifecycle (nested): label-based link UUID=' +
+                      emitAgentId +
+                      ' -> toolCallId=' +
+                      callId +
+                      ' label=' +
+                      callLabel,
+                  );
+                  break;
+                }
+              }
+            }
+
             // Persist nested spawn to parent session so it survives restart
             this.persistNestedSubagentSpawn(emitAgentId, displayLabel, sessionKey);
             // If no label found, query sessions.list to resolve
@@ -2837,6 +2989,59 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             );
           } else if (phase === 'end' || phase === 'completed' || phase === 'stopped') {
             if (this.failedSubagentIds.has(emitAgentId)) return;
+
+            // Establish UUID→call_xxx link if not already done (phase=end may arrive
+            // before phase=start in some cases).
+            if (nestedParentSessionId && !this.uuidToToolCallId.has(emitAgentId)) {
+              const linkedUuids = new Set<string>();
+              for (const [, callId] of this.uuidToToolCallId.entries()) {
+                linkedUuids.add(callId);
+              }
+              const candidates: Array<{ id: string; time: number }> = [];
+              for (const pendingId of this.pendingToolCallIds) {
+                if (!pendingId.startsWith('call_')) continue;
+                if (linkedUuids.has(pendingId)) continue;
+                const parentSessionId = this.toolCallIdToParentSessionId.get(pendingId);
+                if (parentSessionId !== nestedParentSessionId) continue;
+                const mappedKey = this.toolCallIdToSessionKey.get(pendingId);
+                if (mappedKey && mappedKey.includes(':subagent:')) continue;
+                const entryTime = this.pendingEntryTimestamps.get(pendingId) || 0;
+                candidates.push({ id: pendingId, time: entryTime });
+              }
+              if (candidates.length > 0) {
+                candidates.sort((a, b) => b.time - a.time);
+                const matchedCallId = candidates[0].id;
+                this.uuidToToolCallId.set(emitAgentId, matchedCallId);
+                console.log(
+                  '[OpenClawRuntime] subagent lifecycle (nested): temporal link (phase=end) UUID=' +
+                    emitAgentId +
+                    ' -> toolCallId=' +
+                    matchedCallId,
+                );
+              } else {
+                // Secondary fallback: search all call_xxx entries by parent session.
+                // Announcing spawns may not be in pendingToolCallIds.
+                for (const [callId, callLabel] of this.toolCallIdToLabel.entries()) {
+                  if (!callId.startsWith('call_')) continue;
+                  if (linkedUuids.has(callId)) continue;
+                  const parentId = this.toolCallIdToParentSessionId.get(callId);
+                  if (parentId !== nestedParentSessionId) continue;
+                  const mappedKey = this.toolCallIdToSessionKey.get(callId);
+                  if (mappedKey && mappedKey.includes(':subagent:')) continue;
+                  this.uuidToToolCallId.set(emitAgentId, callId);
+                  console.log(
+                    '[OpenClawRuntime] subagent lifecycle (nested): label-based link (phase=end) UUID=' +
+                      emitAgentId +
+                      ' -> toolCallId=' +
+                      callId +
+                      ' label=' +
+                      callLabel,
+                  );
+                  break;
+                }
+              }
+            }
+
             this.subagentStatus.set(emitAgentId, 'done');
             this.persistSubagentStatus(emitAgentId, 'done');
             this.subagentLastActivity.delete(emitAgentId);
@@ -5577,11 +5782,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                     streamedAssistant2.content &&
                     streamedAssistant2.content.length > 0
                   ) {
-                    console.log(
-                      '[OpenClawRuntime] handleChatEvent: different runId normal text but subagent already has streamed content for sessionKey=' +
-                        subagentSessionKey2 +
-                        ', skipping (avoids duplicate)',
-                    );
+                    // Subagent has streamed content — check if this announce text
+                    // is genuinely new or just a duplicate of already-streamed content.
+                    // Announce runs can carry summary text that was not part of the
+                    // subagent's work output (e.g. cross-subagent summaries).
+                    const allStreamedContent = msgs2
+                      .filter(m => m.role === 'assistant')
+                      .map(m => (typeof m.content === 'string' ? m.content : ''))
+                      .join('\n');
+                    if (allStreamedContent.includes(text)) {
+                      console.log(
+                        '[OpenClawRuntime] handleChatEvent: announce text already in streamed content, skipping sessionKey=' +
+                          subagentSessionKey2,
+                      );
+                    } else {
+                      console.log(
+                        '[OpenClawRuntime] handleChatEvent: announce has new content (len=' +
+                          text.length +
+                          ' vs streamed=' +
+                          allStreamedContent.length +
+                          '), emitting for sessionKey=' +
+                          subagentSessionKey2,
+                      );
+                      const assistantMessage = this.store.addMessage(sessionId, {
+                        type: 'assistant',
+                        content: text,
+                        metadata: { isStreaming: false, isFinal: true },
+                        modelName: turn.modelName,
+                        ...(thinking ? { thinkingContent: thinking } : {}),
+                      });
+                      this.emit('message', sessionId, assistantMessage);
+                    }
                   } else {
                     // Subagent has no streamed content — show as regular assistant message
                     console.debug(
@@ -8838,14 +9069,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * 获取子 Agent 状态
    * @param sessionId 可选，指定父会话 ID 进行过滤
    * 状态来源：
-   * 1. tool_use message metadata 中的 subagentStatus（持久化状态，重启后恢复）
-   * 2. 内存中的 subagentStatus（实时状态，覆盖持久化状态）
-   * 3. CoworkStore 消息中的 sessions_spawn/sessions_resume/sessions_read（默认 running）
+   * 1. sessions.list API（重启后的权威来源，过滤 gateway pruned 的无效 spawn）
+   * 2. tool_use message metadata 中的 subagentStatus（持久化状态，重启后恢复）
+   * 3. 内存中的 subagentStatus（实时状态，覆盖持久化状态）
+   * 4. CoworkStore 消息中的 sessions_spawn/sessions_resume/sessions_read（默认 running）
    */
-  getSubagentStatuses(sessionId?: string): {
+  async getSubagentStatuses(sessionId?: string): Promise<{
     statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
     displayLabels: Record<string, string>;
-  } {
+  }> {
     console.log(
       '[OpenClawRuntime] getSubagentStatuses called: sessionId=' +
         (sessionId || '(none)') +
@@ -8861,7 +9093,76 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const displayLabels: Record<string, string> = {};
     const toolUseIdToLabel = new Map<string, string>();
 
-    // 从 CoworkStore 消息中提取子任务（使用 toolUseId 作为唯一 key）
+    // Post-restart recovery: when subagentStatus Map is empty (in-memory state lost),
+    // query sessions.list API to discover which subagents are actually tracked by the gateway.
+    // This filters out spawns that were pruned as orphans.
+    // sessions.list is the authoritative source — tool_use messages are only used for
+    // supplementary info (persisted status, task text).
+    let gatewayChildSessions: Array<{
+      key: string;
+      label?: string;
+      spawnedBy?: string;
+      spawnedAt?: number;
+      status?: string;
+    }> = [];
+
+    if (sessionId && this.subagentStatus.size === 0 && this.gatewayClient) {
+      try {
+        const parentSessionKey = `agent:main:gucciai:${sessionId}`;
+        const sessionsResult = await this.gatewayClient.request<{
+          sessions?: Array<{
+            key: string;
+            label?: string;
+            spawnedBy?: string;
+            spawnedAt?: number;
+            status?: string;
+          }>;
+        }>('sessions.list', {
+          spawnedBy: parentSessionKey,
+          limit: 200,
+        });
+
+        gatewayChildSessions = (sessionsResult?.sessions ?? []).filter(cs => cs.key);
+
+        if (gatewayChildSessions.length > 0) {
+          console.log(
+            '[OpenClawRuntime] getSubagentStatuses: sessions.list found ' +
+              gatewayChildSessions.length +
+              ' child sessions for parentSessionKey=' +
+              parentSessionKey,
+            'childSessionKeys:',
+            gatewayChildSessions.map(cs => cs.key),
+            'childLabels:',
+            gatewayChildSessions.map(cs => cs.label || '(no label)'),
+          );
+
+          // Use each gateway child session as a status entry.
+          // The gateway's `status` field reflects the actual subagent state
+          // (computed from endedAt/outcome) — use it as the default.
+          for (const cs of gatewayChildSessions) {
+            const display = cs.label || cs.key;
+            const gwStatus = cs.status;
+            if (gwStatus === 'done' || gwStatus === 'completed') {
+              statuses[cs.key] = 'done';
+            } else if (gwStatus === 'failed' || gwStatus === 'killed' || gwStatus === 'timeout') {
+              statuses[cs.key] = 'failed';
+            } else {
+              statuses[cs.key] = 'running';
+            }
+            displayLabels[cs.key] = display;
+          }
+        }
+      } catch (err) {
+        console.warn(
+          '[OpenClawRuntime] getSubagentStatuses: sessions.list failed, falling back to message scanning:',
+          err,
+        );
+      }
+    }
+
+    const hasGatewayDiscovery = gatewayChildSessions.length > 0;
+
+    // 从 CoworkStore 消息中补充状态信息
     if (sessionId) {
       const session = this.store.getSession(sessionId);
       if (session?.messages) {
@@ -8870,43 +9171,250 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             session.messages.length,
         );
 
-        // First pass: find all sessions_spawn tool_use messages
-        for (const msg of session.messages) {
-          const meta = msg.metadata;
-          if (!meta) continue;
+        if (hasGatewayDiscovery) {
+          // Gateway mode: use gateway child sessions as authoritative source.
+          // Match each child session to its tool_result message by session key
+          // (result.childSessionKey / result.sessionKey / result.key),
+          // then get the toolUseId to find the tool_use message for persisted status.
+          // This avoids label-based matching entirely — labels are just display titles.
+          for (const cs of gatewayChildSessions) {
+            // Step 1: Find the tool_result whose result contains this child session's key
+            let resultToolUseId: string | null = null;
+            let resultChildSessionKey: string | null = null;
 
-          if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
-            const input = meta.toolInput as Record<string, unknown> | undefined;
-            const toolUseId = meta.toolUseId || '';
-            const label = typeof input?.label === 'string' && input.label ? input.label : '';
-            const agentId =
-              typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
-            const task = typeof input?.task === 'string' ? input.task : '';
-            // Use toolUseId as unique key (label may duplicate)
-            const key = toolUseId;
-            // Display label: prefer label, then agentId, then task slice
-            const display = label || agentId || (task ? task.slice(0, 30) : toolUseId);
-            console.debug(
-              '[OpenClawRuntime] getSubagentStatuses: sessions_spawn toolUseId=' +
-                toolUseId +
-                ' label=' +
-                label +
-                ' display=' +
-                display,
-            );
-            if (key) {
-              // Check for persisted status in metadata (from previous session)
-              // This allows status recovery after restart
-              const persistedStatus = meta.subagentStatus as 'running' | 'done' | undefined;
-              if (persistedStatus === 'running' || persistedStatus === 'done') {
-                statuses[key] = persistedStatus;
-              } else {
-                // Default to running if no persisted status
-                statuses[key] = 'running';
+            for (const msg of session.messages) {
+              if (msg.type !== 'tool_result' || msg.metadata?.toolName !== 'sessions_spawn') {
+                continue;
               }
-              displayLabels[key] = display;
-              if (label) {
-                toolUseIdToLabel.set(key, label);
+              const result = msg.metadata?.toolResult;
+              if (!isRecord(result)) continue;
+
+              const childKey =
+                typeof result.childSessionKey === 'string'
+                  ? result.childSessionKey
+                  : typeof result.sessionKey === 'string'
+                    ? result.sessionKey
+                    : typeof result.key === 'string'
+                      ? result.key
+                      : null;
+
+              if (childKey === cs.key) {
+                resultToolUseId = msg.metadata?.toolUseId || null;
+                resultChildSessionKey = childKey;
+                break;
+              }
+            }
+
+            if (!resultToolUseId) {
+              // tool_result matching failed (e.g. childSessionKey pruned for item-level spawns).
+              // Fallback 1: Check subagent_completion messages persisted in the session.
+              // These messages are created by the lifecycle handler and contain the actual
+              // completion status ('completed' or 'stopped').
+              let matchedViaCompletion = false;
+              for (const msg of session.messages) {
+                if (msg.type !== 'subagent_completion') continue;
+                const meta = msg.metadata;
+                if (!meta) continue;
+
+                const completionStatus = typeof meta.status === 'string' ? meta.status : '';
+
+                // Match by sessionKey first (most reliable)
+                const completionSessionKey =
+                  typeof meta.sessionKey === 'string' ? meta.sessionKey : '';
+                if (completionSessionKey && completionSessionKey === cs.key) {
+                  if (completionStatus === 'completed' || completionStatus === 'stopped') {
+                    statuses[cs.key] = 'done';
+                    matchedViaCompletion = true;
+                    console.log(
+                      '[OpenClawRuntime] getSubagentStatuses: matched via subagent_completion cs.key=' +
+                        cs.key +
+                        ' status=' +
+                        completionStatus,
+                    );
+                    break;
+                  }
+                }
+
+                // Also match by toolCallId if available
+                const completionToolCallId =
+                  typeof meta.toolCallId === 'string' ? meta.toolCallId : '';
+                if (completionToolCallId) {
+                  // Check if any tool_use message with this toolCallId has a result containing cs.key
+                  for (const toolMsg of session.messages) {
+                    if (
+                      toolMsg.type === 'tool_use' &&
+                      toolMsg.metadata?.toolName === 'sessions_spawn' &&
+                      toolMsg.metadata?.toolUseId === completionToolCallId
+                    ) {
+                      // Found the spawn — now check if there's a result containing this child
+                      for (const resultMsg of session.messages) {
+                        if (resultMsg.type !== 'tool_result' || resultMsg.metadata?.toolName !== 'sessions_spawn') continue;
+                        if (resultMsg.metadata?.toolUseId !== completionToolCallId) continue;
+                        const result = resultMsg.metadata?.toolResult;
+                        if (!isRecord(result)) continue;
+                        const rKey =
+                          typeof result.childSessionKey === 'string'
+                            ? result.childSessionKey
+                            : typeof result.sessionKey === 'string'
+                              ? result.sessionKey
+                              : typeof result.key === 'string'
+                                ? result.key
+                                : null;
+                        if (rKey === cs.key) {
+                          if (completionStatus === 'completed' || completionStatus === 'stopped') {
+                            statuses[cs.key] = 'done';
+                            matchedViaCompletion = true;
+                            console.log(
+                              '[OpenClawRuntime] getSubagentStatuses: matched via subagent_completion+toolCallId cs.key=' +
+                                cs.key +
+                                ' toolCallId=' +
+                                completionToolCallId,
+                            );
+                          }
+                          break;
+                        }
+                      }
+                      if (matchedViaCompletion) break;
+                    }
+                  }
+                }
+                if (matchedViaCompletion) break;
+              }
+
+              if (!matchedViaCompletion) {
+                // Fallback 2: Query sessions.get from gateway to check actual child session state.
+                // Completed/idle sessions indicate the subagent is done.
+                let matchedViaGateway = false;
+                if (this.gatewayClient) {
+                  try {
+                    const sessionInfo = await this.gatewayClient.request<{
+                      state?: string;
+                      status?: string;
+                      active?: boolean;
+                    }>('sessions.get', { sessionKey: cs.key });
+
+                    const state = sessionInfo?.state || sessionInfo?.status || '';
+                    const isActive = sessionInfo?.active;
+
+                    // If the session is not active, not in 'running' state, or explicitly inactive,
+                    // the subagent has completed.
+                    if (
+                      state === 'idle' ||
+                      state === 'completed' ||
+                      state === 'stopped' ||
+                      state === 'error' ||
+                      isActive === false
+                    ) {
+                      statuses[cs.key] = 'done';
+                      matchedViaGateway = true;
+                      console.log(
+                        '[OpenClawRuntime] getSubagentStatuses: matched via sessions.get cs.key=' +
+                          cs.key +
+                          ' state=' +
+                          state +
+                          ' active=' +
+                          isActive,
+                      );
+                    } else if (state === 'running' || state === 'processing' || isActive === true) {
+                      // Explicitly running — keep default
+                      console.log(
+                        '[OpenClawRuntime] getSubagentStatuses: sessions.get confirms running cs.key=' +
+                          cs.key +
+                          ' state=' +
+                          state,
+                      );
+                    }
+                  } catch (err) {
+                    console.warn(
+                      '[OpenClawRuntime] getSubagentStatuses: sessions.get failed for cs.key=' +
+                        cs.key +
+                        ':',
+                      err,
+                    );
+                  }
+                }
+
+                if (!matchedViaGateway) {
+                  console.log(
+                    '[OpenClawRuntime] getSubagentStatuses: NO recovery for cs.key=' +
+                      cs.key +
+                      ' — keeping default status: ' +
+                      statuses[cs.key],
+                  );
+                }
+              }
+              continue;
+            }
+
+            // Step 2: Find the tool_use message with the same toolUseId to get persisted status
+            for (const msg of session.messages) {
+              if (
+                msg.type === 'tool_use' &&
+                msg.metadata?.toolName === 'sessions_spawn' &&
+                msg.metadata?.toolUseId === resultToolUseId
+              ) {
+                const input = msg.metadata?.toolInput as Record<string, unknown> | undefined;
+                const persistedStatus = msg.metadata?.subagentStatus as
+                  | 'running'
+                  | 'done'
+                  | undefined;
+                const task = typeof input?.task === 'string' ? input.task : '';
+                const msgLabel = typeof input?.label === 'string' && input.label ? input.label : '';
+
+                if (persistedStatus === 'running' || persistedStatus === 'done') {
+                  statuses[cs.key] = persistedStatus;
+                }
+                displayLabels[cs.key] = msgLabel || (task ? task.slice(0, 30) : cs.key);
+
+                console.log(
+                  '[OpenClawRuntime] getSubagentStatuses: MATCHED cs.key=' +
+                    cs.key +
+                    ' toolUseId=' +
+                    resultToolUseId +
+                    ' persistedStatus=' +
+                    (persistedStatus || '(none)') +
+                    ' finalStatus=' +
+                    statuses[cs.key],
+                );
+                break;
+              }
+            }
+          }
+        } else {
+          // No gateway discovery (runtime mode or API failed).
+          // Fall back to original behavior: scan all sessions_spawn tool_use messages.
+          for (const msg of session.messages) {
+            const meta = msg.metadata;
+            if (!meta) continue;
+
+            if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
+              const input = meta.toolInput as Record<string, unknown> | undefined;
+              const toolUseId = meta.toolUseId || '';
+              const label = typeof input?.label === 'string' && input.label ? input.label : '';
+              const agentId =
+                typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
+              const task = typeof input?.task === 'string' ? input.task : '';
+              const key = toolUseId;
+              const display = label || agentId || (task ? task.slice(0, 30) : toolUseId);
+              console.debug(
+                '[OpenClawRuntime] getSubagentStatuses: sessions_spawn toolUseId=' +
+                  toolUseId +
+                  ' label=' +
+                  label +
+                  ' display=' +
+                  display,
+              );
+              if (key) {
+                const persistedStatus = meta.subagentStatus as 'running' | 'done' | undefined;
+                if (persistedStatus === 'running' || persistedStatus === 'done') {
+                  statuses[key] = persistedStatus;
+                } else {
+                  statuses[key] = 'running';
+                }
+                displayLabels[key] = display;
+                if (label) {
+                  toolUseIdToLabel.set(key, label);
+                }
               }
             }
           }
@@ -8956,6 +9464,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             }
           }
 
+          // Check uuidToToolCallId reverse mapping: if msgKey is a call_xxx that was linked
+          // to a UUID by the nested lifecycle handler, find the UUID that maps to it and
+          // use that UUID's status. This bridges announcing spawns where lifecycle events
+          // are keyed by UUID but the sessions_spawn message uses call_xxx.
+          for (const [uuid, linkedCallId] of this.uuidToToolCallId.entries()) {
+            if (linkedCallId === msgKey) {
+              const uuidStatus = this.subagentStatus.get(uuid);
+              if (uuidStatus) return uuidStatus;
+            }
+          }
+
           // DEBUG: log why lookup failed
           console.debug(
             '[OpenClawRuntime] findLifecycleStatus: NO MATCH for msgKey=' +
@@ -8976,6 +9495,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (memoryStatus) {
             // Memory status from lifecycle events is authoritative
             statuses[toolCallId] = memoryStatus;
+          }
+        }
+
+        // Deduplicate: remove bare UUID keys from statuses when a call_xxx entry
+        // exists for the same subagent. The nested lifecycle handler creates entries
+        // keyed by UUID, but the frontend expects call_xxx keys. Both may appear in
+        // statuses after the subagentStatus scan above — keep only the call_xxx.
+        for (const [uuid, linkedCallId] of this.uuidToToolCallId.entries()) {
+          if (statuses[uuid] && statuses[linkedCallId]) {
+            console.log(
+              '[OpenClawRuntime] getSubagentStatuses: deduplicating uuid=' +
+                uuid +
+                ' linkedCallId=' +
+                linkedCallId,
+            );
+            delete statuses[uuid];
           }
         }
 
@@ -9165,7 +9700,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const hasToolResult = toolResultToolUseIds.has(itemToolCallId);
         const hasLifecycleEnd = (() => {
           const status = this.subagentStatus.get(itemToolCallId);
-          return status === 'done' || status === 'failed';
+          if (status === 'done' || status === 'failed') return true;
+          // Check if the associated UUID (from lifecycle events) was marked done.
+          // The nested lifecycle handler sets status on the UUID key and may have
+          // linked it to this call_xxx via uuidToToolCallId. Search for it.
+          for (const [uuid, linkedCallId] of this.uuidToToolCallId.entries()) {
+            if (linkedCallId === itemToolCallId) {
+              const uuidStatus = this.subagentStatus.get(uuid);
+              if (uuidStatus === 'done' || uuidStatus === 'failed') return true;
+            }
+          }
+          // Also check toolCallIdToSessionKey mapping (legacy path).
+          const mappedSessionKey = this.toolCallIdToSessionKey.get(itemToolCallId);
+          if (mappedSessionKey && mappedSessionKey.includes(':subagent:')) {
+            const uuidStatus = this.subagentStatus.get(mappedSessionKey);
+            if (uuidStatus === 'done' || uuidStatus === 'failed') return true;
+          }
+          return false;
         })();
 
         const lastActivity = this.subagentLastActivity.get(itemToolCallId) || 0;
