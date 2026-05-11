@@ -1,7 +1,4 @@
-import type {
-  CoworkMessageMetadata,
-  CoworkStore,
-} from '../../../coworkStore';
+import type { CoworkMessageMetadata, CoworkStore } from '../../../coworkStore';
 import type { GatewayClientLike, ActiveTurn } from '../gateway/types';
 import { isRecord, sleep, extractMessageText } from '../utils/gatewayHelpers';
 
@@ -31,6 +28,14 @@ export interface SubagentManagerCallbacks {
   activeTurns: Map<string, ActiveTurn>;
   mainAgentLifecycleEnded: boolean;
   resolveSubagentParentSessionId: (agentId: string) => string | null;
+  // Sweeper-accessible collections (read-write via this)
+  _announceToolMessages: Set<string>;
+  _processedToolEvents: Set<string>;
+  subagentThinkingByRunId: Map<string, string>;
+  announceTextByRunId: Map<string, string>;
+  lastAgentSeqByRunId: Map<string, number>;
+  pendingAgentEventsByRunId: Map<string, unknown[]>;
+  processedAnnounceRunIds: Set<string>;
 }
 
 export class SubagentManager {
@@ -106,12 +111,14 @@ export class SubagentManager {
 
   private checkSessionSubagentsDone(sessionId: string): void {
     // Check in-memory subagentStatus Map - this is the authoritative source
-    const hasAnyNonDone = Array.from(this.cb.subagentStatus.entries()).some(([toolCallId, status]) => {
-      const parentSessionId = this.cb.toolCallIdToParentSessionId.get(toolCallId);
-      // Only count subagents belonging to this orchestration session
-      if (parentSessionId !== sessionId) return false;
-      return status !== 'done';
-    });
+    const hasAnyNonDone = Array.from(this.cb.subagentStatus.entries()).some(
+      ([toolCallId, status]) => {
+        const parentSessionId = this.cb.toolCallIdToParentSessionId.get(toolCallId);
+        // Only count subagents belonging to this orchestration session
+        if (parentSessionId !== sessionId) return false;
+        return status !== 'done';
+      },
+    );
 
     if (!hasAnyNonDone) {
       // Verify there's at least one subagent tracked
@@ -854,6 +861,46 @@ export class SubagentManager {
             displayLabels[toolCallId],
         );
       }
+
+      // Also scan subagentStatus for UUID-keyed entries (announcing subagent spawn children)
+      // These are tracked by UUID rather than call_xxx, so toolCallIdToParentSessionId won't have them
+      for (const [key, status] of this.cb.subagentStatus) {
+        if (statuses[key]) continue; // Already covered
+        if (this.cb.failedSubagentIds.has(key)) continue; // Already marked failed
+        // UUID format: not starting with 'call_' and matching UUID pattern
+        const isUuid = /^[a-f0-9-]{36}$/i.test(key);
+        if (!isUuid) continue;
+
+        // Check if there's a corresponding lifecycle entry
+        const childSessionKey = 'agent:main:subagent:' + key;
+        const hasLifecycleEntry = this.cb.sessionKeyToToolCallId.has(childSessionKey);
+        const hasSessionKey = this.cb.toolCallIdToSessionKey.has(key);
+
+        if (!hasLifecycleEntry && !hasSessionKey) {
+          // No session mapping at all — potential orphan
+          // Check if main session is still active
+          const mainSession = this.cb.store.getSession(sessionId);
+          const sessionDone = mainSession?.status === 'completed' || mainSession?.status === 'idle';
+
+          if (sessionDone && (status === 'running' || status === 'pending')) {
+            console.log(
+              '[OpenClawRuntime] getSubagentStatuses: orphan UUID key=' +
+                key +
+                ' status=' +
+                status +
+                ' — main session done, marking as failed',
+            );
+            statuses[key] = 'failed';
+            this.cb.subagentStatus.set(key, 'failed');
+            this.cb.failedSubagentIds.add(key);
+          } else if (sessionDone) {
+            // Already done/failed status but main session completed — reflect it
+            statuses[key] = status;
+            const label = this.cb.subagentUuidToLabel.get(key);
+            displayLabels[key] = label || key;
+          }
+        }
+      }
     }
 
     // Add pending subagents (in pendingToolCallIds but not yet mapped to sessionKey)
@@ -1062,10 +1109,13 @@ export class SubagentManager {
     if (!this.cb.gatewayClient) return;
 
     try {
-      const history = await this.cb.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
-        sessionKey,
-        limit: 10,
-      });
+      const history = await this.cb.gatewayClient.request<{ messages?: unknown[] }>(
+        'chat.history',
+        {
+          sessionKey,
+          limit: 10,
+        },
+      );
 
       const historyMessages = history?.messages;
       if (!Array.isArray(historyMessages) || historyMessages.length === 0) {
@@ -1117,7 +1167,6 @@ export class SubagentManager {
       console.warn('[OpenClawRuntime] syncSubagentNoReply failed:', err);
     }
   }
-
 
   /**
    * Retry wrapper for querying subagent chat.history.
@@ -1428,5 +1477,130 @@ export class SubagentManager {
     }
 
     return null;
+  }
+
+  // --- Sweeper ---
+
+  private sweeperIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  startSweeper(): void {
+    if (this.sweeperIntervalId) return;
+    console.log('[OpenClawRuntime] sweeper: starting (interval=5min, stale=30min)');
+    this.sweeperIntervalId = setInterval(() => this.sweep(), 5 * 60 * 1000);
+  }
+
+  stopSweeper(): void {
+    if (this.sweeperIntervalId) {
+      clearInterval(this.sweeperIntervalId);
+      this.sweeperIntervalId = null;
+      console.log('[OpenClawRuntime] sweeper: stopped');
+    }
+  }
+
+  private sweep(): void {
+    const now = Date.now();
+    const staleThreshold = 30 * 60 * 1000; // 30 minutes
+    let cleaned = 0;
+
+    // 1. Clean up _processedToolEvents (cap at 2000 entries)
+    const maxProcessedEvents = 2000;
+    if (this.cb._processedToolEvents.size > maxProcessedEvents) {
+      const toRemove = this.cb._processedToolEvents.size - maxProcessedEvents;
+      const entries = Array.from(this.cb._processedToolEvents);
+      for (let i = 0; i < toRemove; i++) {
+        this.cb._processedToolEvents.delete(entries[i]);
+      }
+      cleaned += toRemove;
+      console.log(
+        '[OpenClawRuntime] sweeper: trimmed _processedToolEvents from ' +
+          (this.cb._processedToolEvents.size + toRemove) +
+          ' to ' +
+          this.cb._processedToolEvents.size,
+      );
+    }
+
+    // 2. Clean up announce/cascade maps for processed runIds
+    // Only clean entries for runIds that were processed long ago
+    const processedRunIds = this.cb.processedAnnounceRunIds;
+    if (processedRunIds.size > 500) {
+      // Trim to recent 300
+      const entries = Array.from(processedRunIds);
+      const toRemove = entries.length - 300;
+      for (let i = 0; i < toRemove; i++) {
+        const runId = entries[i];
+        processedRunIds.delete(runId);
+        this.cb.subagentThinkingByRunId.delete(runId);
+        this.cb.announceTextByRunId.delete(runId);
+        this.cb.lastAgentSeqByRunId.delete(runId);
+        this.cb.pendingAgentEventsByRunId.delete(runId);
+        cleaned += 4;
+      }
+      console.log(
+        '[OpenClawRuntime] sweeper: trimmed processedAnnounceRunIds from ' +
+          (processedRunIds.size + toRemove) +
+          ' to ' +
+          processedRunIds.size,
+      );
+    }
+
+    // 3. Clean up subagentMessages for done/failed subagents
+    for (const [key, status] of this.cb.subagentStatus) {
+      if (status === 'done' || status === 'failed') {
+        // Keep messages for detail page viewing, but limit size
+        const msgs = this.cb.subagentMessages.get(key);
+        if (msgs && msgs.length > 200) {
+          // Keep first 100 + last 50
+          const trimmed = [...msgs.slice(0, 100), ...msgs.slice(-50)];
+          this.cb.subagentMessages.set(key, trimmed);
+          cleaned += msgs.length - trimmed.length;
+        }
+      }
+    }
+
+    // 4. Clean up _announceToolMessages for done/failed subagents
+    // Remove dedup keys for subagents that completed > staleThreshold ago
+    // We can't easily track age per dedup key, so cap at 3000 entries
+    const maxAnnounceToolMessages = 3000;
+    if (this.cb._announceToolMessages.size > maxAnnounceToolMessages) {
+      const toRemove = this.cb._announceToolMessages.size - maxAnnounceToolMessages;
+      const entries = Array.from(this.cb._announceToolMessages);
+      for (let i = 0; i < toRemove; i++) {
+        this.cb._announceToolMessages.delete(entries[i]);
+      }
+      cleaned += toRemove;
+      console.log(
+        '[OpenClawRuntime] sweeper: trimmed _announceToolMessages from ' +
+          (this.cb._announceToolMessages.size + toRemove) +
+          ' to ' +
+          this.cb._announceToolMessages.size,
+      );
+    }
+
+    // 5. Clean up pendingToolCallIds and pendingEntryTimestamps for done/failed
+    for (const pendingId of [...this.cb.pendingToolCallIds]) {
+      const status = this.cb.subagentStatus.get(pendingId);
+      if (status === 'done' || status === 'failed') {
+        this.cb.pendingToolCallIds.delete(pendingId);
+        this.cb.pendingEntryTimestamps.delete(pendingId);
+        cleaned++;
+      }
+    }
+
+    // 6. Clean up toolCallArgs for done/failed subagents older than staleThreshold
+    // (args are only needed during active lifecycle)
+    for (const toolCallId of this.cb.toolCallArgs.keys()) {
+      const status = this.cb.subagentStatus.get(toolCallId);
+      if (status === 'done' || status === 'failed') {
+        const ts = this.cb.pendingEntryTimestamps.get(toolCallId);
+        if (!ts || now - ts > staleThreshold) {
+          this.cb.toolCallArgs.delete(toolCallId);
+          cleaned++;
+        }
+      }
+    }
+
+    if (cleaned > 0) {
+      console.log('[OpenClawRuntime] sweeper: cleaned ' + cleaned + ' stale entries total');
+    }
   }
 }

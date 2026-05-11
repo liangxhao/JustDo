@@ -244,6 +244,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    *  the gap so getSubTaskHistory can find context when queried by UUID. */
   private readonly uuidToToolCallId = new Map<string, string>();
 
+  private sweeperStarted = false;
+
   private subagentManager!: SubagentManager;
   private historyReconciler!: HistoryReconciler;
   private subtaskHistory!: SubtaskHistory;
@@ -278,27 +280,55 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       orchestrationParentSessionId: this.orchestrationParentSessionId,
       activeTurns: this.activeTurns,
       mainAgentLifecycleEnded: this.mainAgentLifecycleEnded,
-      resolveSubagentParentSessionId: (agentId: string) => this.resolveSubagentParentSessionId(agentId),
+      resolveSubagentParentSessionId: (agentId: string) =>
+        this.resolveSubagentParentSessionId(agentId),
+      _announceToolMessages: this._announceToolMessages,
+      _processedToolEvents: this._processedToolEvents,
+      subagentThinkingByRunId: this.subagentThinkingByRunId,
+      announceTextByRunId: this.announceTextByRunId,
+      lastAgentSeqByRunId: this.lastAgentSeqByRunId,
+      pendingAgentEventsByRunId: this.pendingAgentEventsByRunId,
+      processedAnnounceRunIds: this.processedAnnounceRunIds,
     });
     this.historyReconciler = new HistoryReconciler({
       getSession: (id: string) => this.store.getSession(id),
       getAgent: (id: string) => this.store.getAgent(id),
-      addMessage: (id: string, msg: Parameters<CoworkStore['addMessage']>[1]) => this.store.addMessage(id, msg),
-      updateMessage: (id: string, msgId: string, patch: Parameters<CoworkStore['updateMessage']>[2]) => this.store.updateMessage(id, msgId, patch),
+      addMessage: (id: string, msg: Parameters<CoworkStore['addMessage']>[1]) =>
+        this.store.addMessage(id, msg),
+      updateMessage: (
+        id: string,
+        msgId: string,
+        patch: Parameters<CoworkStore['updateMessage']>[2],
+      ) => this.store.updateMessage(id, msgId, patch),
       deleteMessage: (id: string, msgId: string) => this.store.deleteMessage(id, msgId),
-      replaceConversationMessages: (id: string, entries: Parameters<CoworkStore['replaceConversationMessages']>[1]) => this.store.replaceConversationMessages(id, entries),
+      replaceConversationMessages: (
+        id: string,
+        entries: Parameters<CoworkStore['replaceConversationMessages']>[1],
+      ) => this.store.replaceConversationMessages(id, entries),
       getGatewayClient: () => this.gatewayClient,
       getGatewayHistoryCount: (id: string) => this.gatewayHistoryCountBySession.get(id),
-      setGatewayHistoryCount: (id: string, count: number) => { this.gatewayHistoryCountBySession.set(id, count); },
+      setGatewayHistoryCount: (id: string, count: number) => {
+        this.gatewayHistoryCountBySession.set(id, count);
+      },
       hasGatewayHistoryCount: (id: string) => this.gatewayHistoryCountBySession.has(id),
-      setChannelSyncCursor: (id: string, cursor: number) => { this.channelSyncCursor.set(id, cursor); },
+      setChannelSyncCursor: (id: string, cursor: number) => {
+        this.channelSyncCursor.set(id, cursor);
+      },
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
       isCurrentTurnToken: (id: string, token: number) => this.isCurrentTurnToken(id, token),
-      resolveAssistantSegmentText: (turn: ActiveTurn, text: string) => this.resolveAssistantSegmentText(turn, text),
-      reuseFinalAssistantMessage: (id: string, content: string) => this.reuseFinalAssistantMessage(id, content),
-      isChannelSessionKey: (key: string) => this.channelSessionSync?.isChannelSessionKey(key) ?? false,
+      resolveAssistantSegmentText: (turn: ActiveTurn, text: string) =>
+        this.resolveAssistantSegmentText(turn, text),
+      reuseFinalAssistantMessage: (id: string, content: string) =>
+        this.reuseFinalAssistantMessage(id, content),
+      isChannelSessionKey: (key: string) =>
+        this.channelSessionSync?.isChannelSessionKey(key) ?? false,
       isReCreatedChannelSession: (id: string) => this.reCreatedChannelSessionIds.has(id),
-      syncChannelUserMessages: (id: string, msgs: unknown[], latestOnly: boolean, isDiscord: boolean) => this.syncChannelUserMessages(id, msgs, latestOnly, isDiscord),
+      syncChannelUserMessages: (
+        id: string,
+        msgs: unknown[],
+        latestOnly: boolean,
+        isDiscord: boolean,
+      ) => this.syncChannelUserMessages(id, msgs, latestOnly, isDiscord),
       getFullHistorySyncLimit: () => OpenClawRuntimeAdapter.FULL_HISTORY_SYNC_LIMIT,
     });
     this.skillRpcHandler = new SkillRpcHandler({
@@ -335,9 +365,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       orchestrationParentSessionId: this.orchestrationParentSessionId,
       store: this.store,
       subagentManager: this.subagentManager,
-      resolveSubagentParentSessionId: (agentId: string) => this.resolveSubagentParentSessionId(agentId),
+      resolveSubagentParentSessionId: (agentId: string) =>
+        this.resolveSubagentParentSessionId(agentId),
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
-      splitAssistantSegmentBeforeTool: (sessionId: string, turn: ActiveTurn) => this.splitAssistantSegmentBeforeTool(sessionId, turn),
+      splitAssistantSegmentBeforeTool: (sessionId: string, turn: ActiveTurn) =>
+        this.splitAssistantSegmentBeforeTool(sessionId, turn),
       getGatewayConnectionInfo: () => this.engineManager.getGatewayConnectionInfo(),
     });
     this.agentEventProcessor = new AgentEventProcessor({
@@ -345,10 +377,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       activeTurns: this.activeTurns,
       deletedChannelKeys: this.deletedChannelKeys,
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
-      ensureActiveTurn: (sessionId: string, sessionKey: string, runId: string) => this.ensureActiveTurn(sessionId, sessionKey, runId),
+      ensureActiveTurn: (sessionId: string, sessionKey: string, runId: string) =>
+        this.ensureActiveTurn(sessionId, sessionKey, runId),
       failedSubagentIds: this.failedSubagentIds,
       fullySyncedSessions: this.fullySyncedSessions,
-      handleAgentToolEvent: (sessionId: string, turn: ActiveTurn, data: unknown) => this.handleAgentToolEvent(sessionId, turn, data),
+      handleAgentToolEvent: (sessionId: string, turn: ActiveTurn, data: unknown) =>
+        this.handleAgentToolEvent(sessionId, turn, data),
       heartbeatSessionKeys: this.heartbeatSessionKeys,
       lastAgentSeqByRunId: this.lastAgentSeqByRunId,
       latestTurnTokenBySession: this.latestTurnTokenBySession,
@@ -358,7 +392,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       pendingEntryTimestamps: this.pendingEntryTimestamps,
       pendingToolCallIds: this.pendingToolCallIds,
       reCreatedChannelSessionIds: this.reCreatedChannelSessionIds,
-      resolveSubagentParentSessionId: (agentId: string) => this.resolveSubagentParentSessionId(agentId),
+      resolveSubagentParentSessionId: (agentId: string) =>
+        this.resolveSubagentParentSessionId(agentId),
       sessionIdByRunId: this.sessionIdByRunId,
       sessionIdBySessionKey: this.sessionIdBySessionKey,
       sessionKeyToLabel: this.sessionKeyToLabel,
@@ -383,10 +418,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       cleanupSessionTurn: (sessionId: string) => this.cleanupSessionTurn(sessionId),
       clearPendingMessageUpdate: (messageId: string) => this.clearPendingMessageUpdate(messageId),
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
-      ensureActiveTurn: (sessionId: string, sessionKey: string, runId: string) => this.ensureActiveTurn(sessionId, sessionKey, runId),
-      finalizeThinkingMessage: (sessionId: string, messageId: string, content: string) => this.finalizeThinkingMessage(sessionId, messageId, content),
+      ensureActiveTurn: (sessionId: string, sessionKey: string, runId: string) =>
+        this.ensureActiveTurn(sessionId, sessionKey, runId),
+      finalizeThinkingMessage: (sessionId: string, messageId: string, content: string) =>
+        this.finalizeThinkingMessage(sessionId, messageId, content),
       gatewayClient: null as GatewayClientLike | null,
-      handleAgentThinkingEvent: (sessionId: string, turn: ActiveTurn, data: unknown) => this.handleAgentThinkingEvent(sessionId, turn, data),
+      handleAgentThinkingEvent: (sessionId: string, turn: ActiveTurn, data: unknown) =>
+        this.handleAgentThinkingEvent(sessionId, turn, data),
       heartbeatSessionKeys: this.heartbeatSessionKeys,
       historyReconciler: this.historyReconciler,
       lastChatSeqByRunId: this.lastChatSeqByRunId,
@@ -395,11 +433,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       pendingToolCallIds: this.pendingToolCallIds,
       processedAnnounceRunIds: this.processedAnnounceRunIds,
       rejectTurn: (sessionId: string, error: Error) => this.rejectTurn(sessionId, error),
-      rememberSessionKey: (sessionId: string, sessionKey: string) => this.rememberSessionKey(sessionId, sessionKey),
-      resolveSessionIdBySessionKey: (sessionKey: string) => this.resolveSessionIdBySessionKey(sessionKey),
-      resolveSessionIdFromChatPayload: (payload: ChatEventPayload) => this.resolveSessionIdFromChatPayload(payload),
+      rememberSessionKey: (sessionId: string, sessionKey: string) =>
+        this.rememberSessionKey(sessionId, sessionKey),
+      resolveSessionIdBySessionKey: (sessionKey: string) =>
+        this.resolveSessionIdBySessionKey(sessionKey),
+      resolveSessionIdFromChatPayload: (payload: ChatEventPayload) =>
+        this.resolveSessionIdFromChatPayload(payload),
       resolveTurn: (sessionId: string) => this.resolveTurn(sessionId),
-      reuseFinalAssistantMessage: (sessionId: string, content: string) => this.reuseFinalAssistantMessage(sessionId, content),
+      reuseFinalAssistantMessage: (sessionId: string, content: string) =>
+        this.reuseFinalAssistantMessage(sessionId, content),
       sessionIdByRunId: this.sessionIdByRunId,
       sessionKeyToToolCallId: this.sessionKeyToToolCallId,
       store: this.store,
@@ -407,7 +449,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       subagentMessages: this.subagentMessages,
       subagentStatus: this.subagentStatus,
       subagentThinkingByRunId: this.subagentThinkingByRunId,
-      throttledEmitMessageUpdate: (sessionId: string, messageId: string, content: string) => this.throttledEmitMessageUpdate(sessionId, messageId, content),
+      throttledEmitMessageUpdate: (sessionId: string, messageId: string, content: string) =>
+        this.throttledEmitMessageUpdate(sessionId, messageId, content),
       toolCallIdToParentSessionId: this.toolCallIdToParentSessionId,
       uuidToToolCallId: this.uuidToToolCallId,
     });
@@ -1659,6 +1702,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private handleGatewayEvent(event: GatewayEventFrame): void {
+    if (!this.sweeperStarted) {
+      this.sweeperStarted = true;
+      this.subagentManager.startSweeper();
+    }
+
     if (event.event === 'tick') {
       this.lastTickTimestamp = Date.now();
       return;
@@ -1706,8 +1754,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       console.debug('[OpenClawRuntime] received cron event:', JSON.stringify(event));
     }
   }
-
-
 
   private handleAgentEvent(payload: unknown, seq?: number): void {
     this.agentEventProcessor.handleAgentEvent(payload, seq);
@@ -2217,7 +2263,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.fullySyncedSessions.add(sessionId);
 
     try {
-      await this.historyReconciler.reconcileWithHistory(sessionId, sessionKey, { isFullSync: true });
+      await this.historyReconciler.reconcileWithHistory(sessionId, sessionKey, {
+        isFullSync: true,
+      });
     } catch (error) {
       console.error('[ChannelSync] syncFullChannelHistory: error:', error);
       // Remove from synced set so retry is possible
@@ -2978,7 +3026,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.skillRpcHandler.generateTitle(userIntent, timeoutMs);
   }
 
-  async patchSessionModel(sessionId: string, model: string, agentId?: string): Promise<{ ok: boolean; error?: string }> {
+  async patchSessionModel(
+    sessionId: string,
+    model: string,
+    agentId?: string,
+  ): Promise<{ ok: boolean; error?: string }> {
     return this.skillRpcHandler.patchSessionModel(sessionId, model, agentId);
   }
 
@@ -2986,15 +3038,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.skillRpcHandler.getSkillsStatus(agentId);
   }
 
-  async installSkill(params: import('./types').SkillInstallParams): Promise<import('./types').SkillRpcResult> {
+  async installSkill(
+    params: import('./types').SkillInstallParams,
+  ): Promise<import('./types').SkillRpcResult> {
     return this.skillRpcHandler.installSkill(params);
   }
 
-  async updateSkillConfig(params: import('./types').SkillUpdateParams): Promise<import('./types').SkillRpcResult> {
+  async updateSkillConfig(
+    params: import('./types').SkillUpdateParams,
+  ): Promise<import('./types').SkillRpcResult> {
     return this.skillRpcHandler.updateSkillConfig(params);
   }
 
-  async searchClawHubSkills(query?: string, limit?: number): Promise<import('./types').ClawHubSearchResult[]> {
+  async searchClawHubSkills(
+    query?: string,
+    limit?: number,
+  ): Promise<import('./types').ClawHubSearchResult[]> {
     return this.skillRpcHandler.searchClawHubSkills(query, limit);
   }
 

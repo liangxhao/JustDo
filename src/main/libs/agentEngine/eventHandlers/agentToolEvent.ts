@@ -18,7 +18,10 @@ export interface AgentToolEventCallbacks {
   toolCallIdToSessionKey: Map<string, string>;
   toolCallIdToParentSessionId: Map<string, string>;
   toolCallIdToLabel: Map<string, string>;
-  subagentMessages: Map<string, Array<{ role: string; content: string; metadata?: Record<string, unknown> }>>;
+  subagentMessages: Map<
+    string,
+    Array<{ role: string; content: string; metadata?: Record<string, unknown> }>
+  >;
   successfulSpawnToolCallIds: Set<string>;
   sessionKeyToToolCallId: Map<string, string>;
   sessionKeyToLabel: Map<string, string>;
@@ -145,31 +148,52 @@ export class AgentToolEventHandler {
           (metaField || '(none)'),
       );
 
-      let promptText = '';
-      if (typeof args.task === 'string' && args.task) {
-        promptText = args.task;
-      } else if (typeof args.prompt === 'string' && args.prompt) {
-        promptText = args.prompt;
-      } else if (metaField) {
-        const taskMatch = metaField.match(/(?:task|prompt)\s+(.+)$/i);
+      // For announce subagents, data.args is empty and all info is in meta string:
+      // "label skill-docx-example, task 请阅读 skills/docx/SKILL.md ..."
+      // Extract label, task, runtime, mode from meta when args is empty.
+      let enrichedArgs: Record<string, unknown> = { ...args };
+      let enrichedMetaLabel = metaLabel;
+      if (argsKeys.length === 0 && metaField) {
+        // Extract label: "label xxx, task ..."
+        const labelMatch = metaField.match(/^label\s+([^,]+)/);
+        if (labelMatch && labelMatch[1]) {
+          enrichedArgs.label = labelMatch[1].trim();
+          enrichedMetaLabel = labelMatch[1].trim();
+        }
+        // Extract task: ", task yyy"
+        const taskMatch = metaField.match(/,\s*task\s+(.+)$/i);
         if (taskMatch && taskMatch[1]) {
-          promptText = taskMatch[1].trim();
+          enrichedArgs.task = taskMatch[1].trim();
+        }
+        // Extract runtime and mode if present
+        const runtimeMatch = metaField.match(/runtime\s+(\w+)/);
+        if (runtimeMatch && runtimeMatch[1]) {
+          enrichedArgs.runtime = runtimeMatch[1];
+        }
+        const modeMatch = metaField.match(/mode\s+(\w+)/);
+        if (modeMatch && modeMatch[1]) {
+          enrichedArgs.mode = modeMatch[1];
         }
       }
 
+      let promptText = '';
+      if (typeof enrichedArgs.task === 'string' && enrichedArgs.task) {
+        promptText = enrichedArgs.task as string;
+      } else if (typeof enrichedArgs.prompt === 'string' && enrichedArgs.prompt) {
+        promptText = enrichedArgs.prompt as string;
+      }
+
       const savedInfo = {
-        ...args,
-        _metaLabel: metaLabel,
+        ...enrichedArgs,
+        _metaLabel: enrichedMetaLabel,
         _extractedPrompt: promptText,
       };
       this.cb.toolCallArgs.set(toolCallId, savedInfo);
 
       const displayLabel =
-        typeof args.label === 'string' && args.label
-          ? args.label
-          : typeof args.agentId === 'string' && args.agentId
-            ? args.agentId
-            : metaLabel || (promptText ? promptText.slice(0, 60) : '');
+        typeof enrichedArgs.label === 'string' && enrichedArgs.label
+          ? (enrichedArgs.label as string)
+          : enrichedMetaLabel || (promptText ? promptText.slice(0, 60) : '');
 
       this.cb.subagentStatus.set(toolCallId, 'pending');
       this.cb.pendingToolCallIds.add(toolCallId);
@@ -381,7 +405,8 @@ export class AgentToolEventHandler {
           this.cb.toolCallIdToLabel.set(toolCallId, mappingKey);
         }
         if (toolCallId) {
-          const foundSessionKey = this.cb.subagentManager.findChildSessionKeyByToolCallId(toolCallId);
+          const foundSessionKey =
+            this.cb.subagentManager.findChildSessionKeyByToolCallId(toolCallId);
           if (foundSessionKey) {
             childSessionKey = foundSessionKey;
             if (mappingKey) {
@@ -402,12 +427,14 @@ export class AgentToolEventHandler {
           if (toolCallId && mappingKey) {
             const parentSessionKey = this.cb.toolCallIdToSessionKey.get(toolCallId);
             if (parentSessionKey) {
-              this.cb.subagentManager.querySubagentSessionKey(mappingKey, parentSessionKey, toolCallId).catch(err => {
-                console.warn(
-                  '[OpenClawRuntime] sessions_spawn: querySubagentSessionKey background call failed:',
-                  err,
-                );
-              });
+              this.cb.subagentManager
+                .querySubagentSessionKey(mappingKey, parentSessionKey, toolCallId)
+                .catch(err => {
+                  console.warn(
+                    '[OpenClawRuntime] sessions_spawn: querySubagentSessionKey background call failed:',
+                    err,
+                  );
+                });
             }
           }
         }

@@ -49,7 +49,10 @@ export interface AgentEventProcessorCallbacks {
   sessionKeyToToolCallId: Map<string, string>;
   store: CoworkStore;
   subagentManager: SubagentManager;
-  subagentMessages: Map<string, Array<{ role: string; content: string; metadata?: Record<string, unknown> }>>;
+  subagentMessages: Map<
+    string,
+    Array<{ role: string; content: string; metadata?: Record<string, unknown> }>
+  >;
   subagentStatus: Map<string, string>;
   subagentUuidToLabel: Map<string, string>;
   successfulSpawnToolCallIds: Set<string>;
@@ -172,7 +175,11 @@ export class AgentEventProcessor {
         // Final fallback: if sessionKey is a subagent and we have pending toolCallIds,
         // use the first UNMAPPED pending toolCallId and establish the mapping.
         // This handles cases where gateway strips result.childSessionKey from tool events.
-        if (!toolCallId && sessionKey.includes(':subagent:') && this.cb.pendingToolCallIds.size > 0) {
+        if (
+          !toolCallId &&
+          sessionKey.includes(':subagent:') &&
+          this.cb.pendingToolCallIds.size > 0
+        ) {
           // Filter to only pending toolCallIds that haven't been mapped to a childSessionKey.
           // NOTE: toolCallIdToSessionKey may contain temporary mappings to parentSessionKey
           // (set during sessions_spawn start), which should NOT count as "mapped" here.
@@ -385,7 +392,8 @@ export class AgentEventProcessor {
             // Emit subagent_completion message to parent session
             // Use per-session mapping to avoid cross-session contamination
             const completionParentId =
-              this.cb.toolCallIdToParentSessionId.get(toolCallId) || this.cb.orchestrationParentSessionId;
+              this.cb.toolCallIdToParentSessionId.get(toolCallId) ||
+              this.cb.orchestrationParentSessionId;
             if (completionParentId) {
               const label = this.cb.toolCallIdToLabel.get(toolCallId) || displayLabel || 'Subagent';
               const childSessionKey = this.cb.toolCallIdToSessionKey.get(toolCallId) || '';
@@ -476,7 +484,10 @@ export class AgentEventProcessor {
           const emitAgentId = subagentUuid;
 
           // Compute parent session ID upfront — needed by temporal matching in both phase=start and phase=end.
-          const nestedParentSessionId = this.cb.subagentManager.findParentSessionIdForNested(emitAgentId, sessionKey);
+          const nestedParentSessionId = this.cb.subagentManager.findParentSessionIdForNested(
+            emitAgentId,
+            sessionKey,
+          );
 
           if (phase === 'start' || phase === 'running') {
             // Skip if already running or done (don't override completion with late start/running)
@@ -608,7 +619,11 @@ export class AgentEventProcessor {
             }
 
             // Persist nested spawn to parent session so it survives restart
-            this.cb.subagentManager.persistNestedSubagentSpawn(emitAgentId, displayLabel, sessionKey);
+            this.cb.subagentManager.persistNestedSubagentSpawn(
+              emitAgentId,
+              displayLabel,
+              sessionKey,
+            );
             // If no label found, query sessions.list to resolve
             if (!nestedLabel && this._gatewayClient) {
               // Construct the correct parent session key for the query.
@@ -636,7 +651,11 @@ export class AgentEventProcessor {
                     ', querying sessions.list with parentKey=' +
                     queryParentKey,
                 );
-                void this.cb.subagentManager.queryNestedSubagentLabel(subagentUuid, queryParentKey, emitAgentId);
+                void this.cb.subagentManager.queryNestedSubagentLabel(
+                  subagentUuid,
+                  queryParentKey,
+                  emitAgentId,
+                );
               }
             }
             console.log(
@@ -1087,7 +1106,10 @@ export class AgentEventProcessor {
                   toolName === 'sessions_read'
                 ) {
                   const mainToolUseId = toolCallId || emitAgentId;
-                  if (mainToolUseId && !this.cb._announceToolMessages.has(mainToolUseId + ':result')) {
+                  if (
+                    mainToolUseId &&
+                    !this.cb._announceToolMessages.has(mainToolUseId + ':result')
+                  ) {
                     this.cb._announceToolMessages.add(mainToolUseId + ':result');
                     this.cb.store.addMessage(resultParentSessionId, {
                       type: 'tool_result',
@@ -1154,11 +1176,33 @@ export class AgentEventProcessor {
               if (itemPhase === 'start') {
                 // 工具开始执行
                 const msgId = `subagent-tool-${effectiveToolCallId || Date.now()}`;
-                const toolInput = isRecord(itemMeta?.args)
-                  ? itemMeta.args
-                  : isRecord(itemMeta?.input)
-                    ? itemMeta.input
-                    : {};
+
+                // Extract toolInput from multiple sources:
+                // 1. itemMeta.args or itemMeta.input (parsed JSON meta)
+                // 2. subData.args (top-level field in item event)
+                // 3. Parse meta string for announce format: "label xxx, task yyy"
+                let toolInput: Record<string, unknown> = {};
+                if (isRecord(itemMeta?.args)) {
+                  toolInput = itemMeta.args as Record<string, unknown>;
+                } else if (isRecord(itemMeta?.input)) {
+                  toolInput = itemMeta.input as Record<string, unknown>;
+                } else if (isRecord(subData?.args)) {
+                  toolInput = subData.args as Record<string, unknown>;
+                } else if (metaRaw) {
+                  // Announce subagent format: "label xxx, task yyy"
+                  // Extract label, task from meta string
+                  const labelMatch = metaRaw.match(/label\s+([^,]+)/);
+                  const taskMatch = metaRaw.match(/,\s*task\s+(.+)$/i);
+                  if (labelMatch || taskMatch) {
+                    if (labelMatch && labelMatch[1]) {
+                      toolInput.label = labelMatch[1].trim();
+                    }
+                    if (taskMatch && taskMatch[1]) {
+                      toolInput.task = taskMatch[1].trim();
+                    }
+                  }
+                }
+
                 const toolContent = `Using tool: ${itemName}\n${itemTitle}\n\nInput: ${JSON.stringify(toolInput, null, 2)}`;
                 const toolMsg = {
                   role: 'tool_use',
@@ -1193,11 +1237,18 @@ export class AgentEventProcessor {
                     itemName === 'sessions_read'
                   ) {
                     const mainToolUseId = effectiveToolCallId || emitAgentId;
-                    if (mainToolUseId && !this.cb._announceToolMessages.has(mainToolUseId + ':use')) {
+                    if (
+                      mainToolUseId &&
+                      !this.cb._announceToolMessages.has(mainToolUseId + ':use')
+                    ) {
                       this.cb._announceToolMessages.add(mainToolUseId + ':use');
+                      // Include label/task in content for display
+                      const announceLabel =
+                        typeof toolInput.label === 'string' ? toolInput.label : '';
+                      const announceContent = `Using tool: ${itemName}${announceLabel ? ' — ' + announceLabel : ''}`;
                       this.cb.store.addMessage(itemParentSessionId, {
                         type: 'tool_use',
-                        content: `Using tool: ${itemName}`,
+                        content: announceContent,
                         metadata: {
                           toolName: itemName,
                           toolInput,
@@ -1214,12 +1265,18 @@ export class AgentEventProcessor {
                 if (itemName === 'sessions_spawn') {
                   const nestedArgs = isRecord(toolInput) ? toolInput : {};
 
-                  // Extract displayLabel from args
+                  // Extract displayLabel: prefer label, then fall back to task description
+                  const taskText =
+                    typeof nestedArgs.task === 'string' && nestedArgs.task
+                      ? nestedArgs.task
+                      : typeof nestedArgs.prompt === 'string' && nestedArgs.prompt
+                        ? nestedArgs.prompt
+                        : '';
                   const nestedDisplayLabel =
                     typeof nestedArgs.label === 'string' && nestedArgs.label
                       ? nestedArgs.label
-                      : typeof nestedArgs.agentId === 'string' && nestedArgs.agentId
-                        ? nestedArgs.agentId
+                      : taskText
+                        ? taskText.slice(0, 30)
                         : '';
 
                   // Extract promptText from args.task or args.prompt
@@ -1357,6 +1414,130 @@ export class AgentEventProcessor {
                           isError,
                         },
                       });
+                    }
+
+                    // Extract childSessionKey from result meta for sessions_spawn end phase
+                    if (itemName === 'sessions_spawn' && effectiveToolCallId) {
+                      let childKey: string | null = null;
+                      // Try itemMeta.result.childSessionKey (parsed JSON meta)
+                      if (isRecord(itemMeta?.result)) {
+                        childKey =
+                          typeof itemMeta.result.childSessionKey === 'string'
+                            ? itemMeta.result.childSessionKey
+                            : null;
+                      }
+                      // Try itemMeta.childSessionKey
+                      if (!childKey) {
+                        childKey =
+                          typeof itemMeta?.childSessionKey === 'string'
+                            ? itemMeta.childSessionKey
+                            : null;
+                      }
+                      // Try subData.result.childSessionKey (raw event data)
+                      if (!childKey && isRecord(subData?.result)) {
+                        childKey =
+                          typeof subData.result.childSessionKey === 'string'
+                            ? subData.result.childSessionKey
+                            : null;
+                      }
+                      // Try subData.childSessionKey
+                      if (!childKey) {
+                        childKey =
+                          typeof subData?.childSessionKey === 'string'
+                            ? subData.childSessionKey
+                            : null;
+                      }
+
+                      if (childKey) {
+                        // Correct any wrong existing mappings
+                        const existingToolCallId = this.cb.sessionKeyToToolCallId.get(childKey);
+                        if (existingToolCallId && existingToolCallId !== effectiveToolCallId) {
+                          console.log(
+                            '[OpenClawRuntime] item-level sessions_spawn end: correcting wrong mapping childSessionKey=' +
+                              childKey +
+                              ' from=' +
+                              existingToolCallId +
+                              ' to=' +
+                              effectiveToolCallId,
+                          );
+                          this.cb.subagentStatus.delete(existingToolCallId);
+                          this.cb.toolCallIdToSessionKey.delete(existingToolCallId);
+                          this.cb.sessionKeyToToolCallId.delete(childKey);
+                        }
+
+                        const existingSessionKey =
+                          this.cb.toolCallIdToSessionKey.get(effectiveToolCallId);
+                        if (existingSessionKey && existingSessionKey !== childKey) {
+                          this.cb.sessionKeyToToolCallId.delete(existingSessionKey);
+                        }
+
+                        this.cb.toolCallIdToSessionKey.set(effectiveToolCallId, childKey);
+                        this.cb.sessionKeyToToolCallId.set(childKey, effectiveToolCallId);
+
+                        // Copy pending messages from toolCallId storage to sessionKey storage
+                        const pendingMsgs = this.cb.subagentMessages.get(effectiveToolCallId);
+                        if (pendingMsgs && pendingMsgs.length > 0) {
+                          if (!this.cb.subagentMessages.has(childKey)) {
+                            this.cb.subagentMessages.set(childKey, [...pendingMsgs]);
+                          } else {
+                            const existingMsgs = this.cb.subagentMessages.get(childKey)!;
+                            for (const msg of pendingMsgs) {
+                              const isDup = existingMsgs.some(
+                                e =>
+                                  e.role === msg.role &&
+                                  (e.content === msg.content ||
+                                    e.content.startsWith(msg.content) ||
+                                    msg.content.startsWith(e.content)),
+                              );
+                              if (!isDup) {
+                                existingMsgs.push(msg);
+                              }
+                            }
+                          }
+                        }
+
+                        // Store display label from saved args
+                        const savedArgs = this.cb.toolCallArgs.get(effectiveToolCallId);
+                        if (savedArgs && isRecord(savedArgs)) {
+                          const label =
+                            typeof savedArgs.label === 'string' && savedArgs.label
+                              ? savedArgs.label
+                              : typeof savedArgs.agentId === 'string' && savedArgs.agentId
+                                ? savedArgs.agentId
+                                : null;
+                          if (label) {
+                            this.cb.sessionKeyToLabel.set(childKey, label);
+                            this.cb.toolCallIdToLabel.set(effectiveToolCallId, label);
+                            const uuidMatch = childKey.match(/subagent[:\-]([a-f0-9-]{36})$/i);
+                            if (uuidMatch && uuidMatch[1]) {
+                              this.cb.subagentUuidToLabel.set(uuidMatch[1], label);
+                            }
+                          }
+                        }
+
+                        // Extract UUID for announce completion matching
+                        const uuidMatch = childKey.match(/subagent[:\-]([a-f0-9-]{36})$/i);
+                        if (uuidMatch && uuidMatch[1]) {
+                          this.cb.uuidToToolCallId.set(uuidMatch[1], effectiveToolCallId);
+                        }
+
+                        // Clear pending state
+                        this.cb.pendingToolCallIds.delete(effectiveToolCallId);
+                        this.cb.pendingEntryTimestamps.delete(effectiveToolCallId);
+
+                        console.log(
+                          '[OpenClawRuntime] item-level sessions_spawn end: established childSessionKey mapping toolCallId=' +
+                            effectiveToolCallId +
+                            ' childSessionKey=' +
+                            childKey +
+                            (uuidMatch?.[1] ? ' uuid=' + uuidMatch[1] : ''),
+                        );
+                      } else {
+                        console.log(
+                          '[OpenClawRuntime] item-level sessions_spawn end: childSessionKey not found in result, toolCallId=' +
+                            effectiveToolCallId,
+                        );
+                      }
                     }
                   }
                 }
@@ -1921,14 +2102,33 @@ export class AgentEventProcessor {
 
         if (itemKind === 'tool' && itemToolCallId) {
           // Convert stream=item format to gateway format for handleAgentToolEvent
-          // item: { kind:'tool', phase:'start', name:'sessions_spawn', toolCallId:'call_xxx', meta:'...' }
-          // gateway: { tool:'start:sessions_spawn', call:'call_xxx', meta:'...' }
+          // item: { kind:'tool', phase:'start', name:'sessions_spawn', toolCallId:'call_xxx', meta:'{"args":{...}}' }
+          // gateway: { tool:'start:sessions_spawn', call:'call_xxx', meta:'...', args:{...} }
+
+          // Parse meta JSON to extract args
+          let itemArgs: Record<string, unknown> | undefined;
+          const metaRaw = typeof subData.meta === 'string' ? subData.meta : '';
+          if (metaRaw) {
+            try {
+              const parsed = JSON.parse(metaRaw) as Record<string, unknown>;
+              if (isRecord(parsed.args)) {
+                itemArgs = parsed.args as Record<string, unknown>;
+              }
+            } catch {
+              /* meta may not be JSON, ignore */
+            }
+          }
+          // Fallback: check if args is already a separate field
+          if (!itemArgs && isRecord(subData.args)) {
+            itemArgs = subData.args as Record<string, unknown>;
+          }
+
           const mappedPhase = itemPhase === 'end' ? 'result' : itemPhase;
           const gatewayData: Record<string, unknown> = {
             tool: `${mappedPhase}:${itemName}`,
             call: itemToolCallId,
             meta: typeof subData.meta === 'string' ? subData.meta : '',
-            args: subData.args,
+            args: itemArgs,
             result: subData.result,
             isError: subData.isError,
           };
@@ -1995,7 +2195,9 @@ export class AgentEventProcessor {
     this.cb.pendingAgentEventsByRunId.set(normalizedRunId, queued);
 
     if (this.cb.pendingAgentEventsByRunId.size > 400) {
-      const oldestRunId = this.cb.pendingAgentEventsByRunId.keys().next().value as string | undefined;
+      const oldestRunId = this.cb.pendingAgentEventsByRunId.keys().next().value as
+        | string
+        | undefined;
       if (oldestRunId) {
         this.cb.pendingAgentEventsByRunId.delete(oldestRunId);
       }
@@ -2339,5 +2541,4 @@ export class AgentEventProcessor {
       this.cb.emit('thinkingUpdate', sessionId, messageId, actualDelta);
     }
   }
-
 }
