@@ -307,7 +307,7 @@ export class ChatEventProcessor {
                     // is genuinely new or just a duplicate of already-streamed content.
                     // Announce runs can carry summary text that was not part of the
                     // subagent's work output (e.g. cross-subagent summaries).
-                    const allStreamedContent = msgs2
+                    const allStreamedContent = (msgs2 ?? [])
                       .filter(m => m.role === 'assistant')
                       .map(m => (typeof m.content === 'string' ? m.content : ''))
                       .join('\n');
@@ -1045,10 +1045,33 @@ export class ChatEventProcessor {
     // This prevents "Session is still running" error when user sends message after seeing
     // messageMetadataUpdate (isStreaming: false) but before cleanupSessionTurn completes.
     // reconcileWithHistory only needs sessionId/sessionKey, not turn data.
-    // IMPORTANT: Mark session as pending subagent completion BEFORE deleting activeTurns
-    // to prevent ensureActiveTurn from re-creating turn on late-arriving announce events.
-    this.cb.markPendingSubagentCompletion(sessionId);
-    this.cb.activeTurns.delete(sessionId);
+    // CRITICAL: Only delete activeTurns if NO subagent tool calls were made.
+    // When sessions_spawn was used, main agent will continue after subagent completes,
+    // and subsequent agent events (thinking/assistant stream) need activeTurn to process.
+    // Premature deletion causes main agent's follow-up output to be skipped.
+    // Check from existing session messages (before reconcile) for sessions_spawn tool_use.
+    const sessionBeforeReconcile = this.cb.store.getSession(sessionId);
+    const hasSessionsSpawnToolCall =
+      sessionBeforeReconcile?.messages.some(
+        m => m.type === 'tool_use' && m.metadata?.toolName === 'sessions_spawn',
+      ) ?? false;
+    console.log(
+      '[OpenClawRuntime] handleChatFinal: checking sessions_spawn tool calls, sessionId=' +
+        sessionId +
+        ' hasSessionsSpawnToolCall=' +
+        hasSessionsSpawnToolCall,
+    );
+    if (!hasSessionsSpawnToolCall) {
+      // IMPORTANT: Mark session as pending subagent completion BEFORE deleting activeTurns
+      // to prevent ensureActiveTurn from re-creating turn on late-arriving announce events.
+      this.cb.markPendingSubagentCompletion(sessionId);
+      this.cb.activeTurns.delete(sessionId);
+    } else {
+      console.log(
+        '[OpenClawRuntime] handleChatFinal: keeping activeTurns for subagent follow-up, sessionId=' +
+          sessionId,
+      );
+    }
 
     // Reconcile local messages with authoritative gateway history.
     // This replaces the old syncFinalAssistantWithHistory + syncChannelAfterTurn flow.
@@ -1107,10 +1130,8 @@ export class ChatEventProcessor {
     // because the main agent is still processing results and may have follow-up runs.
     // We use a delayed check to determine if the main agent truly finished:
     // after cleanup, if no new turn is created within 500ms, mark as 'completed'.
-    const hadSubagentToolCalls =
-      sessionAfterReconcile?.messages.some(
-        m => m.type === 'tool_use' && m.metadata?.toolName === 'sessions_spawn',
-      ) ?? false;
+    // NOTE: Use hasSessionsSpawnToolCall (computed earlier) to avoid duplicate check.
+    const hadSubagentToolCalls = hasSessionsSpawnToolCall;
     const shouldKeepRunning = hasRunningSubagents || hadSubagentToolCalls;
     const finalStatus = shouldKeepRunning ? 'running' : 'completed';
     console.log(
@@ -1121,21 +1142,35 @@ export class ChatEventProcessor {
         ' hadSubagentToolCalls=' +
         hadSubagentToolCalls +
         ' finalStatus=' +
-        finalStatus,
+        finalStatus +
+        ' activeTurns.has=' +
+        this.cb.activeTurns.has(sessionId),
     );
     this.cb.store.updateSession(sessionId, { status: finalStatus });
     this.cb.emit('complete', sessionId, payload.runId ?? turn.runId, finalStatus);
-    this.cb.cleanupSessionTurn(sessionId);
+    // Only cleanup session turn when no subagent tool calls were made.
+    // When subagents are involved, activeTurns is preserved for follow-up events.
+    if (!hadSubagentToolCalls) {
+      this.cb.cleanupSessionTurn(sessionId);
+    }
     this.cb.resolveTurn(sessionId);
 
     // Delayed check: if subagents were involved and no new turn was created within 500ms,
     // the main agent has truly finished processing all results. Mark as 'completed'.
     // Use a retry loop (not single-shot) because subagents may take a long time to
     // complete and their lifecycle 'end' events arrive asynchronously.
+    // NOTE: Since we preserve activeTurns for subagent scenarios, "hasNewTurn" now means
+    // either: (1) a genuinely new turn was created after cleanup, OR (2) the preserved
+    // turn is being actively updated by follow-up events. We check the turn's state
+    // to distinguish: if thinkingStreamEnded is false or currentText has new content,
+    // the main agent has resumed and is actively processing.
     if (shouldKeepRunning) {
       const MAX_RETRY_MS = 300_000; // 5 minutes cap
       const RETRY_INTERVAL_MS = 2_000; // check every 2s
       const startTime = Date.now();
+      // Snapshot the turn's current state to detect if follow-up events arrive
+      const initialTextSnapshot = turn.currentText;
+      const initialThinkingEnded = turn.thinkingStreamEnded;
 
       const checkSubagentsAndFinalize = () => {
         // Check session's current status - only update if still 'running'
@@ -1152,7 +1187,7 @@ export class ChatEventProcessor {
             );
             this.cb.cleanupSessionTurn(sessionId);
           }
-          // Clear pending subagent completion marker
+          // Clear pending subagent completion marker (if was set)
           this.cb.clearPendingSubagentCompletion(sessionId);
           console.log(
             '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
@@ -1164,22 +1199,31 @@ export class ChatEventProcessor {
           return;
         }
 
-        // If a new turn was created (follow-up run started), defer to checkAllSubagentsDone
-        // which handles per-session completion tracking. Then reschedule to check again
-        // after the new turn potentially completes.
-        const hasNewTurn = this.cb.activeTurns.has(sessionId);
-        if (hasNewTurn) {
-          console.log(
-            '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
-              sessionId +
-              ' hasNewTurn=' +
-              hasNewTurn +
-              ' -> deferring to checkAllSubagentsDone, will retry',
-          );
-          this.cb.subagentManager.checkAllSubagentsDone();
-          // Reschedule the delayed check in case the new turn also spawns subagents
-          setTimeout(checkSubagentsAndFinalize, RETRY_INTERVAL_MS);
-          return;
+        // Check if the preserved turn is being actively updated by follow-up events.
+        // Compare current turn state against the initial snapshot to detect activity.
+        const currentTurn = this.cb.activeTurns.get(sessionId);
+        if (currentTurn) {
+          const textChanged = currentTurn.currentText !== initialTextSnapshot;
+          const thinkingResumed = currentTurn.thinkingStreamEnded !== initialThinkingEnded &&
+            !currentTurn.thinkingStreamEnded;
+          const isActive = textChanged || thinkingResumed;
+
+          if (isActive) {
+            console.log(
+              '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
+                sessionId +
+                ' isActive=' +
+                isActive +
+                ' (textChanged=' +
+                textChanged +
+                ', thinkingResumed=' +
+                thinkingResumed +
+                ') -> deferring, will retry',
+            );
+            // Main agent has resumed - defer and check again after the new activity completes
+            setTimeout(checkSubagentsAndFinalize, RETRY_INTERVAL_MS);
+            return;
+          }
         }
 
         // Check if any subagents of THIS session are still running.
@@ -1195,8 +1239,8 @@ export class ChatEventProcessor {
           console.log(
             '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
               sessionId +
-              ' hasNewTurn=' +
-              hasNewTurn +
+              ' hasActiveTurn=' +
+              !!currentTurn +
               ' stillHasRunningSubagents=' +
               stillHasRunningSubagents +
               ' -> completed',
@@ -1205,8 +1249,12 @@ export class ChatEventProcessor {
           // Emit complete event to notify frontend of the status change
           // Use null for runId since this is a delayed update, not a new run completion
           this.cb.emit('complete', sessionId, null, 'completed');
-          // Clear pending subagent completion marker
+          // Clear pending subagent completion marker (if was set)
           this.cb.clearPendingSubagentCompletion(sessionId);
+          // Clean up the preserved activeTurns now that session is complete
+          if (currentTurn) {
+            this.cb.cleanupSessionTurn(sessionId);
+          }
         } else if (Date.now() - startTime < MAX_RETRY_MS) {
           // Subagents still running and within retry window — check again
           console.log(
@@ -1230,8 +1278,12 @@ export class ChatEventProcessor {
           );
           this.cb.store.updateSession(sessionId, { status: 'completed' });
           this.cb.emit('complete', sessionId, null, 'completed');
-          // Clear pending subagent completion marker
+          // Clear pending subagent completion marker (if was set)
           this.cb.clearPendingSubagentCompletion(sessionId);
+          // Clean up the preserved activeTurns
+          if (this.cb.activeTurns.has(sessionId)) {
+            this.cb.cleanupSessionTurn(sessionId);
+          }
         }
       };
 

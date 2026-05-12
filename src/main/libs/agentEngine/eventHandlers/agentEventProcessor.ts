@@ -118,6 +118,9 @@ export class AgentEventProcessor {
     // Exclude:
     // - stream=error events (seq gap notifications) — diagnostic alerts, not new runs
     // - lifecycle end events (phase=end/fallback/completed/stopped) — turn already cleaned up
+    // IMPORTANT: Pass the event's runId to ensureActiveTurn so the new turn tracks the
+    // correct runId. This is critical for announce runs after subagent completion,
+    // where events use announce:v1:... runId but the turn was deleted prematurely.
     if (
       sessionId &&
       !this.cb.activeTurns.has(sessionId) &&
@@ -128,9 +131,11 @@ export class AgentEventProcessor {
       console.log(
         '[Debug:handleAgentEvent] re-creating ActiveTurn for follow-up turn, sessionId:',
         sessionId,
+        'event runId:',
+        runId?.slice(0, 12),
       );
       // OpenClaw: runId is set only at send time, events never modify it
-      this.cb.ensureActiveTurn(sessionId, sessionKey, '');
+      this.cb.ensureActiveTurn(sessionId, sessionKey, runId || '');
     }
 
     // Try to resolve channel-originated sessions (e.g. Telegram via OpenClaw)
