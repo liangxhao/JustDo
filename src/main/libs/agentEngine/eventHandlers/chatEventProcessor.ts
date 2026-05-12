@@ -14,11 +14,7 @@ import {
   truncate,
 } from '../utils/gatewayHelpers';
 import { extractOpenClawAssistantStreamText } from '../../openclawAssistantText';
-import type {
-  GatewayClientLike,
-  ChatEventPayload,
-  ActiveTurn,
-} from '../gateway/types';
+import type { GatewayClientLike, ChatEventPayload, ActiveTurn } from '../gateway/types';
 import type { HistoryReconciler } from '../history/historyReconciler';
 import type { SubagentManager } from '../subagent/subagentManager';
 
@@ -50,24 +46,35 @@ export interface ChatEventProcessorCallbacks {
   sessionKeyToToolCallId: Map<string, string>;
   store: CoworkStore;
   subagentManager: SubagentManager;
-  subagentMessages: Map<string, Array<{ role: string; content: string; metadata?: Record<string, unknown> }>>;
+  subagentMessages: Map<
+    string,
+    Array<{ role: string; content: string; metadata?: Record<string, unknown> }>
+  >;
   subagentStatus: Map<string, string>;
   subagentThinkingByRunId: Map<string, string>;
   throttledEmitMessageUpdate: (sessionId: string, messageId: string, content: string) => void;
   toolCallIdToParentSessionId: Map<string, string>;
   uuidToToolCallId: Map<string, string>;
+  /** Mark session as pending subagent completion (prevent turn re-creation) */
+  markPendingSubagentCompletion: (sessionId: string) => void;
+  /** Clear pending subagent completion marker when session completes */
+  clearPendingSubagentCompletion: (sessionId: string) => void;
 }
 
 export class ChatEventProcessor {
   private readonly cb: ChatEventProcessorCallbacks;
-  private _channelSessionSync: import('../../openclawChannelSessionSync').OpenClawChannelSessionSync | null = null;
+  private _channelSessionSync:
+    | import('../../openclawChannelSessionSync').OpenClawChannelSessionSync
+    | null = null;
   private _gatewayClient: GatewayClientLike | null = null;
 
   constructor(cb: ChatEventProcessorCallbacks) {
     this.cb = cb;
   }
 
-  setChannelSessionSync(sync: import('../../openclawChannelSessionSync').OpenClawChannelSessionSync | null): void {
+  setChannelSessionSync(
+    sync: import('../../openclawChannelSessionSync').OpenClawChannelSessionSync | null,
+  ): void {
     this._channelSessionSync = sync;
   }
 
@@ -829,22 +836,31 @@ export class ChatEventProcessor {
 
     this.cb.clearPendingMessageUpdate(messageId);
 
-    // Committed text: use agentAssistantTextLength as the reliable segment length,
-    // since currentText/currentAssistantSegmentText may be overwritten by chat deltas.
-    // Read the actual content from the store (which was updated by processAgentAssistantText).
-    const session = this.cb.store.getSession(sessionId);
-    const currentMsg = session?.messages.find(m => m.id === messageId);
-    const storeContent = currentMsg?.content?.trim() || '';
+    // Use in-memory turn content (currentAssistantSegmentText) instead of SQLite read.
+    // During streaming, content is NOT persisted to SQLite (see processAgentAssistantText line 816),
+    // only emitted via IPC. Reading from SQLite would return the initial first-token content.
+    const segmentContent = turn.currentAssistantSegmentText.trim();
+    console.log(
+      '[Debug:splitAssistantSegmentBeforeTool]',
+      'messageId:',
+      messageId,
+      'segmentContent.length:',
+      segmentContent.length,
+      'segmentContent.preview:',
+      segmentContent.slice(0, 50),
+    );
 
-    if (storeContent) {
-      turn.committedAssistantText = `${turn.committedAssistantText}${storeContent}`;
+    if (segmentContent) {
+      turn.committedAssistantText = `${turn.committedAssistantText}${segmentContent}`;
+      // Persist the final content to SQLite now that streaming is ending for this segment.
+      this.cb.store.updateMessage(sessionId, messageId, { content: segmentContent });
     }
 
     this.cb.store.updateMessage(sessionId, messageId, {
       metadata: { isStreaming: false, isFinal: true },
     });
-    if (storeContent) {
-      this.cb.emit('messageUpdate', sessionId, messageId, storeContent);
+    if (segmentContent) {
+      this.cb.emit('messageUpdate', sessionId, messageId, segmentContent);
     }
 
     turn.assistantMessageId = null;
@@ -1029,6 +1045,9 @@ export class ChatEventProcessor {
     // This prevents "Session is still running" error when user sends message after seeing
     // messageMetadataUpdate (isStreaming: false) but before cleanupSessionTurn completes.
     // reconcileWithHistory only needs sessionId/sessionKey, not turn data.
+    // IMPORTANT: Mark session as pending subagent completion BEFORE deleting activeTurns
+    // to prevent ensureActiveTurn from re-creating turn on late-arriving announce events.
+    this.cb.markPendingSubagentCompletion(sessionId);
     this.cb.activeTurns.delete(sessionId);
 
     // Reconcile local messages with authoritative gateway history.
@@ -1133,6 +1152,8 @@ export class ChatEventProcessor {
             );
             this.cb.cleanupSessionTurn(sessionId);
           }
+          // Clear pending subagent completion marker
+          this.cb.clearPendingSubagentCompletion(sessionId);
           console.log(
             '[OpenClawRuntime] handleChatFinal delayed check: sessionId=' +
               sessionId +
@@ -1184,6 +1205,8 @@ export class ChatEventProcessor {
           // Emit complete event to notify frontend of the status change
           // Use null for runId since this is a delayed update, not a new run completion
           this.cb.emit('complete', sessionId, null, 'completed');
+          // Clear pending subagent completion marker
+          this.cb.clearPendingSubagentCompletion(sessionId);
         } else if (Date.now() - startTime < MAX_RETRY_MS) {
           // Subagents still running and within retry window — check again
           console.log(
@@ -1207,6 +1230,8 @@ export class ChatEventProcessor {
           );
           this.cb.store.updateSession(sessionId, { status: 'completed' });
           this.cb.emit('complete', sessionId, null, 'completed');
+          // Clear pending subagent completion marker
+          this.cb.clearPendingSubagentCompletion(sessionId);
         }
       };
 
@@ -1215,6 +1240,8 @@ export class ChatEventProcessor {
   }
 
   handleChatAborted(sessionId: string, turn: ActiveTurn): void {
+    // Clear pending subagent completion marker since session is being terminated
+    this.cb.clearPendingSubagentCompletion(sessionId);
     this.cb.store.updateSession(sessionId, { status: 'idle' });
     if (!turn.stopRequested && !this.cb.manuallyStoppedSessions.has(sessionId)) {
       // The run was aborted without user request — most likely a timeout.
@@ -1235,6 +1262,8 @@ export class ChatEventProcessor {
   }
 
   private handleChatError(sessionId: string, turn: ActiveTurn, payload: ChatEventPayload): void {
+    // Clear pending subagent completion marker since session is being terminated
+    this.cb.clearPendingSubagentCompletion(sessionId);
     console.log(
       '[OpenClawRuntime] handleChatError payload:',
       JSON.stringify(payload).slice(0, 1000),
@@ -1264,5 +1293,4 @@ export class ChatEventProcessor {
     this.cb.rejectTurn(sessionId, new Error(errorMessage));
     void this.cb.historyReconciler.reconcileWithHistory(sessionId, erroredSessionKey);
   }
-
 }

@@ -762,15 +762,43 @@ export class SubagentManager {
                 status,
             );
             statuses[key] = status;
-            const spawnInfo = this.cb.toolCallArgs.get(key);
-            const display =
-              this.cb.toolCallIdToLabel.get(key) ||
-              this.cb.subagentUuidToLabel.get(key) ||
-              (spawnInfo && typeof spawnInfo.task === 'string'
-                ? spawnInfo.task.slice(0, 30)
-                : '') ||
-              key;
-            displayLabels[key] = display;
+            // Fallback chain for display label:
+            // 1. toolCallIdToLabel (primary - set by tool event)
+            // 2. subagentUuidToLabel (for UUID format keys)
+            // 3. Reverse lookup via sessionKeyToToolCallId (UUID → call_xxx)
+            // 4. task text from toolCallArgs (first 30 chars)
+            // NOTE: Never fallback to key itself - always prefer task description
+            let display =
+              this.cb.toolCallIdToLabel.get(key) || this.cb.subagentUuidToLabel.get(key);
+
+            // If key is UUID and no direct label, try reverse mapping
+            if (!display && /^[a-f0-9-]{36}$/i.test(key)) {
+              for (const [sessionKey, tcId] of this.cb.sessionKeyToToolCallId) {
+                if (sessionKey.includes(key)) {
+                  display = this.cb.toolCallIdToLabel.get(tcId);
+                  if (display) break;
+                }
+              }
+            }
+
+            // Fallback to task description (first 30 chars) - NOT to key
+            if (!display) {
+              const spawnInfo = this.cb.toolCallArgs.get(key);
+              if (spawnInfo && typeof spawnInfo.task === 'string' && spawnInfo.task) {
+                display = spawnInfo.task.slice(0, 30);
+              }
+              // Try to get task from nested lookup via toolCallId
+              const linkedCallId = this.cb.uuidToToolCallId.get(key);
+              if (!display && linkedCallId) {
+                const linkedInfo = this.cb.toolCallArgs.get(linkedCallId);
+                if (linkedInfo && typeof linkedInfo.task === 'string' && linkedInfo.task) {
+                  display = linkedInfo.task.slice(0, 30);
+                }
+              }
+            }
+
+            // If still no display, mark as unknown (but NOT show call_xxx)
+            displayLabels[key] = display || '(unnamed)';
           }
         }
 
@@ -1065,6 +1093,40 @@ export class SubagentManager {
             const existingStatus = this.cb.subagentStatus.get(toolCallId);
             if (existingStatus !== 'done') {
               this.cb.subagentStatus.set(toolCallId, 'running');
+            }
+          }
+
+          // Update tool_result message content if it was created empty
+          // (announce path sessions_spawn doesn't get result from gateway)
+          if (toolCallId) {
+            const parentSessionId = this.cb.toolCallIdToParentSessionId.get(toolCallId);
+            if (parentSessionId) {
+              const turn = this.cb.activeTurns.get(parentSessionId);
+              if (turn) {
+                const resultMessageId = turn.toolResultMessageIdByToolCallId.get(toolCallId);
+                if (resultMessageId) {
+                  const newContent = `Subagent spawned successfully.\nSession Key: ${childSessionKey}`;
+                  this.cb.store.updateMessage(parentSessionId, resultMessageId, {
+                    content: newContent,
+                    metadata: {
+                      toolResult: newContent,
+                      toolUseId: toolCallId,
+                      toolName: 'sessions_spawn',
+                      toolInput: { label, task: '(from announce path)' },
+                      isError: false,
+                      isStreaming: false,
+                      isFinal: true,
+                    },
+                  });
+                  this.cb.emit('messageUpdate', parentSessionId, resultMessageId, newContent);
+                  console.log(
+                    '[OpenClawRuntime] querySubagentSessionKey: updated tool_result message for toolCallId=' +
+                      toolCallId +
+                      ' with childSessionKey=' +
+                      childSessionKey,
+                  );
+                }
+              }
             }
           }
         } else {

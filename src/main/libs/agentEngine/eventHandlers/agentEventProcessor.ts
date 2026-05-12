@@ -1110,20 +1110,30 @@ export class AgentEventProcessor {
                     mainToolUseId &&
                     !this.cb._announceToolMessages.has(mainToolUseId + ':result')
                   ) {
-                    this.cb._announceToolMessages.add(mainToolUseId + ':result');
-                    this.cb.store.addMessage(resultParentSessionId, {
-                      type: 'tool_result',
-                      content: resultText,
-                      metadata: {
-                        toolUseId: mainToolUseId,
-                        toolName,
-                        toolResult:
-                          typeof subData?.result === 'string'
-                            ? subData.result
-                            : JSON.stringify(subData?.result ?? ''),
-                        isError,
-                      },
-                    });
+                    // Gateway strips data.result from stream=tool events unless verbose=full.
+                    // If result is empty, skip store.addMessage and let the stream=item end
+                    // path handle it (item events carry the full result object).
+                    if (!resultText && !isRecord(subData?.result)) {
+                      console.log(
+                        '[OpenClawRuntime] tool result stripped by gateway, deferring to item path: toolCallId=' +
+                          mainToolUseId,
+                      );
+                    } else {
+                      this.cb._announceToolMessages.add(mainToolUseId + ':result');
+                      this.cb.store.addMessage(resultParentSessionId, {
+                        type: 'tool_result',
+                        content: resultText,
+                        metadata: {
+                          toolUseId: mainToolUseId,
+                          toolName,
+                          toolResult:
+                            typeof subData?.result === 'string'
+                              ? subData.result
+                              : JSON.stringify(subData?.result ?? ''),
+                          isError,
+                        },
+                      });
+                    }
                   }
                 }
               }
@@ -1359,17 +1369,42 @@ export class AgentEventProcessor {
                 }
               } else if (itemPhase === 'end') {
                 // 工具执行结束
-                // 从 meta.result/output 获取结果，或使用 title/summary
-                const resultContent =
-                  typeof itemMeta?.result === 'string'
-                    ? itemMeta.result
-                    : typeof itemMeta?.output === 'string'
-                      ? itemMeta.output
-                      : typeof subData?.summary === 'string'
-                        ? subData.summary
-                        : itemTitle;
+                let resultContent: string;
                 const isError =
                   itemStatus === 'failed' || itemStatus === 'error' || Boolean(itemMeta?.is_error);
+
+                // For sessions_spawn, format result nicely
+                if (itemName === 'sessions_spawn' && isRecord(itemMeta?.result)) {
+                  const childSessionKey =
+                    typeof itemMeta.result.childSessionKey === 'string'
+                      ? itemMeta.result.childSessionKey
+                      : typeof itemMeta.result.sessionKey === 'string'
+                        ? itemMeta.result.sessionKey
+                        : '';
+                  const sessionIdFromResult =
+                    typeof itemMeta.result.sessionId === 'string' ? itemMeta.result.sessionId : '';
+
+                  if (!isError && childSessionKey) {
+                    resultContent = `Subagent spawned successfully.\nSession Key: ${childSessionKey}`;
+                    if (sessionIdFromResult) {
+                      resultContent += `\nSession ID: ${sessionIdFromResult}`;
+                    }
+                  } else if (isError) {
+                    resultContent = `Subagent spawn failed: ${itemTitle || 'Unknown error'}`;
+                  } else {
+                    resultContent = JSON.stringify(itemMeta.result, null, 2);
+                  }
+                } else if (typeof itemMeta?.result === 'string') {
+                  resultContent = itemMeta.result;
+                } else if (isRecord(itemMeta?.result)) {
+                  resultContent = JSON.stringify(itemMeta.result, null, 2);
+                } else if (typeof itemMeta?.output === 'string') {
+                  resultContent = itemMeta.output;
+                } else if (typeof subData?.summary === 'string') {
+                  resultContent = subData.summary;
+                } else {
+                  resultContent = itemTitle || 'Tool execution completed';
+                }
                 const resultText = isError ? `Error: ${resultContent}` : resultContent;
                 const resultMsg = {
                   role: 'tool_result',

@@ -190,10 +190,12 @@ export class AgentToolEventHandler {
       };
       this.cb.toolCallArgs.set(toolCallId, savedInfo);
 
+      // Fallback chain: label → metaLabel → promptText.slice(0,30)
+      // NOTE: Never fallback to toolCallId - use task description instead
       const displayLabel =
         typeof enrichedArgs.label === 'string' && enrichedArgs.label
           ? (enrichedArgs.label as string)
-          : enrichedMetaLabel || (promptText ? promptText.slice(0, 60) : '');
+          : enrichedMetaLabel || (promptText ? promptText.slice(0, 30) : '');
 
       this.cb.subagentStatus.set(toolCallId, 'pending');
       this.cb.pendingToolCallIds.add(toolCallId);
@@ -536,9 +538,25 @@ export class AgentToolEventHandler {
           );
         }
       }
+      // For sessions_spawn, show detailed content with label and task
+      let toolContent = `Using tool: ${toolName}`;
+      if (toolName === 'sessions_spawn' && Object.keys(effectiveArgs).length > 0) {
+        const label = typeof effectiveArgs.label === 'string' ? effectiveArgs.label : '';
+        const task = typeof effectiveArgs.task === 'string' ? effectiveArgs.task : '';
+        const agentId = typeof effectiveArgs.agentId === 'string' ? effectiveArgs.agentId : '';
+        if (label) {
+          toolContent = `Spawning subagent: ${label}`;
+        } else if (agentId) {
+          toolContent = `Spawning agent: ${agentId}`;
+        }
+        if (task) {
+          toolContent += `\nTask: ${task.length > 100 ? task.slice(0, 100) + '...' : task}`;
+        }
+      }
+
       const toolUseMessage = this.cb.store.addMessage(sessionId, {
         type: 'tool_use',
-        content: `Using tool: ${toolName}`,
+        content: toolContent,
         metadata: {
           toolName,
           toolInput: effectiveArgs,
@@ -608,10 +626,35 @@ export class AgentToolEventHandler {
 
     // Phase: result
     if (phase === 'result') {
-      const incoming = extractToolText(data.result);
-      const previous = turn.toolResultTextByToolCallId.get(toolCallId) ?? '';
       const isError = Boolean(data.isError);
-      const finalContent = incoming.trim() ? incoming : previous;
+      let finalContent: string;
+
+      // For sessions_spawn, prefer structured result over extractToolText
+      if (toolName === 'sessions_spawn' && isRecord(data.result)) {
+        const childSessionKey =
+          typeof data.result.childSessionKey === 'string'
+            ? data.result.childSessionKey
+            : typeof data.result.sessionKey === 'string'
+              ? data.result.sessionKey
+              : '';
+        const sessionIdFromResult =
+          typeof data.result.sessionId === 'string' ? data.result.sessionId : '';
+
+        if (!isError && childSessionKey) {
+          finalContent = `Subagent spawned successfully.\nSession Key: ${childSessionKey}`;
+          if (sessionIdFromResult) {
+            finalContent += `\nSession ID: ${sessionIdFromResult}`;
+          }
+        } else if (isError) {
+          finalContent = `Subagent spawn failed: ${extractToolText(data.result) || 'Unknown error'}`;
+        } else {
+          finalContent = extractToolText(data.result);
+        }
+      } else {
+        const incoming = extractToolText(data.result);
+        const previous = turn.toolResultTextByToolCallId.get(toolCallId) ?? '';
+        finalContent = incoming.trim() ? incoming : previous;
+      }
       const finalError = isError ? finalContent || 'Tool execution failed' : undefined;
       const existingResultMessageId = turn.toolResultMessageIdByToolCallId.get(toolCallId);
 

@@ -131,6 +131,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly stoppedSessions = new Map<string, number>();
   private static readonly STOP_COOLDOWN_MS = 10_000; // 10 seconds
 
+  /**
+   * Sessions waiting for subagent completion after main agent's handleChatFinal.
+   * These sessions should NOT have ActiveTurn re-created by ensureActiveTurn
+   * when late-arriving announce events (thinking/assistant) from completed subagents arrive.
+   * Prevents the "hasNewTurn=true" infinite loop in delayed check.
+   */
+  private readonly pendingSubagentCompletionSessions = new Set<string>();
+
   private gatewayClient: GatewayClientLike | null = null;
   private gatewayClientVersion: string | null = null;
   private gatewayClientEntryPath: string | null = null;
@@ -453,6 +461,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.throttledEmitMessageUpdate(sessionId, messageId, content),
       toolCallIdToParentSessionId: this.toolCallIdToParentSessionId,
       uuidToToolCallId: this.uuidToToolCallId,
+      markPendingSubagentCompletion: (sessionId: string) =>
+        this.markPendingSubagentCompletion(sessionId),
+      clearPendingSubagentCompletion: (sessionId: string) =>
+        this.clearPendingSubagentCompletion(sessionId),
     });
   }
 
@@ -903,6 +915,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (turn) {
       turn.stopRequested = true;
       this.manuallyStoppedSessions.add(sessionId);
+      // Clear pending subagent completion marker since we're manually stopping
+      this.clearPendingSubagentCompletion(sessionId);
       const client = this.gatewayClient;
       if (client) {
         void client
@@ -2597,6 +2611,38 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return false;
   }
 
+  /**
+   * Mark session as waiting for subagent completion.
+   * Called by handleChatFinal when main agent finishes but subagents are still running.
+   * Prevents ensureActiveTurn from re-creating turn on late-arriving announce events.
+   */
+  private markPendingSubagentCompletion(sessionId: string): void {
+    this.pendingSubagentCompletionSessions.add(sessionId);
+    console.log(
+      '[OpenClawRuntime] markPendingSubagentCompletion: sessionId=',
+      sessionId,
+      'pendingSubagentCompletionSessions.size=',
+      this.pendingSubagentCompletionSessions.size,
+    );
+  }
+
+  /**
+   * Clear pending subagent completion marker when session truly completes.
+   * Called by delayed check when all subagents finish and session is marked completed.
+   */
+  private clearPendingSubagentCompletion(sessionId: string): void {
+    const existed = this.pendingSubagentCompletionSessions.has(sessionId);
+    this.pendingSubagentCompletionSessions.delete(sessionId);
+    if (existed) {
+      console.log(
+        '[OpenClawRuntime] clearPendingSubagentCompletion: sessionId=',
+        sessionId,
+        'pendingSubagentCompletionSessions.size=',
+        this.pendingSubagentCompletionSessions.size,
+      );
+    }
+  }
+
   private ensureActiveTurn(sessionId: string, sessionKey: string, runId: string): void {
     if (this.activeTurns.has(sessionId)) return;
     // Suppress automatic turn re-creation for sessions that are still within
@@ -2606,6 +2652,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       console.log(
         '[Debug:ensureActiveTurn] suppressed — session in stop cooldown, sessionId:',
         sessionId,
+      );
+      return;
+    }
+    // Suppress turn re-creation when session is waiting for subagent completion.
+    // Late-arriving announce events (thinking/assistant) from completed subagents
+    // should not create new turn after handleChatFinal deleted it.
+    if (this.pendingSubagentCompletionSessions.has(sessionId)) {
+      console.log(
+        '[Debug:ensureActiveTurn] suppressed — session pending subagent completion, sessionId:',
+        sessionId,
+        'event runId:',
+        runId?.slice(0, 12),
       );
       return;
     }
