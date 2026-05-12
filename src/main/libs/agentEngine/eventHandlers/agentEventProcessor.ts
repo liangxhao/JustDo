@@ -489,36 +489,96 @@ export class AgentEventProcessor {
             sessionKey,
           );
 
-          if (phase === 'start' || phase === 'running') {
-            // Skip if already running or done (don't override completion with late start/running)
-            const existingStatus = this.cb.subagentStatus.get(emitAgentId);
-            if (existingStatus === 'running' || existingStatus === 'done') return;
-            // Skip if already marked as failed
-            if (this.cb.failedSubagentIds.has(emitAgentId)) return;
+          // Try to find the corresponding call_xxx toolCallId BEFORE creating any status entries.
+          // This prevents duplicate entries (UUID vs call_xxx) in the subagent list.
+          let linkedCallId: string | null = null;
 
-            this.cb.pendingToolCallIds.delete(emitAgentId);
-            this.cb.pendingEntryTimestamps.delete(emitAgentId);
-            this.cb.subagentStatus.set(emitAgentId, 'running');
-            this.cb.sessionKeyToToolCallId.set(sessionKey, emitAgentId);
-            this.cb.toolCallIdToSessionKey.set(emitAgentId, sessionKey);
+          // First: try sessionKey match (same logic as lines 508-518 below)
+          for (const [pendingId, pendingKey] of this.cb.toolCallIdToSessionKey.entries()) {
+            if (pendingKey && pendingKey.includes(':subagent:') && pendingKey === sessionKey) {
+              linkedCallId = pendingId;
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle (nested): pre-link via sessionKey UUID=' +
+                  emitAgentId +
+                  ' -> toolCallId=' +
+                  pendingId,
+              );
+              break;
+            }
+          }
 
-            // Also try to find a matching call_... toolCallId from pending entries
-            // that has the same sessionKey mapping. This lets us cross-reference
-            // context messages stored under call_... keys when queried by UUID.
-            for (const [pendingId, pendingKey] of this.cb.toolCallIdToSessionKey.entries()) {
-              if (pendingKey && pendingKey.includes(':subagent:') && pendingKey === sessionKey) {
-                this.cb.uuidToToolCallId.set(emitAgentId, pendingId);
+          // Second: temporal+parent matching if no sessionKey match and we have parentSessionId
+          if (!linkedCallId && nestedParentSessionId) {
+            const linkedUuids = new Set<string>();
+            for (const [, callId] of this.cb.uuidToToolCallId.entries()) {
+              linkedUuids.add(callId);
+            }
+            const candidates: Array<{ id: string; time: number }> = [];
+            for (const pendingId of this.cb.pendingToolCallIds) {
+              if (!pendingId.startsWith('call_')) continue;
+              if (linkedUuids.has(pendingId)) continue;
+              const parentSessionId = this.cb.toolCallIdToParentSessionId.get(pendingId);
+              if (parentSessionId !== nestedParentSessionId) continue;
+              const mappedKey = this.cb.toolCallIdToSessionKey.get(pendingId);
+              if (mappedKey && mappedKey.includes(':subagent:')) continue; // already mapped to child
+              const entryTime = this.cb.pendingEntryTimestamps.get(pendingId) || 0;
+              candidates.push({ id: pendingId, time: entryTime });
+            }
+            if (candidates.length > 0) {
+              candidates.sort((a, b) => b.time - a.time);
+              linkedCallId = candidates[0].id;
+              console.log(
+                '[OpenClawRuntime] subagent lifecycle (nested): pre-link via temporal UUID=' +
+                  emitAgentId +
+                  ' -> toolCallId=' +
+                  linkedCallId +
+                  ' parentSessionId=' +
+                  nestedParentSessionId,
+              );
+            } else {
+              // Secondary fallback: search all call_xxx entries by parent session
+              for (const [callId] of this.cb.toolCallIdToLabel.entries()) {
+                if (!callId.startsWith('call_')) continue;
+                if (linkedUuids.has(callId)) continue;
+                const parentId = this.cb.toolCallIdToParentSessionId.get(callId);
+                if (parentId !== nestedParentSessionId) continue;
+                const mappedKey = this.cb.toolCallIdToSessionKey.get(callId);
+                if (mappedKey && mappedKey.includes(':subagent:')) continue;
+                linkedCallId = callId;
                 console.log(
-                  '[OpenClawRuntime] subagent lifecycle (nested): linked UUID=' +
+                  '[OpenClawRuntime] subagent lifecycle (nested): pre-link via label-based UUID=' +
                     emitAgentId +
-                    ' to toolCallId=' +
-                    pendingId,
+                    ' -> toolCallId=' +
+                    callId,
                 );
                 break;
               }
             }
+          }
+
+          // Use linkedCallId as the primary tracking key if found, otherwise fall back to UUID
+          const trackingKey = linkedCallId || emitAgentId;
+
+          if (phase === 'start' || phase === 'running') {
+            // Skip if already running or done (don't override completion with late start/running)
+            const existingStatus = this.cb.subagentStatus.get(trackingKey);
+            if (existingStatus === 'running' || existingStatus === 'done') return;
+            // Skip if already marked as failed
+            if (this.cb.failedSubagentIds.has(trackingKey)) return;
+
+            // Clean up pending state and set running status on the tracking key
+            this.cb.pendingToolCallIds.delete(trackingKey);
+            this.cb.pendingEntryTimestamps.delete(trackingKey);
+            this.cb.subagentStatus.set(trackingKey, 'running');
+            this.cb.sessionKeyToToolCallId.set(sessionKey, trackingKey);
+            this.cb.toolCallIdToSessionKey.set(trackingKey, sessionKey);
+
+            // Store UUID → call_xxx mapping for context lookup (even if we found it here)
+            if (linkedCallId) {
+              this.cb.uuidToToolCallId.set(emitAgentId, linkedCallId);
+            }
             if (nestedParentSessionId) {
-              this.cb.toolCallIdToParentSessionId.set(emitAgentId, nestedParentSessionId);
+              this.cb.toolCallIdToParentSessionId.set(trackingKey, nestedParentSessionId);
             }
 
             // Extract label from multiple sources for nested subagents
@@ -549,78 +609,28 @@ export class AgentEventProcessor {
               const dataLabel = typeof data.label === 'string' ? data.label.trim() : '';
               nestedLabel = dataLabel || dataName || null;
             }
-            const displayLabel = nestedLabel || subagentUuid;
-            if (!this.cb.toolCallIdToLabel.has(emitAgentId)) {
-              this.cb.toolCallIdToLabel.set(emitAgentId, displayLabel);
+            // Priority: label > task description (first 30 chars) — never use UUID as display
+            // Try to get task description from toolCallArgs if label is empty
+            if (!nestedLabel) {
+              const spawnInfo = this.cb.toolCallArgs.get(trackingKey);
+              if (spawnInfo && typeof spawnInfo.task === 'string' && spawnInfo.task) {
+                nestedLabel = spawnInfo.task.slice(0, 30);
+              }
+            }
+            const displayLabel = nestedLabel || '(no label)';
+            // Store label under trackingKey (call_xxx or UUID)
+            if (!this.cb.toolCallIdToLabel.has(trackingKey)) {
+              this.cb.toolCallIdToLabel.set(trackingKey, displayLabel);
             }
             // Store UUID → label mapping for direct lookup by lifecycle events
             if (nestedLabel) {
               this.cb.subagentUuidToLabel.set(subagentUuid, nestedLabel);
             }
 
-            // Try to link this UUID to its corresponding call_xxx toolCallId.
-            // Item-level spawns register with call_xxx toolCallIds but lack childSessionKey,
-            // so the existing sessionKey match at line 2777 fails. Use temporal+parent
-            // matching instead — find the most recent pending call_xxx entry that belongs
-            // to the same parent session and hasn't been linked to another UUID yet.
-            if (nestedParentSessionId) {
-              // Build a Set of UUIDs already linked to a call_xxx toolCallId
-              const linkedUuids = new Set<string>();
-              for (const [, callId] of this.cb.uuidToToolCallId.entries()) {
-                linkedUuids.add(callId);
-              }
-              // Find candidate call_xxx entries: same parent, pending, not linked, not mapped to child
-              const candidates: Array<{ id: string; time: number }> = [];
-              for (const pendingId of this.cb.pendingToolCallIds) {
-                if (!pendingId.startsWith('call_')) continue;
-                if (linkedUuids.has(pendingId)) continue;
-                const parentSessionId = this.cb.toolCallIdToParentSessionId.get(pendingId);
-                if (parentSessionId !== nestedParentSessionId) continue;
-                const mappedKey = this.cb.toolCallIdToSessionKey.get(pendingId);
-                if (mappedKey && mappedKey.includes(':subagent:')) continue; // already mapped to child
-                const entryTime = this.cb.pendingEntryTimestamps.get(pendingId) || 0;
-                candidates.push({ id: pendingId, time: entryTime });
-              }
-              if (candidates.length > 0) {
-                // Pick the most recent candidate (temporal proximity)
-                candidates.sort((a, b) => b.time - a.time);
-                const matchedCallId = candidates[0].id;
-                this.cb.uuidToToolCallId.set(emitAgentId, matchedCallId);
-                console.log(
-                  '[OpenClawRuntime] subagent lifecycle (nested): temporal link UUID=' +
-                    emitAgentId +
-                    ' -> toolCallId=' +
-                    matchedCallId +
-                    ' parentSessionId=' +
-                    nestedParentSessionId,
-                );
-              } else {
-                // Secondary fallback: search all call_xxx entries by parent session.
-                // Announcing spawns may not be in pendingToolCallIds.
-                for (const [callId, callLabel] of this.cb.toolCallIdToLabel.entries()) {
-                  if (!callId.startsWith('call_')) continue;
-                  if (linkedUuids.has(callId)) continue;
-                  const parentId = this.cb.toolCallIdToParentSessionId.get(callId);
-                  if (parentId !== nestedParentSessionId) continue;
-                  const mappedKey = this.cb.toolCallIdToSessionKey.get(callId);
-                  if (mappedKey && mappedKey.includes(':subagent:')) continue;
-                  this.cb.uuidToToolCallId.set(emitAgentId, callId);
-                  console.log(
-                    '[OpenClawRuntime] subagent lifecycle (nested): label-based link UUID=' +
-                      emitAgentId +
-                      ' -> toolCallId=' +
-                      callId +
-                      ' label=' +
-                      callLabel,
-                  );
-                  break;
-                }
-              }
-            }
-
             // Persist nested spawn to parent session so it survives restart
+            // Use trackingKey (call_xxx when linked) so frontend can find it
             this.cb.subagentManager.persistNestedSubagentSpawn(
-              emitAgentId,
+              trackingKey,
               displayLabel,
               sessionKey,
             );
@@ -654,24 +664,29 @@ export class AgentEventProcessor {
                 void this.cb.subagentManager.queryNestedSubagentLabel(
                   subagentUuid,
                   queryParentKey,
-                  emitAgentId,
+                  trackingKey,
                 );
               }
             }
             console.log(
               '[OpenClawRuntime] subagent lifecycle (nested): START toolCallId=' +
-                emitAgentId +
+                trackingKey +
+                ' linkedCallId=' +
+                (linkedCallId || '(none)') +
                 ' label=' +
                 displayLabel +
                 ' sessionKey=' +
                 sessionKey,
             );
           } else if (phase === 'end' || phase === 'completed' || phase === 'stopped') {
-            if (this.cb.failedSubagentIds.has(emitAgentId)) return;
+            // Determine tracking key: prefer linked call_xxx from uuidToToolCallId
+            const existingLink = this.cb.uuidToToolCallId.get(emitAgentId);
+            const endTrackingKey = existingLink || emitAgentId;
 
-            // Establish UUID→call_xxx link if not already done (phase=end may arrive
-            // before phase=start in some cases).
-            if (nestedParentSessionId && !this.cb.uuidToToolCallId.has(emitAgentId)) {
+            if (this.cb.failedSubagentIds.has(endTrackingKey)) return;
+
+            // If no existing link, try to find one now (phase=end may arrive before phase=start in rare cases)
+            if (!existingLink && nestedParentSessionId) {
               const linkedUuids = new Set<string>();
               for (const [, callId] of this.cb.uuidToToolCallId.entries()) {
                 linkedUuids.add(callId);
@@ -692,15 +707,17 @@ export class AgentEventProcessor {
                 const matchedCallId = candidates[0].id;
                 this.cb.uuidToToolCallId.set(emitAgentId, matchedCallId);
                 console.log(
-                  '[OpenClawRuntime] subagent lifecycle (nested): temporal link (phase=end) UUID=' +
+                  '[OpenClawRuntime] subagent lifecycle (nested): late link (phase=end) UUID=' +
                     emitAgentId +
                     ' -> toolCallId=' +
                     matchedCallId,
                 );
+                // Now use the matched call_xxx as tracking key
+                this.cb.subagentStatus.set(matchedCallId, 'done');
+                this.cb.subagentManager.persistSubagentStatus(matchedCallId, 'done');
               } else {
-                // Secondary fallback: search all call_xxx entries by parent session.
-                // Announcing spawns may not be in pendingToolCallIds.
-                for (const [callId, callLabel] of this.cb.toolCallIdToLabel.entries()) {
+                // Secondary fallback: search all call_xxx entries by parent session
+                for (const [callId] of this.cb.toolCallIdToLabel.entries()) {
                   if (!callId.startsWith('call_')) continue;
                   if (linkedUuids.has(callId)) continue;
                   const parentId = this.cb.toolCallIdToParentSessionId.get(callId);
@@ -709,50 +726,58 @@ export class AgentEventProcessor {
                   if (mappedKey && mappedKey.includes(':subagent:')) continue;
                   this.cb.uuidToToolCallId.set(emitAgentId, callId);
                   console.log(
-                    '[OpenClawRuntime] subagent lifecycle (nested): label-based link (phase=end) UUID=' +
+                    '[OpenClawRuntime] subagent lifecycle (nested): late label-based link (phase=end) UUID=' +
                       emitAgentId +
                       ' -> toolCallId=' +
-                      callId +
-                      ' label=' +
-                      callLabel,
+                      callId,
                   );
+                  this.cb.subagentStatus.set(callId, 'done');
+                  this.cb.subagentManager.persistSubagentStatus(callId, 'done');
                   break;
                 }
               }
+            } else {
+              // Use existing tracking key
+              this.cb.subagentStatus.set(endTrackingKey, 'done');
+              this.cb.subagentManager.persistSubagentStatus(endTrackingKey, 'done');
             }
 
-            this.cb.subagentStatus.set(emitAgentId, 'done');
-            this.cb.subagentManager.persistSubagentStatus(emitAgentId, 'done');
             this.cb.subagentManager.checkAllSubagentsDone();
             console.log(
               '[OpenClawRuntime] subagent lifecycle (nested): DONE toolCallId=' +
-                emitAgentId +
+                endTrackingKey +
+                ' linkedCallId=' +
+                (existingLink || '(none)') +
                 ' sessionKey=' +
                 sessionKey,
             );
           } else if (phase === 'error') {
+            // Determine tracking key: prefer linked call_xxx from uuidToToolCallId
+            const existingLink = this.cb.uuidToToolCallId.get(emitAgentId);
+            const errorTrackingKey = existingLink || emitAgentId;
+
             // Nested subagent lifecycle error: if already marked done from a prior
             // completed/stopped event, don't overwrite with failure.
-            if (this.cb.subagentStatus.get(emitAgentId) === 'done') {
+            if (this.cb.subagentStatus.get(errorTrackingKey) === 'done') {
               console.log(
-                '[OpenClawRuntime] subagent lifecycle (nested): error but already done, keeping: emitAgentId=' +
-                  emitAgentId +
+                '[OpenClawRuntime] subagent lifecycle (nested): error but already done, keeping: trackingKey=' +
+                  errorTrackingKey +
                   ' sessionKey=' +
                   sessionKey,
               );
             } else {
-              this.cb.failedSubagentIds.add(emitAgentId);
-              this.cb.subagentStatus.delete(emitAgentId);
-              this.cb.pendingToolCallIds.delete(emitAgentId);
-              this.cb.pendingEntryTimestamps.delete(emitAgentId);
-              this.cb.toolCallIdToSessionKey.delete(emitAgentId);
+              this.cb.failedSubagentIds.add(errorTrackingKey);
+              this.cb.subagentStatus.delete(errorTrackingKey);
+              this.cb.pendingToolCallIds.delete(errorTrackingKey);
+              this.cb.pendingEntryTimestamps.delete(errorTrackingKey);
+              this.cb.toolCallIdToSessionKey.delete(errorTrackingKey);
               this.cb.sessionKeyToToolCallId.delete(sessionKey);
-              this.cb.toolCallIdToParentSessionId.delete(emitAgentId);
-              this.cb.toolCallIdToLabel.delete(emitAgentId);
+              this.cb.toolCallIdToParentSessionId.delete(errorTrackingKey);
+              this.cb.toolCallIdToLabel.delete(errorTrackingKey);
               this.cb.subagentMessages.delete(sessionKey);
               console.log(
                 '[OpenClawRuntime] subagent lifecycle (nested): ERROR toolCallId=' +
-                  emitAgentId +
+                  errorTrackingKey +
                   ' sessionKey=' +
                   sessionKey,
               );

@@ -3,12 +3,11 @@ import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
-import { pathToFileURL } from 'url';
+
 
 import type {
   CoworkExecutionMode,
   CoworkMessage,
-  CoworkMessageMetadata,
   CoworkSession,
   CoworkSessionStatus,
   CoworkStore,
@@ -17,7 +16,7 @@ import { t } from '../../i18n';
 import { resolveRawApiConfig } from '../claudeSettings';
 import { getCommandDangerLevel, isDeleteCommand } from '../commandSafety';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
-import { extractOpenClawAssistantStreamText } from '../openclawAssistantText';
+
 import {
   buildManagedSessionKey,
   isCronSessionKey,
@@ -30,7 +29,7 @@ import {
   OpenClawEngineManager,
   type OpenClawGatewayConnectionInfo,
 } from '../openclawEngineManager';
-import { extractGatewayHistoryEntries, extractGatewayMessageText } from '../openclawHistory';
+import { extractGatewayHistoryEntries } from '../openclawHistory';
 import type { PermissionResult } from './types';
 import type {
   CoworkContinueOptions,
@@ -49,9 +48,6 @@ import type {
   AgentEventPayload,
   ExecApprovalRequestedPayload,
   ExecApprovalResolvedPayload,
-  TextStreamMode,
-  BufferedChatEvent,
-  BufferedAgentEvent,
   ChannelHistorySyncEntry,
   ActiveTurn,
 } from './gateway/types';
@@ -67,31 +63,14 @@ import { SkillRpcHandler } from './rpc/skillRpc';
 // Shared utility functions and constants
 import {
   isRecord,
-  truncate,
   stripDiscordMentions,
-  sleep,
   waitWithTimeout,
   extractMessageText,
-  summarizeGatewayMessageShape,
-  extractTextBlocksAndSignals,
-  extractThinkingContent,
-  extractSentFilePathsFromHistory,
-  extractCurrentTurnAssistantText,
-  isDroppedBoundaryTextBlockSubset,
-  computeSuffixPrefixOverlap,
-  mergeStreamingText,
-  parseSubagentCompletionEvent,
-  extractSubagentCompletionMessages,
-  generateStableMessageId,
-  convertToCoworkMessage,
   isSameChannelHistoryEntry,
   OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
   GATEWAY_READY_TIMEOUT_MS,
   FINAL_HISTORY_SYNC_LIMIT,
   CHANNEL_SESSION_DISCOVERY_LIMIT,
-  INTERNAL_RUNTIME_CONTEXT_BEGIN,
-  INTERNAL_RUNTIME_CONTEXT_END,
-  INTERNAL_TASK_COMPLETION_MARKER,
 } from './utils/gatewayHelpers';
 
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {

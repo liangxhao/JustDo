@@ -15,9 +15,6 @@ import type {
   OpenClawChannelSessionSync,
 } from '../../openclawChannelSessionSync';
 import {
-  isManagedSessionKey,
-} from '../../openclawChannelSessionSync';
-import {
   OpenClawEngineManager,
   type OpenClawGatewayConnectionInfo,
 } from '../../openclawEngineManager';

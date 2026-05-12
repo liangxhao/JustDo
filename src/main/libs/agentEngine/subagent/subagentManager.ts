@@ -692,10 +692,9 @@ export class SubagentManager {
           }
         }
 
-        // Deduplicate: remove bare UUID keys from statuses when a call_xxx entry
-        // exists for the same subagent. The nested lifecycle handler creates entries
-        // keyed by UUID, but the frontend expects call_xxx keys. Both may appear in
-        // statuses after the subagentStatus scan above — keep only the call_xxx.
+        // Deduplicate: remove bare UUID keys from statuses AND memory maps when a call_xxx entry
+        // exists for the same subagent. This handles legacy entries from previous sessions or
+        // race conditions where UUID entries were created before linking completed.
         for (const [uuid, linkedCallId] of this.cb.uuidToToolCallId.entries()) {
           if (statuses[uuid] && statuses[linkedCallId]) {
             console.log(
@@ -705,6 +704,16 @@ export class SubagentManager {
                 linkedCallId,
             );
             delete statuses[uuid];
+            // Also clean up memory maps to prevent UUID from appearing again
+            this.cb.subagentStatus.delete(uuid);
+            this.cb.pendingToolCallIds.delete(uuid);
+            this.cb.pendingEntryTimestamps.delete(uuid);
+            this.cb.toolCallIdToSessionKey.delete(uuid);
+            this.cb.toolCallIdToLabel.delete(uuid);
+            this.cb.toolCallIdToParentSessionId.delete(uuid);
+            console.log(
+              '[OpenClawRuntime] getSubagentStatuses: cleaned up UUID memory maps for uuid=' + uuid,
+            );
           }
         }
 
@@ -762,43 +771,38 @@ export class SubagentManager {
                 status,
             );
             statuses[key] = status;
-            // Fallback chain for display label:
-            // 1. toolCallIdToLabel (primary - set by tool event)
-            // 2. subagentUuidToLabel (for UUID format keys)
-            // 3. Reverse lookup via sessionKeyToToolCallId (UUID → call_xxx)
-            // 4. task text from toolCallArgs (first 30 chars)
-            // NOTE: Never fallback to key itself - always prefer task description
-            let display =
-              this.cb.toolCallIdToLabel.get(key) || this.cb.subagentUuidToLabel.get(key);
+            // Priority: label > task description (first 30 chars) — NEVER use UUID or other fallbacks
+            // 1. Get label from toolCallIdToLabel (set by sessions_spawn tool event)
+            let display = this.cb.toolCallIdToLabel.get(key);
 
-            // If key is UUID and no direct label, try reverse mapping
+            // 2. If key is UUID and no direct label, try linked call_xxx's label
             if (!display && /^[a-f0-9-]{36}$/i.test(key)) {
-              for (const [sessionKey, tcId] of this.cb.sessionKeyToToolCallId) {
-                if (sessionKey.includes(key)) {
-                  display = this.cb.toolCallIdToLabel.get(tcId);
-                  if (display) break;
-                }
+              const linkedCallId = this.cb.uuidToToolCallId.get(key);
+              if (linkedCallId) {
+                display = this.cb.toolCallIdToLabel.get(linkedCallId);
               }
             }
 
-            // Fallback to task description (first 30 chars) - NOT to key
+            // 3. Fallback to task description (first 30 chars) from toolCallArgs
             if (!display) {
               const spawnInfo = this.cb.toolCallArgs.get(key);
               if (spawnInfo && typeof spawnInfo.task === 'string' && spawnInfo.task) {
                 display = spawnInfo.task.slice(0, 30);
               }
-              // Try to get task from nested lookup via toolCallId
-              const linkedCallId = this.cb.uuidToToolCallId.get(key);
-              if (!display && linkedCallId) {
-                const linkedInfo = this.cb.toolCallArgs.get(linkedCallId);
-                if (linkedInfo && typeof linkedInfo.task === 'string' && linkedInfo.task) {
-                  display = linkedInfo.task.slice(0, 30);
+              // Also try linked call_xxx's task if key is UUID
+              if (!display && /^[a-f0-9-]{36}$/i.test(key)) {
+                const linkedCallId = this.cb.uuidToToolCallId.get(key);
+                if (linkedCallId) {
+                  const linkedInfo = this.cb.toolCallArgs.get(linkedCallId);
+                  if (linkedInfo && typeof linkedInfo.task === 'string' && linkedInfo.task) {
+                    display = linkedInfo.task.slice(0, 30);
+                  }
                 }
               }
             }
 
-            // If still no display, mark as unknown (but NOT show call_xxx)
-            displayLabels[key] = display || '(unnamed)';
+            // Final fallback: (no label) — NEVER use UUID or call_xxx as display
+            displayLabels[key] = display || '(no label)';
           }
         }
 
