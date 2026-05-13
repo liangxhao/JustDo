@@ -212,6 +212,13 @@ const coworkSlice = createSlice({
             idx === messageIndex ? { ...msg, content } : msg,
           );
         }
+        state.currentSession.updatedAt = Date.now();
+      }
+
+      // Update session in list
+      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
+      if (sessionIndex !== -1) {
+        state.sessions[sessionIndex].updatedAt = Date.now();
       }
 
       markSessionUnread(state, sessionId);
@@ -235,6 +242,13 @@ const coworkSlice = createSlice({
             idx === messageIndex ? { ...msg, thinkingContent: newThinking } : msg,
           );
         }
+        state.currentSession.updatedAt = Date.now();
+      }
+
+      // Update session in list
+      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
+      if (sessionIndex !== -1) {
+        state.sessions[sessionIndex].updatedAt = Date.now();
       }
     },
 
@@ -268,6 +282,13 @@ const coworkSlice = createSlice({
             idx === messageIndex ? { ...msg, metadata: { ...existingMetadata, ...metadata } } : msg,
           );
         }
+        state.currentSession.updatedAt = Date.now();
+      }
+
+      // Update session in list
+      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
+      if (sessionIndex !== -1) {
+        state.sessions[sessionIndex].updatedAt = Date.now();
       }
     },
 
@@ -288,6 +309,13 @@ const coworkSlice = createSlice({
             idx === messageIndex ? { ...msg, usage } : msg,
           );
         }
+        state.currentSession.updatedAt = Date.now();
+      }
+
+      // Update session in list
+      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
+      if (sessionIndex !== -1) {
+        state.sessions[sessionIndex].updatedAt = Date.now();
       }
     },
 

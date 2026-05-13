@@ -793,6 +793,9 @@ export class CoworkStore {
     `,
       )
       .run(...values);
+
+    // Bump session's updated_at so it stays at top of the list during streaming updates
+    this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(Date.now(), sessionId);
   }
 
   // Config operations
