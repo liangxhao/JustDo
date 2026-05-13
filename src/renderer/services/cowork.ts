@@ -826,6 +826,29 @@ class CoworkService {
     return { statuses: {} };
   }
 
+  // Get subagent error info for failed subagents
+  async getSubagentError(options: {
+    parentSessionId: string;
+    agentId: string;
+    sessionKey?: string;
+  }): Promise<{
+    state?: string;
+    status?: string;
+    outcome?: string;
+    endedAt?: number;
+    errorMessage?: string;
+    lastMessage?: string;
+  } | null> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.getSubagentError) return null;
+
+    const result = await cowork.getSubagentError(options);
+    if (result.success && result.errorInfo) {
+      return result.errorInfo;
+    }
+    return null;
+  }
+
   async createGroup(input: CreateGroupInput): Promise<SessionGroup | null> {
     if (!window.electron?.sessionGroup?.create) return null;
     const result = await window.electron.sessionGroup.create(input);

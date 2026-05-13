@@ -65,7 +65,7 @@ export type CoworkAgentEngine = 'openclaw';
 export interface CoworkMessageMetadata {
   toolName?: string;
   toolInput?: Record<string, unknown>;
-  toolResult?: string;
+  toolResult?: string | Record<string, unknown>;
   toolUseId?: string | null;
   error?: string;
   isError?: boolean;

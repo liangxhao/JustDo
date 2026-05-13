@@ -628,6 +628,7 @@ export class AgentToolEventHandler {
     if (phase === 'result') {
       const isError = Boolean(data.isError);
       let finalContent: string;
+      let finalToolResult: unknown = undefined; // Keep original structured result for error parsing
 
       // For sessions_spawn, prefer structured result over extractToolText
       if (toolName === 'sessions_spawn' && isRecord(data.result)) {
@@ -640,13 +641,23 @@ export class AgentToolEventHandler {
         const sessionIdFromResult =
           typeof data.result.sessionId === 'string' ? data.result.sessionId : '';
 
+        // Keep original structured result for error parsing
+        finalToolResult = data.result;
+
         if (!isError && childSessionKey) {
           finalContent = `Subagent spawned successfully.\nSession Key: ${childSessionKey}`;
           if (sessionIdFromResult) {
             finalContent += `\nSession ID: ${sessionIdFromResult}`;
           }
         } else if (isError) {
-          finalContent = `Subagent spawn failed: ${extractToolText(data.result) || 'Unknown error'}`;
+          // Extract error message from structured result
+          const errorStatus = typeof data.result.status === 'string' ? data.result.status : '';
+          const errorMessage = typeof data.result.error === 'string' ? data.result.error : '';
+          if (errorStatus && errorMessage) {
+            finalContent = `Subagent spawn failed (${errorStatus}): ${errorMessage}`;
+          } else {
+            finalContent = `Subagent spawn failed: ${extractToolText(data.result) || 'Unknown error'}`;
+          }
         } else {
           finalContent = extractToolText(data.result);
         }
@@ -654,6 +665,8 @@ export class AgentToolEventHandler {
         const incoming = extractToolText(data.result);
         const previous = turn.toolResultTextByToolCallId.get(toolCallId) ?? '';
         finalContent = incoming.trim() ? incoming : previous;
+        // For other tools, keep result as-is if it's a string or object
+        finalToolResult = data.result;
       }
       const finalError = isError ? finalContent || 'Tool execution failed' : undefined;
       const existingResultMessageId = turn.toolResultMessageIdByToolCallId.get(toolCallId);
@@ -671,7 +684,7 @@ export class AgentToolEventHandler {
         this.cb.store.updateMessage(sessionId, existingResultMessageId, {
           content: finalContent,
           metadata: {
-            toolResult: finalContent,
+            toolResult: (finalToolResult ?? finalContent) as string | Record<string, unknown>,
             toolUseId: toolCallId,
             toolName,
             toolInput: toolInputForResult,
@@ -687,7 +700,7 @@ export class AgentToolEventHandler {
           type: 'tool_result',
           content: finalContent,
           metadata: {
-            toolResult: finalContent,
+            toolResult: (finalToolResult ?? finalContent) as string | Record<string, unknown>,
             toolUseId: toolCallId,
             toolName,
             toolInput: toolInputForResult,

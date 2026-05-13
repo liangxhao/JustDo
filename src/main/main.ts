@@ -2956,6 +2956,31 @@ if (!gotTheLock) {
     },
   );
 
+  ipcMain.handle(
+    'cowork:subagent:error',
+    async (
+      _event,
+      options: { parentSessionId: string; agentId: string; sessionKey?: string },
+    ) => {
+      try {
+        if (!openClawRuntimeAdapter) {
+          return { success: false, error: 'Sub-agent error info is only available with the OpenClaw engine.' };
+        }
+        const errorInfo = await openClawRuntimeAdapter.getSubagentErrorInfo(
+          options.parentSessionId,
+          options.agentId,
+          options.sessionKey,
+        );
+        return { success: true, errorInfo };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get sub-agent error info',
+        };
+      }
+    },
+  );
+
   // ========== Agent IPC Handlers ==========
 
   ipcMain.handle('agents:list', async () => {

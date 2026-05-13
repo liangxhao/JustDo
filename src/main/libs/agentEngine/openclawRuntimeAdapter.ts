@@ -3057,6 +3057,153 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.subtaskHistory.getSubTaskHistory(parentSessionId, agentId, sessionKey);
   }
 
+  /**
+   * 获取失败的子 Agent 错误信息
+   * 优先从父 session 的 tool_result 消息中提取错误信息
+   */
+  async getSubagentErrorInfo(
+    parentSessionId: string,
+    agentId: string,
+    sessionKey?: string,
+  ): Promise<{
+    state?: string;
+    status?: string;
+    outcome?: string;
+    endedAt?: number;
+    errorMessage?: string;
+    lastMessage?: string;
+  } | null> {
+    // 1. First try to get error from tool_result message in parent session
+    const parentSession = this.store.getSession(parentSessionId);
+    if (parentSession?.messages) {
+      // Find the tool_result for this agentId (toolCallId)
+      for (const msg of parentSession.messages) {
+        if (
+          msg.type === 'tool_result' &&
+          msg.metadata?.toolName === 'sessions_spawn' &&
+          msg.metadata?.toolUseId === agentId
+        ) {
+          const toolResult = msg.metadata?.toolResult;
+          if (toolResult) {
+            // Parse toolResult - could be object or string
+            let resultObj: Record<string, unknown> | null = null;
+            if (isRecord(toolResult)) {
+              resultObj = toolResult;
+            } else if (typeof toolResult === 'string') {
+              try {
+                const parsed = JSON.parse(toolResult);
+                if (isRecord(parsed)) {
+                  resultObj = parsed;
+                }
+              } catch {
+                // Not JSON, use as raw error message
+                if (toolResult.toLowerCase().includes('error') ||
+                    toolResult.toLowerCase().includes('failed') ||
+                    toolResult.toLowerCase().includes('forbidden')) {
+                  return { errorMessage: toolResult.slice(0, 500) };
+                }
+              }
+            }
+
+            if (resultObj) {
+              // Check for error status
+              const status = typeof resultObj.status === 'string' ? resultObj.status : '';
+              const error = typeof resultObj.error === 'string' ? resultObj.error : '';
+              if (status === 'forbidden' || status === 'error' || status === 'failed' || error) {
+                console.log(
+                  '[OpenClawRuntime] getSubagentErrorInfo: found error in tool_result for agentId=' +
+                    agentId +
+                    ' status=' +
+                    (status || '(none)') +
+                    ' error=' +
+                    (error || '(none)'),
+                );
+                return {
+                  status: status,
+                  errorMessage: error || `Spawn failed with status: ${status}`,
+                };
+              }
+            }
+          }
+          // Also check isError flag
+          if (msg.metadata?.isError) {
+            const content = typeof msg.content === 'string' ? msg.content : '';
+            return {
+              errorMessage: content.slice(0, 500) || 'Tool call failed',
+            };
+          }
+        }
+      }
+    }
+
+    // 2. Fallback: try gateway sessions.get for session state info
+    let childSessionKey = sessionKey;
+    if (!childSessionKey) {
+      childSessionKey = this.toolCallIdToSessionKey.get(agentId);
+    }
+    if (!childSessionKey && /^[a-f0-9-]{36}$/i.test(agentId)) {
+      childSessionKey = `agent:main:subagent:${agentId}`;
+    }
+
+    if (!childSessionKey || !this.gatewayClient) {
+      return null;
+    }
+
+    try {
+      const sessionInfo = await this.gatewayClient.request<{
+        state?: string;
+        status?: string;
+        outcome?: string;
+        endedAt?: number;
+        active?: boolean;
+        error?: string;
+        lastError?: string;
+      }>('sessions.get', { sessionKey: childSessionKey });
+
+      if (!sessionInfo) {
+        return null;
+      }
+
+      // Get last message from subagent history
+      let lastMessage: string | undefined;
+      try {
+        const history = await this.gatewayClient.request<{ messages?: unknown[] }>(
+          'chat.history',
+          { sessionKey: childSessionKey, limit: 5 },
+        );
+        const messages = history?.messages;
+        if (Array.isArray(messages) && messages.length > 0) {
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
+            if (!isRecord(msg)) continue;
+            const role = typeof msg.role === 'string' ? msg.role.trim().toLowerCase() : '';
+            if (role === 'assistant' || role === 'system') {
+              const text = extractMessageText(msg).trim();
+              if (text) {
+                lastMessage = text.slice(0, 500);
+                break;
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore history errors
+      }
+
+      return {
+        state: sessionInfo.state || sessionInfo.status,
+        status: sessionInfo.status,
+        outcome: sessionInfo.outcome,
+        endedAt: sessionInfo.endedAt,
+        errorMessage: sessionInfo.error || sessionInfo.lastError,
+        lastMessage,
+      };
+    } catch (err) {
+      console.warn('[OpenClawRuntime] getSubagentErrorInfo gateway query failed:', err);
+      return null;
+    }
+  }
+
   // ─── Skill RPC Delegates ─────────────────────────────────────────────────
 
   async generateTitle(userIntent: string | null, timeoutMs = 8000): Promise<string> {

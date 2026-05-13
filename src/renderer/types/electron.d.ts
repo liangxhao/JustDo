@@ -33,7 +33,7 @@ interface CoworkSession {
 interface CoworkMessageMetadata {
   toolName?: string;
   toolInput?: Record<string, unknown>;
-  toolResult?: string;
+  toolResult?: string | Record<string, unknown>;
   toolUseId?: string | null;
   error?: string;
   isError?: boolean;
@@ -596,6 +596,22 @@ interface IElectronAPI {
     }) => Promise<{
       success: boolean;
       messages?: CoworkMessage[];
+      error?: string;
+    }>;
+    getSubagentError: (options: {
+      parentSessionId: string;
+      agentId: string;
+      sessionKey?: string;
+    }) => Promise<{
+      success: boolean;
+      errorInfo?: {
+        state?: string;
+        status?: string;
+        outcome?: string;
+        endedAt?: number;
+        errorMessage?: string;
+        lastMessage?: string;
+      };
       error?: string;
     }>;
   };
