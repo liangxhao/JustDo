@@ -14,6 +14,7 @@ import {
   selectUnreadSessionIds,
   selectGroups,
   selectExpandedGroupIds,
+  selectHideFailedSubagents,
 } from '../../store/selectors/coworkSelectors';
 import { RootState } from '../../store';
 import {
@@ -22,6 +23,7 @@ import {
   updateGroup,
   deleteGroup as deleteGroupAction,
   reorderGroups,
+  toggleHideFailedSubagents,
 } from '../../store/slices/coworkSlice';
 import type {
   CoworkSessionSummary,
@@ -65,6 +67,8 @@ interface UngroupedDroppableZoneProps {
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
   collapsedSubagentSessions: Set<string>;
   onToggleSubagentCollapse: (sessionId: string) => void;
+  hideFailedSubagents?: boolean;
+  onToggleHideFailedSubagents?: () => void;
 }
 
 const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
@@ -86,6 +90,8 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   onMoveToGroup,
   collapsedSubagentSessions,
   onToggleSubagentCollapse,
+  hideFailedSubagents = false,
+  onToggleHideFailedSubagents,
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id: 'ungrouped' });
 
@@ -117,6 +123,8 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
               hasSubagents={session.id === activeSessionId && enrichedSubTasks.length > 0}
               subagentsCollapsed={collapsedSubagentSessions.has(session.id)}
               onToggleSubagentCollapse={() => onToggleSubagentCollapse(session.id)}
+              hideFailedSubagents={hideFailedSubagents}
+              onToggleHideFailedSubagents={onToggleHideFailedSubagents}
             />
             <SubAgentList
               sessionId={session.id}
@@ -124,6 +132,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
               enrichedSubTasks={enrichedSubTasks}
               setActiveSubTask={setActiveSubTask}
               isCollapsed={collapsedSubagentSessions.has(session.id)}
+              hideFailedSubagents={hideFailedSubagents}
             />
           </React.Fragment>
         ))}
@@ -164,6 +173,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
+  const hideFailedSubagents = useSelector(selectHideFailedSubagents);
 
   // DnD state
   const [activeSession, setActiveSession] = useState<CoworkSessionSummary | null>(null);
@@ -572,6 +582,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     setActiveSubTask={setActiveSubTask}
                     collapsedSubagentSessions={collapsedSubagentSessions}
                     onToggleSubagentCollapse={handleToggleSubagentCollapse}
+                    hideFailedSubagents={hideFailedSubagents}
+                    onToggleHideFailedSubagents={() => dispatch(toggleHideFailedSubagents())}
                   />
                 </React.Fragment>
               );
@@ -602,6 +614,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           }}
           collapsedSubagentSessions={collapsedSubagentSessions}
           onToggleSubagentCollapse={handleToggleSubagentCollapse}
+          hideFailedSubagents={hideFailedSubagents}
+          onToggleHideFailedSubagents={() => dispatch(toggleHideFailedSubagents())}
         />
       </div>
 

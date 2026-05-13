@@ -30,6 +30,8 @@ interface SessionGroupPanelProps {
   >;
   collapsedSubagentSessions: Set<string>;
   onToggleSubagentCollapse: (sessionId: string) => void;
+  hideFailedSubagents?: boolean;
+  onToggleHideFailedSubagents?: () => void;
 }
 
 const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
@@ -52,6 +54,8 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   setActiveSubTask,
   collapsedSubagentSessions,
   onToggleSubagentCollapse,
+  hideFailedSubagents = false,
+  onToggleHideFailedSubagents,
 }) => {
   if (!isExpanded || sessions.length === 0) return null;
 
@@ -75,6 +79,8 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
             hasSubagents={session.id === activeSessionId && enrichedSubTasks.length > 0}
             subagentsCollapsed={collapsedSubagentSessions.has(session.id)}
             onToggleSubagentCollapse={() => onToggleSubagentCollapse(session.id)}
+            hideFailedSubagents={hideFailedSubagents}
+            onToggleHideFailedSubagents={onToggleHideFailedSubagents}
           />
           <SubAgentList
             sessionId={session.id}
@@ -82,6 +88,7 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
             enrichedSubTasks={enrichedSubTasks}
             setActiveSubTask={setActiveSubTask}
             isCollapsed={collapsedSubagentSessions.has(session.id)}
+            hideFailedSubagents={hideFailedSubagents}
           />
         </React.Fragment>
       ))}

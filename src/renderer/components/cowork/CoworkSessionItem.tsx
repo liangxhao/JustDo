@@ -26,6 +26,8 @@ interface CoworkSessionItemProps {
   hasSubagents?: boolean;
   subagentsCollapsed?: boolean;
   onToggleSubagentCollapse?: () => void;
+  hideFailedSubagents?: boolean;
+  onToggleHideFailedSubagents?: () => void;
 }
 
 const statusLabels: Record<CoworkSessionStatus, string> = {
@@ -88,6 +90,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   hasSubagents = false,
   subagentsCollapsed = false,
   onToggleSubagentCollapse,
+  hideFailedSubagents = false,
+  onToggleHideFailedSubagents,
 }) => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -264,6 +268,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
 
   const renameLabel = i18nService.t('renameConversation');
   const deleteLabel = i18nService.t('deleteSession');
+  const hideFailedSubagentsLabel = i18nService.t('hideFailedSubagents');
   const relativeTime = formatRelativeTime(session.updatedAt);
   const showRunningIndicator = session.status === 'running';
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
@@ -277,6 +282,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     onClick: (e: React.MouseEvent) => void;
     onMouseEnter?: () => void;
     tone: 'neutral' | 'danger';
+    isCheckbox?: boolean;
+    checked?: boolean;
   }
 
   const menuItems = useMemo(() => {
@@ -284,6 +291,21 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       { key: 'rename', label: renameLabel, onClick: handleRenameClick, tone: 'neutral' as const },
       { key: 'delete', label: deleteLabel, onClick: handleDeleteClick, tone: 'danger' as const },
     ];
+    // Add hideFailedSubagents checkbox after delete
+    if (onToggleHideFailedSubagents) {
+      items.push({
+        key: 'hideFailedSubagents',
+        label: hideFailedSubagentsLabel,
+        onClick: (e: React.MouseEvent) => {
+          e.stopPropagation();
+          onToggleHideFailedSubagents();
+          closeMenu();
+        },
+        tone: 'neutral' as const,
+        isCheckbox: true,
+        checked: hideFailedSubagents,
+      });
+    }
     if (showBatchOption) {
       items.unshift({
         key: 'batch',
@@ -307,6 +329,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   }, [
     batchLabel,
     deleteLabel,
+    hideFailedSubagentsLabel,
     handleBatchClick,
     handleDeleteClick,
     handleRenameClick,
@@ -315,6 +338,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     onMoveToGroup,
     groups.length,
     moveToGroupLabel,
+    onToggleHideFailedSubagents,
+    hideFailedSubagents,
   ]);
 
   const handleMoveToGroup = (groupId: string | null) => {
@@ -461,6 +486,32 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               {item.key === 'delete' && <TrashIcon className="h-4 w-4" />}
               {item.key === 'moveToGroup' && (
                 <span className="h-4 w-4 flex items-center justify-center">→</span>
+              )}
+              {item.isCheckbox && (
+                <span className="h-4 w-4 flex items-center justify-center">
+                  {item.checked ? (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      className="h-4 w-4"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" className="fill-primary stroke-primary" />
+                      <path d="M9 12l2 2 4-4" stroke="white" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      className="h-4 w-4"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                    </svg>
+                  )}
+                </span>
               )}
               {item.label}
               {item.key === 'moveToGroup' && (

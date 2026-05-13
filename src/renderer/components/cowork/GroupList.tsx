@@ -37,6 +37,8 @@ interface GroupListProps {
   >;
   collapsedSubagentSessions: Set<string>;
   onToggleSubagentCollapse: (sessionId: string) => void;
+  hideFailedSubagents?: boolean;
+  onToggleHideFailedSubagents?: () => void;
 }
 
 const GroupListItem: React.FC<GroupListProps> = ({
@@ -65,6 +67,8 @@ const GroupListItem: React.FC<GroupListProps> = ({
   setActiveSubTask,
   collapsedSubagentSessions,
   onToggleSubagentCollapse,
+  hideFailedSubagents = false,
+  onToggleHideFailedSubagents,
 }) => {
   if (sessions.length === 0) return null;
 
@@ -101,6 +105,8 @@ const GroupListItem: React.FC<GroupListProps> = ({
         setActiveSubTask={setActiveSubTask}
         collapsedSubagentSessions={collapsedSubagentSessions}
         onToggleSubagentCollapse={onToggleSubagentCollapse}
+        hideFailedSubagents={hideFailedSubagents}
+        onToggleHideFailedSubagents={onToggleHideFailedSubagents}
       />
     </>
   );

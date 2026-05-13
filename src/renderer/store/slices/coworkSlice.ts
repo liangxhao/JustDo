@@ -36,6 +36,8 @@ interface CoworkState {
   thinkingExpanded: boolean;
   /** Global toggle for tool calls visibility - true = expanded (show), false = collapsed (hide) */
   toolExpanded: boolean;
+  /** Global toggle for hiding failed subagents in list - true = hide, false = show */
+  hideFailedSubagents: boolean;
 }
 
 const initialState: CoworkState = {
@@ -58,6 +60,7 @@ const initialState: CoworkState = {
   },
   thinkingExpanded: true, // Default to expanded (浅蓝色)
   toolExpanded: true, // Default to expanded (浅蓝色)
+  hideFailedSubagents: false, // Default to show failed subagents
 };
 
 const markSessionRead = (state: CoworkState, sessionId: string | null) => {
@@ -392,6 +395,10 @@ const coworkSlice = createSlice({
       state.toolExpanded = !state.toolExpanded;
     },
 
+    toggleHideFailedSubagents(state) {
+      state.hideFailedSubagents = !state.hideFailedSubagents;
+    },
+
     // Session Group actions
     setGroups(state, action: PayloadAction<SessionGroup[]>) {
       state.groups = action.payload;
@@ -480,6 +487,7 @@ export const {
   clearCurrentSession,
   toggleThinkingExpanded,
   toggleToolExpanded,
+  toggleHideFailedSubagents,
   // Session Group actions
   setGroups,
   addGroup,

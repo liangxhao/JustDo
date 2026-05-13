@@ -19,6 +19,7 @@ interface SubAgentListProps {
     } | null>
   >;
   isCollapsed?: boolean;
+  hideFailedSubagents?: boolean;
 }
 
 const statusDotClass: Record<string, string> = {
@@ -34,12 +35,18 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
   enrichedSubTasks,
   setActiveSubTask,
   isCollapsed = false,
+  hideFailedSubagents = false,
 }) => {
-  if (sessionId !== currentSessionId || enrichedSubTasks.length === 0 || isCollapsed) return null;
+  // Filter out failed subagents if hideFailedSubagents is true
+  const visibleSubTasks = hideFailedSubagents
+    ? enrichedSubTasks.filter(sub => sub.status !== 'failed')
+    : enrichedSubTasks;
+
+  if (sessionId !== currentSessionId || visibleSubTasks.length === 0 || isCollapsed) return null;
 
   return (
     <div className="ml-4 pl-3 border-l-2 border-claude-accent/20 dark:border-claude-accent/15 space-y-0.5">
-      {enrichedSubTasks.map(sub => (
+      {visibleSubTasks.map(sub => (
         <div
           key={sub.agentId}
           onClick={() => {
