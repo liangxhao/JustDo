@@ -474,6 +474,8 @@ export class AgentEventProcessor {
               );
               this.cb.failedSubagentIds.add(toolCallId);
               this.cb.subagentStatus.set(toolCallId, 'failed');
+              // Persist failed status to database so it survives restart
+              this.cb.subagentManager.persistSubagentStatus(toolCallId, 'failed');
               this.cb.pendingToolCallIds.delete(toolCallId);
               this.cb.pendingEntryTimestamps.delete(toolCallId);
               this.cb.toolCallIdToSessionKey.delete(toolCallId);

@@ -59,7 +59,7 @@ export class SubagentManager {
     this.cb.orchestrationParentSessionId = sessionId;
   }
 
-  persistSubagentStatus(toolCallId: string, status: 'running' | 'done'): void {
+  persistSubagentStatus(toolCallId: string, status: 'running' | 'done' | 'failed'): void {
     // Use per-session mapping instead of global to avoid cross-session contamination
     const parentSessionId =
       this.cb.toolCallIdToParentSessionId.get(toolCallId) || this.cb.orchestrationParentSessionId;
@@ -74,7 +74,7 @@ export class SubagentManager {
         msg.metadata?.toolName === 'sessions_spawn' &&
         msg.metadata?.toolUseId === toolCallId
       ) {
-        // Update metadata with subagentStatus
+        // Update metadata with subagentStatus (including 'failed' for restart recovery)
         const updatedMetadata = {
           ...msg.metadata,
           subagentStatus: status,
@@ -82,6 +82,14 @@ export class SubagentManager {
         this.cb.store.updateMessage(parentSessionId, msg.id, {
           metadata: updatedMetadata as CoworkMessageMetadata,
         });
+        console.log(
+          '[OpenClawRuntime] persistSubagentStatus: persisted toolCallId=' +
+            toolCallId +
+            ' status=' +
+            status +
+            ' to session=' +
+            parentSessionId,
+        );
         break;
       }
     }
@@ -542,11 +550,16 @@ export class SubagentManager {
                 const persistedStatus = msg.metadata?.subagentStatus as
                   | 'running'
                   | 'done'
+                  | 'failed'
                   | undefined;
                 const task = typeof input?.task === 'string' ? input.task : '';
                 const msgLabel = typeof input?.label === 'string' && input.label ? input.label : '';
 
-                if (persistedStatus === 'running' || persistedStatus === 'done') {
+                if (
+                  persistedStatus === 'running' ||
+                  persistedStatus === 'done' ||
+                  persistedStatus === 'failed'
+                ) {
                   statuses[cs.key] = persistedStatus;
                 }
                 displayLabels[cs.key] = msgLabel || (task ? task.slice(0, 30) : cs.key);
@@ -590,8 +603,16 @@ export class SubagentManager {
                   display,
               );
               if (key) {
-                const persistedStatus = meta.subagentStatus as 'running' | 'done' | undefined;
-                if (persistedStatus === 'running' || persistedStatus === 'done') {
+                const persistedStatus = meta.subagentStatus as
+                  | 'running'
+                  | 'done'
+                  | 'failed'
+                  | undefined;
+                if (
+                  persistedStatus === 'running' ||
+                  persistedStatus === 'done' ||
+                  persistedStatus === 'failed'
+                ) {
                   statuses[key] = persistedStatus;
                 } else {
                   statuses[key] = 'running';
