@@ -11,6 +11,7 @@ import {
   extractSubagentCompletionMessages,
   convertToCoworkMessage,
   truncate,
+  mergeStreamingText,
 } from '../utils/gatewayHelpers';
 import type {
   GatewayClientLike,
@@ -488,7 +489,8 @@ export class AgentEventProcessor {
                 this.cb.toolCallIdToParentSessionId.get(toolCallId) ||
                 this.cb.orchestrationParentSessionId;
               if (parentSessionId) {
-                const label = displayLabel || this.cb.toolCallIdToLabel.get(toolCallId) || '(unknown)';
+                const label =
+                  displayLabel || this.cb.toolCallIdToLabel.get(toolCallId) || '(unknown)';
                 this.cb.store.upsertSubagent(toolCallId, parentSessionId, label, 'failed', {
                   errorReason: 'Subagent lifecycle error',
                 });
@@ -653,11 +655,18 @@ export class AgentEventProcessor {
 
             // Persist nested spawn to database for restart recovery
             // Use trackingKey (call_xxx when linked) so frontend can find it
-            const nestedParentForDb = nestedParentSessionId || this.cb.toolCallIdToParentSessionId.get(trackingKey);
+            const nestedParentForDb =
+              nestedParentSessionId || this.cb.toolCallIdToParentSessionId.get(trackingKey);
             if (nestedParentForDb) {
-              this.cb.store.upsertSubagent(trackingKey, nestedParentForDb, displayLabel, 'running', {
-                childSessionKey: sessionKey,
-              });
+              this.cb.store.upsertSubagent(
+                trackingKey,
+                nestedParentForDb,
+                displayLabel,
+                'running',
+                {
+                  childSessionKey: sessionKey,
+                },
+              );
             }
             // Also persist to tool_use message metadata for backward compat
             this.cb.subagentManager.persistNestedSubagentSpawn(
@@ -805,11 +814,20 @@ export class AgentEventProcessor {
               this.cb.subagentStatus.set(errorTrackingKey, 'failed');
               // Persist to database for restart recovery
               const errorLabel = this.cb.toolCallIdToLabel.get(errorTrackingKey) || '(unknown)';
-              const errorParentSessionId = nestedParentSessionId || this.cb.toolCallIdToParentSessionId.get(errorTrackingKey) || this.cb.orchestrationParentSessionId;
+              const errorParentSessionId =
+                nestedParentSessionId ||
+                this.cb.toolCallIdToParentSessionId.get(errorTrackingKey) ||
+                this.cb.orchestrationParentSessionId;
               if (errorParentSessionId) {
-                this.cb.store.upsertSubagent(errorTrackingKey, errorParentSessionId, errorLabel, 'failed', {
-                  errorReason: 'Nested subagent lifecycle error',
-                });
+                this.cb.store.upsertSubagent(
+                  errorTrackingKey,
+                  errorParentSessionId,
+                  errorLabel,
+                  'failed',
+                  {
+                    errorReason: 'Nested subagent lifecycle error',
+                  },
+                );
               }
               this.cb.pendingToolCallIds.delete(errorTrackingKey);
               this.cb.pendingEntryTimestamps.delete(errorTrackingKey);
@@ -1031,16 +1049,18 @@ export class AgentEventProcessor {
               : msgs.filter(m => m.role === 'assistant').pop();
 
             // Use stored ID if available (from previous streaming event), otherwise generate new one
-            const msgId = lastAssistant && (lastAssistant as { id?: string }).id
-              ? (lastAssistant as { id?: string }).id!
-              : `subagent-assistant-${Date.now()}-${msgs.length}`;
+            const msgId =
+              lastAssistant && (lastAssistant as { id?: string }).id
+                ? (lastAssistant as { id?: string }).id!
+                : `subagent-assistant-${Date.now()}-${msgs.length}`;
 
             if (lastAssistant && !isAfterToolResult) {
               // Continue appending to existing assistant message (streaming)
               const prevContent = lastAssistant.content;
-              lastAssistant.content = eventText.startsWith(prevContent)
-                ? eventText
-                : prevContent + eventText;
+              // Use mergeStreamingText which handles snapshot detection (startsWith,
+              // includes fallback) and overlap-based delta merging robustly.
+              const merged = mergeStreamingText(prevContent, eventText, 'unknown');
+              lastAssistant.content = merged.text;
               // Emit update event - use the stored stable msgId
               const parentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
               if (parentSessionId) {
