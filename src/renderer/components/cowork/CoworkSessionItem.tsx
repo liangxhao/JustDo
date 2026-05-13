@@ -429,12 +429,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2 text-[9px] text-secondary">
+          <div className="flex items-center text-[9px] text-secondary">
             <span className="whitespace-nowrap" title={relativeTime.full}>
               {relativeTime.compact}
-            </span>
-            <span className="text-[7px] uppercase tracking-wider whitespace-nowrap">
-              {i18nService.t(statusLabels[session.status])}
             </span>
           </div>
         </div>

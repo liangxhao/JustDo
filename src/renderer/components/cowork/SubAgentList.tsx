@@ -25,11 +25,7 @@ const statusDotClass: Record<string, string> = {
   done: 'bg-green-500',
   pending: 'bg-orange-500 animate-pulse',
   running: 'bg-blue-500 animate-pulse',
-  failed: 'bg-gray-400 dark:bg-gray-500',
-};
-
-const statusTextClass: Record<string, string> = {
-  failed: 'line-through opacity-60',
+  failed: 'bg-red-500',
 };
 
 const SubAgentList: React.FC<SubAgentListProps> = ({
@@ -60,9 +56,7 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
           <span
             className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotClass[sub.status] || 'bg-blue-500 animate-pulse'}`}
           />
-          <span
-            className={`font-medium dark:text-claude-darkText text-claude-text truncate ${statusTextClass[sub.status] || ''}`}
-          >
+          <span className={`font-medium dark:text-claude-darkText text-claude-text truncate`}>
             {sub.task}
           </span>
         </div>
