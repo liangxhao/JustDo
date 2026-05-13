@@ -442,7 +442,8 @@ export class ChatEventProcessor {
                     (currentStatus || '(none)'),
                 );
                 this.cb.subagentStatus.set(toolCallId, 'done');
-                this.cb.subagentManager.persistSubagentStatus(toolCallId, 'done');
+                // Update database status
+                this.cb.store.updateSubagentStatus(toolCallId, 'done');
                 this.cb.pendingToolCallIds.delete(toolCallId);
                 this.cb.pendingEntryTimestamps.delete(toolCallId);
                 this.cb.subagentManager.checkAllSubagentsDone();

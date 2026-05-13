@@ -282,6 +282,47 @@ export class SubagentManager {
     const displayLabels: Record<string, string> = {};
     const toolUseIdToLabel = new Map<string, string>();
 
+    // === Database recovery (highest priority) ===
+    // When in-memory state is empty, first recover from database.
+    // This ensures subagent status survives restart regardless of gateway state.
+    if (sessionId && this.cb.subagentStatus.size === 0) {
+      const dbSubagents = this.cb.store.getSubagentsByParentSession(sessionId);
+      if (dbSubagents.length > 0) {
+        console.log(
+          '[OpenClawRuntime] getSubagentStatuses: recovered ' +
+            dbSubagents.length +
+            ' subagents from database for sessionId=' +
+            sessionId,
+        );
+        for (const sub of dbSubagents) {
+          statuses[sub.toolCallId] = sub.status;
+          displayLabels[sub.toolCallId] = sub.label;
+          // Also restore in-memory mappings for subsequent events
+          this.cb.subagentStatus.set(sub.toolCallId, sub.status);
+          this.cb.toolCallIdToLabel.set(sub.toolCallId, sub.label);
+          this.cb.toolCallIdToParentSessionId.set(sub.toolCallId, sub.parentSessionId);
+          if (sub.childSessionKey) {
+            this.cb.toolCallIdToSessionKey.set(sub.toolCallId, sub.childSessionKey);
+            this.cb.sessionKeyToToolCallId.set(sub.childSessionKey, sub.toolCallId);
+            this.cb.sessionKeyToLabel.set(sub.childSessionKey, sub.label);
+          }
+          if (sub.status === 'failed') {
+            this.cb.failedSubagentIds.add(sub.toolCallId);
+          }
+        }
+        // Return immediately if all data recovered from database
+        // (no need to query gateway or scan messages)
+        const hasRunning = dbSubagents.some(s => s.status === 'running' || s.status === 'pending');
+        if (!hasRunning) {
+          console.log(
+            '[OpenClawRuntime] getSubagentStatuses: all subagents recovered from database, skipping gateway query',
+          );
+          return { statuses, displayLabels };
+        }
+      }
+    }
+
+    // === Gateway discovery (fallback when database empty or has running subagents) ===
     // Post-restart recovery: when subagentStatus Map is empty (in-memory state lost),
     // query sessions.list API to discover which subagents are actually tracked by the gateway.
     // This filters out spawns that were pruned as orphans.
@@ -870,6 +911,46 @@ export class SubagentManager {
         );
         this.cb.failedSubagentIds.add(pendingId);
         this.cb.subagentStatus.set(pendingId, 'failed');
+        // Persist to database for restart recovery
+        const parentSessionId = this.cb.toolCallIdToParentSessionId.get(pendingId);
+        const label = this.cb.toolCallIdToLabel.get(pendingId) || '(unknown)';
+        if (parentSessionId) {
+          // Try to get specific error reason from gateway
+          let errorReason: string | null = null;
+          const childSessionKey = this.cb.toolCallIdToSessionKey.get(pendingId);
+          if (childSessionKey && this.cb.gatewayClient) {
+            try {
+              const sessionInfo = await this.cb.gatewayClient.request<{
+                state?: string;
+                status?: string;
+                outcome?: string;
+                error?: string;
+                lastError?: string;
+              }>('sessions.get', { sessionKey: childSessionKey });
+
+              if (sessionInfo) {
+                // Same logic as SubTaskDetailDrawer error display:
+                // priority: errorMessage > outcome > state
+                const errorMessage = sessionInfo.error || sessionInfo.lastError;
+                if (errorMessage) {
+                  errorReason = errorMessage;
+                } else if (sessionInfo.outcome) {
+                  errorReason = `Outcome: ${sessionInfo.outcome.toUpperCase()}`;
+                } else if (sessionInfo.state) {
+                  errorReason = `State: ${sessionInfo.state.toUpperCase()}`;
+                }
+              }
+            } catch {
+              // Gateway query failed, fall through to default
+            }
+          }
+          if (!errorReason) {
+            errorReason = 'Spawn timeout - no lifecycle event received';
+          }
+          this.cb.store.upsertSubagent(pendingId, parentSessionId, label, 'failed', {
+            errorReason,
+          });
+        }
         this.cb.pendingEntryTimestamps.delete(pendingId);
       }
     }
@@ -946,6 +1027,11 @@ export class SubagentManager {
             statuses[key] = 'failed';
             this.cb.subagentStatus.set(key, 'failed');
             this.cb.failedSubagentIds.add(key);
+            // Persist to database for restart recovery
+            const label = this.cb.subagentUuidToLabel.get(key) || key;
+            this.cb.store.upsertSubagent(key, sessionId, label, 'failed', {
+              errorReason: 'Orphan subagent - main session completed',
+            });
           } else if (sessionDone) {
             // Already done/failed status but main session completed — reflect it
             statuses[key] = status;

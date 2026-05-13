@@ -76,6 +76,21 @@ export type CoworkAgentEngine = 'openclaw';
 
 export type AgentSource = 'custom' | 'preset';
 
+// Subagent status types for database persistence
+export type SubagentStatusType = 'pending' | 'running' | 'done' | 'failed';
+
+export interface SubagentRecord {
+  toolCallId: string;
+  parentSessionId: string;
+  childSessionKey: string | null;
+  label: string;
+  status: SubagentStatusType;
+  toolInput: Record<string, unknown> | null;
+  errorReason: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -1207,5 +1222,177 @@ export class CoworkStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  // ========== Subagent Status CRUD ==========
+
+  /**
+   * Upsert a subagent status record.
+   * Creates or updates the subagent entry with the given toolCallId.
+   */
+  upsertSubagent(
+    toolCallId: string,
+    parentSessionId: string,
+    label: string,
+    status: SubagentStatusType,
+    options?: {
+      childSessionKey?: string;
+      toolInput?: Record<string, unknown>;
+      errorReason?: string;
+    },
+  ): void {
+    const now = Date.now();
+    const toolInputJson = options?.toolInput ? JSON.stringify(options.toolInput) : null;
+    const errorReason = options?.errorReason || null;
+    const childSessionKey = options?.childSessionKey || null;
+
+    this.db
+      .prepare(
+        `
+      INSERT INTO cowork_subagents (tool_call_id, parent_session_id, child_session_key, label, status, tool_input, error_reason, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(tool_call_id) DO UPDATE SET
+        parent_session_id = excluded.parent_session_id,
+        child_session_key = COALESCE(excluded.child_session_key, cowork_subagents.child_session_key),
+        label = COALESCE(excluded.label, cowork_subagents.label),
+        status = excluded.status,
+        tool_input = COALESCE(excluded.tool_input, cowork_subagents.tool_input),
+        error_reason = COALESCE(excluded.error_reason, cowork_subagents.error_reason),
+        updated_at = excluded.updated_at
+    `,
+      )
+      .run(
+        toolCallId,
+        parentSessionId,
+        childSessionKey,
+        label,
+        status,
+        toolInputJson,
+        errorReason,
+        now,
+        now,
+      );
+  }
+
+  /**
+   * Update subagent status only.
+   */
+  updateSubagentStatus(toolCallId: string, status: SubagentStatusType, errorReason?: string): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `
+      UPDATE cowork_subagents
+      SET status = ?, error_reason = COALESCE(?, error_reason), updated_at = ?
+      WHERE tool_call_id = ?
+    `,
+      )
+      .run(status, errorReason || null, now, toolCallId);
+  }
+
+  /**
+   * Get all subagents for a parent session.
+   */
+  getSubagentsByParentSession(parentSessionId: string): SubagentRecord[] {
+    interface SubagentRow {
+      tool_call_id: string;
+      parent_session_id: string;
+      child_session_key: string | null;
+      label: string;
+      status: string;
+      tool_input: string | null;
+      error_reason: string | null;
+      created_at: number;
+      updated_at: number;
+    }
+
+    const rows = this.getAll<SubagentRow>(
+      `
+      SELECT * FROM cowork_subagents WHERE parent_session_id = ? ORDER BY created_at ASC
+    `,
+      [parentSessionId],
+    );
+
+    return rows.map(row => {
+      let toolInput: Record<string, unknown> | null = null;
+      if (row.tool_input) {
+        try {
+          toolInput = JSON.parse(row.tool_input);
+        } catch {
+          toolInput = null;
+        }
+      }
+      return {
+        toolCallId: row.tool_call_id,
+        parentSessionId: row.parent_session_id,
+        childSessionKey: row.child_session_key,
+        label: row.label,
+        status: row.status as SubagentStatusType,
+        toolInput,
+        errorReason: row.error_reason,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
+  }
+
+  /**
+   * Get a single subagent by toolCallId.
+   */
+  getSubagent(toolCallId: string): SubagentRecord | null {
+    interface SubagentRow {
+      tool_call_id: string;
+      parent_session_id: string;
+      child_session_key: string | null;
+      label: string;
+      status: string;
+      tool_input: string | null;
+      error_reason: string | null;
+      created_at: number;
+      updated_at: number;
+    }
+
+    const row = this.getOne<SubagentRow>(
+      `
+      SELECT * FROM cowork_subagents WHERE tool_call_id = ?
+    `,
+      [toolCallId],
+    );
+
+    if (!row) return null;
+
+    let toolInput: Record<string, unknown> | null = null;
+    if (row.tool_input) {
+      try {
+        toolInput = JSON.parse(row.tool_input);
+      } catch {
+        toolInput = null;
+      }
+    }
+    return {
+      toolCallId: row.tool_call_id,
+      parentSessionId: row.parent_session_id,
+      childSessionKey: row.child_session_key,
+      label: row.label,
+      status: row.status as SubagentStatusType,
+      toolInput,
+      errorReason: row.error_reason,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Delete all subagents for a parent session (called when session is deleted).
+   */
+  deleteSubagentsByParentSession(parentSessionId: string): void {
+    this.db.prepare('DELETE FROM cowork_subagents WHERE parent_session_id = ?').run(parentSessionId);
+  }
+
+  /**
+   * Delete a single subagent.
+   */
+  deleteSubagent(toolCallId: string): void {
+    this.db.prepare('DELETE FROM cowork_subagents WHERE tool_call_id = ?').run(toolCallId);
   }
 }

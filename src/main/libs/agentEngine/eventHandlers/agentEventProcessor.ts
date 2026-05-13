@@ -352,6 +352,11 @@ export class AgentEventProcessor {
             this.cb.pendingToolCallIds.delete(toolCallId);
             this.cb.pendingEntryTimestamps.delete(toolCallId);
             this.cb.subagentStatus.set(toolCallId, 'running');
+            // Update database status
+            const parentSessionId = this.cb.toolCallIdToParentSessionId.get(toolCallId);
+            if (parentSessionId) {
+              this.cb.store.updateSubagentStatus(toolCallId, 'running');
+            }
           } else if (phase === 'end' || phase === 'completed' || phase === 'stopped') {
             // If previously marked as failed (e.g. by pending timeout firing before
             // lifecycle events arrived), recover: the subagent actually completed.
@@ -370,7 +375,11 @@ export class AgentEventProcessor {
                 sessionKey,
             );
             this.cb.subagentStatus.set(toolCallId, 'done');
-            this.cb.subagentManager.persistSubagentStatus(toolCallId, 'done');
+            // Update database status
+            const doneParentSessionId = this.cb.toolCallIdToParentSessionId.get(toolCallId);
+            if (doneParentSessionId) {
+              this.cb.store.updateSubagentStatus(toolCallId, 'done');
+            }
             this.cb.subagentManager.checkAllSubagentsDone();
 
             // Also clean up any parallel UUID entry created by the nested lifecycle handler.
@@ -474,8 +483,16 @@ export class AgentEventProcessor {
               );
               this.cb.failedSubagentIds.add(toolCallId);
               this.cb.subagentStatus.set(toolCallId, 'failed');
-              // Persist failed status to database so it survives restart
-              this.cb.subagentManager.persistSubagentStatus(toolCallId, 'failed');
+              // Persist failed status directly to database for restart recovery
+              const parentSessionId =
+                this.cb.toolCallIdToParentSessionId.get(toolCallId) ||
+                this.cb.orchestrationParentSessionId;
+              if (parentSessionId) {
+                const label = displayLabel || this.cb.toolCallIdToLabel.get(toolCallId) || '(unknown)';
+                this.cb.store.upsertSubagent(toolCallId, parentSessionId, label, 'failed', {
+                  errorReason: 'Subagent lifecycle error',
+                });
+              }
               this.cb.pendingToolCallIds.delete(toolCallId);
               this.cb.pendingEntryTimestamps.delete(toolCallId);
               this.cb.toolCallIdToSessionKey.delete(toolCallId);
@@ -634,8 +651,15 @@ export class AgentEventProcessor {
               this.cb.subagentUuidToLabel.set(subagentUuid, nestedLabel);
             }
 
-            // Persist nested spawn to parent session so it survives restart
+            // Persist nested spawn to database for restart recovery
             // Use trackingKey (call_xxx when linked) so frontend can find it
+            const nestedParentForDb = nestedParentSessionId || this.cb.toolCallIdToParentSessionId.get(trackingKey);
+            if (nestedParentForDb) {
+              this.cb.store.upsertSubagent(trackingKey, nestedParentForDb, displayLabel, 'running', {
+                childSessionKey: sessionKey,
+              });
+            }
+            // Also persist to tool_use message metadata for backward compat
             this.cb.subagentManager.persistNestedSubagentSpawn(
               trackingKey,
               displayLabel,
@@ -721,7 +745,8 @@ export class AgentEventProcessor {
                 );
                 // Now use the matched call_xxx as tracking key
                 this.cb.subagentStatus.set(matchedCallId, 'done');
-                this.cb.subagentManager.persistSubagentStatus(matchedCallId, 'done');
+                // Update database
+                this.cb.store.updateSubagentStatus(matchedCallId, 'done');
               } else {
                 // Secondary fallback: search all call_xxx entries by parent session
                 for (const [callId] of this.cb.toolCallIdToLabel.entries()) {
@@ -739,14 +764,16 @@ export class AgentEventProcessor {
                       callId,
                   );
                   this.cb.subagentStatus.set(callId, 'done');
-                  this.cb.subagentManager.persistSubagentStatus(callId, 'done');
+                  // Update database
+                  this.cb.store.updateSubagentStatus(callId, 'done');
                   break;
                 }
               }
             } else {
               // Use existing tracking key
               this.cb.subagentStatus.set(endTrackingKey, 'done');
-              this.cb.subagentManager.persistSubagentStatus(endTrackingKey, 'done');
+              // Update database
+              this.cb.store.updateSubagentStatus(endTrackingKey, 'done');
             }
 
             this.cb.subagentManager.checkAllSubagentsDone();
@@ -774,7 +801,16 @@ export class AgentEventProcessor {
               );
             } else {
               this.cb.failedSubagentIds.add(errorTrackingKey);
-              this.cb.subagentStatus.delete(errorTrackingKey);
+              // Set status to failed (not delete) for proper tracking
+              this.cb.subagentStatus.set(errorTrackingKey, 'failed');
+              // Persist to database for restart recovery
+              const errorLabel = this.cb.toolCallIdToLabel.get(errorTrackingKey) || '(unknown)';
+              const errorParentSessionId = nestedParentSessionId || this.cb.toolCallIdToParentSessionId.get(errorTrackingKey) || this.cb.orchestrationParentSessionId;
+              if (errorParentSessionId) {
+                this.cb.store.upsertSubagent(errorTrackingKey, errorParentSessionId, errorLabel, 'failed', {
+                  errorReason: 'Nested subagent lifecycle error',
+                });
+              }
               this.cb.pendingToolCallIds.delete(errorTrackingKey);
               this.cb.pendingEntryTimestamps.delete(errorTrackingKey);
               this.cb.toolCallIdToSessionKey.delete(errorTrackingKey);
@@ -994,8 +1030,9 @@ export class AgentEventProcessor {
               ? null
               : msgs.filter(m => m.role === 'assistant').pop();
 
-            const msgId = lastAssistant
-              ? `subagent-assistant-${Date.now()}-${msgs.length - 1}`
+            // Use stored ID if available (from previous streaming event), otherwise generate new one
+            const msgId = lastAssistant && (lastAssistant as { id?: string }).id
+              ? (lastAssistant as { id?: string }).id!
               : `subagent-assistant-${Date.now()}-${msgs.length}`;
 
             if (lastAssistant && !isAfterToolResult) {
@@ -1004,7 +1041,7 @@ export class AgentEventProcessor {
               lastAssistant.content = eventText.startsWith(prevContent)
                 ? eventText
                 : prevContent + eventText;
-              // Emit update event
+              // Emit update event - use the stored stable msgId
               const parentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
               if (parentSessionId) {
                 this.cb.emit(
@@ -1017,7 +1054,7 @@ export class AgentEventProcessor {
               }
             } else {
               // Create new assistant message (after tool_result or no existing assistant)
-              const newMsg = { role: 'assistant', content: eventText };
+              const newMsg = { role: 'assistant', content: eventText, id: msgId };
               msgs.push(newMsg);
               // Emit new message event
               const parentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
@@ -2433,7 +2470,8 @@ export class AgentEventProcessor {
           phase === 'error'
         ) {
           this.cb.subagentStatus.set(toolCallId, 'done');
-          this.cb.subagentManager.persistSubagentStatus(toolCallId, 'done');
+          // Update database status
+          this.cb.store.updateSubagentStatus(toolCallId, 'done');
           if (phase !== 'error') {
             this.cb.subagentManager.checkAllSubagentsDone();
           }

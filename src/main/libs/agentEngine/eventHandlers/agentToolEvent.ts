@@ -229,6 +229,11 @@ export class AgentToolEventHandler {
         this.cb.toolCallIdToLabel.set(toolCallId, displayLabel);
       }
 
+      // Persist to database for restart recovery
+      this.cb.store.upsertSubagent(toolCallId, sessionId, displayLabel || '(unknown)', 'pending', {
+        toolInput: savedInfo,
+      });
+
       if (!this.cb.subagentMessages.has(toolCallId)) {
         this.cb.subagentMessages.set(toolCallId, []);
       }
@@ -446,6 +451,10 @@ export class AgentToolEventHandler {
 
     // sessions_spawn result with error
     if (toolName === 'sessions_spawn' && phase === 'result' && (data.isError || data.err)) {
+      const errorReason = typeof data.err === 'string' ? data.err : String(data.result || 'Unknown error');
+      const label = this.cb.toolCallIdToLabel.get(toolCallId) || '(unknown)';
+      const parentSessionId = this.cb.toolCallIdToParentSessionId.get(toolCallId) || this.cb.orchestrationParentSessionId || sessionId;
+
       console.log(
         '[OpenClawRuntime] sessions_spawn failed: toolCallId=' +
           toolCallId +
@@ -457,6 +466,8 @@ export class AgentToolEventHandler {
       );
       this.cb.failedSubagentIds.add(toolCallId);
       this.cb.subagentStatus.set(toolCallId, 'failed');
+      // Persist to database for restart recovery
+      this.cb.store.upsertSubagent(toolCallId, parentSessionId, label, 'failed', { errorReason });
       this.cb.pendingToolCallIds.delete(toolCallId);
       this.cb.pendingEntryTimestamps.delete(toolCallId);
       this.cb.toolCallIdToSessionKey.delete(toolCallId);
