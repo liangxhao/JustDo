@@ -26,7 +26,7 @@ export interface SubagentManagerCallbacks {
   orchestrationSessionIds: Set<string>;
   orchestrationParentSessionId: string | null;
   activeTurns: Map<string, ActiveTurn>;
-  mainAgentLifecycleEnded: boolean;
+  mainAgentLifecycleEnded: Set<string>;
   resolveSubagentParentSessionId: (agentId: string) => string | null;
   // Sweeper-accessible collections (read-write via this)
   _announceToolMessages: Set<string>;
@@ -51,8 +51,12 @@ export class SubagentManager {
     this.cb.gatewayClient = client;
   }
 
-  setMainAgentLifecycleEnded(ended: boolean): void {
-    this.cb.mainAgentLifecycleEnded = ended;
+  setMainAgentLifecycleEnded(sessionId: string, ended: boolean): void {
+    if (ended) {
+      this.cb.mainAgentLifecycleEnded.add(sessionId);
+    } else {
+      this.cb.mainAgentLifecycleEnded.delete(sessionId);
+    }
   }
 
   setOrchestrationParentSessionId(sessionId: string | null): void {
@@ -140,7 +144,7 @@ export class SubagentManager {
         // it's done even if activeTurns hasn't been cleaned up yet (e.g., when
         // the last chat event came from a different runId and returned early).
         const mainAgentActive = this.cb.activeTurns.has(sessionId);
-        if (mainAgentActive && !this.cb.mainAgentLifecycleEnded) {
+        if (mainAgentActive && !this.cb.mainAgentLifecycleEnded.has(sessionId)) {
           console.log(
             '[OpenClawRuntime] checkAllSubagentsDone: all subagents done but main agent still active, deferring completion: sessionId=' +
               sessionId,

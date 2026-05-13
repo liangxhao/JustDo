@@ -37,7 +37,7 @@ export interface AgentEventProcessorCallbacks {
   heartbeatSessionKeys: Set<string>;
   lastAgentSeqByRunId: Map<string, number>;
   latestTurnTokenBySession: Map<string, number>;
-  mainAgentLifecycleEnded: boolean;
+  mainAgentLifecycleEnded: Set<string>;
   orchestrationParentSessionId: string | null;
   pendingAgentEventsByRunId: Map<string, AgentEventPayload[]>;
   pendingEntryTimestamps: Map<string, number>;
@@ -269,7 +269,7 @@ export class AgentEventProcessor {
                       if (callLabel !== labelFromUuid) continue;
                       // Found matching label — verify parent session alignment
                       const parentId = this.cb.toolCallIdToParentSessionId.get(callId);
-                      if (parentId && parentId === this.cb.orchestrationParentSessionId) {
+                      if (parentId && parentId === sessionId) {
                         toolCallId = callId;
                         console.log(
                           '[OpenClawRuntime] subagent lifecycle fallback: label match sessionKey=' +
@@ -487,7 +487,7 @@ export class AgentEventProcessor {
               // Persist failed status directly to database for restart recovery
               const parentSessionId =
                 this.cb.toolCallIdToParentSessionId.get(toolCallId) ||
-                this.cb.orchestrationParentSessionId;
+                this.cb.resolveSubagentParentSessionId(toolCallId);
               if (parentSessionId) {
                 const label =
                   displayLabel || this.cb.toolCallIdToLabel.get(toolCallId) || '(unknown)';
@@ -817,7 +817,7 @@ export class AgentEventProcessor {
               const errorParentSessionId =
                 nestedParentSessionId ||
                 this.cb.toolCallIdToParentSessionId.get(errorTrackingKey) ||
-                this.cb.orchestrationParentSessionId;
+                this.cb.resolveSubagentParentSessionId(errorTrackingKey);
               if (errorParentSessionId) {
                 this.cb.store.upsertSubagent(
                   errorTrackingKey,
@@ -880,7 +880,7 @@ export class AgentEventProcessor {
         let emitAgentId =
           (storageKey ? this.cb.sessionKeyToToolCallId.get(storageKey) : undefined) || '';
         // If no direct mapping, try reverse lookup
-        if (!emitAgentId && storageKey && this.cb.orchestrationParentSessionId) {
+        if (!emitAgentId && storageKey) {
           emitAgentId = this.cb.subagentManager.findToolCallIdByChildSessionKey(storageKey) || '';
         }
         // Try to find by label from toolCallIdToLabel
@@ -1019,7 +1019,7 @@ export class AgentEventProcessor {
 
             if (isPossibleNoReply) {
               // Possible truncated prefix - query history to resolve
-              if (this.cb.orchestrationParentSessionId && emitAgentId && this._gatewayClient) {
+              if (emitAgentId && this._gatewayClient) {
                 console.log(
                   '[OpenClawRuntime] subagent assistant: possible truncated NO_REPLY="' +
                     trimmedEventText +
@@ -1182,7 +1182,7 @@ export class AgentEventProcessor {
               if (resultParentSessionId) {
                 this.cb.emit(
                   'subagentToolResult',
-                  this.cb.orchestrationParentSessionId,
+                  resultParentSessionId,
                   emitAgentId,
                   toolCallId,
                   resultText,
@@ -1703,10 +1703,11 @@ export class AgentEventProcessor {
                 content: resultText,
               });
               // Emit tool_result
-              if (this.cb.orchestrationParentSessionId) {
+              const toolResultParentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
+              if (toolResultParentSessionId) {
                 this.cb.emit(
                   'subagentToolResult',
-                  this.cb.orchestrationParentSessionId,
+                  toolResultParentSessionId,
                   emitAgentId,
                   toolUseId,
                   resultContent,
@@ -1725,14 +1726,16 @@ export class AgentEventProcessor {
               if (lastToolResult) {
                 lastToolResult.content = lastToolResult.content + '\n' + outputText;
                 // Emit update for tool_result content
-                if (this.cb.orchestrationParentSessionId) {
+                const commandOutputParentSessionId =
+                  this.cb.resolveSubagentParentSessionId(emitAgentId);
+                if (commandOutputParentSessionId) {
                   // Use toolCallId from subData (Gateway sends it in command_output event)
                   const toolUseId =
                     commandToolCallId || (lastToolResult.metadata?.toolUseId as string | undefined);
                   if (toolUseId) {
                     this.cb.emit(
                       'subagentToolResult',
-                      this.cb.orchestrationParentSessionId,
+                      commandOutputParentSessionId,
                       emitAgentId,
                       toolUseId,
                       lastToolResult.content,
@@ -1959,10 +1962,11 @@ export class AgentEventProcessor {
             ) {
               lastMsg.content = eventText;
               // Emit update event
-              if (this.cb.orchestrationParentSessionId && emitAgentId) {
+              const msgUpdateParentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
+              if (msgUpdateParentSessionId && emitAgentId) {
                 this.cb.emit(
                   'subagentMessageUpdate',
-                  this.cb.orchestrationParentSessionId,
+                  msgUpdateParentSessionId,
                   emitAgentId,
                   `subagent-${role}-${Date.now()}`,
                   eventText,
@@ -2141,10 +2145,12 @@ export class AgentEventProcessor {
                   },
                 };
                 msgs.push(resultMsg);
-                if (this.cb.orchestrationParentSessionId && emitAgentId) {
+                const itemResultParentSessionId =
+                  this.cb.resolveSubagentParentSessionId(emitAgentId);
+                if (itemResultParentSessionId && emitAgentId) {
                   this.cb.emit(
                     'subagentToolResult',
-                    this.cb.orchestrationParentSessionId,
+                    itemResultParentSessionId,
                     emitAgentId,
                     effectiveToolCallId,
                     resultContent,
@@ -2506,12 +2512,12 @@ export class AgentEventProcessor {
     // when main agent has follow-up runs after processing subagent results.
     if (isMainAgent && phase === 'start') {
       this.cb.store.updateSession(sessionId, { status: 'running' });
-      this.cb.mainAgentLifecycleEnded = false;
-      this.cb.subagentManager.setMainAgentLifecycleEnded(false);
+      this.cb.mainAgentLifecycleEnded.delete(sessionId);
+      this.cb.subagentManager.setMainAgentLifecycleEnded(sessionId, false);
     }
     if (isMainAgent && phase === 'end') {
-      this.cb.mainAgentLifecycleEnded = true;
-      this.cb.subagentManager.setMainAgentLifecycleEnded(true);
+      this.cb.mainAgentLifecycleEnded.add(sessionId);
+      this.cb.subagentManager.setMainAgentLifecycleEnded(sessionId, true);
       // Check if all subagents are already done. If so, finalize immediately.
       // If not, checkAllSubagentsDone will handle it when subagents complete.
       // This also covers the case where the last chat event comes from a different

@@ -199,8 +199,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly orchestrationSessionIds = new Set<string>();
   /** @deprecated Use orchestrationSessionIds instead. Kept for backward compat with getSubagentStatuses caller. */
   private orchestrationParentSessionId: string | null = null;
-  /** 主 agent 生命周期是否已结束（用于不同 runId final 事件后的完成检查） */
-  private mainAgentLifecycleEnded = false;
+  /** Per-session main agent lifecycle ended tracking: sessionId → true */
+  private mainAgentLifecycleEnded = new Set<string>();
   /** childSessionKey → label 反向映射（用于显示） */
   private readonly sessionKeyToLabel = new Map<string, string>();
   /** toolCallId → childSessionKey 映射，用于通过 toolUseId 查找子会话 */
@@ -467,8 +467,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (this.orchestrationSessionIds.size === 1) {
       return Array.from(this.orchestrationSessionIds)[0];
     }
-    // Multiple concurrent sessions — do NOT guess, return null
-    return this.orchestrationParentSessionId;
+    // Multiple concurrent sessions — do NOT guess.
+    // Returning orchestrationParentSessionId (most recently started session) caused
+    // cross-session contamination: when a subagent's mapping wasn't established yet
+    // (race between subagent events and spawn result), its events were routed to the
+    // wrong parent session, making session A show session B's subagents and bubbles.
+    return null;
   }
 
   /**
@@ -915,6 +919,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // 清理编排状态（per-session tracking）
     this.orchestrationSessionIds.delete(sessionId);
+    this.mainAgentLifecycleEnded.delete(sessionId);
     if (this.orchestrationParentSessionId === sessionId) {
       this.orchestrationParentSessionId =
         this.orchestrationSessionIds.size > 0 ? Array.from(this.orchestrationSessionIds)[0] : null;
@@ -922,14 +927,35 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // 保留消息和状态一段时间供 UI 查询，延迟清理
       // CRITICAL: Only clear transient data, keep subagentStatus and mappings
       // for other sessions to display their subagent status correctly
+      // CRITICAL: Only delete keys belonging to this session, not clear entire Map
       setTimeout(() => {
-        this.subagentMessages.clear();
+        // Delete subagentMessages entries for this session only
+        for (const [key] of this.subagentMessages) {
+          // Keys are toolCallIds or childSessionKeys; check via mapping
+          const parentSessionId = this.toolCallIdToParentSessionId.get(key);
+          if (parentSessionId === sessionId) {
+            this.subagentMessages.delete(key);
+          }
+        }
         // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
         // These are needed for other sessions' subagent status display
-        this.sessionKeyToLabel.clear();
-        this.toolCallArgs.clear();
-        this._announceToolMessages.clear();
-        // Keep: subagentStatus, toolCallIdToSessionKey, sessionKeyToToolCallId, toolCallIdToLabel
+        // Clear sessionKeyToLabel and toolCallArgs entries for this session's children
+        for (const [childKey] of this.sessionKeyToLabel) {
+          const toolCallId = this.sessionKeyToToolCallId.get(childKey);
+          const parentSessionId = toolCallId
+            ? this.toolCallIdToParentSessionId.get(toolCallId)
+            : null;
+          if (parentSessionId === sessionId) {
+            this.sessionKeyToLabel.delete(childKey);
+            this.sessionKeyToToolCallId.delete(childKey);
+          }
+        }
+        for (const [toolCallId] of this.toolCallArgs) {
+          const parentSessionId = this.toolCallIdToParentSessionId.get(toolCallId);
+          if (parentSessionId === sessionId) {
+            this.toolCallArgs.delete(toolCallId);
+          }
+        }
       }, 60000);
     }
 
@@ -1058,7 +1084,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // If the main agent lifecycle has ended and all subagents are done,
       // the turn is stale (leftover from a previous run). Clean it up
       // instead of throwing, so the user can start a new turn.
-      if (this.mainAgentLifecycleEnded) {
+      if (this.mainAgentLifecycleEnded.has(sessionId)) {
         console.log(
           '[OpenClawRuntime] runTurn: cleaning up stale activeTurn for session with ended lifecycle, sessionId=' +
             sessionId,
