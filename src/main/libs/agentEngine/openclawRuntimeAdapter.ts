@@ -2372,9 +2372,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Case 2: Terminal status or lifecycle ended → stale entry, clean immediately
     const isTerminalStatus =
-      session.status === 'completed' ||
-      session.status === 'idle' ||
-      session.status === 'error';
+      session.status === 'completed' || session.status === 'idle' || session.status === 'error';
     if (this.mainAgentLifecycleEnded.has(sessionId) || isTerminalStatus) {
       console.log(
         '[OpenClawRuntime] resolveActiveTurnConflict: stale entry (lifecycleEnded=' +

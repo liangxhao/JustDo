@@ -795,7 +795,9 @@ export class CoworkStore {
       .run(...values);
 
     // Bump session's updated_at so it stays at top of the list during streaming updates
-    this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(Date.now(), sessionId);
+    this.db
+      .prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?')
+      .run(Date.now(), sessionId);
   }
 
   // Config operations
@@ -1389,7 +1391,9 @@ export class CoworkStore {
    * Delete all subagents for a parent session (called when session is deleted).
    */
   deleteSubagentsByParentSession(parentSessionId: string): void {
-    this.db.prepare('DELETE FROM cowork_subagents WHERE parent_session_id = ?').run(parentSessionId);
+    this.db
+      .prepare('DELETE FROM cowork_subagents WHERE parent_session_id = ?')
+      .run(parentSessionId);
   }
 
   /**
