@@ -110,6 +110,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private static readonly STOP_COOLDOWN_MS = 10_000; // 10 seconds
 
   /**
+   * Max time to wait for a racing cleanup timer to finish before force-stopping.
+   * When user sends a message while session appears to be "running" but is actually
+   * in the process of being finalized, this gives the cleanup timer a chance to
+   * complete before taking drastic action.
+   */
+  private static readonly RACE_RESOLUTION_MS = 1_000; // 1 second
+
+  /**
    * Sessions waiting for subagent completion after main agent's handleChatFinal.
    * These sessions should NOT have ActiveTurn re-created by ensureActiveTurn
    * when late-arriving announce events (thinking/assistant) from completed subagents arrive.
@@ -1079,38 +1087,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // These are needed to correctly display subagent status for OTHER sessions
     }
 
-    // Early session validation (before stale-turn check below).
-    const session = this.store.getSession(sessionId);
-
+    // Resolve stale or lingering activeTurns. Three cases:
+    // 1. Terminal status / lifecycle ended → clean up immediately (stale entry).
+    // 2. Session deleted → clean up and throw.
+    // 3. Genuinely running → wait up to RACE_RESOLUTION_MS for it to finish,
+    //    then force-stop if still running. This covers async race conditions
+    //    between status updates and activeTurns cleanup.
+    let session = this.store.getSession(sessionId);
     if (this.activeTurns.has(sessionId)) {
-      // If the session was deleted, has a terminal status, or the main agent
-      // lifecycle has ended, the activeTurn entry is stale — clean it up so
-      // the user can start a new turn. This covers race conditions where
-      // status is finalized before the lifecycle 'end' event fires.
-      if (!session) {
-        console.log(
-          '[OpenClawRuntime] runTurn: cleaning up stale activeTurn for deleted session, sessionId=' +
-            sessionId,
-        );
-        this.cleanupSessionTurn(sessionId);
-        throw new Error(`Session ${sessionId} not found`);
-      }
-
-      const isTerminalStatus =
-        session.status === 'completed' || session.status === 'idle' || session.status === 'error';
-      if (this.mainAgentLifecycleEnded.has(sessionId) || isTerminalStatus) {
-        console.log(
-          '[OpenClawRuntime] runTurn: cleaning up stale activeTurn for session with ended lifecycle or terminal status, sessionId=' +
-            sessionId +
-            ' status=' +
-            session.status +
-            ' lifecycleEnded=' +
-            this.mainAgentLifecycleEnded.has(sessionId),
-        );
-        this.cleanupSessionTurn(sessionId);
-      } else {
-        throw new Error(`Session ${sessionId} is still running.`);
-      }
+      await this.resolveActiveTurnConflict(sessionId);
+      session = this.store.getSession(sessionId);
     }
 
     if (!session) {
@@ -2362,6 +2348,70 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.activeTurns.delete(sessionId);
     setCoworkProxySessionId(null);
     this.reCreatedChannelSessionIds.delete(sessionId);
+  }
+
+  /**
+   * Resolve a conflicting activeTurn when user tries to send a new message.
+   * Strategy:
+   * 1. If terminal status or lifecycle ended → clean up immediately (stale).
+   * 2. If genuinely running → wait RACE_RESOLUTION_MS for async cleanup to finish.
+   * 3. If still running after wait → force-stop the session.
+   */
+  private async resolveActiveTurnConflict(sessionId: string): Promise<void> {
+    const session = this.store.getSession(sessionId);
+
+    // Case 1: Session was deleted
+    if (!session) {
+      console.log(
+        '[OpenClawRuntime] resolveActiveTurnConflict: session deleted, cleaning up, sessionId=' +
+          sessionId,
+      );
+      this.cleanupSessionTurn(sessionId);
+      return;
+    }
+
+    // Case 2: Terminal status or lifecycle ended → stale entry, clean immediately
+    const isTerminalStatus =
+      session.status === 'completed' ||
+      session.status === 'idle' ||
+      session.status === 'error';
+    if (this.mainAgentLifecycleEnded.has(sessionId) || isTerminalStatus) {
+      console.log(
+        '[OpenClawRuntime] resolveActiveTurnConflict: stale entry (lifecycleEnded=' +
+          this.mainAgentLifecycleEnded.has(sessionId) +
+          ', status=' +
+          session.status +
+          '), cleaning up, sessionId=' +
+          sessionId,
+      );
+      this.cleanupSessionTurn(sessionId);
+      return;
+    }
+
+    // Case 3: Genuinely running → wait for async cleanup timer to finish
+    console.log(
+      '[OpenClawRuntime] resolveActiveTurnConflict: session still running, waiting ' +
+        OpenClawRuntimeAdapter.RACE_RESOLUTION_MS +
+        'ms for cleanup, sessionId=' +
+        sessionId,
+    );
+    await new Promise(resolve => setTimeout(resolve, OpenClawRuntimeAdapter.RACE_RESOLUTION_MS));
+
+    // Check again after wait
+    if (!this.activeTurns.has(sessionId)) {
+      console.log(
+        '[OpenClawRuntime] resolveActiveTurnConflict: activeTurns cleared after wait, sessionId=' +
+          sessionId,
+      );
+      return;
+    }
+
+    // Still has activeTurns after wait → force-stop
+    console.log(
+      '[OpenClawRuntime] resolveActiveTurnConflict: forcing stop after timeout, sessionId=' +
+        sessionId,
+    );
+    this.stopSession(sessionId);
   }
 
   /**
