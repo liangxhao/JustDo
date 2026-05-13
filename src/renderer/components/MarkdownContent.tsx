@@ -210,10 +210,12 @@ const MermaidRenderer: React.FC<{ code: string }> = ({ code }) => {
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
+  const mermaidIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const renderDiagram = async () => {
       const id = getMermaidId();
+      mermaidIdRef.current = id; // Store for cleanup on unmount
       try {
         mermaid.initialize({
           startOnLoad: false,
@@ -221,14 +223,53 @@ const MermaidRenderer: React.FC<{ code: string }> = ({ code }) => {
           theme: isDark ? 'dark' : 'default',
         });
         const result = await mermaid.render(id, code.trim());
-        setSvg(result.svg ?? String(result));
-        setError(null);
+        const svgContent = result.svg ?? String(result);
+
+        // Check if the returned SVG contains error content
+        // Mermaid sometimes embeds error messages in the SVG instead of throwing
+        if (svgContent.includes('Syntax error') || svgContent.includes('mermaid version')) {
+          // Extract error message from SVG if possible
+          const errorMatch = svgContent.match(/Syntax error[^<]*|Error[^<]*/i);
+          const errorMsg = errorMatch ? errorMatch[0] : 'Mermaid syntax error';
+          setError(errorMsg);
+          setSvg(null);
+        } else {
+          setSvg(svgContent);
+          setError(null);
+        }
+
+        // Always clean up temporary mermaid element from document.body
+        const tempElement = document.getElementById(id);
+        if (tempElement) {
+          tempElement.remove();
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Mermaid rendering failed');
         setSvg(null);
+        // Clean up temporary mermaid element that may be left in document.body
+        const tempElement = document.getElementById(id);
+        if (tempElement) {
+          tempElement.remove();
+        }
       }
     };
     renderDiagram();
+
+    // Cleanup on unmount: remove any mermaid temp elements that might be left
+    return () => {
+      if (mermaidIdRef.current) {
+        const tempElement = document.getElementById(mermaidIdRef.current);
+        if (tempElement) {
+          tempElement.remove();
+        }
+      }
+      // Also clean up any orphaned mermaid temp elements with common patterns
+      document.querySelectorAll('[id^="mermaid-"]').forEach((el) => {
+        if (el.parentElement === document.body) {
+          el.remove();
+        }
+      });
+    };
   }, [code, isDark]);
 
   if (error) {
