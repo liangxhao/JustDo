@@ -4,7 +4,6 @@ import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
 
-
 import type {
   CoworkExecutionMode,
   CoworkMessage,
@@ -1080,14 +1079,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // These are needed to correctly display subagent status for OTHER sessions
     }
 
+    // Early session validation (before stale-turn check below).
+    const session = this.store.getSession(sessionId);
+
     if (this.activeTurns.has(sessionId)) {
-      // If the main agent lifecycle has ended and all subagents are done,
-      // the turn is stale (leftover from a previous run). Clean it up
-      // instead of throwing, so the user can start a new turn.
-      if (this.mainAgentLifecycleEnded.has(sessionId)) {
+      // If the session was deleted, has a terminal status, or the main agent
+      // lifecycle has ended, the activeTurn entry is stale — clean it up so
+      // the user can start a new turn. This covers race conditions where
+      // status is finalized before the lifecycle 'end' event fires.
+      if (!session) {
         console.log(
-          '[OpenClawRuntime] runTurn: cleaning up stale activeTurn for session with ended lifecycle, sessionId=' +
+          '[OpenClawRuntime] runTurn: cleaning up stale activeTurn for deleted session, sessionId=' +
             sessionId,
+        );
+        this.cleanupSessionTurn(sessionId);
+        throw new Error(`Session ${sessionId} not found`);
+      }
+
+      const isTerminalStatus =
+        session.status === 'completed' || session.status === 'idle' || session.status === 'error';
+      if (this.mainAgentLifecycleEnded.has(sessionId) || isTerminalStatus) {
+        console.log(
+          '[OpenClawRuntime] runTurn: cleaning up stale activeTurn for session with ended lifecycle or terminal status, sessionId=' +
+            sessionId +
+            ' status=' +
+            session.status +
+            ' lifecycleEnded=' +
+            this.mainAgentLifecycleEnded.has(sessionId),
         );
         this.cleanupSessionTurn(sessionId);
       } else {
@@ -1095,7 +1113,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
-    const session = this.store.getSession(sessionId);
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
     }
@@ -3123,9 +3140,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
                 }
               } catch {
                 // Not JSON, use as raw error message
-                if (toolResult.toLowerCase().includes('error') ||
-                    toolResult.toLowerCase().includes('failed') ||
-                    toolResult.toLowerCase().includes('forbidden')) {
+                if (
+                  toolResult.toLowerCase().includes('error') ||
+                  toolResult.toLowerCase().includes('failed') ||
+                  toolResult.toLowerCase().includes('forbidden')
+                ) {
                   return { errorMessage: toolResult.slice(0, 500) };
                 }
               }
@@ -3193,10 +3212,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Get last message from subagent history
       let lastMessage: string | undefined;
       try {
-        const history = await this.gatewayClient.request<{ messages?: unknown[] }>(
-          'chat.history',
-          { sessionKey: childSessionKey, limit: 5 },
-        );
+        const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
+          sessionKey: childSessionKey,
+          limit: 5,
+        });
         const messages = history?.messages;
         if (Array.isArray(messages) && messages.length > 0) {
           for (let i = messages.length - 1; i >= 0; i--) {
