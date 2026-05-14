@@ -1276,11 +1276,9 @@ export class AgentEventProcessor {
                 // 工具开始执行
                 const msgId = `subagent-tool-${effectiveToolCallId || Date.now()}`;
 
-                // Extract toolInput from multiple sources:
-                // 1. itemMeta.args or itemMeta.input (parsed JSON meta)
-                // 2. subData.args (top-level field in item event)
-                // 3. Parse meta string for announce format: "label xxx, task yyy"
+                // Extract toolInput: structured args or meta string
                 let toolInput: Record<string, unknown> = {};
+                let metaDisplay = '';
                 if (isRecord(itemMeta?.args)) {
                   toolInput = itemMeta.args as Record<string, unknown>;
                 } else if (isRecord(itemMeta?.input)) {
@@ -1288,21 +1286,13 @@ export class AgentEventProcessor {
                 } else if (isRecord(subData?.args)) {
                   toolInput = subData.args as Record<string, unknown>;
                 } else if (metaRaw) {
-                  // Announce subagent format: "label xxx, task yyy"
-                  // Extract label, task from meta string
-                  const labelMatch = metaRaw.match(/label\s+([^,]+)/);
-                  const taskMatch = metaRaw.match(/,\s*task\s+(.+)$/i);
-                  if (labelMatch || taskMatch) {
-                    if (labelMatch && labelMatch[1]) {
-                      toolInput.label = labelMatch[1].trim();
-                    }
-                    if (taskMatch && taskMatch[1]) {
-                      toolInput.task = taskMatch[1].trim();
-                    }
-                  }
+                  // Announce format: no structured args, use meta directly
+                  metaDisplay = metaRaw;
                 }
 
-                const toolContent = `Using tool: ${itemName}\n${itemTitle}\n\nInput: ${JSON.stringify(toolInput, null, 2)}`;
+                const toolContent = metaDisplay
+                  ? `Using tool: ${itemName}\n${metaDisplay}`
+                  : `Using tool: ${itemName}\n${itemTitle}\n\nInput: ${JSON.stringify(toolInput, null, 2)}`;
                 const toolMsg = {
                   role: 'tool_use',
                   content: toolContent,
@@ -2091,12 +2081,20 @@ export class AgentEventProcessor {
               const effectiveToolCallId = itemToolCallId || itemId;
               if (itemPhase === 'start') {
                 const msgId = `subagent-tool-${effectiveToolCallId || Date.now()}`;
-                const toolInput = isRecord(itemMeta?.args)
-                  ? itemMeta.args
-                  : isRecord(itemMeta?.input)
-                    ? itemMeta.input
-                    : {};
-                const toolContent = `Using tool: ${itemName}\n${itemTitle}\n\nInput: ${JSON.stringify(toolInput, null, 2)}`;
+                // Extract toolInput: structured args or meta string
+                let toolInput: Record<string, unknown> = {};
+                let metaDisplay = '';
+                if (isRecord(itemMeta?.args)) {
+                  toolInput = itemMeta.args as Record<string, unknown>;
+                } else if (isRecord(itemMeta?.input)) {
+                  toolInput = itemMeta.input as Record<string, unknown>;
+                } else if (metaRaw) {
+                  // Announce format: no structured args, use meta directly
+                  metaDisplay = metaRaw;
+                }
+                const toolContent = metaDisplay
+                  ? `Using tool: ${itemName}\n${metaDisplay}`
+                  : `Using tool: ${itemName}\n${itemTitle}\n\nInput: ${JSON.stringify(toolInput, null, 2)}`;
                 const toolMsg = {
                   role: 'tool_use',
                   content: toolContent,
@@ -2229,13 +2227,29 @@ export class AgentEventProcessor {
         const itemPhase = typeof subData.phase === 'string' ? subData.phase : '';
         const itemName = typeof subData.name === 'string' ? subData.name : '';
         const itemToolCallId = typeof subData.toolCallId === 'string' ? subData.toolCallId : '';
+        const itemMetaRaw = typeof subData.meta === 'string' ? subData.meta : '';
+
+        console.log(
+          '[OpenClawRuntime] dispatchAgentEvent item: kind=' +
+            itemKind +
+            ' phase=' +
+            itemPhase +
+            ' name=' +
+            itemName +
+            ' toolCallId=' +
+            itemToolCallId +
+            ' meta=' +
+            itemMetaRaw.slice(0, 120),
+        );
 
         if (itemKind === 'tool' && itemToolCallId) {
           // Convert stream=item format to gateway format for handleAgentToolEvent
-          // item: { kind:'tool', phase:'start', name:'sessions_spawn', toolCallId:'call_xxx', meta:'{"args":{...}}' }
-          // gateway: { tool:'start:sessions_spawn', call:'call_xxx', meta:'...', args:{...} }
+          // item: { kind:'tool', phase:'start', name:'sessions_spawn', toolCallId:'call_xxx', meta:'label xxx, task yyy' }
+          // gateway: { tool:'start:sessions_spawn', call:'call_xxx', meta:'label xxx, task yyy', args:{...} }
+          // The meta string is passed through as-is; handleAgentToolEvent uses it directly for display
+          // when structured args are unavailable (announce format has no args, just meta).
 
-          // Parse meta JSON to extract args
+          // Try to extract structured args from JSON meta or separate args field
           let itemArgs: Record<string, unknown> | undefined;
           const metaRaw = typeof subData.meta === 'string' ? subData.meta : '';
           if (metaRaw) {
@@ -2262,7 +2276,34 @@ export class AgentEventProcessor {
             result: subData.result,
             isError: subData.isError,
           };
+          console.log(
+            '[OpenClawRuntime] stream=item -> gateway: tool=' +
+              gatewayData.tool +
+              ' call=' +
+              gatewayData.call +
+              ' argsKeys=[' +
+              (itemArgs ? Object.keys(itemArgs).join(',') : 'none') +
+              ']',
+          );
           this.cb.handleAgentToolEvent(sessionId, turn, gatewayData);
+        } else if (itemKind === 'command' && itemToolCallId) {
+          // Handle kind=command events (exec tool execution output)
+          // These events carry actual execution output in summary field at phase=end
+          // Gateway sends: { kind:'command', phase:'end', name:'exec', toolCallId, summary:'output text', status:'completed'|'failed' }
+          if (itemPhase === 'end') {
+            const outputSummary = typeof subData.summary === 'string' ? subData.summary : '';
+            const commandStatus = typeof subData.status === 'string' ? subData.status : '';
+            const isError = commandStatus === 'failed' || Boolean(subData.error);
+            // Convert to gateway format for handleAgentToolEvent
+            const gatewayData: Record<string, unknown> = {
+              tool: `result:${itemName}`,
+              call: itemToolCallId,
+              meta: itemMetaRaw,
+              result: outputSummary,
+              isError,
+            };
+            this.cb.handleAgentToolEvent(sessionId, turn, gatewayData);
+          }
         }
       }
     }
@@ -2285,6 +2326,19 @@ export class AgentEventProcessor {
         }
       } else if (hasGatewayToolShape) {
         // Gateway format: pass entire payload (contains tool, call, meta)
+        const toolFieldValue = typeof agentPayload.tool === 'string' ? agentPayload.tool : '';
+        const callFieldValue = typeof agentPayload.call === 'string' ? agentPayload.call : '';
+        const hasArgs =
+          isRecord(agentPayload.data) &&
+          isRecord((agentPayload.data as Record<string, unknown>).args);
+        console.log(
+          '[OpenClawRuntime] stream=tool -> gateway: tool=' +
+            toolFieldValue +
+            ' call=' +
+            callFieldValue +
+            ' hasArgs=' +
+            hasArgs,
+        );
         this.cb.handleAgentToolEvent(sessionId, turn, agentPayload);
       } else {
         this.cb.handleAgentToolEvent(sessionId, turn, agentPayload.data);

@@ -46,28 +46,31 @@ export class AgentToolEventHandler {
   handleAgentToolEvent(sessionId: string, turn: ActiveTurn, data: unknown): void {
     if (!isRecord(data)) return;
 
-    // Dedup: both stream=tool and stream=item can carry the same tool event
-    const quickToolCallId = typeof data.toolCallId === 'string' ? data.toolCallId.trim() : '';
-    const quickToolField = typeof data.tool === 'string' ? data.tool.trim() : '';
-    const quickCall = typeof data.call === 'string' ? data.call.trim() : '';
-    const quickPhase =
-      typeof data.phase === 'string'
-        ? data.phase.trim() === 'end'
-          ? 'result'
-          : data.phase.trim()
-        : quickToolField.includes(':')
-          ? quickToolField.split(':')[0] === 'end'
-            ? 'result'
-            : quickToolField.split(':')[0]
-          : '';
-    const quickDedupToolCallId = quickToolCallId || quickCall;
-    if (quickPhase && quickDedupToolCallId) {
-      const dedupKey = quickPhase + ':' + quickDedupToolCallId;
-      if (this.cb.processedToolEvents.has(dedupKey)) {
-        return;
-      }
-      this.cb.processedToolEvents.add(dedupKey);
-    }
+    const debugToolField = typeof data.tool === 'string' ? data.tool : '';
+    const debugCall = typeof data.call === 'string' ? data.call : '';
+    const debugToolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+    const debugPhase = typeof data.phase === 'string' ? data.phase : '';
+    const debugMeta = typeof data.meta === 'string' ? data.meta.slice(0, 60) : '';
+    const debugName = typeof data.name === 'string' ? data.name : '';
+    console.log(
+      '[OpenClawRuntime] handleAgentToolEvent: tool=' +
+        debugToolField +
+        ' call=' +
+        debugCall +
+        ' toolCallId=' +
+        debugToolCallId +
+        ' name=' +
+        debugName +
+        ' phase=' +
+        debugPhase +
+        ' meta=' +
+        debugMeta,
+    );
+
+    // NOTE: Dedup removed. Both stream=tool and stream=item carry the same
+    // tool events but stream=item arrives LATER with enriched meta string data.
+    // Instead of deduping, we let both through and update existing tool_use
+    // messages when item events arrive with more complete information.
 
     // Parse both gateway format and standard format
     const toolField = typeof data.tool === 'string' ? data.tool.trim() : '';
@@ -451,9 +454,13 @@ export class AgentToolEventHandler {
 
     // sessions_spawn result with error
     if (toolName === 'sessions_spawn' && phase === 'result' && (data.isError || data.err)) {
-      const errorReason = typeof data.err === 'string' ? data.err : String(data.result || 'Unknown error');
+      const errorReason =
+        typeof data.err === 'string' ? data.err : String(data.result || 'Unknown error');
       const label = this.cb.toolCallIdToLabel.get(toolCallId) || '(unknown)';
-      const parentSessionId = this.cb.toolCallIdToParentSessionId.get(toolCallId) || this.cb.orchestrationParentSessionId || sessionId;
+      const parentSessionId =
+        this.cb.toolCallIdToParentSessionId.get(toolCallId) ||
+        this.cb.orchestrationParentSessionId ||
+        sessionId;
 
       console.log(
         '[OpenClawRuntime] sessions_spawn failed: toolCallId=' +
@@ -526,7 +533,21 @@ export class AgentToolEventHandler {
     }
 
     // Create tool_use message if not already tracked
-    if (!turn.toolUseMessageIdByToolCallId.has(toolCallId)) {
+    const alreadyTracked = turn.toolUseMessageIdByToolCallId.has(toolCallId);
+    console.log(
+      '[OpenClawRuntime] tool_use create decision: toolName=' +
+        toolName +
+        ' toolCallId=' +
+        toolCallId +
+        ' phase=' +
+        phase +
+        ' alreadyTracked=' +
+        alreadyTracked +
+        ' dataArgsKeys=[' +
+        Object.keys(isRecord(data.args) ? (data.args as Record<string, unknown>) : {}).join(',') +
+        ']',
+    );
+    if (!alreadyTracked) {
       this.cb.splitAssistantSegmentBeforeTool(sessionId, turn);
 
       let effectiveArgs = toToolInputRecord(data.args);
@@ -549,7 +570,19 @@ export class AgentToolEventHandler {
           );
         }
       }
-      // For sessions_spawn, show detailed content with label and task
+      console.log(
+        '[OpenClawRuntime] tool_use message CREATED: toolName=' +
+          toolName +
+          ' toolCallId=' +
+          toolCallId +
+          ' effectiveArgsKeys=[' +
+          Object.keys(effectiveArgs).join(',') +
+          ']',
+      );
+      // Build display content:
+      // Priority 1: structured args → build from fields
+      // Priority 2: meta string → display directly (announce format has no args)
+      const metaField = typeof data.meta === 'string' ? data.meta.trim() : '';
       let toolContent = `Using tool: ${toolName}`;
       if (toolName === 'sessions_spawn' && Object.keys(effectiveArgs).length > 0) {
         const label = typeof effectiveArgs.label === 'string' ? effectiveArgs.label : '';
@@ -563,6 +596,22 @@ export class AgentToolEventHandler {
         if (task) {
           toolContent += `\nTask: ${task.length > 100 ? task.slice(0, 100) + '...' : task}`;
         }
+      } else if (Object.keys(effectiveArgs).length > 0) {
+        const label = typeof effectiveArgs.label === 'string' ? effectiveArgs.label : '';
+        const command = typeof effectiveArgs.command === 'string' ? effectiveArgs.command : '';
+        const task = typeof effectiveArgs.task === 'string' ? effectiveArgs.task : '';
+        const message = typeof effectiveArgs.message === 'string' ? effectiveArgs.message : '';
+        const parts: string[] = [];
+        if (label) parts.push(label);
+        if (command) parts.push(command.length > 100 ? command.slice(0, 100) + '...' : command);
+        if (task) parts.push(task.length > 100 ? task.slice(0, 100) + '...' : task);
+        if (message) parts.push(message.length > 100 ? message.slice(0, 100) + '...' : message);
+        if (parts.length > 0) {
+          toolContent = `Using tool: ${toolName}\n${parts.join('\n')}`;
+        }
+      } else if (metaField) {
+        // Announce format: no args, just a human-readable meta string
+        toolContent = `Using tool: ${toolName}\n${metaField}`;
       }
 
       const toolUseMessage = this.cb.store.addMessage(sessionId, {
@@ -570,17 +619,116 @@ export class AgentToolEventHandler {
         content: toolContent,
         metadata: {
           toolName,
-          toolInput: effectiveArgs,
+          toolInput:
+            Object.keys(effectiveArgs).length > 0
+              ? effectiveArgs
+              : metaField
+                ? { _display: metaField }
+                : effectiveArgs,
           toolUseId: toolCallId,
         },
       });
       turn.toolUseMessageIdByToolCallId.set(toolCallId, toolUseMessage.id);
       this.cb.emit('message', sessionId, toolUseMessage);
+    } else if (phase === 'start') {
+      // Message already exists (likely created by stream=tool event with empty args).
+      // Check if incoming event has enriched data that should update the display.
+      const incomingArgs = toToolInputRecord(data.args);
+      const existingMsgId = turn.toolUseMessageIdByToolCallId.get(toolCallId);
+      if (!existingMsgId) return;
+
+      // Build display content from args or meta (same logic as create path)
+      const metaField = typeof data.meta === 'string' ? data.meta.trim() : '';
+      const hasUsefulArgs = Object.keys(incomingArgs).length > 0;
+      if (!hasUsefulArgs && !metaField) return;
+
+      let updatedContent = `Using tool: ${toolName}`;
+      if (toolName === 'sessions_spawn' && hasUsefulArgs) {
+        const label = typeof incomingArgs.label === 'string' ? incomingArgs.label : '';
+        const task = typeof incomingArgs.task === 'string' ? incomingArgs.task : '';
+        if (label) {
+          updatedContent = `Spawning subagent: ${label}`;
+          if (task) {
+            updatedContent += `\nTask: ${task.length > 100 ? task.slice(0, 100) + '...' : task}`;
+          }
+        }
+      } else if (hasUsefulArgs) {
+        const label = typeof incomingArgs.label === 'string' ? incomingArgs.label : '';
+        const command = typeof incomingArgs.command === 'string' ? incomingArgs.command : '';
+        const task = typeof incomingArgs.task === 'string' ? incomingArgs.task : '';
+        const message = typeof incomingArgs.message === 'string' ? incomingArgs.message : '';
+        const parts: string[] = [];
+        if (label) parts.push(label);
+        if (command) parts.push(command.length > 100 ? command.slice(0, 100) + '...' : command);
+        if (task) parts.push(task.length > 100 ? task.slice(0, 100) + '...' : task);
+        if (message) parts.push(message.length > 100 ? message.slice(0, 100) + '...' : message);
+        if (parts.length > 0) {
+          updatedContent = `Using tool: ${toolName}\n${parts.join('\n')}`;
+        }
+      } else if (metaField) {
+        updatedContent = `Using tool: ${toolName}\n${metaField}`;
+      }
+
+      console.log(
+        '[OpenClawRuntime] tool_use message UPDATED: toolName=' +
+          toolName +
+          ' toolCallId=' +
+          toolCallId +
+          ' source=' +
+          (hasUsefulArgs ? 'args' : 'meta'),
+      );
+      if (hasUsefulArgs) {
+        this.cb.store.updateMessage(sessionId, existingMsgId, {
+          content: updatedContent,
+          metadata: {
+            toolName,
+            toolInput: incomingArgs,
+            toolUseId: toolCallId,
+          },
+        });
+      } else if (toolName === 'sessions_spawn' && metaField) {
+        // stream=item: extract label/task from meta string for subagent title
+        const extractedLabel = metaField.match(/^label\s+([^,]+)/)?.[1]?.trim() ?? null;
+        const extractedTask = metaField.match(/,\s*task\s+(.+)$/i)?.[1]?.trim() ?? null;
+        if (extractedLabel || extractedTask) {
+          const toolInput: Record<string, unknown> = {
+            ...(extractedLabel ? { label: extractedLabel } : {}),
+            ...(extractedTask ? { task: extractedTask } : {}),
+          };
+          this.cb.store.updateMessage(sessionId, existingMsgId, {
+            content: updatedContent,
+            metadata: { toolName, toolInput, toolUseId: toolCallId },
+          });
+        } else {
+          // metaField doesn't match expected format — just update content
+          this.cb.store.updateMessage(sessionId, existingMsgId, {
+            content: updatedContent,
+          });
+        }
+      } else if (metaField) {
+        // No structured args but meta string available — store as display text
+        this.cb.store.updateMessage(sessionId, existingMsgId, {
+          content: updatedContent,
+          metadata: {
+            toolName,
+            toolInput: { _display: metaField },
+            toolUseId: toolCallId,
+          },
+        });
+      } else {
+        // Neither args nor meta: preserve existing toolInput
+        this.cb.store.updateMessage(sessionId, existingMsgId, {
+          content: updatedContent,
+        });
+      }
+      this.cb.emit('messageUpdate', sessionId, existingMsgId, updatedContent);
     }
 
     // Phase: update
     if (phase === 'update') {
-      const incoming = extractToolText(data.partialResult);
+      // Try partialResult first (gateway stream=tool format), then text (kind=command / command_output)
+      const incoming =
+        extractToolText(data.partialResult) || (typeof data.text === 'string' ? data.text : '');
       if (!incoming.trim()) return;
 
       const previous = turn.toolResultTextByToolCallId.get(toolCallId) ?? '';
@@ -673,7 +821,9 @@ export class AgentToolEventHandler {
           finalContent = extractToolText(data.result);
         }
       } else {
-        const incoming = extractToolText(data.result);
+        // For other tools, try result first, then text (kind=command events carry output in text)
+        const incoming =
+          extractToolText(data.result) || (typeof data.text === 'string' ? data.text : '');
         const previous = turn.toolResultTextByToolCallId.get(toolCallId) ?? '';
         finalContent = incoming.trim() ? incoming : previous;
         // For other tools, keep result as-is if it's a string or object

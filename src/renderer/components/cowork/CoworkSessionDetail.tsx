@@ -526,6 +526,12 @@ const getToolInputSummary = (
 ): string | null => {
   if (!toolName || !toolInput) return null;
   const input = toolInput as Record<string, unknown>;
+
+  // Handle _display key from announce-format tool events
+  if (typeof input._display === 'string' && Object.keys(input).length === 1) {
+    return input._display as string;
+  }
+
   if (isTodoWriteToolName(toolName)) {
     const items = parseTodoWriteItems(input);
     return items ? getTodoWriteSummary(items) : null;
