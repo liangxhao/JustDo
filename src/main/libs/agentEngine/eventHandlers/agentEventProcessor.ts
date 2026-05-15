@@ -1125,13 +1125,17 @@ export class AgentEventProcessor {
             const thinkingDelta = typeof subData?.delta === 'string' ? subData.delta : '';
             const thinkingText = typeof subData?.text === 'string' ? subData.text : '';
             const msgId = `subagent-thinking-${Date.now()}`;
-            // 将 thinking 添加到最后一个 assistant 消息
-            const lastAssistant = msgs.filter(m => m.role === 'assistant').pop();
+            // Store thinking as independent 'thinking' role - DO NOT pollute assistant messages
+            // This ensures assistant stream starts fresh without thinking content contamination
             const thinkingContent = thinkingDelta || thinkingText;
-            if (lastAssistant) {
-              lastAssistant.content = thinkingContent;
+            // Find existing thinking message or create new one
+            const lastThinking = msgs.filter(m => m.role === 'thinking').pop();
+            if (lastThinking) {
+              // Continue appending to existing thinking message (streaming)
+              const merged = mergeStreamingText(lastThinking.content, thinkingContent, 'unknown');
+              lastThinking.content = merged.text;
             } else {
-              msgs.push({ role: 'assistant', content: thinkingContent });
+              msgs.push({ role: 'thinking', content: thinkingContent });
             }
             // Emit thinking update event
             const thinkingParentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
