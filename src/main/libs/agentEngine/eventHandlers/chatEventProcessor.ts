@@ -220,28 +220,51 @@ export class ChatEventProcessor {
               break;
             }
           }
+          // Check for truncated NO_REPLY before emitting accumulated text.
+          // OpenClaw gateway may stream "NO" or "NO_RE" before completing "NO_REPLY".
+          // We must detect and defer emission until confirmed via history sync.
+          const NO_REPLY_MARKER = 'NO_REPLY';
+          const accumulatedTrimmed = accumulatedText.trim();
+          const isAccumulatedFullNoReply = /^NO_REPLY$/i.test(accumulatedTrimmed);
+          const isAccumulatedTruncatedNoReply =
+            accumulatedTrimmed.length > 0 &&
+            accumulatedTrimmed.length <= NO_REPLY_MARKER.length &&
+            NO_REPLY_MARKER.startsWith(accumulatedTrimmed.toUpperCase()) &&
+            !isAccumulatedFullNoReply;
+
           // Only emit if there's new text beyond what was already emitted
+          // AND it's not a possible truncated NO_REPLY marker
           if (accumulatedText.length > alreadyEmittedLen) {
-            const newText = accumulatedText.slice(alreadyEmittedLen);
-            const streamingMessage = this.cb.store.addMessage(sessionId, {
-              type: 'assistant',
-              content: newText,
-              metadata: { isStreaming: false, isFinal: true },
-              modelName: turn.modelName,
-            });
-            this.cb.emit('message', sessionId, streamingMessage);
-            announceStreamingMessageId = streamingMessage.id;
-            alreadyEmittedAnnounceText = true;
-            console.log(
-              '[OpenClawRuntime] handleChatEvent: emitted NEW announce text (len=' +
-                newText.length +
-                ', total=' +
-                accumulatedText.length +
-                ', already=' +
-                alreadyEmittedLen +
-                ') from accumulated deltas for runId=' +
-                runId.slice(0, 20),
-            );
+            if (isAccumulatedTruncatedNoReply || isAccumulatedFullNoReply) {
+              // Don't emit possible truncated NO_REPLY - will be resolved later via history sync
+              console.log(
+                '[OpenClawRuntime] handleChatEvent: skipping accumulated text - possible truncated NO_REPLY="' +
+                  accumulatedTrimmed +
+                  '"',
+              );
+              alreadyEmittedAnnounceText = false;
+            } else {
+              const newText = accumulatedText.slice(alreadyEmittedLen);
+              const streamingMessage = this.cb.store.addMessage(sessionId, {
+                type: 'assistant',
+                content: newText,
+                metadata: { isStreaming: false, isFinal: true },
+                modelName: turn.modelName,
+              });
+              this.cb.emit('message', sessionId, streamingMessage);
+              announceStreamingMessageId = streamingMessage.id;
+              alreadyEmittedAnnounceText = true;
+              console.log(
+                '[OpenClawRuntime] handleChatEvent: emitted NEW announce text (len=' +
+                  newText.length +
+                  ', total=' +
+                  accumulatedText.length +
+                  ', already=' +
+                  alreadyEmittedLen +
+                  ') from accumulated deltas for runId=' +
+                  runId.slice(0, 20),
+              );
+            }
           } else {
             // All accumulated text was already emitted at tool_start
             console.log(
