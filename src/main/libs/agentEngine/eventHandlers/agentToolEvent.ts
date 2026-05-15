@@ -151,24 +151,33 @@ export class AgentToolEventHandler {
           (metaField || '(none)'),
       );
 
-      // For announce subagents, data.args is empty and all info is in meta string:
+      // For announce subagents, data.args may be empty or incomplete.
+      // All info may be in meta string:
       // "label skill-docx-example, task 请阅读 skills/docx/SKILL.md ..."
-      // Extract label, task, runtime, mode from meta when args is empty.
+      // Extract label, task, runtime, mode from meta when args lacks these fields.
       let enrichedArgs: Record<string, unknown> = { ...args };
       let enrichedMetaLabel = metaLabel;
-      if (argsKeys.length === 0 && metaField) {
-        // Extract label: "label xxx, task ..."
-        const labelMatch = metaField.match(/^label\s+([^,]+)/);
-        if (labelMatch && labelMatch[1]) {
-          enrichedArgs.label = labelMatch[1].trim();
-          enrichedMetaLabel = labelMatch[1].trim();
+      // Extract from meta when args is empty OR when args lacks task/prompt field
+      const argsHasTask = typeof args.task === 'string' && args.task;
+      const argsHasPrompt = typeof args.prompt === 'string' && args.prompt;
+      const argsHasLabel = typeof args.label === 'string' && args.label;
+      if (metaField && (!argsHasTask || !argsHasLabel)) {
+        // Extract label: "label xxx, task ..." (only if args doesn't have it)
+        if (!argsHasLabel) {
+          const labelMatch = metaField.match(/^label\s+([^,]+)/);
+          if (labelMatch && labelMatch[1]) {
+            enrichedArgs.label = labelMatch[1].trim();
+            enrichedMetaLabel = labelMatch[1].trim();
+          }
         }
-        // Extract task: ", task yyy"
-        const taskMatch = metaField.match(/,\s*task\s+(.+)$/i);
-        if (taskMatch && taskMatch[1]) {
-          enrichedArgs.task = taskMatch[1].trim();
+        // Extract task: ", task yyy" (only if args doesn't have it)
+        if (!argsHasTask && !argsHasPrompt) {
+          const taskMatch = metaField.match(/,\s*task\s+(.+)$/i);
+          if (taskMatch && taskMatch[1]) {
+            enrichedArgs.task = taskMatch[1].trim();
+          }
         }
-        // Extract runtime and mode if present
+        // Extract runtime and mode if present (always try from meta)
         const runtimeMatch = metaField.match(/runtime\s+(\w+)/);
         if (runtimeMatch && runtimeMatch[1]) {
           enrichedArgs.runtime = runtimeMatch[1];
