@@ -1205,7 +1205,8 @@ export class ChatEventProcessor {
         const currentTurn = this.cb.activeTurns.get(sessionId);
         if (currentTurn) {
           const textChanged = currentTurn.currentText !== initialTextSnapshot;
-          const thinkingResumed = currentTurn.thinkingStreamEnded !== initialThinkingEnded &&
+          const thinkingResumed =
+            currentTurn.thinkingStreamEnded !== initialThinkingEnded &&
             !currentTurn.thinkingStreamEnded;
           const isActive = textChanged || thinkingResumed;
 
@@ -1298,14 +1299,7 @@ export class ChatEventProcessor {
     this.cb.store.updateSession(sessionId, { status: 'idle' });
     if (!turn.stopRequested && !this.cb.manuallyStoppedSessions.has(sessionId)) {
       // The run was aborted without user request — most likely a timeout.
-      // Add a visible hint so the user knows the task was interrupted.
-      const hintMessage = this.cb.store.addMessage(sessionId, {
-        type: 'assistant',
-        content: t('taskTimedOut'),
-        metadata: { isTimeout: true },
-        modelName: turn.modelName,
-      });
-      this.cb.emit('message', sessionId, hintMessage);
+      // Emit complete event but no timeout hint message.
       this.cb.emit('complete', sessionId, turn.runId, 'idle');
     }
     const abortedSessionKey = turn.sessionKey;

@@ -25,10 +25,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     cronSessionPrefix: '定时',
     // IM channel prefixes will be added when integration is implemented
 
-    // Timeout hint
-    taskTimedOut: '[任务超时] 任务因超过最大允许时长而被自动停止。你可以继续对话以从中断处继续。',
-    // IM session messages will be added when integration is implemented
-
     // OAuth flow messages
     qwenOAuthRequestingDeviceCode: '正在请求设备授权码...',
     qwenOAuthOpeningBrowser: '正在打开浏览器进行授权...',
@@ -86,11 +82,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Session titles
     cronSessionPrefix: 'Cron',
     // IM channel prefixes will be added when integration is implemented
-
-    // Timeout hint
-    taskTimedOut:
-      '[Task timed out] The task was automatically stopped because it exceeded the maximum allowed duration. You can continue the conversation to pick up where it left off.',
-    // IM session messages will be added when integration is implemented
 
     // OAuth flow messages
     qwenOAuthRequestingDeviceCode: 'Requesting device authorization code...',
