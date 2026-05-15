@@ -2250,7 +2250,25 @@ export class AgentEventProcessor {
 
     // Fast-path: skip assistant-stream events — they carry the same text as
     // chat deltas and dispatchAgentEvent() has no handler for stream=assistant.
+    // EXCEPTION: For announce runs, agent events have COMPLETE text while chat deltas
+    // are truncated. We need to accumulate from agent events to get full content.
     if (stream === 'assistant') {
+      if (runId && runId.startsWith('announce:v1:')) {
+        // Announce run: accumulate complete text from agent events
+        const subData = isRecord(agentPayload.data)
+          ? (agentPayload.data as Record<string, unknown>)
+          : null;
+        const eventText = typeof subData?.text === 'string' ? subData.text : '';
+        if (eventText && eventText.trim()) {
+          this.cb.announceTextByRunId.set(runId, eventText.trim());
+          console.log(
+            '[OpenClawRuntime] announce assistant: accumulated text from agent event, len=' +
+              eventText.trim().length +
+              ' runId=' +
+              runId.slice(0, 30),
+          );
+        }
+      }
       return;
     }
 
@@ -2356,7 +2374,19 @@ export class AgentEventProcessor {
               this.cb.emit('message', sessionId, announceMsg);
               // Mark this text as already emitted by storing the length
               // We'll use this at tool_result to only emit new text
-              this.cb._announceToolMessages.add(`${runId}:${accumulatedAnnounceText.length}`);
+              const marker = `${runId}:${accumulatedAnnounceText.length}`;
+              this.cb._announceToolMessages.add(marker);
+              console.log(
+                '[OpenClawRuntime] announce tool_start: ADDED marker=' +
+                  marker +
+                  ' to _announceToolMessages, setSize=' +
+                  this.cb._announceToolMessages.size +
+                  ' setContents=[' +
+                  Array.from(this.cb._announceToolMessages)
+                    .map(m => m.slice(0, 40))
+                    .join(', ') +
+                  ']',
+              );
               // DO NOT delete the map - delta events carry accumulated text
             }
           }
@@ -2442,13 +2472,9 @@ export class AgentEventProcessor {
                 });
                 this.cb.emit('message', sessionId, announceMsg);
               }
-              // Clear the marker and the map
-              for (const marker of this.cb._announceToolMessages) {
-                if (marker.startsWith(markerKey)) {
-                  this.cb._announceToolMessages.delete(marker);
-                  break;
-                }
-              }
+              // DO NOT delete the marker here - chatEventProcessor needs it at final
+              // to check if text was already emitted at tool_start.
+              // The marker will be deleted in chatEventProcessor.handleChatEvent (final state).
               this.cb.announceTextByRunId.delete(runId);
             }
           }

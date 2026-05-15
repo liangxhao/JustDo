@@ -19,6 +19,7 @@ import type { HistoryReconciler } from '../history/historyReconciler';
 import type { SubagentManager } from '../subagent/subagentManager';
 
 export interface ChatEventProcessorCallbacks {
+  _announceToolMessages: Set<string>;
   _loggedThinkingStreamTypes: Set<string>;
   activeTurns: Map<string, ActiveTurn>;
   announceTextByRunId: Map<string, string>;
@@ -188,25 +189,87 @@ export class ChatEventProcessor {
         // Flush accumulated announce streaming text as a message before
         // processing the final. This ensures partial text from delta events
         // is visible in the UI.
+        // Check _announceToolMessages to avoid emitting text already emitted at tool_start.
         const accumulatedText = this.cb.announceTextByRunId.get(runId);
         let alreadyEmittedAnnounceText = false;
         let announceStreamingMessageId: string | null = null;
         if (accumulatedText && accumulatedText.length > 0) {
-          const streamingMessage = this.cb.store.addMessage(sessionId, {
-            type: 'assistant',
-            content: accumulatedText,
-            metadata: { isStreaming: false, isFinal: true },
-            modelName: turn.modelName,
-          });
-          this.cb.emit('message', sessionId, streamingMessage);
-          announceStreamingMessageId = streamingMessage.id;
-          alreadyEmittedAnnounceText = true;
+          // Find the marker for what was already emitted at tool_start
+          const markerKey = `${runId}:`;
           console.log(
-            '[OpenClawRuntime] handleChatEvent: emitted announce text (len=' +
-              accumulatedText.length +
-              ') from accumulated deltas for runId=' +
-              runId.slice(0, 20),
+            '[OpenClawRuntime] handleChatEvent: searching for marker, markerKey=' +
+              markerKey.slice(0, 35) +
+              ' _announceToolMessages size=' +
+              this.cb._announceToolMessages.size +
+              ' contents=[' +
+              Array.from(this.cb._announceToolMessages)
+                .map(m => m.slice(0, 40))
+                .join(', ') +
+              ']',
           );
+          let alreadyEmittedLen = 0;
+          for (const marker of this.cb._announceToolMessages) {
+            if (marker.startsWith(markerKey)) {
+              alreadyEmittedLen = parseInt(marker.slice(markerKey.length), 10);
+              console.log(
+                '[OpenClawRuntime] handleChatEvent: FOUND marker=' +
+                  marker.slice(0, 35) +
+                  ' alreadyEmittedLen=' +
+                  alreadyEmittedLen,
+              );
+              break;
+            }
+          }
+          // Only emit if there's new text beyond what was already emitted
+          if (accumulatedText.length > alreadyEmittedLen) {
+            const newText = accumulatedText.slice(alreadyEmittedLen);
+            const streamingMessage = this.cb.store.addMessage(sessionId, {
+              type: 'assistant',
+              content: newText,
+              metadata: { isStreaming: false, isFinal: true },
+              modelName: turn.modelName,
+            });
+            this.cb.emit('message', sessionId, streamingMessage);
+            announceStreamingMessageId = streamingMessage.id;
+            alreadyEmittedAnnounceText = true;
+            console.log(
+              '[OpenClawRuntime] handleChatEvent: emitted NEW announce text (len=' +
+                newText.length +
+                ', total=' +
+                accumulatedText.length +
+                ', already=' +
+                alreadyEmittedLen +
+                ') from accumulated deltas for runId=' +
+                runId.slice(0, 20),
+            );
+          } else {
+            // All accumulated text was already emitted at tool_start
+            console.log(
+              '[OpenClawRuntime] handleChatEvent: announce text already handled at tool_start, skipping (total=' +
+                accumulatedText.length +
+                ', already=' +
+                alreadyEmittedLen +
+                ') runId=' +
+                runId.slice(0, 20),
+            );
+            alreadyEmittedAnnounceText = true;
+          }
+        }
+        // Clean up the marker and map after final processing
+        if (accumulatedText && accumulatedText.length > 0) {
+          const markerKey = `${runId}:`;
+          for (const marker of this.cb._announceToolMessages) {
+            if (marker.startsWith(markerKey)) {
+              this.cb._announceToolMessages.delete(marker);
+              console.log(
+                '[OpenClawRuntime] handleChatEvent: DELETED marker=' +
+                  marker.slice(0, 40) +
+                  ' from _announceToolMessages after final, setSize=' +
+                  this.cb._announceToolMessages.size,
+              );
+              break;
+            }
+          }
         }
         this.cb.announceTextByRunId.delete(runId);
 

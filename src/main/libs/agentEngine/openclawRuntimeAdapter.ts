@@ -407,6 +407,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       uuidToToolCallId: this.uuidToToolCallId,
     });
     this.chatEventProcessor = new ChatEventProcessor({
+      _announceToolMessages: this._announceToolMessages,
       _loggedThinkingStreamTypes: this._loggedThinkingStreamTypes,
       activeTurns: this.activeTurns,
       announceTextByRunId: this.announceTextByRunId,
