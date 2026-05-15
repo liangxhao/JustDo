@@ -646,20 +646,27 @@ export class SubagentManager {
                   display,
               );
               if (key) {
-                const persistedStatus = meta.subagentStatus as
-                  | 'running'
-                  | 'done'
-                  | 'failed'
-                  | undefined;
-                if (
-                  persistedStatus === 'running' ||
-                  persistedStatus === 'done' ||
-                  persistedStatus === 'failed'
-                ) {
-                  statuses[key] = persistedStatus;
-                } else {
-                  statuses[key] = 'running';
+                // Database recovery takes priority - only set status if not already present.
+                // When software restarts, database has correct 'done'/'failed' values from
+                // lifecycle events, but tool_use message metadata may still have stale 'running'.
+                // This prevents the stale metadata from overriding the correct database state.
+                if (!statuses[key]) {
+                  const persistedStatus = meta.subagentStatus as
+                    | 'running'
+                    | 'done'
+                    | 'failed'
+                    | undefined;
+                  if (
+                    persistedStatus === 'running' ||
+                    persistedStatus === 'done' ||
+                    persistedStatus === 'failed'
+                  ) {
+                    statuses[key] = persistedStatus;
+                  } else {
+                    statuses[key] = 'running';
+                  }
                 }
+                // Always update displayLabels (may not be set in database recovery)
                 displayLabels[key] = display;
                 if (label) {
                   toolUseIdToLabel.set(key, label);
