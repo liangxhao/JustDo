@@ -1031,6 +1031,22 @@ interface MarkdownContentProps {
   showRevealInFolderAction?: boolean;
 }
 
+/**
+ * Escape markdown link-like patterns that would be hidden or misparsed.
+ * 1. `[Something]: xxx` - reference link definitions (hidden)
+ * 2. `[Subagent Context]` / `[Nested Subagent Context]` - label headers (bold them)
+ * Convert to visible bold format.
+ */
+const escapeMarkdownLinkPatterns = (content: string): string => {
+  // Handle reference link definitions: `[Something]: xxx` -> `**[Something]:** xxx`
+  let result = content.replace(/(\n|^)\[([^\]]+)\]:\s*/g, '$1**[$2]:** ');
+
+  // Handle context labels: `[Subagent Context]` or `[Nested Subagent Context]` -> bold
+  result = result.replace(/(\n|^)\[(Subagent Context|Nested Subagent Context)\]\s*/g, '$1**[$2]** ');
+
+  return result;
+};
+
 const MarkdownContent: React.FC<MarkdownContentProps> = ({
   content,
   className = '',
@@ -1042,7 +1058,8 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
     [resolveLocalFilePath, showRevealInFolderAction],
   );
   const normalizedContent = useMemo(
-    () => normalizeDisplayMath(encodeFileUrlsInMarkdown(content)),
+    () =>
+      escapeMarkdownLinkPatterns(normalizeDisplayMath(encodeFileUrlsInMarkdown(content))),
     [content],
   );
 

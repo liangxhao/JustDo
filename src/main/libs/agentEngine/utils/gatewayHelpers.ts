@@ -607,7 +607,9 @@ export function convertEntriesToCoworkMessages(
 }
 
 /**
- * Mark the first user message as Subagent Context if it starts with [Subagent Context].
+ * Mark the first user message as Subagent Context.
+ * For subagent history, the first user message is always the context/instruction.
+ * No longer requires '[Subagent Context]' prefix since Gateway may not preserve it.
  */
 export function markSubagentContextMessage(messages: CoworkMessage[]): CoworkMessage[] {
   if (messages.length === 0) return messages;
@@ -615,11 +617,11 @@ export function markSubagentContextMessage(messages: CoworkMessage[]): CoworkMes
   if (firstUserIndex === -1) return messages;
 
   const firstUserMsg = messages[firstUserIndex];
-  const content = firstUserMsg.content;
 
-  if (!content || !content.startsWith('[Subagent Context]')) return messages;
+  // Already marked, skip
   if (firstUserMsg.metadata?.isSubagentContext) return messages;
 
+  // Mark first user message as Subagent Context (it's the instruction sent to subagent)
   messages[firstUserIndex] = {
     ...firstUserMsg,
     metadata: {

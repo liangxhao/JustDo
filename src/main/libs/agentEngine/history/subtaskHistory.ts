@@ -46,145 +46,17 @@ export class SubtaskHistory {
 
     const gatewayClient = this.cb.getGatewayClient();
 
-    // 先获取 in-memory 的 Subagent Context 消息（用于显示启动指令）
+    // Resolve sessionKey from various sources
     const rawSessionKeyFromToolCallId = this.cb.toolCallIdToSessionKey.get(agentId);
     const sessionKeyFromToolCallId = rawSessionKeyFromToolCallId?.includes(':subagent:')
       ? rawSessionKeyFromToolCallId
       : null;
 
-    const directMessages = this.cb.subagentMessages.get(agentId);
-    const mappedMessages = sessionKeyFromToolCallId
-      ? this.cb.subagentMessages.get(sessionKeyFromToolCallId)
-      : null;
+    // Try to resolve effective sessionKey for Gateway query
+    const effectiveSessionKey = sessionKey || sessionKeyFromToolCallId;
 
-    // 获取 Subagent Context 消息（第一条 user 消息，带有 isSubagentContext 标记）
-    const subagentContextMsg = (() => {
-      const candidates = [directMessages, mappedMessages];
-      for (const msgs of candidates) {
-        if (msgs && msgs.length > 0) {
-          const contextMsg = msgs.find(m => m.role === 'user' && m.metadata?.isSubagentContext);
-          if (contextMsg) return contextMsg;
-        }
-      }
-      // Fallback: try uuidToToolCallId cross-reference for nested subagents.
-      const linkedToolCallId = this.cb.uuidToToolCallId.get(agentId);
-      if (linkedToolCallId) {
-        const linkedMsgs = this.cb.subagentMessages.get(linkedToolCallId);
-        if (linkedMsgs && linkedMsgs.length > 0) {
-          const contextMsg = linkedMsgs.find(
-            m => m.role === 'user' && m.metadata?.isSubagentContext,
-          );
-          if (contextMsg) {
-            console.log(
-              '[OpenClawRuntime] getSubTaskHistory: found context via uuidToToolCallId agentId=' +
-                agentId +
-                ' -> toolCallId=' +
-                linkedToolCallId,
-            );
-            return contextMsg;
-          }
-        }
-      }
-      return null;
-    })();
-
-    // Debug: log lookup state for subagent context
-    const allMsgKeys = [...this.cb.subagentMessages.keys()];
-    console.log(
-      '[OpenClawRuntime] getSubTaskHistory context lookup: agentId=' +
-        agentId +
-        ' directMessages=' +
-        (directMessages ? directMessages.length : 'null') +
-        ' mappedMessages=' +
-        (mappedMessages ? mappedMessages.length : 'null') +
-        ' sessionKeyFromToolCallId=' +
-        (sessionKeyFromToolCallId || 'null') +
-        ' allSubagentMessagesKeys=[' +
-        allMsgKeys.join(', ') +
-        ']',
-    );
-    if (subagentContextMsg) {
-      console.log(
-        '[OpenClawRuntime] getSubTaskHistory subagentContextMsg found: content starts with "' +
-          subagentContextMsg.content.slice(0, 50) +
-          '"',
-      );
-    } else {
-      console.log(
-        '[OpenClawRuntime] getSubTaskHistory NO subagentContextMsg found, will use markSubagentContextMessage fallback',
-      );
-    }
-
-    // Strategy 1: If sessionKey is provided, use it directly
-    if (sessionKey && gatewayClient) {
-      try {
-        const history = await gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
-          sessionKey,
-          limit: 100,
-        });
-        if (Array.isArray(history?.messages)) {
-          console.log(
-            '[OpenClawRuntime] getSubTaskHistory raw messages sample:',
-            history.messages
-              .slice(0, 3)
-              .map(m =>
-                typeof m === 'object' && m
-                  ? { role: (m as any).role, content_type: typeof (m as any).content }
-                  : m,
-              ),
-          );
-          const entries = extractGatewayHistoryEntries(history.messages);
-          console.log(
-            '[OpenClawRuntime] getSubTaskHistory extracted entries:',
-            entries.map(e => ({ role: e.role, textLen: e.text?.length, hasMeta: !!e.metadata })),
-          );
-          if (entries.length > 0) {
-            let historyMessages = convertEntriesToCoworkMessages(entries);
-            this.cb.historyReconciler.patchToolInputFromHistoryRaw(historyMessages, history?.messages);
-            if (subagentContextMsg) {
-              const contextContent = subagentContextMsg.content;
-              console.log(
-                '[OpenClawRuntime] getSubTaskHistory Strategy 1: prepending context msg, startsWith "' +
-                  contextContent.slice(0, 50) +
-                  '"',
-              );
-              const firstUserIndex = historyMessages.findIndex(m => m.type === 'user');
-              if (
-                firstUserIndex !== -1 &&
-                !historyMessages[firstUserIndex].metadata?.isSubagentContext
-              ) {
-                historyMessages.splice(firstUserIndex, 1);
-              }
-              const contextCoworkMsg: CoworkMessage = {
-                id: `subagent-context-${Date.now()}`,
-                type: 'user',
-                content: contextContent,
-                timestamp: Date.now() - 100,
-                metadata: subagentContextMsg.metadata,
-              };
-              historyMessages.unshift(contextCoworkMsg);
-            } else {
-              historyMessages = markSubagentContextMessage(historyMessages);
-            }
-            return historyMessages;
-          }
-        }
-      } catch (err) {
-        console.warn('[OpenClawRuntime] getSubTaskHistory: gateway query failed:', err);
-      }
-    }
-
-    // Strategy 0: Check in-memory subagentMessages for Subagent Context
-    const inMemoryMessages =
-      (directMessages && directMessages.length > 0 ? directMessages : null) ||
-      (mappedMessages && mappedMessages.length > 0 ? mappedMessages : null);
-
-    const rawToolCallIdSessionKey = this.cb.toolCallIdToSessionKey.get(agentId);
-    const validToolCallIdSessionKey = rawToolCallIdSessionKey?.includes(':subagent:')
-      ? rawToolCallIdSessionKey
-      : null;
-    const effectiveSessionKey = sessionKey || sessionKeyFromToolCallId || validToolCallIdSessionKey;
-
+    // Strategy 1: Query Gateway history directly (most reliable source)
+    // The first user message in Gateway history IS the actual subagent context
     if (effectiveSessionKey && gatewayClient) {
       try {
         const history = await gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
@@ -193,65 +65,34 @@ export class SubtaskHistory {
         });
         if (Array.isArray(history?.messages) && history.messages.length > 0) {
           console.log(
-            '[OpenClawRuntime] getSubTaskHistory Strategy 0: using Gateway history (' +
+            '[OpenClawRuntime] getSubTaskHistory: using Gateway history (' +
               history.messages.length +
-              ' msgs) with Subagent Context',
-          );
-          console.log(
-            '[OpenClawRuntime] getSubTaskHistory Strategy 0 raw messages:',
-            history.messages.slice(0, 5).map(m =>
-              isRecord(m)
-                ? {
-                    role: (m as Record<string, unknown>).role,
-                    hasContent: !!(m as Record<string, unknown>).content,
-                    keys: Object.keys(m).slice(0, 5),
-                  }
-                : m,
-            ),
+              ' msgs) for sessionKey=' +
+              effectiveSessionKey.slice(0, 30),
           );
           const entries = extractGatewayHistoryEntries(history.messages);
-          console.log(
-            '[OpenClawRuntime] getSubTaskHistory Strategy 0 entries:',
-            entries.slice(0, 3).map(e => ({ role: e.role, textLen: e.text?.length })),
-          );
           if (entries.length > 0) {
-            let historyMessages = convertEntriesToCoworkMessages(entries);
+            const historyMessages = convertEntriesToCoworkMessages(entries);
             this.cb.historyReconciler.patchToolInputFromHistoryRaw(historyMessages, history.messages);
-
-            if (subagentContextMsg) {
-              const contextContent = subagentContextMsg.content;
-              console.log(
-                '[OpenClawRuntime] getSubTaskHistory Strategy 0: prepending context msg, startsWith "' +
-                  contextContent.slice(0, 50) +
-                  '"',
-              );
-              const firstUserIndex = historyMessages.findIndex(m => m.type === 'user');
-              if (
-                firstUserIndex !== -1 &&
-                !historyMessages[firstUserIndex].metadata?.isSubagentContext
-              ) {
-                historyMessages.splice(firstUserIndex, 1);
-              }
-              const contextCoworkMsg: CoworkMessage = {
-                id: `subagent-context-${Date.now()}`,
-                type: 'user',
-                content: contextContent,
-                timestamp: Date.now() - 100,
-                metadata: subagentContextMsg.metadata,
-              };
-              historyMessages.unshift(contextCoworkMsg);
-            } else {
-              historyMessages = markSubagentContextMessage(historyMessages);
-            }
-            return historyMessages;
+            // The first user message from Gateway IS the subagent context (sent by OpenClaw)
+            // Just mark it with isSubagentContext flag for UI styling
+            return markSubagentContextMessage(historyMessages);
           }
         }
       } catch (err) {
-        console.warn('[OpenClawRuntime] getSubTaskHistory: Gateway history query failed:', err);
+        console.warn('[OpenClawRuntime] getSubTaskHistory: Gateway query failed:', err);
       }
     }
 
-    // Fallback: return in-memory messages if Gateway history unavailable
+    // In-memory fallback (only when Gateway is unavailable)
+    const directMessages = this.cb.subagentMessages.get(agentId);
+    const mappedMessages = sessionKeyFromToolCallId
+      ? this.cb.subagentMessages.get(sessionKeyFromToolCallId)
+      : null;
+    const inMemoryMessages =
+      (directMessages && directMessages.length > 0 ? directMessages : null) ||
+      (mappedMessages && mappedMessages.length > 0 ? mappedMessages : null);
+
     if (inMemoryMessages && inMemoryMessages.length > 0) {
       console.log(
         '[OpenClawRuntime] getSubTaskHistory: fallback to in-memory messages (' +
@@ -259,45 +100,10 @@ export class SubtaskHistory {
           ' msgs)',
       );
       const coworkMsgs = convertToCoworkMessages(inMemoryMessages);
-      return coworkMsgs;
+      return markSubagentContextMessage(coworkMsgs);
     }
 
-    // Strategy 1.5: Use toolCallId to find sessionKey (agentId is now toolCallId)
-    const rawToolCallIdSessionKey15 = this.cb.toolCallIdToSessionKey.get(agentId);
-    const toolCallIdSessionKey = rawToolCallIdSessionKey15?.includes(':subagent:')
-      ? rawToolCallIdSessionKey15
-      : null;
-    if (toolCallIdSessionKey && gatewayClient) {
-      try {
-        const history = await gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
-          sessionKey: toolCallIdSessionKey,
-          limit: 100,
-        });
-        console.log(
-          '[OpenClawRuntime] getSubTaskHistory strategy 1.5: sessionKey=' +
-            toolCallIdSessionKey +
-            ' messagesLen=' +
-            (history?.messages?.length ?? 0),
-        );
-        if (Array.isArray(history?.messages) && history.messages.length > 0) {
-          const entries = extractGatewayHistoryEntries(history.messages);
-          console.log(
-            '[OpenClawRuntime] getSubTaskHistory strategy 1.5 entries:',
-            entries.map(e => ({ role: e.role, textLen: e.text?.length })),
-          );
-          if (entries.length > 0) {
-            const msgs = convertEntriesToCoworkMessages(entries);
-            this.cb.historyReconciler.patchToolInputFromHistoryRaw(msgs, history.messages);
-            return markSubagentContextMessage(msgs);
-          }
-        }
-      } catch (err) {
-        console.warn(
-          '[OpenClawRuntime] getSubTaskHistory: toolCallId sessionKey query failed:',
-          err,
-        );
-      }
-    }
+    // Try additional sessionKey resolution strategies when effectiveSessionKey not available
 
     // Strategy 2: Find childSessionKey from CoworkStore tool_result for sessions_spawn
     const parentSession = this.cb.store.getSession(parentSessionId);
