@@ -607,7 +607,7 @@ export class SubagentManager {
                 ) {
                   statuses[cs.key] = persistedStatus;
                 }
-                displayLabels[cs.key] = msgLabel || (task ? task.slice(0, 30) : cs.key);
+                displayLabels[cs.key] = msgLabel || (task ? task.slice(0, 30) : '(no label)');
 
                 console.log(
                   '[OpenClawRuntime] getSubagentStatuses: MATCHED cs.key=' +
@@ -634,11 +634,9 @@ export class SubagentManager {
               const input = meta.toolInput as Record<string, unknown> | undefined;
               const toolUseId = meta.toolUseId || '';
               const label = typeof input?.label === 'string' && input.label ? input.label : '';
-              const agentId =
-                typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
               const task = typeof input?.task === 'string' ? input.task : '';
               const key = toolUseId;
-              const display = label || agentId || (task ? task.slice(0, 30) : toolUseId);
+              const display = label || (task ? task.slice(0, 30) : '(no label)');
               console.debug(
                 '[OpenClawRuntime] getSubagentStatuses: sessions_spawn toolUseId=' +
                   toolUseId +
@@ -975,8 +973,9 @@ export class SubagentManager {
           const spawnInfo = this.cb.toolCallArgs.get(toolCallId);
           displayLabels[toolCallId] =
             this.cb.toolCallIdToLabel.get(toolCallId) ||
-            (spawnInfo && typeof spawnInfo.task === 'string' ? spawnInfo.task.slice(0, 30) : '') ||
-            toolCallId;
+            (spawnInfo && typeof spawnInfo.task === 'string'
+              ? spawnInfo.task.slice(0, 30)
+              : '(no label)');
           continue;
         }
         const memoryStatus = this.cb.subagentStatus.get(toolCallId);
@@ -1040,7 +1039,7 @@ export class SubagentManager {
             // Already done/failed status but main session completed — reflect it
             statuses[key] = status;
             const label = this.cb.subagentUuidToLabel.get(key);
-            displayLabels[key] = label || key;
+            displayLabels[key] = label || '(no label)';
           }
         }
       }
@@ -1066,7 +1065,7 @@ export class SubagentManager {
         this.cb.toolCallIdToLabel.get(pendingId) ||
         this.cb.subagentUuidToLabel.get(pendingId) ||
         (spawnInfo && typeof spawnInfo.task === 'string' ? spawnInfo.task.slice(0, 30) : '');
-      displayLabels[pendingId] = label || pendingId;
+      displayLabels[pendingId] = label || '(no label)';
       console.debug(
         '[OpenClawRuntime] getSubagentStatuses: pending subagent toolCallId=' +
           pendingId +

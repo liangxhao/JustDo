@@ -1439,7 +1439,8 @@ export class AgentEventProcessor {
                 if (itemName === 'sessions_spawn') {
                   const nestedArgs = isRecord(toolInput) ? toolInput : {};
 
-                  // Extract displayLabel: prefer label, then fall back to task description
+                  // Extract displayLabel: prefer label, then fall back to task description (first 30 chars)
+                  // NEVER fallback to toolCallId or other identifiers
                   const taskText =
                     typeof nestedArgs.task === 'string' && nestedArgs.task
                       ? nestedArgs.task
@@ -1451,7 +1452,7 @@ export class AgentEventProcessor {
                       ? nestedArgs.label
                       : taskText
                         ? taskText.slice(0, 30)
-                        : '';
+                        : '(no label)';
 
                   // Extract promptText from args.task or args.prompt
                   let nestedPromptText = '';

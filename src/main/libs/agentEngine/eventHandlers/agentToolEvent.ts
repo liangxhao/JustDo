@@ -193,12 +193,12 @@ export class AgentToolEventHandler {
       };
       this.cb.toolCallArgs.set(toolCallId, savedInfo);
 
-      // Fallback chain: label → metaLabel → promptText.slice(0,30)
-      // NOTE: Never fallback to toolCallId - use task description instead
+      // Priority: label → metaLabel → promptText.slice(0,30) → '(no label)'
+      // NEVER fallback to toolCallId or other identifiers
       const displayLabel =
         typeof enrichedArgs.label === 'string' && enrichedArgs.label
           ? (enrichedArgs.label as string)
-          : enrichedMetaLabel || (promptText ? promptText.slice(0, 30) : '');
+          : enrichedMetaLabel || (promptText ? promptText.slice(0, 30) : '(no label)');
 
       this.cb.subagentStatus.set(toolCallId, 'pending');
       this.cb.pendingToolCallIds.add(toolCallId);

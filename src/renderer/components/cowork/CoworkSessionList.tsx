@@ -450,7 +450,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       for (const [agentId, status] of Object.entries(backendStatuses)) {
         // Get display label from backend or fallback to frontend extraction
         const frontendTask = subTasks.find(t => t.agentId === agentId);
-        const displayLabel = backendDisplayLabels[agentId] || frontendTask?.task || agentId;
+        const displayLabel = backendDisplayLabels[agentId] || frontendTask?.task || '(no label)';
         merged.push({
           agentId,
           task: displayLabel,
