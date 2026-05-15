@@ -27,6 +27,8 @@ import type { SubagentManager } from '../subagent/subagentManager';
 
 export interface AgentEventProcessorCallbacks {
   _announceToolMessages: Set<string>;
+  /** Accumulated announce text from chat delta events. Used to emit text before tool starts. */
+  announceTextByRunId: Map<string, string>;
   activeTurns: Map<string, ActiveTurn>;
   deletedChannelKeys: Set<string>;
   emit: (event: string, ...args: unknown[]) => void;
@@ -1063,7 +1065,23 @@ export class AgentEventProcessor {
               lastAssistant.content = merged.text;
               // Emit update event - use the stored stable msgId
               const parentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
+              console.log(
+                '[OpenClawRuntime] subagent assistant update emit check: emitAgentId=' +
+                  emitAgentId +
+                  ' parentSessionId=' +
+                  (parentSessionId || '(null)') +
+                  ' msgId=' +
+                  msgId,
+              );
               if (parentSessionId) {
+                console.log(
+                  '[OpenClawRuntime] subagent assistant UPDATE EMIT: parentSessionId=' +
+                    parentSessionId +
+                    ' emitAgentId=' +
+                    emitAgentId +
+                    ' content=' +
+                    lastAssistant.content.slice(0, 50),
+                );
                 this.cb.emit(
                   'subagentMessageUpdate',
                   parentSessionId,
@@ -1078,7 +1096,23 @@ export class AgentEventProcessor {
               msgs.push(newMsg);
               // Emit new message event
               const parentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
+              console.log(
+                '[OpenClawRuntime] subagent assistant new emit check: emitAgentId=' +
+                  emitAgentId +
+                  ' parentSessionId=' +
+                  (parentSessionId || '(null)') +
+                  ' msgId=' +
+                  msgId,
+              );
               if (parentSessionId) {
+                console.log(
+                  '[OpenClawRuntime] subagent assistant NEW EMIT: parentSessionId=' +
+                    parentSessionId +
+                    ' emitAgentId=' +
+                    emitAgentId +
+                    ' content=' +
+                    eventText.slice(0, 50),
+                );
                 this.cb.emit('subagentMessage', parentSessionId, emitAgentId, {
                   id: msgId,
                   type: 'assistant',
@@ -1101,7 +1135,25 @@ export class AgentEventProcessor {
             }
             // Emit thinking update event
             const thinkingParentSessionId = this.cb.resolveSubagentParentSessionId(emitAgentId);
+            console.log(
+              '[OpenClawRuntime] subagent thinking emit check: emitAgentId=' +
+                emitAgentId +
+                ' thinkingParentSessionId=' +
+                (thinkingParentSessionId || '(null)') +
+                ' thinkingContent.len=' +
+                (thinkingContent?.length || 0),
+            );
             if (thinkingParentSessionId && thinkingContent) {
+              console.log(
+                '[OpenClawRuntime] subagent thinking EMIT: parentSessionId=' +
+                  thinkingParentSessionId +
+                  ' emitAgentId=' +
+                  emitAgentId +
+                  ' msgId=' +
+                  msgId +
+                  ' content=' +
+                  thinkingContent.slice(0, 50),
+              );
               this.cb.emit(
                 'subagentThinkingUpdate',
                 thinkingParentSessionId,
@@ -1115,6 +1167,35 @@ export class AgentEventProcessor {
             const toolName = typeof subData?.name === 'string' ? subData.name : '';
             const toolCallId = typeof subData?.toolCallId === 'string' ? subData.toolCallId : '';
             if (toolPhase === 'start' && toolName) {
+              // Emit accumulated announce text BEFORE tool starts.
+              // When announce run calls a tool, we need to split the text into:
+              // 1. Text before tool (emit now)
+              // 2. Text after tool (emit at final)
+              // This fixes the issue where all announce text merges into one bubble.
+              if (runId && runId.startsWith('announce:v1:')) {
+                const accumulatedAnnounceText = this.cb.announceTextByRunId.get(runId);
+                if (accumulatedAnnounceText && accumulatedAnnounceText.length > 0) {
+                  const announceTextParentSessionId =
+                    this.cb.resolveSubagentParentSessionId(emitAgentId);
+                  if (announceTextParentSessionId) {
+                    console.log(
+                      '[OpenClawRuntime] announce tool_start: emitting accumulated text (len=' +
+                        accumulatedAnnounceText.length +
+                        ') before tool, runId=' +
+                        runId.slice(0, 30),
+                    );
+                    const announceMsg = this.cb.store.addMessage(announceTextParentSessionId, {
+                      type: 'assistant',
+                      content: accumulatedAnnounceText,
+                      metadata: { isStreaming: false, isFinal: true },
+                      modelName: undefined,
+                    });
+                    this.cb.emit('message', announceTextParentSessionId, announceMsg);
+                    // Clear accumulated text so subsequent text after tool creates new message
+                    this.cb.announceTextByRunId.delete(runId);
+                  }
+                }
+              }
               const msgId = `subagent-tool-${toolCallId || Date.now()}`;
               const toolContent = `Using tool: ${toolName}\n\nInput: ${JSON.stringify(subData?.args || {}, null, 2)}`;
               const toolMsg = {
@@ -2179,6 +2260,7 @@ export class AgentEventProcessor {
     turn: ActiveTurn,
     agentPayload: AgentEventPayload,
   ): void {
+    const runId = typeof agentPayload.runId === 'string' ? agentPayload.runId.trim() : '';
     const stream = typeof agentPayload.stream === 'string' ? agentPayload.stream.trim() : '';
     const hasToolShape =
       isRecord(agentPayload.data) && typeof agentPayload.data.toolCallId === 'string';
@@ -2243,6 +2325,37 @@ export class AgentEventProcessor {
         );
 
         if (itemKind === 'tool' && itemToolCallId) {
+          // Emit accumulated announce text BEFORE tool starts.
+          // When announce run calls a tool, we need to split the text into:
+          // 1. Text before tool (emit at start)
+          // 2. Tool execution (tool_use + tool_result)
+          // 3. Text after tool (emit at result)
+          // This fixes the issue where all announce text merges into one bubble.
+          // NOTE: We do NOT delete the map here because delta events carry accumulated
+          // text (not incremental), so we need to track what was already emitted.
+          if (itemPhase === 'start' && runId && runId.startsWith('announce:v1:')) {
+            const accumulatedAnnounceText = this.cb.announceTextByRunId.get(runId);
+            if (accumulatedAnnounceText && accumulatedAnnounceText.length > 0) {
+              console.log(
+                '[OpenClawRuntime] announce item tool_start: emitting accumulated text (len=' +
+                  accumulatedAnnounceText.length +
+                  ') before tool, runId=' +
+                  runId.slice(0, 30),
+              );
+              const announceMsg = this.cb.store.addMessage(sessionId, {
+                type: 'assistant',
+                content: accumulatedAnnounceText,
+                metadata: { isStreaming: false, isFinal: true },
+                modelName: turn.modelName,
+              });
+              this.cb.emit('message', sessionId, announceMsg);
+              // Mark this text as already emitted by storing the length
+              // We'll use this at tool_result to only emit new text
+              this.cb._announceToolMessages.add(`${runId}:${accumulatedAnnounceText.length}`);
+              // DO NOT delete the map - delta events carry accumulated text
+            }
+          }
+
           // Convert stream=item format to gateway format for handleAgentToolEvent
           // item: { kind:'tool', phase:'start', name:'sessions_spawn', toolCallId:'call_xxx', meta:'label xxx, task yyy' }
           // gateway: { tool:'start:sessions_spawn', call:'call_xxx', meta:'label xxx, task yyy', args:{...} }
@@ -2286,6 +2399,54 @@ export class AgentEventProcessor {
               ']',
           );
           this.cb.handleAgentToolEvent(sessionId, turn, gatewayData);
+
+          // Emit NEW accumulated announce text AFTER tool result.
+          // Tool execution may have taken time, and chat delta events continued accumulating text.
+          // Delta events carry accumulated text (not incremental), so we compare with what was
+          // already emitted at tool_start to only emit the new portion.
+          if (itemPhase === 'end' && runId && runId.startsWith('announce:v1:')) {
+            const accumulatedAnnounceText = this.cb.announceTextByRunId.get(runId);
+            if (accumulatedAnnounceText && accumulatedAnnounceText.length > 0) {
+              // Find the marker for what was already emitted
+              const markerKey = `${runId}:`;
+              let alreadyEmittedLen = 0;
+              for (const marker of this.cb._announceToolMessages) {
+                if (marker.startsWith(markerKey)) {
+                  alreadyEmittedLen = parseInt(marker.slice(markerKey.length), 10);
+                  break;
+                }
+              }
+              // Only emit if there's new text beyond what was already emitted
+              if (accumulatedAnnounceText.length > alreadyEmittedLen) {
+                const newText = accumulatedAnnounceText.slice(alreadyEmittedLen);
+                console.log(
+                  '[OpenClawRuntime] announce item tool_result: emitting NEW text (len=' +
+                    newText.length +
+                    ', total=' +
+                    accumulatedAnnounceText.length +
+                    ', already=' +
+                    alreadyEmittedLen +
+                    ') after tool, runId=' +
+                    runId.slice(0, 30),
+                );
+                const announceMsg = this.cb.store.addMessage(sessionId, {
+                  type: 'assistant',
+                  content: newText,
+                  metadata: { isStreaming: false, isFinal: true },
+                  modelName: turn.modelName,
+                });
+                this.cb.emit('message', sessionId, announceMsg);
+              }
+              // Clear the marker and the map
+              for (const marker of this.cb._announceToolMessages) {
+                if (marker.startsWith(markerKey)) {
+                  this.cb._announceToolMessages.delete(marker);
+                  break;
+                }
+              }
+              this.cb.announceTextByRunId.delete(runId);
+            }
+          }
         } else if (itemKind === 'command' && itemToolCallId) {
           // Handle kind=command events (exec tool execution output)
           // These events carry actual execution output in summary field at phase=end

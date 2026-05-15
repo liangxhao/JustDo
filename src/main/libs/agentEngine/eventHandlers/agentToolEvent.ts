@@ -252,35 +252,47 @@ export class AgentToolEventHandler {
       );
       if (promptText) {
         const msgs = this.cb.subagentMessages.get(toolCallId)!;
-        const contextMsg = {
-          role: 'user',
-          content: `[Subagent Context]\n\n${promptText}`,
-          metadata: {
-            isSubagentContext: true,
-            label: displayLabel,
-          },
-        };
-        msgs.push(contextMsg);
-        console.log(
-          '[OpenClawRuntime] sessions_spawn start: added subagent context message to msgs (len=' +
-            msgs.length +
-            ')',
-        );
-        const contextParentSessionId = this.cb.resolveSubagentParentSessionId(toolCallId);
-        if (contextParentSessionId) {
-          this.cb.emit('subagentMessage', contextParentSessionId, toolCallId, {
-            id: `subagent-context-${Date.now()}`,
-            type: 'user',
-            content: contextMsg.content,
-            timestamp: Date.now(),
-            metadata: contextMsg.metadata,
-          });
+        // Check if context message already added (stream=tool and stream=item both trigger this)
+        const hasContext = msgs.some(m => m.metadata?.isSubagentContext);
+        if (hasContext) {
+          console.log(
+            '[OpenClawRuntime] sessions_spawn start: context message already exists for toolCallId=' +
+              toolCallId +
+              ', skipping duplicate (len=' +
+              msgs.length +
+              ')',
+          );
+        } else {
+          const contextMsg = {
+            role: 'user',
+            content: `[Subagent Context]\n\n${promptText}`,
+            metadata: {
+              isSubagentContext: true,
+              label: displayLabel,
+            },
+          };
+          msgs.push(contextMsg);
+          console.log(
+            '[OpenClawRuntime] sessions_spawn start: added subagent context message to msgs (len=' +
+              msgs.length +
+              ')',
+          );
+          const contextParentSessionId = this.cb.resolveSubagentParentSessionId(toolCallId);
+          if (contextParentSessionId) {
+            this.cb.emit('subagentMessage', contextParentSessionId, toolCallId, {
+              id: `subagent-context-${Date.now()}`,
+              type: 'user',
+              content: contextMsg.content,
+              timestamp: Date.now(),
+              metadata: contextMsg.metadata,
+            });
+          }
+          console.log(
+            '[OpenClawRuntime] sessions_spawn start: added subagent context message (len=' +
+              promptText.length +
+              ')',
+          );
         }
-        console.log(
-          '[OpenClawRuntime] sessions_spawn start: added subagent context message (len=' +
-            promptText.length +
-            ')',
-        );
       }
       console.log(
         '[OpenClawRuntime] sessions_spawn start: toolCallId=' +

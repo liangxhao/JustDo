@@ -368,6 +368,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     });
     this.agentEventProcessor = new AgentEventProcessor({
       _announceToolMessages: this._announceToolMessages,
+      announceTextByRunId: this.announceTextByRunId,
       activeTurns: this.activeTurns,
       deletedChannelKeys: this.deletedChannelKeys,
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
