@@ -256,6 +256,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       store: this.store,
       gatewayClient: null, // will be set via updateGatewayClientReference
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
+      historyReconciler: null as HistoryReconciler, // will be set via setHistoryReconciler
+      getSessionKeyBySessionId: (sessionId: string) => {
+        // Reverse lookup: find sessionKey for given sessionId
+        for (const [key, id] of this.sessionIdBySessionKey.entries()) {
+          if (id === sessionId) return key;
+        }
+        return null;
+      },
       subagentStatus: this.subagentStatus,
       failedSubagentIds: this.failedSubagentIds,
       successfulSpawnToolCallIds: this.successfulSpawnToolCallIds,
@@ -325,6 +333,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       ) => this.syncChannelUserMessages(id, msgs, latestOnly, isDiscord),
       getFullHistorySyncLimit: () => OpenClawRuntimeAdapter.FULL_HISTORY_SYNC_LIMIT,
     });
+    // Set historyReconciler reference in subagentManager (created earlier)
+    this.subagentManager.setHistoryReconciler(this.historyReconciler);
     this.skillRpcHandler = new SkillRpcHandler({
       ensureGatewayClientReady: () => this.ensureGatewayClientReady(),
       requireGatewayClient: () => this.requireGatewayClient(),

@@ -1,11 +1,14 @@
 import type { CoworkMessageMetadata, CoworkStore } from '../../../coworkStore';
 import type { GatewayClientLike, ActiveTurn } from '../gateway/types';
 import { isRecord, sleep, extractMessageText } from '../utils/gatewayHelpers';
+import type { HistoryReconciler } from '../history/historyReconciler';
 
 export interface SubagentManagerCallbacks {
   store: CoworkStore;
   gatewayClient: GatewayClientLike | null;
   emit: (event: string, ...args: unknown[]) => void;
+  historyReconciler: HistoryReconciler;
+  getSessionKeyBySessionId: (sessionId: string) => string | null;
   subagentStatus: Map<string, 'pending' | 'running' | 'done' | 'failed'>;
   failedSubagentIds: Set<string>;
   successfulSpawnToolCallIds: Set<string>;
@@ -49,6 +52,10 @@ export class SubagentManager {
 
   setGatewayClient(client: GatewayClientLike | null): void {
     this.cb.gatewayClient = client;
+  }
+
+  setHistoryReconciler(reconciler: HistoryReconciler): void {
+    this.cb.historyReconciler = reconciler;
   }
 
   setMainAgentLifecycleEnded(sessionId: string, ended: boolean): void {
@@ -166,6 +173,26 @@ export class SubagentManager {
           status: 'completed',
         });
         this.cb.emit('complete', sessionId, null, 'completed');
+
+        // Trigger history reconciliation to fetch complete output from gateway.
+        // This ensures the main agent's follow-up output (streamed via announce runs)
+        // is captured even when agent events were skipped due to runId mismatch.
+        const sessionKey = this.cb.getSessionKeyBySessionId(sessionId);
+        if (sessionKey) {
+          console.log(
+            '[OpenClawRuntime] checkAllSubagentsDone: triggering history reconciliation for sessionId=' +
+              sessionId +
+              ' sessionKey=' +
+              sessionKey.slice(0, 30),
+          );
+          void this.cb.historyReconciler.reconcileWithHistory(sessionId, sessionKey).catch(err => {
+            console.warn(
+              '[OpenClawRuntime] checkAllSubagentsDone: history reconciliation failed for sessionId=' +
+                sessionId,
+              err,
+            );
+          });
+        }
       }
     }
   }
