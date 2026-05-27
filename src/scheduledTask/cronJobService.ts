@@ -420,29 +420,132 @@ export class CronJobService {
   private lastKnownStates: Map<string, string> = new Map();
   private lastKnownRunAtMs: Map<string, number> = new Map();
   private polling = false;
+  private pollOnceInProgress = false;
   private firstPollDone = false;
-  /** Synchronous jobId → name cache, populated during polling. */
-  private jobNameCache: Map<string, string> = new Map();
-  /** Job IDs currently running (non-null `runningAtMs`), updated during polling. */
   private runningJobIds: Set<string> = new Set();
 
-  private static readonly POLL_INTERVAL_MS = 15_000;
+  private static readonly POLL_INTERVAL_MS = 60_000;
 
   constructor(deps: CronJobServiceDeps) {
     this.getGatewayClient = deps.getGatewayClient;
     this.ensureGatewayReady = deps.ensureGatewayReady;
   }
 
-  /**
-   * Look up a job name synchronously from the polling cache.
-   * Returns the job name if known, or null if the cache hasn't been populated yet.
-   */
-  getJobNameSync(jobId: string): string | null {
-    return this.jobNameCache.get(jobId) ?? null;
-  }
-
   hasRunningJobs(): boolean {
     return this.runningJobIds.size > 0;
+  }
+
+  startPolling(): void {
+    if (this.polling) return;
+    this.polling = true;
+    void this.pollOnce();
+    this.pollingTimer = setInterval(() => {
+      void this.pollOnce();
+    }, CronJobService.POLL_INTERVAL_MS);
+  }
+
+  stopPolling(): void {
+    this.polling = false;
+    if (this.pollingTimer) {
+      clearInterval(this.pollingTimer);
+      this.pollingTimer = null;
+    }
+    this.lastKnownStates.clear();
+    this.lastKnownRunAtMs.clear();
+    this.runningJobIds.clear();
+    this.pollOnceInProgress = false;
+    this.firstPollDone = false;
+  }
+
+  private async pollOnce(): Promise<void> {
+    if (!this.polling || this.pollOnceInProgress) return;
+    this.pollOnceInProgress = true;
+
+    try {
+      const client = this.getGatewayClient();
+      if (!client) return;
+
+      const result = await client.request<{ jobs?: GatewayJob[] }>('cron.list', {
+        includeDisabled: true,
+        limit: 200,
+      });
+      const jobs = Array.isArray(result.jobs) ? result.jobs : [];
+
+      this.runningJobIds.clear();
+      for (const job of jobs) {
+        if (job.state.runningAtMs) {
+          this.runningJobIds.add(job.id);
+        }
+      }
+
+      for (const job of jobs) {
+        const stateHash = JSON.stringify(job.state);
+        const previousHash = this.lastKnownStates.get(job.id);
+        if (previousHash !== stateHash) {
+          this.lastKnownStates.set(job.id, stateHash);
+          if (previousHash !== undefined) {
+            const task = mapGatewayJob(job);
+            this.emitStatusUpdate(task.id, task.state);
+          }
+        }
+
+        const lastRunAtMs = job.state.lastRunAtMs ?? 0;
+        const previousRunAtMs = this.lastKnownRunAtMs.get(job.id) ?? 0;
+        if (lastRunAtMs > previousRunAtMs && previousRunAtMs > 0) {
+          try {
+            const runs = await this.listRuns(job.id, 1, 0);
+            if (runs[0]) {
+              const task = mapGatewayJob(job);
+              this.emitRunUpdate({ ...runs[0], taskName: task.name });
+            }
+          } catch {
+            // Ignore run fetch failures during polling.
+          }
+        }
+        this.lastKnownRunAtMs.set(job.id, lastRunAtMs);
+      }
+
+      const currentIds = new Set(jobs.map(job => job.id));
+      for (const knownId of this.lastKnownStates.keys()) {
+        if (!currentIds.has(knownId)) {
+          this.lastKnownStates.delete(knownId);
+          this.lastKnownRunAtMs.delete(knownId);
+        }
+      }
+
+      if (!this.firstPollDone) {
+        this.firstPollDone = true;
+        this.emitFullRefresh();
+      }
+    } catch (error) {
+      console.warn('[CronJobService] Polling error:', error);
+    } finally {
+      this.pollOnceInProgress = false;
+    }
+  }
+
+  private emitStatusUpdate(taskId: string, state: TaskState): void {
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IpcChannel.StatusUpdate, { taskId, state });
+      }
+    });
+  }
+
+  private emitRunUpdate(run: ScheduledTaskRunWithName): void {
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IpcChannel.RunUpdate, { run });
+      }
+    });
+  }
+
+  private emitFullRefresh(): void {
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IpcChannel.Refresh);
+      }
+    });
   }
 
   private async client(): Promise<GatewayClientLike> {
@@ -493,7 +596,6 @@ export class CronJobService {
       ...(input.sessionKey?.trim() ? { sessionKey: input.sessionKey.trim() } : {}),
     });
     const mapped = mapGatewayJob(job);
-    this.jobNameCache.set(mapped.id, mapped.name);
     console.log('[CronJobService][addJob] created job id:', mapped.id, 'name:', mapped.name);
     return mapped;
   }
@@ -642,117 +744,4 @@ export class CronJobService {
     }));
   }
 
-  startPolling(): void {
-    if (this.polling) return;
-    this.polling = true;
-    this.pollOnce();
-    this.pollingTimer = setInterval(() => {
-      void this.pollOnce();
-    }, CronJobService.POLL_INTERVAL_MS);
-  }
-
-  stopPolling(): void {
-    this.polling = false;
-    if (this.pollingTimer) {
-      clearInterval(this.pollingTimer);
-      this.pollingTimer = null;
-    }
-    this.lastKnownStates.clear();
-    this.lastKnownRunAtMs.clear();
-    this.jobNameCache.clear();
-    this.runningJobIds.clear();
-    this.firstPollDone = false;
-  }
-
-  private async pollOnce(): Promise<void> {
-    if (!this.polling) return;
-
-    try {
-      // await this.ensureGatewayReady();
-      const client = this.getGatewayClient();
-      if (!client) return;
-
-      const result = await client.request<{ jobs?: GatewayJob[] }>('cron.list', {
-        includeDisabled: true,
-        limit: 200,
-      });
-      const jobs = Array.isArray(result.jobs) ? result.jobs : [];
-
-      // Refresh jobId → name cache for synchronous lookups (used by session naming).
-      this.jobNameCache.clear();
-      this.runningJobIds.clear();
-      for (const job of jobs) {
-        this.jobNameCache.set(job.id, job.name);
-        if (job.state.runningAtMs) {
-          this.runningJobIds.add(job.id);
-        }
-      }
-
-      for (const job of jobs) {
-        const stateHash = JSON.stringify(job.state);
-        const previousHash = this.lastKnownStates.get(job.id);
-        if (previousHash !== stateHash) {
-          this.lastKnownStates.set(job.id, stateHash);
-          if (previousHash !== undefined) {
-            const task = mapGatewayJob(job);
-            this.emitStatusUpdate(task.id, task.state);
-          }
-        }
-
-        const lastRunAtMs = job.state.lastRunAtMs ?? 0;
-        const previousRunAtMs = this.lastKnownRunAtMs.get(job.id) ?? 0;
-        if (lastRunAtMs > previousRunAtMs && previousRunAtMs > 0) {
-          try {
-            const runs = await this.listRuns(job.id, 1, 0);
-            if (runs[0]) {
-              const task = mapGatewayJob(job);
-              this.emitRunUpdate({ ...runs[0], taskName: task.name });
-            }
-          } catch {
-            // Ignore run fetch failures during polling.
-          }
-        }
-        this.lastKnownRunAtMs.set(job.id, lastRunAtMs);
-      }
-
-      const currentIds = new Set(jobs.map(job => job.id));
-      for (const knownId of this.lastKnownStates.keys()) {
-        if (!currentIds.has(knownId)) {
-          this.lastKnownStates.delete(knownId);
-          this.lastKnownRunAtMs.delete(knownId);
-        }
-      }
-
-      if (!this.firstPollDone) {
-        this.firstPollDone = true;
-        this.emitFullRefresh();
-      }
-    } catch (error) {
-      console.warn('[CronJobService] Polling error:', error);
-    }
-  }
-
-  private emitStatusUpdate(taskId: string, state: TaskState): void {
-    BrowserWindow.getAllWindows().forEach(window => {
-      if (!window.isDestroyed()) {
-        window.webContents.send(IpcChannel.StatusUpdate, { taskId, state });
-      }
-    });
-  }
-
-  private emitRunUpdate(run: ScheduledTaskRunWithName): void {
-    BrowserWindow.getAllWindows().forEach(window => {
-      if (!window.isDestroyed()) {
-        window.webContents.send(IpcChannel.RunUpdate, { run });
-      }
-    });
-  }
-
-  private emitFullRefresh(): void {
-    BrowserWindow.getAllWindows().forEach(window => {
-      if (!window.isDestroyed()) {
-        window.webContents.send(IpcChannel.Refresh);
-      }
-    });
-  }
 }

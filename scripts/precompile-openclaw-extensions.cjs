@@ -21,7 +21,7 @@ const runtimeDir = process.argv[2]
   ? path.resolve(process.argv[2])
   : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
 
-const extensionsDir = path.join(runtimeDir, 'extensions');
+const extensionsDir = path.join(runtimeDir, 'dist', 'extensions');
 
 if (!fs.existsSync(extensionsDir)) {
   console.log('[precompile-extensions] No extensions directory found, skipping.');
@@ -124,12 +124,20 @@ async function main() {
         format: 'esm',
         target: 'es2023',
         outfile: outFile,
-        packages: 'external',  // All node_modules deps stay external
+        // Bundle all dependencies except SDK imports (resolved by jiti at runtime).
+        // This inlines @sinclair/typebox and other small deps so the runtime
+        // doesn't need them in node_modules.
         external: SDK_EXTERNALS,
         plugins: [openclawInternalsPlugin],
         // Silence warnings about __dirname/__filename in ESM
         logLevel: 'warning',
       });
+
+      // Remove the .ts source file so the gateway plugin loader doesn't
+      // prefer it over the compiled .js entry.
+      if (entry.entryAbs !== outFile && fs.existsSync(entry.entryAbs)) {
+        fs.unlinkSync(entry.entryAbs);
+      }
 
       // Update package.json to point to the compiled .js entry
       if (entry.hasPkg) {

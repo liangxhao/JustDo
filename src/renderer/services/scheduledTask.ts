@@ -94,7 +94,6 @@ class ScheduledTaskService {
     );
     this.cleanupFns.push(cleanupRun);
 
-    // Listen for full refresh events (e.g., after first poll or migration)
     const cleanupRefresh = api.onRefresh(() => {
       this.loadTasks();
     });

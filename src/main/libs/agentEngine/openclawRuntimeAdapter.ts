@@ -65,7 +65,6 @@ import {
 const NO_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const STOP_COOLDOWN_MS = 10_000;
 const RACE_RESOLUTION_MS = 1_000;
-const CHANNEL_POLL_INTERVAL_MS = 10_000;
 const FULL_HISTORY_SYNC_LIMIT = 50;
 const TICK_WATCHDOG_INTERVAL_MS = 60_000;
 const TICK_TIMEOUT_MS = 90_000;
@@ -148,7 +147,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly heartbeatSessionKeys = new Set<string>();
   private readonly gatewayHistoryCountBySession = new Map<string, number>();
   private readonly latestTurnTokenBySession = new Map<string, number>();
-  private channelPollingTimer: ReturnType<typeof setInterval> | null = null;
 
   // Subagent status tracking (simplified)
   private readonly subagentStatus = new Map<string, 'pending' | 'running' | 'done' | 'failed'>();
@@ -381,7 +379,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.store.updateSession(sessionId, { status: 'running' });
     setCoworkProxySessionId(sessionId);
     await this.ensureGatewayClientReady();
-    this.startChannelPolling();
 
     const runId = randomUUID();
     const turnToken = this.nextTurnToken(sessionId);
@@ -543,8 +540,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Notify renderer of turn completion
       const session = this.store.getSession(sessionId!);
       this.emit('complete', sessionId!, session?.claudeSessionId ?? null, sessionStatus);
-      // Post-turn channel sync
-      if (sessionKey && this.channelSessionSync?.isChannelSessionKey(sessionKey)) {
+      // Post-turn sync: patch tool results/args/usage from chat.history
+      if (sessionKey) {
         void this.historyReconciler.reconcileWithHistory(sessionId!, sessionKey).catch(() => {});
       }
     };
@@ -1060,13 +1057,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   async connectGatewayIfNeeded(): Promise<void> {
     if (this.gatewayClient) return;
     await this.ensureGatewayClientReady();
-    this.startChannelPolling();
+    void this.discoverChannelSessions();
   }
 
   async reconnectGateway(): Promise<void> {
     this.stopGatewayClient();
     await this.ensureGatewayClientReady();
-    this.startChannelPolling();
+    void this.discoverChannelSessions();
   }
 
   disconnectGatewayClient(): void {
@@ -1153,6 +1150,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (!settled) {
           this.pendingGatewayClient = null;
           settleReject(new Error(reason || 'OpenClaw gateway disconnected before handshake'));
+          if (!this.gatewayStoppingIntentionally) {
+            this.scheduleGatewayReconnect();
+          }
           return;
         }
         if (this.gatewayStoppingIntentionally) return;
@@ -1164,7 +1164,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.cleanupSessionTurn(sessionId);
           this.rejectTurn(sessionId, disconnectedError);
         }
-        this.stopGatewayClient();
+        // Connection is already closed — don't call client.stop() which would
+        // reject all pending requests with "gateway client stopped" noise.
+        // Just clean up internal state and schedule reconnect.
+        this.cleanupGatewayClientState();
         this.gatewayReadyPromise = Promise.reject(disconnectedError);
         this.gatewayReadyPromise.catch(() => {});
         this.scheduleGatewayReconnect();
@@ -1178,7 +1181,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private stopGatewayClient(): void {
     this.gatewayStoppingIntentionally = true;
-    this.stopChannelPolling();
     this.cancelGatewayReconnect();
     this.stopTickWatchdog();
     const clientToStop = this.gatewayClient ?? this.pendingGatewayClient;
@@ -1198,6 +1200,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.pendingMessageUpdateTimer.clear();
     this.lastMessageUpdateEmitTime.clear();
     this.gatewayStoppingIntentionally = false;
+  }
+
+  /** Clean up internal gateway client state without calling client.stop().
+   *  Used when the connection is already closed (onClose) — calling stop()
+   *  on a closed connection would reject all pending requests with
+   *  "gateway client stopped" noise. */
+  private cleanupGatewayClientState(): void {
+    this.cancelGatewayReconnect();
+    this.stopTickWatchdog();
+    this.gatewayClient = null;
+    this.pendingGatewayClient = null;
+    this.gatewayClientVersion = null;
+    this.gatewayClientEntryPath = null;
+    this.gatewayReadyPromise = null;
+    this.channelSessionSync?.clearCache();
+    this.knownChannelSessionIds.clear();
+    this.heartbeatSessionKeys.clear();
+    this.stoppedSessions.clear();
+    this.lastTickTimestamp = 0;
+    this.lastAgentActivityTimestamp = 0;
+    for (const timer of this.pendingMessageUpdateTimer.values()) clearTimeout(timer);
+    this.pendingMessageUpdateTimer.clear();
+    this.lastMessageUpdateEmitTime.clear();
   }
 
   private async loadGatewayClientCtor(clientEntryPath: string): Promise<GatewayClientCtor> {
@@ -1275,19 +1300,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  // ─── Channel Session Polling ────────────────────────────────────────────
+  // ─── Channel Session Discovery (one-shot on gateway connect) ───────────
 
-  startChannelPolling(): void {
-    if (!this.channelSessionSync || this.channelPollingTimer) return;
-    void this.pollChannelSessions();
-    this.channelPollingTimer = setInterval(() => void this.pollChannelSessions(), CHANNEL_POLL_INTERVAL_MS);
-  }
-
-  stopChannelPolling(): void {
-    if (this.channelPollingTimer) { clearInterval(this.channelPollingTimer); this.channelPollingTimer = null; }
-  }
-
-  private async pollChannelSessions(): Promise<void> {
+  private async discoverChannelSessions(): Promise<void> {
     if (!this.gatewayClient || !this.channelSessionSync) return;
     try {
       const result = await this.gatewayClient.request('sessions.list', { activeMinutes: 60, limit: CHANNEL_SESSION_DISCOVERY_LIMIT });
@@ -1325,20 +1340,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (!win.isDestroyed()) win.webContents.send('cowork:sessions:changed');
         }
       }
-
-      // Incremental sync
-      for (const row of sessions) {
-        const key = typeof row?.key === 'string' ? row.key : '';
-        if (!key || !this.channelSessionSync.isChannelSessionKey(key)) continue;
-        if (this.deletedChannelKeys.has(key) || this.heartbeatSessionKeys.has(key)) continue;
-        if (!this.channelSessionSync.isCurrentBindingKey(key)) continue;
-        const sessionId = this.sessionIdBySessionKey.get(key);
-        if (!sessionId || !this.fullySyncedSessions.has(sessionId)) continue;
-        if (this.activeTurns.has(sessionId)) continue;
-        await this.historyReconciler.reconcileWithHistory(sessionId, key).catch(() => {});
-      }
     } catch (error) {
-      console.error('[ChannelSync] pollChannelSessions error:', error);
+      console.error('[ChannelSync] discoverChannelSessions error:', error);
     }
   }
 

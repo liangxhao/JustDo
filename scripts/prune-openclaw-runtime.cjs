@@ -219,7 +219,7 @@ function main() {
   cleanDir(nodeModulesDir, stats);
 
   // Step 3: Clean node_modules inside extensions (but not extension source files)
-  const extensionsDir = path.join(runtimeRoot, 'extensions');
+  const extensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
   if (fs.existsSync(extensionsDir)) {
     try {
       for (const ext of fs.readdirSync(extensionsDir, { withFileTypes: true })) {

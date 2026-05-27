@@ -101,7 +101,7 @@ function verifyPreinstalledPlugins(runtimeRoot, buildHint) {
     return;
   }
 
-  const extensionsDir = path.join(runtimeRoot, 'extensions');
+  const extensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
   const missing = [];
 
   for (const plugin of plugins) {
@@ -127,7 +127,7 @@ function ensureBundledOpenClawRuntime(context) {
   const { runtimeRoot, targetId } = syncCurrentOpenClawRuntimeForTarget(context);
   const buildHint = getOpenClawRuntimeBuildHint(targetId);
 
-  const localMcpBridgeDir = path.join(runtimeRoot, 'extensions', 'mcp-bridge');
+  const localMcpBridgeDir = path.join(runtimeRoot, 'dist', 'extensions', 'mcp-bridge');
   if (!existsSync(localMcpBridgeDir)) {
     syncLocalOpenClawExtensions(runtimeRoot);
   }

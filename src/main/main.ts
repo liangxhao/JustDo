@@ -916,11 +916,6 @@ const DEFERRED_RESTART_MAX_WAIT_MS = 5 * 60_000; // 5 minutes hard cap
 
 const hasActiveGatewayWorkloads = (): boolean => {
   if (openClawRuntimeAdapter?.hasActiveSessions()) return true;
-  try {
-    if (getCronJobService()?.hasRunningJobs()) return true;
-  } catch {
-    // CronJobService may not be initialized yet.
-  }
   return false;
 };
 
@@ -4152,16 +4147,13 @@ if (!gotTheLock) {
       createTray(() => mainWindow);
 
       // Start cron polling after the window is ready.
-      (async () => {
-        try {
-          getCronJobService().startPolling();
-        } catch (err) {
-          console.warn(
-            '[Main] CronJobService not available yet, will start polling when OpenClaw is ready:',
-            err,
-          );
-        }
+      try {
+        getCronJobService().startPolling();
+      } catch {
+        // CronJobService not available yet, will start when OpenClaw is ready.
+      }
 
+      (async () => {
         // One-time migration: move tasks from legacy SQLite tables to OpenClaw gateway.
         migrateScheduledTasksToOpenclaw({
           db: getStore().getDatabase(),
@@ -4398,11 +4390,10 @@ if (!gotTheLock) {
     if (resolveCoworkAgentEngine() === 'openclaw') {
       void ensureOpenClawRunningForCowork()
         .then(() => {
-          // Start cron polling once the gateway is confirmed running.
           try {
             getCronJobService().startPolling();
-          } catch (err) {
-            console.warn('[Main] CronJobService not available after OpenClaw startup:', err);
+          } catch {
+            // CronJobService not available after OpenClaw startup.
           }
         })
         .catch(error => {

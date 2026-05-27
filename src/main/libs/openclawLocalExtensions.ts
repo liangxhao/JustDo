@@ -31,8 +31,8 @@ const findBundledExtensionsDir = (): string | null => {
   const candidates = app.isPackaged
     ? [path.join(process.resourcesPath, 'cfmind', 'extensions')]
     : [
-        path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'extensions'),
-        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', 'extensions'),
+        path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions'),
+        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions'),
       ];
 
   for (const candidate of candidates) {
@@ -56,7 +56,7 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
     return { sourceDir: null, copied: [] };
   }
 
-  const targetExtensionsDir = path.join(runtimeRoot, 'extensions');
+  const targetExtensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
   try {
     if (!fs.statSync(targetExtensionsDir).isDirectory()) {
       return { sourceDir, copied: [] };
@@ -70,9 +70,19 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
     if (!entry.isDirectory()) {
       continue;
     }
+    const destDir = path.join(targetExtensionsDir, entry.name);
+    // Skip if the compiled extension already exists (placed by build pipeline).
+    // The runtime sync should not overwrite compiled .js with source .ts files.
+    try {
+      if (fs.statSync(destDir).isDirectory() && fs.existsSync(path.join(destDir, 'index.js'))) {
+        continue;
+      }
+    } catch {
+      // Target doesn't exist yet, proceed with copy.
+    }
     fs.cpSync(
       path.join(sourceDir, entry.name),
-      path.join(targetExtensionsDir, entry.name),
+      destDir,
       { recursive: true, force: true },
     );
     copied.push(entry.name);
