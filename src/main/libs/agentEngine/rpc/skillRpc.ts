@@ -213,13 +213,6 @@ export class SkillRpcHandler {
     const result = await client.request<GatewaySkillStatus>('skills.status', {
       agentId,
     });
-    console.log('[OpenClawRuntime] getSkillsStatus response:', {
-      workspaceDir: result.workspaceDir,
-      managedSkillsDir: result.managedSkillsDir,
-      skillCount: result.skills?.length || 0,
-      firstSkillPath: result.skills?.[0]?.filePath,
-      firstSkillBaseDir: result.skills?.[0]?.baseDir,
-    });
     return result;
   }
 

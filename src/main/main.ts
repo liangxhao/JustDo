@@ -1885,20 +1885,9 @@ if (!gotTheLock) {
       ? path.join(process.resourcesPath, 'cfmind', 'skills')
       : path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'skills');
 
-    // Debug: Log resolver initialization
-    console.log('[Skills] createSkillPathResolver initialized:', {
-      stateDir,
-      userSkillsDir,
-      bundledSkillsDir,
-      isPackaged: app.isPackaged,
-      userSkillsDirExists: fs.existsSync(userSkillsDir),
-      bundledSkillsDirExists: fs.existsSync(bundledSkillsDir),
-    });
-
     return (entry: import('./libs/agentEngine/types').GatewaySkillEntry): string => {
       // First check if filePath from Gateway is valid
       if (entry.filePath && fs.existsSync(entry.filePath)) {
-        console.log(`[Skills] Skill ${entry.skillKey}: Gateway filePath valid: ${entry.filePath}`);
         return entry.filePath;
       }
 
@@ -1940,21 +1929,6 @@ if (!gotTheLock) {
         };
       }
       const status = await adapter.getSkillsStatus();
-      // Debug: Log Gateway response for skills
-      console.log('[Skills] Gateway skills.status response:', {
-        workspaceDir: status.workspaceDir,
-        managedSkillsDir: status.managedSkillsDir,
-        skillCount: status.skills.length,
-        firstSkill: status.skills[0]
-          ? {
-              skillKey: status.skills[0].skillKey,
-              filePath: status.skills[0].filePath,
-              baseDir: status.skills[0].baseDir,
-              source: status.skills[0].source,
-              bundled: status.skills[0].bundled,
-            }
-          : null,
-      });
       const resolveSkillPath = createSkillPathResolver();
       const skills = status.skills.map(entry => ({
         id: entry.skillKey,
