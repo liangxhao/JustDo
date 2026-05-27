@@ -1,6 +1,11 @@
 /**
- * Shared gateway types used by connectionManager, event handlers, and the main adapter.
+ * Shared gateway types for the simplified v2026.5.22 adapter.
+ *
+ * Replaces the 22-field ActiveTurn with an 8-field SessionTurn,
+ * aligned with openclaw webchat's ChatState pattern.
  */
+
+// ─── Gateway Client ─────────────────────────────────────────────────────────
 
 export type GatewayEventFrame = {
   event: string;
@@ -20,6 +25,8 @@ export type GatewayClientLike = {
 
 export type GatewayClientCtor = new (options: Record<string, unknown>) => GatewayClientLike;
 
+// ─── Chat Events ────────────────────────────────────────────────────────────
+
 export type ChatEventState = 'delta' | 'final' | 'aborted' | 'error';
 
 export type ChatEventPayload = {
@@ -31,20 +38,22 @@ export type ChatEventPayload = {
   stopReason?: string;
 };
 
+// ─── Agent Events ───────────────────────────────────────────────────────────
+
 export type AgentEventPayload = {
   seq?: number;
   runId?: string;
   sessionKey?: string;
-  /** Alternative field name used by some gateway events (e.g., agent lifecycle events) */
   session?: string;
   stream?: string;
   data?: unknown;
-  /** Gateway tool event fields: tool='result:sessions_spawn', call='toolCallId', meta='label xxx' */
   tool?: string;
   call?: string;
   meta?: string;
   err?: boolean;
 };
+
+// ─── Approval Events ────────────────────────────────────────────────────────
 
 export type ExecApprovalRequestedPayload = {
   id?: string;
@@ -64,59 +73,47 @@ export type ExecApprovalResolvedPayload = {
   id?: string;
 };
 
-export type TextStreamMode = 'unknown' | 'snapshot' | 'delta';
+// ─── Tool Stream (aligned with openclaw webchat app-tool-stream.ts) ─────────
 
-export type BufferedChatEvent = {
-  payload: unknown;
-  seq: number | undefined;
-  bufferedAt: number;
+export type ToolStreamEntry = {
+  toolCallId: string;
+  runId: string;
+  sessionKey?: string;
+  name: string;
+  args?: unknown;
+  output?: string;
+  startedAt: number;
+  updatedAt: number;
 };
 
-export type BufferedAgentEvent = {
-  payload: unknown;
-  seq: number | undefined;
-  bufferedAt: number;
-};
+// ─── Session Turn (replaces 22-field ActiveTurn) ────────────────────────────
 
-export type ChannelHistorySyncEntry = {
-  role: 'user' | 'assistant';
-  text: string;
-};
-
-export type ActiveTurn = {
+/**
+ * Per-session turn state, aligned with openclaw webchat's ChatState.
+ * One SessionTurn per active session, not 25+ scattered Maps.
+ */
+export type SessionTurn = {
   sessionId: string;
   sessionKey: string;
   runId: string;
   turnToken: number;
-  knownRunIds: Set<string>;
-  assistantMessageId: string | null;
-  committedAssistantText: string;
-  currentAssistantSegmentText: string;
-  currentText: string;
-  /** Highest text length from agent assistant events (immune to chat delta noise). */
-  agentAssistantTextLength: number;
-  currentContentText: string;
-  currentContentBlocks: string[];
-  sawNonTextContentBlocks: boolean;
-  textStreamMode: TextStreamMode;
-  toolUseMessageIdByToolCallId: Map<string, string>;
-  toolResultMessageIdByToolCallId: Map<string, string>;
-  toolResultTextByToolCallId: Map<string, string>;
+  /** Full accumulated text from chat delta events (gateway sends snapshot, not增量). */
+  chatStream: string;
+  chatStreamStartedAt: number;
+  /** Tool stream entries keyed by toolCallId. */
+  toolStreamById: Map<string, ToolStreamEntry>;
+  toolStreamOrder: string[];
+  /** Committed text segments (before each tool call). */
+  chatStreamSegments: Array<{ text: string; timestamp: number }>;
+  /** Accumulated thinking content. */
+  thinkingContent: string;
+  thinkingMessageId: string | null;
+  /** Whether the user requested a stop. */
   stopRequested: boolean;
-  /** True while async user message prefetch is in progress for channel sessions. */
-  pendingUserSync: boolean;
-  /** Chat events buffered while pendingUserSync is true. */
-  bufferedChatPayloads: BufferedChatEvent[];
-  /** Agent events buffered while pendingUserSync is true. */
-  bufferedAgentPayloads: BufferedAgentEvent[];
-  /** Client-side timeout watchdog timer (fallback for missing gateway abort events). */
-  timeoutTimer?: ReturnType<typeof setTimeout>;
-  /** Message ID for current thinking stream (created on first thinking event). */
-  currentThinkingMessageId: string | null;
-  /** Accumulated thinking content for current stream. */
-  currentThinkingContent: string;
-  /** True when thinking stream has ended (first text or non-thinking event received). */
-  thinkingStreamEnded: boolean;
-  /** Model name for this turn's assistant messages (captured at turn start). */
+  /** Message ID of the current streaming assistant message. */
+  assistantMessageId: string | null;
+  /** Model name for this turn. */
   modelName: string;
+  /** Set of known runIds for this turn (main + announce). */
+  knownRunIds: Set<string>;
 };

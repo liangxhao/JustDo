@@ -17,15 +17,13 @@ import { isManagedSessionKey } from '../../openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../../openclawHistory';
 import type {
   GatewayClientLike,
-  ActiveTurn,
+  SessionTurn,
 } from '../gateway/types';
 import {
   isRecord,
-  sleep,
   extractMessageText,
   stripDiscordMentions,
   extractSentFilePathsFromHistory,
-  extractCurrentTurnAssistantText,
   extractToolText,
   FINAL_HISTORY_SYNC_LIMIT,
 } from '../utils/gatewayHelpers';
@@ -59,7 +57,7 @@ export interface HistoryReconcilerCallbacks {
   isCurrentTurnToken: (sessionId: string, turnToken: number) => boolean;
 
   // Assistant text resolution
-  resolveAssistantSegmentText: (turn: ActiveTurn, fullText: string) => string;
+  resolveAssistantSegmentText: (turn: SessionTurn, fullText: string) => string;
 
   // Message reuse
   reuseFinalAssistantMessage: (sessionId: string, content: string) => string | null;
@@ -797,231 +795,4 @@ export class HistoryReconciler {
     }
   }
 
-  async syncFinalAssistantWithHistory(sessionId: string, turn: ActiveTurn): Promise<void> {
-    console.log('[Debug:syncFinal] start — sessionId:', sessionId, 'sessionKey:', turn.sessionKey);
-    const client = this.callbacks.getGatewayClient();
-    if (!client) {
-      console.log('[Debug:syncFinal] no gateway client, skipping');
-      return;
-    }
-
-    try {
-      const retryDelaysMs = [0, 120, 250, 500];
-      let historyMessages: unknown[] | null = null;
-      let canonicalText = '';
-      let isChannel = false;
-
-      for (const delayMs of retryDelaysMs) {
-        if (delayMs > 0) {
-          await sleep(delayMs);
-        }
-
-        const history = await client.request<{ messages?: unknown[] }>('chat.history', {
-          sessionKey: turn.sessionKey,
-          limit: FINAL_HISTORY_SYNC_LIMIT,
-        });
-        const msgCount = Array.isArray(history?.messages) ? history.messages.length : 0;
-        console.log(
-          '[Debug:syncFinal] chat.history returned',
-          msgCount,
-          'messages',
-          `afterDelay=${delayMs}`,
-        );
-        if (!Array.isArray(history?.messages) || history.messages.length === 0) {
-          this.callbacks.setGatewayHistoryCount(sessionId, 0);
-          continue;
-        }
-
-        historyMessages = history.messages;
-        const previousHistoryCountKnown = this.callbacks.hasGatewayHistoryCount(sessionId);
-        const previousHistoryCount = this.callbacks.getGatewayHistoryCount(sessionId) ?? 0;
-        this.syncSystemMessagesFromHistory(sessionId, history.messages, {
-          previousCountKnown: previousHistoryCountKnown,
-          previousCount: previousHistoryCount,
-        });
-
-        // Debug: dump all history message roles and content types
-        for (let i = 0; i < history.messages.length; i++) {
-          const m = history.messages[i] as Record<string, unknown>;
-          if (!isRecord(m)) continue;
-          const r = typeof m.role === 'string' ? m.role : '?';
-          let contentSummary: string;
-          if (Array.isArray(m.content)) {
-            const types = (m.content as Array<Record<string, unknown>>)
-              .filter(isRecord)
-              .map(b => b.type);
-            contentSummary = `blocks:[${types.join(',')}]`;
-          } else if (typeof m.content === 'string') {
-            contentSummary = `text(${(m.content as string).length})`;
-          } else {
-            contentSummary = String(typeof m.content);
-          }
-          console.log(`[Debug:syncFinal:history] [${i}] role=${r} content=${contentSummary}`);
-          if (r !== 'user' && Array.isArray(m.content)) {
-            for (const block of m.content as Array<Record<string, unknown>>) {
-              if (
-                isRecord(block) &&
-                typeof block.type === 'string' &&
-                block.type !== 'text' &&
-                block.type !== 'thinking'
-              ) {
-                console.log(
-                  `[Debug:syncFinal:history] [${i}] block:`,
-                  JSON.stringify(block).slice(0, 800),
-                );
-              }
-            }
-          }
-        }
-
-        isChannel = Boolean(
-          !isManagedSessionKey(turn.sessionKey) &&
-            this.callbacks.isChannelSessionKey(turn.sessionKey)
-        );
-        if (isChannel) {
-          const latestOnly = this.callbacks.isReCreatedChannelSession(sessionId);
-          this.callbacks.syncChannelUserMessages(
-            sessionId,
-            history.messages,
-            latestOnly,
-            turn.sessionKey.includes(':discord:'),
-          );
-        }
-
-        if (!this.callbacks.isCurrentTurnToken(sessionId, turn.turnToken)) {
-          console.log(
-            '[Debug:syncFinal] stale turn token, skipping assistant text alignment for sessionId:',
-            sessionId,
-            'turnToken:',
-            turn.turnToken,
-          );
-          return;
-        }
-
-        if (isChannel) {
-          canonicalText = extractCurrentTurnAssistantText(history.messages);
-        } else {
-          for (let index = history.messages.length - 1; index >= 0; index -= 1) {
-            const message = history.messages[index];
-            if (!isRecord(message)) continue;
-            const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
-            if (role !== 'assistant') continue;
-            canonicalText = extractMessageText(message).trim();
-            if (canonicalText) {
-              break;
-            }
-          }
-        }
-
-        if (canonicalText) {
-          break;
-        }
-      }
-
-      // Patch tool result messages with content from history (gateway tool events
-      // do not include the actual output text).
-      if (historyMessages) {
-        this.patchToolResultsFromHistory(sessionId, historyMessages);
-        // Patch tool_use args from history (gateway tool events don't include args)
-        this.patchToolUseArgsFromHistory(sessionId, historyMessages);
-      }
-
-      if (!historyMessages || !canonicalText) {
-        console.log('[Debug:syncFinal] no canonical assistant text found in history');
-        return;
-      }
-
-      // For channel sessions, append file paths from "message" tool calls as clickable links
-      if (isChannel) {
-        const sentFilePaths = extractSentFilePathsFromHistory(historyMessages);
-        if (sentFilePaths.length > 0) {
-          console.log('[Debug:syncFinal] found sent file paths:', sentFilePaths);
-          const fileLinks = sentFilePaths.map(fp => `[${path.basename(fp)}](${fp})`).join('\n');
-          canonicalText = `${canonicalText}\n\n${fileLinks}`;
-        }
-      }
-
-      console.log(
-        '[Debug:syncFinal] canonicalText length:',
-        canonicalText.length,
-        'assistantMessageId:',
-        turn.assistantMessageId,
-      );
-
-      const canonicalSegmentText = this.callbacks.resolveAssistantSegmentText(turn, canonicalText);
-      console.debug(
-        '[Debug:syncFinal] canonicalSegmentText length:',
-        canonicalSegmentText.length,
-        'committed.length:',
-        turn.committedAssistantText.length,
-        'segment:',
-        canonicalSegmentText.slice(0, 80),
-      );
-      turn.currentText = canonicalText;
-      turn.currentAssistantSegmentText = canonicalSegmentText;
-
-      // Handle "NO_REPLY" special marker: clear any previously created message
-      // If canonicalSegmentText is empty (filtered out "NO_REPLY"), we should
-      // delete any message created during streaming that may have partial marker content
-      if (!canonicalSegmentText) {
-        if (turn.assistantMessageId) {
-          // Delete the message created during streaming (may have "NO" partial marker)
-          this.callbacks.deleteMessage(sessionId, turn.assistantMessageId);
-          this.callbacks.emit('messageDelete', sessionId, turn.assistantMessageId);
-          turn.assistantMessageId = null;
-        }
-        return;
-      }
-
-      if (!turn.assistantMessageId) {
-        const reusedMessageId = this.callbacks.reuseFinalAssistantMessage(sessionId, canonicalSegmentText);
-        if (reusedMessageId) {
-          turn.assistantMessageId = reusedMessageId;
-          return;
-        }
-
-        const assistantMessage = this.callbacks.addMessage(sessionId, {
-          type: 'assistant',
-          content: canonicalSegmentText,
-          metadata: {
-            isStreaming: false,
-            isFinal: true,
-          },
-          modelName: turn.modelName,
-        });
-        turn.assistantMessageId = assistantMessage.id;
-        this.callbacks.emit('message', sessionId, assistantMessage);
-        return;
-      }
-
-      const session = this.callbacks.getSession(sessionId);
-      const currentMessage = session?.messages.find(
-        message => message.id === turn.assistantMessageId,
-      );
-      const currentText = currentMessage?.content.trim() ?? '';
-      if (canonicalSegmentText === currentText) {
-        // Content matches but renderer may not have received the last throttled update.
-        // Force-emit so the UI shows the final text.
-        this.callbacks.emit('messageUpdate', sessionId, turn.assistantMessageId, canonicalSegmentText);
-        return;
-      }
-
-      console.debug(
-        '[Debug:syncFinal] updating last segment:',
-        currentText.length,
-        '->',
-        canonicalSegmentText.length,
-      );
-      this.callbacks.updateMessage(sessionId, turn.assistantMessageId, {
-        content: canonicalSegmentText,
-        metadata: {
-          isStreaming: false,
-          isFinal: true,
-        },
-      });
-      this.callbacks.emit('messageUpdate', sessionId, turn.assistantMessageId, canonicalSegmentText);
-    } catch (error) {
-      console.warn('[OpenClawRuntime] chat.history sync after final failed:', error);
-    }
-  }
 }

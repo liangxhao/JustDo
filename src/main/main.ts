@@ -1309,7 +1309,6 @@ const getCoworkEngineRouter = () => {
       );
     }
     coworkEngineRouter = new CoworkEngineRouter({
-      getCurrentEngine: resolveCoworkAgentEngine,
       openclawRuntime: openClawRuntimeAdapter,
     });
   }
