@@ -534,6 +534,9 @@ export class OpenClawConfigSync {
       gateway: {
         mode: 'local',
         bind: 'loopback',
+        controlUi: {
+          dangerouslyDisableDeviceAuth: true,
+        },
       },
       models: {
         mode: 'replace',
@@ -1016,6 +1019,9 @@ export class OpenClawConfigSync {
     const minimalConfig: Record<string, unknown> = {
       gateway: {
         mode: 'local',
+        controlUi: {
+          dangerouslyDisableDeviceAuth: true,
+        },
       },
       // Don't enable plugins in minimal config — plugin loading via jiti happens
       // synchronously BEFORE the HTTP server binds, and can block gateway startup

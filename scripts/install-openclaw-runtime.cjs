@@ -15,6 +15,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { patchOpenClawThinkingStream } = require('./patch-openclaw-thinking-stream.cjs');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -163,30 +164,36 @@ fs.mkdirSync(extractDir, { recursive: true });
     patchFacadeRuntime(outDir);
 
     // ---------------------------------------------------------------------------
-    // 7. Process skills
+    // 7. Patch compiled OpenClaw dist for GucciAI integration
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [5/7] Processing skills...`);
+    console.log(`[install-openclaw-runtime] [5/8] Patching thinking stream support...`);
+    patchOpenClawThinkingStream(outDir, { label: 'install-openclaw-runtime' });
+
+    // ---------------------------------------------------------------------------
+    // 8. Process skills
+    // ---------------------------------------------------------------------------
+    console.log(`[install-openclaw-runtime] [6/8] Processing skills...`);
     processSkills(rootDir, outDir);
 
     // ---------------------------------------------------------------------------
-    // 8. Install production dependencies
+    // 9. Install production dependencies
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [6/7] Installing production dependencies...`);
+    console.log(`[install-openclaw-runtime] [7/8] Installing production dependencies...`);
     installProdDeps(outDir, npmTargetPlatform, targetArch);
 
     // ---------------------------------------------------------------------------
-    // 9. Pack gateway.asar
+    // 10. Pack gateway.asar
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [7/7] Packing gateway.asar...`);
+    console.log(`[install-openclaw-runtime] [8/8] Packing gateway.asar...`);
     await packGatewayAsar(rootDir, outDir);
 
     // ---------------------------------------------------------------------------
-    // 10. Sanity checks
+    // 11. Sanity checks
     // ---------------------------------------------------------------------------
     verifyRuntimeLayout(outDir);
 
     // ---------------------------------------------------------------------------
-    // 11. Save runtime-build-info.json
+    // 12. Save runtime-build-info.json
     // ---------------------------------------------------------------------------
     const buildMeta = {
       builtAt: new Date().toISOString(),
@@ -203,7 +210,7 @@ fs.mkdirSync(extractDir, { recursive: true });
     console.log(`[install-openclaw-runtime] Done. Runtime: ${outDir}`);
   } finally {
     // ---------------------------------------------------------------------------
-    // 12. Cleanup
+    // 13. Cleanup
     // ---------------------------------------------------------------------------
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });

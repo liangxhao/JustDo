@@ -2751,6 +2751,9 @@ if (!gotTheLock) {
       if (!openClawRuntimeAdapter) {
         return { success: false, error: 'OpenClaw runtime adapter not available' };
       }
+      if (openClawRuntimeAdapter.hasActiveSessions()) {
+        return { success: false, error: 'Context usage is unavailable while a session is running' };
+      }
       const gatewayClient = openClawRuntimeAdapter.getGatewayClient();
       if (!gatewayClient) {
         return { success: false, error: 'Gateway client not connected' };

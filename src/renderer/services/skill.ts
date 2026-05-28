@@ -46,6 +46,9 @@ class SkillService {
   private localSkillDescriptions: Map<string, string | LocalizedText> = new Map();
   private marketplaceSkillDescriptions: Map<string, string | LocalizedText> = new Map();
   private gatewayOffline = false;
+  private loadPromise: Promise<Skill[]> | null = null;
+  private lastLoadedAt = 0;
+  private static readonly CACHE_TTL_MS = 30_000;
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -54,11 +57,25 @@ class SkillService {
   }
 
   async loadSkills(): Promise<Skill[]> {
+    const now = Date.now();
+    if (this.loadPromise) return this.loadPromise;
+    if (this.skills.length > 0 && now - this.lastLoadedAt < SkillService.CACHE_TTL_MS) {
+      return this.skills;
+    }
+
+    this.loadPromise = this.fetchSkills().finally(() => {
+      this.loadPromise = null;
+    });
+    return this.loadPromise;
+  }
+
+  private async fetchSkills(): Promise<Skill[]> {
     try {
       const result: SkillListResult = await window.electron.skills.list();
       if (result.success && result.skills) {
         this.skills = result.skills;
         this.gatewayOffline = false;
+        this.lastLoadedAt = Date.now();
       } else {
         this.skills = [];
         this.gatewayOffline = result.gatewayOffline || false;

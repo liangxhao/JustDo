@@ -73,6 +73,7 @@ const MESSAGE_UPDATE_THROTTLE_MS = 200;
 const CLIENT_TIMEOUT_GRACE_MS = 30_000;
 const GATEWAY_RECONNECT_MAX_ATTEMPTS = 10;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
+const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -122,6 +123,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayClientVersion: string | null = null;
   private gatewayClientEntryPath: string | null = null;
   private pendingGatewayClient: GatewayClientLike | null = null;
+  private readonly intentionallyStoppedGatewayClients = new WeakSet<object>();
   private gatewayReadyPromise: Promise<void> | null = null;
   private gatewayClientInitLock: Promise<void> | null = null;
   private gatewayStoppingIntentionally = false;
@@ -406,6 +408,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     });
     this.sessionIdByRunId.set(runId, sessionId);
     this.startTurnTimeoutWatchdog(sessionId);
+    this.lastAgentActivityTimestamp = Date.now();
 
     const client = this.requireGatewayClient();
     try {
@@ -577,6 +580,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           });
           this.emit('messageUpdate', sessionId, turn.assistantMessageId, finalText);
         } else {
+          const duplicate = this.findRecentAssistantByContent(sessionId, finalText);
+          if (duplicate) {
+            this.store.updateMessage(sessionId, duplicate.id, {
+              content: finalText,
+              metadata: { ...duplicate.metadata, isStreaming: false, isFinal: true, modelName: turn.modelName },
+            });
+            this.emit('messageMetadataUpdate', sessionId, duplicate.id, {
+              ...duplicate.metadata,
+              isStreaming: false,
+              isFinal: true,
+              modelName: turn.modelName,
+            });
+            reconcileTerminalRun('idle');
+            return;
+          }
           // Create final message
           const msg = this.store.addMessage(sessionId, {
             type: 'assistant',
@@ -639,18 +657,32 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const data = isRecord(p.data) ? p.data : {};
 
-    // Thinking stream — stored as assistant message with thinkingContent field
+    // Thinking stream — OpenClaw's `text` is the reliable accumulated snapshot.
+    // Its `delta` can be provider-shaped, so compute our own UI delta from the snapshot.
     if (stream === 'thinking') {
-      const thinkingText = typeof data.thinking === 'string' ? data.thinking :
-        typeof data.text === 'string' ? data.text : '';
-      if (thinkingText) {
-        turn.thinkingContent += thinkingText;
+      const thinkingSnapshot =
+        typeof data.thinking === 'string'
+          ? data.thinking
+          : typeof data.text === 'string'
+            ? data.text
+            : '';
+      const fallbackDelta = typeof data.delta === 'string' ? data.delta : '';
+      const nextThinkingContent = thinkingSnapshot || `${turn.thinkingContent}${fallbackDelta}`;
+      const thinkingDelta =
+        thinkingSnapshot && thinkingSnapshot.startsWith(turn.thinkingContent)
+          ? thinkingSnapshot.slice(turn.thinkingContent.length)
+          : !thinkingSnapshot && fallbackDelta
+            ? fallbackDelta
+            : nextThinkingContent;
+
+      if (nextThinkingContent) {
+        turn.thinkingContent = nextThinkingContent;
         if (!turn.thinkingMessageId) {
           const msg = this.store.addMessage(sessionId, {
             type: 'assistant',
             content: '',
             thinkingContent: turn.thinkingContent,
-            metadata: { isStreaming: true },
+            metadata: { isStreaming: true, isThinking: true },
           });
           turn.thinkingMessageId = msg.id;
           this.emit('message', sessionId, msg);
@@ -658,9 +690,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.store.updateMessage(sessionId, turn.thinkingMessageId, {
             content: '',
             thinkingContent: turn.thinkingContent,
-            metadata: { isStreaming: true },
+            metadata: { isStreaming: true, isThinking: true },
           });
-          this.emit('messageUpdate', sessionId, turn.thinkingMessageId, turn.thinkingContent);
+          if (thinkingDelta) {
+            this.emit('thinkingUpdate', sessionId, turn.thinkingMessageId, thinkingDelta);
+          }
         }
       }
       return;
@@ -668,6 +702,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Assistant text stream
     if (stream === 'assistant') {
+      this.finalizeThinkingSegment(sessionId, turn);
       const text = typeof data.text === 'string' ? data.text : '';
       if (text && !isNoReply(text)) {
         turn.chatStream = text;
@@ -698,6 +733,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (stream === 'item') return;
   }
 
+  private finalizeThinkingSegment(sessionId: string, turn: SessionTurn): void {
+    if (!turn.thinkingMessageId) return;
+    this.store.updateMessage(sessionId, turn.thinkingMessageId, {
+      metadata: { isStreaming: false, isThinking: true },
+    });
+    this.emit('messageMetadataUpdate', sessionId, turn.thinkingMessageId, {
+      isStreaming: false,
+      isThinking: true,
+    });
+    turn.thinkingMessageId = null;
+    turn.thinkingContent = '';
+  }
+
+  private findRecentAssistantByContent(sessionId: string, content: string): CoworkMessage | null {
+    const normalized = content.trim();
+    if (!normalized) return null;
+    const session = this.store.getSession(sessionId);
+    if (!session) return null;
+    for (let index = session.messages.length - 1; index >= 0; index--) {
+      const message = session.messages[index];
+      if (message.type !== 'assistant') continue;
+      if (message.metadata?.isThinking) continue;
+      if (message.content.trim() === normalized) return message;
+    }
+    return null;
+  }
+
   private handleToolStreamEvent(sessionId: string, turn: SessionTurn, data: Record<string, unknown>): void {
     const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
     if (!toolCallId) return;
@@ -712,6 +774,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     let entry = turn.toolStreamById.get(toolCallId);
 
     if (!entry) {
+      this.finalizeThinkingSegment(sessionId, turn);
+
       // Commit in-progress chat text as segment (webchat pattern)
       if (turn.chatStream && turn.chatStream.trim().length > 0) {
         turn.chatStreamSegments.push({ text: turn.chatStream, timestamp: now });
@@ -888,7 +952,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const turn = this.activeTurns.get(sessionId);
     if (turn) {
       if (turn.thinkingMessageId) {
-        this.store.updateMessage(sessionId, turn.thinkingMessageId, { metadata: { isStreaming: false } });
+        this.store.updateMessage(sessionId, turn.thinkingMessageId, {
+          metadata: { isStreaming: false, isThinking: true },
+        });
       }
       if (turn.assistantMessageId) {
         this.clearPendingMessageUpdate(turn.assistantMessageId);
@@ -1104,11 +1170,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
-    this.stopGatewayClient();
-    await this.createGatewayClient(connection);
-    if (this.gatewayReadyPromise) {
-      await waitWithTimeout(this.gatewayReadyPromise, GATEWAY_READY_TIMEOUT_MS);
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < GATEWAY_CONNECT_RETRY_DELAYS.length; attempt++) {
+      this.stopGatewayClient();
+      try {
+        await this.createGatewayClient(connection);
+        if (this.gatewayReadyPromise) {
+          await waitWithTimeout(this.gatewayReadyPromise, GATEWAY_READY_TIMEOUT_MS);
+        }
+        return;
+      } catch (error) {
+        lastError = error;
+        const delay = GATEWAY_CONNECT_RETRY_DELAYS[attempt];
+        if (attempt < GATEWAY_CONNECT_RETRY_DELAYS.length - 1) {
+          console.warn(
+            `[OpenClawRuntime] Gateway client handshake failed; retrying in ${delay}ms:`,
+            error,
+          );
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
     }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private async createGatewayClient(connection: OpenClawGatewayConnectionInfo): Promise<void> {
@@ -1147,6 +1230,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       },
       onConnectError: (error: Error) => settleReject(error),
       onClose: (_code: number, reason: string) => {
+        const isCurrentClient = this.gatewayClient === client || this.pendingGatewayClient === client;
+        if (!isCurrentClient || this.intentionallyStoppedGatewayClients.has(client)) {
+          return;
+        }
         if (!settled) {
           this.pendingGatewayClient = null;
           settleReject(new Error(reason || 'OpenClaw gateway disconnected before handshake'));
@@ -1184,6 +1271,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.cancelGatewayReconnect();
     this.stopTickWatchdog();
     const clientToStop = this.gatewayClient ?? this.pendingGatewayClient;
+    if (clientToStop) {
+      this.intentionallyStoppedGatewayClients.add(clientToStop);
+    }
     try { clientToStop?.stop(); } catch (error) { console.warn('[OpenClawRuntime] Failed to stop gateway client:', error); }
     this.gatewayClient = null;
     this.pendingGatewayClient = null;
@@ -1257,6 +1347,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private checkTickHealth(): void {
     if (this.lastTickTimestamp <= 0) return;
     const now = Date.now();
+    if (this.activeTurns.size > 0) {
+      this.lastTickTimestamp = now;
+      return;
+    }
     if (now - this.lastAgentActivityTimestamp <= AGENT_ACTIVITY_ALIVE_WINDOW_MS) {
       this.lastTickTimestamp = now;
       return;

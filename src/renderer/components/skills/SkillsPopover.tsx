@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { CheckIcon } from '@heroicons/react/24/outline';
 import SearchIcon from '../icons/SearchIcon';
 import PuzzleIcon from '../icons/PuzzleIcon';
@@ -7,6 +7,7 @@ import Cog6ToothIcon from '../icons/Cog6ToothIcon';
 import { i18nService } from '../../services/i18n';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
+import { setSkills } from '../../store/slices/skillSlice';
 import { Skill } from '../../types/skill';
 
 interface SkillsPopoverProps {
@@ -28,6 +29,7 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
   const [maxListHeight, setMaxListHeight] = useState(256); // default max-h-64 = 256px
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const dispatch = useDispatch();
   const skills = useSelector((state: RootState) => state.skill.skills);
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
 
@@ -42,6 +44,9 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
   // Calculate available height and focus search input when popover opens
   useEffect(() => {
     if (isOpen) {
+      void skillService.loadSkills().then(loadedSkills => {
+        dispatch(setSkills(loadedSkills));
+      });
       // Calculate available space above the anchor
       if (anchorRef.current) {
         const anchorRect = anchorRef.current.getBoundingClientRect();
@@ -57,7 +62,7 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
     if (!isOpen) {
       setSearchQuery('');
     }
-  }, [isOpen, anchorRef]);
+  }, [isOpen, anchorRef, dispatch]);
 
   // Handle click outside
   useEffect(() => {

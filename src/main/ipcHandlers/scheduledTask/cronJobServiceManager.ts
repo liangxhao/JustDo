@@ -12,6 +12,7 @@ export interface CronJobServiceDeps {
   getOpenClawRuntimeAdapter: () => {
     getGatewayClient: () => GatewayClientLike | null;
     ensureReady: () => Promise<void>;
+    hasActiveSessions?: () => boolean;
   } | null;
 }
 
@@ -34,6 +35,7 @@ export function getCronJobService(): CronJobService {
     cronJobService = new CronJobService({
       getGatewayClient: () => adapter.getGatewayClient(),
       ensureGatewayReady: () => adapter.ensureReady(),
+      isCoworkBusy: () => adapter.hasActiveSessions?.() ?? false,
     });
   }
   return cronJobService;

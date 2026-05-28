@@ -7,7 +7,6 @@ import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
-import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
 import { selectDraftPrompts, selectDraftAttachments } from '../../store/selectors/coworkSelectors';
 import {
@@ -18,7 +17,6 @@ import {
   setDraftPrompt,
 } from '../../store/slices/coworkSlice';
 import { setSelectedModel } from '../../store/slices/modelSlice';
-import { setSkills } from '../../store/slices/skillSlice';
 import { CoworkImageAttachment } from '../../types/cowork';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
@@ -209,25 +207,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const isLarge = size === 'large';
     const minHeight = isLarge ? 60 : 24;
     const maxHeight = isLarge ? 200 : 200;
-
-    // Load skills on mount
-    useEffect(() => {
-      const loadSkills = async () => {
-        const loadedSkills = await skillService.loadSkills();
-        dispatch(setSkills(loadedSkills));
-      };
-      loadSkills();
-    }, [dispatch]);
-
-    useEffect(() => {
-      const unsubscribe = skillService.onSkillsChanged(async () => {
-        const loadedSkills = await skillService.loadSkills();
-        dispatch(setSkills(loadedSkills));
-      });
-      return () => {
-        unsubscribe();
-      };
-    }, [dispatch]);
 
     // Auto-resize textarea
     useEffect(() => {
@@ -909,9 +888,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => window.removeEventListener('config-updated', syncFromConfig);
     }, []);
 
-    // Poll context usage from OpenClaw gateway
+    // Poll context usage from OpenClaw gateway only while idle. The gateway's
+    // sessions.list call can be expensive during an active agent turn.
     useEffect(() => {
-      if (!sessionId) {
+      if (!sessionId || isStreaming) {
         setContextUsage(null);
         return;
       }
@@ -936,8 +916,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         }
       };
       void fetchUsage();
-      const interval = isStreaming ? 1000 : 5000;
-      const timer = setInterval(fetchUsage, interval);
+      const timer = setInterval(fetchUsage, 15000);
       return () => {
         cancelled = true;
         clearInterval(timer);

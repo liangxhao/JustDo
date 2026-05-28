@@ -127,6 +127,7 @@ interface GatewayRunLogEntry {
 interface CronJobServiceDeps {
   getGatewayClient: () => GatewayClientLike | null;
   ensureGatewayReady: () => Promise<void>;
+  isCoworkBusy?: () => boolean;
 }
 
 /**
@@ -416,6 +417,7 @@ function extractRunTitle(summary?: string): string | undefined {
 export class CronJobService {
   private readonly getGatewayClient: () => GatewayClientLike | null;
   private readonly ensureGatewayReady: () => Promise<void>;
+  private readonly isCoworkBusy: () => boolean;
   private pollingTimer: ReturnType<typeof setInterval> | null = null;
   private lastKnownStates: Map<string, string> = new Map();
   private lastKnownRunAtMs: Map<string, number> = new Map();
@@ -429,6 +431,7 @@ export class CronJobService {
   constructor(deps: CronJobServiceDeps) {
     this.getGatewayClient = deps.getGatewayClient;
     this.ensureGatewayReady = deps.ensureGatewayReady;
+    this.isCoworkBusy = deps.isCoworkBusy ?? (() => false);
   }
 
   hasRunningJobs(): boolean {
@@ -459,6 +462,7 @@ export class CronJobService {
 
   private async pollOnce(): Promise<void> {
     if (!this.polling || this.pollOnceInProgress) return;
+    if (this.isCoworkBusy()) return;
     this.pollOnceInProgress = true;
 
     try {
