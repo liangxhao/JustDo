@@ -1,15 +1,16 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { i18nService } from '../../services/i18n';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
 import { coworkService } from '../../services/cowork';
+import { i18nService } from '../../services/i18n';
 import type { CoworkMessage } from '../../types/cowork';
+import { extractCanvasShortcodes } from '../../utils/canvasShortcode';
 import MarkdownContent from '../MarkdownContent';
 import {
-  buildDisplayItems,
   buildConversationTurns,
+  buildDisplayItems,
   hasRenderableAssistantContent,
   ToolCallGroup,
 } from './CoworkSessionDetail';
-import { extractCanvasShortcodes } from '../../utils/canvasShortcode';
 
 // Copy button component for subagent messages
 const CopyButton: React.FC<{
@@ -314,7 +315,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       setLoading(false);
       isFirstLoad.current = false;
     }
-  }, [parentSessionId, agentId, cacheKey]);
+  }, [parentSessionId, agentId, cacheKey, messages.length]);
 
   // Set up streaming listeners when running
   useEffect(() => {
@@ -339,6 +340,43 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
             });
           }
         },
+        onMessageUpdate: (streamAgentId, messageId, content) => {
+          if (streamAgentId !== agentId) return;
+          setMessages(prev => {
+            const updated = prev.map(message =>
+              message.id === messageId ? { ...message, content } : message,
+            );
+            messageCache.set(cacheKey, updated);
+            return updated;
+          });
+        },
+        onThinkingUpdate: (streamAgentId, messageId, thinkingDelta) => {
+          if (streamAgentId !== agentId) return;
+          setMessages(prev => {
+            const updated = prev.map(message =>
+              message.id === messageId
+                ? {
+                    ...message,
+                    thinkingContent: `${message.thinkingContent || ''}${thinkingDelta}`,
+                  }
+                : message,
+            );
+            messageCache.set(cacheKey, updated);
+            return updated;
+          });
+        },
+        onMessageMetadataUpdate: (streamAgentId, messageId, metadata) => {
+          if (streamAgentId !== agentId) return;
+          setMessages(prev => {
+            const updated = prev.map(message =>
+              message.id === messageId
+                ? { ...message, metadata: { ...message.metadata, ...metadata } }
+                : message,
+            );
+            messageCache.set(cacheKey, updated);
+            return updated;
+          });
+        },
       });
 
       return () => {
@@ -360,7 +398,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
         const result = await coworkService.getSubTaskStatus(parentSessionId);
         const currentStatus = result.statuses[agentId];
         if (currentStatus) {
-          setStatus(currentStatus as 'pending' | 'running' | 'done');
+          setStatus(currentStatus);
           if (currentStatus === 'done' && !hasFetchedOnCompletion.current) {
             // Fetch history once when done — prevent double-fetch via the isRunning effect below
             hasFetchedOnCompletion.current = true;

@@ -45,7 +45,7 @@ function patchFile(filePath) {
   return true;
 }
 
-function patchOpenClawThinkingStream(runtimeDir, options = {}) {
+function applyPatch(runtimeDir, options = {}) {
   const candidates = [
     path.join(runtimeDir, 'gateway-bundle.mjs'),
     ...walkJsFiles(path.join(runtimeDir, 'dist')),
@@ -68,18 +68,4 @@ function patchOpenClawThinkingStream(runtimeDir, options = {}) {
   return patched;
 }
 
-if (require.main === module) {
-  const rootDir = path.resolve(__dirname, '..');
-  const runtimeDir = process.argv[2]
-    ? path.resolve(process.argv[2])
-    : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
-
-  if (!fs.existsSync(runtimeDir)) {
-    console.error(`[patch-openclaw-thinking-stream] Runtime not found: ${runtimeDir}`);
-    process.exit(1);
-  }
-
-  patchOpenClawThinkingStream(runtimeDir, { verbose: true });
-}
-
-module.exports = { patchOpenClawThinkingStream };
+module.exports = { applyPatch };

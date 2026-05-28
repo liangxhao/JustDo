@@ -15,7 +15,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { patchOpenClawThinkingStream } = require('./patch-openclaw-thinking-stream.cjs');
+const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -166,8 +166,8 @@ fs.mkdirSync(extractDir, { recursive: true });
     // ---------------------------------------------------------------------------
     // 7. Patch compiled OpenClaw dist for GucciAI integration
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [5/8] Patching thinking stream support...`);
-    patchOpenClawThinkingStream(outDir, { label: 'install-openclaw-runtime' });
+    console.log(`[install-openclaw-runtime] [5/8] Patching OpenClaw integration...`);
+    patchOpenClawRuntime(outDir, { label: 'install-openclaw-runtime' });
 
     // ---------------------------------------------------------------------------
     // 8. Process skills

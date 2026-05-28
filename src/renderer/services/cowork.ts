@@ -772,6 +772,13 @@ class CoworkService {
     parentSessionId: string,
     callbacks: {
       onMessage: (agentId: string, message: CoworkMessage) => void;
+      onMessageUpdate?: (agentId: string, messageId: string, content: string) => void;
+      onThinkingUpdate?: (agentId: string, messageId: string, thinkingDelta: string) => void;
+      onMessageMetadataUpdate?: (
+        agentId: string,
+        messageId: string,
+        metadata: Record<string, unknown>,
+      ) => void;
     },
   ): () => void {
     const cowork = window.electron?.cowork;
@@ -786,6 +793,27 @@ class CoworkService {
       }
     });
     cleanups.push(messageCleanup);
+
+    const messageUpdateCleanup = cowork.onSubagentMessageUpdate?.(data => {
+      if (data.parentSessionId === parentSessionId) {
+        callbacks.onMessageUpdate?.(data.agentId, data.messageId, data.content);
+      }
+    });
+    if (messageUpdateCleanup) cleanups.push(messageUpdateCleanup);
+
+    const thinkingUpdateCleanup = cowork.onSubagentThinkingUpdate?.(data => {
+      if (data.parentSessionId === parentSessionId) {
+        callbacks.onThinkingUpdate?.(data.agentId, data.messageId, data.thinkingDelta);
+      }
+    });
+    if (thinkingUpdateCleanup) cleanups.push(thinkingUpdateCleanup);
+
+    const metadataUpdateCleanup = cowork.onSubagentMessageMetadataUpdate?.(data => {
+      if (data.parentSessionId === parentSessionId) {
+        callbacks.onMessageMetadataUpdate?.(data.agentId, data.messageId, data.metadata);
+      }
+    });
+    if (metadataUpdateCleanup) cleanups.push(metadataUpdateCleanup);
 
     // Return cleanup function
     return () => {

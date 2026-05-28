@@ -1292,6 +1292,59 @@ const bindCoworkRuntimeForwarder = (): void => {
     });
   });
 
+  runtime.on(
+    'subagentMessageUpdate',
+    (parentSessionId: string, agentId: string, messageId: string, content: string) => {
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach(win => {
+        if (win.isDestroyed()) return;
+        win.webContents.send('cowork:subagent:messageUpdate', {
+          parentSessionId,
+          agentId,
+          messageId,
+          content,
+        });
+      });
+    },
+  );
+
+  runtime.on(
+    'subagentThinkingUpdate',
+    (parentSessionId: string, agentId: string, messageId: string, thinkingDelta: string) => {
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach(win => {
+        if (win.isDestroyed()) return;
+        win.webContents.send('cowork:subagent:thinkingUpdate', {
+          parentSessionId,
+          agentId,
+          messageId,
+          thinkingDelta,
+        });
+      });
+    },
+  );
+
+  runtime.on(
+    'subagentMessageMetadataUpdate',
+    (
+      parentSessionId: string,
+      agentId: string,
+      messageId: string,
+      metadata: Partial<CoworkMessage['metadata']>,
+    ) => {
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach(win => {
+        if (win.isDestroyed()) return;
+        win.webContents.send('cowork:subagent:messageMetadataUpdate', {
+          parentSessionId,
+          agentId,
+          messageId,
+          metadata,
+        });
+      });
+    },
+  );
+
   coworkRuntimeForwarderBound = true;
 };
 
@@ -2929,13 +2982,13 @@ if (!gotTheLock) {
 
   ipcMain.handle(
     'cowork:subagent:error',
-    async (
-      _event,
-      options: { parentSessionId: string; agentId: string; sessionKey?: string },
-    ) => {
+    async (_event, options: { parentSessionId: string; agentId: string; sessionKey?: string }) => {
       try {
         if (!openClawRuntimeAdapter) {
-          return { success: false, error: 'Sub-agent error info is only available with the OpenClaw engine.' };
+          return {
+            success: false,
+            error: 'Sub-agent error info is only available with the OpenClaw engine.',
+          };
         }
         const errorInfo = await openClawRuntimeAdapter.getSubagentErrorInfo(
           options.parentSessionId,

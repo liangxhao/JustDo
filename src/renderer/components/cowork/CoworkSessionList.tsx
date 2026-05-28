@@ -1,45 +1,46 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
 import {
   DndContext,
+  DragEndEvent,
   DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  useDroppable,
   useSensor,
   useSensors,
-  useDroppable,
-  PointerSensor,
-  DragStartEvent,
-  DragEndEvent,
 } from '@dnd-kit/core';
-import {
-  selectUnreadSessionIds,
-  selectGroups,
-  selectExpandedGroupIds,
-  selectHideFailedSubagents,
-} from '../../store/selectors/coworkSelectors';
+import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+
+import { coworkService } from '../../services/cowork';
+import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
 import {
-  moveSessionToGroup,
-  toggleGroupExpanded,
-  updateGroup,
+  selectExpandedGroupIds,
+  selectGroups,
+  selectHideFailedSubagents,
+  selectUnreadSessionIds,
+} from '../../store/selectors/coworkSelectors';
+import {
   deleteGroup as deleteGroupAction,
+  moveSessionToGroup,
   reorderGroups,
+  toggleGroupExpanded,
   toggleHideFailedSubagents,
+  updateGroup,
 } from '../../store/slices/coworkSlice';
 import type {
   CoworkSessionSummary,
-  UpdateGroupInput,
   CreateGroupInput,
   SessionGroup,
+  UpdateGroupInput,
 } from '../../types/cowork';
 import CoworkSessionItem from './CoworkSessionItem';
+import CreateGroupModal from './CreateGroupModal';
 import SessionGroupHeader from './SessionGroupHeader';
 import SessionGroupPanel from './SessionGroupPanel';
 import SubAgentList, { SubTaskInfo } from './SubAgentList';
-import CreateGroupModal from './CreateGroupModal';
 import SubTaskDetailDrawer from './SubTaskDetailDrawer';
-import { i18nService } from '../../services/i18n';
-import { coworkService } from '../../services/cowork';
-import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 
 interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
@@ -398,8 +399,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
   useEffect(() => {
     hasRunningRef.current =
-      Object.values(backendStatuses).some(s => s === 'running') ||
-      subTasks.some(t => t.status === 'running');
+      Object.values(backendStatuses).some(s => s === 'running' || s === 'pending') ||
+      subTasks.some(t => t.status === 'running' || t.status === 'pending');
   }, [backendStatuses, subTasks]);
 
   useEffect(() => {

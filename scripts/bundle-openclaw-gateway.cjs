@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { patchOpenClawThinkingStream } = require('./patch-openclaw-thinking-stream.cjs');
+const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
 const runtimeDir = process.argv[2]
@@ -42,7 +42,7 @@ if (fs.existsSync(bundleOutPath)) {
   const entryStat = fs.statSync(entryPath);
   if (bundleStat.mtimeMs > entryStat.mtimeMs) {
     console.log(`[bundle-openclaw-gateway] Bundle is up-to-date, skipping.`);
-    patchOpenClawThinkingStream(runtimeDir, { label: 'bundle-openclaw-gateway' });
+    patchOpenClawRuntime(runtimeDir, { label: 'bundle-openclaw-gateway' });
     process.exit(0);
   }
 }
@@ -117,7 +117,7 @@ esbuild
     },
   })
   .then((result) => {
-    patchOpenClawThinkingStream(runtimeDir, { label: 'bundle-openclaw-gateway' });
+    patchOpenClawRuntime(runtimeDir, { label: 'bundle-openclaw-gateway' });
     const elapsed = Date.now() - t0;
     const sizeKB = Math.round(fs.statSync(bundleOutPath).size / 1024);
     console.log(

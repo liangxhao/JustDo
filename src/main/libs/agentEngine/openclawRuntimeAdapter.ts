@@ -13,7 +13,6 @@ import { t } from '../../i18n';
 import { resolveRawApiConfig } from '../claudeSettings';
 import { getCommandDangerLevel, isDeleteCommand } from '../commandSafety';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
-
 import {
   buildManagedSessionKey,
   type OpenClawChannelSessionSync,
@@ -24,6 +23,20 @@ import {
   type OpenClawGatewayConnectionInfo,
 } from '../openclawEngineManager';
 import { extractGatewayHistoryEntries } from '../openclawHistory';
+import type {
+  AgentEventPayload,
+  ChatEventPayload,
+  ExecApprovalRequestedPayload,
+  ExecApprovalResolvedPayload,
+  GatewayClientCtor,
+  GatewayClientLike,
+  GatewayEventFrame,
+  SessionTurn,
+  ToolStreamEntry,
+} from './gateway/types';
+import { HistoryReconciler } from './history/historyReconciler';
+import { SubtaskHistory } from './history/subtaskHistory';
+import { SkillRpcHandler } from './rpc/skillRpc';
 import type { PermissionResult } from './types';
 import type {
   CoworkContinueOptions,
@@ -32,32 +45,15 @@ import type {
   CoworkStartOptions,
   PermissionRequest,
 } from './types';
-
-import type {
-  GatewayEventFrame,
-  GatewayClientLike,
-  GatewayClientCtor,
-  ChatEventPayload,
-  AgentEventPayload,
-  ExecApprovalRequestedPayload,
-  ExecApprovalResolvedPayload,
-  SessionTurn,
-  ToolStreamEntry,
-} from './gateway/types';
-
-import { HistoryReconciler } from './history/historyReconciler';
-import { SubtaskHistory } from './history/subtaskHistory';
-import { SkillRpcHandler } from './rpc/skillRpc';
-
 import {
-  isRecord,
-  waitWithTimeout,
-  extractMessageText,
-  OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
-  GATEWAY_READY_TIMEOUT_MS,
   CHANNEL_SESSION_DISCOVERY_LIMIT,
+  extractMessageText,
   extractSubagentCompletionMessages,
+  GATEWAY_READY_TIMEOUT_MS,
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
+  isRecord,
+  OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
+  waitWithTimeout,
 } from './utils/gatewayHelpers';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -86,7 +82,10 @@ const extractAssistantText = (message: unknown): string => {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
-      .filter((b): b is Record<string, unknown> => isRecord(b) && b.type === 'text' && typeof b.text === 'string')
+      .filter(
+        (b): b is Record<string, unknown> =>
+          isRecord(b) && b.type === 'text' && typeof b.text === 'string',
+      )
       .map(b => b.text as string)
       .join('');
   }
@@ -101,6 +100,14 @@ type PendingApprovalEntryLocal = {
   allowAlways?: boolean;
 };
 
+type SubagentStreamState = {
+  parentSessionId: string;
+  agentId: string;
+  assistantMessageId: string | null;
+  thinkingMessageId: string | null;
+  thinkingContent: string;
+};
+
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {
   private readonly store: CoworkStore;
   private readonly engineManager: OpenClawEngineManager;
@@ -109,7 +116,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly activeTurns = new Map<string, SessionTurn>();
   private readonly sessionIdBySessionKey = new Map<string, string>();
   private readonly sessionIdByRunId = new Map<string, string>();
-  private readonly pendingTurns = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
+  private readonly pendingTurns = new Map<
+    string,
+    { resolve: () => void; reject: (error: Error) => void }
+  >();
   private readonly confirmationModeBySession = new Map<string, 'modal' | 'text'>();
   private readonly stoppedSessions = new Map<string, number>();
   private readonly manuallyStoppedSessions = new Set<string>();
@@ -156,7 +166,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly toolCallIdToSessionKey = new Map<string, string>();
   private readonly sessionKeyToLabel = new Map<string, string>();
   private readonly toolCallIdToParentSessionId = new Map<string, string>();
-  private readonly subagentMessages = new Map<string, Array<{ role: string; content: string; metadata?: Record<string, unknown> }>>();
+  private readonly subagentMessages = new Map<
+    string,
+    Array<{ role: string; content: string; metadata?: Record<string, unknown> }>
+  >();
+  private readonly subagentStreamByRunId = new Map<string, SubagentStreamState>();
   private readonly orchestrationSessionIds = new Set<string>();
   private readonly mainAgentLifecycleEnded = new Set<string>();
   private readonly toolCallArgs = new Map<string, Record<string, unknown>>();
@@ -176,25 +190,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.historyReconciler = new HistoryReconciler({
       getSession: (id: string) => this.store.getSession(id),
       getAgent: (id: string) => this.store.getAgent(id),
-      addMessage: (id: string, msg: Parameters<CoworkStore['addMessage']>[1]) => this.store.addMessage(id, msg),
-      updateMessage: (id: string, msgId: string, patch: Parameters<CoworkStore['updateMessage']>[2]) =>
-        this.store.updateMessage(id, msgId, patch),
+      addMessage: (id: string, msg: Parameters<CoworkStore['addMessage']>[1]) =>
+        this.store.addMessage(id, msg),
+      updateMessage: (
+        id: string,
+        msgId: string,
+        patch: Parameters<CoworkStore['updateMessage']>[2],
+      ) => this.store.updateMessage(id, msgId, patch),
       deleteMessage: (id: string, msgId: string) => this.store.deleteMessage(id, msgId),
-      replaceConversationMessages: (id: string, entries: Parameters<CoworkStore['replaceConversationMessages']>[1]) =>
-        this.store.replaceConversationMessages(id, entries),
+      replaceConversationMessages: (
+        id: string,
+        entries: Parameters<CoworkStore['replaceConversationMessages']>[1],
+      ) => this.store.replaceConversationMessages(id, entries),
       getGatewayClient: () => this.gatewayClient,
       getGatewayHistoryCount: (id: string) => this.gatewayHistoryCountBySession.get(id),
-      setGatewayHistoryCount: (id: string, count: number) => this.gatewayHistoryCountBySession.set(id, count),
+      setGatewayHistoryCount: (id: string, count: number) =>
+        this.gatewayHistoryCountBySession.set(id, count),
       hasGatewayHistoryCount: (id: string) => this.gatewayHistoryCountBySession.has(id),
       setChannelSyncCursor: (id: string, cursor: number) => this.channelSyncCursor.set(id, cursor),
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
       isCurrentTurnToken: () => true,
       resolveAssistantSegmentText: (_turn: unknown, text: string) => text,
       reuseFinalAssistantMessage: () => null,
-      isChannelSessionKey: (key: string) => this.channelSessionSync?.isChannelSessionKey(key) ?? false,
+      isChannelSessionKey: (key: string) =>
+        this.channelSessionSync?.isChannelSessionKey(key) ?? false,
       isReCreatedChannelSession: (id: string) => this.reCreatedChannelSessionIds.has(id),
-      syncChannelUserMessages: (id: string, msgs: unknown[], latestOnly: boolean, isDiscord: boolean) =>
-        this.syncChannelUserMessages(id, msgs, latestOnly, isDiscord),
+      syncChannelUserMessages: (
+        id: string,
+        msgs: unknown[],
+        latestOnly: boolean,
+        isDiscord: boolean,
+      ) => this.syncChannelUserMessages(id, msgs, latestOnly, isDiscord),
       getFullHistorySyncLimit: () => FULL_HISTORY_SYNC_LIMIT,
     });
 
@@ -223,15 +249,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // ─── Session Lifecycle ──────────────────────────────────────────────────
 
-  override on<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this {
+  override on<U extends keyof CoworkRuntimeEvents>(
+    event: U,
+    listener: CoworkRuntimeEvents[U],
+  ): this {
     return super.on(event, listener);
   }
 
-  override off<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this {
+  override off<U extends keyof CoworkRuntimeEvents>(
+    event: U,
+    listener: CoworkRuntimeEvents[U],
+  ): this {
     return super.off(event, listener);
   }
 
-  async startSession(sessionId: string, prompt: string, options: CoworkStartOptions = {}): Promise<void> {
+  async startSession(
+    sessionId: string,
+    prompt: string,
+    options: CoworkStartOptions = {},
+  ): Promise<void> {
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: options.skipInitialUserMessage,
       skillIds: options.skillIds,
@@ -241,7 +277,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     });
   }
 
-  async continueSession(sessionId: string, prompt: string, options: CoworkContinueOptions = {}): Promise<void> {
+  async continueSession(
+    sessionId: string,
+    prompt: string,
+    options: CoworkContinueOptions = {},
+  ): Promise<void> {
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: false,
       skillIds: options.skillIds,
@@ -257,7 +297,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.pendingSubagentCompletionSessions.delete(sessionId);
       const client = this.gatewayClient;
       if (client) {
-        void client.request('chat.abort', { sessionKey: turn.sessionKey, runId: turn.runId })
+        void client
+          .request('chat.abort', { sessionKey: turn.sessionKey, runId: turn.runId })
           .catch(error => console.warn('[OpenClawRuntime] Failed to abort chat run:', error));
       }
     }
@@ -281,7 +322,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) return;
 
-    const decision = result.behavior !== 'allow' ? 'deny' : pending.allowAlways ? 'allow-always' : 'allow-once';
+    const decision =
+      result.behavior !== 'allow' ? 'deny' : pending.allowAlways ? 'allow-always' : 'allow-once';
     const client = this.gatewayClient;
     if (!client) {
       this.pendingApprovals.delete(requestId);
@@ -291,7 +333,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const sessionId = pending.sessionId;
     const needsContinuation = !pending.allowAlways;
 
-    void client.request('exec.approval.resolve', { id: requestId, decision })
+    void client
+      .request('exec.approval.resolve', { id: requestId, decision })
       .then(() => {
         if (!needsContinuation) return;
         const prompt = decision !== 'deny' ? t('execApprovalApproved') : t('execApprovalDenied');
@@ -299,7 +342,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (!this.store.getSession(sessionId)) return;
           if (!this.isSessionActive(sessionId)) {
             void this.continueSession(sessionId, prompt).catch(error =>
-              console.warn('[OpenClawRuntime] failed to continue session after approval:', error));
+              console.warn('[OpenClawRuntime] failed to continue session after approval:', error),
+            );
             return;
           }
           if (retries > 0) setTimeout(() => tryContinue(retries - 1), 1000);
@@ -354,14 +398,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
-    const confirmationMode = options.confirmationMode ?? this.confirmationModeBySession.get(sessionId) ?? 'modal';
+    const confirmationMode =
+      options.confirmationMode ?? this.confirmationModeBySession.get(sessionId) ?? 'modal';
     this.confirmationModeBySession.set(sessionId, confirmationMode);
 
     if (!options.skipInitialUserMessage) {
-      const metadata = options.skillIds?.length || options.imageAttachments?.length
-        ? { ...(options.skillIds?.length ? { skillIds: options.skillIds } : {}), ...(options.imageAttachments?.length ? { imageAttachments: options.imageAttachments } : {}) }
-        : undefined;
-      const userMessage = this.store.addMessage(sessionId, { type: 'user', content: prompt, metadata });
+      const metadata =
+        options.skillIds?.length || options.imageAttachments?.length
+          ? {
+              ...(options.skillIds?.length ? { skillIds: options.skillIds } : {}),
+              ...(options.imageAttachments?.length
+                ? { imageAttachments: options.imageAttachments }
+                : {}),
+            }
+          : undefined;
+      const userMessage = this.store.addMessage(sessionId, {
+        type: 'user',
+        content: prompt,
+        metadata,
+      });
       this.emit('message', sessionId, userMessage);
     }
 
@@ -413,7 +468,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = this.requireGatewayClient();
     try {
       const attachments = options.imageAttachments?.length
-        ? options.imageAttachments.map(img => ({ type: 'image', mimeType: img.mimeType, content: img.base64Data }))
+        ? options.imageAttachments.map(img => ({
+            type: 'image',
+            mimeType: img.mimeType,
+            content: img.base64Data,
+          }))
         : undefined;
       await client.request('chat.send', {
         sessionKey,
@@ -507,29 +566,49 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const turn = this.activeTurns.get(sessionId);
     if (!turn) return;
 
-    // Foreign run final (subagent announce): append directly, don't touch active run
+    // Foreign run (subagent announce): stream to the subagent drawer and don't touch active run.
     if (runId && turn.runId !== runId && !turn.knownRunIds.has(runId)) {
-      if (state === 'final') {
-        const text = extractAssistantText(p.message);
+      const agentId = this.resolveSubagentToolCallId(sessionId, runId, sessionKey);
+      const text = extractAssistantText(p.message);
+      if (state === 'delta') {
+        this.emitSubagentAssistantSnapshot(sessionId, runId, agentId, text, false);
+      } else if (state === 'final' || state === 'aborted') {
+        let resolvedAgentId = agentId;
         if (text && !isNoReply(text)) {
-          // Split subagent completion messages if present
+          this.emitSubagentAssistantSnapshot(sessionId, runId, agentId, text, true);
           const messages = text.includes(INTERNAL_RUNTIME_CONTEXT_BEGIN)
             ? extractSubagentCompletionMessages(text, Date.now(), 0)
             : [{ type: 'assistant' as const, content: text, timestamp: Date.now() }];
 
           for (const msg of messages) {
+            resolvedAgentId = this.resolveSubagentToolCallIdFromMetadata(
+              sessionId,
+              resolvedAgentId,
+              msg.metadata,
+            );
+            this.updateSubagentStatusFromCompletion(resolvedAgentId, msg.metadata);
             const savedMsg = this.store.addMessage(sessionId, {
               type: msg.type as CoworkMessage['type'],
               content: msg.content,
               metadata: 'metadata' in msg ? msg.metadata : undefined,
             });
             this.emit('message', sessionId, savedMsg);
-            // Forward to subagent drawer for real-time display
-            this.emit('subagentMessage', sessionId, runId, savedMsg);
+            if (msg.type !== 'assistant') {
+              this.emit('subagentMessage', sessionId, resolvedAgentId, savedMsg);
+            }
           }
-          // Mark announce runId as known to prevent duplicate processing
-          turn.knownRunIds.add(runId);
+          if (resolvedAgentId !== agentId) {
+            this.subagentStatus.delete(agentId);
+          }
         }
+        this.finalizeSubagentStream(runId);
+        if (this.subagentStatus.get(resolvedAgentId) !== 'failed') {
+          this.subagentStatus.set(resolvedAgentId, 'done');
+        }
+        turn.knownRunIds.add(runId);
+      } else if (state === 'error') {
+        this.subagentStatus.set(agentId, 'failed');
+        this.finalizeSubagentStream(runId);
       }
       return;
     }
@@ -584,7 +663,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (duplicate) {
             this.store.updateMessage(sessionId, duplicate.id, {
               content: finalText,
-              metadata: { ...duplicate.metadata, isStreaming: false, isFinal: true, modelName: turn.modelName },
+              metadata: {
+                ...duplicate.metadata,
+                isStreaming: false,
+                isFinal: true,
+                modelName: turn.modelName,
+              },
             });
             this.emit('messageMetadataUpdate', sessionId, duplicate.id, {
               ...duplicate.metadata,
@@ -648,6 +732,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const turn = this.activeTurns.get(sessionId);
     if (!turn) return;
+
+    if (runId && turn.runId !== runId && !turn.knownRunIds.has(runId)) {
+      const data = isRecord(p.data) ? p.data : {};
+      const agentId = this.resolveSubagentToolCallId(sessionId, runId, sessionKey);
+      if (stream === 'thinking') {
+        this.emitSubagentThinkingSnapshot(sessionId, runId, agentId, data);
+      } else if (stream === 'assistant') {
+        const text = typeof data.text === 'string' ? data.text : '';
+        this.emitSubagentAssistantSnapshot(sessionId, runId, agentId, text, false);
+      } else if (stream === 'lifecycle') {
+        const phase = typeof data.phase === 'string' ? data.phase : '';
+        if (phase === 'end') {
+          if (this.subagentStatus.get(agentId) !== 'failed')
+            this.subagentStatus.set(agentId, 'done');
+          this.finalizeSubagentStream(runId);
+        } else if (phase === 'error') {
+          this.subagentStatus.set(agentId, 'failed');
+          this.finalizeSubagentStream(runId);
+        }
+      }
+      return;
+    }
 
     // Register runId if new
     if (runId && !turn.knownRunIds.has(runId)) {
@@ -760,15 +866,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return null;
   }
 
-  private handleToolStreamEvent(sessionId: string, turn: SessionTurn, data: Record<string, unknown>): void {
+  private handleToolStreamEvent(
+    sessionId: string,
+    turn: SessionTurn,
+    data: Record<string, unknown>,
+  ): void {
     const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
     if (!toolCallId) return;
 
     const name = typeof data.name === 'string' ? data.name : 'tool';
     const phase = typeof data.phase === 'string' ? data.phase : '';
     const args = phase === 'start' ? data.args : undefined;
-    const output = phase === 'result' ? this.formatToolOutput(data.result) :
-      phase === 'update' ? this.formatToolOutput(data.partialResult) : undefined;
+    const output =
+      phase === 'result'
+        ? this.formatToolOutput(data.result)
+        : phase === 'update'
+          ? this.formatToolOutput(data.partialResult)
+          : undefined;
 
     const now = Date.now();
     let entry = turn.toolStreamById.get(toolCallId);
@@ -822,6 +936,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       metadata: {
         toolName: entry.name,
         toolUseId: entry.toolCallId,
+        toolInput: isRecord(entry.args) ? entry.args : undefined,
         isStreaming: false,
       },
     });
@@ -832,12 +947,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Emit tool_result message
     if (entry.output) {
+      const toolResult = this.parseToolOutputObject(entry.output) ?? undefined;
+      if (entry.name === 'sessions_spawn') {
+        this.updateSubagentFromSpawnResult(sessionId, entry.toolCallId, entry.output);
+      }
       const toolResultMsg = this.store.addMessage(sessionId, {
         type: 'tool_result',
         content: entry.output,
         metadata: {
           toolName: entry.name,
           toolUseId: entry.toolCallId,
+          toolResult,
+          isError:
+            entry.name === 'sessions_spawn' &&
+            this.subagentStatus.get(entry.toolCallId) === 'failed',
           isStreaming: false,
         },
       });
@@ -863,6 +986,261 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.toolCallArgs.set(toolCallId, args as Record<string, unknown>);
   }
 
+  private resolveSubagentToolCallId(
+    parentSessionId: string,
+    runId: string,
+    sessionKey: string,
+  ): string {
+    if (this.toolCallIdToParentSessionId.get(runId) === parentSessionId) return runId;
+    if (sessionKey) {
+      for (const [toolCallId, mappedSessionKey] of this.toolCallIdToSessionKey.entries()) {
+        if (
+          mappedSessionKey === sessionKey &&
+          this.toolCallIdToParentSessionId.get(toolCallId) === parentSessionId
+        ) {
+          return toolCallId;
+        }
+      }
+    }
+    return runId;
+  }
+
+  private resolveSubagentToolCallIdFromMetadata(
+    parentSessionId: string,
+    fallbackToolCallId: string,
+    metadata: Record<string, unknown> | undefined,
+  ): string {
+    const sessionKey = typeof metadata?.sessionKey === 'string' ? metadata.sessionKey : '';
+    if (sessionKey) {
+      for (const [toolCallId, mappedSessionKey] of this.toolCallIdToSessionKey.entries()) {
+        if (
+          mappedSessionKey === sessionKey &&
+          this.toolCallIdToParentSessionId.get(toolCallId) === parentSessionId
+        ) {
+          return toolCallId;
+        }
+      }
+    }
+
+    const taskLabel = typeof metadata?.taskLabel === 'string' ? metadata.taskLabel : '';
+    if (taskLabel) {
+      for (const [toolCallId, label] of this.toolCallIdToLabel.entries()) {
+        if (
+          label === taskLabel &&
+          this.toolCallIdToParentSessionId.get(toolCallId) === parentSessionId
+        ) {
+          return toolCallId;
+        }
+      }
+    }
+
+    return fallbackToolCallId;
+  }
+
+  private emitSubagentAssistantSnapshot(
+    parentSessionId: string,
+    runId: string,
+    agentId: string,
+    content: string,
+    isFinal: boolean,
+  ): void {
+    if (!content || isNoReply(content)) return;
+    let stream = this.subagentStreamByRunId.get(runId);
+    if (!stream) {
+      stream = {
+        parentSessionId,
+        agentId,
+        assistantMessageId: `subagent-stream-${runId}`,
+        thinkingMessageId: null,
+        thinkingContent: '',
+      };
+      this.subagentStreamByRunId.set(runId, stream);
+      this.subagentStatus.set(agentId, 'running');
+      this.emit('subagentMessage', parentSessionId, agentId, {
+        id: stream.assistantMessageId,
+        type: 'assistant',
+        content,
+        timestamp: Date.now(),
+        metadata: { isStreaming: !isFinal, isFinal },
+      });
+      return;
+    }
+    if (!stream.assistantMessageId) {
+      stream.assistantMessageId = `subagent-stream-${runId}`;
+      this.emit('subagentMessage', parentSessionId, agentId, {
+        id: stream.assistantMessageId,
+        type: 'assistant',
+        content,
+        timestamp: Date.now(),
+        metadata: { isStreaming: !isFinal, isFinal },
+      });
+      return;
+    }
+    this.emit(
+      'subagentMessageUpdate',
+      parentSessionId,
+      agentId,
+      stream.assistantMessageId,
+      content,
+    );
+    if (isFinal) {
+      this.emit(
+        'subagentMessageMetadataUpdate',
+        parentSessionId,
+        agentId,
+        stream.assistantMessageId,
+        {
+          isStreaming: false,
+          isFinal: true,
+        },
+      );
+    }
+  }
+
+  private emitSubagentThinkingSnapshot(
+    parentSessionId: string,
+    runId: string,
+    agentId: string,
+    data: Record<string, unknown>,
+  ): void {
+    const stream = this.subagentStreamByRunId.get(runId) ?? {
+      parentSessionId,
+      agentId,
+      assistantMessageId: null,
+      thinkingMessageId: `subagent-thinking-${runId}`,
+      thinkingContent: '',
+    };
+    this.subagentStreamByRunId.set(runId, stream);
+    this.subagentStatus.set(agentId, 'running');
+
+    const thinkingSnapshot =
+      typeof data.thinking === 'string'
+        ? data.thinking
+        : typeof data.text === 'string'
+          ? data.text
+          : '';
+    const fallbackDelta = typeof data.delta === 'string' ? data.delta : '';
+    const nextThinkingContent = thinkingSnapshot || `${stream.thinkingContent}${fallbackDelta}`;
+    const thinkingDelta =
+      thinkingSnapshot && thinkingSnapshot.startsWith(stream.thinkingContent)
+        ? thinkingSnapshot.slice(stream.thinkingContent.length)
+        : !thinkingSnapshot && fallbackDelta
+          ? fallbackDelta
+          : nextThinkingContent;
+
+    if (!nextThinkingContent) return;
+    stream.thinkingContent = nextThinkingContent;
+    if (!stream.thinkingMessageId) {
+      stream.thinkingMessageId = `subagent-thinking-${runId}`;
+    }
+    if (thinkingDelta === nextThinkingContent) {
+      this.emit('subagentMessage', parentSessionId, agentId, {
+        id: stream.thinkingMessageId,
+        type: 'assistant',
+        content: '',
+        thinkingContent: nextThinkingContent,
+        timestamp: Date.now(),
+        metadata: { isStreaming: true, isThinking: true },
+      });
+    } else if (thinkingDelta) {
+      this.emit(
+        'subagentThinkingUpdate',
+        parentSessionId,
+        agentId,
+        stream.thinkingMessageId,
+        thinkingDelta,
+      );
+    }
+  }
+
+  private finalizeSubagentStream(runId: string): void {
+    const stream = this.subagentStreamByRunId.get(runId);
+    if (!stream) return;
+    if (stream.assistantMessageId) {
+      this.emit(
+        'subagentMessageMetadataUpdate',
+        stream.parentSessionId,
+        stream.agentId,
+        stream.assistantMessageId,
+        { isStreaming: false, isFinal: true },
+      );
+    }
+    if (stream.thinkingMessageId) {
+      this.emit(
+        'subagentMessageMetadataUpdate',
+        stream.parentSessionId,
+        stream.agentId,
+        stream.thinkingMessageId,
+        { isStreaming: false, isThinking: true },
+      );
+    }
+    this.subagentStreamByRunId.delete(runId);
+  }
+
+  private updateSubagentFromSpawnResult(
+    parentSessionId: string,
+    toolCallId: string,
+    output: string,
+  ): void {
+    this.toolCallIdToParentSessionId.set(toolCallId, parentSessionId);
+    const parsed = this.parseToolOutputObject(output);
+    const sessionKey = this.extractSpawnedSessionKey(parsed);
+    if (sessionKey) {
+      this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
+      this.sessionKeyToLabel.set(sessionKey, this.toolCallIdToLabel.get(toolCallId) || toolCallId);
+    }
+
+    const status = typeof parsed?.status === 'string' ? parsed.status.toLowerCase() : '';
+    const outcome = typeof parsed?.outcome === 'string' ? parsed.outcome.toLowerCase() : '';
+    const error = typeof parsed?.error === 'string' ? parsed.error : '';
+    const failed =
+      Boolean(error) ||
+      ['error', 'failed', 'forbidden', 'cancelled'].includes(status) ||
+      outcome === 'failed';
+    this.subagentStatus.set(toolCallId, failed ? 'failed' : 'running');
+  }
+
+  private updateSubagentStatusFromCompletion(
+    toolCallId: string,
+    metadata: Record<string, unknown> | undefined,
+  ): void {
+    if (!metadata?.isSubagentCompletion) return;
+    const sessionKey = typeof metadata.sessionKey === 'string' ? metadata.sessionKey : '';
+    if (sessionKey) {
+      this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
+      this.sessionKeyToLabel.set(sessionKey, this.toolCallIdToLabel.get(toolCallId) || toolCallId);
+    }
+    const status = typeof metadata.status === 'string' ? metadata.status.toLowerCase() : '';
+    this.subagentStatus.set(
+      toolCallId,
+      ['error', 'failed', 'cancelled'].includes(status) ? 'failed' : 'done',
+    );
+  }
+
+  private parseToolOutputObject(output: string): Record<string, unknown> | null {
+    try {
+      const parsed = JSON.parse(output);
+      return isRecord(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private extractSpawnedSessionKey(parsed: Record<string, unknown> | null): string | null {
+    if (!parsed) return null;
+    const directKeys = ['childSessionKey', 'sessionKey', 'key'];
+    for (const key of directKeys) {
+      const value = parsed[key];
+      if (typeof value === 'string' && value) return value;
+    }
+    const session = parsed.session;
+    if (isRecord(session)) {
+      const value = session.key ?? session.sessionKey;
+      if (typeof value === 'string' && value) return value;
+    }
+    return null;
+  }
+
   private formatToolOutput(value: unknown): string | null {
     if (value === null || value === undefined) return null;
     if (typeof value === 'string') return value;
@@ -872,12 +1250,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (typeof value.output === 'string') return value.output;
       if (Array.isArray(value.content)) {
         const parts = value.content
-          .filter((b): b is Record<string, unknown> => isRecord(b) && b.type === 'text' && typeof b.text === 'string')
+          .filter(
+            (b): b is Record<string, unknown> =>
+              isRecord(b) && b.type === 'text' && typeof b.text === 'string',
+          )
           .map(b => b.text as string);
         if (parts.length > 0) return parts.join('\n');
       }
     }
-    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
   }
 
   // ─── Approval ───────────────────────────────────────────────────────────
@@ -890,7 +1275,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const request = typedPayload.request;
     const sessionKey = typeof request.sessionKey === 'string' ? request.sessionKey.trim() : '';
-    let sessionId = sessionKey ? (this.resolveSessionIdBySessionKey(sessionKey) ?? undefined) : undefined;
+    let sessionId = sessionKey
+      ? (this.resolveSessionIdBySessionKey(sessionKey) ?? undefined)
+      : undefined;
 
     if (!sessionId && sessionKey && this.channelSessionSync) {
       const channelSessionId =
@@ -1015,9 +1402,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private async resolveActiveTurnConflict(sessionId: string): Promise<void> {
     const session = this.store.getSession(sessionId);
-    if (!session) { this.cleanupSessionTurn(sessionId); return; }
+    if (!session) {
+      this.cleanupSessionTurn(sessionId);
+      return;
+    }
 
-    const isTerminalStatus = session.status === 'completed' || session.status === 'idle' || session.status === 'error';
+    const isTerminalStatus =
+      session.status === 'completed' || session.status === 'idle' || session.status === 'error';
     if (this.mainAgentLifecycleEnded.has(sessionId) || isTerminalStatus) {
       this.cleanupSessionTurn(sessionId);
       return;
@@ -1103,11 +1494,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     this.clearPendingMessageUpdate(messageId);
-    this.pendingMessageUpdateTimer.set(messageId, setTimeout(() => {
-      this.pendingMessageUpdateTimer.delete(messageId);
-      this.lastMessageUpdateEmitTime.set(messageId, Date.now());
-      this.emit('messageUpdate', sessionId, messageId, content);
-    }, MESSAGE_UPDATE_THROTTLE_MS - elapsed));
+    this.pendingMessageUpdateTimer.set(
+      messageId,
+      setTimeout(() => {
+        this.pendingMessageUpdateTimer.delete(messageId);
+        this.lastMessageUpdateEmitTime.set(messageId, Date.now());
+        this.emit('messageUpdate', sessionId, messageId, content);
+      }, MESSAGE_UPDATE_THROTTLE_MS - elapsed),
+    );
   }
 
   private clearPendingMessageUpdate(messageId: string): void {
@@ -1142,7 +1536,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
     this.gatewayClientInitLock = this._ensureGatewayClientReadyImpl();
-    try { await this.gatewayClientInitLock; } finally { this.gatewayClientInitLock = null; }
+    try {
+      await this.gatewayClientInitLock;
+    } finally {
+      this.gatewayClientInitLock = null;
+    }
   }
 
   private async _ensureGatewayClientReadyImpl(): Promise<void> {
@@ -1158,10 +1556,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!connection.version) missing.push('version');
     if (!connection.clientEntryPath) missing.push('clientEntryPath');
     if (missing.length > 0) {
-      throw new Error(`OpenClaw gateway connection info is incomplete (missing: ${missing.join(', ')})`);
+      throw new Error(
+        `OpenClaw gateway connection info is incomplete (missing: ${missing.join(', ')})`,
+      );
     }
 
-    const needsNewClient = !this.gatewayClient ||
+    const needsNewClient =
+      !this.gatewayClient ||
       this.gatewayClientVersion !== connection.version ||
       this.gatewayClientEntryPath !== connection.clientEntryPath;
 
@@ -1208,8 +1609,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       rejectReady = reject;
     });
 
-    const settleResolve = () => { if (settled) return; settled = true; resolveReady?.(); };
-    const settleReject = (error: Error) => { if (settled) return; settled = true; rejectReady?.(error); };
+    const settleResolve = () => {
+      if (settled) return;
+      settled = true;
+      resolveReady?.();
+    };
+    const settleReject = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      rejectReady?.(error);
+    };
 
     const client = new GatewayClient({
       url: connection.url,
@@ -1230,7 +1639,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       },
       onConnectError: (error: Error) => settleReject(error),
       onClose: (_code: number, reason: string) => {
-        const isCurrentClient = this.gatewayClient === client || this.pendingGatewayClient === client;
+        const isCurrentClient =
+          this.gatewayClient === client || this.pendingGatewayClient === client;
         if (!isCurrentClient || this.intentionallyStoppedGatewayClients.has(client)) {
           return;
         }
@@ -1274,7 +1684,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (clientToStop) {
       this.intentionallyStoppedGatewayClients.add(clientToStop);
     }
-    try { clientToStop?.stop(); } catch (error) { console.warn('[OpenClawRuntime] Failed to stop gateway client:', error); }
+    try {
+      clientToStop?.stop();
+    } catch (error) {
+      console.warn('[OpenClawRuntime] Failed to stop gateway client:', error);
+    }
     this.gatewayClient = null;
     this.pendingGatewayClient = null;
     this.gatewayClientVersion = null;
@@ -1322,10 +1736,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     for (const candidate of Object.values(loaded)) {
       if (typeof candidate !== 'function') continue;
-      const maybeCtor = candidate as { name?: string; prototype?: { start?: unknown; stop?: unknown; request?: unknown } };
+      const maybeCtor = candidate as {
+        name?: string;
+        prototype?: { start?: unknown; stop?: unknown; request?: unknown };
+      };
       if (maybeCtor.name === 'GatewayClient') return candidate as GatewayClientCtor;
       const proto = maybeCtor.prototype;
-      if (proto && typeof proto.start === 'function' && typeof proto.stop === 'function' && typeof proto.request === 'function') {
+      if (
+        proto &&
+        typeof proto.start === 'function' &&
+        typeof proto.stop === 'function' &&
+        typeof proto.request === 'function'
+      ) {
         return candidate as GatewayClientCtor;
       }
     }
@@ -1341,7 +1763,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private stopTickWatchdog(): void {
-    if (this.tickWatchdogTimer) { clearInterval(this.tickWatchdogTimer); this.tickWatchdogTimer = null; }
+    if (this.tickWatchdogTimer) {
+      clearInterval(this.tickWatchdogTimer);
+      this.tickWatchdogTimer = null;
+    }
   }
 
   private checkTickHealth(): void {
@@ -1365,13 +1790,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   onSystemResume(): void {
     this.cancelGatewayReconnect();
     this.gatewayReconnectAttempt = 0;
-    if (!this.gatewayClient) { void this.attemptGatewayReconnect(); } else { this.checkTickHealth(); }
+    if (!this.gatewayClient) {
+      void this.attemptGatewayReconnect();
+    } else {
+      this.checkTickHealth();
+    }
   }
 
   // ─── Gateway Reconnect ──────────────────────────────────────────────────
 
   private cancelGatewayReconnect(): void {
-    if (this.gatewayReconnectTimer) { clearTimeout(this.gatewayReconnectTimer); this.gatewayReconnectTimer = null; }
+    if (this.gatewayReconnectTimer) {
+      clearTimeout(this.gatewayReconnectTimer);
+      this.gatewayReconnectTimer = null;
+    }
   }
 
   private scheduleGatewayReconnect(): void {
@@ -1399,7 +1831,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private async discoverChannelSessions(): Promise<void> {
     if (!this.gatewayClient || !this.channelSessionSync) return;
     try {
-      const result = await this.gatewayClient.request('sessions.list', { activeMinutes: 60, limit: CHANNEL_SESSION_DISCOVERY_LIMIT });
+      const result = await this.gatewayClient.request('sessions.list', {
+        activeMinutes: 60,
+        limit: CHANNEL_SESSION_DISCOVERY_LIMIT,
+      });
       const sessions = (result as Record<string, unknown>)?.sessions;
       if (!Array.isArray(sessions)) return;
 
@@ -1443,13 +1878,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (this.fullySyncedSessions.has(sessionId)) return;
     this.fullySyncedSessions.add(sessionId);
     try {
-      await this.historyReconciler.reconcileWithHistory(sessionId, sessionKey, { isFullSync: true });
-    } catch (error) {
+      await this.historyReconciler.reconcileWithHistory(sessionId, sessionKey, {
+        isFullSync: true,
+      });
+    } catch {
       this.fullySyncedSessions.delete(sessionId);
     }
   }
 
-  private syncChannelUserMessages(sessionId: string, historyMessages: unknown[], latestOnly = false, _isDiscord = false): void {
+  private syncChannelUserMessages(
+    sessionId: string,
+    historyMessages: unknown[],
+    latestOnly = false,
+    _isDiscord = false,
+  ): void {
     // Simplified: delegate to store for user message sync
     const session = this.store.getSession(sessionId);
     if (!session) return;
@@ -1460,9 +1902,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (role !== 'user') continue;
       const text = extractMessageText(message).trim();
       if (!text) continue;
-      const alreadyExists = session.messages.some((m: CoworkMessage) => m.type === 'user' && m.content.trim() === text);
+      const alreadyExists = session.messages.some(
+        (m: CoworkMessage) => m.type === 'user' && m.content.trim() === text,
+      );
       if (!alreadyExists) {
-        const userMessage = this.store.addMessage(sessionId, { type: 'user', content: text, metadata: {} });
+        const userMessage = this.store.addMessage(sessionId, {
+          type: 'user',
+          content: text,
+          metadata: {},
+        });
         this.emit('message', sessionId, userMessage);
       }
       if (latestOnly) break;
@@ -1480,7 +1928,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   onSessionDeleted(sessionId: string, agentId?: string): void {
     const removedKeys: string[] = [];
     for (const [key, id] of this.sessionIdBySessionKey.entries()) {
-      if (id === sessionId) { removedKeys.push(key); this.sessionIdBySessionKey.delete(key); }
+      if (id === sessionId) {
+        removedKeys.push(key);
+        this.sessionIdBySessionKey.delete(key);
+      }
     }
     if (removedKeys.length === 0) {
       const effectiveAgentId = agentId || 'main';
@@ -1505,33 +1956,52 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.deleteOpenClawSessionByKeysWithRetry(sessionId, removedKeys).catch(() => {});
   }
 
-  private async deleteOpenClawSessionByKeysWithRetry(_sessionId: string, sessionKeys: string[]): Promise<void> {
+  private async deleteOpenClawSessionByKeysWithRetry(
+    _sessionId: string,
+    sessionKeys: string[],
+  ): Promise<void> {
     if (sessionKeys.length === 0) return;
     const maxWaitMs = 5000;
     const startTime = Date.now();
     while (!this.gatewayClient && Date.now() - startTime < maxWaitMs) {
-      try { await this.ensureGatewayClientReady(); } catch {}
+      try {
+        await this.ensureGatewayClientReady();
+      } catch {
+        // Gateway may still be booting; retry until the short deletion grace window expires.
+      }
       if (!this.gatewayClient) await new Promise(resolve => setTimeout(resolve, 500));
     }
     if (!this.gatewayClient) return;
     try {
-      await Promise.allSettled(sessionKeys.map(key => this.deleteSessionTree(this.gatewayClient!, key)));
-    } catch {}
+      await Promise.allSettled(
+        sessionKeys.map(key => this.deleteSessionTree(this.gatewayClient!, key)),
+      );
+    } catch {
+      // Best-effort cleanup only; local session deletion has already completed.
+    }
   }
 
   private async deleteSessionTree(client: GatewayClientLike, sessionKey: string): Promise<void> {
     try {
-      const listResult = await client.request<{ sessions?: Array<{ key: string }> }>('sessions.list', { spawnedBy: sessionKey, limit: 100 });
-      for (const child of listResult.sessions ?? []) await this.deleteSessionTree(client, child.key);
+      const listResult = await client.request<{ sessions?: Array<{ key: string }> }>(
+        'sessions.list',
+        { spawnedBy: sessionKey, limit: 100 },
+      );
+      for (const child of listResult.sessions ?? [])
+        await this.deleteSessionTree(client, child.key);
       if (!sessionKey.endsWith(':main')) {
         await client.request('sessions.delete', { key: sessionKey, deleteTranscript: true });
       }
-    } catch {}
+    } catch {
+      // Keep recursive cleanup best-effort so a missing child transcript does not abort siblings.
+    }
   }
 
   // ─── Public API ─────────────────────────────────────────────────────────
 
-  getGatewayClient(): GatewayClientLike | null { return this.gatewayClient; }
+  getGatewayClient(): GatewayClientLike | null {
+    return this.gatewayClient;
+  }
 
   getSessionKeysForSession(sessionId: string): string[] {
     const keys: string[] = [];
@@ -1544,7 +2014,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return keys;
   }
 
-  async ensureReady(): Promise<void> { await this.ensureGatewayClientReady(); }
+  async ensureReady(): Promise<void> {
+    await this.ensureGatewayClientReady();
+  }
 
   async getSubagentStatuses(sessionId?: string): Promise<{
     statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
@@ -1564,11 +2036,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return { statuses, displayLabels };
   }
 
-  async getSubTaskHistory(parentSessionId: string, agentId: string, sessionKey?: string): Promise<CoworkMessage[]> {
+  async getSubTaskHistory(
+    parentSessionId: string,
+    agentId: string,
+    sessionKey?: string,
+  ): Promise<CoworkMessage[]> {
     return this.subtaskHistory.getSubTaskHistory(parentSessionId, agentId, sessionKey);
   }
 
-  async getSubagentErrorInfo(parentSessionId: string, agentId: string, _sessionKey?: string): Promise<{
+  async getSubagentErrorInfo(
+    parentSessionId: string,
+    agentId: string,
+    _sessionKey?: string,
+  ): Promise<{
     state?: string;
     status?: string;
     outcome?: string;
@@ -1580,7 +2060,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const parentSession = this.store.getSession(parentSessionId);
     if (parentSession?.messages) {
       for (const msg of parentSession.messages) {
-        if (msg.type === 'tool_result' && msg.metadata?.toolName === 'sessions_spawn' && msg.metadata?.toolUseId === agentId) {
+        if (
+          msg.type === 'tool_result' &&
+          msg.metadata?.toolName === 'sessions_spawn' &&
+          msg.metadata?.toolUseId === agentId
+        ) {
           const toolResult = msg.metadata?.toolResult;
           if (isRecord(toolResult)) {
             const status = typeof toolResult.status === 'string' ? toolResult.status : '';
@@ -1590,7 +2074,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             }
           }
           if (msg.metadata?.isError) {
-            return { errorMessage: typeof msg.content === 'string' ? msg.content.slice(0, 500) : 'Tool call failed' };
+            return {
+              errorMessage:
+                typeof msg.content === 'string' ? msg.content.slice(0, 500) : 'Tool call failed',
+            };
           }
         }
       }
@@ -1618,7 +2105,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = this.gatewayClient;
     if (!client) return null;
     try {
-      const history = await client.request<{ messages?: unknown[] }>('chat.history', { sessionKey, limit: FULL_HISTORY_SYNC_LIMIT });
+      const history = await client.request<{ messages?: unknown[] }>('chat.history', {
+        sessionKey,
+        limit: FULL_HISTORY_SYNC_LIMIT,
+      });
       if (!Array.isArray(history?.messages) || history.messages.length === 0) return null;
 
       const now = Date.now();
@@ -1649,7 +2139,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         createdAt: now,
         updatedAt: now,
       };
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 
   // ─── Skill RPC Delegates ────────────────────────────────────────────────
@@ -1658,7 +2150,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.skillRpcHandler.generateTitle(userIntent, timeoutMs);
   }
 
-  async patchSessionModel(sessionId: string, model: string, agentId?: string): Promise<{ ok: boolean; error?: string }> {
+  async patchSessionModel(
+    sessionId: string,
+    model: string,
+    agentId?: string,
+  ): Promise<{ ok: boolean; error?: string }> {
     return this.skillRpcHandler.patchSessionModel(sessionId, model, agentId);
   }
 
@@ -1666,15 +2162,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.skillRpcHandler.getSkillsStatus(agentId);
   }
 
-  async installSkill(params: import('./types').SkillInstallParams): Promise<import('./types').SkillRpcResult> {
+  async installSkill(
+    params: import('./types').SkillInstallParams,
+  ): Promise<import('./types').SkillRpcResult> {
     return this.skillRpcHandler.installSkill(params);
   }
 
-  async updateSkillConfig(params: import('./types').SkillUpdateParams): Promise<import('./types').SkillRpcResult> {
+  async updateSkillConfig(
+    params: import('./types').SkillUpdateParams,
+  ): Promise<import('./types').SkillRpcResult> {
     return this.skillRpcHandler.updateSkillConfig(params);
   }
 
-  async searchClawHubSkills(query?: string, limit?: number): Promise<import('./types').ClawHubSearchResult[]> {
+  async searchClawHubSkills(
+    query?: string,
+    limit?: number,
+  ): Promise<import('./types').ClawHubSearchResult[]> {
     return this.skillRpcHandler.searchClawHubSkills(query, limit);
   }
 
