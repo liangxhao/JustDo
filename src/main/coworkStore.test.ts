@@ -59,6 +59,9 @@ function setupDb(): void {
       metadata TEXT,
       created_at INTEGER NOT NULL,
       sequence INTEGER,
+      thinking_content TEXT,
+      model_name TEXT,
+      usage TEXT,
       FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
     );
   `);

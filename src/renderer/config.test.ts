@@ -1,4 +1,4 @@
-import { expect,test } from 'vitest';
+import { expect, test } from 'vitest';
 
 import {
   getCustomProviderDefaultName,
@@ -138,7 +138,7 @@ test('validateDisplayName: built-in provider name is invalid', () => {
 });
 
 test('validateDisplayName: built-in provider name case-insensitive is invalid', () => {
-  expect(validateDisplayName('OpenAI')).toEqual({
+  expect(validateDisplayName('Ollama')).toEqual({
     valid: false,
     error: 'Cannot use built-in provider name',
   });
