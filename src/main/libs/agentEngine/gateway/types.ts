@@ -99,12 +99,10 @@ export type SessionTurn = {
   turnToken: number;
   /** Full accumulated text from chat delta events (gateway sends snapshot, not增量). */
   chatStream: string;
-  chatStreamStartedAt: number;
+  /** Assistant text already finalized before tool calls in this run. */
+  committedAssistantSegments: string[];
   /** Tool stream entries keyed by toolCallId. */
   toolStreamById: Map<string, ToolStreamEntry>;
-  toolStreamOrder: string[];
-  /** Committed text segments (before each tool call). */
-  chatStreamSegments: Array<{ text: string; timestamp: number }>;
   /** Accumulated thinking content. */
   thinkingContent: string;
   thinkingMessageId: string | null;

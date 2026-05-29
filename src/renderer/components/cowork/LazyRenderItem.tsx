@@ -1,31 +1,31 @@
 import React, { useEffect,useRef, useState } from 'react';
 
 /**
- * LazyRenderTurn — Viewport-based lazy rendering wrapper for conversation turns.
+ * LazyRenderItem — Viewport-based lazy rendering wrapper for transcript items.
  *
- * Renders a lightweight placeholder when the turn is far from the viewport,
+ * Renders a lightweight placeholder when the item is far from the viewport,
  * and renders the actual content when it enters (or is near) the viewport.
  * Once rendered, keeps a cached height so the placeholder matches the real size.
  *
  * This dramatically reduces DOM node count and React reconciliation work
- * for long conversations (200+ turns).
+ * for long conversations.
  */
 
-interface LazyRenderTurnProps extends React.HTMLAttributes<HTMLDivElement> {
+interface LazyRenderItemProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Unique key for height cache */
-  turnId: string;
+  itemId: string;
   /** Vertical margin around viewport to pre-render (px) */
   rootMargin?: number;
-  /** Whether this turn should always be rendered (e.g. last turn during streaming) */
+  /** Whether this item should always be rendered, e.g. the latest streaming item. */
   alwaysRender?: boolean;
   children: React.ReactNode;
 }
 
-// Global height cache survives re-renders — keyed by turnId
+// Global height cache survives re-renders and is keyed by transcript item id.
 const heightCache = new Map<string, number>();
 
-const LazyRenderTurn: React.FC<LazyRenderTurnProps> = ({
-  turnId,
+const LazyRenderItem: React.FC<LazyRenderItemProps> = ({
+  itemId,
   rootMargin = 600,
   alwaysRender = false,
   children,
@@ -72,15 +72,15 @@ const LazyRenderTurn: React.FC<LazyRenderTurnProps> = ({
     const ro = new ResizeObserver(([entry]) => {
       const h = entry.contentRect.height;
       if (h > 0) {
-        heightCache.set(turnId, h);
+        heightCache.set(itemId, h);
       }
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [isVisible, turnId]);
+  }, [isVisible, itemId]);
 
   const shouldRender = isVisible || alwaysRender;
-  const cachedHeight = heightCache.get(turnId);
+  const cachedHeight = heightCache.get(itemId);
 
   return (
     <div
@@ -103,7 +103,7 @@ const LazyRenderTurn: React.FC<LazyRenderTurnProps> = ({
   );
 };
 
-export default LazyRenderTurn;
+export default LazyRenderItem;
 
 /** Clear all cached heights (e.g. when switching sessions) */
 export const clearHeightCache = () => heightCache.clear();

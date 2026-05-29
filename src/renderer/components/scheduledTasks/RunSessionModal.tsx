@@ -4,9 +4,8 @@ import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import type { CoworkMessage,CoworkSession } from '../../types/cowork';
 import {
-  AssistantTurnBlock,
-  buildConversationTurns,
-  buildDisplayItems,
+  AssistantTranscriptBlock,
+  buildTranscriptItems,
   UserMessageItem,
 } from '../cowork/CoworkSessionDetail';
 
@@ -127,9 +126,8 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
     }
   };
 
-  const messages: CoworkMessage[] = session?.messages ?? [];
-  const displayItems = useMemo(() => buildDisplayItems(messages), [messages]);
-  const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
+  const messages = useMemo<CoworkMessage[]>(() => session?.messages ?? [], [session?.messages]);
+  const transcriptItems = useMemo(() => buildTranscriptItems(messages), [messages]);
 
   return (
     <div
@@ -188,7 +186,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
             </div>
           )}
 
-          {!loading && !error && turns.length === 0 && (
+          {!loading && !error && transcriptItems.length === 0 && (
             <div className="flex items-center justify-center py-16">
               <span className="text-sm text-secondary">
                 {i18nService.t('scheduledTasksNoRuns')}
@@ -196,26 +194,20 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
             </div>
           )}
 
-          {!loading && !error && turns.length > 0 && (
+          {!loading && !error && transcriptItems.length > 0 && (
             <div className="py-2">
-              {turns.map((turn) => {
-                const showAssistantBlock = turn.assistantItems.length > 0;
-
-                return (
-                  <React.Fragment key={turn.id}>
-                    {turn.userMessage && (
-                      <UserMessageItem message={turn.userMessage} skills={[]} />
-                    )}
-                    {showAssistantBlock && (
-                      <AssistantTurnBlock
-                        turn={turn}
-                        showTypingIndicator={false}
-                        showCopyButtons={true}
-                      />
-                    )}
-                  </React.Fragment>
-                );
-              })}
+              {transcriptItems.map(item =>
+                item.type === 'user' ? (
+                  <UserMessageItem key={item.message.id} message={item.message} skills={[]} />
+                ) : (
+                  <AssistantTranscriptBlock
+                    key={item.type === 'tool_group' ? item.group.toolUse.id : item.message.id}
+                    item={item}
+                    showTypingIndicator={false}
+                    showCopyButtons={true}
+                  />
+                ),
+              )}
             </div>
           )}
         </div>

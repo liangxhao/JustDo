@@ -6,9 +6,7 @@ import type { CoworkMessage } from '../../types/cowork';
 import { extractCanvasShortcodes } from '../../utils/canvasShortcode';
 import MarkdownContent from '../MarkdownContent';
 import {
-  buildConversationTurns,
-  buildDisplayItems,
-  hasRenderableAssistantContent,
+  buildTranscriptItems,
   ToolCallGroup,
 } from './CoworkSessionDetail';
 
@@ -541,9 +539,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     setIsResizing(true);
   }, []);
 
-  // Build display items and conversation turns
-  const displayItems = useMemo(() => buildDisplayItems(messages), [messages]);
-  const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
+  const transcriptItems = useMemo(() => buildTranscriptItems(messages), [messages]);
 
   return (
     <div className="fixed inset-0 top-12 z-50 flex" onClick={onClose}>
@@ -700,117 +696,59 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
 
           {!loading &&
             !error &&
-            turns.length === 0 &&
-            messages.length > 0 &&
-            // Render raw messages if turns can't be built
-            messages.map((msg, idx) => (
-              <div key={msg.id || idx} className="space-y-2">
-                {msg.type === 'user' && <SubagentUserMessage message={msg} />}
-                {msg.type === 'assistant' && <SubagentAssistantMessage message={msg} />}
-                {msg.type === 'tool_use' && (
-                  <div className="px-4 py-1">
+            transcriptItems.map(item => {
+              if (item.type === 'user') {
+                return <SubagentUserMessage key={item.message.id} message={item.message} />;
+              }
+              if (item.type === 'assistant') {
+                return <SubagentAssistantMessage key={item.message.id} message={item.message} />;
+              }
+              if (item.type === 'tool_group') {
+                return (
+                  <div key={`tool-${item.group.toolUse.id}`} className="px-4 py-1">
+                    <ToolCallGroup group={item.group} isLastInSequence={true} />
+                  </div>
+                );
+              }
+              if (item.type === 'tool_result') {
+                return (
+                  <div key={item.message.id} className="px-4 py-1">
                     <ToolCallGroup
-                      group={{ type: 'tool_group', toolUse: msg }}
+                      group={{
+                        type: 'tool_group',
+                        toolUse: {
+                          ...item.message,
+                          type: 'tool_use',
+                          metadata: {
+                            toolName: item.message.metadata?.toolName ?? 'Unknown Tool',
+                            toolUseId: item.message.metadata?.toolUseId,
+                            toolInput: item.message.metadata?.toolInput ?? {},
+                          },
+                        } as CoworkMessage,
+                        toolResult: item.message,
+                      }}
                       isLastInSequence={true}
                     />
                   </div>
-                )}
-                {msg.type === 'tool_result' &&
-                  !messages.some(
-                    m => m.type === 'tool_use' && m.metadata?.toolUseId === msg.metadata?.toolUseId,
-                  ) && (
-                    <div className="px-4 py-1">
-                      <ToolCallGroup
-                        group={{
-                          type: 'tool_group',
-                          toolUse: { ...msg, type: 'tool_use' } as CoworkMessage,
-                          toolResult: msg,
-                        }}
-                        isLastInSequence={true}
-                      />
-                    </div>
-                  )}
-              </div>
-            ))}
-
-          {!loading &&
-            !error &&
-            turns.length > 0 &&
-            turns.map((turn, index) => {
-              const isLastTurn = index === turns.length - 1;
-              const showTypingIndicator =
-                isRunning && isLastTurn && !hasRenderableAssistantContent(turn);
-
-              return (
-                <div key={turn.id} className="space-y-2">
-                  {/* User message */}
-                  {turn.userMessage && <SubagentUserMessage message={turn.userMessage} />}
-
-                  {/* Assistant turn content */}
-                  {turn.assistantItems.length > 0 && (
-                    <div className="pl-4 space-y-2">
-                      {turn.assistantItems.map(item => {
-                        if (item.type === 'assistant') {
-                          return (
-                            <SubagentAssistantMessage
-                              key={item.message.id}
-                              message={item.message}
-                            />
-                          );
-                        }
-
-                        if (item.type === 'tool_group') {
-                          return (
-                            <div key={`tool-${item.group.toolUse.id}`} className="px-2 py-1">
-                              <ToolCallGroup group={item.group} isLastInSequence={true} />
-                            </div>
-                          );
-                        }
-
-                        // Orphan tool result - use toolName from tool_result's metadata if available
-                        if (item.type === 'tool_result') {
-                          return (
-                            <div key={item.message.id} className="px-2 py-1">
-                              <ToolCallGroup
-                                group={{
-                                  type: 'tool_group',
-                                  toolUse: {
-                                    ...item.message,
-                                    type: 'tool_use',
-                                    metadata: {
-                                      toolName: item.message.metadata?.toolName ?? 'Unknown Tool',
-                                      toolUseId: item.message.metadata?.toolUseId,
-                                      toolInput: item.message.metadata?.toolInput ?? {},
-                                    },
-                                  } as CoworkMessage,
-                                  toolResult: item.message,
-                                }}
-                                isLastInSequence={true}
-                              />
-                            </div>
-                          );
-                        }
-
-                        // System message
-                        if (item.type === 'system') {
-                          return (
-                            <div
-                              key={item.message.id}
-                              className="px-3 py-2 bg-gray-50/60 dark:bg-gray-800/20 rounded-lg"
-                            >
-                              <div className="text-xs text-muted">{item.message.content}</div>
-                            </div>
-                          );
-                        }
-
-                        return null;
-                      })}
-                      {showTypingIndicator && <TypingDots />}
-                    </div>
-                  )}
-                </div>
-              );
+                );
+              }
+              if (item.type === 'system') {
+                return (
+                  <div
+                    key={item.message.id}
+                    className="px-3 py-2 bg-gray-50/60 dark:bg-gray-800/20 rounded-lg"
+                  >
+                    <div className="text-xs text-muted">{item.message.content}</div>
+                  </div>
+                );
+              }
+              return null;
             })}
+          {!loading && !error && isRunning && transcriptItems.length > 0 && (
+            <div className="pl-4">
+              <TypingDots />
+            </div>
+          )}
         </div>
 
         <div className="px-4 py-2.5 border-t dark:border-claude-darkBorder border-claude-border">

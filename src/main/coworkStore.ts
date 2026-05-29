@@ -1296,6 +1296,26 @@ export class CoworkStore {
   }
 
   /**
+   * Update subagent status by either the original tool call id or child session key.
+   */
+  updateSubagentStatusByIdentifier(
+    identifier: string,
+    status: SubagentStatusType,
+    errorReason?: string,
+  ): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `
+      UPDATE cowork_subagents
+      SET status = ?, error_reason = COALESCE(?, error_reason), updated_at = ?
+      WHERE tool_call_id = ? OR child_session_key = ?
+    `,
+      )
+      .run(status, errorReason || null, now, identifier, identifier);
+  }
+
+  /**
    * Get all subagents for a parent session.
    */
   getSubagentsByParentSession(parentSessionId: string): SubagentRecord[] {

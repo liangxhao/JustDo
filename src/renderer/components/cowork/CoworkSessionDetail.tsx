@@ -58,7 +58,7 @@ import MarkdownContent from '../MarkdownContent';
 import WindowTitleBar from '../window/WindowTitleBar';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import InlineCanvasPreviews from './InlineCanvasPreviews';
-import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
+import LazyRenderItem, { clearHeightCache } from './LazyRenderItem';
 import MonacoDiffView, { extractDiffFromToolInput } from './MonacoDiffView';
 
 interface CoworkSessionDetailProps {
@@ -691,30 +691,23 @@ export type ToolGroupItem = {
   toolResult?: CoworkMessage | null;
 };
 
-export type DisplayItem = { type: 'message'; message: CoworkMessage } | ToolGroupItem;
-
-export type AssistantTurnItem =
+export type TranscriptItem =
+  | { type: 'user'; message: CoworkMessage }
   | { type: 'assistant'; message: CoworkMessage }
   | { type: 'system'; message: CoworkMessage }
   | { type: 'tool_group'; group: ToolGroupItem }
   | { type: 'tool_result'; message: CoworkMessage }
   | { type: 'subagent_completion'; message: CoworkMessage };
 
-export type ConversationTurn = {
-  id: string;
-  userMessage: CoworkMessage | null;
-  assistantItems: AssistantTurnItem[];
-};
-
-export const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
-  const items: DisplayItem[] = [];
+export const buildTranscriptItems = (messages: CoworkMessage[]): TranscriptItem[] => {
+  const items: TranscriptItem[] = [];
   const groupsByToolUseId = new Map<string, ToolGroupItem>();
   let pendingAdjacentGroup: ToolGroupItem | null = null;
 
   for (const message of messages) {
     if (message.type === 'tool_use') {
       const group: ToolGroupItem = { type: 'tool_group', toolUse: message };
-      items.push(group);
+      items.push({ type: 'tool_group', group });
 
       const toolUseId = message.metadata?.toolUseId;
       if (typeof toolUseId === 'string' && toolUseId.trim()) {
@@ -740,113 +733,33 @@ export const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
 
       pendingAdjacentGroup = null;
       if (!matched) {
-        items.push({ type: 'message', message });
+        items.push({ type: 'tool_result', message });
       }
       continue;
     }
 
     pendingAdjacentGroup = null;
-    items.push({ type: 'message', message });
-  }
-
-  return items;
-};
-
-export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[] => {
-  const turns: ConversationTurn[] = [];
-  let currentTurn: ConversationTurn | null = null;
-  let orphanIndex = 0;
-
-  const ensureTurn = (): ConversationTurn => {
-    if (currentTurn) return currentTurn;
-    const orphanTurn: ConversationTurn = {
-      id: `orphan-${orphanIndex++}`,
-      userMessage: null,
-      assistantItems: [],
-    };
-    turns.push(orphanTurn);
-    currentTurn = orphanTurn;
-    return orphanTurn;
-  };
-
-  for (const item of items) {
-    if (item.type === 'message' && item.message.type === 'user') {
-      currentTurn = {
-        id: item.message.id,
-        userMessage: item.message,
-        assistantItems: [],
-      };
-      turns.push(currentTurn);
-      continue;
-    }
-
-    const turn = ensureTurn();
-    if (item.type === 'tool_group') {
-      turn.assistantItems.push({ type: 'tool_group', group: item });
-      continue;
-    }
-
-    const message = item.message;
     if (message.type === 'assistant') {
-      turn.assistantItems.push({ type: 'assistant', message });
+      items.push({ type: 'assistant', message });
       continue;
     }
 
     if (message.type === 'system') {
-      turn.assistantItems.push({ type: 'system', message });
+      items.push({ type: 'system', message });
       continue;
     }
 
     if (message.type === 'subagent_completion') {
-      turn.assistantItems.push({ type: 'subagent_completion', message });
+      items.push({ type: 'subagent_completion', message });
       continue;
     }
 
-    if (message.type === 'tool_result') {
-      turn.assistantItems.push({ type: 'tool_result', message });
-      continue;
-    }
-
-    if (message.type === 'tool_use') {
-      turn.assistantItems.push({
-        type: 'tool_group',
-        group: {
-          type: 'tool_group',
-          toolUse: message,
-        },
-      });
+    if (message.type === 'user') {
+      items.push({ type: 'user', message });
     }
   }
 
-  // Sort assistantItems by timestamp to maintain correct order during streaming.
-  // This handles cases where multiple thinking/tool cycles occur in one turn:
-  // thinking A (t1) → tool A (t2) → thinking B (t3) → tool B (t4)
-  // Priority-based sorting would incorrectly place thinking B before tool A.
-  for (const turn of turns) {
-    turn.assistantItems.sort((a, b) => {
-      // Get timestamp from message or tool_group
-      const getTimestamp = (item: AssistantTurnItem): number => {
-        if (
-          item.type === 'assistant' ||
-          item.type === 'system' ||
-          item.type === 'subagent_completion'
-        ) {
-          return item.message.timestamp;
-        }
-        if (item.type === 'tool_group') {
-          // Use the toolUse message's timestamp
-          return item.group.toolUse.timestamp;
-        }
-        if (item.type === 'tool_result') {
-          return item.message.timestamp;
-        }
-        return 0;
-      };
-      return getTimestamp(a) - getTimestamp(b);
-    });
-  }
-
-  return turns;
+  return items;
 };
 
 const isRenderableAssistantOrSystemMessage = (message: CoworkMessage): boolean => {
@@ -861,7 +774,10 @@ const isRenderableAssistantOrSystemMessage = (message: CoworkMessage): boolean =
   return false;
 };
 
-const isVisibleAssistantTurnItem = (item: AssistantTurnItem): boolean => {
+const isVisibleTranscriptItem = (item: TranscriptItem): boolean => {
+  if (item.type === 'user') {
+    return hasText(item.message.content);
+  }
   if (item.type === 'assistant' || item.type === 'system' || item.type === 'subagent_completion') {
     return isRenderableAssistantOrSystemMessage(item.message);
   }
@@ -871,11 +787,26 @@ const isVisibleAssistantTurnItem = (item: AssistantTurnItem): boolean => {
   return true;
 };
 
-const getVisibleAssistantItems = (assistantItems: AssistantTurnItem[]): AssistantTurnItem[] =>
-  assistantItems.filter(isVisibleAssistantTurnItem);
+const getTranscriptItemId = (item: TranscriptItem): string => {
+  if (item.type === 'tool_group') return `tool-${item.group.toolUse.id}`;
+  return item.message.id;
+};
 
-export const hasRenderableAssistantContent = (turn: ConversationTurn): boolean =>
-  getVisibleAssistantItems(turn.assistantItems).length > 0;
+const getTranscriptItemContent = (item: TranscriptItem): string => {
+  if (item.type === 'tool_group') {
+    return [
+      item.group.toolUse.metadata?.toolName,
+      item.group.toolUse.content,
+      item.group.toolResult?.content,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .join('\n');
+  }
+  if (item.type === 'tool_result') return getToolResultDisplay(item.message);
+  return [item.message.content, item.message.thinkingContent]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .join('\n');
+};
 
 const getToolResultLineCount = (result: string): number => {
   if (!result) return 0;
@@ -1753,8 +1684,8 @@ const ThinkingStreamBlock: React.FC<{
   );
 };
 
-export const AssistantTurnBlock: React.FC<{
-  turn: ConversationTurn;
+export const AssistantTranscriptBlock: React.FC<{
+  item?: Exclude<TranscriptItem, { type: 'user' }>;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   showTypingIndicator?: boolean;
@@ -1762,7 +1693,7 @@ export const AssistantTurnBlock: React.FC<{
   sessionId?: string;
   toolExpanded?: boolean;
 }> = ({
-  turn,
+  item,
   resolveLocalFilePath,
   mapDisplayText,
   showTypingIndicator = false,
@@ -1770,14 +1701,6 @@ export const AssistantTurnBlock: React.FC<{
   sessionId,
   toolExpanded = true,
 }) => {
-  const baseVisibleItems = getVisibleAssistantItems(turn.assistantItems);
-  // Filter out tool-related items when toolExpanded is false
-  const isToolRelatedItem = (item: AssistantTurnItem): boolean =>
-    item.type === 'tool_group' || item.type === 'tool_result';
-  const visibleAssistantItems = toolExpanded
-    ? baseVisibleItems
-    : baseVisibleItems.filter(item => !isToolRelatedItem(item));
-
   const renderSystemMessage = (message: CoworkMessage) => {
     const isError = !hasText(message.content) && typeof message.metadata?.error === 'string';
     const rawContent = hasText(message.content)
@@ -1857,6 +1780,53 @@ export const AssistantTurnBlock: React.FC<{
     );
   };
 
+  const renderContent = () => {
+    if (!item) return null;
+    if (!toolExpanded && (item.type === 'tool_group' || item.type === 'tool_result')) {
+      return null;
+    }
+
+    if (item.type === 'assistant') {
+      return (
+        <AssistantMessageItem
+          message={item.message}
+          resolveLocalFilePath={resolveLocalFilePath}
+          mapDisplayText={mapDisplayText}
+          showCopyButton={showCopyButtons}
+          sessionId={sessionId}
+        />
+      );
+    }
+
+    if (item.type === 'tool_group') {
+      return (
+        <ToolCallGroup
+          group={item.group}
+          isLastInSequence
+          mapDisplayText={mapDisplayText}
+        />
+      );
+    }
+
+    if (item.type === 'system') {
+      return renderSystemMessage(item.message);
+    }
+
+    if (item.type === 'subagent_completion') {
+      return (
+        <SubagentCompletionMessageItem
+          message={item.message}
+          mapDisplayText={mapDisplayText}
+        />
+      );
+    }
+
+    return renderOrphanToolResult(item.message);
+  };
+
+  const content = renderContent();
+  if (!content && !showTypingIndicator) return null;
+
   return (
     <div className="px-4 py-2">
       <div className="max-w-5xl mx-auto">
@@ -1867,60 +1837,7 @@ export const AssistantTurnBlock: React.FC<{
           </div>
           {/* Content area with fixed width to prevent layout shift */}
           <div className="w-full min-w-0 px-0 py-3 space-y-3">
-            {visibleAssistantItems.map((item, index) => {
-              if (item.type === 'assistant') {
-                // Check if there are any tool_group items after this assistant message
-                const hasToolGroupAfter = visibleAssistantItems
-                  .slice(index + 1)
-                  .some(laterItem => laterItem.type === 'tool_group');
-
-                // Use AssistantMessageItem which handles both thinking and response content
-                // It internally decides whether to use ThinkingStreamBlock or static display
-                return (
-                  <AssistantMessageItem
-                    key={item.message.id}
-                    message={item.message}
-                    resolveLocalFilePath={resolveLocalFilePath}
-                    mapDisplayText={mapDisplayText}
-                    showCopyButton={showCopyButtons && !hasToolGroupAfter}
-                    sessionId={sessionId}
-                  />
-                );
-              }
-
-              if (item.type === 'tool_group') {
-                const nextItem = visibleAssistantItems[index + 1];
-                const isLastInSequence = !nextItem || nextItem.type !== 'tool_group';
-                return (
-                  <ToolCallGroup
-                    key={`tool-${item.group.toolUse.id}`}
-                    group={item.group}
-                    isLastInSequence={isLastInSequence}
-                    mapDisplayText={mapDisplayText}
-                  />
-                );
-              }
-
-              if (item.type === 'system') {
-                const systemMessage = renderSystemMessage(item.message);
-                if (!systemMessage) {
-                  return null;
-                }
-                return <div key={item.message.id}>{systemMessage}</div>;
-              }
-
-              if (item.type === 'subagent_completion') {
-                return (
-                  <SubagentCompletionMessageItem
-                    key={item.message.id}
-                    message={item.message}
-                    mapDisplayText={mapDisplayText}
-                  />
-                );
-              }
-
-              return <div key={item.message.id}>{renderOrphanToolResult(item.message)}</div>;
-            })}
+            {content}
             {showTypingIndicator && <TypingDots />}
           </div>
         </div>
@@ -1963,11 +1880,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [currentRailIndex, setCurrentRailIndex] = useState(-1);
   const currentRailIndexRef = useRef(-1);
   const railItemCountRef = useRef(0);
-  // Mapping: turnIndex → { first: firstRailIdx, last: lastRailIdx }
-  const turnToRailRangeRef = useRef<{ first: number; last: number }[]>([]);
+  // Mapping: transcript item index -> visible rail range.
+  const itemToRailRangeRef = useRef<{ first: number; last: number }[]>([]);
   const isNavigatingRef = useRef(false);
   const navigatingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const turnElsCacheRef = useRef<HTMLElement[]>([]);
+  const transcriptItemElsCacheRef = useRef<HTMLElement[]>([]);
   const railLinesRef = useRef<HTMLDivElement>(null);
   const [isScrollable, setIsScrollable] = useState(false);
   const [hoveredRailIndex, setHoveredRailIndex] = useState<number | null>(null);
@@ -2027,7 +1944,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setCurrentRailIndex(-1);
     currentRailIndexRef.current = -1;
     isNavigatingRef.current = false;
-    turnElsCacheRef.current = [];
+    transcriptItemElsCacheRef.current = [];
     if (navigatingTimerRef.current) clearTimeout(navigatingTimerRef.current);
     setHoveredRailIndex(null);
   }, [currentSession?.id]);
@@ -2485,10 +2402,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     // Skip index recalculation during programmatic navigation
     if (isNavigatingRef.current) return;
 
-    // Use turn-level elements (always in DOM, even for lazy-rendered turns) for scroll detection
-    const turnEls = turnElsCacheRef.current;
+    // Use transcript item shells (always in DOM, even for lazy-rendered content) for scroll detection.
+    const itemEls = transcriptItemElsCacheRef.current;
     const railCount = railItemCountRef.current;
-    if (turnEls.length === 0 || railCount === 0) return;
+    if (itemEls.length === 0 || railCount === 0) return;
 
     // If at very bottom, snap to last rail item
     if (distanceToBottom <= NAV_BOTTOM_SNAP_THRESHOLD) {
@@ -2500,30 +2417,28 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       return;
     }
 
-    // Find current turn based on turn element offsetTop
+    // Find current transcript item based on shell offsetTop.
     const scrollTop = container.scrollTop;
-    let currentTurn = 0;
-    for (let i = 0; i < turnEls.length; i++) {
-      if (turnEls[i].offsetTop <= scrollTop + 80) {
-        currentTurn = i;
+    let currentItem = 0;
+    for (let i = 0; i < itemEls.length; i++) {
+      if (itemEls[i].offsetTop <= scrollTop + 80) {
+        currentItem = i;
       } else {
         break;
       }
     }
 
-    // Map turn to rail index: check if scrolled past the midpoint of the turn
-    // (first half → user message = first rail item, second half → assistant = last rail item)
-    const range = turnToRailRangeRef.current[currentTurn];
+    const range = itemToRailRangeRef.current[currentItem];
     if (!range) return;
     let railIdx = range.first;
     if (range.first !== range.last) {
-      const turnEl = turnEls[currentTurn];
-      const nextTurnTop =
-        currentTurn + 1 < turnEls.length
-          ? turnEls[currentTurn + 1].offsetTop
+      const itemEl = itemEls[currentItem];
+      const nextItemTop =
+        currentItem + 1 < itemEls.length
+          ? itemEls[currentItem + 1].offsetTop
           : container.scrollHeight;
-      const turnMid = turnEl.offsetTop + (nextTurnTop - turnEl.offsetTop) / 2;
-      if (scrollTop + 80 >= turnMid) {
+      const itemMid = itemEl.offsetTop + (nextItemTop - itemEl.offsetTop) / 2;
+      if (scrollTop + 80 >= itemMid) {
         railIdx = range.last;
       }
     }
@@ -2537,12 +2452,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const navigateToRailItem = useCallback((railIndex: number) => {
     if (railIndex < 0 || railIndex >= railItemCountRef.current) return;
 
-    // Find the turn that contains this rail item
-    const ranges = turnToRailRangeRef.current;
-    let targetTurnIdx = -1;
+    const ranges = itemToRailRangeRef.current;
+    let targetItemIndex = -1;
     for (let t = 0; t < ranges.length; t++) {
       if (ranges[t] && railIndex >= ranges[t].first && railIndex <= ranges[t].last) {
-        targetTurnIdx = t;
+        targetItemIndex = t;
         break;
       }
     }
@@ -2559,11 +2473,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       const el = container.querySelector<HTMLElement>(`[data-rail-index="${railIndex}"]`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else if (targetTurnIdx >= 0) {
-        // Fallback: scroll to the turn element (always in DOM)
-        const turnEls = turnElsCacheRef.current;
-        if (targetTurnIdx < turnEls.length) {
-          turnEls[targetTurnIdx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (targetItemIndex >= 0) {
+        const itemEls = transcriptItemElsCacheRef.current;
+        if (targetItemIndex < itemEls.length) {
+          itemEls[targetItemIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       }
     }
@@ -2622,24 +2535,23 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }, []);
 
   const messages = currentSession?.messages;
-  const displayItems = useMemo(() => (messages ? buildDisplayItems(messages) : []), [messages]);
-  const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
+  const transcriptItems = useMemo(() => (messages ? buildTranscriptItems(messages) : []), [messages]);
 
-  // Cache turn-level DOM elements (data-turn-index, always in DOM even for lazy turns)
+  // Cache transcript item shells (data-transcript-index, always in DOM even for lazy content).
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) {
-      turnElsCacheRef.current = [];
+      transcriptItemElsCacheRef.current = [];
       return;
     }
-    turnElsCacheRef.current = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-turn-index]'),
+    transcriptItemElsCacheRef.current = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-transcript-index]'),
     );
-  }, [turns]);
+  }, [transcriptItems]);
 
-  // Sync rail index when turns change or rail first appears (isScrollable becomes true)
+  // Sync rail index when transcript changes or rail first appears (isScrollable becomes true).
   useEffect(() => {
-    // After turns/scrollable change, if rail index is uninitialized (-1) or out of bounds,
+    // After transcript/scrollable change, if rail index is uninitialized (-1) or out of bounds,
     // wait for next frame so render IIFE has updated railItemCountRef, then sync
     const frameId = requestAnimationFrame(() => {
       const count = railItemCountRef.current;
@@ -2652,7 +2564,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       }
     });
     return () => cancelAnimationFrame(frameId);
-  }, [turns, isScrollable]);
+  }, [transcriptItems, isScrollable]);
 
   // Scroll rail lines container to keep active item visible (without affecting page scroll)
   useEffect(() => {
@@ -2681,31 +2593,27 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       setIsScrollable(container.scrollHeight > container.clientHeight);
     }
     // Sync rail index to last when auto-scrolled to bottom
-    if (turns.length > 0) {
+    if (transcriptItems.length > 0) {
       // Use -1 when rail hasn't rendered yet (count is 0),
       // so the render IIFE resolvedRailIndex fallback picks the last item
       const lastRail = railItemCountRef.current > 0 ? railItemCountRef.current - 1 : -1;
       currentRailIndexRef.current = lastRail;
       setCurrentRailIndex(lastRail);
     }
-  }, [messagesLength, lastMessageContent, isStreaming, shouldAutoScroll, turns.length]);
+  }, [messagesLength, lastMessageContent, isStreaming, shouldAutoScroll, transcriptItems.length]);
 
   if (!currentSession) {
     return null;
   }
 
-  const renderConversationTurns = () => {
+  const renderTranscriptItems = () => {
     let railCounter = 0;
-    if (turns.length === 0) {
+    itemToRailRangeRef.current = [];
+    if (transcriptItems.length === 0) {
       if (!isStreaming) return null;
       return (
         <div data-export-role="assistant-block">
-          <AssistantTurnBlock
-            turn={{
-              id: 'streaming-only',
-              userMessage: null,
-              assistantItems: [],
-            }}
+          <AssistantTranscriptBlock
             resolveLocalFilePath={resolveLocalFilePath}
             showTypingIndicator
             showCopyButtons={!isStreaming}
@@ -2716,45 +2624,41 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       );
     }
 
-    return turns.map((turn, index) => {
-      const isLastTurn = index === turns.length - 1;
-      const showTypingIndicator = isStreaming && isLastTurn && !hasRenderableAssistantContent(turn);
-      const showAssistantBlock = turn.assistantItems.length > 0 || showTypingIndicator;
-      // Always render last 3 turns (needed for streaming, auto-scroll, and smooth UX)
-      const alwaysRender = index >= turns.length - 3;
-
-      // Compute rail indices for user/assistant messages (must match rail IIFE logic)
-      let asstContent = '';
-      for (const item of turn.assistantItems) {
-        if (item.type === 'assistant' && item.message?.content) {
-          asstContent += item.message.content;
-        }
+    return transcriptItems.map((item, index) => {
+      const isLastItem = index === transcriptItems.length - 1;
+      const showTypingIndicator = isStreaming && isLastItem && !isVisibleTranscriptItem(item);
+      const alwaysRender = index >= transcriptItems.length - 3;
+      const itemId = getTranscriptItemId(item);
+      const itemContent = getTranscriptItemContent(item);
+      const railIdx =
+        (item.type === 'user' || item.type === 'assistant') && hasText(itemContent)
+          ? railCounter++
+          : -1;
+      if (railIdx >= 0) {
+        itemToRailRangeRef.current[index] = { first: railIdx, last: railIdx };
       }
-      const userRailIdx = turn.userMessage ? railCounter++ : -1;
-      const asstRailIdx = asstContent ? railCounter++ : -1;
 
       return (
-        <LazyRenderTurn
-          key={turn.id}
-          turnId={turn.id}
+        <LazyRenderItem
+          key={itemId}
+          itemId={itemId}
           alwaysRender={alwaysRender}
-          data-turn-index={index}
+          data-transcript-index={index}
         >
-          {turn.userMessage && (
+          {item.type === 'user' ? (
             <div
               data-export-role="user-message"
-              {...(userRailIdx >= 0 ? { 'data-rail-index': userRailIdx } : undefined)}
+              {...(railIdx >= 0 ? { 'data-rail-index': railIdx } : undefined)}
             >
-              <UserMessageItem message={turn.userMessage} skills={skills} sessionId={sessionId} />
+              <UserMessageItem message={item.message} skills={skills} sessionId={sessionId} />
             </div>
-          )}
-          {showAssistantBlock && (
+          ) : (
             <div
               data-export-role="assistant-block"
-              {...(asstRailIdx >= 0 ? { 'data-rail-index': asstRailIdx } : undefined)}
+              {...(railIdx >= 0 ? { 'data-rail-index': railIdx } : undefined)}
             >
-              <AssistantTurnBlock
-                turn={turn}
+              <AssistantTranscriptBlock
+                item={item}
                 resolveLocalFilePath={resolveLocalFilePath}
                 mapDisplayText={mapDisplayText}
                 showTypingIndicator={showTypingIndicator}
@@ -2764,7 +2668,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               />
             </div>
           )}
-        </LazyRenderTurn>
+        </LazyRenderItem>
       );
     });
   };
@@ -3048,14 +2952,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <div
           ref={scrollContainerRef}
           onScroll={handleMessagesScroll}
-          className={`h-full min-h-0 overflow-y-auto pt-3 ${turns.length > 1 && isScrollable ? 'pr-8' : 'pr-3'}`}
+          className={`h-full min-h-0 overflow-y-auto pt-3 ${transcriptItems.length > 1 && isScrollable ? 'pr-8' : 'pr-3'}`}
         >
-          {renderConversationTurns()}
+          {renderTranscriptItems()}
           <div className="h-20" />
         </div>
 
-        {/* Turn Navigation Rail — to the left of scrollbar */}
-        {turns.length > 1 && isScrollable && (
+        {/* Transcript navigation rail — to the left of scrollbar */}
+        {transcriptItems.length > 1 && isScrollable && (
           <div
             className="absolute right-[18px] top-1/2 -translate-y-1/2 w-5 flex flex-col items-end z-10"
             style={{ maxHeight: 'calc(100% - 40px)' }}
@@ -3106,7 +3010,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               style={{ scrollbarWidth: 'none' }}
             >
               {(() => {
-                // Build flat list of messages with their content length and turn index
+                // Build flat list of transcript entries with their content length and item index.
                 const MIN_W = 6; // px
                 const MAX_W = 16; // px
                 // Strip common markdown syntax for tooltip display
@@ -3126,37 +3030,31 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 };
                 type RailItem = {
                   key: string;
-                  turnIndex: number;
+                  itemIndex: number;
                   label: string;
                   contentLen: number;
                   isUser: boolean;
                 };
                 const items: RailItem[] = [];
-                for (let i = 0; i < turns.length; i++) {
-                  const turn = turns[i];
-                  if (turn.userMessage) {
-                    const content = turn.userMessage.content ?? '';
+                for (let i = 0; i < transcriptItems.length; i++) {
+                  const item = transcriptItems[i];
+                  if (item.type !== 'user' && item.type !== 'assistant') continue;
+                  const content = getTranscriptItemContent(item);
+                  if (!content) continue;
+                  if (item.type === 'user') {
                     items.push({
-                      key: `${turn.id}-user`,
-                      turnIndex: i,
+                      key: `${getTranscriptItemId(item)}-user`,
+                      itemIndex: i,
                       label: getLabel(content, `Turn ${i + 1}`),
                       contentLen: content.length,
                       isUser: true,
                     });
-                  }
-                  // Aggregate all assistant content into one line per turn
-                  let asstContent = '';
-                  for (const item of turn.assistantItems) {
-                    if (item.type === 'assistant' && item.message?.content) {
-                      asstContent += item.message.content;
-                    }
-                  }
-                  if (asstContent) {
+                  } else {
                     items.push({
-                      key: `${turn.id}-asst`,
-                      turnIndex: i,
-                      label: getLabel(asstContent, 'GucciAI'),
-                      contentLen: asstContent.length,
+                      key: `${getTranscriptItemId(item)}-asst`,
+                      itemIndex: i,
+                      label: getLabel(content, 'GucciAI'),
+                      contentLen: content.length,
                       isUser: false,
                     });
                   }
@@ -3166,14 +3064,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 railItemCountRef.current = items.length;
                 const rangeMap: { first: number; last: number }[] = [];
                 for (let ri = 0; ri < items.length; ri++) {
-                  const ti = items[ri].turnIndex;
+                  const ti = items[ri].itemIndex;
                   if (!rangeMap[ti]) {
                     rangeMap[ti] = { first: ri, last: ri };
                   } else {
                     rangeMap[ti].last = ri;
                   }
                 }
-                turnToRailRangeRef.current = rangeMap;
+                itemToRailRangeRef.current = rangeMap;
 
                 // Clamp rail index to valid range
                 const resolvedRailIndex =

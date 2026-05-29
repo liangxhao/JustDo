@@ -460,6 +460,55 @@ test('subagent lifecycle end updates status after parent turn is cleaned up', as
   ).toBe('done');
 });
 
+test('subagent status list restores persisted rows after app restart', async () => {
+  const store = {
+    getSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? {
+            id: 'session-1',
+            title: 'Session',
+            claudeSessionId: null,
+            status: 'completed',
+            pinned: false,
+            cwd: '',
+            executionMode: 'local',
+            activeSkillIds: [],
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+          }
+        : null,
+    getSubagentsByParentSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? [
+            {
+              toolCallId: 'call-subagent',
+              parentSessionId: 'session-1',
+              childSessionKey: 'agent:main:subagent:child-1',
+              label: 'research task',
+              status: 'done' as const,
+            },
+          ]
+        : [],
+    addMessage: () => {
+      throw new Error('not expected');
+    },
+    updateSession: () => {},
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+
+  const statuses = await adapter.getSubagentStatuses('session-1');
+
+  expect(statuses.subagents).toEqual([
+    {
+      id: 'agent:main:subagent:child-1',
+      sessionKey: 'agent:main:subagent:child-1',
+      label: 'research task',
+      status: 'done',
+    },
+  ]);
+});
+
 test('subagent display label prefers explicit label before task preview', () => {
   const { store } = createHistoryStore([]);
   const adapter = new OpenClawRuntimeAdapter(store, {});

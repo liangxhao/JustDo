@@ -363,9 +363,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           if (result.displayLabels) {
             setBackendDisplayLabels(result.displayLabels);
           }
-          if (result.subagents && result.subagents.length > 0) {
-            setBackendSubagents(result.subagents);
-          }
+          setBackendSubagents(result.subagents || []);
         }
       } catch {
         /* ignore */
