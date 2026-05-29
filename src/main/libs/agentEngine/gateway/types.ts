@@ -82,6 +82,7 @@ export type ToolStreamEntry = {
   name: string;
   args?: unknown;
   output?: string;
+  emitted?: boolean;
   startedAt: number;
   updatedAt: number;
 };

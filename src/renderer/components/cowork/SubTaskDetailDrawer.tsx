@@ -262,6 +262,13 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   const [status, setStatus] = useState<'pending' | 'running' | 'done' | 'failed'>(initialStatus);
   const isRunning = status === 'running' || status === 'pending';
   const isFailed = status === 'failed';
+  const isCurrentSubagent = useCallback(
+    (streamAgentId: string) =>
+      streamAgentId === agentId ||
+      streamAgentId === subagentKey ||
+      Boolean(sessionKey && streamAgentId === sessionKey),
+    [agentId, sessionKey, subagentKey],
+  );
 
   // Width state for resizable drawer
   // Default: 40% of the main content area width (excluding sidebar)
@@ -281,7 +288,8 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   // Reset completion flag when switching to a different subagent
   useEffect(() => {
     hasFetchedOnCompletion.current = false;
-  }, [cacheKey]);
+    setStatus(initialStatus);
+  }, [cacheKey, initialStatus]);
 
   // Auto-scroll when new messages arrive
   useEffect(() => {
@@ -330,7 +338,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       // Set up new streaming listeners
       streamCleanupRef.current = coworkService.setupSubagentListeners(parentSessionId, {
         onMessage: (streamAgentId, message) => {
-          if (streamAgentId === agentId) {
+          if (isCurrentSubagent(streamAgentId)) {
             setMessages(prev => {
               // Avoid duplicates
               if (prev.some(m => m.id === message.id)) {
@@ -343,7 +351,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
           }
         },
         onMessageUpdate: (streamAgentId, messageId, content) => {
-          if (streamAgentId !== agentId) return;
+          if (!isCurrentSubagent(streamAgentId)) return;
           setMessages(prev => {
             const updated = prev.map(message =>
               message.id === messageId ? { ...message, content } : message,
@@ -353,7 +361,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
           });
         },
         onThinkingUpdate: (streamAgentId, messageId, thinkingDelta) => {
-          if (streamAgentId !== agentId) return;
+          if (!isCurrentSubagent(streamAgentId)) return;
           setMessages(prev => {
             const updated = prev.map(message =>
               message.id === messageId
@@ -368,7 +376,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
           });
         },
         onMessageMetadataUpdate: (streamAgentId, messageId, metadata) => {
-          if (streamAgentId !== agentId) return;
+          if (!isCurrentSubagent(streamAgentId)) return;
           setMessages(prev => {
             const updated = prev.map(message =>
               message.id === messageId
@@ -389,7 +397,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       };
     }
     return () => {};
-  }, [isRunning, parentSessionId, agentId, cacheKey]);
+  }, [isRunning, parentSessionId, agentId, cacheKey, isCurrentSubagent]);
 
   // Poll subagent status to detect completion
   useEffect(() => {
@@ -398,7 +406,10 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     const checkStatus = async () => {
       try {
         const result = await coworkService.getSubTaskStatus(parentSessionId);
-        const currentStatus = result.statuses[agentId];
+        const currentStatus =
+          result.statuses[agentId] ||
+          result.statuses[subagentKey] ||
+          (sessionKey ? result.statuses[sessionKey] : undefined);
         if (currentStatus) {
           setStatus(currentStatus);
           if (currentStatus === 'done' && !hasFetchedOnCompletion.current) {
@@ -418,7 +429,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     checkStatus();
 
     return () => clearInterval(statusTimer);
-  }, [isRunning, parentSessionId, agentId, fetchHistory]);
+  }, [isRunning, parentSessionId, agentId, sessionKey, subagentKey, fetchHistory]);
 
   // Fetch error info when subagent is failed
   useEffect(() => {

@@ -328,6 +328,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     Record<string, 'pending' | 'running' | 'done' | 'failed'>
   >({});
   const [backendDisplayLabels, setBackendDisplayLabels] = useState<Record<string, string>>({});
+  const [backendSessionKeys, setBackendSessionKeys] = useState<Record<string, string>>({});
   const [backendSubagents, setBackendSubagents] = useState<
     Array<{
       id: string;
@@ -343,6 +344,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   useEffect(() => {
     setBackendStatuses({});
     setBackendDisplayLabels({});
+    setBackendSessionKeys({});
     setBackendSubagents([]);
     hasRunningRef.current = false;
   }, [activeSessionId]);
@@ -363,6 +365,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           if (result.displayLabels) {
             setBackendDisplayLabels(result.displayLabels);
           }
+          setBackendSessionKeys(result.sessionKeys || {});
           setBackendSubagents(result.subagents || []);
         }
       } catch {
@@ -394,7 +397,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       return Object.entries(backendStatuses).map(([agentId, status]) => {
         return {
           agentId,
-          sessionKey: undefined,
+          sessionKey: backendSessionKeys[agentId],
           task: backendDisplayLabels[agentId] || '(no label)',
           status,
         };
@@ -402,7 +405,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     }
 
     return [];
-  }, [backendStatuses, backendDisplayLabels, backendSubagents]);
+  }, [backendStatuses, backendDisplayLabels, backendSessionKeys, backendSubagents]);
 
   // Subtask detail drawer state
   const [activeSubTask, setActiveSubTask] = useState<{
