@@ -1,5 +1,6 @@
 import React from 'react';
-import type { SessionGroup, CoworkSessionSummary } from '../../types/cowork';
+
+import type { CoworkSessionSummary,SessionGroup } from '../../types/cowork';
 import CoworkSessionItem from './CoworkSessionItem';
 import SubAgentList, { SubTaskInfo } from './SubAgentList';
 
@@ -23,6 +24,7 @@ interface SessionGroupPanelProps {
   setActiveSubTask: React.Dispatch<
     React.SetStateAction<{
       agentId: string;
+      sessionKey?: string;
       displayName?: string;
       parentSessionId: string;
       status: 'pending' | 'running' | 'done' | 'failed';

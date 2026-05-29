@@ -2949,9 +2949,11 @@ if (!gotTheLock) {
         success: true,
         statuses: result.statuses || {},
         displayLabels: result.displayLabels || {},
+        sessionKeys: result.sessionKeys || {},
+        subagents: result.subagents || [],
       };
     } catch (error) {
-      return { success: false, statuses: {}, displayLabels: {} };
+      return { success: false, statuses: {}, displayLabels: {}, sessionKeys: {}, subagents: [] };
     }
   });
 

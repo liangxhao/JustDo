@@ -1,7 +1,7 @@
 import { OpenClawProviderId, ProviderRegistry } from '@shared/providers/constants';
-import { isCustomProvider, getProviderDisplayName, getCustomProviderDefaultName } from '../config';
-import { configService } from '../services/config';
 
+import { getCustomProviderDefaultName,getProviderDisplayName, isCustomProvider } from '../config';
+import { configService } from '../services/config';
 import type { Model } from '../store/slices/modelSlice';
 
 /**

@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+
 import { IpcChannel as ScheduledTaskIpc } from '../../../scheduledTask/constants';
 import type { CronJobService } from '../../../scheduledTask/cronJobService';
 import { listScheduledTaskChannels } from './helpers';
@@ -116,16 +117,9 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
   });
 
   ipcMain.handle(ScheduledTaskIpc.Stop, async (_event, _id: string) => {
-    try {
-      // OpenClaw doesn't expose a direct stop API for running cron jobs
-      // The job will complete or timeout on its own
-      return { success: true, result: false };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to stop task',
-      };
-    }
+    // OpenClaw doesn't expose a direct stop API for running cron jobs
+    // The job will complete or timeout on its own
+    return { success: true, result: false };
   });
 
   ipcMain.handle(

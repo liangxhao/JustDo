@@ -1,11 +1,12 @@
-import { test, expect } from 'vitest';
+import { expect,test } from 'vitest';
+
 import {
-  DEFAULT_MANAGED_AGENT_ID,
-  OpenClawChannelSessionSync,
   buildManagedSessionKey,
-  isManagedSessionKey,
-  parseManagedSessionKey,
+  DEFAULT_MANAGED_AGENT_ID,
   isCronSessionKey,
+  isManagedSessionKey,
+  OpenClawChannelSessionSync,
+  parseManagedSessionKey,
 } from './openclawChannelSessionSync';
 
 function createSync() {

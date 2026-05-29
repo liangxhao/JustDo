@@ -1,9 +1,10 @@
+import { ArrowRightIcon } from '@heroicons/react/24/outline';
 import React from 'react';
-import { useSelector, useDispatch } from 'react-redux';
+import { useDispatch,useSelector } from 'react-redux';
+
 import { RootState } from '../../store';
 import { selectPrompt } from '../../store/slices/quickActionSlice';
-import type { LocalizedQuickAction, LocalizedPrompt } from '../../types/quickAction';
-import { ArrowRightIcon } from '@heroicons/react/24/outline';
+import type { LocalizedPrompt,LocalizedQuickAction } from '../../types/quickAction';
 
 interface PromptPanelProps {
   action: LocalizedQuickAction;

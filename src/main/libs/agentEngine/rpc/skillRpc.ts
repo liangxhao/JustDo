@@ -6,16 +6,16 @@
  * Also handles session title generation.
  */
 
+import type { CoworkStore } from '../../../coworkStore';
 import type { GatewayClientLike } from '../gateway/types';
 import type {
+  ClawHubDetail,
+  ClawHubSearchResult,
   GatewaySkillStatus,
   SkillInstallParams,
-  SkillUpdateParams,
   SkillRpcResult,
-  ClawHubSearchResult,
-  ClawHubDetail,
+  SkillUpdateParams,
 } from '../types';
-import type { CoworkStore } from '../../../coworkStore';
 
 export interface SkillRpcCallbacks {
   ensureGatewayClientReady(): Promise<void>;

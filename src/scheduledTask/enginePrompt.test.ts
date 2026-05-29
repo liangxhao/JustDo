@@ -1,4 +1,5 @@
-import { test, expect } from 'vitest';
+import { expect,test } from 'vitest';
+
 import { buildScheduledTaskEnginePrompt, SCHEDULED_TASK_SWITCH_MESSAGE } from './enginePrompt';
 
 test('openclaw prompt points scheduled task requests to the native cron tool', () => {

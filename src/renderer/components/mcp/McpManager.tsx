@@ -1,19 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import SearchIcon from '../icons/SearchIcon';
-import TrashIcon from '../icons/TrashIcon';
-import PencilIcon from '../icons/PencilIcon';
-import ConnectorIcon from '../icons/ConnectorIcon';
+
+import { mcpCategories,mcpRegistry } from '../../data/mcpRegistry';
 import { i18nService } from '../../services/i18n';
 import { mcpService } from '../../services/mcp';
-import { setMcpServers } from '../../store/slices/mcpSlice';
 import { RootState } from '../../store';
-import { McpServerConfig, McpServerFormData, McpRegistryEntry } from '../../types/mcp';
-import { mcpRegistry, mcpCategories } from '../../data/mcpRegistry';
+import { setMcpServers } from '../../store/slices/mcpSlice';
+import { McpRegistryEntry,McpServerConfig, McpServerFormData } from '../../types/mcp';
+import Modal from '../common/Modal';
 import ErrorMessage from '../ErrorMessage';
+import ConnectorIcon from '../icons/ConnectorIcon';
+import PencilIcon from '../icons/PencilIcon';
+import SearchIcon from '../icons/SearchIcon';
+import TrashIcon from '../icons/TrashIcon';
 import Tooltip from '../ui/Tooltip';
 import McpServerFormModal from './McpServerFormModal';
-import Modal from '../common/Modal';
 
 const TRANSPORT_BADGE_COLORS: Record<string, string> = {
   stdio: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',

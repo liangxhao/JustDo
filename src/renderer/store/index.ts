@@ -1,11 +1,12 @@
 import { configureStore } from '@reduxjs/toolkit';
-import modelReducer from './slices/modelSlice';
+
+import agentReducer from './slices/agentSlice';
 import coworkReducer from './slices/coworkSlice';
-import skillReducer from './slices/skillSlice';
 import mcpReducer from './slices/mcpSlice';
+import modelReducer from './slices/modelSlice';
 import quickActionReducer from './slices/quickActionSlice';
 import scheduledTaskReducer from './slices/scheduledTaskSlice';
-import agentReducer from './slices/agentSlice';
+import skillReducer from './slices/skillSlice';
 
 export const store = configureStore({
   reducer: {

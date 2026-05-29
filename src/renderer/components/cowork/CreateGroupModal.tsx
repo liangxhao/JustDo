@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useMemo,useRef, useState } from 'react';
+
+import { i18nService } from '../../services/i18n';
 import type { CreateGroupInput } from '../../types/cowork';
 import { GROUP_COLORS } from '../../types/cowork';
 import Modal from '../common/Modal';
-import { i18nService } from '../../services/i18n';
 
 interface CreateGroupModalProps {
   isOpen: boolean;

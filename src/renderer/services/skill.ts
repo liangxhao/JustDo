@@ -1,4 +1,4 @@
-import { Skill, LocalizedText, ClawHubSkill, ClawHubSkillDetail } from '../types/skill';
+import { ClawHubSkill, ClawHubSkillDetail,LocalizedText, Skill } from '../types/skill';
 import { i18nService } from './i18n';
 
 export function resolveLocalizedText(text: string | LocalizedText): string {

@@ -20,12 +20,12 @@ import type {
   SessionTurn,
 } from '../gateway/types';
 import {
-  isRecord,
   extractMessageText,
-  stripDiscordMentions,
   extractSentFilePathsFromHistory,
   extractToolText,
   FINAL_HISTORY_SYNC_LIMIT,
+  isRecord,
+  stripDiscordMentions,
 } from '../utils/gatewayHelpers';
 
 // Callback interface

@@ -841,6 +841,13 @@ class CoworkService {
   async getSubTaskStatus(sessionId?: string): Promise<{
     statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
     displayLabels?: Record<string, string>;
+    sessionKeys?: Record<string, string>;
+    subagents?: Array<{
+      id: string;
+      sessionKey: string;
+      label: string;
+      status: 'pending' | 'running' | 'done' | 'failed';
+    }>;
   }> {
     const cowork = window.electron?.cowork;
     if (!cowork?.getSubTaskStatus) {
@@ -849,7 +856,12 @@ class CoworkService {
 
     const result = await cowork.getSubTaskStatus(sessionId);
     if (result.success) {
-      return { statuses: result.statuses, displayLabels: result.displayLabels };
+      return {
+        statuses: result.statuses,
+        displayLabels: result.displayLabels,
+        sessionKeys: result.sessionKeys,
+        subagents: result.subagents,
+      };
     }
     return { statuses: {} };
   }

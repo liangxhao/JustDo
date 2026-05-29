@@ -1,9 +1,9 @@
 import {
+  isCronSessionKey,
   isManagedSessionKey,
   parseManagedSessionKey,
-  isCronSessionKey,
 } from '../main/libs/openclawChannelSessionSync';
-import { OriginKind, BindingKind, DeliveryMode, DeliveryChannel } from './constants';
+import { BindingKind, DeliveryChannel,DeliveryMode, OriginKind } from './constants';
 
 // Re-declare origin/binding types here so common/ doesn't depend on renderer/
 // These MUST be kept in sync with src/renderer/types/scheduledTask.ts

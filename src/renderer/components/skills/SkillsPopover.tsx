@@ -1,14 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
 import { CheckIcon } from '@heroicons/react/24/outline';
-import SearchIcon from '../icons/SearchIcon';
-import PuzzleIcon from '../icons/PuzzleIcon';
-import Cog6ToothIcon from '../icons/Cog6ToothIcon';
+import React, { useEffect, useRef,useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+
 import { i18nService } from '../../services/i18n';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
 import { setSkills } from '../../store/slices/skillSlice';
 import { Skill } from '../../types/skill';
+import Cog6ToothIcon from '../icons/Cog6ToothIcon';
+import PuzzleIcon from '../icons/PuzzleIcon';
+import SearchIcon from '../icons/SearchIcon';
 
 interface SkillsPopoverProps {
   isOpen: boolean;

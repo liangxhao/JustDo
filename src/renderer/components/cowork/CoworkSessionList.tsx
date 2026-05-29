@@ -60,6 +60,7 @@ interface UngroupedDroppableZoneProps {
   setActiveSubTask: React.Dispatch<
     React.SetStateAction<{
       agentId: string;
+      sessionKey?: string;
       displayName?: string;
       parentSessionId: string;
       status: 'pending' | 'running' | 'done' | 'failed';
@@ -320,73 +321,21 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     return result;
   }, [sessions, groups]);
 
-  // From current session messages extract subtasks
   const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
-  const subTasks = useMemo<SubTaskInfo[]>(() => {
-    if (!currentSession?.messages) return [];
-    const tasks = new Map<string, SubTaskInfo>();
 
-    // First pass: find all sessions_spawn tool_use messages
-    for (let i = 0; i < currentSession.messages.length; i++) {
-      const msg = currentSession.messages[i];
-      const meta = msg.metadata;
-      if (!meta) continue;
-
-      if (msg.type === 'tool_use' && meta.toolName === 'sessions_spawn') {
-        const input = meta.toolInput as Record<string, unknown> | undefined;
-        // Use toolUseId as unique identifier (label may duplicate)
-        const toolUseId = meta.toolUseId || '';
-        const label = typeof input?.label === 'string' && input.label ? input.label : '';
-        const agentId = typeof input?.agentId === 'string' && input.agentId ? input.agentId : '';
-        const task = typeof input?.task === 'string' ? input.task.slice(0, 60) : '';
-        // task field stores label for display, agentId is toolUseId for unique key
-        if (toolUseId) {
-          tasks.set(toolUseId, {
-            agentId: toolUseId,
-            task: label || agentId || task,
-            status: 'pending', // Initially pending (queued, waiting for execution)
-          });
-        }
-      }
-    }
-
-    // Second pass: check for tool_result messages to determine if subagent was successfully started
-    // A sessions_spawn tool_result means the subagent was started (status changes from pending to running)
-    // NOTE: tool_result does NOT mean the subagent has finished execution - completion is tracked
-    // by lifecycle events (agent.stopped/agent.completed) which update backend's subagentStatus
-    for (let i = 0; i < currentSession.messages.length; i++) {
-      const msg = currentSession.messages[i];
-      if (msg.type === 'tool_result') {
-        const meta = msg.metadata;
-        if (!meta) continue;
-        const toolUseId = meta.toolUseId as string | undefined;
-        if (toolUseId && tasks.has(toolUseId)) {
-          const existing = tasks.get(toolUseId)!;
-          // If tool_result exists and not isError, subagent was successfully started
-          // Change from pending to running (actual completion tracked by backend)
-          if (existing.status === 'pending' && !meta.isError) {
-            tasks.set(toolUseId, { ...existing, status: 'running' });
-          }
-          // If tool_result has isError, the subagent failed to start - should be filtered out
-          // But this is handled by backend's failedSubagentIds, frontend relies on backendStatuses
-        }
-      }
-    }
-
-    // NOTE: We no longer use session.completed as a fallback to mark all subtasks as 'done'.
-    // The backend's getSubagentStatuses (via backendStatuses) is the authoritative source
-    // for subagent status. When backendStatuses is available, it will override frontend
-    // extraction status in enrichedSubTasks. This prevents showing 'completed' for
-    // running subagents when the session status might be stale in Redux.
-
-    return Array.from(tasks.values());
-  }, [currentSession?.messages, currentSession?.status]);
-
-  // Poll backend for real-time sub agent status
+  // Poll OpenClaw for subagent rows.
   const [backendStatuses, setBackendStatuses] = useState<
     Record<string, 'pending' | 'running' | 'done' | 'failed'>
   >({});
   const [backendDisplayLabels, setBackendDisplayLabels] = useState<Record<string, string>>({});
+  const [backendSubagents, setBackendSubagents] = useState<
+    Array<{
+      id: string;
+      sessionKey: string;
+      label: string;
+      status: 'pending' | 'running' | 'done' | 'failed';
+    }>
+  >([]);
   const isSessionActive = currentSession?.status === 'running';
   const activeSessionId = currentSession?.id;
   const hasRunningRef = React.useRef(false);
@@ -394,18 +343,18 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   useEffect(() => {
     setBackendStatuses({});
     setBackendDisplayLabels({});
+    setBackendSubagents([]);
     hasRunningRef.current = false;
   }, [activeSessionId]);
 
   useEffect(() => {
     hasRunningRef.current =
       Object.values(backendStatuses).some(s => s === 'running' || s === 'pending') ||
-      subTasks.some(t => t.status === 'running' || t.status === 'pending');
-  }, [backendStatuses, subTasks]);
+      backendSubagents.some(t => t.status === 'running' || t.status === 'pending');
+  }, [backendStatuses, backendSubagents]);
 
   useEffect(() => {
     if (!activeSessionId) return;
-    if (subTasks.length === 0 && !isSessionActive) return;
     const poll = async () => {
       try {
         const result = await window.electron.cowork.getSubTaskStatus(activeSessionId);
@@ -413,6 +362,9 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           setBackendStatuses(result.statuses);
           if (result.displayLabels) {
             setBackendDisplayLabels(result.displayLabels);
+          }
+          if (result.subagents && result.subagents.length > 0) {
+            setBackendSubagents(result.subagents);
           }
         }
       } catch {
@@ -428,51 +380,36 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       poll();
     }, 3000);
     return () => clearInterval(timer);
-  }, [activeSessionId, subTasks.length, isSessionActive]);
+  }, [activeSessionId, isSessionActive]);
 
-  // Merge message-extracted subtasks and backend-discovered statuses
-  // Use backendDisplayLabels for display (key is toolUseId, unique)
-  // Merge subTasks from Redux messages with backendStatuses from CoworkStore API.
-  // Backend statuses is the authoritative source - failed subagents are filtered out by backend.
-  // If backendStatuses has data, only show subagents that exist in backendStatuses.
-  // If backendStatuses is empty (still loading), use frontend subTasks as fallback.
   const enrichedSubTasks = useMemo(() => {
-    // If backend has returned statuses, use those as authoritative source
-    // This filters out failed subagents that backend has removed from statuses
-    if (Object.keys(backendStatuses).length > 0) {
-      // Build list from backendStatuses (authoritative)
-      const merged: Array<{
-        agentId: string;
-        task: string;
-        status: 'pending' | 'running' | 'done' | 'failed';
-        sessionKey?: string;
-      }> = [];
-
-      for (const [agentId, status] of Object.entries(backendStatuses)) {
-        // Get display label from backend or fallback to frontend extraction
-        const frontendTask = subTasks.find(t => t.agentId === agentId);
-        const displayLabel = backendDisplayLabels[agentId] || frontendTask?.task || '(no label)';
-        merged.push({
-          agentId,
-          task: displayLabel,
-          status: status as 'pending' | 'running' | 'done' | 'failed',
-        });
-      }
-
-      return merged;
+    if (backendSubagents.length > 0) {
+      return backendSubagents.map(subagent => ({
+        agentId: subagent.id,
+        sessionKey: subagent.sessionKey,
+        task: subagent.label,
+        status: subagent.status,
+      }));
     }
 
-    // Fallback: use frontend extraction when backend hasn't responded yet
-    return subTasks.map(t => ({
-      ...t,
-      task: backendDisplayLabels[t.agentId] || t.task,
-      status: t.status,
-    }));
-  }, [subTasks, backendStatuses, backendDisplayLabels]);
+    if (Object.keys(backendStatuses).length > 0) {
+      return Object.entries(backendStatuses).map(([agentId, status]) => {
+        return {
+          agentId,
+          sessionKey: undefined,
+          task: backendDisplayLabels[agentId] || '(no label)',
+          status,
+        };
+      });
+    }
+
+    return [];
+  }, [backendStatuses, backendDisplayLabels, backendSubagents]);
 
   // Subtask detail drawer state
   const [activeSubTask, setActiveSubTask] = useState<{
     agentId: string;
+    sessionKey?: string;
     displayName?: string;
     parentSessionId: string;
     status: 'pending' | 'running' | 'done' | 'failed';
@@ -642,6 +579,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       {activeSubTask && (
         <SubTaskDetailDrawer
           agentId={activeSubTask.agentId}
+          sessionKey={activeSubTask.sessionKey}
           displayName={activeSubTask.displayName}
           parentSessionId={activeSubTask.parentSessionId}
           status={activeSubTask.status}

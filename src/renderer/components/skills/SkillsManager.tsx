@@ -1,7 +1,7 @@
+import { ArrowUpTrayIcon, FolderIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { ArrowUpTrayIcon, FolderIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 import { i18nService } from '../../services/i18n';
 import { skillService } from '../../services/skill';

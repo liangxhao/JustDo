@@ -21,6 +21,11 @@ function patchFile(filePath) {
   const original = content;
 
   content = content.replace(
+    /SESSIONS_YIELD_ABORT_SETTLE_TIMEOUT_MS = process\.env\.OPENCLAW_TEST_FAST === "1" \? 250 : 2e3/g,
+    'SESSIONS_YIELD_ABORT_SETTLE_TIMEOUT_MS = process.env.OPENCLAW_TEST_FAST === "1" ? 250 : 3e4',
+  );
+
+  content = content.replace(
     /if \(outcome === "timed_out"\) log41\.warn\(`sessions_yield abort settle timed out: runId=\$\{params\.runId\} sessionId=\$\{params\.sessionId\} timeoutMs=\$\{SESSIONS_YIELD_ABORT_SETTLE_TIMEOUT_MS\}`\);\n}/g,
     'if (outcome === "timed_out") log41.warn(`sessions_yield abort settle timed out: runId=${params.runId} sessionId=${params.sessionId} timeoutMs=${SESSIONS_YIELD_ABORT_SETTLE_TIMEOUT_MS}`);\n  return outcome;\n}',
   );

@@ -1,6 +1,7 @@
 import { createSelector } from '@reduxjs/toolkit';
-import type { RootState } from '../index';
+
 import type { CoworkSessionSummary } from '../../types/cowork';
+import type { RootState } from '../index';
 
 // --- Primitive (identity) selectors ---
 // These return stable references for primitive values or existing object refs,

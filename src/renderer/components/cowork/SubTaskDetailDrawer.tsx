@@ -78,6 +78,7 @@ const CopyButton: React.FC<{
 
 interface SubTaskDetailDrawerProps {
   agentId: string;
+  sessionKey?: string;
   displayName?: string;
   parentSessionId: string;
   onClose: () => void;
@@ -227,6 +228,7 @@ const TypingDots: React.FC = () => (
 
 const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   agentId,
+  sessionKey,
   displayName,
   parentSessionId,
   onClose,
@@ -242,7 +244,8 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       parentSessionId,
   );
 
-  const cacheKey = `${parentSessionId}:${agentId}`;
+  const subagentKey = sessionKey || agentId;
+  const cacheKey = `${parentSessionId}:${subagentKey}`;
   const cached = messageCache.get(cacheKey);
 
   const [messages, setMessages] = useState<CoworkMessage[]>(cached ?? []);
@@ -299,6 +302,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       const fetchedMessages = await coworkService.getSubTaskHistory({
         parentSessionId,
         agentId,
+        sessionKey,
       });
       if (fetchedMessages.length > 0) {
         setMessages(fetchedMessages);
@@ -315,7 +319,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       setLoading(false);
       isFirstLoad.current = false;
     }
-  }, [parentSessionId, agentId, cacheKey, messages.length]);
+  }, [parentSessionId, agentId, sessionKey, cacheKey, messages.length]);
 
   // Set up streaming listeners when running
   useEffect(() => {
@@ -427,6 +431,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
         const errorInfo = await coworkService.getSubagentError({
           parentSessionId,
           agentId,
+          sessionKey,
         });
         setSubagentErrorInfo(errorInfo);
       } catch {
@@ -435,7 +440,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     };
 
     fetchErrorInfo();
-  }, [isFailed, parentSessionId, agentId]);
+  }, [isFailed, parentSessionId, agentId, sessionKey]);
 
   // Initial load and final refresh when subagent completes
   useEffect(() => {

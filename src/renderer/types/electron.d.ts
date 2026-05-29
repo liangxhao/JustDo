@@ -612,6 +612,13 @@ interface IElectronAPI {
       success: boolean;
       statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
       displayLabels?: Record<string, string>;
+      sessionKeys?: Record<string, string>;
+      subagents?: Array<{
+        id: string;
+        sessionKey: string;
+        label: string;
+        status: 'pending' | 'running' | 'done' | 'failed';
+      }>;
     }>;
     getSubTaskHistory: (options: {
       parentSessionId: string;

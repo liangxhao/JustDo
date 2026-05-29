@@ -1,7 +1,7 @@
-import { test, expect, describe, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
-import path from 'path';
 import os from 'os';
+import path from 'path';
+import { afterEach,beforeEach, describe, expect, test } from 'vitest';
 
 describe('enterpriseConfigSync', () => {
   let tmpDir: string;

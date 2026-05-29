@@ -1,13 +1,3 @@
-import React, {
-  useRef,
-  useEffect,
-  useState,
-  useCallback,
-  useMemo,
-  useSyncExternalStore,
-} from 'react';
-import { createPortal } from 'react-dom';
-import { useDispatch, useSelector } from 'react-redux';
 import { ShareIcon } from '@heroicons/react/20/solid';
 import {
   CheckIcon,
@@ -19,31 +9,42 @@ import {
   UserIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
-import { store } from '../../store';
-import {
-  selectCurrentSession,
-  selectIsStreaming,
-  selectRemoteManaged,
-  selectLastMessageContent,
-  selectCurrentMessagesLength,
-  selectThinkingExpanded,
-  selectToolExpanded,
-} from '../../store/selectors/coworkSelectors';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { useDispatch, useSelector } from 'react-redux';
+
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
+import { store } from '../../store';
 import { RootState } from '../../store';
+import {
+  selectCurrentMessagesLength,
+  selectCurrentSession,
+  selectIsStreaming,
+  selectLastMessageContent,
+  selectRemoteManaged,
+  selectThinkingExpanded,
+  selectToolExpanded,
+} from '../../store/selectors/coworkSelectors';
 import { toggleThinkingExpanded, toggleToolExpanded } from '../../store/slices/coworkSlice';
 import type {
+  CoworkImageAttachment,
   CoworkMessage,
   CoworkMessageMetadata,
-  CoworkImageAttachment,
 } from '../../types/cowork';
 import type { Skill } from '../../types/skill';
+import { extractCanvasShortcodes } from '../../utils/canvasShortcode';
 import { getCompactFolderName } from '../../utils/path';
 import Modal from '../common/Modal';
 import BrainIcon from '../icons/BrainIcon';
-import ToolIcon from '../icons/ToolIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
@@ -51,14 +52,14 @@ import InformationCircleIcon from '../icons/InformationCircleIcon';
 import PencilSquareIcon from '../icons/PencilSquareIcon';
 import PuzzleIcon from '../icons/PuzzleIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
+import ToolIcon from '../icons/ToolIcon';
 import TrashIcon from '../icons/TrashIcon';
 import MarkdownContent from '../MarkdownContent';
 import WindowTitleBar from '../window/WindowTitleBar';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
-import MonacoDiffView, { extractDiffFromToolInput } from './MonacoDiffView';
-import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
 import InlineCanvasPreviews from './InlineCanvasPreviews';
-import { extractCanvasShortcodes } from '../../utils/canvasShortcode';
+import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
+import MonacoDiffView, { extractDiffFromToolInput } from './MonacoDiffView';
 
 interface CoworkSessionDetailProps {
   onContinue: (

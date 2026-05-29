@@ -1,22 +1,23 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import Modal from './common/Modal';
+import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import React, { useCallback,useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
+
+import { coworkService } from '../services/cowork';
+import { i18nService } from '../services/i18n';
 import {
   selectCoworkSessions,
   selectCurrentSessionId,
   selectIsOpenClawEngine,
 } from '../store/selectors/coworkSelectors';
-import { coworkService } from '../services/cowork';
-import { i18nService } from '../services/i18n';
-import CoworkSessionList from './cowork/CoworkSessionList';
+import Modal from './common/Modal';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
+import CoworkSessionList from './cowork/CoworkSessionList';
+import ArrowUpRightIcon from './icons/ArrowUpRightIcon';
+import ClockIcon from './icons/ClockIcon';
 import ComposeIcon from './icons/ComposeIcon';
 import SearchIcon from './icons/SearchIcon';
-import ClockIcon from './icons/ClockIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import TrashIcon from './icons/TrashIcon';
-import ArrowUpRightIcon from './icons/ArrowUpRightIcon';
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 interface SidebarProps {
   onShowSettings: () => void;

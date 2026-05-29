@@ -1,11 +1,12 @@
-import { app, utilityProcess, type UtilityProcess } from 'electron';
-import { spawn, type ChildProcess } from 'child_process';
+import { type ChildProcess,spawn } from 'child_process';
 import crypto from 'crypto';
+import { app, type UtilityProcess,utilityProcess } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
-import { getElectronNodeRuntimePath, ensureElectronNodeShim, getSkillsRoot } from './coworkUtil';
+
+import { ensureElectronNodeShim, getElectronNodeRuntimePath, getSkillsRoot } from './coworkUtil';
 import { syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
@@ -1047,7 +1048,7 @@ export class OpenClawEngineManager extends EventEmitter {
       for (const candidate of candidates) {
         const fullPath = path.join(distRoot, candidate);
         try {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
+           
           const loaded = require(fullPath) as Record<string, unknown>;
           // Check if GatewayClient is directly exported or exported as 't' (minified)
           if (typeof loaded.GatewayClient === 'function') {

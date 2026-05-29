@@ -1,12 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import type { CoworkSessionSummary, CoworkSessionStatus, SessionGroup } from '../../types/cowork';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+
+import { i18nService } from '../../services/i18n';
+import type { CoworkSessionStatus, CoworkSessionSummary, SessionGroup } from '../../types/cowork';
+import Modal from '../common/Modal';
+import ListChecksIcon from '../icons/ListChecksIcon';
 import PencilSquareIcon from '../icons/PencilSquareIcon';
 import TrashIcon from '../icons/TrashIcon';
-import ListChecksIcon from '../icons/ListChecksIcon';
-import { i18nService } from '../../services/i18n';
-import Modal from '../common/Modal';
 import Tooltip from '../ui/Tooltip';
 
 interface CoworkSessionItemProps {

@@ -1,8 +1,9 @@
-import { test, expect } from 'vitest';
+import { expect,test } from 'vitest';
+
 import {
-  isCustomProvider,
   getCustomProviderDefaultName,
   getProviderDisplayName,
+  isCustomProvider,
   validateDisplayName,
 } from './config';
 

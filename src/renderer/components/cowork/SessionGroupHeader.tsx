@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
+import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import React, { useEffect,useRef, useState } from 'react';
+
+import { i18nService } from '../../services/i18n';
 import type { SessionGroup } from '../../types/cowork';
 import { GROUP_COLORS } from '../../types/cowork';
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import { i18nService } from '../../services/i18n';
 import Modal from '../common/Modal';
 
 interface SessionGroupHeaderProps {

@@ -1,30 +1,31 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
+import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
+import { useDispatch,useSelector } from 'react-redux';
+
+import { CoworkView } from './components/cowork';
+import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
+import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
+import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
+import { ScheduledTasksView } from './components/scheduledTasks';
+import Settings, { type SettingsOpenOptions } from './components/Settings';
+import Sidebar from './components/Sidebar';
+import Toast from './components/Toast';
+import WindowTitleBar from './components/window/WindowTitleBar';
+import { defaultConfig, getProviderDisplayName } from './config';
+import { configService } from './services/config';
+import { coworkService } from './services/cowork';
+import { i18nService } from './services/i18n';
+import { scheduledTaskService } from './services/scheduledTask';
+import { matchesShortcut } from './services/shortcuts';
+import { themeService } from './services/theme';
 import { RootState, store } from './store';
 import {
   selectCurrentSessionId,
   selectFirstPendingPermission,
 } from './store/selectors/coworkSelectors';
-import Settings, { type SettingsOpenOptions } from './components/Settings';
-import Sidebar from './components/Sidebar';
-import Toast from './components/Toast';
-import WindowTitleBar from './components/window/WindowTitleBar';
-import { CoworkView } from './components/cowork';
-import { ScheduledTasksView } from './components/scheduledTasks';
-import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
-import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
-import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
-import { configService } from './services/config';
-import { themeService } from './services/theme';
-import { coworkService } from './services/cowork';
-import { scheduledTaskService } from './services/scheduledTask';
-import { defaultConfig, getProviderDisplayName } from './config';
 import { setAvailableModels, setSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
 import type { CoworkPermissionResult } from './types/cowork';
-import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-import { i18nService } from './services/i18n';
-import { matchesShortcut } from './services/shortcuts';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);

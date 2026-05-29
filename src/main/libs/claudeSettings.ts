@@ -1,15 +1,16 @@
-import { join } from 'path';
 import { app } from 'electron';
+import { join } from 'path';
+
+import { ProviderName, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import type { SqliteStore } from '../sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
+import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
 import {
   configureCoworkOpenAICompatProxy,
-  type OpenAICompatProxyTarget,
   getCoworkOpenAICompatProxyBaseURL,
   getCoworkOpenAICompatProxyStatus,
+  type OpenAICompatProxyTarget,
 } from './coworkOpenAICompatProxy';
-import { normalizeProviderApiFormat, type AnthropicApiFormat } from './coworkFormatTransform';
-import { ProviderName, resolveCodingPlanBaseUrl } from '../../shared/providers';
 
 type ProviderModel = {
   id: string;

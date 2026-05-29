@@ -3,10 +3,10 @@ import { buildManagedSessionKey } from '../../openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../../openclawHistory';
 import type { GatewayClientLike } from '../gateway/types';
 import {
-  isRecord,
   convertEntriesToCoworkMessages,
-  markSubagentContextMessage,
   convertToCoworkMessages,
+  isRecord,
+  markSubagentContextMessage,
 } from '../utils/gatewayHelpers';
 import type { HistoryReconciler } from './historyReconciler';
 

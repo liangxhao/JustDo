@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import React, { useEffect,useState } from 'react';
 import { useSelector } from 'react-redux';
-import { selectIsOpenClawEngine } from '../../store/selectors/coworkSelectors';
+
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
-import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import { selectIsOpenClawEngine } from '../../store/selectors/coworkSelectors';
 import type { OpenClawEngineStatus } from '../../types/cowork';
 
 const resolveEngineStatusText = (status: OpenClawEngineStatus): string => {

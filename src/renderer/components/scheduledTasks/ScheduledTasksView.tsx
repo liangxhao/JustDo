@@ -1,18 +1,19 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import { RootState } from '../../store';
-import { setViewMode, selectTask } from '../../store/slices/scheduledTaskSlice';
-import { scheduledTaskService } from '../../services/scheduledTask';
+import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useRef,useState } from 'react';
+import { useDispatch,useSelector } from 'react-redux';
+
 import { i18nService } from '../../services/i18n';
-import TaskList from './TaskList';
-import TaskForm from './TaskForm';
-import TaskDetail from './TaskDetail';
+import { scheduledTaskService } from '../../services/scheduledTask';
+import { RootState } from '../../store';
+import { selectTask,setViewMode } from '../../store/slices/scheduledTaskSlice';
+import ComposeIcon from '../icons/ComposeIcon';
+import SidebarToggleIcon from '../icons/SidebarToggleIcon';
+import WindowTitleBar from '../window/WindowTitleBar';
 import AllRunsHistory from './AllRunsHistory';
 import DeleteConfirmModal from './DeleteConfirmModal';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import ComposeIcon from '../icons/ComposeIcon';
-import WindowTitleBar from '../window/WindowTitleBar';
+import TaskDetail from './TaskDetail';
+import TaskForm from './TaskForm';
+import TaskList from './TaskList';
 
 interface ScheduledTasksViewProps {
   isSidebarCollapsed?: boolean;

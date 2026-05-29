@@ -2,9 +2,9 @@ import { describe, expect, test, vi } from 'vitest';
 
 import type { Model } from '../store/slices/modelSlice';
 import {
-  toOpenClawModelRef,
-  resolveOpenClawModelRef,
   matchesOpenClawModelRef,
+  resolveOpenClawModelRef,
+  toOpenClawModelRef,
 } from '../utils/openclawModelRef';
 
 // Mock configService (fallback only, prefer model.provider)

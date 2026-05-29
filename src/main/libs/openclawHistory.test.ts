@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { extractGatewayHistoryEntry, extractGatewayHistoryEntries, extractGatewayMessageText, buildScheduledReminderSystemMessage } from './openclawHistory';
+
+import { buildScheduledReminderSystemMessage,extractGatewayHistoryEntries, extractGatewayHistoryEntry, extractGatewayMessageText } from './openclawHistory';
 
 describe('openclawHistory', () => {
   test('extracts plain text content blocks', () => {

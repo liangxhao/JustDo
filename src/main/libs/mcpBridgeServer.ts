@@ -5,9 +5,10 @@
  * OpenClaw's ask-user-question plugin calls /askuser for user confirmation dialogs.
  * Binds to 127.0.0.1 only (local traffic).
  */
+import crypto from 'crypto';
 import http from 'http';
 import net from 'net';
-import crypto from 'crypto';
+
 import type { McpServerManager } from './mcpServerManager';
 
 const log = (level: string, msg: string) => {

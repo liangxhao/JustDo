@@ -4,15 +4,15 @@
  * Works offline with locally bundled workers
  */
 
-import React, { useEffect, useRef, useState } from 'react';
 import { loader, Monaco } from '@monaco-editor/react';
 import { editor, Uri } from 'monaco-editor';
+import React, { useEffect, useRef, useState } from 'react';
 
 // Import types and helper from DiffView
-import { extractDiffFromToolInput, type DiffData } from './DiffView';
+import { type DiffData,extractDiffFromToolInput } from './DiffView';
 
 // Re-export for compatibility
-export { extractDiffFromToolInput, type DiffData };
+export { type DiffData,extractDiffFromToolInput };
 
 // Monokai-inspired theme for diff view
 const MONOKAI_THEME = {

@@ -1,11 +1,12 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+
 import type {
-  CoworkSession,
-  CoworkSessionSummary,
-  CoworkMessage,
   CoworkConfig,
+  CoworkMessage,
   CoworkPermissionRequest,
+  CoworkSession,
   CoworkSessionStatus,
+  CoworkSessionSummary,
   SessionGroup,
 } from '../../types/cowork';
 import { removeSessionFromState, removeSessionsFromState } from './coworkDeleteState';

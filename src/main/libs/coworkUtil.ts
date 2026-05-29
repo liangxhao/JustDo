@@ -1,21 +1,15 @@
-import { app } from 'electron';
 import { execSync, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, chmodSync, statSync, readdirSync } from 'fs';
+import { app } from 'electron';
+import { chmodSync, existsSync, mkdirSync, readdirSync,statSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
+
 import {
   buildEnvForConfig,
   getCurrentApiConfig,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
 } from './claudeSettings';
-import type { OpenAICompatProxyTarget } from './coworkOpenAICompatProxy';
-import {
-  getCoworkOpenAICompatProxyBaseURL,
-  getCoworkOpenAICompatProxyToken,
-} from './coworkOpenAICompatProxy';
 import { coworkLog } from './coworkLogger';
-import { appendPythonRuntimeToEnv } from './pythonRuntime';
-import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
 import {
   buildAnthropicMessagesUrl,
   buildGeminiGenerateContentUrl,
@@ -24,6 +18,13 @@ import {
   extractTextFromAnthropicResponse,
   extractTextFromGeminiResponse,
 } from './coworkModelApi';
+import type { OpenAICompatProxyTarget } from './coworkOpenAICompatProxy';
+import {
+  getCoworkOpenAICompatProxyBaseURL,
+  getCoworkOpenAICompatProxyToken,
+} from './coworkOpenAICompatProxy';
+import { appendPythonRuntimeToEnv } from './pythonRuntime';
+import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
 
 function appendEnvPath(current: string | undefined, additions: string[]): string | undefined {
   const items = new Set<string>();

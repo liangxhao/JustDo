@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { useSelector } from 'react-redux';
-import { RootState } from '../../store';
-import { i18nService } from '../../services/i18n';
 import { CheckIcon } from '@heroicons/react/24/outline';
+import React, { useMemo,useState } from 'react';
+import { useSelector } from 'react-redux';
+
+import { i18nService } from '../../services/i18n';
+import { RootState } from '../../store';
 import SearchIcon from '../icons/SearchIcon';
 
 interface AgentSkillSelectorProps {

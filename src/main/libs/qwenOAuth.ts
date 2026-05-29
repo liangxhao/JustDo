@@ -8,7 +8,7 @@
  * Original implementation connected to Qwen OAuth service.
  */
 
-import { randomUUID, randomBytes, createHash } from 'node:crypto';
+import { createHash,randomBytes, randomUUID } from 'node:crypto';
 
 // Stub URLs - no actual external calls will be made
 const QWEN_OAUTH_BASE_URL = '';

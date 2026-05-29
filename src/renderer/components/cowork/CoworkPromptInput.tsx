@@ -8,7 +8,7 @@ import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
-import { selectDraftPrompts, selectDraftAttachments } from '../../store/selectors/coworkSelectors';
+import { selectDraftAttachments,selectDraftPrompts } from '../../store/selectors/coworkSelectors';
 import {
   addDraftAttachment,
   clearDraftAttachments,

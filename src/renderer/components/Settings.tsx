@@ -1,56 +1,57 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import Modal from './common/Modal';
+import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
+import {
+  ArrowTopRightOnSquareIcon,
+  CheckCircleIcon,
+  Cog6ToothIcon,
+  CpuChipIcon,
+  CubeIcon,
+  SignalIcon,
+  XCircleIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
+import { PlusIcon,UserGroupIcon } from '@heroicons/react/24/outline';
+import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+
+import { ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
+import {
+  type AppConfig,
+  defaultConfig,
+  getCustomProviderDefaultName,
+  getProviderDisplayName,
+  getVisibleProviders,
+  isCustomProvider,
+  validateDisplayName,
+} from '../config';
+import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
+import { agentService } from '../services/agent';
 import { configService } from '../services/config';
-import { themeService } from '../services/theme';
-import { i18nService, LanguageType } from '../services/i18n';
+import { coworkService } from '../services/cowork';
 import {
   decryptSecret,
-  encryptWithPassword,
   decryptWithPassword,
   EncryptedPayload,
+  encryptWithPassword,
   PasswordEncryptedPayload,
 } from '../services/encryption';
-import { coworkService } from '../services/cowork';
-import { agentService } from '../services/agent';
-import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
-import ErrorMessage from './ErrorMessage';
-import {
-  XMarkIcon,
-  Cog6ToothIcon,
-  SignalIcon,
-  CheckCircleIcon,
-  XCircleIcon,
-  CubeIcon,
-  CpuChipIcon,
-  ArrowTopRightOnSquareIcon,
-} from '@heroicons/react/24/outline';
-import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
-import { UserGroupIcon, PlusIcon } from '@heroicons/react/24/outline';
-import PlusCircleIcon from './icons/PlusCircleIcon';
-import TrashIcon from './icons/TrashIcon';
-import PencilIcon from './icons/PencilIcon';
-import { useDispatch, useSelector } from 'react-redux';
+import { i18nService, LanguageType } from '../services/i18n';
+import { themeService } from '../services/theme';
 import { RootState } from '../store';
-import { setAvailableModels } from '../store/slices/modelSlice';
 import { selectCoworkConfig } from '../store/selectors/coworkSelectors';
-import ThemedSelect from './ui/ThemedSelect';
+import { setAvailableModels } from '../store/slices/modelSlice';
+import type { PresetAgent } from '../types/agent';
 import type { CoworkAgentEngine, OpenClawEngineStatus } from '../types/cowork';
 import AgentCreateModal from './agent/AgentCreateModal';
 import AgentSettingsPanel from './agent/AgentSettingsPanel';
-import SkillsManager from './skills/SkillsManager';
+import Modal from './common/Modal';
+import ErrorMessage from './ErrorMessage';
+import PencilIcon from './icons/PencilIcon';
+import PlusCircleIcon from './icons/PlusCircleIcon';
+import { CustomProviderIcon,OllamaIcon } from './icons/providers';
+import TrashIcon from './icons/TrashIcon';
 import McpManager from './mcp/McpManager';
-import { ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
-import {
-  defaultConfig,
-  type AppConfig,
-  getVisibleProviders,
-  isCustomProvider,
-  getCustomProviderDefaultName,
-  getProviderDisplayName,
-  validateDisplayName,
-} from '../config';
-import { OllamaIcon, CustomProviderIcon } from './icons/providers';
-import type { PresetAgent } from '../types/agent';
+import SkillsManager from './skills/SkillsManager';
+import ThemedSelect from './ui/ThemedSelect';
 
 type TabType =
   | 'general'

@@ -5,15 +5,16 @@
  * Starts enabled MCP servers via MCP SDK transports (stdio, SSE, Streamable HTTP),
  * discovers available tools, and routes tool calls to the correct server.
  */
-import { app } from 'electron';
-import fs from 'fs';
-import path from 'path';
-import { spawnSync } from 'child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { spawnSync } from 'child_process';
+import { app } from 'electron';
+import fs from 'fs';
+import path from 'path';
+
 import type { McpServerRecord } from '../mcpStore';
 import { getElectronNodeRuntimePath, getEnhancedEnv } from './coworkUtil';
 
