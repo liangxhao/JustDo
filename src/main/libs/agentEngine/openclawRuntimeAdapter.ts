@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 
@@ -55,6 +55,7 @@ import {
   extractSubagentCompletionMessages,
   GATEWAY_READY_TIMEOUT_MS,
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
+  INTERNAL_RUNTIME_CONTEXT_END,
   isRecord,
   OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
   waitWithTimeout,
@@ -72,6 +73,7 @@ const AGENT_ACTIVITY_ALIVE_WINDOW_MS = 60_000;
 const MESSAGE_UPDATE_THROTTLE_MS = 200;
 const CLIENT_TIMEOUT_GRACE_MS = 30_000;
 const SUBAGENT_STATUS_CACHE_TTL_MS = 2_000;
+const SUBAGENT_AGGREGATE_WAKE_DELAY_MS = 2_000;
 const GATEWAY_RECONNECT_MAX_ATTEMPTS = 10;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
@@ -214,6 +216,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly orchestrationSessionIds = new Set<string>();
   private readonly mainAgentLifecycleEnded = new Set<string>();
   private readonly toolCallArgs = new Map<string, Record<string, unknown>>();
+  private readonly yieldedSubagentParentSessions = new Set<string>();
+  private readonly aggregateSubagentWakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly aggregateSubagentWakeSignatures = new Set<string>();
 
   // Collaborators
   private historyReconciler!: HistoryReconciler;
@@ -345,6 +350,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.set(sessionId, Date.now());
     this.orchestrationSessionIds.delete(sessionId);
     this.mainAgentLifecycleEnded.delete(sessionId);
+    this.yieldedSubagentParentSessions.delete(sessionId);
+    this.clearAggregateSubagentWakeTimer(sessionId);
     this.cleanupSessionTurn(sessionId);
     this.clearPendingApprovalsBySession(sessionId);
     this.store.updateSession(sessionId, { status: 'idle' });
@@ -429,6 +436,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
     this.orchestrationSessionIds.add(sessionId);
+    this.yieldedSubagentParentSessions.delete(sessionId);
 
     // Resolve stale activeTurns
     if (this.activeTurns.has(sessionId)) {
@@ -701,6 +709,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (this.subagentStatus.get(resolvedAgentId) !== 'failed') {
           this.subagentStatus.set(resolvedAgentId, 'done');
           this.persistSubagentStatus(resolvedAgentId, 'done');
+          this.scheduleAggregateSubagentCompletionWake(sessionId);
         }
         turn.knownRunIds.add(runId);
       } else if (state === 'error') {
@@ -902,6 +911,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (this.subagentStatus.get(agentId) !== 'failed') {
             this.subagentStatus.set(agentId, 'done');
             this.persistSubagentStatus(agentId, 'done');
+            this.scheduleAggregateSubagentCompletionWake(sessionId);
           }
           this.finalizeSubagentStream(runId);
         } else if (phase === 'error') {
@@ -1052,6 +1062,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (this.subagentStatus.get(resolved.subagentId) !== 'failed') {
         this.subagentStatus.set(resolved.subagentId, 'done');
         this.persistSubagentStatus(resolved.subagentId, 'done');
+        this.scheduleAggregateSubagentCompletionWake(resolved.parentSessionId);
       }
       this.finalizeSubagentStream(runId);
     } else if (phase === 'error') {
@@ -1769,6 +1780,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (entry.name === 'sessions_spawn' && entry.args) {
       this.trackSubagentSpawn(sessionId, entry);
     }
+    if (entry.name === 'sessions_yield') {
+      this.yieldedSubagentParentSessions.add(sessionId);
+      this.scheduleAggregateSubagentCompletionWake(sessionId);
+    }
 
     const isSubagentTool = this.toolCallIdToParentSessionId.has(entry.toolCallId);
 
@@ -2025,6 +2040,113 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       );
     }
     this.subagentStreamByRunId.delete(runId);
+  }
+
+  private clearAggregateSubagentWakeTimer(sessionId: string): void {
+    const timer = this.aggregateSubagentWakeTimers.get(sessionId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.aggregateSubagentWakeTimers.delete(sessionId);
+  }
+
+  private scheduleAggregateSubagentCompletionWake(parentSessionId: string): void {
+    if (!this.yieldedSubagentParentSessions.has(parentSessionId)) return;
+    this.clearAggregateSubagentWakeTimer(parentSessionId);
+    const timer = setTimeout(() => {
+      this.aggregateSubagentWakeTimers.delete(parentSessionId);
+      void this.maybeWakeParentWithAggregateSubagentResults(parentSessionId).catch(error =>
+        console.warn('[OpenClawRuntime] Aggregate subagent wake failed:', error),
+      );
+    }, SUBAGENT_AGGREGATE_WAKE_DELAY_MS);
+    this.aggregateSubagentWakeTimers.set(parentSessionId, timer);
+  }
+
+  private getPersistedSubagents(parentSessionId: string): PersistedSubagentRow[] {
+    const getSubagentsByParentSession = (this.store as unknown as {
+      getSubagentsByParentSession?: (parentSessionId: string) => PersistedSubagentRow[];
+    }).getSubagentsByParentSession;
+    return typeof getSubagentsByParentSession === 'function'
+      ? getSubagentsByParentSession.call(this.store, parentSessionId)
+      : [];
+  }
+
+  private async maybeWakeParentWithAggregateSubagentResults(parentSessionId: string): Promise<void> {
+    if (!this.yieldedSubagentParentSessions.has(parentSessionId)) return;
+    const parentSessionKey = this.findSessionKeyBySessionId(parentSessionId);
+    if (!parentSessionKey) return;
+
+    const rows = this.getPersistedSubagents(parentSessionId).filter(row => row.childSessionKey);
+    if (rows.length < 2) return;
+    if (rows.some(row => row.status !== 'done' && row.status !== 'failed')) return;
+
+    const signature = `${parentSessionId}:${rows
+      .map(row => `${row.childSessionKey || row.toolCallId}:${row.status}`)
+      .sort()
+      .join('|')}`;
+    if (this.aggregateSubagentWakeSignatures.has(signature)) return;
+
+    await this.ensureGatewayClientReady();
+    const client = this.gatewayClient;
+    if (!client) return;
+
+    const results: string[] = [];
+    for (const [index, row] of rows.entries()) {
+      const childSessionKey = row.childSessionKey || '';
+      const output = childSessionKey
+        ? await this.readLatestAssistantTextFromGateway(childSessionKey)
+        : '';
+      const label = this.sanitizeCachedSubagentLabel(row.label) || `subagent ${index + 1}`;
+      results.push(
+        [
+          `${index + 1}. ${label}`,
+          `session_key: ${childSessionKey || row.toolCallId}`,
+          `status: ${row.status}`,
+          'result:',
+          output.trim() || '(no output)',
+        ].join('\n'),
+      );
+    }
+
+    const message = [
+      INTERNAL_RUNTIME_CONTEXT_BEGIN,
+      'OpenClaw runtime context (internal):',
+      'All spawned subagents for the yielded parent turn have now settled. Use every child result below before deciding the next action. If these results satisfy the original task, do not call sessions_yield again; finish the task or reply to the user.',
+      '',
+      'Child completion results:',
+      '',
+      results.join('\n\n---\n\n'),
+      INTERNAL_RUNTIME_CONTEXT_END,
+    ].join('\n');
+
+    this.aggregateSubagentWakeSignatures.add(signature);
+    this.yieldedSubagentParentSessions.delete(parentSessionId);
+    await client.request('chat.send', {
+      sessionKey: parentSessionKey,
+      message,
+      deliver: false,
+      idempotencyKey: `gucciai:subagent-aggregate:${createHash('sha256')
+        .update(signature)
+        .digest('hex')}`,
+    });
+  }
+
+  private async readLatestAssistantTextFromGateway(sessionKey: string): Promise<string> {
+    const client = this.gatewayClient;
+    if (!client) return '';
+    try {
+      const history = await client.request<{ messages?: unknown[] }>('chat.history', {
+        sessionKey,
+        limit: 100,
+      });
+      const entries = extractGatewayHistoryEntries(history.messages ?? []);
+      for (let index = entries.length - 1; index >= 0; index--) {
+        const entry = entries[index];
+        if (entry.role === 'assistant' && entry.text.trim()) return entry.text.trim();
+      }
+    } catch (error) {
+      console.warn('[OpenClawRuntime] Failed to read subagent history:', error);
+    }
+    return '';
   }
 
   private updateSubagentFromSpawnResult(

@@ -892,3 +892,82 @@ test('session.message reload is deferred until sessions.changed clears active ru
   );
   expect(session.status).toBe('idle');
 });
+
+test('aggregate wake sends all completed yielded subagent results once', async () => {
+  const rows = [
+    {
+      toolCallId: 'call-a',
+      parentSessionId: 'session-1',
+      childSessionKey: 'agent:main:subagent:child-a',
+      label: 'first blessing',
+      status: 'done' as const,
+    },
+    {
+      toolCallId: 'call-b',
+      parentSessionId: 'session-1',
+      childSessionKey: 'agent:main:subagent:child-b',
+      label: 'second blessing',
+      status: 'done' as const,
+    },
+  ];
+  const store = {
+    getSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? {
+            id: 'session-1',
+            title: 'Session',
+            claudeSessionId: null,
+            status: 'idle',
+            pinned: false,
+            cwd: '',
+            executionMode: 'local',
+            activeSkillIds: [],
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+            agentId: 'main',
+          }
+        : null,
+    getAgent: () => null,
+    getSubagentsByParentSession: () => rows,
+    addMessage: () => {
+      throw new Error('not expected');
+    },
+    updateSession: () => {},
+    deleteMessage: () => true,
+    replaceConversationMessages: () => {},
+    updateMessage: () => true,
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+    if (method === 'chat.history') {
+      return {
+        messages: [
+          {
+            role: 'assistant',
+            content:
+              params.sessionKey === 'agent:main:subagent:child-a'
+                ? '愿你今天一路有光。'
+                : '愿你明天满载惊喜。',
+          },
+        ],
+      };
+    }
+    return {};
+  });
+
+  adapter.gatewayClient = { start: () => {}, stop: () => {}, request };
+  adapter.ensureGatewayClientReady = async () => {};
+  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
+  adapter.yieldedSubagentParentSessions.add('session-1');
+
+  await adapter.maybeWakeParentWithAggregateSubagentResults('session-1');
+  await adapter.maybeWakeParentWithAggregateSubagentResults('session-1');
+
+  const sendCalls = request.mock.calls.filter(([method]) => method === 'chat.send');
+  expect(sendCalls).toHaveLength(1);
+  expect(sendCalls[0][1].sessionKey).toBe('agent:main:gucciai:session-1');
+  expect(sendCalls[0][1].message).toContain('All spawned subagents');
+  expect(sendCalls[0][1].message).toContain('愿你今天一路有光。');
+  expect(sendCalls[0][1].message).toContain('愿你明天满载惊喜。');
+});
