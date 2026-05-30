@@ -82,6 +82,7 @@ export type ToolStreamEntry = {
   name: string;
   args?: unknown;
   output?: string;
+  message?: Record<string, unknown>;
   emitted?: boolean;
   startedAt: number;
   updatedAt: number;
@@ -104,6 +105,12 @@ export type SessionTurn = {
   committedAssistantSegments: string[];
   /** Tool stream entries keyed by toolCallId. */
   toolStreamById: Map<string, ToolStreamEntry>;
+  /** OpenClaw webchat-style tool ordering for transient UI stream only. */
+  toolStreamOrder: string[];
+  /** Tool messages projected from the transient tool stream. */
+  chatToolMessages: Record<string, unknown>[];
+  /** Streaming assistant text segments committed before tool cards. */
+  chatStreamSegments: Array<{ text: string; ts: number }>;
   /** Accumulated thinking content. */
   thinkingContent: string;
   thinkingMessageId: string | null;

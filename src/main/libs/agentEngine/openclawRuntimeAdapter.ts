@@ -36,6 +36,10 @@ import type {
 } from './gateway/types';
 import { HistoryReconciler } from './history/historyReconciler';
 import { SubtaskHistory } from './history/subtaskHistory';
+import {
+  resetWebchatToolStream,
+  syncWebchatToolStreamMessages,
+} from './openclaw/webchatToolStream';
 import { SkillRpcHandler } from './rpc/skillRpc';
 import type { PermissionResult } from './types';
 import type {
@@ -120,6 +124,14 @@ type VisibleRunStreamState = {
   thinkingContent: string;
   toolStreamById: Map<string, ToolStreamEntry>;
   modelName: string;
+};
+
+type PersistedSubagentRow = {
+  toolCallId: string;
+  parentSessionId: string;
+  childSessionKey: string | null;
+  label: string;
+  status: 'pending' | 'running' | 'done' | 'failed';
 };
 
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {
@@ -480,6 +492,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       chatStream: '',
       committedAssistantSegments: [],
       toolStreamById: new Map(),
+      toolStreamOrder: [],
+      chatToolMessages: [],
+      chatStreamSegments: [],
       thinkingContent: '',
       thinkingMessageId: null,
       stopRequested: false,
@@ -578,7 +593,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     let sessionId = runId ? (this.sessionIdByRunId.get(runId) ?? null) : null;
     if (!sessionId && sessionKey) {
       sessionId = this.resolveSessionIdBySessionKey(sessionKey);
-      if (sessionId && runId) {
+      if (sessionId && runId && !this.isAnnounceRunId(runId)) {
         this.ensureActiveTurn(sessionId, sessionKey, runId);
       }
     }
@@ -698,6 +713,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Terminal event helper (aligned with webchat reconcileTerminalRun)
     const reconcileTerminalRun = (sessionStatus: 'idle' | 'completed' | 'error') => {
+      const hadToolStream = turn.toolStreamOrder.length > 0;
       this.cleanupSessionTurn(sessionId!);
       this.store.updateSession(sessionId!, { status: sessionStatus });
       this.mainAgentLifecycleEnded.add(sessionId!);
@@ -706,9 +722,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Notify renderer of turn completion
       const session = this.store.getSession(sessionId!);
       this.emit('complete', sessionId!, session?.claudeSessionId ?? null, sessionStatus);
-      // Post-turn sync: patch tool results/args/usage from chat.history
+      // OpenClaw Gateway history is authoritative; local messages are only a UI cache.
       if (sessionKey) {
-        void this.historyReconciler.reconcileWithHistory(sessionId!, sessionKey).catch(() => {});
+        void this.historyReconciler
+          .reconcileWithHistory(sessionId!, sessionKey)
+          .finally(() => {
+            if (hadToolStream) {
+              resetWebchatToolStream(turn);
+            }
+          })
+          .catch(() => {});
       }
     };
 
@@ -1187,6 +1210,35 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return null;
   }
 
+  private isRecentAssistantSegmentComposite(sessionId: string, content: string): boolean {
+    const normalized = content.replace(/\s+/g, ' ').trim();
+    if (!normalized) return false;
+    const session = this.store.getSession(sessionId);
+    if (!session) return false;
+
+    const recentAssistantContents = session.messages
+      .filter(message => message.type === 'assistant' && !message.metadata?.isThinking)
+      .map(message => message.content.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .slice(-6);
+
+    for (let start = 0; start < recentAssistantContents.length - 1; start++) {
+      const segments = recentAssistantContents.slice(start);
+      const joinedTight = segments.join('');
+      const joinedSpaced = segments.join(' ');
+      if (joinedTight === normalized || joinedSpaced === normalized) return true;
+      if (
+        normalized.startsWith(segments[0]) &&
+        normalized.endsWith(segments[segments.length - 1]) &&
+        segments.every(segment => normalized.includes(segment))
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private appendExternalFinalAssistantMessage(
     sessionId: string,
     modelName: string,
@@ -1198,6 +1250,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (sessionKey) {
         void this.historyReconciler.reconcileWithHistory(sessionId, sessionKey).catch(() => {});
       }
+      return;
+    }
+
+    if (this.isRecentAssistantSegmentComposite(sessionId, content)) {
       return;
     }
 
@@ -1595,7 +1651,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       entry.updatedAt = now;
     }
 
-    // On result: emit tool_use + tool_result messages
+    entry.message = {
+      role: 'assistant',
+      toolCallId: entry.toolCallId,
+      runId: entry.runId,
+      content: [
+        { type: 'toolcall', name: entry.name, arguments: entry.args ?? {} },
+        ...(entry.output ? [{ type: 'toolresult', name: entry.name, text: entry.output }] : []),
+      ],
+      timestamp: entry.startedAt,
+    };
+    if (!turn.toolStreamOrder.includes(toolCallId)) {
+      turn.toolStreamOrder.push(toolCallId);
+    }
+    syncWebchatToolStreamMessages(turn);
+
     if (phase === 'result') {
       this.emitToolMessages(sessionId, entry);
     }
@@ -1666,6 +1736,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       entry.name = entry.name === 'tool' ? name : entry.name;
       if (output !== undefined) entry.output = output || undefined;
       entry.updatedAt = now;
+    }
+
+    entry.message = {
+      role: 'assistant',
+      toolCallId: entry.toolCallId,
+      runId: entry.runId,
+      content: [
+        { type: 'toolcall', name: entry.name, arguments: entry.args ?? {} },
+        ...(entry.output ? [{ type: 'toolresult', name: entry.name, text: entry.output }] : []),
+      ],
+      timestamp: entry.startedAt,
+    };
+    const activeTurn = this.activeTurns.get(sessionId);
+    if (activeTurn && toolStreamById === activeTurn.toolStreamById) {
+      if (!activeTurn.toolStreamOrder.includes(toolCallId)) {
+        activeTurn.toolStreamOrder.push(toolCallId);
+      }
+      syncWebchatToolStreamMessages(activeTurn);
     }
 
     if (phase === 'end' && !entry.emitted && entry.output !== undefined) {
@@ -2316,6 +2404,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       chatStream: '',
       committedAssistantSegments: [],
       toolStreamById: new Map(),
+      toolStreamOrder: [],
+      chatToolMessages: [],
+      chatStreamSegments: [],
       thinkingContent: '',
       thinkingMessageId: null,
       stopRequested: false,
@@ -2572,6 +2663,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         settleResolve();
         this.lastTickTimestamp = Date.now();
         this.startTickWatchdog();
+        void this.subscribeGatewaySessions();
       },
       onConnectError: (error: Error) => settleReject(error),
       onClose: (_code: number, reason: string) => {
@@ -2640,6 +2732,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.pendingMessageUpdateTimer.clear();
     this.lastMessageUpdateEmitTime.clear();
     this.gatewayStoppingIntentionally = false;
+  }
+
+  private async subscribeGatewaySessions(): Promise<void> {
+    const client = this.gatewayClient;
+    if (!client) return;
+    try {
+      await client.request('sessions.subscribe', {});
+    } catch (error) {
+      console.warn('[OpenClawRuntime] Failed to subscribe to Gateway session events:', error);
+    }
   }
 
   /** Clean up internal gateway client state without calling client.stop().
@@ -2990,6 +3092,48 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     };
 
     if (sessionId) {
+      const gatewaySubagents = await this.listSubagentsFromGateway(sessionId);
+      if (gatewaySubagents.length > 0) {
+        const getSubagentsByParentSession = (this.store as unknown as {
+          getSubagentsByParentSession?: (parentSessionId: string) => PersistedSubagentRow[];
+        }).getSubagentsByParentSession;
+        const persistedSubagents: PersistedSubagentRow[] =
+          typeof getSubagentsByParentSession === 'function'
+            ? getSubagentsByParentSession.call(this.store, sessionId)
+            : [];
+
+        for (const subagent of gatewaySubagents) {
+          const normalizedSessionKey =
+            this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
+          addSubagent({
+            ...subagent,
+            id: normalizedSessionKey || subagent.id,
+          });
+          statuses[normalizedSessionKey] = subagent.status;
+          displayLabels[normalizedSessionKey] = subagent.label;
+          sessionKeys[normalizedSessionKey] = subagent.sessionKey;
+
+          const persisted = persistedSubagents.find(row => {
+            const childSessionKey = row.childSessionKey || '';
+            return (
+              childSessionKey === subagent.sessionKey ||
+              this.normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
+            );
+          });
+          if (persisted?.toolCallId) {
+            statuses[persisted.toolCallId] = subagent.status;
+            displayLabels[persisted.toolCallId] = subagent.label;
+            sessionKeys[persisted.toolCallId] = subagent.sessionKey;
+          }
+        }
+
+        return {
+          statuses,
+          displayLabels,
+          sessionKeys,
+          subagents: Array.from(subagentsById.values()),
+        };
+      }
       this.reconcilePersistedSubagentsFromSession(sessionId);
       const getSubagentsByParentSession = (this.store as unknown as {
         getSubagentsByParentSession?: (parentSessionId: string) => Array<{
@@ -3031,8 +3175,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         });
       }
 
-      const gatewaySubagents = await this.listSubagentsFromGateway(sessionId);
-      for (const subagent of gatewaySubagents) {
+      const fallbackGatewaySubagents = await this.listSubagentsFromGateway(sessionId);
+      for (const subagent of fallbackGatewaySubagents) {
         const normalizedSessionKey =
           this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
         this.subagentStatus.set(normalizedSessionKey, subagent.status);

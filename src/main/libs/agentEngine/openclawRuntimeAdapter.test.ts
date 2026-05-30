@@ -398,13 +398,19 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
   });
 
   expect(subagentMessages).toHaveLength(0);
-  expect(mainMessages.map(message => message.type)).toEqual(['tool_use', 'tool_result', 'assistant']);
-  expect(session.messages.map(message => message.type)).toEqual([
+  expect(mainMessages.map(message => message.type)).toEqual([
+    'assistant',
+    'assistant',
     'tool_use',
     'tool_result',
-    'assistant',
   ]);
-  expect(session.messages[2].content).toBe('I will inspect the file and then report back.');
+  expect(session.messages.map(message => message.type)).toEqual([
+    'assistant',
+    'assistant',
+    'tool_use',
+    'tool_result',
+  ]);
+  expect(session.messages[1].content).toBe('I will inspect the file and then report back.');
 });
 
 test('announce item and command_output events render tool messages', () => {
@@ -602,13 +608,164 @@ test('announce events after parent turn cleanup do not render assistant deltas',
     },
   });
 
-  expect(mainMessages.map(message => message.type)).toEqual(['tool_use', 'tool_result', 'assistant']);
-  expect(session.messages.map(message => message.type)).toEqual([
+  expect(mainMessages.map(message => message.type)).toEqual([
+    'assistant',
     'tool_use',
     'tool_result',
     'assistant',
   ]);
-  expect(session.messages[2].content).toContain('文件已保存到');
+  expect(session.messages.map(message => message.type)).toEqual([
+    'assistant',
+    'tool_use',
+    'tool_result',
+    'assistant',
+  ]);
+  expect(session.messages[3].content).toContain('文件已保存到');
+});
+
+test('detached announce final does not append composite assistant snapshot', () => {
+  const session = {
+    id: 'session-1',
+    title: 'Announce Session',
+    claudeSessionId: null,
+    status: 'idle',
+    pinned: false,
+    cwd: '',
+    executionMode: 'local',
+    activeSkillIds: [],
+    messages: [] as Array<Record<string, unknown>>,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  let nextId = 1;
+  const store = {
+    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+    getAgent: () => null,
+    addMessage: (sessionId: string, message: Record<string, unknown>) => {
+      expect(sessionId).toBe(session.id);
+      const created = {
+        id: `msg-${nextId++}`,
+        timestamp: nextId,
+        metadata: {},
+        ...message,
+      };
+      session.messages.push(created);
+      return created;
+    },
+    updateMessage: (sessionId: string, messageId: string, updates: Record<string, unknown>) => {
+      expect(sessionId).toBe(session.id);
+      const index = session.messages.findIndex(m => m.id === messageId);
+      if (index !== -1) {
+        session.messages[index] = {
+          ...session.messages[index],
+          ...updates,
+          metadata: {
+            ...((session.messages[index].metadata as Record<string, unknown>) ?? {}),
+            ...((updates.metadata as Record<string, unknown>) ?? {}),
+          },
+        };
+      }
+      return index !== -1;
+    },
+    updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
+      Object.assign(session, updates);
+    },
+    deleteMessage: () => true,
+    replaceConversationMessages: () => {},
+    getSubagentsByParentSession: () => [],
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const mainMessages: Array<Record<string, unknown>> = [];
+  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
+
+  const sessionKey = 'agent:main:gucciai:session-1';
+  const runId = 'announce:v1:agent:main:subagent:child-run';
+  const beforeTool = '两个祝福语都收到了！现在汇总写入 Excel。';
+  const afterTool = '✅ **完成！** 两个 subagent 的祝福语已汇总写入 Excel';
+
+  adapter.rememberSessionKey('session-1', sessionKey);
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: beforeTool },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'call-1',
+        name: 'exec',
+        args: { command: 'write xlsx' },
+      },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        toolCallId: 'call-1',
+        name: 'exec',
+        result: 'ok',
+      },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: afterTool },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: {
+      runId,
+      sessionKey,
+      state: 'final',
+      message: {
+        role: 'assistant',
+        content: `${beforeTool}${afterTool}`,
+      },
+    },
+  });
+
+  expect(mainMessages.map(message => message.type)).toEqual([
+    'assistant',
+    'tool_use',
+    'tool_result',
+    'assistant',
+  ]);
+  expect(session.messages.map(message => message.type)).toEqual([
+    'assistant',
+    'tool_use',
+    'tool_result',
+    'assistant',
+  ]);
+  expect(session.messages[0].content).toBe(beforeTool);
+  expect(session.messages[3].content).toBe(afterTool);
 });
 
 test('chat delta without run id is ignored while a turn is active', () => {
