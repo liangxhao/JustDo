@@ -3,6 +3,7 @@ import React from 'react';
 export interface SubTaskInfo {
   agentId: string;
   sessionKey?: string;
+  childSessionId?: string;
   task: string;
   status: 'pending' | 'running' | 'done' | 'failed';
 }
@@ -15,6 +16,7 @@ interface SubAgentListProps {
     React.SetStateAction<{
       agentId: string;
       sessionKey?: string;
+      childSessionId?: string;
       displayName?: string;
       parentSessionId: string;
       status: 'pending' | 'running' | 'done' | 'failed';
@@ -56,6 +58,7 @@ const SubAgentList: React.FC<SubAgentListProps> = ({
             setActiveSubTask({
               agentId: sub.agentId,
               sessionKey: sub.sessionKey,
+              childSessionId: sub.childSessionId,
               displayName: sub.task,
               parentSessionId: sessionId,
               status: sub.status,

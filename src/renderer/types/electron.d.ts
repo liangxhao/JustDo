@@ -624,6 +624,7 @@ interface IElectronAPI {
       parentSessionId: string;
       agentId: string;
       sessionKey?: string;
+      childSessionId?: string;
     }) => Promise<{
       success: boolean;
       messages?: CoworkMessage[];

@@ -1,5 +1,14 @@
 'use strict';
 
+// Purpose: Avoid short abort-settle timeouts causing sessions_yield transcript
+// cleanup to contend with active session locks.
+// Affected OpenClaw version: v2026.5.22.
+// Risk: Longer wait changes abort cleanup latency and can mask upstream lock
+// ordering problems.
+// Remove when: OpenClaw settles sessions_yield abort cleanup without lock races.
+// Upstream tracking: TODO(openclaw): file issue/PR with sessions_yield lock trace.
+// Temporary: yes.
+
 const fs = require('fs');
 const path = require('path');
 

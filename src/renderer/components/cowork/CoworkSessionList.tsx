@@ -388,6 +388,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       return backendSubagents.map(subagent => ({
         agentId: subagent.id,
         sessionKey: subagent.sessionKey,
+        childSessionId: subagent.sessionKey,
         task: subagent.label,
         status: subagent.status,
       }));
@@ -398,6 +399,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         return {
           agentId,
           sessionKey: backendSessionKeys[agentId],
+          childSessionId: backendSessionKeys[agentId],
           task: backendDisplayLabels[agentId] || '(no label)',
           status,
         };
@@ -411,6 +413,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const [activeSubTask, setActiveSubTask] = useState<{
     agentId: string;
     sessionKey?: string;
+    childSessionId?: string;
     displayName?: string;
     parentSessionId: string;
     status: 'pending' | 'running' | 'done' | 'failed';
@@ -581,6 +584,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         <SubTaskDetailDrawer
           agentId={activeSubTask.agentId}
           sessionKey={activeSubTask.sessionKey}
+          childSessionId={activeSubTask.childSessionId}
           displayName={activeSubTask.displayName}
           parentSessionId={activeSubTask.parentSessionId}
           status={activeSubTask.status}

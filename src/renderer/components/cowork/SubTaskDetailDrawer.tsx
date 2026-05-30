@@ -77,6 +77,7 @@ const CopyButton: React.FC<{
 interface SubTaskDetailDrawerProps {
   agentId: string;
   sessionKey?: string;
+  childSessionId?: string;
   displayName?: string;
   parentSessionId: string;
   onClose: () => void;
@@ -227,6 +228,7 @@ const TypingDots: React.FC = () => (
 const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
   agentId,
   sessionKey,
+  childSessionId,
   displayName,
   parentSessionId,
   onClose,
@@ -309,6 +311,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
         parentSessionId,
         agentId,
         sessionKey,
+        childSessionId,
       });
       if (fetchedMessages.length > 0) {
         setMessages(fetchedMessages);
@@ -325,7 +328,7 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
       setLoading(false);
       isFirstLoad.current = false;
     }
-  }, [parentSessionId, agentId, sessionKey, cacheKey, messages.length]);
+  }, [parentSessionId, agentId, sessionKey, childSessionId, cacheKey, messages.length]);
 
   // Set up streaming listeners when running
   useEffect(() => {

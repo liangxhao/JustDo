@@ -1,9 +1,10 @@
 /**
  * History reconciliation methods extracted from OpenClawRuntimeAdapter.
  *
- * These methods synchronize local CoworkStore messages with the authoritative
+ * These methods refresh the local CoworkStore UI cache from authoritative
  * gateway chat.history, patching tool results, tool args, usage data, and
- * system messages. All class-level dependencies are injected via callbacks.
+ * system messages. Runtime behavior must not depend on SQLite transcript state.
+ * All class-level dependencies are injected via callbacks.
  */
 
 import { BrowserWindow } from 'electron';
@@ -141,13 +142,12 @@ export class HistoryReconciler {
   }
 
   /**
-   * Reconcile local session messages with the authoritative gateway chat.history.
+   * Refresh local session message cache from the authoritative gateway chat.history.
    *
-   * This is the single source-of-truth sync method: after a turn completes,
-   * it fetches the full conversation from OpenClaw and overwrites local
-   * user/assistant messages to match exactly.  Tool messages (tool_use,
-   * tool_result, system) are kept as-is because the gateway does not
-   * expose them in chat.history.
+   * OpenClaw is the single source of truth: after a turn completes, this fetches
+   * the conversation from OpenClaw and updates local user/assistant cache rows.
+   * Tool messages (tool_use, tool_result, system) are kept as-is because the
+   * gateway does not expose them in chat.history.
    *
    * The reconciliation is idempotent — calling it multiple times produces
    * the same result.

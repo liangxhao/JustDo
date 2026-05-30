@@ -5,7 +5,6 @@ import type { GatewayClientLike } from '../gateway/types';
 import {
   convertEntriesToCoworkMessages,
   convertToCoworkMessages,
-  isRecord,
   markSubagentContextMessage,
 } from '../utils/gatewayHelpers';
 import type { HistoryReconciler } from './historyReconciler';
@@ -35,6 +34,7 @@ export class SubtaskHistory {
     parentSessionId: string,
     agentId: string,
     sessionKey?: string,
+    childSessionId?: string,
   ): Promise<CoworkMessage[]> {
     // 确保 gateway client 已准备好（重启后可能未初始化）
     try {
@@ -45,6 +45,20 @@ export class SubtaskHistory {
     }
 
     const gatewayClient = this.cb.getGatewayClient();
+    const strictChildSessionId = childSessionId?.trim();
+
+    if (strictChildSessionId) {
+      if (!gatewayClient) {
+        console.warn(
+          '[OpenClawRuntime] getSubTaskHistory: childSessionId was provided but gateway client is unavailable.',
+        );
+        return [];
+      }
+      return this.queryGatewayHistory(gatewayClient, strictChildSessionId, {
+        strict: true,
+        label: 'childSessionId',
+      });
+    }
 
     // Resolve sessionKey from various sources
     const rawSessionKeyFromToolCallId = this.cb.toolCallIdToSessionKey.get(agentId);
@@ -58,33 +72,18 @@ export class SubtaskHistory {
     // Strategy 1: Query Gateway history directly (most reliable source)
     // The first user message in Gateway history IS the actual subagent context
     if (effectiveSessionKey && gatewayClient) {
-      try {
-        const history = await gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
-          sessionKey: effectiveSessionKey,
-          limit: 100,
-        });
-        if (Array.isArray(history?.messages) && history.messages.length > 0) {
-          console.log(
-            '[OpenClawRuntime] getSubTaskHistory: using Gateway history (' +
-              history.messages.length +
-              ' msgs) for sessionKey=' +
-              effectiveSessionKey.slice(0, 30),
-          );
-          const entries = extractGatewayHistoryEntries(history.messages);
-          if (entries.length > 0) {
-            const historyMessages = convertEntriesToCoworkMessages(entries);
-            this.cb.historyReconciler.patchToolInputFromHistoryRaw(historyMessages, history.messages);
-            // The first user message from Gateway IS the subagent context (sent by OpenClaw)
-            // Just mark it with isSubagentContext flag for UI styling
-            return markSubagentContextMessage(historyMessages);
-          }
-        }
-      } catch (err) {
-        console.warn('[OpenClawRuntime] getSubTaskHistory: Gateway query failed:', err);
-      }
+      const messages = await this.queryGatewayHistory(gatewayClient, effectiveSessionKey, {
+        strict: false,
+        label: 'sessionKey',
+      });
+      if (messages.length > 0) return messages;
     }
 
     // In-memory fallback (only when Gateway is unavailable)
+    console.warn(
+      '[OpenClawRuntime] getSubTaskHistory: using legacy fallback without childSessionId. ' +
+        'New Subagent UI calls must pass OpenClaw childSessionId.',
+    );
     const directMessages = this.cb.subagentMessages.get(agentId);
     const mappedMessages = sessionKeyFromToolCallId
       ? this.cb.subagentMessages.get(sessionKeyFromToolCallId)
@@ -266,5 +265,45 @@ export class SubtaskHistory {
 
     console.log('[OpenClawRuntime] getSubTaskHistory: no messages found for agentId=' + agentId);
     return [];
+  }
+
+  private async queryGatewayHistory(
+    gatewayClient: GatewayClientLike,
+    sessionKey: string,
+    options: { strict: boolean; label: string },
+  ): Promise<CoworkMessage[]> {
+    try {
+      const history = await gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
+        sessionKey,
+        limit: 100,
+      });
+      if (!Array.isArray(history?.messages) || history.messages.length === 0) {
+        if (options.strict) {
+          console.warn(
+            `[OpenClawRuntime] getSubTaskHistory: no Gateway history for ${options.label}=${sessionKey.slice(0, 80)}`,
+          );
+        }
+        return [];
+      }
+
+      console.log(
+        '[OpenClawRuntime] getSubTaskHistory: using Gateway history (' +
+          history.messages.length +
+          ' msgs) for ' +
+          options.label +
+          '=' +
+          sessionKey.slice(0, 80),
+      );
+      const entries = extractGatewayHistoryEntries(history.messages);
+      if (entries.length === 0) return [];
+
+      const historyMessages = convertEntriesToCoworkMessages(entries);
+      this.cb.historyReconciler.patchToolInputFromHistoryRaw(historyMessages, history.messages);
+      // The first user message from Gateway IS the subagent context (sent by OpenClaw).
+      return markSubagentContextMessage(historyMessages);
+    } catch (err) {
+      console.warn('[OpenClawRuntime] getSubTaskHistory: Gateway query failed:', err);
+      return [];
+    }
   }
 }

@@ -826,6 +826,7 @@ class CoworkService {
     parentSessionId: string;
     agentId: string;
     sessionKey?: string;
+    childSessionId?: string;
   }): Promise<CoworkMessage[]> {
     const cowork = window.electron?.cowork;
     if (!cowork?.getSubTaskHistory) return [];

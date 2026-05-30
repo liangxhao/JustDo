@@ -2959,7 +2959,15 @@ if (!gotTheLock) {
 
   ipcMain.handle(
     'cowork:subTask:history',
-    async (_event, options: { parentSessionId: string; agentId: string; sessionKey?: string }) => {
+    async (
+      _event,
+      options: {
+        parentSessionId: string;
+        agentId: string;
+        sessionKey?: string;
+        childSessionId?: string;
+      },
+    ) => {
       try {
         if (!openClawRuntimeAdapter) {
           return {
@@ -2971,6 +2979,7 @@ if (!gotTheLock) {
           options.parentSessionId,
           options.agentId,
           options.sessionKey,
+          options.childSessionId,
         );
         return { success: true, messages };
       } catch (error) {

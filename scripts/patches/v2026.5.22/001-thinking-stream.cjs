@@ -1,5 +1,14 @@
 'use strict';
 
+// Purpose: Keep reasoning stream emission enabled even when the caller has no
+// onReasoningStream callback, while still guarding optional callback calls.
+// Affected OpenClaw version: v2026.5.22.
+// Risk: Diverges from upstream reasoning-stream gating semantics.
+// Remove when: OpenClaw exposes thinking stream events without requiring a
+// callback gate, or GucciAI consumes the upstream event shape directly.
+// Upstream tracking: TODO(openclaw): file issue/PR with reasoning stream fixture.
+// Temporary: yes.
+
 const fs = require('fs');
 const path = require('path');
 

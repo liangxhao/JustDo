@@ -76,7 +76,8 @@ export type CoworkAgentEngine = 'openclaw';
 
 export type AgentSource = 'custom' | 'preset';
 
-// Subagent status types for database persistence
+// Subagent status types for UI cache persistence. OpenClaw Gateway remains the
+// authority for Subagent lifecycle and parent/child lineage.
 export type SubagentStatusType = 'pending' | 'running' | 'done' | 'failed';
 
 export interface SubagentRecord {
@@ -692,9 +693,9 @@ export class CoworkStore {
   }
 
   /**
-   * Replace all user/assistant messages in a session with the given list.
+   * Refresh the local user/assistant message cache from Gateway chat.history.
    * Tool messages (tool_use, tool_result, system) are preserved in their existing positions.
-   * Used by history reconciliation to align local state with the authoritative gateway history.
+   * This updates SQLite for UI display only; Runtime behavior must use OpenClaw Gateway state.
    */
   replaceConversationMessages(
     sessionId: string,

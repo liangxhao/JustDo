@@ -616,7 +616,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // appends their final assistant payload once.
       if (state === 'final' || state === 'aborted' || state === 'error') {
         if (state === 'final') {
-          this.appendExternalFinalAssistantMessage(sessionId, turn.modelName, p.message, sessionKey);
+          const stream = this.visibleRunStreams.get(runId);
+          if (stream) {
+            const text = extractAssistantText(p.message);
+            this.handleVisibleRunAssistantSnapshot(
+              sessionId,
+              sessionKey,
+              runId,
+              turn.modelName,
+              text,
+              true,
+            );
+          } else if (!turn.knownRunIds.has(runId)) {
+            this.appendExternalFinalAssistantMessage(
+              sessionId,
+              turn.modelName,
+              p.message,
+              sessionKey,
+            );
+          }
         }
         turn.knownRunIds.add(runId);
       }
@@ -819,9 +837,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (runId && turn.runId !== runId && this.isAnnounceRunId(runId)) {
       const data = isRecord(p.data) ? p.data : {};
       if (stream === 'thinking') {
-        this.getVisibleRunStream(sessionId, sessionKey, runId, turn.modelName);
+        this.handleVisibleRunThinkingSnapshot(sessionId, sessionKey, runId, turn.modelName, data);
       } else if (stream === 'assistant') {
-        this.getVisibleRunStream(sessionId, sessionKey, runId, turn.modelName);
+        const text = typeof data.text === 'string' ? data.text : '';
+        this.handleVisibleRunAssistantSnapshot(
+          sessionId,
+          sessionKey,
+          runId,
+          turn.modelName,
+          text,
+          false,
+        );
       } else if (stream === 'tool') {
         this.handleVisibleRunToolEvent(sessionId, sessionKey, runId, turn.modelName, data);
       } else if (stream === 'item' || stream === 'command_output') {
@@ -1023,7 +1049,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const modelName = this.resolveSessionModelName(sessionId);
 
     if (stream === 'thinking' || stream === 'assistant') {
-      this.getVisibleRunStream(sessionId, sessionKey, runId, modelName);
+      if (stream === 'thinking') {
+        this.handleVisibleRunThinkingSnapshot(sessionId, sessionKey, runId, modelName, eventData);
+      } else {
+        const text = typeof eventData.text === 'string' ? eventData.text : '';
+        this.handleVisibleRunAssistantSnapshot(
+          sessionId,
+          sessionKey,
+          runId,
+          modelName,
+          text,
+          false,
+        );
+      }
       return;
     }
 
@@ -3244,8 +3282,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     parentSessionId: string,
     agentId: string,
     sessionKey?: string,
+    childSessionId?: string,
   ): Promise<CoworkMessage[]> {
-    return this.subtaskHistory.getSubTaskHistory(parentSessionId, agentId, sessionKey);
+    return this.subtaskHistory.getSubTaskHistory(
+      parentSessionId,
+      agentId,
+      sessionKey,
+      childSessionId,
+    );
   }
 
   async getSubagentErrorInfo(

@@ -448,6 +448,7 @@ contextBridge.exposeInMainWorld('electron', {
       parentSessionId: string;
       agentId: string;
       sessionKey?: string;
+      childSessionId?: string;
     }) => ipcRenderer.invoke('cowork:subTask:history', options),
     getSubagentError: (options: {
       parentSessionId: string;

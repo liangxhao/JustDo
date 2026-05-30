@@ -1,5 +1,14 @@
 'use strict';
 
+// Purpose: Point bundled gateway code at the packaged subagent registry runtime
+// path used by GucciAI's Electron distribution layout.
+// Affected OpenClaw version: v2026.5.22.
+// Risk: Runtime path can diverge from upstream package layout assumptions.
+// Remove when: OpenClaw resolves subagent registry runtime paths correctly in
+// packaged Electron bundles.
+// Upstream tracking: TODO(openclaw): file issue/PR with packaged runtime layout.
+// Temporary: yes.
+
 const fs = require('fs');
 const path = require('path');
 
