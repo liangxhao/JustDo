@@ -574,7 +574,8 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-sm">🔍</span>
             <h3 className="text-sm font-semibold dark:text-claude-darkText text-claude-text truncate">
-              {i18nService.t('subTaskDetail') || 'Sub-task Detail'} — {displayName || agentId}
+              {i18nService.t('subTaskDetail') || 'Sub-task Detail'}
+              {displayName ? ` - ${displayName}` : ''}
             </h3>
             {/* Status indicator synced with breathing light */}
             {status === 'running' && (

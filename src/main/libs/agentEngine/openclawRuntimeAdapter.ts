@@ -1827,7 +1827,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     this.subagentStatus.set(toolCallId, 'pending');
     this.toolCallArgs.set(toolCallId, args as Record<string, unknown>);
-    this.persistSubagent(toolCallId, sessionId, label || toolCallId, 'pending', {
+    this.persistSubagent(toolCallId, sessionId, label, 'pending', {
       toolInput: args as Record<string, unknown>,
     });
   }
@@ -2046,7 +2046,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.persistSubagent(
       toolCallId,
       parentSessionId,
-      this.toolCallIdToLabel.get(toolCallId) || toolCallId,
+      this.toolCallIdToLabel.get(toolCallId) || '',
       failed ? 'failed' : 'running',
       {
         childSessionKey: sessionKey || undefined,
@@ -2056,7 +2056,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     );
     if (sessionKey) {
       this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
-      this.sessionKeyToLabel.set(sessionKey, this.toolCallIdToLabel.get(toolCallId) || toolCallId);
+      const label = this.toolCallIdToLabel.get(toolCallId) || '';
+      if (label) this.sessionKeyToLabel.set(sessionKey, label);
       const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey) || sessionKey;
       this.toolCallIdToParentSessionId.set(normalizedSessionKey, parentSessionId);
       this.subagentStatus.set(
@@ -2074,7 +2075,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const sessionKey = typeof metadata.sessionKey === 'string' ? metadata.sessionKey : '';
     if (sessionKey) {
       this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
-      this.sessionKeyToLabel.set(sessionKey, this.toolCallIdToLabel.get(toolCallId) || toolCallId);
+      const label = this.toolCallIdToLabel.get(toolCallId) || '';
+      if (label) this.sessionKeyToLabel.set(sessionKey, label);
     }
     const status = typeof metadata.status === 'string' ? metadata.status.toLowerCase() : '';
     const normalizedStatus: 'done' | 'failed' = ['error', 'failed', 'cancelled'].includes(status)
@@ -2186,7 +2188,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const toolInput = isRecord(message.metadata?.toolInput)
         ? (message.metadata.toolInput as Record<string, unknown>)
         : this.parseToolOutputObject(message.content);
-      const label = this.getSubagentDisplayLabelFromToolInput(toolInput) || toolCallId;
+      const label = this.getSubagentDisplayLabelFromToolInput(toolInput);
       const toolResult = session.messages.find(
         candidate =>
           candidate.type === 'tool_result' &&
@@ -2218,7 +2220,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (toolInput) this.toolCallArgs.set(toolCallId, toolInput);
       if (childSessionKey) {
         this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
-        this.sessionKeyToLabel.set(childSessionKey, label);
+        if (label) this.sessionKeyToLabel.set(childSessionKey, label);
         const normalizedSessionKey = this.normalizeSubagentSessionKey(childSessionKey) || childSessionKey;
         this.toolCallIdToParentSessionId.set(normalizedSessionKey, sessionId);
         this.subagentStatus.set(normalizedSessionKey, persistedStatus);
@@ -3124,7 +3126,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             statuses[persisted.toolCallId] = subagent.status;
             displayLabels[persisted.toolCallId] = subagent.label;
             sessionKeys[persisted.toolCallId] = subagent.sessionKey;
+            this.persistSubagentStatus(persisted.toolCallId, subagent.status);
+          } else {
+            this.persistSubagent(normalizedSessionKey || subagent.id, sessionId, subagent.label, subagent.status, {
+              childSessionKey: subagent.sessionKey,
+            });
           }
+          this.persistSubagentStatus(subagent.sessionKey || subagent.id, subagent.status);
         }
 
         return {
@@ -3150,27 +3158,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           : [];
       for (const subagent of persistedSubagents) {
         const id = subagent.childSessionKey || subagent.toolCallId;
+        const label = this.sanitizeCachedSubagentLabel(subagent.label);
         this.toolCallIdToParentSessionId.set(subagent.toolCallId, subagent.parentSessionId);
-        this.toolCallIdToLabel.set(subagent.toolCallId, subagent.label);
+        if (label) this.toolCallIdToLabel.set(subagent.toolCallId, label);
         this.subagentStatus.set(subagent.toolCallId, subagent.status);
         statuses[subagent.toolCallId] = subagent.status;
-        displayLabels[subagent.toolCallId] = subagent.label;
+        displayLabels[subagent.toolCallId] = label;
         if (subagent.childSessionKey) {
           this.toolCallIdToSessionKey.set(subagent.toolCallId, subagent.childSessionKey);
           sessionKeys[subagent.toolCallId] = subagent.childSessionKey;
-          this.sessionKeyToLabel.set(subagent.childSessionKey, subagent.label);
+          if (label) this.sessionKeyToLabel.set(subagent.childSessionKey, label);
           const normalizedSessionKey =
             this.normalizeSubagentSessionKey(subagent.childSessionKey) || subagent.childSessionKey;
           this.toolCallIdToParentSessionId.set(normalizedSessionKey, subagent.parentSessionId);
           this.subagentStatus.set(normalizedSessionKey, subagent.status);
           statuses[normalizedSessionKey] = subagent.status;
-          displayLabels[normalizedSessionKey] = subagent.label;
+          displayLabels[normalizedSessionKey] = label;
           sessionKeys[normalizedSessionKey] = subagent.childSessionKey;
         }
         addSubagent({
           id,
           sessionKey: subagent.childSessionKey || '',
-          label: subagent.label,
+          label,
           status: subagent.status,
         });
       }
@@ -3181,7 +3190,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
         this.subagentStatus.set(normalizedSessionKey, subagent.status);
         this.toolCallIdToParentSessionId.set(normalizedSessionKey, sessionId);
-        this.sessionKeyToLabel.set(normalizedSessionKey, subagent.label);
+        if (subagent.label) this.sessionKeyToLabel.set(normalizedSessionKey, subagent.label);
         statuses[normalizedSessionKey] = subagent.status;
         displayLabels[normalizedSessionKey] = subagent.label;
         sessionKeys[normalizedSessionKey] = subagent.sessionKey;
@@ -3212,14 +3221,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         continue;
       }
       statuses[toolCallId] = status;
-      const label = this.toolCallIdToLabel.get(toolCallId) || this.sessionKeyToLabel.get(toolCallId);
+      const label = this.sanitizeCachedSubagentLabel(
+        this.toolCallIdToLabel.get(toolCallId) || this.sessionKeyToLabel.get(toolCallId),
+      );
       if (label) displayLabels[toolCallId] = label;
       const sessionKey = this.toolCallIdToSessionKey.get(toolCallId) || this.normalizeSubagentSessionKey(toolCallId);
       if (sessionKey) sessionKeys[toolCallId] = sessionKey;
       addSubagent({
         id: sessionKey || toolCallId,
         sessionKey: sessionKey || '',
-        label: label || sessionKey || toolCallId,
+        label: label || '',
         status,
       });
     }
@@ -3287,11 +3298,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         for (const row of result.sessions ?? []) {
           const sessionKey = typeof row.key === 'string' ? row.key : '';
           if (!sessionKey) continue;
-          const gatewayLabel =
-            (typeof row.label === 'string' && row.label.trim()) ||
-            (typeof row.displayName === 'string' && row.displayName.trim()) ||
-            '';
-          const label = this.getSubagentDisplayLabel(sessionId, sessionKey, gatewayLabel);
+          const label = this.getSubagentDisplayLabel(sessionId, sessionKey);
           byKey.set(sessionKey, {
             id: sessionKey,
             sessionKey,
@@ -3317,10 +3324,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private getSubagentDisplayLabel(
     parentSessionId: string,
     sessionKey: string,
-    fallbackLabel?: string,
   ): string {
-    const mappedLabel = this.sessionKeyToLabel.get(sessionKey);
-    if (mappedLabel && !this.isOpaqueSubagentLabel(mappedLabel)) return mappedLabel;
+    const mappedLabel = this.sanitizeCachedSubagentLabel(this.sessionKeyToLabel.get(sessionKey));
+    if (mappedLabel) return mappedLabel;
 
     const parentSession = this.store.getSession(parentSessionId);
     const spawnToolUses =
@@ -3363,14 +3369,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
-    if (fallbackLabel && !this.isOpaqueSubagentLabel(fallbackLabel)) return fallbackLabel;
-    return sessionKey.split(':').pop() || sessionKey;
+    return '';
   }
 
   private getSubagentDisplayLabelFromToolInput(input: unknown): string {
     if (!isRecord(input)) return '';
     const label = typeof input.label === 'string' ? input.label.trim() : '';
-    if (label && !this.isOpaqueSubagentLabel(label)) return label;
+    if (label) return label;
+    const taskName = typeof input.taskName === 'string' ? input.taskName.trim() : '';
+    if (taskName) return taskName;
     const task = typeof input.task === 'string' ? input.task.trim() : '';
     if (task) return this.truncateSubagentTaskLabel(task);
     return '';
@@ -3378,14 +3385,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private truncateSubagentTaskLabel(task: string): string {
     const normalized = task.replace(/\s+/g, ' ').trim();
-    return normalized.length > 30 ? `${normalized.slice(0, 30)}...` : normalized;
+    return normalized.length > 30 ? normalized.slice(0, 30) : normalized;
   }
 
-  private isOpaqueSubagentLabel(label: string): boolean {
-    const value = label.trim();
-    if (!value) return true;
+  private sanitizeCachedSubagentLabel(label: string | undefined): string {
+    const value = typeof label === 'string' ? label.trim() : '';
+    if (!value || this.isOpaqueSubagentIdentifier(value)) return '';
+    return value;
+  }
+
+  private isOpaqueSubagentIdentifier(value: string): boolean {
     if (value.includes(':subagent:')) return true;
     if (/^webchat:g-agent-main-subagent-[0-9a-f-]{36}$/i.test(value)) return true;
+    if (/^call_[a-z0-9]+$/i.test(value)) return true;
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
       return true;
     }

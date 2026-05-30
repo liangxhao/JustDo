@@ -385,22 +385,26 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
   const enrichedSubTasks = useMemo(() => {
     if (backendSubagents.length > 0) {
-      return backendSubagents.map(subagent => ({
-        agentId: subagent.id,
-        sessionKey: subagent.sessionKey,
-        childSessionId: subagent.sessionKey,
-        task: subagent.label,
-        status: subagent.status,
-      }));
+      return backendSubagents
+        .filter(subagent => subagent.label.trim())
+        .map(subagent => ({
+          agentId: subagent.id,
+          sessionKey: subagent.sessionKey,
+          childSessionId: subagent.sessionKey,
+          task: subagent.label,
+          status: subagent.status,
+        }));
     }
 
     if (Object.keys(backendStatuses).length > 0) {
-      return Object.entries(backendStatuses).map(([agentId, status]) => {
+      return Object.entries(backendStatuses).flatMap(([agentId, status]) => {
+        const task = backendDisplayLabels[agentId] || '';
+        if (!task.trim()) return [];
         return {
           agentId,
           sessionKey: backendSessionKeys[agentId],
           childSessionId: backendSessionKeys[agentId],
-          task: backendDisplayLabels[agentId] || '(no label)',
+          task,
           status,
         };
       });

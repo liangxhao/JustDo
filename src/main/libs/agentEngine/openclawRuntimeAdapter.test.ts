@@ -225,6 +225,12 @@ test('gateway subagent status updates both tool call and session key aliases', a
   expect(statuses.statuses['call-subagent']).toBe('done');
   expect(statuses.statuses['agent:main:subagent:child-1']).toBe('done');
   expect(statuses.sessionKeys['call-subagent']).toBe('agent:main:subagent:child-1');
+  expect(store.updateSubagentStatusByIdentifier).toHaveBeenCalledWith('call-subagent', 'done', undefined);
+  expect(store.updateSubagentStatusByIdentifier).toHaveBeenCalledWith(
+    'agent:main:subagent:child-1',
+    'done',
+    undefined,
+  );
   expect(statuses.subagents).toEqual([
     {
       id: 'agent:main:subagent:child-1',
@@ -255,7 +261,19 @@ test('subagent display label falls back to the first 30 task characters', () => 
     adapter.getSubagentDisplayLabelFromToolInput({
       task: '请阅读 skill 文件，然后根据该 skill 的说明，写一个完整的 diagram 示例',
     }),
-  ).toBe('请阅读 skill 文件，然后根据该 skill 的说明，写...');
+  ).toBe('请阅读 skill 文件，然后根据该 skill 的说明，写');
+});
+
+test('subagent display label prefers taskName before task preview', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+
+  expect(
+    adapter.getSubagentDisplayLabelFromToolInput({
+      taskName: 'diagram example',
+      task: '请阅读 skill 文件，然后根据该 skill 的说明，写一个完整的 diagram 示例',
+    }),
+  ).toBe('diagram example');
 });
 
 test('announce run events follow webchat chat-final and tool-stream split', () => {
