@@ -791,6 +791,9 @@ const isVisibleTranscriptItem = (item: TranscriptItem): boolean => {
   return true;
 };
 
+const isAssistantReplyItem = (item: TranscriptItem): boolean =>
+  item.type === 'assistant' || item.type === 'tool_group' || item.type === 'tool_result';
+
 const getTranscriptItemId = (item: TranscriptItem): string => {
   if (item.type === 'tool_group') return `tool-${item.group.toolUse.id}`;
   return item.message.id;
@@ -810,11 +813,6 @@ const getTranscriptItemContent = (item: TranscriptItem): string => {
   return [item.message.content, item.message.thinkingContent]
     .filter((value): value is string => typeof value === 'string' && value.length > 0)
     .join('\n');
-};
-
-const getToolResultLineCount = (result: string): number => {
-  if (!result) return 0;
-  return result.split('\n').length;
 };
 
 const TodoWriteInputView: React.FC<{ items: ParsedTodoItem[] }> = ({ items }) => {
@@ -889,7 +887,6 @@ export const ToolCallGroup: React.FC<{
   const toolKey = (toolUse.metadata?.toolUseId as string) ?? toolUse.id;
   const persistedExpanded = toolExpandStateMap.get(toolKey) ?? false;
   const [isExpanded, setIsExpanded] = useState(persistedExpanded);
-  const resultLineCount = hasToolResultText ? getToolResultLineCount(toolResultDisplay) : 0;
   const toolResultSummary =
     isCronTool && hasToolResultText
       ? truncatePreview(toolResultDisplay.replace(/\s+/g, ' '))
@@ -917,7 +914,7 @@ export const ToolCallGroup: React.FC<{
           setIsExpanded(newExpanded);
           toolExpandStateMap.set(toolKey, newExpanded);
         }}
-        className="w-full flex items-start gap-2 text-left group relative z-10"
+        className="w-full max-w-[calc(100%-44px)] flex items-start gap-2 text-left group relative z-10"
       >
         <span
           className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${
@@ -925,28 +922,28 @@ export const ToolCallGroup: React.FC<{
           }`}
         />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-secondary">{toolName}</span>
+          <div className="flex items-baseline gap-2 min-w-0 max-w-full">
+            <span className="text-sm font-medium text-secondary flex-shrink-0">{toolName}</span>
             {toolInputSummary && (
-              <code className="text-xs text-muted font-mono truncate max-w-[400px]">
+              <code
+                className="text-xs text-muted font-mono truncate min-w-0 flex-1 max-w-full"
+                title={toolInputSummary}
+              >
                 {toolInputSummary}
               </code>
             )}
           </div>
-          {toolResult && !isTodoWriteTool && (hasToolResultText || showNoDetailError) && (
+          {toolResult && !isTodoWriteTool && (toolResultSummary || showNoDetailError) && (
             <div
               className={`text-xs mt-0.5 ${
-                hasToolResultText
+                toolResultSummary
                   ? 'text-muted'
                   : showNoDetailError
                     ? 'text-red-500/80'
                     : 'text-muted'
               }`}
             >
-              {hasToolResultText
-                ? (toolResultSummary ??
-                  `${resultLineCount} ${resultLineCount === 1 ? 'line' : 'lines'} of output`)
-                : toolResultFallback}
+              {toolResultSummary || toolResultFallback}
             </div>
           )}
           {!toolResult && (
@@ -1300,6 +1297,7 @@ const AssistantMessageItem: React.FC<{
 
   // Check if thinking content exists
   const hasThinking = message.thinkingContent && message.thinkingContent.length > 0;
+  const hasVisibleContent = Boolean(message.content || previews.length > 0);
 
   // Decide bubble width based on content:
   // - w-fit: bubble width follows content (adaptive)
@@ -1316,7 +1314,7 @@ const AssistantMessageItem: React.FC<{
       {hasThinking && <ThinkingStreamBlock messageId={message.id} />}
 
       {/* Normal content */}
-      {(message.content || previews.length > 0) && (
+      {hasVisibleContent && (
         <div
           className={`relative rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle ${bubbleWidthClass}`}
         >
@@ -1339,38 +1337,42 @@ const AssistantMessageItem: React.FC<{
           )}
         </div>
       )}
-      <div className="flex items-center gap-1.5 pl-4">
-        {message.modelName && (
-          <span className="text-[10px] text-secondary">{message.modelName}</span>
-        )}
-        <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
-        {message.usage && (
-          <span className="text-[10px] text-muted tabular-nums">
-            {message.usage.input != null && (
-              <>
-                <span title={`Input tokens: ${message.usage.input}`}>
-                  ↑{formatTokenCount(message.usage.input)}
+      {hasVisibleContent && (
+        <div className="flex items-center gap-1.5 pl-4">
+          {message.modelName && (
+            <span className="text-[10px] text-secondary">{message.modelName}</span>
+          )}
+          <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
+          {message.usage && (
+            <span className="text-[10px] text-muted tabular-nums">
+              {message.usage.input != null && (
+                <>
+                  <span title={`Input tokens: ${message.usage.input}`}>
+                    ↑{formatTokenCount(message.usage.input)}
+                  </span>
+                  {message.usage.output != null && <span className="mx-0.5">·</span>}
+                </>
+              )}
+              {message.usage.output != null && (
+                <span title={`Output tokens: ${message.usage.output}`}>
+                  ↓{formatTokenCount(message.usage.output)}
                 </span>
-                {message.usage.output != null && <span className="mx-0.5">·</span>}
-              </>
-            )}
-            {message.usage.output != null && (
-              <span title={`Output tokens: ${message.usage.output}`}>
-                ↓{formatTokenCount(message.usage.output)}
-              </span>
-            )}
-          </span>
-        )}
-        <button
-          onClick={handleDelete}
-          className={`p-0.5 rounded transition-colors ${
-            isHovered ? 'text-red-400 hover:bg-red-500/10' : 'text-transparent pointer-events-none'
-          }`}
-          title={i18nService.t('delete') || 'Delete'}
-        >
-          <TrashIcon className="h-3 w-3" />
-        </button>
-      </div>
+              )}
+            </span>
+          )}
+          <button
+            onClick={handleDelete}
+            className={`p-0.5 rounded transition-colors ${
+              isHovered
+                ? 'text-red-400 hover:bg-red-500/10'
+                : 'text-transparent pointer-events-none'
+            }`}
+            title={i18nService.t('delete') || 'Delete'}
+          >
+            <TrashIcon className="h-3 w-3" />
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -1651,29 +1653,35 @@ const ThinkingStreamBlock: React.FC<{
 
   if (!thinkingContent || thinkingContent.length === 0) return null;
 
-  // Determine status text: "正在思考..." when streaming, "思考完成" when complete
-  const statusText = isStreaming
-    ? i18nService.t('thinkingInProgress')
-    : i18nService.t('thoughtComplete');
-
   // Local toggle handler - only affects this block
   const handleToggle = () => {
     setLocalCollapsed(prev => !prev);
   };
 
   return (
-    <div className="mb-2">
+    <div className="mt-4 mb-0">
       <div
-        className="flex items-center gap-1.5 w-fit max-w-[calc(100%-44px)] text-xs text-muted-foreground cursor-pointer select-none"
+        className="flex items-center gap-1.5 w-fit max-w-[calc(100%-44px)] text-[10px] text-muted-foreground cursor-pointer select-none"
         onClick={handleToggle}
       >
         <ChevronRightIcon
-          className={`h-3 w-3 flex-shrink-0 transition-transform ${localCollapsed ? '' : 'rotate-90'}`}
+          className={`h-2.5 w-2.5 flex-shrink-0 transition-transform ${localCollapsed ? '' : 'rotate-90'}`}
         />
-        <span>{statusText}</span>
+        <span>Thinking</span>
         {isStreaming && (
-          <span className="flex items-center gap-1 ml-1">
-            <span className="w-1 h-1 rounded-full bg-primary animate-pulse" />
+          <span className="flex items-center gap-0.5 ml-1">
+            <span
+              className="w-1 h-1 rounded-full bg-primary animate-bounce"
+              style={{ animationDelay: '0ms' }}
+            />
+            <span
+              className="w-1 h-1 rounded-full bg-primary animate-bounce"
+              style={{ animationDelay: '150ms' }}
+            />
+            <span
+              className="w-1 h-1 rounded-full bg-primary animate-bounce"
+              style={{ animationDelay: '300ms' }}
+            />
           </span>
         )}
       </div>
@@ -1694,6 +1702,10 @@ export const AssistantTranscriptBlock: React.FC<{
   mapDisplayText?: (value: string) => string;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
+  showAvatar?: boolean;
+  compactWithPrevious?: boolean;
+  compactWithNext?: boolean;
+  isLastInToolSequence?: boolean;
   sessionId?: string;
   toolExpanded?: boolean;
 }> = ({
@@ -1702,6 +1714,10 @@ export const AssistantTranscriptBlock: React.FC<{
   mapDisplayText,
   showTypingIndicator = false,
   showCopyButtons = true,
+  showAvatar = true,
+  compactWithPrevious = false,
+  compactWithNext = false,
+  isLastInToolSequence = true,
   sessionId,
   toolExpanded = true,
 }) => {
@@ -1737,7 +1753,6 @@ export const AssistantTranscriptBlock: React.FC<{
       : toolResultDisplayRaw;
     const isToolError = Boolean(message.metadata?.isError || message.metadata?.error);
     const hasToolResultText = hasText(toolResultDisplay);
-    const resultLineCount = hasToolResultText ? getToolResultLineCount(toolResultDisplay) : 0;
     const showNoDetailError = isToolError && !hasToolResultText;
     const fallbackText = showNoDetailError ? i18nService.t('coworkToolNoErrorDetail') : '';
     const displayText = hasToolResultText ? toolResultDisplay : fallbackText;
@@ -1753,12 +1768,7 @@ export const AssistantTranscriptBlock: React.FC<{
             <div className="text-sm font-medium text-secondary">
               {i18nService.t('coworkToolResult')}
             </div>
-            {resultLineCount > 0 && (
-              <div className="text-xs text-muted mt-0.5">
-                {resultLineCount} {resultLineCount === 1 ? 'line' : 'lines'} of output
-              </div>
-            )}
-            {resultLineCount === 0 && showNoDetailError && (
+            {showNoDetailError && (
               <div className={`text-xs mt-0.5 ${isToolError ? 'text-red-500/80' : 'text-muted'}`}>
                 {fallbackText}
               </div>
@@ -1806,7 +1816,7 @@ export const AssistantTranscriptBlock: React.FC<{
       return (
         <ToolCallGroup
           group={item.group}
-          isLastInSequence
+          isLastInSequence={isLastInToolSequence}
           mapDisplayText={mapDisplayText}
         />
       );
@@ -1818,10 +1828,7 @@ export const AssistantTranscriptBlock: React.FC<{
 
     if (item.type === 'subagent_completion') {
       return (
-        <SubagentCompletionMessageItem
-          message={item.message}
-          mapDisplayText={mapDisplayText}
-        />
+        <SubagentCompletionMessageItem message={item.message} mapDisplayText={mapDisplayText} />
       );
     }
 
@@ -1831,16 +1838,35 @@ export const AssistantTranscriptBlock: React.FC<{
   const content = renderContent();
   if (!content && !showTypingIndicator) return null;
 
+  const blockPaddingClass = compactWithPrevious
+    ? compactWithNext
+      ? 'px-4 py-0'
+      : 'px-4 pt-0 pb-2'
+    : compactWithNext
+      ? 'px-4 pt-2 pb-0'
+      : 'px-4 py-2';
+  const contentPaddingClass = compactWithPrevious
+    ? compactWithNext
+      ? 'py-0'
+      : 'pt-0 pb-3'
+    : compactWithNext
+      ? 'pt-3 pb-0'
+      : 'py-3';
+
   return (
-    <div className="px-4 py-2">
+    <div className={blockPaddingClass}>
       <div className="max-w-5xl mx-auto">
         <div className="flex items-start gap-3">
           {/* Assistant avatar */}
-          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
-            <SparklesIcon className="h-4 w-4 text-purple-500" />
-          </div>
+          {showAvatar ? (
+            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
+              <SparklesIcon className="h-4 w-4 text-purple-500" />
+            </div>
+          ) : (
+            <div className="flex-shrink-0 w-8" aria-hidden="true" />
+          )}
           {/* Content area with fixed width to prevent layout shift */}
-          <div className="w-full min-w-0 px-0 py-3 space-y-3">
+          <div className={`w-full min-w-0 px-0 ${contentPaddingClass} space-y-3`}>
             {content}
             {showTypingIndicator && <TypingDots />}
           </div>
@@ -2539,7 +2565,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }, []);
 
   const messages = currentSession?.messages;
-  const transcriptItems = useMemo(() => (messages ? buildTranscriptItems(messages) : []), [messages]);
+  const transcriptItems = useMemo(
+    () => (messages ? buildTranscriptItems(messages) : []),
+    [messages],
+  );
 
   // Cache transcript item shells (data-transcript-index, always in DOM even for lazy content).
   useEffect(() => {
@@ -2613,6 +2642,33 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const renderTranscriptItems = () => {
     let railCounter = 0;
     itemToRailRangeRef.current = [];
+
+    const willRenderAssistantItem = (candidate: TranscriptItem, candidateIndex: number) => {
+      if (candidate.type === 'user') return false;
+      if (!toolExpanded && (candidate.type === 'tool_group' || candidate.type === 'tool_result')) {
+        return false;
+      }
+      const isCandidateLast = candidateIndex === transcriptItems.length - 1;
+      return isVisibleTranscriptItem(candidate) || (isStreaming && isCandidateLast);
+    };
+
+    const getAdjacentAssistantReplyItem = (
+      fromIndex: number,
+      direction: -1 | 1,
+    ): TranscriptItem | null => {
+      for (
+        let cursor = fromIndex + direction;
+        cursor >= 0 && cursor < transcriptItems.length;
+        cursor += direction
+      ) {
+        const candidate = transcriptItems[cursor];
+        if (candidate.type === 'user') return null;
+        if (!willRenderAssistantItem(candidate, cursor)) continue;
+        return isAssistantReplyItem(candidate) ? candidate : null;
+      }
+      return null;
+    };
+
     if (transcriptItems.length === 0) {
       if (!isStreaming) return null;
       return (
@@ -2634,6 +2690,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       const alwaysRender = index >= transcriptItems.length - 3;
       const itemId = getTranscriptItemId(item);
       const itemContent = getTranscriptItemContent(item);
+      const previousAssistantReplyItem = getAdjacentAssistantReplyItem(index, -1);
+      const nextAssistantReplyItem = getAdjacentAssistantReplyItem(index, 1);
+      const belongsToAssistantReply = isAssistantReplyItem(item);
+      const compactWithPrevious = belongsToAssistantReply && Boolean(previousAssistantReplyItem);
+      const compactWithNext = belongsToAssistantReply && Boolean(nextAssistantReplyItem);
+      const showAssistantAvatar = !compactWithPrevious;
+      const isLastInToolSequence =
+        item.type !== 'tool_group' || nextAssistantReplyItem?.type !== 'tool_group';
       const railIdx =
         (item.type === 'user' || item.type === 'assistant') && hasText(itemContent)
           ? railCounter++
@@ -2667,6 +2731,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 mapDisplayText={mapDisplayText}
                 showTypingIndicator={showTypingIndicator}
                 showCopyButtons={!isStreaming}
+                showAvatar={showAssistantAvatar}
+                compactWithPrevious={compactWithPrevious}
+                compactWithNext={compactWithNext}
+                isLastInToolSequence={isLastInToolSequence}
                 sessionId={sessionId}
                 toolExpanded={toolExpanded}
               />
