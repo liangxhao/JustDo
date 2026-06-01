@@ -2829,24 +2829,194 @@ if (!gotTheLock) {
       if (!gatewayClient) {
         return { success: false, error: 'Gateway client not connected' };
       }
-      const sessionKey = `agent:main:gucciai:${sessionId}`;
+      const localSession = getCoworkStore().getSession(sessionId);
+      const effectiveAgentId = localSession?.agentId || DEFAULT_MANAGED_AGENT_ID;
+      const sessionKeys = new Set<string>([
+        ...openClawRuntimeAdapter.getSessionKeysForSession(sessionId),
+        buildManagedSessionKey(sessionId, effectiveAgentId),
+        buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
+      ]);
+      const readNumber = (value: unknown): number | undefined =>
+        typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+      const isRecord = (value: unknown): value is Record<string, unknown> =>
+        value !== null && typeof value === 'object' && !Array.isArray(value);
+      const estimateStringChars = (text: string): number => {
+        const nonLatinCount = (text.match(/[^\u0000-\u007f]/g) ?? []).length;
+        return Array.from(text).length + nonLatinCount * 3;
+      };
+      const estimateStringTokens = (text: string, charsPerToken = 4): number =>
+        Math.ceil(estimateStringChars(text) / charsPerToken);
+      const estimateJsonTokens = (value: unknown, charsPerToken = 3): number => {
+        try {
+          return estimateStringTokens(JSON.stringify(value), charsPerToken);
+        } catch {
+          return 256;
+        }
+      };
+      const estimateContentTokens = (content: unknown): number => {
+        if (typeof content === 'string') return estimateStringTokens(content);
+        if (!Array.isArray(content)) return content === undefined ? 0 : estimateJsonTokens(content);
+        return content.reduce((sum, block) => {
+          if (typeof block === 'string') return sum + estimateStringTokens(block);
+          if (!isRecord(block)) return sum + estimateJsonTokens(block);
+          if (block.type === 'text' && typeof block.text === 'string') {
+            return sum + 6 + estimateStringTokens(block.text);
+          }
+          if (block.type === 'thinking' && typeof block.thinking === 'string') {
+            return sum + 6 + estimateStringTokens(block.thinking);
+          }
+          if (block.type === 'image') return sum + 2000;
+          return sum + 6 + estimateJsonTokens(block);
+        }, 0);
+      };
+      const estimateMessageTokens = (message: unknown): number => {
+        if (!isRecord(message)) return 0;
+        const payload = isRecord(message.message) ? message.message : message;
+        let tokens = 12;
+        if (payload.role === 'assistant') {
+          tokens += estimateContentTokens(payload.content);
+          return tokens;
+        }
+        if (
+          payload.role === 'toolResult' ||
+          payload.role === 'tool' ||
+          payload.type === 'toolResult'
+        ) {
+          tokens += estimateContentTokens(payload.content);
+          return tokens;
+        }
+        tokens += estimateContentTokens(payload.content);
+        return tokens;
+      };
+      const estimateFromOpenClawSessionState = (
+        sessionKey: string,
+      ): { totalTokens?: number; contextTokens?: number } => {
+        try {
+          const sessionsPath = path.join(
+            app.getPath('userData'),
+            'openclaw',
+            'state',
+            'agents',
+            effectiveAgentId,
+            'sessions',
+            'sessions.json',
+          );
+          const raw = fs.readFileSync(sessionsPath, 'utf-8');
+          const sessions = JSON.parse(raw) as Record<string, unknown>;
+          const entry = isRecord(sessions[sessionKey]) ? sessions[sessionKey] : undefined;
+          if (!entry) return {};
+
+          const report = isRecord(entry.systemPromptReport) ? entry.systemPromptReport : undefined;
+          const systemPrompt =
+            report && isRecord(report.systemPrompt) ? report.systemPrompt : undefined;
+          const systemChars = readNumber(systemPrompt?.chars) ?? 0;
+          const sessionFile =
+            typeof entry.sessionFile === 'string' && entry.sessionFile.trim()
+              ? entry.sessionFile
+              : undefined;
+          let transcriptTokens = 0;
+          if (sessionFile && fs.existsSync(sessionFile)) {
+            for (const line of fs.readFileSync(sessionFile, 'utf-8').split(/\r?\n/)) {
+              if (!line.trim()) continue;
+              try {
+                const item = JSON.parse(line) as unknown;
+                if (isRecord(item) && item.type === 'message') {
+                  transcriptTokens += estimateMessageTokens(item);
+                }
+              } catch {
+                // Ignore partial/corrupt jsonl lines; the file can be written while we read.
+              }
+            }
+          }
+          const contextTokens = readNumber(entry.contextTokens);
+          const totalTokens = Math.ceil((Math.ceil(systemChars / 4) + transcriptTokens) * 1.2);
+          return {
+            ...(totalTokens > 0 ? { totalTokens } : {}),
+            ...(contextTokens ? { contextTokens } : {}),
+          };
+        } catch (error) {
+          console.debug('[CoworkContextUsage] failed to estimate local context usage', {
+            sessionId,
+            sessionKey,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return {};
+        }
+      };
+      const readSessionTokens = (session: Record<string, unknown>) => {
+        const budgetStatus =
+          session.contextBudgetStatus && typeof session.contextBudgetStatus === 'object'
+            ? (session.contextBudgetStatus as Record<string, unknown>)
+            : undefined;
+        const totalTokens =
+          readNumber(session.totalTokens) ??
+          readNumber(session.usedTokens) ??
+          readNumber(session.contextUsedTokens) ??
+          readNumber(session.currentTokens) ??
+          readNumber(budgetStatus?.estimatedPromptTokens) ??
+          0;
+        const contextTokens =
+          readNumber(session.contextTokens) ??
+          readNumber(session.contextWindow) ??
+          readNumber(session.contextLength) ??
+          readNumber(session.maxContextTokens) ??
+          readNumber(session.totalContextTokens) ??
+          readNumber(budgetStatus?.contextTokenBudget) ??
+          0;
+
+        return {
+          totalTokens,
+          contextTokens,
+          totalTokensFresh:
+            typeof session.totalTokensFresh === 'boolean'
+              ? session.totalTokensFresh ||
+                readNumber(budgetStatus?.estimatedPromptTokens) !== undefined
+              : true,
+        };
+      };
       const result = await gatewayClient.request<{
-        sessions?: Array<{
-          key: string;
-          totalTokens?: number;
-          contextTokens?: number;
-          totalTokensFresh?: boolean;
-        }>;
-      }>('sessions.list', { agentId: 'main', limit: 50 });
-      const session = result.sessions?.find(s => s.key === sessionKey);
+        sessions?: Array<
+          {
+            key: string;
+            totalTokens?: number;
+            contextTokens?: number;
+            totalTokensFresh?: boolean;
+          } & Record<string, unknown>
+        >;
+      }>('sessions.list', { agentId: effectiveAgentId, limit: 100 });
+      let session = result.sessions?.find(s => sessionKeys.has(s.key));
+      if (!session && effectiveAgentId !== DEFAULT_MANAGED_AGENT_ID) {
+        const fallbackResult = await gatewayClient.request<{
+          sessions?: Array<{ key: string } & Record<string, unknown>>;
+        }>('sessions.list', { limit: 100 });
+        session = fallbackResult.sessions?.find(s => sessionKeys.has(s.key));
+      }
       if (!session) {
+        console.warn('[CoworkContextUsage] session not found in gateway', {
+          sessionId,
+          effectiveAgentId,
+          sessionKeys: Array.from(sessionKeys),
+          returnedKeys: result.sessions?.map(s => s.key).slice(0, 10) ?? [],
+        });
         return { success: false, error: 'Session not found in gateway' };
       }
+      const usage = readSessionTokens(session);
+      if (usage.totalTokens <= 0 || usage.contextTokens <= 0) {
+        const estimatedUsage = estimateFromOpenClawSessionState(session.key);
+        usage.totalTokens = Math.max(usage.totalTokens, estimatedUsage.totalTokens ?? 0);
+        usage.contextTokens = estimatedUsage.contextTokens ?? usage.contextTokens;
+        usage.totalTokensFresh = usage.totalTokens > 0 || usage.totalTokensFresh;
+      }
+      console.debug('[CoworkContextUsage] resolved context usage', {
+        sessionId,
+        sessionKey: session.key,
+        totalTokens: usage.totalTokens,
+        contextTokens: usage.contextTokens,
+        totalTokensFresh: usage.totalTokensFresh,
+      });
       return {
         success: true,
-        totalTokens: session.totalTokens ?? 0,
-        contextTokens: session.contextTokens ?? 0,
-        totalTokensFresh: session.totalTokensFresh ?? true,
+        ...usage,
       };
     } catch (error) {
       return {

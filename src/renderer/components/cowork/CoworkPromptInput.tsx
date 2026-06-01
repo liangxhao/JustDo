@@ -8,7 +8,7 @@ import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
-import { selectDraftAttachments,selectDraftPrompts } from '../../store/selectors/coworkSelectors';
+import { selectDraftAttachments, selectDraftPrompts } from '../../store/selectors/coworkSelectors';
 import {
   addDraftAttachment,
   clearDraftAttachments,
@@ -413,6 +413,27 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const effectiveSelectedModel =
       coworkAgentEngine === 'openclaw' ? agentSelectedModel : globalSelectedModel;
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
+    const contextUsageText = useMemo(() => {
+      if (!contextUsage) return null;
+      const contextTokens =
+        contextUsage.contextTokens || effectiveSelectedModel?.contextLength || 200_000;
+      if (contextTokens <= 0) return null;
+      const usedTokens = Math.max(0, contextUsage.totalTokens);
+      const percentage = Math.round((usedTokens / contextTokens) * 100);
+      return `${formatContextLength(usedTokens)} / ${formatContextLength(contextTokens)} · ${percentage}%`;
+    }, [contextUsage, effectiveSelectedModel?.contextLength]);
+    const contextUsageStatusText =
+      sessionId && !isStreaming
+        ? contextUsageText || i18nService.t('coworkContextUsageRefreshing')
+        : null;
+    const contextUsageBadge = contextUsageStatusText ? (
+      <span
+        className="inline-flex h-7 max-w-[190px] items-center rounded-md border border-border/60 bg-surface-raised/70 px-2 text-[11px] font-medium leading-none text-secondary tabular-nums select-none shadow-subtle"
+        title={i18nService.t('coworkContextUsageFullLabel')}
+      >
+        <span className="truncate">{contextUsageStatusText}</span>
+      </span>
+    ) : null;
 
     const addAttachment = useCallback(
       (filePath: string, imageInfo?: { isImage: boolean; dataUrl?: string }) => {
@@ -899,15 +920,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       const fetchUsage = async () => {
         try {
           const result = await window.electron.cowork.getContextUsage(sessionId);
-          if (
-            !cancelled &&
-            result.success &&
-            result.totalTokens != null &&
-            result.contextTokens != null
-          ) {
+          if (!cancelled && result.success && result.totalTokens != null) {
             setContextUsage({
               totalTokens: result.totalTokens,
-              contextTokens: result.contextTokens,
+              contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
               totalTokensFresh: result.totalTokensFresh ?? true,
             });
           }
@@ -921,7 +937,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         cancelled = true;
         clearInterval(timer);
       };
-    }, [sessionId, isStreaming]);
+    }, [sessionId, isStreaming, effectiveSelectedModel?.contextLength]);
 
     return (
       <div className="relative">
@@ -1070,25 +1086,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     </>
                   )}
                   {!remoteManaged && (
-                    <button
-                      type="button"
-                      onClick={handleAddFile}
-                      className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-                      title={i18nService.t('coworkAddFile')}
-                      aria-label={i18nService.t('coworkAddFile')}
-                      disabled={disabled || isStreaming || isAddingFile}
-                    >
-                      <PaperClipIcon className="h-4 w-4" />
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleAddFile}
+                        className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
+                        title={i18nService.t('coworkAddFile')}
+                        aria-label={i18nService.t('coworkAddFile')}
+                        disabled={disabled || isStreaming || isAddingFile}
+                      >
+                        <PaperClipIcon className="h-4 w-4" />
+                      </button>
+                      {contextUsageBadge}
+                    </>
                   )}
-                  {contextUsage &&
-                    contextUsage.totalTokensFresh &&
-                    contextUsage.contextTokens > 0 && (
-                      <span className="text-[11px] font-medium text-foreground/70 tabular-nums select-none rounded-md border border-border/50 bg-surface-raised px-1.5 py-0.5">
-                        {formatContextLength(contextUsage.totalTokens)}/
-                        {formatContextLength(contextUsage.contextTokens)}
-                      </span>
-                    )}
                   {!remoteManaged && <ActiveSkillBadge />}
                 </div>
                 <div className="flex items-center gap-2">
@@ -1143,14 +1154,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   >
                     <PaperClipIcon className="h-4 w-4" />
                   </button>
-                  {contextUsage &&
-                    contextUsage.totalTokensFresh &&
-                    contextUsage.contextTokens > 0 && (
-                      <span className="flex-shrink-0 text-[11px] font-medium text-foreground/70 tabular-nums select-none rounded-md border border-border/50 bg-surface-raised px-1.5 py-0.5">
-                        {formatContextLength(contextUsage.totalTokens)}/
-                        {formatContextLength(contextUsage.contextTokens)}
-                      </span>
-                    )}
+                  {contextUsageBadge}
                 </div>
               )}
 
@@ -1178,7 +1182,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             </>
           )}
         </div>
-
         {/* Context menu for textarea */}
         {contextMenuPos && (
           <div

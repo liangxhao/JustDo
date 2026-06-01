@@ -1147,10 +1147,14 @@ const formatTimestamp = (ts: number): string => {
 // Format token count to compact display (e.g., 128000 -> "128k", 4200 -> "4.2k")
 const formatTokenCount = (n: number): string => {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-  if (n >= 10_000) return `${Math.round(n / 1_000)}k`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
   return String(n);
 };
+
+const hasPositiveUsage = (
+  usage?: CoworkMessage['usage'],
+): usage is NonNullable<CoworkMessage['usage']> =>
+  !!usage && ((usage.input ?? 0) > 0 || (usage.output ?? 0) > 0);
 
 export const UserMessageItem: React.FC<{
   message: CoworkMessage;
@@ -1343,17 +1347,19 @@ const AssistantMessageItem: React.FC<{
             <span className="text-[10px] text-secondary">{message.modelName}</span>
           )}
           <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
-          {message.usage && (
+          {hasPositiveUsage(message.usage) && (
             <span className="text-[10px] text-muted tabular-nums">
-              {message.usage.input != null && (
+              {message.usage.input != null && message.usage.input > 0 && (
                 <>
                   <span title={`Input tokens: ${message.usage.input}`}>
                     ↑{formatTokenCount(message.usage.input)}
                   </span>
-                  {message.usage.output != null && <span className="mx-0.5">·</span>}
+                  {message.usage.output != null && message.usage.output > 0 && (
+                    <span className="mx-0.5">·</span>
+                  )}
                 </>
               )}
-              {message.usage.output != null && (
+              {message.usage.output != null && message.usage.output > 0 && (
                 <span title={`Output tokens: ${message.usage.output}`}>
                   ↓{formatTokenCount(message.usage.output)}
                 </span>

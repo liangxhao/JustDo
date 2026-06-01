@@ -10,16 +10,10 @@
 import { BrowserWindow } from 'electron';
 import * as path from 'path';
 
-import type {
-  CoworkMessage,
-  CoworkStore,
-} from '../../../coworkStore';
+import type { CoworkMessage, CoworkStore } from '../../../coworkStore';
 import { isManagedSessionKey } from '../../openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../../openclawHistory';
-import type {
-  GatewayClientLike,
-  SessionTurn,
-} from '../gateway/types';
+import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import {
   extractMessageText,
   extractSentFilePathsFromHistory,
@@ -30,6 +24,41 @@ import {
 } from '../utils/gatewayHelpers';
 
 // Callback interface
+
+type TokenUsage = { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+
+const readUsageNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const extractTokenUsage = (usage: unknown): TokenUsage | undefined => {
+  if (!isRecord(usage)) return undefined;
+  const input =
+    readUsageNumber(usage.input) ??
+    readUsageNumber(usage.input_tokens) ??
+    readUsageNumber(usage.prompt_tokens);
+  const output =
+    readUsageNumber(usage.output) ??
+    readUsageNumber(usage.output_tokens) ??
+    readUsageNumber(usage.completion_tokens);
+  const cacheRead =
+    readUsageNumber(usage.cacheRead) ??
+    readUsageNumber(usage.cache_read) ??
+    readUsageNumber(usage.cache_read_input_tokens);
+  const cacheWrite =
+    readUsageNumber(usage.cacheWrite) ??
+    readUsageNumber(usage.cache_write) ??
+    readUsageNumber(usage.cache_creation_input_tokens);
+
+  if (
+    input === undefined &&
+    output === undefined &&
+    cacheRead === undefined &&
+    cacheWrite === undefined
+  ) {
+    return undefined;
+  }
+  return { input, output, cacheRead, cacheWrite };
+};
 
 export interface HistoryReconcilerCallbacks {
   // CoworkStore delegates
@@ -210,8 +239,7 @@ export class HistoryReconciler {
 
       // Determine if this is a channel session (for Discord text normalization)
       const isChannel =
-        !isManagedSessionKey(sessionKey) &&
-          this.callbacks.isChannelSessionKey(sessionKey);
+        !isManagedSessionKey(sessionKey) && this.callbacks.isChannelSessionKey(sessionKey);
       const isDiscord = sessionKey.includes(':discord:');
 
       // Extract authoritative user/assistant entries from gateway history
@@ -226,7 +254,7 @@ export class HistoryReconciler {
         role: 'user' | 'assistant';
         text: string;
         modelName?: string;
-        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+        usage?: TokenUsage;
       }> = [];
       for (const message of history.messages) {
         if (!isRecord(message)) continue;
@@ -237,15 +265,7 @@ export class HistoryReconciler {
         if (isDiscord) text = stripDiscordMentions(text);
 
         // Extract usage from gateway message (if assistant)
-        const usage =
-          role === 'assistant' && message.usage
-            ? (message.usage as {
-                input?: number;
-                output?: number;
-                cacheRead?: number;
-                cacheWrite?: number;
-              })
-            : undefined;
+        const usage = role === 'assistant' ? extractTokenUsage(message.usage) : undefined;
 
         authoritativeEntries.push({
           role: role as 'user' | 'assistant',
@@ -586,24 +606,14 @@ export class HistoryReconciler {
    */
   patchUsageFromHistory(sessionId: string, historyMessages: unknown[]): void {
     // Build a map of assistant text -> usage from gateway history
-    const usageByText = new Map<
-      string,
-      { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
-    >();
+    const usageByText = new Map<string, TokenUsage>();
     for (const raw of historyMessages) {
       if (!isRecord(raw)) continue;
       const role = typeof raw.role === 'string' ? raw.role.trim().toLowerCase() : '';
       if (role !== 'assistant') continue;
       const text = extractMessageText(raw).trim();
       if (!text) continue;
-      const usage = isRecord(raw.usage)
-        ? {
-            input: typeof raw.usage.input === 'number' ? raw.usage.input : undefined,
-            output: typeof raw.usage.output === 'number' ? raw.usage.output : undefined,
-            cacheRead: typeof raw.usage.cacheRead === 'number' ? raw.usage.cacheRead : undefined,
-            cacheWrite: typeof raw.usage.cacheWrite === 'number' ? raw.usage.cacheWrite : undefined,
-          }
-        : undefined;
+      const usage = extractTokenUsage(raw.usage);
       if (usage) {
         usageByText.set(text, usage);
       }
@@ -794,5 +804,4 @@ export class HistoryReconciler {
       );
     }
   }
-
 }
