@@ -51,6 +51,7 @@ import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
 import InformationCircleIcon from '../icons/InformationCircleIcon';
 import PencilSquareIcon from '../icons/PencilSquareIcon';
 import PuzzleIcon from '../icons/PuzzleIcon';
+import SearchIcon from '../icons/SearchIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ToolIcon from '../icons/ToolIcon';
 import TrashIcon from '../icons/TrashIcon';
@@ -74,10 +75,41 @@ interface CoworkSessionDetailProps {
   onNewChat?: () => void;
 }
 
+type SessionSearchMatch = {
+  id: string;
+  itemId: string;
+  transcriptIndex: number;
+  occurrenceIndex: number;
+};
+
 const AUTO_SCROLL_THRESHOLD = 120;
 const NAV_SCROLL_LOCK_DURATION = 800;
 const NAV_BOTTOM_SNAP_THRESHOLD = 20;
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
+const SEARCH_HIGHLIGHT_DURATION = 1600;
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const countTextOccurrences = (content: string, query: string, caseSensitive: boolean): number => {
+  if (!query) return 0;
+  const matcher = new RegExp(escapeRegExp(query), caseSensitive ? 'g' : 'gi');
+  return Array.from(content.matchAll(matcher)).length;
+};
+
+const stringifySearchValue = (value: unknown): string => {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+};
+
+const getCssEscapedValue = (value: string): string => {
+  const css = window.CSS as typeof window.CSS & { escape?: (value: string) => string };
+  return css.escape ? css.escape(value) : value.replace(/["\\]/g, '\\$&');
+};
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -804,13 +836,19 @@ const getTranscriptItemContent = (item: TranscriptItem): string => {
     return [
       item.group.toolUse.metadata?.toolName,
       item.group.toolUse.content,
+      stringifySearchValue(item.group.toolUse.metadata?.toolInput),
       item.group.toolResult?.content,
+      stringifySearchValue(item.group.toolResult?.metadata?.error),
     ]
       .filter((value): value is string => typeof value === 'string' && value.length > 0)
       .join('\n');
   }
   if (item.type === 'tool_result') return getToolResultDisplay(item.message);
-  return [item.message.content, item.message.thinkingContent]
+  return [
+    item.message.thinkingContent,
+    item.message.content,
+    stringifySearchValue(item.message.metadata?.error),
+  ]
     .filter((value): value is string => typeof value === 'string' && value.length > 0)
     .join('\n');
 };
@@ -860,7 +898,8 @@ export const ToolCallGroup: React.FC<{
   group: ToolGroupItem;
   isLastInSequence?: boolean;
   mapDisplayText?: (value: string) => string;
-}> = ({ group, isLastInSequence = true, mapDisplayText }) => {
+  forceExpanded?: boolean;
+}> = ({ group, isLastInSequence = true, mapDisplayText, forceExpanded = false }) => {
   const { toolUse, toolResult } = group;
   const rawToolName =
     typeof toolUse.metadata?.toolName === 'string' ? toolUse.metadata.toolName : 'Tool';
@@ -901,6 +940,12 @@ export const ToolCallGroup: React.FC<{
     [rawToolName, toolInput],
   );
   const isEditWithDiff = diffDataList !== null && diffDataList.length > 0;
+
+  useEffect(() => {
+    if (!forceExpanded || isExpanded) return;
+    setIsExpanded(true);
+    toolExpandStateMap.set(toolKey, true);
+  }, [forceExpanded, isExpanded, toolKey]);
 
   return (
     <div className="relative py-1">
@@ -1292,7 +1337,15 @@ const AssistantMessageItem: React.FC<{
   mapDisplayText?: (value: string) => string;
   showCopyButton?: boolean;
   sessionId?: string;
-}> = ({ message, resolveLocalFilePath, mapDisplayText, showCopyButton = false, sessionId }) => {
+  forceThinkingExpanded?: boolean;
+}> = ({
+  message,
+  resolveLocalFilePath,
+  mapDisplayText,
+  showCopyButton = false,
+  sessionId,
+  forceThinkingExpanded = false,
+}) => {
   const [isHovered, setIsHovered] = useState(false);
 
   const handleDelete = useCallback(() => {
@@ -1323,7 +1376,9 @@ const AssistantMessageItem: React.FC<{
       onMouseLeave={() => setIsHovered(false)}
     >
       {/* Thinking block - use direct Redux subscription for real-time updates */}
-      {hasThinking && <ThinkingStreamBlock messageId={message.id} />}
+      {hasThinking && (
+        <ThinkingStreamBlock messageId={message.id} forceExpanded={forceThinkingExpanded} />
+      )}
 
       {/* Normal content */}
       {hasVisibleContent && (
@@ -1582,7 +1637,8 @@ const TypingDots: React.FC = () => (
 // Uses useSyncExternalStore to bypass React-Redux batching and get real-time updates
 const ThinkingStreamBlock: React.FC<{
   messageId: string;
-}> = ({ messageId }) => {
+  forceExpanded?: boolean;
+}> = ({ messageId, forceExpanded = false }) => {
   // Local collapsed state - can be toggled independently per block
   const [localCollapsed, setLocalCollapsed] = useState(false);
   // Cache the snapshot result to avoid infinite loops
@@ -1655,7 +1711,9 @@ const ThinkingStreamBlock: React.FC<{
   // collapse them once streaming completes. When global expanded: show all.
   const wasStreamingRef = useRef<boolean>(isStreaming);
   useEffect(() => {
-    if (globalExpanded) {
+    if (forceExpanded) {
+      setLocalCollapsed(false);
+    } else if (globalExpanded) {
       setLocalCollapsed(false);
     } else if (isStreaming) {
       // Globally collapsed but currently streaming — show until done
@@ -1670,7 +1728,7 @@ const ThinkingStreamBlock: React.FC<{
       setLocalCollapsed(true);
       wasStreamingRef.current = false;
     }
-  }, [globalExpanded, isStreaming]);
+  }, [forceExpanded, globalExpanded, isStreaming]);
 
   if (!thinkingContent || thinkingContent.length === 0) return null;
 
@@ -1729,6 +1787,7 @@ export const AssistantTranscriptBlock: React.FC<{
   isLastInToolSequence?: boolean;
   sessionId?: string;
   toolExpanded?: boolean;
+  activeSearchItemId?: string | null;
 }> = ({
   item,
   resolveLocalFilePath,
@@ -1741,6 +1800,7 @@ export const AssistantTranscriptBlock: React.FC<{
   isLastInToolSequence = true,
   sessionId,
   toolExpanded = true,
+  activeSearchItemId = null,
 }) => {
   const renderSystemMessage = (message: CoworkMessage) => {
     const isError = !hasText(message.content) && typeof message.metadata?.error === 'string';
@@ -1829,6 +1889,7 @@ export const AssistantTranscriptBlock: React.FC<{
           mapDisplayText={mapDisplayText}
           showCopyButton={showCopyButtons}
           sessionId={sessionId}
+          forceThinkingExpanded={activeSearchItemId === item.message.id}
         />
       );
     }
@@ -1839,6 +1900,7 @@ export const AssistantTranscriptBlock: React.FC<{
           group={item.group}
           isLastInSequence={isLastInToolSequence}
           mapDisplayText={mapDisplayText}
+          forceExpanded={activeSearchItemId === `tool-${item.group.toolUse.id}`}
         />
       );
     }
@@ -1920,6 +1982,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+  const [sessionSearchQuery, setSessionSearchQuery] = useState('');
+  const [sessionSearchCaseSensitive, setSessionSearchCaseSensitive] = useState(false);
+  const [activeSearchIndex, setActiveSearchIndex] = useState(-1);
+  const [activeSearchHit, setActiveSearchHit] = useState<SessionSearchMatch | null>(null);
+  const sessionSearchInputRef = useRef<HTMLInputElement>(null);
+  const sessionSearchPanelRef = useRef<HTMLDivElement>(null);
+  const searchHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Clear lazy-render height cache when session changes
   const sessionId = currentSession?.id;
@@ -2590,6 +2660,192 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     () => (messages ? buildTranscriptItems(messages) : []),
     [messages],
   );
+  const trimmedSessionSearchQuery = sessionSearchQuery.trim();
+  const sessionSearchMatches = useMemo<SessionSearchMatch[]>(() => {
+    if (!trimmedSessionSearchQuery) return [];
+
+    const matches: SessionSearchMatch[] = [];
+    transcriptItems.forEach((item, transcriptIndex) => {
+      const itemId = getTranscriptItemId(item);
+      const content = getTranscriptItemContent(item);
+      const count = countTextOccurrences(
+        content,
+        trimmedSessionSearchQuery,
+        sessionSearchCaseSensitive,
+      );
+      for (let occurrenceIndex = 0; occurrenceIndex < count; occurrenceIndex += 1) {
+        matches.push({
+          id: `${itemId}-${occurrenceIndex}`,
+          itemId,
+          transcriptIndex,
+          occurrenceIndex,
+        });
+      }
+    });
+    return matches;
+  }, [sessionSearchCaseSensitive, transcriptItems, trimmedSessionSearchQuery]);
+
+  const clearSessionSearchMarks = useCallback(() => {
+    const root = detailRootRef.current;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>('[data-cowork-search-mark="true"]').forEach(mark => {
+      const parent = mark.parentNode;
+      if (!parent) return;
+      parent.replaceChild(document.createTextNode(mark.textContent || ''), mark);
+      parent.normalize();
+    });
+  }, []);
+
+  const highlightSearchMatch = useCallback(
+    (hit: SessionSearchMatch, query: string, caseSensitive: boolean) => {
+      clearSessionSearchMarks();
+      if (searchHighlightTimerRef.current) {
+        clearTimeout(searchHighlightTimerRef.current);
+        searchHighlightTimerRef.current = null;
+      }
+      if (!query) return;
+
+      const root = detailRootRef.current;
+      const searchRoot = root?.querySelector<HTMLElement>(
+        `[data-search-item-id="${getCssEscapedValue(hit.itemId)}"]`,
+      );
+      if (!searchRoot) return;
+
+      const matcher = new RegExp(escapeRegExp(query), caseSensitive ? 'g' : 'gi');
+      const walker = document.createTreeWalker(searchRoot, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const parent = node.parentElement;
+          if (!parent || !node.nodeValue) return NodeFilter.FILTER_REJECT;
+          if (parent.closest('[data-cowork-search-mark="true"], input, textarea, select')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          matcher.lastIndex = 0;
+          return matcher.test(node.nodeValue)
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_REJECT;
+        },
+      });
+
+      const textNodes: Text[] = [];
+      while (walker.nextNode()) {
+        textNodes.push(walker.currentNode as Text);
+      }
+
+      let currentOccurrence = 0;
+      for (const textNode of textNodes) {
+        const text = textNode.nodeValue || '';
+        matcher.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = matcher.exec(text))) {
+          if (currentOccurrence === hit.occurrenceIndex) {
+            const range = document.createRange();
+            range.setStart(textNode, match.index);
+            range.setEnd(textNode, match.index + match[0].length);
+            const mark = document.createElement('span');
+            mark.dataset.coworkSearchMark = 'true';
+            mark.className =
+              'rounded-[3px] bg-yellow-300/80 text-yellow-950 ring-2 ring-yellow-400/70 transition-colors';
+            range.surroundContents(mark);
+            mark.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+            searchHighlightTimerRef.current = setTimeout(() => {
+              clearSessionSearchMarks();
+            }, SEARCH_HIGHLIGHT_DURATION);
+            return;
+          }
+          currentOccurrence += 1;
+        }
+      }
+
+      searchRoot.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    },
+    [clearSessionSearchMarks],
+  );
+
+  const navigateSessionSearch = useCallback(
+    (direction: 1 | -1) => {
+      if (sessionSearchMatches.length === 0) return;
+      const nextIndex =
+        activeSearchIndex < 0
+          ? direction === 1
+            ? 0
+            : sessionSearchMatches.length - 1
+          : (activeSearchIndex + direction + sessionSearchMatches.length) %
+            sessionSearchMatches.length;
+      const hit = sessionSearchMatches[nextIndex];
+      setActiveSearchIndex(nextIndex);
+      setActiveSearchHit(hit);
+      setShouldAutoScroll(false);
+
+      const hitItem = transcriptItems[hit.transcriptIndex];
+      if ((hitItem?.type === 'tool_group' || hitItem?.type === 'tool_result') && !toolExpanded) {
+        dispatch(toggleToolExpanded());
+      }
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          highlightSearchMatch(hit, trimmedSessionSearchQuery, sessionSearchCaseSensitive);
+        });
+      });
+    },
+    [
+      activeSearchIndex,
+      dispatch,
+      highlightSearchMatch,
+      sessionSearchCaseSensitive,
+      sessionSearchMatches,
+      toolExpanded,
+      transcriptItems,
+      trimmedSessionSearchQuery,
+    ],
+  );
+
+  useEffect(() => {
+    if (!sessionSearchOpen) return;
+    requestAnimationFrame(() => {
+      sessionSearchInputRef.current?.focus();
+      sessionSearchInputRef.current?.select();
+    });
+  }, [sessionSearchOpen]);
+
+  useEffect(() => {
+    if (!sessionSearchOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (sessionSearchPanelRef.current?.contains(target)) return;
+      setSessionSearchOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSessionSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [sessionSearchOpen]);
+
+  useEffect(() => {
+    setActiveSearchIndex(-1);
+    setActiveSearchHit(null);
+    clearSessionSearchMarks();
+  }, [
+    clearSessionSearchMarks,
+    currentSession?.id,
+    sessionSearchCaseSensitive,
+    trimmedSessionSearchQuery,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (searchHighlightTimerRef.current) {
+        clearTimeout(searchHighlightTimerRef.current);
+      }
+      clearSessionSearchMarks();
+    };
+  }, [clearSessionSearchMarks]);
 
   // Cache transcript item shells (data-transcript-index, always in DOM even for lazy content).
   useEffect(() => {
@@ -2734,33 +2990,36 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           alwaysRender={alwaysRender}
           data-transcript-index={index}
         >
-          {item.type === 'user' ? (
-            <div
-              data-export-role="user-message"
-              {...(railIdx >= 0 ? { 'data-rail-index': railIdx } : undefined)}
-            >
-              <UserMessageItem message={item.message} skills={skills} sessionId={sessionId} />
-            </div>
-          ) : (
-            <div
-              data-export-role="assistant-block"
-              {...(railIdx >= 0 ? { 'data-rail-index': railIdx } : undefined)}
-            >
-              <AssistantTranscriptBlock
-                item={item}
-                resolveLocalFilePath={resolveLocalFilePath}
-                mapDisplayText={mapDisplayText}
-                showTypingIndicator={showTypingIndicator}
-                showCopyButtons={!isStreaming}
-                showAvatar={showAssistantAvatar}
-                compactWithPrevious={compactWithPrevious}
-                compactWithNext={compactWithNext}
-                isLastInToolSequence={isLastInToolSequence}
-                sessionId={sessionId}
-                toolExpanded={toolExpanded}
-              />
-            </div>
-          )}
+          <div data-search-item-id={itemId}>
+            {item.type === 'user' ? (
+              <div
+                data-export-role="user-message"
+                {...(railIdx >= 0 ? { 'data-rail-index': railIdx } : undefined)}
+              >
+                <UserMessageItem message={item.message} skills={skills} sessionId={sessionId} />
+              </div>
+            ) : (
+              <div
+                data-export-role="assistant-block"
+                {...(railIdx >= 0 ? { 'data-rail-index': railIdx } : undefined)}
+              >
+                <AssistantTranscriptBlock
+                  item={item}
+                  resolveLocalFilePath={resolveLocalFilePath}
+                  mapDisplayText={mapDisplayText}
+                  showTypingIndicator={showTypingIndicator}
+                  showCopyButtons={!isStreaming}
+                  showAvatar={showAssistantAvatar}
+                  compactWithPrevious={compactWithPrevious}
+                  compactWithNext={compactWithNext}
+                  isLastInToolSequence={isLastInToolSequence}
+                  sessionId={sessionId}
+                  toolExpanded={toolExpanded}
+                  activeSearchItemId={activeSearchHit?.itemId ?? null}
+                />
+              </div>
+            )}
+          </div>
         </LazyRenderItem>
       );
     });
@@ -2769,7 +3028,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   return (
     <div ref={detailRootRef} className="flex-1 flex flex-col bg-background h-full">
       {/* Header */}
-      <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border bg-surface shrink-0">
+      <div className="draggable relative flex h-12 items-center justify-between px-4 border-b border-border bg-surface shrink-0">
         {/* Left side: Toggle buttons (when collapsed) + Title */}
         <div className="flex h-full items-center gap-2 min-w-0">
           {isSidebarCollapsed && (
@@ -2865,6 +3124,25 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             <ToolIcon className="h-4 w-4" />
           </button>
 
+          {/* In-session search button */}
+          <button
+            type="button"
+            onMouseDown={e => e.stopPropagation()}
+            onClick={e => {
+              e.stopPropagation();
+              setSessionSearchOpen(prev => !prev);
+            }}
+            className={`p-1.5 rounded-lg transition-colors ${
+              sessionSearchOpen
+                ? 'text-blue-400 hover:bg-blue-400/10'
+                : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+            }`}
+            aria-label={i18nService.t('coworkSearchInSession')}
+            title={i18nService.t('coworkSearchInSession')}
+          >
+            <SearchIcon className="h-4 w-4" />
+          </button>
+
           {/* Menu button */}
           <button
             ref={actionButtonRef}
@@ -2877,6 +3155,58 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           </button>
           <WindowTitleBar inline className="ml-1" />
         </div>
+
+        {sessionSearchOpen && (
+          <div
+            ref={sessionSearchPanelRef}
+            className="non-draggable absolute right-16 top-full z-40 mt-2 flex min-h-9 items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 shadow-popover"
+          >
+            <SearchIcon className="h-4 w-4 text-muted flex-shrink-0" />
+            <input
+              ref={sessionSearchInputRef}
+              value={sessionSearchQuery}
+              onChange={e => setSessionSearchQuery(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  navigateSessionSearch(e.shiftKey ? -1 : 1);
+                }
+              }}
+              className="h-7 w-48 bg-transparent text-sm text-foreground placeholder:text-muted focus:outline-none"
+              placeholder={i18nService.t('coworkSearchInSessionPlaceholder')}
+            />
+            <span className="min-w-[48px] text-center text-xs tabular-nums text-muted">
+              {sessionSearchMatches.length > 0 && activeSearchIndex >= 0
+                ? `${activeSearchIndex + 1}/${sessionSearchMatches.length}`
+                : `0/${sessionSearchMatches.length}`}
+            </span>
+            <label className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised">
+              <input
+                type="checkbox"
+                checked={sessionSearchCaseSensitive}
+                onChange={e => setSessionSearchCaseSensitive(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border accent-primary"
+              />
+              <span className="whitespace-nowrap">{i18nService.t('caseSensitive')}</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => navigateSessionSearch(-1)}
+              disabled={sessionSearchMatches.length === 0}
+              className="h-7 px-2 rounded-md text-xs text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+            >
+              {i18nService.t('previous')}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateSessionSearch(1)}
+              disabled={sessionSearchMatches.length === 0}
+              className="h-7 px-2 rounded-md text-xs text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+            >
+              {i18nService.t('next')}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Floating Menu */}
