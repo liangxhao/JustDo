@@ -6,6 +6,7 @@
  * Also handles session title generation.
  */
 
+import { randomUUID } from 'crypto';
 import type { CoworkStore } from '../../../coworkStore';
 import type { GatewayClientLike } from '../gateway/types';
 import type {
@@ -32,6 +33,7 @@ export class SkillRpcHandler {
   async generateTitle(userIntent: string | null, timeoutMs = 8000): Promise<string> {
     const SESSION_TITLE_MAX_CHARS = 50;
     const SESSION_TITLE_FALLBACK = 'New Session';
+    const effectiveTimeout = timeoutMs > 0 ? timeoutMs : 8000;
 
     const normalizedInput = typeof userIntent === 'string' ? userIntent.trim() : '';
     const fallbackTitle = this.buildFallbackTitle(
@@ -40,16 +42,63 @@ export class SkillRpcHandler {
       SESSION_TITLE_MAX_CHARS,
     );
 
-    // CRITICAL: Skip gateway-based title generation entirely.
-    // The gateway's bootstrapContextMode: 'lightweight' does NOT prevent skill context injection,
-    // causing the title session to spawn subagents for skill processing instead of just generating a title.
-    console.log(
-      '[OpenClawRuntime] generateTitle: using fallback title to avoid skill injection (input="' +
-        normalizedInput.slice(0, 50) +
-        '...") -> "' +
-        fallbackTitle +
-        '"',
-    );
+    if (!normalizedInput) {
+      return fallbackTitle;
+    }
+
+    // Ensure gateway client is ready
+    try {
+      await this.callbacks.ensureGatewayClientReady();
+    } catch (error) {
+      console.warn('[OpenClawRuntime] generateTitle: gateway client not ready:', error);
+      return fallbackTitle;
+    }
+
+    const client = this.callbacks.getGatewayClient();
+    if (!client) {
+      console.warn('[OpenClawRuntime] generateTitle: gateway client unavailable');
+      return fallbackTitle;
+    }
+
+    const prompt = `Generate a short title from this input, keep the same language, return plain text only (no markdown), and keep it within ${SESSION_TITLE_MAX_CHARS} characters: ${normalizedInput}`;
+
+    // Use a temporary session key for title generation with lightweight context
+    const titleSessionKey = `title:${randomUUID()}`;
+    const idempotencyKey = randomUUID();
+
+    console.log('[OpenClawRuntime] generateTitle: sending request via gateway...');
+
+    try {
+      const requestPromise = client.request<Record<string, unknown>>(
+        'agent',
+        {
+          message: prompt,
+          sessionKey: titleSessionKey,
+          idempotencyKey,
+          deliver: false,
+          bootstrapContextMode: 'lightweight',
+        },
+        { expectFinal: true },
+      );
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), effectiveTimeout);
+      });
+
+      const result = await Promise.race([requestPromise, timeoutPromise]);
+      if (timer) clearTimeout(timer);
+
+      const resultText = this.extractTitleFromAgentResult(result);
+      console.log('[OpenClawRuntime] generateTitle: extracted text=', resultText?.slice(0, 100));
+
+      if (resultText) {
+        return this.normalizeTitle(resultText, fallbackTitle, SESSION_TITLE_MAX_CHARS);
+      }
+    } catch (error) {
+      console.warn('[OpenClawRuntime] generateTitle: request failed:', error);
+    }
+
     return fallbackTitle;
   }
 
@@ -97,7 +146,7 @@ export class SkillRpcHandler {
     title = title.split(/\r?\n/)[0].trim();
 
     // Strip suffix after dash/hyphen (e.g., "Sorting Algorithms - Part 1/2")
-    const dashMatch = title.match(/^(.+?)[-—–.]/);
+    const dashMatch = title.match(/^(.+?)[ ]+[-—–]/);
     if (dashMatch?.[1]) {
       title = dashMatch[1].trim();
     }
@@ -110,7 +159,11 @@ export class SkillRpcHandler {
   }
 
   extractTitleFromAgentResult(result: unknown): string | null {
-    if (!result) return null;
+    return this.extractTitleFromResultImpl(result, 0);
+  }
+
+  private extractTitleFromResultImpl(result: unknown, depth: number): string | null {
+    if (depth > 5 || !result) return null;
 
     const obj = result as Record<string, unknown>;
 
@@ -124,7 +177,7 @@ export class SkillRpcHandler {
           return firstPayload.text;
         }
       }
-      return this.extractTitleFromAgentResult(obj.result);
+      return this.extractTitleFromResultImpl(obj.result, depth + 1);
     }
 
     if (typeof result === 'string') {
@@ -242,10 +295,10 @@ export class SkillRpcHandler {
   async searchClawHubSkills(query?: string, limit?: number): Promise<ClawHubSearchResult[]> {
     await this.callbacks.ensureGatewayClientReady();
     const client = this.callbacks.requireGatewayClient();
-    const result = await client.request<{ results?: ClawHubSearchResult[] }>(
-      'skills.search',
-      { query, limit: limit || 20 },
-    );
+    const result = await client.request<{ results?: ClawHubSearchResult[] }>('skills.search', {
+      query,
+      limit: limit || 20,
+    });
     console.log(
       '[OpenClawRuntime] searchClawHubSkills: received',
       result.results?.length || 0,
