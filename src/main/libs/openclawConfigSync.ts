@@ -33,6 +33,36 @@ export type McpBridgeConfig = {
   tools: McpToolManifestEntry[];
 };
 
+const MCP_BRIDGE_PLUGIN_ID = 'mcp-bridge';
+
+const sanitizeMcpBridgeToolSegment = (value: string): string => {
+  const sanitized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return sanitized || 'tool';
+};
+
+const buildMcpBridgeToolContractNames = (tools: McpToolManifestEntry[]): string[] => {
+  const usedNames = new Set<string>();
+  return tools.map(tool => {
+    const base = `mcp_${sanitizeMcpBridgeToolSegment(tool.server)}_${sanitizeMcpBridgeToolSegment(tool.name)}`;
+    let next = base;
+    let index = 2;
+    while (usedNames.has(next)) {
+      next = `${base}_${index}`;
+      index += 1;
+    }
+    usedNames.add(next);
+    return next;
+  });
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+};
+
 const mapExecutionModeToSandboxMode = (
   mode: CoworkExecutionMode,
   isEnterprise: boolean,
@@ -527,7 +557,7 @@ export class OpenClawConfigSync {
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
       isBundledPluginAvailable(id),
     );
-    const hasMcpBridgePlugin = isBundledPluginAvailable('mcp-bridge');
+    const hasMcpBridgePlugin = isBundledPluginAvailable(MCP_BRIDGE_PLUGIN_ID);
     const hasAskUserPlugin = isBundledPluginAvailable('ask-user-question');
 
     const managedConfig: Record<string, unknown> = {
@@ -597,7 +627,7 @@ export class OpenClawConfigSync {
               return [id, { enabled: true }];
             }),
           ),
-          ...(hasMcpBridgePlugin ? { 'mcp-bridge': { enabled: true } } : {}),
+          ...(hasMcpBridgePlugin ? { [MCP_BRIDGE_PLUGIN_ID]: { enabled: true } } : {}),
           ...(hasAskUserPlugin ? { 'ask-user-question': { enabled: true } } : {}),
         };
 
@@ -622,8 +652,8 @@ export class OpenClawConfigSync {
     ) {
       const plugins = managedConfig.plugins as Record<string, unknown>;
       const entries = plugins.entries as Record<string, Record<string, unknown>>;
-      entries['mcp-bridge'] = {
-        ...entries['mcp-bridge'],
+      entries[MCP_BRIDGE_PLUGIN_ID] = {
+        ...entries[MCP_BRIDGE_PLUGIN_ID],
         config: {
           callbackUrl: mcpBridgeCfg.callbackUrl,
           secret: '${GUCCIAI_MCP_BRIDGE_SECRET}',
@@ -662,6 +692,10 @@ export class OpenClawConfigSync {
     }
 
     const configChanged = currentContent !== nextContent;
+    const mcpBridgeManifestChanged =
+      hasMcpBridgePlugin && mcpBridgeCfg
+        ? this.syncMcpBridgeToolContracts(mcpBridgeCfg.tools)
+        : false;
 
     if (configChanged) {
       try {
@@ -692,9 +726,75 @@ export class OpenClawConfigSync {
 
     return {
       ok: true,
-      changed: configChanged || sessionStoreChanged,
+      changed: configChanged || sessionStoreChanged || mcpBridgeManifestChanged,
       configPath,
     };
+  }
+
+  private syncMcpBridgeToolContracts(tools: McpToolManifestEntry[]): boolean {
+    const extensionsDir = this.findBundledExtensionsDir();
+    if (!extensionsDir) {
+      return false;
+    }
+
+    const manifestPath = path.join(extensionsDir, MCP_BRIDGE_PLUGIN_ID, 'openclaw.plugin.json');
+    let manifest: Record<string, unknown>;
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    } catch (error) {
+      console.warn(
+        `[OpenClawConfigSync] failed to read ${MCP_BRIDGE_PLUGIN_ID} manifest: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    }
+
+    const nextToolNames = buildMcpBridgeToolContractNames(tools);
+    const contracts = isRecord(manifest.contracts) ? manifest.contracts : {};
+    const currentTools = Array.isArray(contracts.tools)
+      ? contracts.tools.filter((value): value is string => typeof value === 'string')
+      : [];
+
+    if (JSON.stringify(currentTools) === JSON.stringify(nextToolNames)) {
+      return false;
+    }
+
+    manifest.contracts = {
+      ...contracts,
+      tools: nextToolNames,
+    };
+
+    try {
+      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+      console.log(
+        `[OpenClawConfigSync] synced ${MCP_BRIDGE_PLUGIN_ID} contracts.tools (${nextToolNames.length})`,
+      );
+      return true;
+    } catch (error) {
+      console.warn(
+        `[OpenClawConfigSync] failed to write ${MCP_BRIDGE_PLUGIN_ID} manifest: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    }
+  }
+
+  private findBundledExtensionsDir(): string | null {
+    const candidates = app.isPackaged
+      ? [path.join(process.resourcesPath, 'cfmind', 'dist', 'extensions')]
+      : [
+          path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions'),
+          path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions'),
+        ];
+
+    for (const candidate of candidates) {
+      try {
+        if (fs.statSync(candidate).isDirectory()) {
+          return candidate;
+        }
+      } catch {
+        // Ignore missing candidates.
+      }
+    }
+    return null;
   }
 
   /**

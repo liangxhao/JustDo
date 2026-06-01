@@ -135,14 +135,13 @@ const plugin = {
       return;
     }
 
-    // Use a factory so the tool is only available for desktop (webchat) sessions.
-    // IM channel sessions (qqbot, dingtalk, weixin, feishu, etc.) get null → tool hidden.
+    // Use a factory so the tool is only available for GucciAI desktop sessions.
+    // IM channel sessions (qqbot, dingtalk, weixin, feishu, etc.) get null -> tool hidden.
     api.registerTool((ctx) => {
-      // Only enable for GucciAI desktop sessions (sessionKey starts with 'agent:main:gucciai:').
-      // IM channel sessions (dingtalk, qqbot, weixin, feishu, wecom, etc.) should not have this tool
-      // so the model executes delete commands directly without confirmation on IM.
       const sessionKey = ctx.sessionKey ?? '';
-      const isLocalDesktop = sessionKey.startsWith('agent:main:gucciai:');
+      const isLocalDesktop =
+        sessionKey.startsWith('gucciai:')
+        || /^agent:[^:]+:gucciai:/.test(sessionKey);
       if (!isLocalDesktop) {
         return null;
       }
@@ -193,7 +192,7 @@ const plugin = {
         }
       },
     };  // end of returned tool object
-    });  // end of factory function passed to registerTool
+    }, { name: 'AskUserQuestion' });  // end of factory function passed to registerTool
 
     api.logger.info('[ask-user-question] registered AskUserQuestion tool factory.');
   },
