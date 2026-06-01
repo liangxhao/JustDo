@@ -1108,6 +1108,26 @@ const bindCoworkRuntimeForwarder = (): void => {
       windows.length,
     );
 
+    // Add modelName to assistant messages (look up from session's agent)
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+      value !== null && typeof value === 'object' && !Array.isArray(value);
+    const enrichedMessage =
+      messageType === 'assistant' && isRecord(message)
+        ? (() => {
+            const session = getCoworkStore().getSession(sessionId);
+            const agentId = session?.agentId || 'main';
+            const agent = getCoworkStore().getAgent(agentId);
+            const rawModel = agent?.model || '';
+            const modelName = rawModel.includes('/')
+              ? rawModel.slice(rawModel.indexOf('/') + 1)
+              : rawModel;
+            return {
+              ...(message as Record<string, unknown>),
+              ...(modelName ? { modelName } : {}),
+            } as CoworkMessage;
+          })()
+        : (message as CoworkMessage);
+
     // Persist message to CoworkStore so it survives session reloads
     // Only persist certain message types (not streaming intermediate messages)
     if (
@@ -1117,15 +1137,7 @@ const bindCoworkRuntimeForwarder = (): void => {
       messageType === 'user'
     ) {
       try {
-        getCoworkStore().insertMessageWithId(sessionId, message as CoworkMessage);
-        console.log(
-          '[CoworkForwarder] persisted message to CoworkStore: sessionId=',
-          sessionId,
-          'type=',
-          messageType,
-          'id=',
-          messageId,
-        );
+        getCoworkStore().insertMessageWithId(sessionId, enrichedMessage);
       } catch (err) {
         console.error('[CoworkForwarder] failed to persist message:', err);
       }
@@ -1136,18 +1148,11 @@ const bindCoworkRuntimeForwarder = (): void => {
       try {
         const sentResult = win.webContents.send('cowork:stream:message', {
           sessionId,
-          message: safeMessage,
+          message: {
+            ...(safeMessage as Record<string, unknown>),
+            ...(enrichedMessage.modelName ? { modelName: enrichedMessage.modelName } : {}),
+          },
         });
-        console.log(
-          '[CoworkForwarder] IPC sent: sessionId=',
-          sessionId,
-          'type=',
-          messageType,
-          'webContentsId=',
-          win.webContents.id,
-          'success=',
-          sentResult === undefined ? 'true' : 'false',
-        );
       } catch (error) {
         console.error('Failed to forward cowork message:', error);
       }

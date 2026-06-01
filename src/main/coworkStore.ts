@@ -519,6 +519,14 @@ export class CoworkStore {
     const id = uuidv4();
     const now = Date.now();
 
+    // Extract modelName from top-level or metadata (runtime adapter puts it in metadata)
+    const modelName =
+      message.modelName ||
+      (message.metadata &&
+        typeof message.metadata === 'object' &&
+        (message.metadata as Record<string, unknown>).modelName as string | undefined) ||
+      null;
+
     const seqRow = this.db
       .prepare(
         'SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM cowork_messages WHERE session_id = ?',
@@ -542,7 +550,7 @@ export class CoworkStore {
         now,
         sequence,
         message.thinkingContent || null,
-        message.modelName || null,
+        modelName,
         message.usage ? JSON.stringify(message.usage) : null,
       );
 
@@ -576,6 +584,14 @@ export class CoworkStore {
       return existing;
     }
 
+    // Extract modelName from top-level or metadata (for consistency with addMessage)
+    const modelName =
+      message.modelName ||
+      (message.metadata &&
+        typeof message.metadata === 'object' &&
+        (message.metadata as Record<string, unknown>).modelName as string | undefined) ||
+      null;
+
     const seqRow = this.db
       .prepare(
         'SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM cowork_messages WHERE session_id = ?',
@@ -599,7 +615,7 @@ export class CoworkStore {
         message.timestamp,
         sequence,
         message.thinkingContent || null,
-        message.modelName || null,
+        modelName,
         message.usage ? JSON.stringify(message.usage) : null,
       );
 

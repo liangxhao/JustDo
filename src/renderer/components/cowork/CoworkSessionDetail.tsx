@@ -1138,10 +1138,15 @@ const CopyButton: React.FC<{
   );
 };
 
-// Format epoch-ms timestamp to absolute time like "10:30"
+// Format epoch-ms timestamp to absolute time like "2026-06-01 10:30"
 const formatTimestamp = (ts: number): string => {
   const date = new Date(ts);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const h = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${d} ${h}:${min}`;
 };
 
 // Format token count to compact display (e.g., 128000 -> "128k", 4200 -> "4.2k")
@@ -1243,6 +1248,9 @@ export const UserMessageItem: React.FC<{
                 )}
               </div>
               <div className="flex items-center gap-1.5 mt-1 pl-4 sm:pl-8 md:pl-12">
+                {message.modelName && (
+                  <span className="text-[10px] text-secondary">{message.modelName}</span>
+                )}
                 <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
                 <button
                   onClick={handleDelete}
@@ -1499,6 +1507,9 @@ const SubagentCompletionMessageItem: React.FC<{
               </div>
             )}
             <div className="flex items-center gap-1.5 mt-1 pl-4">
+              {message.modelName && (
+                <span className="text-[10px] text-secondary">{message.modelName}</span>
+              )}
               <span className="text-[10px] text-muted">{formatTimestamp(message.timestamp)}</span>
             </div>
           </div>
