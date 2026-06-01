@@ -10,6 +10,7 @@ import {
   clearPendingPermissions,
   deleteGroup as deleteGroupAction,
   deleteMessage as deleteMessageAction,
+  deleteMessagesFrom as deleteMessagesFromAction,
   deleteSession as deleteSessionAction,
   deleteSessions as deleteSessionsAction,
   dequeuePendingPermission,
@@ -479,6 +480,20 @@ class CoworkService {
     }
 
     console.error('Failed to delete message:', result.error);
+    return false;
+  }
+
+  async deleteMessagesFrom(sessionId: string, messageId: string): Promise<boolean> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.deleteMessagesFrom) return false;
+
+    const result = await cowork.deleteMessagesFrom(sessionId, messageId);
+    if (result.success) {
+      store.dispatch(deleteMessagesFromAction({ sessionId, messageId }));
+      return true;
+    }
+
+    console.error('Failed to delete messages:', result.error);
     return false;
   }
 

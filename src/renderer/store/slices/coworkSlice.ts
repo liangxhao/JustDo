@@ -263,6 +263,18 @@ const coworkSlice = createSlice({
       }
     },
 
+    deleteMessagesFrom(state, action: PayloadAction<{ sessionId: string; messageId: string }>) {
+      const { sessionId, messageId } = action.payload;
+
+      if (state.currentSession?.id === sessionId) {
+        const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
+        if (messageIndex !== -1) {
+          state.currentSession.messages = state.currentSession.messages.slice(0, messageIndex);
+          state.currentSession.updatedAt = Date.now();
+        }
+      }
+    },
+
     updateMessageMetadata(
       state,
       action: PayloadAction<{
@@ -504,6 +516,7 @@ export const {
   updateMessageMetadata,
   updateMessageUsage,
   deleteMessage,
+  deleteMessagesFrom,
   setStreaming,
   setRemoteManaged,
   updateSessionPinned,

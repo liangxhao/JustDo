@@ -263,6 +263,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
     deleteMessage: (sessionId: string, messageId: string) =>
       ipcRenderer.invoke('cowork:message:delete', sessionId, messageId),
+    deleteMessagesFrom: (sessionId: string, messageId: string) =>
+      ipcRenderer.invoke('cowork:message:deleteFrom', sessionId, messageId),
     exportResultImage: (options: {
       rect: { x: number; y: number; width: number; height: number };
       defaultFileName?: string;

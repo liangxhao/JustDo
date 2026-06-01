@@ -1216,7 +1216,7 @@ export const UserMessageItem: React.FC<{
 
   const handleDelete = useCallback(() => {
     if (!sessionId) return;
-    void coworkService.deleteMessage(sessionId, message.id);
+    void coworkService.deleteMessagesFrom(sessionId, message.id);
   }, [sessionId, message.id]);
 
   // Get skills used for this message
@@ -1304,7 +1304,7 @@ export const UserMessageItem: React.FC<{
                       ? 'text-red-400 hover:bg-red-500/10'
                       : 'text-transparent pointer-events-none'
                   }`}
-                  title={i18nService.t('delete') || 'Delete'}
+                  title={i18nService.t('coworkDeleteFromMessage')}
                 >
                   <TrashIcon className="h-3 w-3" />
                 </button>
@@ -1350,7 +1350,7 @@ const AssistantMessageItem: React.FC<{
 
   const handleDelete = useCallback(() => {
     if (!sessionId) return;
-    void coworkService.deleteMessage(sessionId, message.id);
+    void coworkService.deleteMessagesFrom(sessionId, message.id);
   }, [sessionId, message.id]);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
 
@@ -1436,7 +1436,7 @@ const AssistantMessageItem: React.FC<{
                 ? 'text-red-400 hover:bg-red-500/10'
                 : 'text-transparent pointer-events-none'
             }`}
-            title={i18nService.t('delete') || 'Delete'}
+            title={i18nService.t('coworkDeleteFromMessage')}
           >
             <TrashIcon className="h-3 w-3" />
           </button>

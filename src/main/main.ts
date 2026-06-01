@@ -2713,6 +2713,22 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle(
+    'cowork:message:deleteFrom',
+    async (_event, sessionId: string, messageId: string) => {
+      try {
+        const coworkStoreInstance = getCoworkStore();
+        const deleted = coworkStoreInstance.deleteMessagesFrom(sessionId, messageId);
+        return { success: deleted };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to delete messages',
+        };
+      }
+    },
+  );
+
   ipcMain.handle('cowork:session:deleteBatch', async (_event, sessionIds: string[]) => {
     try {
       const runtime = getCoworkEngineRouter();

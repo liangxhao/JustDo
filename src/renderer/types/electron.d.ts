@@ -511,6 +511,10 @@ interface IElectronAPI {
       sessionId: string,
       messageId: string,
     ) => Promise<{ success: boolean; error?: string }>;
+    deleteMessagesFrom: (
+      sessionId: string,
+      messageId: string,
+    ) => Promise<{ success: boolean; error?: string }>;
     exportResultImage: (options: {
       rect: { x: number; y: number; width: number; height: number };
       defaultFileName?: string;

@@ -709,6 +709,25 @@ export class CoworkStore {
   }
 
   /**
+   * Delete a message and every later message in the same session.
+   * Used by the UI to rewind a conversation from a selected point.
+   */
+  deleteMessagesFrom(sessionId: string, messageId: string): boolean {
+    const target = this.db
+      .prepare('SELECT sequence FROM cowork_messages WHERE id = ? AND session_id = ?')
+      .get(messageId, sessionId) as { sequence: number | null } | undefined;
+
+    if (!target || target.sequence == null) {
+      return false;
+    }
+
+    const result = this.db
+      .prepare('DELETE FROM cowork_messages WHERE session_id = ? AND sequence >= ?')
+      .run(sessionId, target.sequence);
+    return result.changes > 0;
+  }
+
+  /**
    * Refresh the local user/assistant message cache from Gateway chat.history.
    * Tool messages (tool_use, tool_result, system) are preserved in their existing positions.
    * This updates SQLite for UI display only; Runtime behavior must use OpenClaw Gateway state.
