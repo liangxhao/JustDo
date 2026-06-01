@@ -1568,9 +1568,6 @@ const ThinkingStreamBlock: React.FC<{
 }> = ({ messageId }) => {
   // Local collapsed state - can be toggled independently per block
   const [localCollapsed, setLocalCollapsed] = useState(false);
-  // Track previous global state to detect global toggle changes
-  const prevGlobalExpandedRef = useRef<boolean>(true);
-
   // Cache the snapshot result to avoid infinite loops
   const snapshotCacheRef = useRef<{
     content: string;
@@ -1636,20 +1633,27 @@ const ThinkingStreamBlock: React.FC<{
   const isStreaming = thinkingState.isStreaming;
   const globalExpanded = thinkingState.globalExpanded;
 
-  // Sync local state with global state when global changes
-  // This ensures clicking the global button updates all blocks
+  // Sync local state with global state and streaming status
+  // When global collapsed: keep blocks expanded while actively streaming,
+  // collapse them once streaming completes. When global expanded: show all.
+  const wasStreamingRef = useRef<boolean>(isStreaming);
   useEffect(() => {
-    if (globalExpanded !== prevGlobalExpandedRef.current) {
-      // Global state changed, sync local state
-      setLocalCollapsed(!globalExpanded);
-      prevGlobalExpandedRef.current = globalExpanded;
+    if (globalExpanded) {
+      setLocalCollapsed(false);
+    } else if (isStreaming) {
+      // Globally collapsed but currently streaming — show until done
+      setLocalCollapsed(false);
+      wasStreamingRef.current = true;
+    } else if (wasStreamingRef.current && !isStreaming) {
+      // Streaming just finished while globally collapsed — fold it
+      setLocalCollapsed(true);
+      wasStreamingRef.current = false;
+    } else {
+      // Already done, not streaming — collapse per global setting
+      setLocalCollapsed(true);
+      wasStreamingRef.current = false;
     }
-  }, [globalExpanded]);
-
-  // Initialize ref on first render
-  useEffect(() => {
-    prevGlobalExpandedRef.current = globalExpanded;
-  }, []);
+  }, [globalExpanded, isStreaming]);
 
   if (!thinkingContent || thinkingContent.length === 0) return null;
 
