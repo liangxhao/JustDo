@@ -56,6 +56,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Exec approval continuation
     execApprovalApproved: '用户已确认执行该命令，请检查执行结果并继续。',
     execApprovalDenied: '用户已拒绝执行该命令。',
+    askUserApprovedMessage: '我已确认。',
+    askUserDeniedMessage: '我拒绝了请求。',
+    askUserAnswerLabel: '用户选择',
 
     // Skill manager errors
     skillErrNoSkillMd: '来源中未找到 SKILL.md',
@@ -117,6 +120,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     execApprovalApproved:
       'The user approved the command execution. Please check the result and continue.',
     execApprovalDenied: 'The user denied the command execution.',
+    askUserApprovedMessage: 'I approved.',
+    askUserDeniedMessage: 'I denied the request.',
+    askUserAnswerLabel: 'User answer',
 
     // Skill manager errors
     skillErrNoSkillMd: 'No SKILL.md found in source',

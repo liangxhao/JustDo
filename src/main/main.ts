@@ -70,6 +70,7 @@ import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
   OpenClawChannelSessionSync,
+  parseManagedSessionKey,
 } from './libs/openclawChannelSessionSync';
 import type { McpBridgeConfig } from './libs/openclawConfigSync';
 import { buildProviderSelection, OpenClawConfigSync } from './libs/openclawConfigSync';
@@ -96,7 +97,7 @@ const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const IPC_MESSAGE_CONTENT_MAX_CHARS = 120_000;
 const IPC_UPDATE_CONTENT_MAX_CHARS = 120_000;
 const IPC_STRING_MAX_CHARS = 4_000;
-const IPC_MAX_DEPTH = 5;
+const IPC_MAX_DEPTH = 8;
 const IPC_MAX_KEYS = 80;
 const IPC_MAX_ITEMS = 40;
 const MAX_INLINE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -246,6 +247,14 @@ const ensureZipFileName = (value: string): string => {
 };
 
 const padTwoDigits = (value: number): string => value.toString().padStart(2, '0');
+
+const formatAskUserAnswerValue = (value: string): string => {
+  return value
+    .split('|||')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .join(', ');
+};
 
 const buildLogExportFileName = (): string => {
   const now = new Date();
@@ -682,6 +691,7 @@ let mcpStore: McpStore | null = null;
 let mcpServerManager: McpServerManager | null = null;
 let mcpBridgeServer: McpBridgeServer | null = null;
 let mcpBridgeSecret: string | null = null;
+const askUserSessionByRequestId = new Map<string, string>();
 let mcpBridgeStartPromise: Promise<McpBridgeConfig | null> | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
@@ -1432,16 +1442,23 @@ const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
       // Register AskUserQuestion callback — shows a permission modal when the
       // ask-user-question OpenClaw plugin sends a request via HTTP.
       mcpBridgeServer.onAskUser(request => {
+        const managedSession = parseManagedSessionKey(request.sessionKey);
+        const requestSessionId = managedSession?.sessionId ?? '__askuser__';
+        askUserSessionByRequestId.set(request.requestId, requestSessionId);
         const windows = BrowserWindow.getAllWindows();
         windows.forEach(win => {
           if (win.isDestroyed()) return;
           try {
             win.webContents.send('cowork:stream:permission', {
-              sessionId: '__askuser__',
+              sessionId: requestSessionId,
               request: {
                 requestId: request.requestId,
                 toolName: 'AskUserQuestion',
-                toolInput: { questions: request.questions },
+                toolInput: {
+                  questions: request.questions,
+                  sessionKey: request.sessionKey,
+                  sessionId: requestSessionId,
+                },
               },
             });
           } catch (error) {
@@ -1453,6 +1470,7 @@ const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
       // Dismiss the AskUser modal when timeout or resolved from server side.
       // Simulate a deny response to remove it from the renderer's pending queue.
       mcpBridgeServer.onAskUserDismiss(requestId => {
+        askUserSessionByRequestId.delete(requestId);
         const windows = BrowserWindow.getAllWindows();
         windows.forEach(win => {
           if (win.isDestroyed()) return;
@@ -3274,18 +3292,52 @@ if (!gotTheLock) {
         // AskUserQuestion plugin responses go to the bridge server, not the runtime
         if (mcpBridgeServer && options.requestId) {
           const result = options.result;
+          const updatedInput =
+            result.behavior === 'allow' &&
+            result.updatedInput &&
+            typeof result.updatedInput === 'object'
+              ? (result.updatedInput as Record<string, unknown>)
+              : undefined;
+          const answers = updatedInput?.answers as Record<string, string> | undefined;
           const askUserResponse: import('./libs/mcpBridgeServer').AskUserResponse = {
             behavior: result.behavior === 'allow' ? 'allow' : 'deny',
-            answers:
-              result.behavior === 'allow' &&
-              result.updatedInput &&
-              typeof result.updatedInput === 'object'
-                ? ((result.updatedInput as Record<string, unknown>).answers as
-                    | Record<string, string>
-                    | undefined)
-                : undefined,
+            answers,
           };
           mcpBridgeServer.resolveAskUser(options.requestId, askUserResponse);
+
+          const sessionId =
+            typeof updatedInput?.sessionId === 'string'
+              ? updatedInput.sessionId.trim()
+              : askUserSessionByRequestId.get(options.requestId) ?? '';
+          if (sessionId && sessionId !== '__askuser__') {
+            const content =
+              result.behavior === 'allow' && answers && Object.keys(answers).length > 0
+                ? Object.entries(answers)
+                    .map(
+                      ([question, answer]) =>
+                        `${question}\n${t('askUserAnswerLabel')}：${formatAskUserAnswerValue(answer)}`,
+                    )
+                    .join('\n\n')
+                : t(result.behavior === 'allow' ? 'askUserApprovedMessage' : 'askUserDeniedMessage');
+            const message = getCoworkStore().addMessage(sessionId, {
+              type: 'user',
+              content,
+              metadata: {
+                source: 'AskUserQuestion',
+                requestId: options.requestId,
+                answers: answers ?? null,
+              },
+            });
+            const safeMessage = sanitizeCoworkMessageForIpc(message);
+            BrowserWindow.getAllWindows().forEach(win => {
+              if (win.isDestroyed()) return;
+              win.webContents.send('cowork:stream:message', {
+                sessionId,
+                message: safeMessage,
+              });
+            });
+          }
+          askUserSessionByRequestId.delete(options.requestId);
         }
 
         const runtime = getCoworkEngineRouter();

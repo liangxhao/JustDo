@@ -70,6 +70,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [otherInputs, setOtherInputs] = useState<Record<number, string>>({});
+  const [otherActive, setOtherActive] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     const rawAnswers = (toolInput as Record<string, unknown>).answers;
@@ -84,6 +85,8 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
     } else {
       setAnswers({});
     }
+    setOtherInputs({});
+    setOtherActive({});
   }, [permission.requestId, toolInput]);
 
   if (questions.length === 0) {
@@ -111,6 +114,12 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         ...prev,
         [question.question]: optionLabel,
       }));
+      setOtherInputs((prev) => {
+        const next = { ...prev };
+        delete next[currentStep];
+        return next;
+      });
+      setOtherActive((prev) => ({ ...prev, [currentStep]: false }));
 
       // 单选题选择后自动跳转到下一题（延迟执行以显示选中效果）
       setTimeout(() => {
@@ -167,6 +176,34 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
       ...prev,
       [currentStep]: value,
     }));
+    setOtherActive((prev) => ({
+      ...prev,
+      [currentStep]: true,
+    }));
+    if (!currentQuestion.multiSelect) {
+      setAnswers((prev) => {
+        const next = { ...prev };
+        delete next[currentQuestion.question];
+        return next;
+      });
+    }
+  };
+
+  const handleToggleOther = () => {
+    setOtherActive((prev) => {
+      const nextActive = !prev[currentStep];
+      return {
+        ...prev,
+        [currentStep]: nextActive,
+      };
+    });
+    if (!currentQuestion.multiSelect) {
+      setAnswers((prev) => {
+        const next = { ...prev };
+        delete next[currentQuestion.question];
+        return next;
+      });
+    }
   };
 
   const handlePrevious = () => {
@@ -193,6 +230,10 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
       delete newInputs[currentStep];
       return newInputs;
     });
+    setOtherActive((prev) => ({
+      ...prev,
+      [currentStep]: false,
+    }));
 
     if (!isLastStep) {
       handleNext();
@@ -204,7 +245,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
     const finalAnswers = { ...answers };
     Object.entries(otherInputs).forEach(([stepIndex, otherValue]) => {
       const question = questions[Number(stepIndex)];
-      if (question && otherValue.trim()) {
+      if (question && otherActive[Number(stepIndex)] && otherValue.trim()) {
         if (question.multiSelect) {
           const existingAnswers = finalAnswers[question.question]?.split('|||').map(a => a.trim()).filter(Boolean) || [];
           finalAnswers[question.question] = [...existingAnswers, otherValue.trim()].join('|||');
@@ -235,7 +276,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   // Check whether every question has at least one answer (selected option or "other" input)
   const allAnswered = questions.every((q, idx) => {
     const hasSelection = Boolean(answers[q.question]?.trim());
-    const hasOther = Boolean(otherInputs[idx]?.trim());
+    const hasOther = Boolean(otherActive[idx] && otherInputs[idx]?.trim());
     return hasSelection || hasOther;
   });
 
@@ -390,21 +431,63 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                   </button>
                 );
               })}
+              <button
+                type="button"
+                onClick={handleToggleOther}
+                className={`w-full text-left rounded-lg border px-4 py-3 transition-all ${
+                  otherActive[currentStep]
+                    ? 'border-primary bg-primary/10 text-foreground shadow-sm'
+                    : 'border-border text-secondary hover:bg-surface-raised hover:border-primary/50'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  {currentQuestion.multiSelect ? (
+                    <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border-2 transition-colors ${
+                      otherActive[currentStep]
+                        ? 'bg-primary border-primary'
+                        : 'border-border'
+                    }`}>
+                      {otherActive[currentStep] && (
+                        <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
+                          <path d="M13 4L6 11L3 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </div>
+                  ) : (
+                    <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 transition-colors ${
+                      otherActive[currentStep]
+                        ? 'border-primary'
+                        : 'border-border'
+                    }`}>
+                      {otherActive[currentStep] && (
+                        <div className="w-full h-full rounded-full bg-primary scale-50" />
+                      )}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">
+                      {i18nService.t('coworkQuestionWizardOther')}
+                    </div>
+                  </div>
+                </div>
+              </button>
             </div>
 
-            {/* Other input and Skip button in same row */}
             <div className="mt-4 flex items-center gap-3">
-              <input
-                type="text"
-                value={otherInputs[currentStep] || ''}
-                onChange={(e) => handleOtherInputChange(e.target.value)}
-                placeholder={i18nService.t('coworkQuestionWizardOther')}
-                className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
-              />
+              {otherActive[currentStep] && (
+                <input
+                  type="text"
+                  value={otherInputs[currentStep] || ''}
+                  onChange={(e) => handleOtherInputChange(e.target.value)}
+                  placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
+                  className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                  autoFocus
+                />
+              )}
               <button
                 type="button"
                 onClick={handleSkip}
-                className="px-4 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors whitespace-nowrap"
+                className="ml-auto px-4 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors whitespace-nowrap"
               >
                 {i18nService.t('coworkQuestionWizardSkip')}
               </button>

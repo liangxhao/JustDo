@@ -176,6 +176,8 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
   }, [isConfirmMode, questions]);
 
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [otherInputs, setOtherInputs] = useState<Record<string, string>>({});
+  const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!isQuestionTool) {
@@ -195,6 +197,8 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
     } else {
       setAnswers({});
     }
+    setOtherInputs({});
+    setOtherActive({});
   }, [isQuestionTool, permission.requestId, toolInput]);
 
   const formatToolInput = (input: Record<string, unknown>): string => {
@@ -292,10 +296,62 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
         [question.question]: Array.from(current).join('|||'),
       };
     });
+    if (!question.multiSelect) {
+      setOtherInputs((prev) => {
+        const next = { ...prev };
+        delete next[question.question];
+        return next;
+      });
+      setOtherActive((prev) => ({ ...prev, [question.question]: false }));
+    }
+  };
+
+  const handleToggleOther = (question: QuestionItem) => {
+    setOtherActive((prev) => ({
+      ...prev,
+      [question.question]: !prev[question.question],
+    }));
+    if (!question.multiSelect) {
+      setAnswers((prev) => {
+        const next = { ...prev };
+        delete next[question.question];
+        return next;
+      });
+    }
+  };
+
+  const handleOtherInputChange = (question: QuestionItem, value: string) => {
+    setOtherInputs((prev) => ({ ...prev, [question.question]: value }));
+    setOtherActive((prev) => ({ ...prev, [question.question]: true }));
+    if (!question.multiSelect) {
+      setAnswers((prev) => {
+        const next = { ...prev };
+        delete next[question.question];
+        return next;
+      });
+    }
+  };
+
+  const buildFinalAnswers = (): Record<string, string> => {
+    const finalAnswers = { ...answers };
+    questions.forEach((question) => {
+      const otherValue = otherInputs[question.question]?.trim();
+      if (!otherActive[question.question] || !otherValue) return;
+      if (question.multiSelect) {
+        const existingAnswers = finalAnswers[question.question]
+          ?.split('|||')
+          .map(answer => answer.trim())
+          .filter(Boolean) ?? [];
+        finalAnswers[question.question] = [...existingAnswers, otherValue].join('|||');
+      } else {
+        finalAnswers[question.question] = otherValue;
+      }
+    });
+    return finalAnswers;
   };
 
   const isComplete = isQuestionTool && !isConfirmMode
-    ? questions.every((question) => (answers[question.question] ?? '').trim())
+    ? questions.every((question) => (buildFinalAnswers()[question.question] ?? '').trim())
     : true;
 
   const denyButtonLabel = isQuestionTool && !isConfirmMode
@@ -312,6 +368,13 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
 
   const handleApprove = () => {
     if (isConfirmMode) {
+      const question = questions[0];
+      const otherValue = otherInputs[question.question]?.trim();
+      if (otherActive[question.question]) {
+        if (!otherValue) return;
+        handleConfirmModeSelect(otherValue);
+        return;
+      }
       handleConfirmModeSelect(confirmModeButtons?.primary.label ?? questions[0].options[0].label);
       return;
     }
@@ -322,7 +385,7 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
         behavior: 'allow',
         updatedInput: {
           ...(toolInput && typeof toolInput === 'object' ? toolInput : {}),
-          answers,
+          answers: buildFinalAnswers(),
         },
       });
       return;
@@ -340,6 +403,9 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
       message: 'Permission denied',
     });
   };
+
+  const isConfirmOtherActive = isConfirmMode && Boolean(otherActive[questions[0].question]);
+  const canApprove = !isConfirmOtherActive || Boolean(otherInputs[questions[0].question]?.trim());
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop">
@@ -390,6 +456,31 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
                   </div>
                 </div>
               )}
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => handleToggleOther(questions[0])}
+                  className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
+                    otherActive[questions[0].question]
+                      ? 'border-primary bg-primary/10 text-foreground'
+                      : 'border-border text-secondary hover:bg-surface-raised'
+                  }`}
+                >
+                  <div className="text-sm font-medium">
+                    {i18nService.t('coworkQuestionWizardOther')}
+                  </div>
+                </button>
+                {otherActive[questions[0].question] && (
+                  <input
+                    type="text"
+                    value={otherInputs[questions[0].question] || ''}
+                    onChange={(event) => handleOtherInputChange(questions[0], event.target.value)}
+                    placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
+                    className="mt-2 w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                    autoFocus
+                  />
+                )}
+              </div>
             </div>
           ) : isQuestionTool ? (
             <>
@@ -444,6 +535,29 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
                           </button>
                         );
                       })}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleOther(question)}
+                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
+                          otherActive[question.question]
+                            ? 'border-primary bg-primary/10 text-foreground'
+                            : 'border-border text-secondary hover:bg-surface-raised'
+                        }`}
+                      >
+                        <div className="text-sm font-medium">
+                          {i18nService.t('coworkQuestionWizardOther')}
+                        </div>
+                      </button>
+                      {otherActive[question.question] && (
+                        <input
+                          type="text"
+                          value={otherInputs[question.question] || ''}
+                          onChange={(event) => handleOtherInputChange(question, event.target.value)}
+                          placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
+                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                          autoFocus
+                        />
+                      )}
                     </div>
                   </div>
                 );
@@ -516,10 +630,14 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
           </button>
           <button
             onClick={handleApprove}
-            disabled={!isComplete}
+            disabled={!isComplete || !canApprove}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isConfirmMode && confirmModeButtons ? confirmModeButtons.primary.label : approveButtonLabel}
+            {isConfirmOtherActive
+              ? i18nService.t('coworkConfirmSelection')
+              : isConfirmMode && confirmModeButtons
+              ? confirmModeButtons.primary.label
+              : approveButtonLabel}
           </button>
         </div>
       </div>

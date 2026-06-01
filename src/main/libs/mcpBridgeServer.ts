@@ -24,6 +24,7 @@ const log = (level: string, msg: string) => {
 
 export type AskUserRequest = {
   requestId: string;
+  sessionKey?: string;
   questions: Array<{
     question: string;
     header?: string;
@@ -179,7 +180,7 @@ export class McpBridgeServer {
 
     try {
       const body = await this.readBody(req);
-      const input = JSON.parse(body) as { questions?: unknown[] };
+      const input = JSON.parse(body) as { questions?: unknown[]; sessionKey?: unknown };
       log(
         'INFO',
         `AskUser request received, questions=${Array.isArray(input.questions) ? input.questions.length : 0}`,
@@ -209,6 +210,7 @@ export class McpBridgeServer {
         if (this.onAskUserCallback) {
           this.onAskUserCallback({
             requestId,
+            sessionKey: typeof input.sessionKey === 'string' ? input.sessionKey : undefined,
             questions: input.questions as AskUserRequest['questions'],
           });
         } else {

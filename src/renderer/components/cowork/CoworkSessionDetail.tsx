@@ -596,14 +596,18 @@ const hasText = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
 const getToolResultDisplay = (message: CoworkMessage): string => {
+  const formatResultText = (value: string): string => {
+    return formatStructuredText(normalizeToolResultText(value));
+  };
+
   if (hasText(message.content)) {
-    return formatStructuredText(normalizeToolResultText(message.content));
+    return formatResultText(message.content);
   }
   if (hasText(message.metadata?.toolResult)) {
-    return formatStructuredText(normalizeToolResultText(message.metadata?.toolResult ?? ''));
+    return formatResultText(message.metadata?.toolResult ?? '');
   }
   if (hasText(message.metadata?.error)) {
-    return formatStructuredText(normalizeToolResultText(message.metadata?.error ?? ''));
+    return formatResultText(message.metadata?.error ?? '');
   }
   return '';
 };

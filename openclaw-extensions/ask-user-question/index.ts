@@ -31,6 +31,7 @@ type Question = {
 
 type AskUserInput = {
   questions: Question[];
+  sessionKey?: string;
 };
 
 type AskUserResponse = {
@@ -39,6 +40,14 @@ type AskUserResponse = {
 };
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+const formatAnswerValue = (value: string): string => {
+  return value
+    .split('|||')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .join(', ');
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -157,7 +166,10 @@ const plugin = {
       ].join(' '),
       parameters: AskUserQuestionSchema,
       async execute(_id: string, params: unknown) {
-        const input = params as AskUserInput;
+        const input = {
+          ...(params as AskUserInput),
+          sessionKey,
+        };
         if (!input?.questions?.length) {
           return {
             content: [{ type: 'text', text: 'No questions provided.' }],
@@ -176,8 +188,8 @@ const plugin = {
 
           const answerLines = response.answers
             ? Object.entries(response.answers)
-                .map(([q, a]) => `${q}: ${a}`)
-                .join('\n')
+                .map(([q, a]) => `${q}\n用户选择：${formatAnswerValue(a)}`)
+                .join('\n\n')
             : 'User approved.';
 
           return {
