@@ -101,6 +101,8 @@ export type SessionTurn = {
   turnToken: number;
   /** Full accumulated text from chat delta events (gateway sends snapshot, not增量). */
   chatStream: string;
+  /** Whether this run already received authoritative agent assistant snapshots. */
+  agentAssistantStreamSeen: boolean;
   /** Assistant text already finalized before tool calls in this run. */
   committedAssistantSegments: string[];
   /** Tool stream entries keyed by toolCallId. */

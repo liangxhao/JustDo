@@ -136,6 +136,11 @@ type PersistedSubagentRow = {
   status: 'pending' | 'running' | 'done' | 'failed';
 };
 
+type PendingSessionModelPatch = {
+  model: string;
+  agentId?: string;
+};
+
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {
   private readonly store: CoworkStore;
   private readonly engineManager: OpenClawEngineManager;
@@ -152,6 +157,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly stoppedSessions = new Map<string, number>();
   private readonly manuallyStoppedSessions = new Set<string>();
   private readonly pendingSubagentCompletionSessions = new Set<string>();
+  private readonly pendingSessionModelPatches = new Map<string, PendingSessionModelPatch>();
   private readonly visibleRunStreams = new Map<string, VisibleRunStreamState>();
 
   // Approval
@@ -498,6 +504,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       runId,
       turnToken,
       chatStream: '',
+      agentAssistantStreamSeen: false,
       committedAssistantSegments: [],
       toolStreamById: new Map(),
       toolStreamOrder: [],
@@ -745,6 +752,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     };
 
     if (state === 'delta') {
+      if (turn.agentAssistantStreamSeen && (!runId || runId === turn.runId)) {
+        return;
+      }
       const rawText = extractAssistantText(p.message);
       const text = this.prepareAssistantSnapshot(turn, rawText);
       if (text && !isNoReply(text)) {
@@ -765,11 +775,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     } else if (state === 'final') {
       const rawText = extractAssistantText(p.message);
-      const text = this.prepareAssistantSnapshot(turn, rawText);
+      const text =
+        turn.agentAssistantStreamSeen && (!runId || runId === turn.runId)
+          ? turn.chatStream
+          : this.prepareAssistantSnapshot(turn, rawText);
       const finalText = text || turn.chatStream;
       if (finalText && !isNoReply(finalText)) {
         if (turn.assistantMessageId) {
           // Finalize existing streaming message
+          this.clearPendingMessageUpdate(turn.assistantMessageId);
           this.store.updateMessage(sessionId, turn.assistantMessageId, {
             content: finalText,
             metadata: { isStreaming: false, isFinal: true, modelName: turn.modelName },
@@ -811,6 +825,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const text = this.prepareAssistantSnapshot(turn, rawText) || turn.chatStream;
       if (text && !isNoReply(text)) {
         if (turn.assistantMessageId) {
+          this.clearPendingMessageUpdate(turn.assistantMessageId);
           this.store.updateMessage(sessionId, turn.assistantMessageId, {
             content: text,
             metadata: { isStreaming: false, isFinal: true, modelName: turn.modelName },
@@ -976,6 +991,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Assistant text stream
     if (stream === 'assistant') {
+      turn.agentAssistantStreamSeen = true;
       this.finalizeThinkingSegment(sessionId, turn);
       const rawText = typeof data.text === 'string' ? data.text : '';
       const text = this.prepareAssistantSnapshot(turn, rawText);
@@ -2496,6 +2512,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.activeTurns.delete(sessionId);
     setCoworkProxySessionId(null);
     this.reCreatedChannelSessionIds.delete(sessionId);
+    this.flushPendingSessionModelPatch(sessionId);
+  }
+
+  private flushPendingSessionModelPatch(sessionId: string): void {
+    const pendingPatch = this.pendingSessionModelPatches.get(sessionId);
+    if (!pendingPatch) return;
+    this.pendingSessionModelPatches.delete(sessionId);
+    if (!this.store.getSession(sessionId)) return;
+
+    void this.skillRpcHandler
+      .patchSessionModel(sessionId, pendingPatch.model, pendingPatch.agentId)
+      .catch(error =>
+        console.warn('[OpenClawRuntime] deferred patchSessionModel failed:', error),
+      );
   }
 
   private ensureActiveTurn(sessionId: string, sessionKey: string, runId: string): void {
@@ -2526,6 +2556,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       runId: turnRunId,
       turnToken,
       chatStream: '',
+      agentAssistantStreamSeen: false,
       committedAssistantSegments: [],
       toolStreamById: new Map(),
       toolStreamOrder: [],
@@ -3108,6 +3139,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.gatewayHistoryCountBySession.delete(sessionId);
     this.latestTurnTokenBySession.delete(sessionId);
     this.stoppedSessions.delete(sessionId);
+    this.pendingSessionModelPatches.delete(sessionId);
     this.cleanupSessionTurn(sessionId);
     this.clearPendingApprovalsBySession(sessionId);
     this.confirmationModeBySession.delete(sessionId);
@@ -3681,6 +3713,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     model: string,
     agentId?: string,
   ): Promise<{ ok: boolean; error?: string }> {
+    if (this.isSessionActive(sessionId)) {
+      this.pendingSessionModelPatches.set(sessionId, { model, agentId });
+      console.log(
+        '[OpenClawRuntime] patchSessionModel: deferred active session sessionId=%s model=%s',
+        sessionId,
+        model,
+      );
+      return { ok: true };
+    }
     return this.skillRpcHandler.patchSessionModel(sessionId, model, agentId);
   }
 

@@ -336,6 +336,8 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
   );
 
   adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
+  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
+  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
   adapter.ensureActiveTurn('session-1', 'agent:main:gucciai:session-1', 'main-run');
   adapter.handleGatewayEvent({
     event: 'agent',
@@ -786,6 +788,72 @@ test('detached announce final does not append composite assistant snapshot', () 
   expect(session.messages[3].content).toBe(afterTool);
 });
 
+test('agent assistant stream wins over duplicate chat deltas for active run', () => {
+  vi.useFakeTimers();
+  const { session, store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const mainMessages: Array<Record<string, unknown>> = [];
+  const updates: Array<{ messageId: string; content: string }> = [];
+  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
+  adapter.on('messageUpdate', (_sessionId, messageId, content) => {
+    updates.push({ messageId, content });
+  });
+
+  const sessionKey = 'agent:main:gucciai:session-1';
+  const runId = 'run-1';
+  const firstSnapshot = '完成！两条祝福语已汇总写入 Excel 文件：';
+  const finalSnapshot =
+    '完成！两条祝福语已汇总写入 Excel 文件：\n\n| 序号 | 祝福语 |\n|------|--------|';
+
+  adapter.rememberSessionKey('session-1', sessionKey);
+  adapter.ensureActiveTurn('session-1', sessionKey, runId);
+
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: firstSnapshot },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: {
+      runId,
+      sessionKey,
+      state: 'delta',
+      message: { role: 'assistant', content: '完成！' },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: finalSnapshot },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: {
+      runId,
+      sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: '完成！' },
+    },
+  });
+
+  vi.runOnlyPendingTimers();
+  vi.useRealTimers();
+
+  expect(mainMessages.map(message => message.type)).toEqual(['assistant']);
+  expect(session.messages).toHaveLength(1);
+  expect(session.messages[0].content).toBe(finalSnapshot);
+  expect(updates.at(-1)?.content).toBe(finalSnapshot);
+});
+
 test('chat delta without run id is ignored while a turn is active', () => {
   const session = {
     id: 'session-1',
@@ -891,6 +959,67 @@ test('session.message reload is deferred until sessions.changed clears active ru
     'agent:main:gucciai:session-1',
   );
   expect(session.status).toBe('idle');
+});
+
+test('patchSessionModel defers gateway patch while session is active', async () => {
+  const session = {
+    id: 'session-1',
+    title: 'Session',
+    claudeSessionId: null,
+    status: 'running',
+    pinned: false,
+    cwd: '',
+    executionMode: 'local',
+    activeSkillIds: [],
+    messages: [] as Array<Record<string, unknown>>,
+    createdAt: 1,
+    updatedAt: 1,
+    agentId: 'main',
+  };
+  const store = {
+    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+    getAgent: () => null,
+    addMessage: () => {
+      throw new Error('not expected');
+    },
+    updateMessage: () => true,
+    updateSession: (_sessionId: string, updates: Record<string, unknown>) => {
+      Object.assign(session, updates);
+    },
+    deleteMessage: () => true,
+    replaceConversationMessages: () => {},
+    getSubagentsByParentSession: () => [],
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const patchSessionModel = vi.fn().mockResolvedValue({ ok: true });
+  (
+    adapter as unknown as {
+      skillRpcHandler: { patchSessionModel: typeof patchSessionModel };
+    }
+  ).skillRpcHandler = { patchSessionModel };
+
+  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
+  adapter.ensureActiveTurn('session-1', 'agent:main:gucciai:session-1', 'main-run');
+  const result = await adapter.patchSessionModel('session-1', 'bailian/qwen3.6-plus');
+
+  expect(result).toEqual({ ok: true });
+  expect(patchSessionModel).not.toHaveBeenCalled();
+
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey: 'agent:main:gucciai:session-1',
+      key: 'agent:main:gucciai:session-1',
+      status: 'idle',
+      hasActiveRun: false,
+    },
+  });
+
+  expect(patchSessionModel).toHaveBeenCalledWith(
+    'session-1',
+    'bailian/qwen3.6-plus',
+    undefined,
+  );
 });
 
 test('aggregate wake sends all completed yielded subagent results once', async () => {
