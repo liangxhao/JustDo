@@ -409,10 +409,15 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     const checkStatus = async () => {
       try {
         const result = await coworkService.getSubTaskStatus(parentSessionId);
+        const mappedSessionKey =
+          result.sessionKeys?.[agentId] ||
+          result.sessionKeys?.[subagentKey] ||
+          (sessionKey ? result.sessionKeys?.[sessionKey] : undefined);
         const currentStatus =
           result.statuses[agentId] ||
           result.statuses[subagentKey] ||
-          (sessionKey ? result.statuses[sessionKey] : undefined);
+          (sessionKey ? result.statuses[sessionKey] : undefined) ||
+          (mappedSessionKey ? result.statuses[mappedSessionKey] : undefined);
         if (currentStatus) {
           setStatus(currentStatus);
           if (currentStatus === 'done' && !hasFetchedOnCompletion.current) {

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 
@@ -37,6 +37,13 @@ import type {
 import { HistoryReconciler } from './history/historyReconciler';
 import { SubtaskHistory } from './history/subtaskHistory';
 import {
+  buildSubagentStatusView,
+  type GatewaySubagent,
+  listGatewaySubagents,
+  normalizeSubagentSessionKey,
+  type SubagentStatus,
+} from './openclaw/subagentGateway';
+import {
   resetWebchatToolStream,
   syncWebchatToolStreamMessages,
 } from './openclaw/webchatToolStream';
@@ -55,7 +62,6 @@ import {
   extractSubagentCompletionMessages,
   GATEWAY_READY_TIMEOUT_MS,
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
-  INTERNAL_RUNTIME_CONTEXT_END,
   isRecord,
   OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
   waitWithTimeout,
@@ -73,7 +79,6 @@ const AGENT_ACTIVITY_ALIVE_WINDOW_MS = 60_000;
 const MESSAGE_UPDATE_THROTTLE_MS = 200;
 const CLIENT_TIMEOUT_GRACE_MS = 30_000;
 const SUBAGENT_STATUS_CACHE_TTL_MS = 2_000;
-const SUBAGENT_AGGREGATE_WAKE_DELAY_MS = 2_000;
 const GATEWAY_RECONNECT_MAX_ATTEMPTS = 10;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
@@ -197,7 +202,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly pendingSessionMessageReloadSessionIds = new Set<string>();
 
   // Subagent status tracking (simplified)
-  private readonly subagentStatus = new Map<string, 'pending' | 'running' | 'done' | 'failed'>();
+  private readonly subagentStatus = new Map<string, SubagentStatus>();
   private readonly toolCallIdToLabel = new Map<string, string>();
   private readonly toolCallIdToSessionKey = new Map<string, string>();
   private readonly sessionKeyToLabel = new Map<string, string>();
@@ -215,6 +220,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         sessionKey: string;
         label: string;
         status: 'pending' | 'running' | 'done' | 'failed';
+        toolCallId?: string;
       }>;
     }
   >();
@@ -222,9 +228,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly orchestrationSessionIds = new Set<string>();
   private readonly mainAgentLifecycleEnded = new Set<string>();
   private readonly toolCallArgs = new Map<string, Record<string, unknown>>();
-  private readonly yieldedSubagentParentSessions = new Set<string>();
-  private readonly aggregateSubagentWakeTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly aggregateSubagentWakeSignatures = new Set<string>();
 
   // Collaborators
   private historyReconciler!: HistoryReconciler;
@@ -356,8 +359,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.set(sessionId, Date.now());
     this.orchestrationSessionIds.delete(sessionId);
     this.mainAgentLifecycleEnded.delete(sessionId);
-    this.yieldedSubagentParentSessions.delete(sessionId);
-    this.clearAggregateSubagentWakeTimer(sessionId);
     this.cleanupSessionTurn(sessionId);
     this.clearPendingApprovalsBySession(sessionId);
     this.store.updateSession(sessionId, { status: 'idle' });
@@ -442,7 +443,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
     this.orchestrationSessionIds.add(sessionId);
-    this.yieldedSubagentParentSessions.delete(sessionId);
 
     // Resolve stale activeTurns
     if (this.activeTurns.has(sessionId)) {
@@ -716,7 +716,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (this.subagentStatus.get(resolvedAgentId) !== 'failed') {
           this.subagentStatus.set(resolvedAgentId, 'done');
           this.persistSubagentStatus(resolvedAgentId, 'done');
-          this.scheduleAggregateSubagentCompletionWake(sessionId);
         }
         turn.knownRunIds.add(runId);
       } else if (state === 'error') {
@@ -920,18 +919,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       } else if (stream === 'lifecycle') {
         const phase = typeof data.phase === 'string' ? data.phase : '';
         if (phase === 'start') {
-          this.subagentStatus.set(agentId, 'running');
-          this.persistSubagentStatus(agentId, 'running');
+          this.setLocalSubagentStatusHint(agentId, 'running', {
+            parentSessionId: sessionId,
+            persist: true,
+          });
         } else if (phase === 'end') {
           if (this.subagentStatus.get(agentId) !== 'failed') {
-            this.subagentStatus.set(agentId, 'done');
-            this.persistSubagentStatus(agentId, 'done');
-            this.scheduleAggregateSubagentCompletionWake(sessionId);
+            this.setLocalSubagentStatusHint(agentId, 'done', {
+              parentSessionId: sessionId,
+              persist: true,
+            });
           }
           this.finalizeSubagentStream(runId);
         } else if (phase === 'error') {
-          this.subagentStatus.set(agentId, 'failed');
-          this.persistSubagentStatus(agentId, 'failed');
+          this.setLocalSubagentStatusHint(agentId, 'failed', {
+            parentSessionId: sessionId,
+            persist: true,
+          });
           this.finalizeSubagentStream(runId);
         }
       }
@@ -1072,18 +1076,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (stream !== 'lifecycle') return;
     const phase = typeof eventData.phase === 'string' ? eventData.phase : '';
     if (phase === 'start') {
-      this.subagentStatus.set(resolved.subagentId, 'running');
-      this.persistSubagentStatus(resolved.subagentId, 'running');
+      this.setLocalSubagentStatusHint(resolved.subagentId, 'running', {
+        parentSessionId: resolved.parentSessionId,
+        persist: true,
+      });
     } else if (phase === 'end') {
       if (this.subagentStatus.get(resolved.subagentId) !== 'failed') {
-        this.subagentStatus.set(resolved.subagentId, 'done');
-        this.persistSubagentStatus(resolved.subagentId, 'done');
-        this.scheduleAggregateSubagentCompletionWake(resolved.parentSessionId);
+        this.setLocalSubagentStatusHint(resolved.subagentId, 'done', {
+          parentSessionId: resolved.parentSessionId,
+          persist: true,
+        });
       }
       this.finalizeSubagentStream(runId);
     } else if (phase === 'error') {
-      this.subagentStatus.set(resolved.subagentId, 'failed');
-      this.persistSubagentStatus(resolved.subagentId, 'failed');
+      this.setLocalSubagentStatusHint(resolved.subagentId, 'failed', {
+        parentSessionId: resolved.parentSessionId,
+        persist: true,
+      });
       this.finalizeSubagentStream(runId);
     }
   }
@@ -1203,11 +1212,50 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private normalizeSubagentSessionKey(sessionKey: string): string {
-    const key = sessionKey.trim();
-    if (!key) return '';
-    if (key.startsWith('subagent:')) return `agent:main:${key}`;
-    if (!key.includes(':subagent:')) return '';
-    return key;
+    return normalizeSubagentSessionKey(sessionKey);
+  }
+
+  private getSubagentIdentifierAliases(identifier: string): string[] {
+    const value = identifier.trim();
+    if (!value) return [];
+    const aliases = new Set<string>([value]);
+    const normalized = this.normalizeSubagentSessionKey(value);
+    if (normalized) aliases.add(normalized);
+    const mappedSessionKey = this.toolCallIdToSessionKey.get(value);
+    if (mappedSessionKey) {
+      aliases.add(mappedSessionKey);
+      const normalizedMapped = this.normalizeSubagentSessionKey(mappedSessionKey);
+      if (normalizedMapped) aliases.add(normalizedMapped);
+    }
+    for (const [toolCallId, sessionKey] of this.toolCallIdToSessionKey.entries()) {
+      const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey);
+      if (sessionKey === value || normalizedSessionKey === value || normalizedSessionKey === normalized) {
+        aliases.add(toolCallId);
+        aliases.add(sessionKey);
+        if (normalizedSessionKey) aliases.add(normalizedSessionKey);
+      }
+    }
+    return Array.from(aliases);
+  }
+
+  private setLocalSubagentStatusHint(
+    identifier: string,
+    status: SubagentStatus,
+    options?: {
+      parentSessionId?: string;
+      persist?: boolean;
+      errorReason?: string;
+    },
+  ): void {
+    for (const alias of this.getSubagentIdentifierAliases(identifier)) {
+      this.subagentStatus.set(alias, status);
+      if (options?.parentSessionId) {
+        this.toolCallIdToParentSessionId.set(alias, options.parentSessionId);
+      }
+    }
+    if (options?.persist) {
+      this.persistSubagentStatus(identifier, status, options.errorReason);
+    }
   }
 
   private finalizeThinkingSegment(sessionId: string, turn: SessionTurn): void {
@@ -1796,11 +1844,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (entry.name === 'sessions_spawn' && entry.args) {
       this.trackSubagentSpawn(sessionId, entry);
     }
-    if (entry.name === 'sessions_yield') {
-      this.yieldedSubagentParentSessions.add(sessionId);
-      this.scheduleAggregateSubagentCompletionWake(sessionId);
-    }
-
     const isSubagentTool = this.toolCallIdToParentSessionId.has(entry.toolCallId);
 
     // Emit tool_use message
@@ -2058,113 +2101,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.subagentStreamByRunId.delete(runId);
   }
 
-  private clearAggregateSubagentWakeTimer(sessionId: string): void {
-    const timer = this.aggregateSubagentWakeTimers.get(sessionId);
-    if (!timer) return;
-    clearTimeout(timer);
-    this.aggregateSubagentWakeTimers.delete(sessionId);
-  }
-
-  private scheduleAggregateSubagentCompletionWake(parentSessionId: string): void {
-    if (!this.yieldedSubagentParentSessions.has(parentSessionId)) return;
-    this.clearAggregateSubagentWakeTimer(parentSessionId);
-    const timer = setTimeout(() => {
-      this.aggregateSubagentWakeTimers.delete(parentSessionId);
-      void this.maybeWakeParentWithAggregateSubagentResults(parentSessionId).catch(error =>
-        console.warn('[OpenClawRuntime] Aggregate subagent wake failed:', error),
-      );
-    }, SUBAGENT_AGGREGATE_WAKE_DELAY_MS);
-    this.aggregateSubagentWakeTimers.set(parentSessionId, timer);
-  }
-
-  private getPersistedSubagents(parentSessionId: string): PersistedSubagentRow[] {
-    const getSubagentsByParentSession = (this.store as unknown as {
-      getSubagentsByParentSession?: (parentSessionId: string) => PersistedSubagentRow[];
-    }).getSubagentsByParentSession;
-    return typeof getSubagentsByParentSession === 'function'
-      ? getSubagentsByParentSession.call(this.store, parentSessionId)
-      : [];
-  }
-
-  private async maybeWakeParentWithAggregateSubagentResults(parentSessionId: string): Promise<void> {
-    if (!this.yieldedSubagentParentSessions.has(parentSessionId)) return;
-    const parentSessionKey = this.findSessionKeyBySessionId(parentSessionId);
-    if (!parentSessionKey) return;
-
-    const rows = this.getPersistedSubagents(parentSessionId).filter(row => row.childSessionKey);
-    if (rows.length < 2) return;
-    if (rows.some(row => row.status !== 'done' && row.status !== 'failed')) return;
-
-    const signature = `${parentSessionId}:${rows
-      .map(row => `${row.childSessionKey || row.toolCallId}:${row.status}`)
-      .sort()
-      .join('|')}`;
-    if (this.aggregateSubagentWakeSignatures.has(signature)) return;
-
-    await this.ensureGatewayClientReady();
-    const client = this.gatewayClient;
-    if (!client) return;
-
-    const results: string[] = [];
-    for (const [index, row] of rows.entries()) {
-      const childSessionKey = row.childSessionKey || '';
-      const output = childSessionKey
-        ? await this.readLatestAssistantTextFromGateway(childSessionKey)
-        : '';
-      const label = this.sanitizeCachedSubagentLabel(row.label) || `subagent ${index + 1}`;
-      results.push(
-        [
-          `${index + 1}. ${label}`,
-          `session_key: ${childSessionKey || row.toolCallId}`,
-          `status: ${row.status}`,
-          'result:',
-          output.trim() || '(no output)',
-        ].join('\n'),
-      );
-    }
-
-    const message = [
-      INTERNAL_RUNTIME_CONTEXT_BEGIN,
-      'OpenClaw runtime context (internal):',
-      'All spawned subagents for the yielded parent turn have now settled. Use every child result below before deciding the next action. If these results satisfy the original task, do not call sessions_yield again; finish the task or reply to the user.',
-      '',
-      'Child completion results:',
-      '',
-      results.join('\n\n---\n\n'),
-      INTERNAL_RUNTIME_CONTEXT_END,
-    ].join('\n');
-
-    this.aggregateSubagentWakeSignatures.add(signature);
-    this.yieldedSubagentParentSessions.delete(parentSessionId);
-    await client.request('chat.send', {
-      sessionKey: parentSessionKey,
-      message,
-      deliver: false,
-      idempotencyKey: `gucciai:subagent-aggregate:${createHash('sha256')
-        .update(signature)
-        .digest('hex')}`,
-    });
-  }
-
-  private async readLatestAssistantTextFromGateway(sessionKey: string): Promise<string> {
-    const client = this.gatewayClient;
-    if (!client) return '';
-    try {
-      const history = await client.request<{ messages?: unknown[] }>('chat.history', {
-        sessionKey,
-        limit: 100,
-      });
-      const entries = extractGatewayHistoryEntries(history.messages ?? []);
-      for (let index = entries.length - 1; index >= 0; index--) {
-        const entry = entries[index];
-        if (entry.role === 'assistant' && entry.text.trim()) return entry.text.trim();
-      }
-    } catch (error) {
-      console.warn('[OpenClawRuntime] Failed to read subagent history:', error);
-    }
-    return '';
-  }
-
   private updateSubagentFromSpawnResult(
     parentSessionId: string,
     toolCallId: string,
@@ -2179,7 +2115,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       Boolean(error) ||
       ['error', 'failed', 'forbidden', 'cancelled'].includes(status) ||
       outcome === 'failed';
-    this.subagentStatus.set(toolCallId, failed ? 'failed' : 'running');
+    const nextStatus: SubagentStatus = failed ? 'failed' : 'running';
+    this.setLocalSubagentStatusHint(toolCallId, nextStatus, {
+      parentSessionId,
+    });
     const sessionKey = this.extractSpawnedSessionKey(parsed);
     this.persistSubagent(
       toolCallId,
@@ -2198,10 +2137,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (label) this.sessionKeyToLabel.set(sessionKey, label);
       const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey) || sessionKey;
       this.toolCallIdToParentSessionId.set(normalizedSessionKey, parentSessionId);
-      this.subagentStatus.set(
-        normalizedSessionKey,
-        failed ? 'failed' : 'running',
-      );
+      this.setLocalSubagentStatusHint(normalizedSessionKey, nextStatus, {
+        parentSessionId,
+      });
     }
   }
 
@@ -2220,14 +2158,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const normalizedStatus: 'done' | 'failed' = ['error', 'failed', 'cancelled'].includes(status)
       ? 'failed'
       : 'done';
-    this.subagentStatus.set(toolCallId, normalizedStatus);
-    this.persistSubagentStatus(toolCallId, normalizedStatus);
+    this.setLocalSubagentStatusHint(toolCallId, normalizedStatus, {
+      persist: true,
+    });
     if (sessionKey) {
-      this.subagentStatus.set(
+      this.setLocalSubagentStatusHint(
         this.normalizeSubagentSessionKey(sessionKey) || sessionKey,
         normalizedStatus,
+        {
+          persist: true,
+        },
       );
-      this.persistSubagentStatus(sessionKey, normalizedStatus);
     }
   }
 
@@ -3223,198 +3164,92 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       status: 'pending' | 'running' | 'done' | 'failed';
     }>;
   }> {
-    const statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'> = {};
-    const displayLabels: Record<string, string> = {};
-    const sessionKeys: Record<string, string> = {};
-    const subagentsById = new Map<
-      string,
-      {
-        id: string;
-        sessionKey: string;
-        label: string;
-        status: 'pending' | 'running' | 'done' | 'failed';
-      }
-    >();
-    const addSubagent = (subagent: {
-      id: string;
-      sessionKey: string;
-      label: string;
-      status: 'pending' | 'running' | 'done' | 'failed';
-    }) => {
-      statuses[subagent.id] = subagent.status;
-      displayLabels[subagent.id] = subagent.label;
-      if (subagent.sessionKey) sessionKeys[subagent.id] = subagent.sessionKey;
-      subagentsById.set(subagent.id, subagent);
-    };
+    const empty = buildSubagentStatusView([]);
+    if (!sessionId) return empty;
 
-    if (sessionId) {
-      const gatewaySubagents = await this.listSubagentsFromGateway(sessionId);
-      if (gatewaySubagents.length > 0) {
-        const getSubagentsByParentSession = (this.store as unknown as {
-          getSubagentsByParentSession?: (parentSessionId: string) => PersistedSubagentRow[];
-        }).getSubagentsByParentSession;
-        const persistedSubagents: PersistedSubagentRow[] =
-          typeof getSubagentsByParentSession === 'function'
-            ? getSubagentsByParentSession.call(this.store, sessionId)
-            : [];
-
-        for (const subagent of gatewaySubagents) {
-          const normalizedSessionKey =
-            this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
-          addSubagent({
-            ...subagent,
-            id: normalizedSessionKey || subagent.id,
-          });
-          statuses[normalizedSessionKey] = subagent.status;
-          displayLabels[normalizedSessionKey] = subagent.label;
-          sessionKeys[normalizedSessionKey] = subagent.sessionKey;
-
-          const persisted = persistedSubagents.find(row => {
-            const childSessionKey = row.childSessionKey || '';
-            return (
-              childSessionKey === subagent.sessionKey ||
-              this.normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
-            );
-          });
-          if (persisted?.toolCallId) {
-            statuses[persisted.toolCallId] = subagent.status;
-            displayLabels[persisted.toolCallId] = subagent.label;
-            sessionKeys[persisted.toolCallId] = subagent.sessionKey;
-            this.persistSubagentStatus(persisted.toolCallId, subagent.status);
-          } else {
-            this.persistSubagent(normalizedSessionKey || subagent.id, sessionId, subagent.label, subagent.status, {
-              childSessionKey: subagent.sessionKey,
-            });
-          }
-          this.persistSubagentStatus(subagent.sessionKey || subagent.id, subagent.status);
-        }
-
-        return {
-          statuses,
-          displayLabels,
-          sessionKeys,
-          subagents: Array.from(subagentsById.values()),
-        };
-      }
-      this.reconcilePersistedSubagentsFromSession(sessionId);
-      const getSubagentsByParentSession = (this.store as unknown as {
-        getSubagentsByParentSession?: (parentSessionId: string) => Array<{
-          toolCallId: string;
-          parentSessionId: string;
-          childSessionKey: string | null;
-          label: string;
-          status: 'pending' | 'running' | 'done' | 'failed';
-        }>;
-      }).getSubagentsByParentSession;
-      const persistedSubagents =
-        typeof getSubagentsByParentSession === 'function'
-          ? getSubagentsByParentSession.call(this.store, sessionId)
-          : [];
-      for (const subagent of persistedSubagents) {
-        const id = subagent.childSessionKey || subagent.toolCallId;
-        const label = this.sanitizeCachedSubagentLabel(subagent.label);
-        this.toolCallIdToParentSessionId.set(subagent.toolCallId, subagent.parentSessionId);
-        if (label) this.toolCallIdToLabel.set(subagent.toolCallId, label);
-        this.subagentStatus.set(subagent.toolCallId, subagent.status);
-        statuses[subagent.toolCallId] = subagent.status;
-        displayLabels[subagent.toolCallId] = label;
-        if (subagent.childSessionKey) {
-          this.toolCallIdToSessionKey.set(subagent.toolCallId, subagent.childSessionKey);
-          sessionKeys[subagent.toolCallId] = subagent.childSessionKey;
-          if (label) this.sessionKeyToLabel.set(subagent.childSessionKey, label);
-          const normalizedSessionKey =
-            this.normalizeSubagentSessionKey(subagent.childSessionKey) || subagent.childSessionKey;
-          this.toolCallIdToParentSessionId.set(normalizedSessionKey, subagent.parentSessionId);
-          this.subagentStatus.set(normalizedSessionKey, subagent.status);
-          statuses[normalizedSessionKey] = subagent.status;
-          displayLabels[normalizedSessionKey] = label;
-          sessionKeys[normalizedSessionKey] = subagent.childSessionKey;
-        }
-        addSubagent({
-          id,
-          sessionKey: subagent.childSessionKey || '',
-          label,
-          status: subagent.status,
-        });
-      }
-
-      const fallbackGatewaySubagents = await this.listSubagentsFromGateway(sessionId);
-      for (const subagent of fallbackGatewaySubagents) {
-        const normalizedSessionKey =
-          this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
-        this.subagentStatus.set(normalizedSessionKey, subagent.status);
-        this.toolCallIdToParentSessionId.set(normalizedSessionKey, sessionId);
-        if (subagent.label) this.sessionKeyToLabel.set(normalizedSessionKey, subagent.label);
-        statuses[normalizedSessionKey] = subagent.status;
-        displayLabels[normalizedSessionKey] = subagent.label;
-        sessionKeys[normalizedSessionKey] = subagent.sessionKey;
-
-        const mappedToolCallId = this.findSubagentToolCallIdBySessionKey(
-          sessionId,
-          subagent.sessionKey,
+    const persistedRows = this.getPersistedSubagentRows(sessionId);
+    const gatewaySubagents = (await this.listSubagentsFromGateway(sessionId)).map(subagent => {
+      const normalizedSessionKey =
+        this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
+      const persisted = persistedRows.find(row => {
+        const childSessionKey = row.childSessionKey || '';
+        return (
+          childSessionKey === subagent.sessionKey ||
+          this.normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
         );
-        if (mappedToolCallId) {
-          this.subagentStatus.set(mappedToolCallId, subagent.status);
-          statuses[mappedToolCallId] = subagent.status;
-          displayLabels[mappedToolCallId] = subagent.label;
-          sessionKeys[mappedToolCallId] = subagent.sessionKey;
+      });
+      return {
+        ...subagent,
+        label: subagent.label || this.sanitizeCachedSubagentLabel(persisted?.label),
+        toolCallId: subagent.toolCallId || persisted?.toolCallId,
+      };
+    });
+    if (gatewaySubagents.length > 0) {
+      for (const subagent of gatewaySubagents) {
+        const cacheKey = subagent.toolCallId || subagent.id || subagent.sessionKey;
+        if (!cacheKey) continue;
+        this.persistSubagent(cacheKey, sessionId, subagent.label, subagent.status, {
+          childSessionKey: subagent.sessionKey,
+        });
+        this.toolCallIdToParentSessionId.set(cacheKey, sessionId);
+        if (subagent.toolCallId) {
+          this.toolCallIdToSessionKey.set(subagent.toolCallId, subagent.sessionKey);
         }
-        addSubagent(subagent);
-        this.persistSubagentStatus(subagent.sessionKey || subagent.id, subagent.status);
+        if (subagent.label) {
+          this.sessionKeyToLabel.set(subagent.sessionKey, subagent.label);
+          this.toolCallIdToLabel.set(cacheKey, subagent.label);
+        }
       }
+      return buildSubagentStatusView(gatewaySubagents);
     }
 
-    for (const [toolCallId, status] of this.subagentStatus.entries()) {
-      const parentSessionId = this.toolCallIdToParentSessionId.get(toolCallId);
-      if (sessionId && parentSessionId !== sessionId) continue;
-      const mappedSessionKey = this.toolCallIdToSessionKey.get(toolCallId);
-      const normalizedMappedSessionKey = mappedSessionKey
-        ? this.normalizeSubagentSessionKey(mappedSessionKey)
-        : '';
-      if (normalizedMappedSessionKey && this.subagentStatus.has(normalizedMappedSessionKey)) {
+    this.reconcilePersistedSubagentsFromSession(sessionId);
+    const cachedSubagents = this.getPersistedSubagentRows(sessionId).map(row => {
+      const label = this.sanitizeCachedSubagentLabel(row.label);
+      if (label) this.toolCallIdToLabel.set(row.toolCallId, label);
+      if (row.childSessionKey) this.toolCallIdToSessionKey.set(row.toolCallId, row.childSessionKey);
+      this.toolCallIdToParentSessionId.set(row.toolCallId, row.parentSessionId);
+      return {
+        id: row.childSessionKey || row.toolCallId,
+        sessionKey: row.childSessionKey || '',
+        label,
+        status: row.status,
+        toolCallId: row.toolCallId,
+      };
+    });
+
+    const liveHints: GatewaySubagent[] = [];
+    for (const [identifier, status] of this.subagentStatus.entries()) {
+      if (this.toolCallIdToParentSessionId.get(identifier) !== sessionId) continue;
+      if (cachedSubagents.some(subagent => subagent.id === identifier || subagent.toolCallId === identifier)) {
         continue;
       }
-      statuses[toolCallId] = status;
+      const sessionKey = this.toolCallIdToSessionKey.get(identifier) || this.normalizeSubagentSessionKey(identifier);
       const label = this.sanitizeCachedSubagentLabel(
-        this.toolCallIdToLabel.get(toolCallId) || this.sessionKeyToLabel.get(toolCallId),
+        this.toolCallIdToLabel.get(identifier) || this.sessionKeyToLabel.get(identifier),
       );
-      if (label) displayLabels[toolCallId] = label;
-      const sessionKey = this.toolCallIdToSessionKey.get(toolCallId) || this.normalizeSubagentSessionKey(toolCallId);
-      if (sessionKey) sessionKeys[toolCallId] = sessionKey;
-      addSubagent({
-        id: sessionKey || toolCallId,
+      liveHints.push({
+        id: sessionKey || identifier,
         sessionKey: sessionKey || '',
-        label: label || '',
+        label,
         status,
+        toolCallId: identifier,
       });
     }
 
-    return { statuses, displayLabels, sessionKeys, subagents: Array.from(subagentsById.values()) };
+    return buildSubagentStatusView([...cachedSubagents, ...liveHints]);
   }
 
-  private findSubagentToolCallIdBySessionKey(parentSessionId: string, sessionKey: string): string {
-    const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey) || sessionKey;
-    for (const [toolCallId, mappedSessionKey] of this.toolCallIdToSessionKey.entries()) {
-      const normalizedMappedSessionKey =
-        this.normalizeSubagentSessionKey(mappedSessionKey) || mappedSessionKey;
-      if (
-        normalizedMappedSessionKey === normalizedSessionKey &&
-        this.toolCallIdToParentSessionId.get(toolCallId) === parentSessionId
-      ) {
-        return toolCallId;
-      }
-    }
-    return '';
+  private getPersistedSubagentRows(parentSessionId: string): PersistedSubagentRow[] {
+    const getSubagentsByParentSession = (this.store as unknown as {
+      getSubagentsByParentSession?: (parentSessionId: string) => PersistedSubagentRow[];
+    }).getSubagentsByParentSession;
+    return typeof getSubagentsByParentSession === 'function'
+      ? getSubagentsByParentSession.call(this.store, parentSessionId)
+      : [];
   }
 
-  private async listSubagentsFromGateway(sessionId: string): Promise<
-    Array<{
-      id: string;
-      sessionKey: string;
-      label: string;
-      status: 'pending' | 'running' | 'done' | 'failed';
-    }>
-  > {
+  private async listSubagentsFromGateway(sessionId: string): Promise<GatewaySubagent[]> {
     const cached = this.subagentGatewayStatusCache.get(sessionId);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.subagents;
@@ -3428,44 +3263,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = this.gatewayClient;
     if (!client) return [];
 
-    const parentKeys = this.getSessionKeysForSession(sessionId);
-    const byKey = new Map<
-      string,
-      {
-        id: string;
-        sessionKey: string;
-        label: string;
-        status: 'pending' | 'running' | 'done' | 'failed';
-      }
-    >();
-
-    for (const parentKey of parentKeys) {
-      try {
-        const result = await client.request<{
-          sessions?: Array<Record<string, unknown>>;
-        }>('sessions.list', {
-          spawnedBy: parentKey,
-          limit: 100,
-          includeLastMessage: true,
-        });
-
-        for (const row of result.sessions ?? []) {
-          const sessionKey = typeof row.key === 'string' ? row.key : '';
-          if (!sessionKey) continue;
-          const label = this.getSubagentDisplayLabel(sessionId, sessionKey);
-          byKey.set(sessionKey, {
-            id: sessionKey,
-            sessionKey,
-            label,
-            status: this.normalizeGatewaySubagentStatus(row),
-          });
-        }
-      } catch (error) {
-        console.warn('[OpenClawRuntime] sessions.list for subagents failed:', error);
-      }
+    let subagents: GatewaySubagent[] = [];
+    try {
+      subagents = await listGatewaySubagents({
+        client,
+        parentKeys: this.getSessionKeysForSession(sessionId),
+        persistedRows: this.getPersistedSubagentRows(sessionId),
+        getLabel: (sessionKey, persisted) =>
+          this.sanitizeCachedSubagentLabel(persisted?.label) ||
+          this.getSubagentDisplayLabel(sessionId, sessionKey),
+      });
+    } catch (error) {
+      console.warn('[OpenClawRuntime] sessions.list for subagents failed:', error);
     }
 
-    const subagents = Array.from(byKey.values());
     if (subagents.length > 0) {
       this.subagentGatewayStatusCache.set(sessionId, {
         expiresAt: Date.now() + SUBAGENT_STATUS_CACHE_TTL_MS,
@@ -3556,36 +3367,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return true;
     }
     return false;
-  }
-
-  private normalizeGatewaySubagentStatus(
-    row: Record<string, unknown>,
-  ): 'pending' | 'running' | 'done' | 'failed' {
-    const status = typeof row.status === 'string' ? row.status.toLowerCase() : '';
-    const runState = typeof row.subagentRunState === 'string' ? row.subagentRunState.toLowerCase() : '';
-    const active = row.hasActiveSubagentRun === true;
-    const endedAt =
-      (typeof row.endedAt === 'number' && Number.isFinite(row.endedAt)) ||
-      (typeof row.endedAt === 'string' && row.endedAt.trim() !== '');
-    const startedAt =
-      (typeof row.startedAt === 'number' && Number.isFinite(row.startedAt)) ||
-      (typeof row.startedAt === 'string' && row.startedAt.trim() !== '');
-
-    if (active || status === 'running' || runState === 'active') return 'running';
-    if (
-      endedAt &&
-      ['failed', 'error', 'killed', 'timeout', 'timed_out', 'cancelled'].includes(status)
-    ) {
-      return 'failed';
-    }
-    if (
-      endedAt ||
-      ['done', 'ok', 'completed', 'complete'].includes(status) ||
-      runState === 'historical'
-    ) {
-      return 'done';
-    }
-    return startedAt ? 'running' : 'pending';
   }
 
   async getSubTaskHistory(
