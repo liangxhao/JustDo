@@ -1,1 +1,1 @@
-export { default as ScheduledTasksView } from './ScheduledTasksView';
+export { CronView } from './CronView';

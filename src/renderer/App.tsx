@@ -6,7 +6,7 @@ import { CoworkView } from './components/cowork';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
-import { ScheduledTasksView } from './components/scheduledTasks';
+import { CronView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
@@ -499,7 +499,7 @@ const App: React.FC = () => {
           <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
             <EngineStartupOverlay />
             {mainView === 'scheduledTasks' ? (
-              <ScheduledTasksView
+              <CronView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
