@@ -61,7 +61,7 @@ OpenClaw 版本在 `package.json` 中声明：
 ```json
 {
   "openclaw": {
-    "version": "v2026.3.2",
+    "version": "v2026.6.5",
     "repo": "https://github.com/openclaw/openclaw.git"
   }
 }
@@ -187,9 +187,6 @@ class OpenClawEngineManager {
   // 构建环境变量
   private buildGatewayEnv(): Record<string, string> {
     const env = { ...process.env };
-
-    // IM secrets（规划中）
-    // 待 IM 集成时配置平台凭证
 
     return env;
   }
@@ -549,7 +546,7 @@ npm run dist:win
 
 ```json
 {
-  "version": "v2026.3.2",
+  "version": "v2026.6.5",
   "platform": "win-x64",
   "builtAt": 1712851200000,
   "outputPath": "release/openclaw-runtime-win-x64.asar"
@@ -568,9 +565,6 @@ npm run dist:win
 | `OPENCLAW_FORCE_BUILD` | 强制重新构建 | — |
 | `OPENCLAW_SKIP_ENSURE` | 跳过版本 checkout | — |
 
-### 7.2 IM Secrets
-
-> IM 集成相关环境变量将在功能实现后定义。
 
 ## 8. 关键文件清单
 

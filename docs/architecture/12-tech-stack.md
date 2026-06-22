@@ -21,7 +21,7 @@ GucciAI 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vi
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **OpenClaw** | v2026.3.2 | 主要 Agent 引擎 |
+| **OpenClaw** | v2026.6.5 | 主要 Agent 引擎 |
 | **@anthropic-ai/claude-agent-sdk** | 0.2.12 | 内置 Agent SDK（弃用但保留） |
 | **@modelcontextprotocol/sdk** | 1.27.1 | MCP 协议 SDK |
 
@@ -366,7 +366,7 @@ npm run build:skills
 ```json
 {
   "openclaw": {
-    "version": "v2026.3.2",
+    "version": "v2026.6.5",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   }

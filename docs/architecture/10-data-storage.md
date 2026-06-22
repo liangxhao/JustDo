@@ -116,18 +116,34 @@ CREATE INDEX idx_messages_type ON cowork_messages(type);
 
 > **thinking_content 字段**：存储模型的思考/推理内容。详见 [thinking-stream-implementation.md](../features/thinking-stream-implementation.md)。
 
-### 2.5 user_memories 表
+### 2.X cowork_subagents 表
 
-用户记忆条目（GUI 管理用，实际记忆文件为 MEMORY.md）：
+子 Agent 追踪（UI 缓存，非运行时权威）：
 
 ```sql
-CREATE TABLE user_memories (
+CREATE TABLE cowork_subagents (
   id TEXT PRIMARY KEY,
-  content TEXT,
-  category TEXT,               -- 'preference' | 'fact' | 'decision' | 'environment'
-  source TEXT,                 -- 'conversation' | 'manual' | 'migration'
+  parent_session_id TEXT,
+  child_session_key TEXT,
+  label TEXT,
+  status TEXT,
   created_at INTEGER,
-  updated_at INTEGER
+  FOREIGN KEY (parent_session_id) REFERENCES cowork_sessions(id)
+);
+
+CREATE INDEX idx_cowork_subagents_parent_session ON cowork_subagents(parent_session_id);
+```
+
+### 2.Y session_groups 表
+
+会话分组：
+
+```sql
+CREATE TABLE session_groups (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  sort_order INTEGER,
+  created_at INTEGER
 );
 ```
 
@@ -646,8 +662,6 @@ function exportData(db: Database): ExportedData {
     coworkMessages: db.all('SELECT * FROM cowork_messages'),
     agents: db.all('SELECT * FROM agents'),
     mcpServers: db.all('SELECT * FROM mcp_servers'),
-    imConfig: db.all('SELECT * FROM im_config'),
-    scheduledTaskMeta: db.all('SELECT * FROM scheduled_task_meta'),
     exportedAt: Date.now(),
     version: '2026.4',
   };
@@ -666,8 +680,6 @@ function importData(db: Database, data: ExportedData): void {
     DELETE FROM cowork_messages;
     DELETE FROM agents;
     DELETE FROM mcp_servers;
-    DELETE FROM im_config;
-    DELETE FROM scheduled_task_meta;
   `);
   
   // 导入数据

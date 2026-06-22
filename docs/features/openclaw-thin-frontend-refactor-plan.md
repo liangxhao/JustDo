@@ -2,6 +2,8 @@
 
 ## Background
 
+> **实现状态（2026-06）**：本重构方案已在 v2026.5-v2026.6 中部分落地。GucciAI 不再做 OpenClaw Runtime 二次状态机，Gateway 为权威数据源。Subagent 逻辑已收缩。剩余工作包括历史兼容性 shim 清理和 runtime patch 精简。
+
 GucciAI is intended to act as an Electron/React frontend for OpenClaw, similar to ClawX. The current `OpenClawRuntimeAdapter` has gradually grown into a second orchestration layer: it tracks active turns, run IDs, subagent status, visible announce runs, deferred history reloads, tool streams, SQLite persistence, and completion fallbacks.
 
 Recent logs in `build.log` show the risk of this approach. OpenClaw successfully spawned and completed two subagents, and emitted completion announce runs, but GucciAI's adapter state and completion handling did not reliably let the parent agent receive the full set of child results. This suggests the local adapter can interfere with OpenClaw's native webchat/runtime semantics.

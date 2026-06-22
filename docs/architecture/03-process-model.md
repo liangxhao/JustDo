@@ -180,8 +180,7 @@ contextBridge.exposeInMainWorld('electron', {
     onSessionsChanged: (callback: () => void) => { /* ... */ },
   },
 
-  // 文件对话框
-  dialog: {
+  // Artifact\n  artifact: {\n    parse, render\n  },\n\n  // 文件对话框\n  dialog: {
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
     selectFile: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) =>
       ipcRenderer.invoke('dialog:selectFile', options),
@@ -654,8 +653,6 @@ export const IpcChannel = {
   OpenClawEngineOnProgress: 'openclaw:engine:onProgress',
   OpenClawEngineOnStatusChange: 'openclaw:engine:onStatusChange',
 
-  // IM（规划中）
-  ImGetStatus: 'im:getStatus',
   ImGetConfig: 'im:getConfig',
   ImSetConfig: 'im:setConfig',
   // 多实例 channels（规划中）...

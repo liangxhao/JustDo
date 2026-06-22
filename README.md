@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Version-2026.4.12-green.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2026.6.12-green.svg?style=for-the-badge" alt="Version">
   <br>
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen?style=for-the-badge" alt="Platform">
   <img src="https://img.shields.io/badge/Electron-41-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
@@ -33,14 +33,15 @@ At its core is **Cowork mode** — it executes tools, manipulates files, and run
 |---------|-------------|
 | **All-in-One Productivity** | Data analysis, PPT creation, video generation, document writing, web search, email — covers the full range of daily work |
 | **Local + Sandbox Execution** | Run tasks directly on your machine or in an OpenClaw sandbox environment |
-| **Built-in Skills** | Office document generation (Word/Excel/PPT/PDF), web search, file operations, custom skill creation |
+| **Built-in Skills** | Office documents (Word/Excel/PPT/PDF), browser automation, data analysis, diagram creation, web search, AI art, skill creation — 17 skills bundled |
 | **Windows Python Runtime** | Windows packages bundle a ready-to-use Python interpreter; dependencies install on demand |
 | **Scheduled Tasks** | Create recurring tasks via conversation or GUI — daily news digests, inbox cleanup, periodic reports |
 | **Persistent Memory** | Automatically extracts preferences and facts from conversations, remembers across sessions |
-| **IM Integration** | Remote control via IM platforms — Coming Soon |
+| **IM Integration** | Remote control via IM platforms (Telegram, Discord) — in development with UI placeholders |
+| **Subagents** | Delegate sub-sessions for parallel or scoped task execution — tracked in `cowork_subagents` |
 | **Permission Gating** | All tool invocations require explicit user approval before execution |
 | **Cross-Platform** | macOS (Intel + Apple Silicon), Windows, Linux desktop |
-| **Local Data** | SQLite storage keeps your chat history and configuration on your device |
+| **Local Data** | SQLite storage keeps your chat history, sessions, and configuration on your device |
 
 ## Architecture Overview
 
@@ -70,7 +71,7 @@ npm run electron:dev
 npm run electron:dev:openclaw
 ```
 
-Dev server runs at `http://localhost:5175`. OpenClaw source defaults to `../openclaw`.
+Dev server runs at `http://localhost:5175` with HMR. OpenClaw source defaults to `../openclaw`.
 
 <details>
 <summary>OpenClaw Environment Variables</summary>
@@ -110,24 +111,28 @@ An AI working session system powered by OpenClaw, autonomously completing comple
 
 All tool invocations (filesystem, terminal, network) require explicit approval via `CoworkPermissionModal`.
 
-### Skills System
+### Skills System (17 bundled skills)
 
-| Skill | Function |
+| Skill | Category |
 |-------|----------|
-| `web-search` | Web search |
-| `docx` | Word document generation |
-| `xlsx` | Excel spreadsheet generation |
-| `pptx` | PowerPoint creation |
-| `pdf` | PDF processing |
-| `create-plan` | Implementation planning |
-| `local-tools` | File and system operations |
-| `skill-creator` | Custom skill creation |
+| `docx` / `xlsx` / `pptx` / `pdf` | Office documents |
+| `multi-search-engine` | Multi-engine web search |
+| `playwright` / `agent-browser` | Browser automation |
+| `data-analysis` | Data processing & visualization |
+| `diagram-generator` | Diagrams & flowcharts |
+| `algorithmic-art` | Generative AI art |
+| `taskflow` | Multi-step workflows |
+| `mcp-builder` | MCP server creation |
+| `self-improvement` | Agent self-optimization |
+| `ontology` | Domain knowledge modeling |
+| `theme-factory` | UI theme generation |
+| `healthcheck` | System diagnostics |
 
-Custom skills can be created via `skill-creator` and hot-loaded at runtime.
+Custom skills can be created via `skill-creator` and hot-loaded at runtime. User-imported skills stored in `userData/openclaw/state/skills/`. Bundled skills take priority on ID conflict.
 
 ### Scheduled Tasks
 
-Create recurring tasks via natural language or GUI. Examples: daily news collection, weekly reports, email cleanup.
+Create recurring tasks via natural language or GUI using OpenClaw's cron engine. Examples: daily news collection, weekly reports, email cleanup. Managed by `cronJobService.ts`.
 
 ### Persistent Memory
 
@@ -154,24 +159,26 @@ Electron strict process isolation with IPC communication.
 
 ```
 src/
-├── main/           # Electron main process
-│   ├── main.ts     # Entry point, IPC handlers
-│   ├── preload.ts  # Security bridge
-│   └── libs/       # Agent engine, memory extraction
+├── main/           # Electron main process (IPC handlers)
+│   ├── main.ts     # Entry point
+│   ├── preload.ts  # contextBridge security layer
+│   └── libs/       # Engine manager, skill manager, MCP bridge, cowork store, config sync
 ├── renderer/       # React frontend
 │   ├── App.tsx     # Root component
-│   └── components/ # Cowork UI, Settings, Artifacts
-resources/skills/   # Skill definitions
-├── web-search/     # Web search
-├── docx/           # Word documents
-├── xlsx/           # Excel spreadsheets
-├── pptx/           # PowerPoint
-└── pdf/            # PDF processing
+│   ├── components/ # Cowork UI, Settings, scheduled tasks, quick actions
+│   └── store/      # Redux slices (agent, skill, mcp, cowork, scheduledTask, quickAction)
+├── scheduledTask/  # Cron engine, migration, policies
+└── shared/         # Platform & provider constants
+resources/skills/   # 17 bundled skill definitions (Gateway-managed)
 ```
+
+### Cowork Engine Architecture
+
+Cowork sessions use a Gateway-based process lifecycle (`idle → downloading → installing → ready → running`). History reconciliation via `historyReconciler.ts`, subagent dispatch via `subagentGateway.ts`.
 
 ### Data Storage
 
-Local SQLite (`gucciai.sqlite`): app config, sessions, messages, memories, agents, MCP servers, scheduled tasks.
+Local SQLite (`gucciai.sqlite`): app config, sessions, messages, subagents, memories, agents, MCP servers, scheduled tasks.
 
 ### Tech Stack
 
@@ -182,7 +189,7 @@ Local SQLite (`gucciai.sqlite`): app config, sessions, messages, memories, agent
 | Build | Vite 5 |
 | Styling | Tailwind CSS 3 |
 | State | Redux Toolkit |
-| AI Engine | OpenClaw |
+| AI Engine | OpenClaw (runtime download, auto-install, Gateway lifecycle) |
 | Storage | better-sqlite3 |
 
 ### Security
@@ -191,6 +198,7 @@ Local SQLite (`gucciai.sqlite`): app config, sessions, messages, memories, agent
 - Permission gating for sensitive tool invocations
 - Optional OpenClaw sandbox
 - HTML sandbox, DOMPurify, Mermaid strict mode
+- Enterprise config sync support via `enterpriseConfigSync.ts`
 
 ## Configuration
 
@@ -207,7 +215,7 @@ Version pinned in `package.json`:
 ```json
 {
   "openclaw": {
-    "version": "v2026.4.11",
+    "version": "v2026.6.5",
     "repo": "https://github.com/openclaw/openclaw.git"
   }
 }

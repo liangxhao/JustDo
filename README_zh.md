@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Version-2026.4.12-green.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2026.6.12-green.svg?style=for-the-badge" alt="Version">
   <br>
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen?style=for-the-badge" alt="Platform">
   <img src="https://img.shields.io/badge/Electron-41-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
@@ -33,14 +33,15 @@ GucciAI 的核心是 **Cowork 模式**，它能在本地或沙箱环境中执行
 |------|------|
 | **全场景办公** | 数据分析、PPT 制作、视频生成、文档撰写、Web 搜索、邮件收发，覆盖日常办公全流程 |
 | **本地 + 沙箱执行** | 任务执行支持本地直接运行或 OpenClaw 沙箱环境 |
-| **内置技能** | Office 文档生成（Word/Excel/PPT/PDF）、Web 搜索、文件操作、自定义技能创建 |
+| **内置技能** | Office 文档（Word/Excel/PPT/PDF）、浏览器自动化、数据分析、图表绘制、AI 艺术、技能创建 —— 共 17 个技能 |
 | **Windows Python 运行时** | Windows 安装包内置 Python 解释器；依赖按需安装 |
 | **定时任务** | 对话式或 GUI 添加定时任务 —— 每日新闻收集、邮箱整理、周期性报告 |
 | **持久记忆** | 自动提取偏好与个人信息，跨会话记住你的习惯 |
-| **IM 集成** | 通过 IM 平台远程操控 —— Coming Soon |
+| **IM 集成** | 通过 IM 平台远程操控（Telegram、Discord）—— 开发中，已有 UI 占位 |
+| **子智能体** | 派遣子会话并行或限定域执行任务 —— 通过 `cowork_subagents` 追踪 |
 | **权限门控** | 所有敏感工具调用需用户明确批准 |
 | **跨平台** | macOS（Intel + Apple Silicon）、Windows、Linux 桌面端 |
-| **数据本地化** | SQLite 本地存储，数据不离开你的设备 |
+| **数据本地化** | SQLite 本地存储，聊天记录、会话、配置不离开你的设备 |
 
 ## 架构概览
 
@@ -70,7 +71,7 @@ npm run electron:dev
 npm run electron:dev:openclaw
 ```
 
-开发服务器默认运行在 `http://localhost:5175`。OpenClaw 源码默认在 `../openclaw`。
+开发服务器默认运行在 `http://localhost:5175`，支持 HMR。OpenClaw 源码默认在 `../openclaw`。
 
 <details>
 <summary>OpenClaw 环境变量</summary>
@@ -110,24 +111,28 @@ npm run dist:linux      # Linux .AppImage & .deb
 
 所有涉及文件系统、终端、网络的工具调用需在 `CoworkPermissionModal` 中明确批准。
 
-### 技能系统
+### 技能系统（17 个内置技能）
 
-| 技能 | 功能 |
+| 技能 | 类别 |
 |------|------|
-| `web-search` | Web 搜索 |
-| `docx` | Word 文档生成 |
-| `xlsx` | Excel 表格生成 |
-| `pptx` | PowerPoint 制作 |
-| `pdf` | PDF 处理 |
-| `create-plan` | 实现规划 |
-| `local-tools` | 本地文件和系统操作 |
-| `skill-creator` | 自定义技能创建 |
+| `docx` / `xlsx` / `pptx` / `pdf` | Office 文档 |
+| `multi-search-engine` | 多引擎 Web 搜索 |
+| `playwright` / `agent-browser` | 浏览器自动化 |
+| `data-analysis` | 数据处理与可视化 |
+| `diagram-generator` | 图表与流程图 |
+| `algorithmic-art` | 生成式 AI 艺术 |
+| `taskflow` | 多步骤工作流 |
+| `mcp-builder` | MCP 服务器创建 |
+| `self-improvement` | 智能体自优化 |
+| `ontology` | 领域知识建模 |
+| `theme-factory` | UI 主题生成 |
+| `healthcheck` | 系统健康诊断 |
 
-支持通过 `skill-creator` 创建自定义技能并热加载。
+通过 `skill-creator` 可创建自定义技能并热加载。用户导入的技能存储在 `userData/openclaw/state/skills/`，内置技能在 ID 冲突时优先。
 
 ### 定时任务
 
-通过自然语言或 GUI 创建定时任务。示例：每日新闻收集、每周报告、邮箱整理。
+通过自然语言或 GUI 创建定时任务，底层使用 OpenClaw cron 引擎。示例：每日新闻收集、每周报告、邮箱整理。由 `cronJobService.ts` 管理。
 
 ### 持久记忆
 
@@ -154,24 +159,26 @@ Electron 严格进程隔离，通过 IPC 通信。
 
 ```
 src/
-├── main/           # Electron 主进程
-│   ├── main.ts     # 入口，IPC 处理
-│   ├── preload.ts  # 安全桥接
-│   └── libs/       # Agent 引擎、记忆提取
+├── main/           # Electron 主进程（IPC 处理）
+│   ├── main.ts     # 入口
+│   ├── preload.ts  # contextBridge 安全层
+│   └── libs/       # 引擎管理、技能管理、MCP 桥接、Cowork 存储、配置同步
 ├── renderer/       # React 前端
 │   ├── App.tsx     # 根组件
-│   └── components/ # Cowork UI、Settings、Artifacts
-resources/skills/   # 技能定义
-├── web-search/     # Web 搜索
-├── docx/           # Word 文档
-├── xlsx/           # Excel 表格
-├── pptx/           # PowerPoint
-└── pdf/            # PDF 处理
+│   ├── components/ # Cowork UI、Settings、定时任务、快捷操作
+│   └── store/      # Redux slices（agent、skill、mcp、cowork、scheduledTask、quickAction）
+├── scheduledTask/  # Cron 引擎、迁移、策略
+└── shared/         # 平台与 Provider 常量
+resources/skills/   # 17 个内置技能定义（Gateway 管理）
 ```
+
+### Cowork 引擎架构
+
+Cowork 会话使用 Gateway 进程生命周期（`idle → downloading → installing → ready → running`）。历史记录通过 `historyReconciler.ts` 协调，子智能体通过 `subagentGateway.ts` 分发。
 
 ### 数据存储
 
-本地 SQLite（`gucciai.sqlite`）：应用配置、会话、消息、记忆、Agent、MCP 服务器、定时任务。
+本地 SQLite（`gucciai.sqlite`）：应用配置、会话、消息、子智能体、记忆、Agent、MCP 服务器、定时任务。
 
 ### 技术栈
 
@@ -182,7 +189,7 @@ resources/skills/   # 技能定义
 | 构建 | Vite 5 |
 | 样式 | Tailwind CSS 3 |
 | 状态 | Redux Toolkit |
-| AI 引擎 | OpenClaw |
+| AI 引擎 | OpenClaw（运行时下载、自动安装、Gateway 生命周期） |
 | 存储 | better-sqlite3 |
 
 ### 安全模型
@@ -191,6 +198,7 @@ resources/skills/   # 技能定义
 - 敏感工具调用需用户审批
 - 可选 OpenClaw 沙箱隔离
 - HTML sandbox、DOMPurify、Mermaid strict mode
+- 企业级配置同步支持（`enterpriseConfigSync.ts`）
 
 ## 配置
 
@@ -207,7 +215,7 @@ resources/skills/   # 技能定义
 ```json
 {
   "openclaw": {
-    "version": "v2026.4.11",
+    "version": "v2026.6.5",
     "repo": "https://github.com/openclaw/openclaw.git"
   }
 }

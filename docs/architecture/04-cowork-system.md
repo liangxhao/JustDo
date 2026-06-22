@@ -43,16 +43,16 @@ Cowork 使用 IPC 事件进行实时双向通信：
 
 ```typescript
 class CoworkEngineRouter {
-  private activeEngine: 'openclaw' | 'yd_cowork';
+  private activeEngine: 'openclaw';
   private openclawAdapter: OpenClawRuntimeAdapter;
-  private claudeAdapter: ClaudeRuntimeAdapter; // 弃用但保留
+
   
   constructor(
     coworkStore: CoworkStore,
     openclawManager: OpenClawEngineManager
   ) {
     this.openclawAdapter = new OpenClawRuntimeAdapter(coworkStore, openclawManager);
-    this.claudeAdapter = new ClaudeRuntimeAdapter(coworkStore);
+
   }
   
   // 启动会话
@@ -60,9 +60,7 @@ class CoworkEngineRouter {
     const engine = this.getActiveEngine();
     if (engine === 'openclaw') {
       this.openclawAdapter.startSession(sessionId, prompt);
-    } else {
-      this.claudeAdapter.startSession(sessionId, prompt);
-    }
+
   }
   
   // 继续会话
@@ -515,7 +513,7 @@ CREATE TABLE cowork_config (
   working_directory TEXT,
   system_prompt TEXT,
   execution_mode TEXT, -- 'auto' | 'local'
-  agent_engine TEXT,   -- 'openclaw' | 'yd_cowork'
+  agent_engine TEXT  -- 'openclaw'|  agent_engine TEXT  -- 'openclaw'
   updated_at INTEGER
 );
 ```
@@ -532,12 +530,12 @@ CREATE TABLE cowork_config (
 class OpenClawConfigSync {
   // 同步配置到 OpenClaw
   sync(config: CoworkConfig, imConfig: IMConfig): void {
-    const managedConfig = this.buildManagedConfig(config, imConfig);
+    const managedConfig = this.buildManagedConfig(config);
     this.writeManagedConfig(managedConfig);
   }
   
   // 构建 managed config
-  private buildManagedConfig(config: CoworkConfig, imConfig: IMConfig): ManagedConfig {
+  private buildManagedConfig(config: CoworkConfig): ManagedConfig {
     return {
       session: {
         scope: 'per-account-channel-peer',
@@ -545,7 +543,7 @@ class OpenClawConfigSync {
       sandbox: {
         mode: this.mapExecutionMode(config.executionMode),
       },
-      channels: this.buildChannelConfigs(imConfig),
+      // Channels managed by OpenClaw Gateway
     };
   }
   

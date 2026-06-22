@@ -1,5 +1,8 @@
 # GucciAI 纯前端架构设计
 
+> **状态**：本设计在 v2026.5-v2026.6 已基本落地。GucciAI 不再注入自定义 system prompt / AGENTS.md policy / per-agent workspace。当前边界参见 [openclaw-gateway-capability-matrix.md](openclaw-gateway-capability-matrix.md)。
+
+
 ## 1. 设计目标
 
 GucciAI 作为 **OpenClaw Gateway 的纯前端**，不注入任何自己的上下文内容。所有 AI 推理、上下文管理、历史存储由 OpenClaw Gateway 处理，GucciAI 仅负责：

@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-Skills 是 GucciAI 的扩展机制，每个 Skill 定义了一组特定场景下的工具和能力。GucciAI 内置 29 个 Skill，覆盖文档生成、视频创作、数据分析、网络自动化等场景。
+Skills 是 GucciAI 的扩展机制，每个 Skill 定义了一组特定场景下的工具和能力。GucciAI 内置 17 个 Skill（由 OpenClaw Gateway 管理），覆盖文档生成、视频创作、数据分析、网络自动化等场景。
 
 ### 1.1 Skill 目录结构
 
