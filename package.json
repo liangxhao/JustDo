@@ -46,7 +46,9 @@
     "predist:linux": "npm run openclaw:runtime:linux-x64",
     "dist:linux": "npm run build && npm run compile:electron && electron-builder --linux",
     "clean:release": "rimraf release",
-    "generate:tray-icons": "node scripts/generate-tray-icons.js",
+    "generate:tray-icons": "node scripts/generate-icons.cjs tray-icons",
+    "generate:app-icon:win": "node scripts/generate-icons.cjs app-icon",
+    "generate:app-icons:png": "node scripts/generate-icons.cjs png",
     "setup:mingit": "node scripts/setup-mingit.js",
     "setup:python-runtime": "node scripts/setup-python-runtime.js",
     "openclaw:plugins": "node scripts/ensure-openclaw-plugins.cjs",
@@ -61,8 +63,8 @@
     "openclaw:runtime:win-arm64": "node scripts/install-openclaw-runtime.cjs win-arm64 && node scripts/sync-openclaw-runtime-current.cjs win-arm64 && npm run openclaw:bundle && npm run openclaw:plugins && npm run openclaw:extensions:local && npm run openclaw:precompile && npm run openclaw:prune",
     "openclaw:runtime:linux-x64": "node scripts/install-openclaw-runtime.cjs linux-x64 && node scripts/sync-openclaw-runtime-current.cjs linux-x64 && npm run openclaw:bundle && npm run openclaw:plugins && npm run openclaw:extensions:local && npm run openclaw:precompile && npm run openclaw:prune",
     "openclaw:runtime:linux-arm64": "node scripts/install-openclaw-runtime.cjs linux-arm64 && node scripts/sync-openclaw-runtime-current.cjs linux-arm64 && npm run openclaw:bundle && npm run openclaw:plugins && npm run openclaw:extensions:local && npm run openclaw:precompile && npm run openclaw:prune",
-    "regenerate:icon": "bash scripts/regenerate-mac-icon.sh",
-    "fix:mac-icon": "bash scripts/fix-mac-icon-display.sh"
+    "regenerate:icon": "bash scripts/mac-icon.sh regenerate",
+    "fix:mac-icon": "bash scripts/mac-icon.sh fix-display"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
