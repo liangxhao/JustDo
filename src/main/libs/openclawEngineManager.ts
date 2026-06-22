@@ -715,7 +715,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const asarControlUi = path.join(runtimeRoot, 'gateway.asar', 'dist', 'control-ui');
     if (!fs.existsSync(asarControlUi)) {
-      // control-ui may already exist as bare files from the build (see build-openclaw-runtime.sh)
+      // control-ui may already exist as bare files from the runtime install (see install-openclaw-runtime.cjs)
       return;
     }
 

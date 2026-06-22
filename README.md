@@ -71,16 +71,14 @@ npm run electron:dev
 npm run electron:dev:openclaw
 ```
 
-Dev server runs at `http://localhost:5175` with HMR. OpenClaw source defaults to `../openclaw`.
+Dev server runs at `http://localhost:5175` with HMR. OpenClaw runtime is downloaded as a pre-built npm package.
 
 <details>
 <summary>OpenClaw Environment Variables</summary>
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENCLAW_SRC` | OpenClaw source path | `../openclaw` |
-| `OPENCLAW_FORCE_BUILD` | Force rebuild | — |
-| `OPENCLAW_SKIP_ENSURE` | Skip version checkout | — |
+| `OPENCLAW_FORCE_INSTALL` | Force reinstall of the pre-built runtime | — |
 
 </details>
 
@@ -215,7 +213,7 @@ Version pinned in `package.json`:
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.5",
+    "version": "v2026.6.9",
     "repo": "https://github.com/openclaw/openclaw.git"
   }
 }
@@ -253,3 +251,7 @@ npm test -- logger    # Specific module
 ## Acknowledgments
 
 Developed with reference to [LobsterAI](https://github.com/netease-youdao/LobsterAI). Thanks to the LobsterAI team for their pioneering work.
+
+
+
+

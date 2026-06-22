@@ -170,4 +170,4 @@ Agent 能够记住你的偏好和习惯：
 
 - **v2026.4**：品牌重塑，稳定版本
 - **v2026.5**：薄前端架构重构，OpenClaw Gateway 深度集成
-- **v2026.6**：OpenClaw v2026.6.5 升级，Subagent 逻辑收缩至 Gateway，Thin Frontend 落地
+- **v2026.6**：OpenClaw v2026.6.9 升级，Subagent 逻辑收缩至 Gateway，Thin Frontend 落地

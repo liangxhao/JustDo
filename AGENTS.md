@@ -6,7 +6,7 @@ Guidance for Claude Code when working with this repository.
 
 GucciAI is a **24/7 personal assistant Agent** — an AI that actually executes tasks, not just suggests. Core capabilities: real task execution, local-first SQLite storage, 17 bundled skills, scheduled tasks via OpenClaw cron, and IM remote control (in development).
 
-**Version**: 2026.6.12 | **Electron**: 41.2.0 | **OpenClaw**: v2026.6.5
+**Version**: 2026.6.12 | **Electron**: 41.2.0 | **OpenClaw**: v2026.6.9
 
 ## Build Commands
 

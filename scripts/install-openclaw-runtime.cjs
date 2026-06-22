@@ -104,11 +104,11 @@ console.log(`[install-openclaw-runtime] Package: ${npmSpec}`);
 // 2. Build cache check
 // ---------------------------------------------------------------------------
 
-if (process.env.OPENCLAW_FORCE_BUILD !== '1') {
+if (process.env.OPENCLAW_FORCE_INSTALL !== '1') {
   const buildInfo = readJsonFile(path.join(outDir, 'runtime-build-info.json'));
   if (buildInfo && buildInfo.openclawVersion === openclawVersion) {
     console.log(`[install-openclaw-runtime] Already installed ${openclawVersion} (target=${targetId}), skipping.`);
-    console.log(`[install-openclaw-runtime] Use OPENCLAW_FORCE_BUILD=1 to force reinstall.`);
+    console.log(`[install-openclaw-runtime] Use OPENCLAW_FORCE_INSTALL=1 to force reinstall.`);
     process.exit(0);
   }
 }

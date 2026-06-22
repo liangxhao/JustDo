@@ -132,7 +132,7 @@ GucciAI 项目
 │   ├── docx/
 │   ├── web-search/
 │   └── ...
-└── scripts/build-openclaw-runtime.sh  # 构建脚本
+└── scripts/install-openclaw-runtime.cjs (via patch-openclaw-runtime.cjs)  # 构建脚本
 
          ↓ 构建时处理
 
@@ -169,7 +169,7 @@ OpenClaw Runtime
 
 ### 5.3 构建脚本处理
 
-在 `scripts/build-openclaw-runtime.sh` 中：
+在 `scripts/install-openclaw-runtime.cjs (via patch-openclaw-runtime.cjs)` 中：
 
 1. 加载 `resources/builtin-skills.json` 配置
 2. 若 `disableOpenClawDefaults=true`：删除 runtime 的 `skills/` 目录所有内容

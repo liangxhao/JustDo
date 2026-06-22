@@ -21,7 +21,7 @@ GucciAI 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vi
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **OpenClaw** | v2026.6.5 | 主要 Agent 引擎 |
+| **OpenClaw** | v2026.6.9 | 主要 Agent 引擎 |
 | **@anthropic-ai/claude-agent-sdk** | 0.2.12 | 内置 Agent SDK（弃用但保留） |
 | **@modelcontextprotocol/sdk** | 1.27.1 | MCP 协议 SDK |
 
@@ -331,9 +331,7 @@ npm run build:skills
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `OPENCLAW_SRC` | OpenClaw 源码路径 | `../openclaw` |
-| `OPENCLAW_FORCE_BUILD` | 强制重新构建 | — |
-| `OPENCLAW_SKIP_ENSURE` | 跳过版本 checkout | — |
+| `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | — |
 
 ### 8.2 IM Secrets
 
@@ -366,7 +364,7 @@ npm run build:skills
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.5",
+    "version": "v2026.6.9",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   }
@@ -416,8 +414,6 @@ GucciAI/
 │   └── ...
 │
 ├── scripts/                  # 构建脚本
-│   ├── ensure-openclaw-version.cjs
-│   ├── run-build-openclaw-runtime.cjs
 │   ├── setup-python-runtime.js
 │   └── ...
 │

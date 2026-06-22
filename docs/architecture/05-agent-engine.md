@@ -61,7 +61,7 @@ OpenClaw 版本在 `package.json` 中声明：
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.5",
+    "version": "v2026.6.9",
     "repo": "https://github.com/openclaw/openclaw.git"
   }
 }
@@ -208,32 +208,6 @@ function emitProgress(progress: InstallProgress): void {
   if (win) {
     win.webContents.send('openclaw:engine:onProgress', progress);
   }
-}
-```
-
-### 2.4 安装脚本
-
-**运行时构建**：`scripts/run-build-openclaw-runtime.cjs`
-
-```javascript
-// 构建 OpenClaw runtime
-async function buildRuntime(platform, arch) {
-  const openclawSrc = process.env.OPENCLAW_SRC || '../openclaw';
-  
-  // 1. pnpm install
-  execSync('pnpm install', { cwd: openclawSrc });
-  
-  // 2. build
-  execSync('pnpm run build', { cwd: openclawSrc });
-  
-  // 3. ui:build
-  execSync('pnpm run ui:build', { cwd: openclawSrc });
-  
-  // 4. pack to asar
-  const outputPath = `release/openclaw-runtime-${platform}-${arch}.asar`;
-  packToAsar(openclawSrc, outputPath);
-  
-  return outputPath;
 }
 ```
 
@@ -546,14 +520,13 @@ npm run dist:win
 
 ```json
 {
-  "version": "v2026.6.5",
+  "version": "v2026.6.9",
   "platform": "win-x64",
   "builtAt": 1712851200000,
   "outputPath": "release/openclaw-runtime-win-x64.asar"
 }
 ```
 
-如果 pinned version 与缓存一致，跳过构建。
 
 ## 7. 环境变量
 
@@ -561,9 +534,7 @@ npm run dist:win
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `OPENCLAW_SRC` | OpenClaw 源码路径 | `../openclaw` |
-| `OPENCLAW_FORCE_BUILD` | 强制重新构建 | — |
-| `OPENCLAW_SKIP_ENSURE` | 跳过版本 checkout | — |
+| `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | — |
 
 
 ## 8. 关键文件清单
@@ -574,8 +545,6 @@ npm run dist:win
 | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | Gateway 适配 |
 | `src/main/libs/openclawConfigSync.ts` | 配置同步 |
 | `src/main/libs/openclawChannelSessionSync.ts` | Channel 会话同步 |
-| `scripts/ensure-openclaw-version.cjs` | 版本确保 |
-| `scripts/run-build-openclaw-runtime.cjs` | 运行时构建 |
 | `scripts/bundle-openclaw-gateway.cjs` | Gateway 打包 |
 | `scripts/sync-openclaw-runtime-current.cjs` | 同步当前 runtime |
 | `scripts/sync-local-openclaw-extensions.cjs` | 同步本地扩展 |

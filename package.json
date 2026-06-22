@@ -7,9 +7,9 @@
     "email": "liangxhao@example.com"
   },
   "license": "MIT",
-  "version": "2026.6.12",
+  "version": "2026.6.22",
   "openclaw": {
-    "version": "v2026.6.5",
+    "version": "v2026.6.9",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   },

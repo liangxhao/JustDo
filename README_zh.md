@@ -71,16 +71,14 @@ npm run electron:dev
 npm run electron:dev:openclaw
 ```
 
-开发服务器默认运行在 `http://localhost:5175`，支持 HMR。OpenClaw 源码默认在 `../openclaw`。
+开发服务器默认运行在 `http://localhost:5175`，支持 HMR。OpenClaw 运行时以预构建 npm 包形式下载。
 
 <details>
 <summary>OpenClaw 环境变量</summary>
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `OPENCLAW_SRC` | OpenClaw 源码路径 | `../openclaw` |
-| `OPENCLAW_FORCE_BUILD` | 强制重新构建 | — |
-| `OPENCLAW_SKIP_ENSURE` | 跳过版本切换 | — |
+| `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | — |
 
 </details>
 
@@ -215,7 +213,7 @@ Cowork 会话使用 Gateway 进程生命周期（`idle → downloading → insta
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.5",
+    "version": "v2026.6.9",
     "repo": "https://github.com/openclaw/openclaw.git"
   }
 }
@@ -253,3 +251,8 @@ npm test -- logger    # 指定模块
 ## 致谢
 
 本项目参考 [LobsterAI](https://github.com/netease-youdao/LobsterAI) 开发而成。感谢 LobsterAI 团队在个人助理 Agent 领域的开拓性工作。
+
+
+
+
+
