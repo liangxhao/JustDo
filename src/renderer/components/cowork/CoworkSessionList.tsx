@@ -374,7 +374,10 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     };
     poll();
     const timer = setInterval(() => {
-      if (!hasRunningRef.current && !isSessionActive) {
+      const hasLiveSubagents =
+        Object.values(backendStatuses).some(s => s === 'running' || s === 'pending') ||
+        backendSubagents.some(s => s.status === 'running' || s.status === 'pending');
+      if (!hasLiveSubagents) {
         clearInterval(timer);
         return;
       }
@@ -383,6 +386,25 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     return () => clearInterval(timer);
   }, [activeSessionId, isSessionActive]);
 
+  // One-time subagent status query for the currently-viewed session
+  // (non-active/historical sessions): when a user selects a session that is not
+  // the active running session, fetch its subagent statuses once.
+  useEffect(() => {
+    const currentSessionId = currentSession?.id;
+    if (!currentSessionId || currentSessionId === activeSessionId) return;
+    const fetchOnce = async () => {
+      try {
+        const result = await window.electron.cowork.getSubTaskStatus(currentSessionId);
+        if (result.success && result.statuses) {
+          setBackendStatuses(result.statuses);
+          if (result.displayLabels) setBackendDisplayLabels(result.displayLabels);
+          setBackendSessionKeys(result.sessionKeys || {});
+          setBackendSubagents(result.subagents || []);
+        }
+      } catch { /* ignore */ }
+    };
+    fetchOnce();
+  }, [currentSession?.id, activeSessionId]);
   const enrichedSubTasks = useMemo(() => {
     if (backendSubagents.length > 0) {
       return backendSubagents

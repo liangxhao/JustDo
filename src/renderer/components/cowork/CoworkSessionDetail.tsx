@@ -61,6 +61,8 @@ import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInpu
 import InlineCanvasPreviews from './InlineCanvasPreviews';
 import LazyRenderItem, { clearHeightCache } from './LazyRenderItem';
 import MonacoDiffView, { extractDiffFromToolInput } from './MonacoDiffView';
+import SubAgentList, { type SubTaskInfo } from './SubAgentList';
+import SubTaskDetailDrawer from './SubTaskDetailDrawer';
 
 interface CoworkSessionDetailProps {
   onContinue: (
@@ -1453,7 +1455,8 @@ const AssistantMessageItem: React.FC<{
 const SubagentCompletionMessageItem: React.FC<{
   message: CoworkMessage;
   mapDisplayText?: (value: string) => string;
-}> = ({ message, mapDisplayText }) => {
+  onOpenDetail?: () => void;
+}> = ({ message, mapDisplayText, onOpenDetail }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
@@ -1524,14 +1527,15 @@ const SubagentCompletionMessageItem: React.FC<{
                 </div>
               </div>
             )}
-            {/* Header row when expanded: clickable to collapse */}
+            {/* Header row when expanded: collapse on left, detail entry on right */}
             {isExpanded && (
-              <button
-                type="button"
-                onClick={() => setIsExpanded(false)}
-                className="flex flex-col mb-1.5 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
-                title={`${taskLabel}${sessionKey ? '\n' + sessionKey : ''}`}
-              >
+              <div className="flex items-start gap-1 mb-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded(false)}
+                  className="flex flex-col cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                  title={`${taskLabel}${sessionKey ? '\n' + sessionKey : ''} (click to collapse)`}
+                >
                 <span
                   className="text-xs font-medium text-teal-600 truncate max-w-[200px]"
                   title={taskLabel}
@@ -1547,7 +1551,18 @@ const SubagentCompletionMessageItem: React.FC<{
                   </span>
                 )}
                 <span className="text-[10px] text-muted">▼</span>
-              </button>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onOpenDetail?.(); }}
+                  className="flex-shrink-0 p-0.5 mt-0.5 rounded hover:bg-teal-500/10 text-teal-500 transition-colors"
+                  title="Open subagent detail"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                  </svg>
+                </button>
+              </div>
             )}
             {/* Expanded full content — shown below the header when expanded */}
             {isExpanded && displayContent && (
@@ -1911,7 +1926,21 @@ export const AssistantTranscriptBlock: React.FC<{
 
     if (item.type === 'subagent_completion') {
       return (
-        <SubagentCompletionMessageItem message={item.message} mapDisplayText={mapDisplayText} />
+        <SubagentCompletionMessageItem
+          message={item.message}
+          mapDisplayText={mapDisplayText}
+          onOpenDetail={() => {
+            const meta = item.message.metadata as Record<string, unknown> | undefined;
+            setActiveSubTask({
+              agentId: (meta?.toolCallId as string) || (meta?.sessionKey as string) || '',
+              sessionKey: (meta?.sessionKey as string) || '',
+              childSessionId: (meta?.sessionKey as string) || '',
+              displayName: (meta?.taskLabel as string) || 'Subagent Task',
+              parentSessionId: sessionId ?? '',
+              status: 'done',
+            });
+          }}
+        />
       );
     }
 
@@ -2030,6 +2059,87 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
+  // Subagent status polling
+  const [backendSubagentStatuses, setBackendSubagentStatuses] = useState<Record<string, string>>({});
+  const [backendSubagentLabels, setBackendSubagentLabels] = useState<Record<string, string>>({});
+  const [backendSubagentSessionKeys, setBackendSubagentSessionKeys] = useState<Record<string, string>>({});
+  const [backendSubagents, setBackendSubagents] = useState<Array<{ id: string; sessionKey?: string; label: string; status: "pending" | "running" | "done" | "failed" }>>([]);
+
+  useEffect(() => {
+    setBackendSubagentStatuses({});
+    setBackendSubagentLabels({});
+    setBackendSubagentSessionKeys({});
+    setBackendSubagents([]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let timerRef: ReturnType<typeof setInterval> | null = null;
+    const poll = async () => {
+      try {
+        const result = await window.electron.cowork.getSubTaskStatus(sessionId);
+        if (result.success && result.statuses) {
+          setBackendSubagentStatuses(result.statuses);
+          if (result.displayLabels) setBackendSubagentLabels(result.displayLabels);
+          setBackendSubagentSessionKeys(result.sessionKeys || {});
+          setBackendSubagents(result.subagents || []);
+          // Stop polling when all subagents have reached terminal state
+          const statuses: Record<string, string> = result.statuses;
+          const agents: Array<{ status: string }> = result.subagents || [];
+          const hasLive =
+            Object.values(statuses).some(s => s === 'running' || s === 'pending') ||
+            agents.some(s => s.status === 'running' || s.status === 'pending');
+          if (!hasLive && timerRef) {
+            clearInterval(timerRef);
+            timerRef = null;
+          }
+        }
+      } catch { /* ignore */ }
+    };
+    poll();
+    timerRef = setInterval(poll, 3000);
+    return () => { if (timerRef) clearInterval(timerRef); };
+  }, [sessionId]);
+
+  const enrichedSubTasks = useMemo(() => {
+    if (backendSubagents.length > 0) {
+      return backendSubagents
+        .filter(s => s.label.trim())
+        .map(s => ({
+          agentId: s.id,
+          sessionKey: s.sessionKey,
+          childSessionId: s.sessionKey,
+          task: s.label,
+          status: s.status,
+        }));
+    }
+   if (Object.keys(backendSubagentStatuses).length > 0) {
+     return Object.entries(backendSubagentStatuses).flatMap(([agentId, status]) => {
+       const task = backendSubagentLabels[agentId] || "";
+        if (!task.trim()) return [];
+       return [{
+         agentId,
+         sessionKey: backendSubagentSessionKeys[agentId],
+         childSessionId: backendSubagentSessionKeys[agentId],
+          task,
+         status: status as SubTaskInfo["status"],
+       }];
+     });
+    }
+    return [];
+  }, [backendSubagentStatuses, backendSubagentLabels, backendSubagentSessionKeys, backendSubagents]);
+
+  // Subagent detail drawer state
+  const [activeSubTask, setActiveSubTask] = useState<{
+    agentId: string;
+    sessionKey?: string;
+    childSessionId?: string;
+    displayName?: string;
+    parentSessionId: string;
+    status: 'pending' | 'running' | 'done' | 'failed';
+  } | null>(null);
+
+
 
   // Reset rename value when session changes
   useEffect(() => {
