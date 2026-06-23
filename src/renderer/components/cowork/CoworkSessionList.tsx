@@ -374,10 +374,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     };
     poll();
     const timer = setInterval(() => {
-      const hasLiveSubagents =
-        Object.values(backendStatuses).some(s => s === 'running' || s === 'pending') ||
-        backendSubagents.some(s => s.status === 'running' || s.status === 'pending');
-      if (!hasLiveSubagents) {
+      if (!hasRunningRef.current) {
         clearInterval(timer);
         return;
       }
@@ -444,6 +441,21 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     parentSessionId: string;
     status: 'pending' | 'running' | 'done' | 'failed';
   } | null>(null);
+  // Keep activeSubTask.status in sync with enrichedSubTasks so the
+  // SubTaskDetailDrawer title bar and SubAgentList breathing light use
+  // the same source of truth.
+  useEffect(() => {
+    if (!activeSubTask) return;
+    const match = enrichedSubTasks.find(
+      (s) => s.agentId === activeSubTask.agentId,
+    );
+    if (match && match.status !== activeSubTask.status) {
+      setActiveSubTask((prev) =>
+        prev ? { ...prev, status: match.status } : prev,
+      );
+    }
+  }, [enrichedSubTasks, activeSubTask?.agentId]);
+
 
   if (unGroupedSessions.length === 0 && sessions.length === 0) {
     if (isLoading) {

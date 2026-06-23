@@ -260,8 +260,12 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     lastMessage?: string;
   } | null>(null);
 
-  // Track actual status internally (may differ from initial prop)
+  // Sync status from parent to avoid inconsistency from independent polling.
+  // The parent (CoworkSessionList) owns the single source of truth via getSubagentStatuses.
   const [status, setStatus] = useState<'pending' | 'running' | 'done' | 'failed'>(initialStatus);
+  useEffect(() => {
+    setStatus(initialStatus);
+  }, [initialStatus]);
   const isRunning = status === 'running' || status === 'pending';
   const isFailed = status === 'failed';
   const isCurrentSubagent = useCallback(
@@ -401,43 +405,6 @@ const SubTaskDetailDrawer: React.FC<SubTaskDetailDrawerProps> = ({
     }
     return () => {};
   }, [isRunning, parentSessionId, agentId, cacheKey, isCurrentSubagent]);
-
-  // Poll subagent status to detect completion
-  useEffect(() => {
-    if (!isRunning) return;
-
-    const checkStatus = async () => {
-      try {
-        const result = await coworkService.getSubTaskStatus(parentSessionId);
-        const mappedSessionKey =
-          result.sessionKeys?.[agentId] ||
-          result.sessionKeys?.[subagentKey] ||
-          (sessionKey ? result.sessionKeys?.[sessionKey] : undefined);
-        const currentStatus =
-          result.statuses[agentId] ||
-          result.statuses[subagentKey] ||
-          (sessionKey ? result.statuses[sessionKey] : undefined) ||
-          (mappedSessionKey ? result.statuses[mappedSessionKey] : undefined);
-        if (currentStatus) {
-          setStatus(currentStatus);
-          if (currentStatus === 'done' && !hasFetchedOnCompletion.current) {
-            // Fetch history once when done — prevent double-fetch via the isRunning effect below
-            hasFetchedOnCompletion.current = true;
-            fetchHistory();
-          }
-        }
-      } catch {
-        // Ignore status check errors
-      }
-    };
-
-    // Check status every 3 seconds
-    const statusTimer = setInterval(checkStatus, 3000);
-    // Also check immediately
-    checkStatus();
-
-    return () => clearInterval(statusTimer);
-  }, [isRunning, parentSessionId, agentId, sessionKey, subagentKey, fetchHistory]);
 
   // Fetch error info when subagent is failed
   useEffect(() => {

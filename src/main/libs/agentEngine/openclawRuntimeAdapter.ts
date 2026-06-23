@@ -1093,6 +1093,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (stream !== 'lifecycle') return;
     const phase = typeof eventData.phase === 'string' ? eventData.phase : '';
+    if (phase === 'start' || phase === 'finishing' || phase === 'error' || phase === 'end') {
+      console.debug(
+        '[OpenClawRuntime] subagent lifecycle:',
+        'phase=' + phase,
+        'subagentId=' + resolved.subagentId.slice(-20),
+        'parentSessionId=' + (resolved.parentSessionId?.slice(-20) || ''),
+        'runId=' + (runId?.slice(-20) || ''),
+        'aborted=' + (eventData.aborted ?? ''),
+        'error=' + (eventData.error ?? ''),
+      );
+    }
     if (phase === 'start') {
       this.setLocalSubagentStatusHint(resolved.subagentId, 'running', {
         parentSessionId: resolved.parentSessionId,
@@ -3253,8 +3264,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
         );
       });
+      // Prefer a previously-recorded terminal "done" (from a non-aborted
+      // finishing lifecycle event) over a Gateway-reported "failed", which can
+      // be caused by post-completion announce-phase errors.  Check three sources
+      // because the persisted row may have been overwritten on a prior poll.
+      const inMemoryStatus =
+        this.subagentStatus.get(subagent.toolCallId || '') ||
+        this.subagentStatus.get(normalizedSessionKey);
+      const sourcesHaveDone =
+        persisted?.status === 'done' || inMemoryStatus === 'done';
+      const reconciledStatus =
+        sourcesHaveDone && subagent.status === 'failed'
+          ? 'done'
+          : subagent.status;
       return {
         ...subagent,
+        status: reconciledStatus,
         label: subagent.label || this.sanitizeCachedSubagentLabel(persisted?.label),
         toolCallId: subagent.toolCallId || persisted?.toolCallId,
       };
@@ -3309,11 +3334,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (label) this.toolCallIdToLabel.set(row.toolCallId, label);
       if (row.childSessionKey) this.toolCallIdToSessionKey.set(row.toolCallId, row.childSessionKey);
       this.toolCallIdToParentSessionId.set(row.toolCallId, row.parentSessionId);
+      // If the in-memory guard already recorded a "done" from finishing lifecycle,
+      // but the persisted row shows "failed" (from a prior Gateway poll), prefer "done".
+      const inMemoryFallback = this.subagentStatus.get(row.toolCallId);
+      const fallbackReconciled =
+        row.status === 'failed' && inMemoryFallback === 'done' ? 'done' : row.status;
       return {
         id: row.childSessionKey || row.toolCallId,
         sessionKey: row.childSessionKey || '',
         label,
-        status: row.status,
+        status: fallbackReconciled,
         toolCallId: row.toolCallId,
       };
     });
@@ -3348,7 +3378,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       });
     }
 
-    return buildSubagentStatusView([...cachedSubagents, ...liveHints]);
+    const finalView = buildSubagentStatusView([...cachedSubagents, ...liveHints]);
+    for (const s of finalView.subagents) {
+      if (s.label) {
+        console.debug(
+          '[OpenClawRuntime] getSubagentStatuses result:',
+          'label=' + s.label,
+          'status=' + s.status,
+          'sessionKey=' + (s.sessionKey?.slice(-20) || ''),
+          'id=' + (s.id?.slice(-20) || ''),
+        );
+      }
+    }
+    return finalView;
   }
 
   private getPersistedSubagentRows(parentSessionId: string): PersistedSubagentRow[] {
