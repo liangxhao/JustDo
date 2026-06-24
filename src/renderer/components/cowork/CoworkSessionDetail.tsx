@@ -84,6 +84,15 @@ type SessionSearchMatch = {
   occurrenceIndex: number;
 };
 
+type ActiveSubTask = {
+  agentId: string;
+  sessionKey?: string;
+  childSessionId?: string;
+  displayName?: string;
+  parentSessionId: string;
+  status: 'pending' | 'running' | 'done' | 'failed';
+};
+
 const AUTO_SCROLL_THRESHOLD = 120;
 const NAV_SCROLL_LOCK_DURATION = 800;
 const NAV_BOTTOM_SNAP_THRESHOLD = 20;
@@ -1803,6 +1812,7 @@ export const AssistantTranscriptBlock: React.FC<{
   sessionId?: string;
   toolExpanded?: boolean;
   activeSearchItemId?: string | null;
+  onOpenSubTaskDetail?: (subTask: ActiveSubTask) => void;
 }> = ({
   item,
   resolveLocalFilePath,
@@ -1816,6 +1826,7 @@ export const AssistantTranscriptBlock: React.FC<{
   sessionId,
   toolExpanded = true,
   activeSearchItemId = null,
+  onOpenSubTaskDetail,
 }) => {
   const renderSystemMessage = (message: CoworkMessage) => {
     const isError = !hasText(message.content) && typeof message.metadata?.error === 'string';
@@ -1931,7 +1942,7 @@ export const AssistantTranscriptBlock: React.FC<{
           mapDisplayText={mapDisplayText}
           onOpenDetail={() => {
             const meta = item.message.metadata as Record<string, unknown> | undefined;
-            setActiveSubTask({
+            onOpenSubTaskDetail?.({
               agentId: (meta?.toolCallId as string) || (meta?.sessionKey as string) || '',
               sessionKey: (meta?.sessionKey as string) || '',
               childSessionId: (meta?.sessionKey as string) || '',
@@ -2130,14 +2141,15 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }, [backendSubagentStatuses, backendSubagentLabels, backendSubagentSessionKeys, backendSubagents]);
 
   // Subagent detail drawer state
-  const [activeSubTask, setActiveSubTask] = useState<{
-    agentId: string;
-    sessionKey?: string;
-    childSessionId?: string;
-    displayName?: string;
-    parentSessionId: string;
-    status: 'pending' | 'running' | 'done' | 'failed';
-  } | null>(null);
+  const [activeSubTask, setActiveSubTask] = useState<ActiveSubTask | null>(null);
+
+  useEffect(() => {
+    if (!activeSubTask) return;
+    const match = enrichedSubTasks.find(s => s.agentId === activeSubTask.agentId);
+    if (match && match.status !== activeSubTask.status) {
+      setActiveSubTask(prev => (prev ? { ...prev, status: match.status } : prev));
+    }
+  }, [enrichedSubTasks, activeSubTask?.agentId, activeSubTask?.status]);
 
 
 
@@ -3066,6 +3078,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             showCopyButtons={!isStreaming}
             sessionId={sessionId}
             toolExpanded={toolExpanded}
+            onOpenSubTaskDetail={setActiveSubTask}
           />
         </div>
       );
@@ -3126,6 +3139,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                   sessionId={sessionId}
                   toolExpanded={toolExpanded}
                   activeSearchItemId={activeSearchHit?.itemId ?? null}
+                  onOpenSubTaskDetail={setActiveSubTask}
                 />
               </div>
             )}
@@ -3488,6 +3502,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           className={`h-full min-h-0 overflow-y-auto pt-3 ${transcriptItems.length > 1 && isScrollable ? 'pr-8' : 'pr-3'}`}
         >
           {renderTranscriptItems()}
+          <div className="max-w-5xl mx-auto px-4">
+            <SubAgentList
+              sessionId={sessionId ?? null}
+              currentSessionId={sessionId ?? null}
+              enrichedSubTasks={enrichedSubTasks}
+              setActiveSubTask={setActiveSubTask}
+            />
+          </div>
           <div className="h-20" />
         </div>
 
@@ -3736,6 +3758,18 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
       {/* Streaming Activity Bar */}
       {isStreaming && <StreamingActivityBar messages={currentSession.messages} />}
+
+      {activeSubTask && (
+        <SubTaskDetailDrawer
+          agentId={activeSubTask.agentId}
+          sessionKey={activeSubTask.sessionKey}
+          childSessionId={activeSubTask.childSessionId}
+          displayName={activeSubTask.displayName}
+          parentSessionId={activeSubTask.parentSessionId}
+          status={activeSubTask.status}
+          onClose={() => setActiveSubTask(null)}
+        />
+      )}
 
       {/* Input Area */}
       <div className="p-4 shrink-0">
