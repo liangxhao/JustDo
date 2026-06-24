@@ -10,6 +10,7 @@ vi.mock('electron', () => ({
   },
 }));
 
+import { normalizeGatewaySubagentStatus } from './openclaw/subagentGateway';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 function createEmptyStore() {
@@ -304,6 +305,205 @@ test('gateway subagent status wins over local lifecycle hints', async () => {
   expect(statuses.statuses['call-subagent']).toBe('running');
   expect(statuses.statuses['agent:main:subagent:child-1']).toBe('running');
   expect(statuses.subagents[0]?.status).toBe('running');
+});
+
+test('gateway subagent status treats ended historical running rows as done', () => {
+  expect(
+    normalizeGatewaySubagentStatus({
+      status: 'running',
+      subagentRunState: 'historical',
+      hasActiveSubagentRun: false,
+      startedAt: 1,
+      endedAt: 2,
+    }),
+  ).toBe('done');
+});
+
+test('persisted terminal subagent status wins over stale gateway running after restart', async () => {
+  const upsertSubagent = vi.fn();
+  const store = {
+    getSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? {
+            id: 'session-1',
+            title: 'Session',
+            claudeSessionId: null,
+            status: 'completed',
+            pinned: false,
+            cwd: '',
+            executionMode: 'local',
+            activeSkillIds: [],
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+          }
+        : null,
+    getAgent: () => null,
+    getSubagentsByParentSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? [
+            {
+              toolCallId: 'call-subagent',
+              parentSessionId: 'session-1',
+              childSessionKey: 'agent:main:subagent:child-1',
+              label: 'research task',
+              status: 'done' as const,
+            },
+          ]
+        : [],
+    addMessage: () => {
+      throw new Error('not expected');
+    },
+    updateSession: () => {},
+    deleteMessage: () => true,
+    replaceConversationMessages: () => {},
+    updateMessage: () => {},
+    upsertSubagent,
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.listSubagentsFromGateway = async () => [
+    {
+      id: 'agent:main:subagent:child-1',
+      sessionKey: 'agent:main:subagent:child-1',
+      label: 'research task',
+      status: 'running' as const,
+    },
+  ];
+
+  const statuses = await adapter.getSubagentStatuses('session-1');
+
+  expect(statuses.statuses['call-subagent']).toBe('done');
+  expect(statuses.statuses['agent:main:subagent:child-1']).toBe('done');
+  expect(statuses.subagents[0]?.status).toBe('done');
+  expect(upsertSubagent).toHaveBeenCalledWith(
+    'call-subagent',
+    'session-1',
+    'research task',
+    'done',
+    { childSessionKey: 'agent:main:subagent:child-1' },
+  );
+});
+
+test('persisted done subagent status wins over post-completion gateway failed after restart', async () => {
+  const upsertSubagent = vi.fn();
+  const store = {
+    getSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? {
+            id: 'session-1',
+            title: 'Session',
+            claudeSessionId: null,
+            status: 'completed',
+            pinned: false,
+            cwd: '',
+            executionMode: 'local',
+            activeSkillIds: [],
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+          }
+        : null,
+    getAgent: () => null,
+    getSubagentsByParentSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? [
+            {
+              toolCallId: 'call-subagent',
+              parentSessionId: 'session-1',
+              childSessionKey: 'agent:main:subagent:child-1',
+              label: 'research task',
+              status: 'done' as const,
+            },
+          ]
+        : [],
+    addMessage: () => {
+      throw new Error('not expected');
+    },
+    updateSession: () => {},
+    deleteMessage: () => true,
+    replaceConversationMessages: () => {},
+    updateMessage: () => {},
+    upsertSubagent,
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.listSubagentsFromGateway = async () => [
+    {
+      id: 'agent:main:subagent:child-1',
+      sessionKey: 'agent:main:subagent:child-1',
+      label: 'research task',
+      status: 'failed' as const,
+    },
+  ];
+
+  const statuses = await adapter.getSubagentStatuses('session-1');
+
+  expect(statuses.statuses['call-subagent']).toBe('done');
+  expect(statuses.statuses['agent:main:subagent:child-1']).toBe('done');
+  expect(statuses.subagents[0]?.status).toBe('done');
+  expect(upsertSubagent).toHaveBeenCalledWith(
+    'call-subagent',
+    'session-1',
+    'research task',
+    'done',
+    { childSessionKey: 'agent:main:subagent:child-1' },
+  );
+});
+
+test('persisted failed subagent status wins over stale gateway running after restart', async () => {
+  const store = {
+    getSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? {
+            id: 'session-1',
+            title: 'Session',
+            claudeSessionId: null,
+            status: 'completed',
+            pinned: false,
+            cwd: '',
+            executionMode: 'local',
+            activeSkillIds: [],
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+          }
+        : null,
+    getAgent: () => null,
+    getSubagentsByParentSession: (sessionId: string) =>
+      sessionId === 'session-1'
+        ? [
+            {
+              toolCallId: 'call-subagent',
+              parentSessionId: 'session-1',
+              childSessionKey: 'agent:main:subagent:child-1',
+              label: 'research task',
+              status: 'failed' as const,
+            },
+          ]
+        : [],
+    addMessage: () => {
+      throw new Error('not expected');
+    },
+    updateSession: () => {},
+    deleteMessage: () => true,
+    replaceConversationMessages: () => {},
+    updateMessage: () => {},
+    upsertSubagent: vi.fn(),
+  };
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.listSubagentsFromGateway = async () => [
+    {
+      id: 'agent:main:subagent:child-1',
+      sessionKey: 'agent:main:subagent:child-1',
+      label: 'research task',
+      status: 'running' as const,
+    },
+  ];
+
+  const statuses = await adapter.getSubagentStatuses('session-1');
+
+  expect(statuses.statuses['call-subagent']).toBe('failed');
+  expect(statuses.statuses['agent:main:subagent:child-1']).toBe('failed');
+  expect(statuses.subagents[0]?.status).toBe('failed');
 });
 
 test('subagent display label prefers explicit label before task preview', () => {

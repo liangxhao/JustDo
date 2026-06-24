@@ -59,7 +59,7 @@ const initialState: CoworkState = {
     executionMode: 'local',
     agentEngine: 'openclaw',
   },
-  thinkingExpanded: true, // Default to expanded (浅蓝色)
+  thinkingExpanded: false, // Default to collapsed (浅蓝色)
   toolExpanded: true, // Default to expanded (浅蓝色)
   hideFailedSubagents: false, // Default to show failed subagents
 };

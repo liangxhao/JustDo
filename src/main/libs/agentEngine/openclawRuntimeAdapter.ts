@@ -41,7 +41,6 @@ import {
   type GatewaySubagent,
   listGatewaySubagents,
   normalizeSubagentSessionKey,
-  normalizeGatewaySubagentStatus,
   type SubagentStatus,
 } from './openclaw/subagentGateway';
 import {
@@ -3264,17 +3263,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
         );
       });
-      // Prefer a previously-recorded terminal "done" (from a non-aborted
-      // finishing lifecycle event) over a Gateway-reported "failed", which can
-      // be caused by post-completion announce-phase errors.  Check three sources
-      // because the persisted row may have been overwritten on a prior poll.
+      // Prefer a previously-recorded "done" over later Gateway status. Gateway
+      // can report post-completion announce errors as failed even though the
+      // subagent itself already reached a non-aborted finishing lifecycle.
       const inMemoryStatus =
         this.subagentStatus.get(subagent.toolCallId || '') ||
         this.subagentStatus.get(normalizedSessionKey);
-      const sourcesHaveDone =
-        persisted?.status === 'done' || inMemoryStatus === 'done';
+      const persistedTerminal =
+        persisted?.status === 'done' || persisted?.status === 'failed'
+          ? persisted.status
+          : null;
+      const inMemoryDone = inMemoryStatus === 'done';
       const reconciledStatus =
-        sourcesHaveDone && subagent.status === 'failed'
+        persistedTerminal === 'done'
+          ? 'done'
+          : persistedTerminal === 'failed' && subagent.status !== 'failed'
+          ? 'failed'
+          : inMemoryDone && subagent.status === 'failed'
           ? 'done'
           : subagent.status;
       return {
@@ -3305,30 +3310,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     this.reconcilePersistedSubagentsFromSession(sessionId);
 
-    // Attempt to refresh statuses from Gateway for persisted subagents
-    // This helps recover accurate statuses after an engine restart
-    const rowsForRefresh = this.getPersistedSubagentRows(sessionId);
-    for (const row of rowsForRefresh) {
-      if (!row.childSessionKey || row.status === 'done' || row.status === 'failed') continue;
-      try {
-        const client = this.gatewayClient;
-        if (!client) break;
-        const result = await client.request('sessions.list', {
-          key: row.childSessionKey,
-          limit: 1,
-        });
-        const sessions = (result as Record<string, unknown>)?.sessions;
-        if (Array.isArray(sessions) && sessions.length > 0) {
-          const session = sessions[0] as Record<string, unknown>;
-          const gwStatus = normalizeGatewaySubagentStatus(session);
-          if (gwStatus === 'done' || gwStatus === 'failed') {
-            this.persistSubagentStatus(row.toolCallId, gwStatus);
-          }
-        }
-      } catch {
-        // Gateway may be unready; keep persisted status
-      }
-    }
     const cachedSubagents = this.getPersistedSubagentRows(sessionId).map(row => {
       const label = this.sanitizeCachedSubagentLabel(row.label);
       if (label) this.toolCallIdToLabel.set(row.toolCallId, label);

@@ -52,7 +52,7 @@ function patchFile(filePath) {
   //    In v2026.6.9, thinkLevel is followed by extraSystemPrompt, not fastMode
   content = content.replace(
     /(thinkLevel: resolvedThinkLevel,\n)(\s*)(extraSystemPrompt:)/g,
-    '$1$2reasoningLevel: params.resolvedReasoningLevel,\n$2$3',
+    '$1$2reasoningLevel: resolvedReasoningLevel,\n$2$3',
   );
 
   if (content === original) return false;

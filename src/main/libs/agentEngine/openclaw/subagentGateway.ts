@@ -52,7 +52,7 @@ export const normalizeGatewaySubagentStatus = (
     (typeof row.startedAt === 'number' && Number.isFinite(row.startedAt)) ||
     (typeof row.startedAt === 'string' && row.startedAt.trim() !== '');
 
-  if (active || status === 'running' || runState === 'active') return 'running';
+  if (active || runState === 'active') return 'running';
   if (
     endedAt &&
     ['failed', 'error', 'killed', 'timeout', 'timed_out', 'cancelled'].includes(status)
@@ -66,6 +66,7 @@ export const normalizeGatewaySubagentStatus = (
   ) {
     return 'done';
   }
+  if (status === 'running') return 'running';
   return startedAt ? 'running' : 'pending';
 };
 
@@ -159,4 +160,3 @@ export const listGatewaySubagents = async (options: {
 
   return Array.from(byKey.values());
 };
-
