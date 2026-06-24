@@ -3028,13 +3028,6 @@ if (!gotTheLock) {
         usage.contextTokens = estimatedUsage.contextTokens ?? usage.contextTokens;
         usage.totalTokensFresh = usage.totalTokens > 0 || usage.totalTokensFresh;
       }
-      console.debug('[CoworkContextUsage] resolved context usage', {
-        sessionId,
-        sessionKey: session.key,
-        totalTokens: usage.totalTokens,
-        contextTokens: usage.contextTokens,
-        totalTokensFresh: usage.totalTokensFresh,
-      });
       return {
         success: true,
         ...usage,

@@ -1292,14 +1292,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       errorReason?: string;
     },
   ): void {
-    for (const alias of this.getSubagentIdentifierAliases(identifier, options?.parentSessionId)) {
+    const aliases = this.getSubagentIdentifierAliases(identifier, options?.parentSessionId);
+    for (const alias of aliases) {
       this.subagentStatus.set(alias, status);
       if (options?.parentSessionId) {
         this.toolCallIdToParentSessionId.set(alias, options.parentSessionId);
       }
     }
     if (options?.persist) {
-      this.persistSubagentStatus(identifier, status, options.errorReason);
+      for (const alias of aliases) {
+        this.persistSubagentStatus(alias, status, options.errorReason);
+      }
     }
   }
 
@@ -3253,42 +3256,51 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!sessionId) return empty;
 
     const persistedRows = this.getPersistedSubagentRows(sessionId);
-    const gatewaySubagents = (await this.listSubagentsFromGateway(sessionId)).map(subagent => {
-      const normalizedSessionKey =
-        this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
-      const persisted = persistedRows.find(row => {
-        const childSessionKey = row.childSessionKey || '';
-        return (
-          childSessionKey === subagent.sessionKey ||
-          this.normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
-        );
-      });
-      // Prefer a previously-recorded "done" over later Gateway status. Gateway
-      // can report post-completion announce errors as failed even though the
-      // subagent itself already reached a non-aborted finishing lifecycle.
-      const inMemoryStatus =
-        this.subagentStatus.get(subagent.toolCallId || '') ||
-        this.subagentStatus.get(normalizedSessionKey);
-      const persistedTerminal =
-        persisted?.status === 'done' || persisted?.status === 'failed'
-          ? persisted.status
-          : null;
-      const inMemoryDone = inMemoryStatus === 'done';
-      const reconciledStatus =
-        persistedTerminal === 'done'
-          ? 'done'
-          : persistedTerminal === 'failed' && subagent.status !== 'failed'
-          ? 'failed'
-          : inMemoryDone && subagent.status === 'failed'
-          ? 'done'
-          : subagent.status;
-      return {
-        ...subagent,
-        status: reconciledStatus,
-        label: subagent.label || this.sanitizeCachedSubagentLabel(persisted?.label),
-        toolCallId: subagent.toolCallId || persisted?.toolCallId,
-      };
-    });
+    const gatewaySubagents = await Promise.all(
+      (await this.listSubagentsFromGateway(sessionId)).map(async subagent => {
+        const normalizedSessionKey =
+          this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
+        const persisted = persistedRows.find(row => {
+          const childSessionKey = row.childSessionKey || '';
+          return (
+            childSessionKey === subagent.sessionKey ||
+            this.normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
+          );
+        });
+        // Prefer a previously-recorded "done" over later Gateway status. Gateway
+        // can report post-completion announce errors as failed even though the
+        // subagent itself already reached a non-aborted finishing lifecycle.
+        const inMemoryStatus =
+          this.subagentStatus.get(subagent.toolCallId || '') ||
+          this.subagentStatus.get(normalizedSessionKey);
+        const persistedTerminal =
+          persisted?.status === 'done' || persisted?.status === 'failed'
+            ? persisted.status
+            : null;
+        const inMemoryDone = inMemoryStatus === 'done';
+        let reconciledStatus: SubagentStatus =
+          persistedTerminal === 'done'
+            ? 'done'
+            : persistedTerminal === 'failed' && subagent.status !== 'failed'
+              ? 'failed'
+              : inMemoryDone && subagent.status === 'failed'
+                ? 'done'
+                : subagent.status;
+        if (
+          reconciledStatus === 'running' &&
+          !persistedTerminal &&
+          (await this.hasCompletedSubagentHistory(subagent.sessionKey))
+        ) {
+          reconciledStatus = 'done';
+        }
+        return {
+          ...subagent,
+          status: reconciledStatus,
+          label: subagent.label || this.sanitizeCachedSubagentLabel(persisted?.label),
+          toolCallId: subagent.toolCallId || persisted?.toolCallId,
+        };
+      }),
+    );
     if (gatewaySubagents.length > 0) {
       for (const subagent of gatewaySubagents) {
         const cacheKey = subagent.toolCallId || subagent.id || subagent.sessionKey;
@@ -3381,6 +3393,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return typeof getSubagentsByParentSession === 'function'
       ? getSubagentsByParentSession.call(this.store, parentSessionId)
       : [];
+  }
+
+  private async hasCompletedSubagentHistory(sessionKey: string): Promise<boolean> {
+    const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey) || sessionKey;
+    if (!normalizedSessionKey || !this.gatewayClient) return false;
+    try {
+      const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
+        sessionKey: normalizedSessionKey,
+        limit: 20,
+      });
+      if (!Array.isArray(history?.messages)) return false;
+      return extractGatewayHistoryEntries(history.messages).some(entry => {
+        return entry.role === 'assistant' && entry.text.trim() !== '' && !isNoReply(entry.text);
+      });
+    } catch {
+      return false;
+    }
   }
 
   private async listSubagentsFromGateway(sessionId: string): Promise<GatewaySubagent[]> {

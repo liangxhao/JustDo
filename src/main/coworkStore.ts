@@ -1296,7 +1296,12 @@ export class CoworkStore {
         parent_session_id = excluded.parent_session_id,
         child_session_key = COALESCE(excluded.child_session_key, cowork_subagents.child_session_key),
         label = COALESCE(excluded.label, cowork_subagents.label),
-        status = excluded.status,
+        status = CASE
+          WHEN cowork_subagents.status IN ('done', 'failed')
+            AND excluded.status IN ('pending', 'running')
+          THEN cowork_subagents.status
+          ELSE excluded.status
+        END,
         tool_input = COALESCE(excluded.tool_input, cowork_subagents.tool_input),
         error_reason = COALESCE(excluded.error_reason, cowork_subagents.error_reason),
         updated_at = excluded.updated_at
@@ -1324,11 +1329,16 @@ export class CoworkStore {
       .prepare(
         `
       UPDATE cowork_subagents
-      SET status = ?, error_reason = COALESCE(?, error_reason), updated_at = ?
+      SET status = CASE
+        WHEN status IN ('done', 'failed') AND ? IN ('pending', 'running') THEN status
+        ELSE ?
+      END,
+      error_reason = COALESCE(?, error_reason),
+      updated_at = ?
       WHERE tool_call_id = ?
     `,
       )
-      .run(status, errorReason || null, now, toolCallId);
+      .run(status, status, errorReason || null, now, toolCallId);
   }
 
   /**
@@ -1344,11 +1354,16 @@ export class CoworkStore {
       .prepare(
         `
       UPDATE cowork_subagents
-      SET status = ?, error_reason = COALESCE(?, error_reason), updated_at = ?
+      SET status = CASE
+        WHEN status IN ('done', 'failed') AND ? IN ('pending', 'running') THEN status
+        ELSE ?
+      END,
+      error_reason = COALESCE(?, error_reason),
+      updated_at = ?
       WHERE tool_call_id = ? OR child_session_key = ?
     `,
       )
-      .run(status, errorReason || null, now, identifier, identifier);
+      .run(status, status, errorReason || null, now, identifier, identifier);
   }
 
   /**
