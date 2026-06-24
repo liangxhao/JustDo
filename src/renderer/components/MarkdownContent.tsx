@@ -59,6 +59,155 @@ const encodeFileUrlDestination = (dest: string): string => {
   return dest.replace(trimmed, `${prefix}${encoded}${suffix}`);
 };
 
+const trimAutoLinkedPath = (value: string): { path: string; suffix: string } => {
+  let path = value;
+  let suffix = '';
+  const trailingPunctuation = /[.,;:!?，。；：！？、)\]\}）】》"'“”‘’]+$/;
+
+  while (path) {
+    const match = path.match(trailingPunctuation);
+    if (!match) break;
+    suffix = `${match[0]}${suffix}`;
+    path = path.slice(0, -match[0].length);
+  }
+
+  return { path, suffix };
+};
+
+const escapeMarkdownText = (value: string): string =>
+  value.replace(/([\\`*_{}\[\]()#+\-.!|>])/g, '\\$1');
+
+const getPathDisplayName = (filePath: string): string => {
+  const withoutProtocol = stripFileProtocol(stripHashAndQuery(filePath));
+  const normalized = safeDecodeURIComponent(withoutProtocol).replace(/[\\/]+$/, '');
+  const lastSegment = normalized.split(/[\\/]/).filter(Boolean).pop();
+  return lastSegment || normalized || filePath;
+};
+
+const isPathStartBoundary = (content: string, index: number): boolean => {
+  if (index === 0) return true;
+  const previous = content[index - 1];
+  return /[\s([{"'`<:=：，。；、]/.test(previous);
+};
+
+const findMarkdownInlineLinkEnd = (input: string, start: number): number => {
+  const closeBracket = input.indexOf(']', start + 1);
+  if (closeBracket === -1) return -1;
+
+  const next = input[closeBracket + 1];
+  if (next === '(') {
+    return findMarkdownLinkEnd(input, closeBracket + 2);
+  }
+
+  if (next === '[') {
+    const closeReference = input.indexOf(']', closeBracket + 2);
+    return closeReference === -1 ? -1 : closeReference;
+  }
+
+  return -1;
+};
+
+const findInlineCodeEnd = (input: string, start: number): number => {
+  let tickCount = 0;
+  while (input[start + tickCount] === '`') {
+    tickCount += 1;
+  }
+
+  const fence = '`'.repeat(tickCount);
+  return input.indexOf(fence, start + tickCount);
+};
+
+const getAutoLinkPathCandidate = (
+  input: string,
+  start: number,
+): { path: string; suffix: string; rawLength: number } | null => {
+  if (!isPathStartBoundary(input, start)) return null;
+
+  const rest = input.slice(start);
+  const match =
+    rest.match(/^file:\/\/[^\s<>"'`|[\]{}]+/i) ??
+    rest.match(/^[A-Za-z]:[\\/][^\s<>"'`|[\]{}]+/) ??
+    rest.match(/^\/(?:[^\s<>"'`|[\]{}]+\/)+[^\s<>"'`|[\]{}]+/);
+
+  if (!match) return null;
+
+  const { path, suffix } = trimAutoLinkedPath(match[0]);
+  if (!path || path === '/' || path.endsWith(':')) return null;
+  if (!/^file:\/\//i.test(path) && !isLikelyLocalFilePath(path)) return null;
+
+  return { path, suffix, rawLength: match[0].length };
+};
+
+const autoLinkLocalFilePathsInText = (content: string): string => {
+  let result = '';
+  let cursor = 0;
+
+  while (cursor < content.length) {
+    const char = content[cursor];
+
+    if (char === '`') {
+      const codeEnd = findInlineCodeEnd(content, cursor);
+      if (codeEnd !== -1) {
+        const tickCount = content.slice(cursor).match(/^`+/)?.[0].length ?? 1;
+        const codeContentStart = cursor + tickCount;
+        const codeContent = content.slice(codeContentStart, codeEnd);
+        const codeCandidate = getAutoLinkPathCandidate(codeContent, 0);
+        if (codeCandidate && codeCandidate.rawLength === codeContent.length) {
+          const displayName = getPathDisplayName(codeCandidate.path);
+          const href = encodeFileUrl(toFileHref(stripFileProtocol(codeCandidate.path)));
+          result += `[${escapeMarkdownText(displayName)}](<${href}>)${codeCandidate.suffix}`;
+          cursor = codeEnd + tickCount;
+          continue;
+        }
+
+        result += content.slice(cursor, codeEnd + tickCount);
+        cursor = codeEnd + tickCount;
+        continue;
+      }
+    }
+
+    if (char === '[' || (char === '!' && content[cursor + 1] === '[')) {
+      const linkStart = char === '!' ? cursor + 1 : cursor;
+      const linkEnd = findMarkdownInlineLinkEnd(content, linkStart);
+      if (linkEnd !== -1) {
+        result += content.slice(cursor, linkEnd + 1);
+        cursor = linkEnd + 1;
+        continue;
+      }
+    }
+
+    const candidate = getAutoLinkPathCandidate(content, cursor);
+    if (candidate) {
+      const displayName = getPathDisplayName(candidate.path);
+      const href = encodeFileUrl(toFileHref(stripFileProtocol(candidate.path)));
+      result += `[${escapeMarkdownText(displayName)}](<${href}>)${candidate.suffix}`;
+      cursor += candidate.rawLength;
+      continue;
+    }
+
+    result += char;
+    cursor += 1;
+  }
+
+  return result;
+};
+
+const autoLinkLocalFilePathsInMarkdown = (content: string): string => {
+  const fencePattern = /(^|\n)(```|~~~)[\s\S]*?(?:\n\2(?=\n|$)|$)/g;
+  let result = '';
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = fencePattern.exec(content)) !== null) {
+    result += autoLinkLocalFilePathsInText(content.slice(cursor, match.index));
+    result += match[0];
+    cursor = match.index + match[0].length;
+  }
+
+  result += autoLinkLocalFilePathsInText(content.slice(cursor));
+  return result;
+};
+
 const findMarkdownLinkEnd = (input: string, start: number): number => {
   let depth = 1;
   for (let i = start; i < input.length; i += 1) {
@@ -653,6 +802,36 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
   ]
     .filter(Boolean)
     .join(' ');
+  const inlinePathCandidate = getAutoLinkPathCandidate(trimmedCodeText, 0);
+
+  if (inlinePathCandidate && inlinePathCandidate.rawLength === trimmedCodeText.length) {
+    const filePath = safeDecodeURIComponent(stripFileProtocol(inlinePathCandidate.path));
+    const displayName = getPathDisplayName(filePath);
+    const handleInlinePathClick = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+      e.preventDefault();
+      try {
+        const result = await window.electron.shell.openPath(filePath);
+        if (!result?.success) {
+          console.error('Failed to open file:', filePath, result?.error);
+        }
+      } catch (error) {
+        console.error('Failed to open file:', filePath, error);
+      }
+    };
+
+    return (
+      <a
+        href={toFileHref(filePath)}
+        onClick={handleInlinePathClick}
+        className="text-primary hover:text-primary-hover underline decoration-primary/50 hover:decoration-primary transition-colors cursor-pointer"
+        title={filePath}
+      >
+        <code className={inlineClassName} {...props}>
+          {displayName}
+        </code>
+      </a>
+    );
+  }
 
   return (
     <code className={inlineClassName} {...props}>
@@ -1061,7 +1240,9 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
   );
   const normalizedContent = useMemo(
     () =>
-      escapeMarkdownLinkPatterns(normalizeDisplayMath(encodeFileUrlsInMarkdown(content))),
+      escapeMarkdownLinkPatterns(
+        encodeFileUrlsInMarkdown(autoLinkLocalFilePathsInMarkdown(normalizeDisplayMath(content))),
+      ),
     [content],
   );
 
