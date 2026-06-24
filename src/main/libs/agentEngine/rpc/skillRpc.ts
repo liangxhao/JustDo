@@ -18,6 +18,10 @@ import type {
   SkillUpdateParams,
 } from '../types';
 
+const SESSION_TITLE_MAX_CHARS = 50;
+const SESSION_TITLE_FALLBACK = 'New Session';
+const SESSION_TITLE_TIMEOUT_MS = 30_000;
+
 export interface SkillRpcCallbacks {
   ensureGatewayClientReady(): Promise<void>;
   requireGatewayClient(): GatewayClientLike;
@@ -30,10 +34,11 @@ export class SkillRpcHandler {
 
   // ─── Title Generation ──────────────────────────────────────────────────────
 
-  async generateTitle(userIntent: string | null, timeoutMs = 8000): Promise<string> {
-    const SESSION_TITLE_MAX_CHARS = 50;
-    const SESSION_TITLE_FALLBACK = 'New Session';
-    const effectiveTimeout = timeoutMs > 0 ? timeoutMs : 8000;
+  async generateTitle(
+    userIntent: string | null,
+    timeoutMs = SESSION_TITLE_TIMEOUT_MS,
+  ): Promise<string> {
+    const effectiveTimeout = timeoutMs > 0 ? timeoutMs : SESSION_TITLE_TIMEOUT_MS;
 
     const normalizedInput = typeof userIntent === 'string' ? userIntent.trim() : '';
     const fallbackTitle = this.buildFallbackTitle(
@@ -68,8 +73,19 @@ export class SkillRpcHandler {
 
     console.log('[OpenClawRuntime] generateTitle: sending request via gateway...');
 
+    let requestPromise: Promise<Record<string, unknown>> | null = null;
+    let cleanupScheduled = false;
+    const scheduleCleanup = () => {
+      if (cleanupScheduled || !requestPromise) return;
+      cleanupScheduled = true;
+      void requestPromise.then(
+        () => this.deleteTitleSession(client, titleSessionKey),
+        () => this.deleteTitleSession(client, titleSessionKey),
+      );
+    };
+
     try {
-      const requestPromise = client.request<Record<string, unknown>>(
+      requestPromise = client.request<Record<string, unknown>>(
         'agent',
         {
           message: prompt,
@@ -83,7 +99,9 @@ export class SkillRpcHandler {
 
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('timeout')), effectiveTimeout);
+        timer = setTimeout(() => {
+          reject(new Error(`timeout after ${effectiveTimeout}ms`));
+        }, effectiveTimeout);
       });
 
       const result = await Promise.race([requestPromise, timeoutPromise]);
@@ -96,10 +114,31 @@ export class SkillRpcHandler {
         return this.normalizeTitle(resultText, fallbackTitle, SESSION_TITLE_MAX_CHARS);
       }
     } catch (error) {
+      if (this.isTimeoutError(error)) {
+        console.debug(
+          `[OpenClawRuntime] generateTitle: timed out after ${effectiveTimeout}ms. Using fallback title.`,
+        );
+        return fallbackTitle;
+      }
       console.warn('[OpenClawRuntime] generateTitle: request failed:', error);
+    } finally {
+      scheduleCleanup();
     }
 
     return fallbackTitle;
+  }
+
+  private isTimeoutError(error: unknown): boolean {
+    return error instanceof Error && /^timeout(?: after \d+ms)?$/.test(error.message);
+  }
+
+  private async deleteTitleSession(client: GatewayClientLike, sessionKey: string): Promise<void> {
+    try {
+      await client.request('sessions.delete', { key: sessionKey, deleteTranscript: true });
+      console.debug('[OpenClawRuntime] generateTitle: deleted temporary title session:', sessionKey);
+    } catch (error) {
+      console.debug('[OpenClawRuntime] generateTitle: temporary title session cleanup failed:', error);
+    }
   }
 
   private buildFallbackTitle(input: string, fallback: string, maxChars: number): string {

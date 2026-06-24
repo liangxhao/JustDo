@@ -3648,7 +3648,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // ─── Skill RPC Delegates ────────────────────────────────────────────────
 
-  async generateTitle(userIntent: string | null, timeoutMs = 8000): Promise<string> {
+  async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string> {
     return this.skillRpcHandler.generateTitle(userIntent, timeoutMs);
   }
 

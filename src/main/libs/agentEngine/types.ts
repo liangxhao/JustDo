@@ -248,7 +248,7 @@ export interface CoworkRuntime {
    * Generate a session title using the configured model.
    * Optional: only implemented by OpenClawRuntimeAdapter which has Gateway access.
    * @param userIntent The user's initial prompt to generate title from
-   * @param timeoutMs Timeout in milliseconds (default 8000ms)
+   * @param timeoutMs Timeout in milliseconds (default 30000ms)
    * @returns Generated title, or fallback if generation fails
    */
   generateTitle?(userIntent: string | null, timeoutMs?: number): Promise<string>;
