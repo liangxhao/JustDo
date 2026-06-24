@@ -7,6 +7,7 @@
  */
 
 import { randomUUID } from 'crypto';
+
 import type { CoworkStore } from '../../../coworkStore';
 import type { GatewayClientLike } from '../gateway/types';
 import type {

@@ -1,30 +1,30 @@
 import {
-  ClockIcon,
-  PlusIcon,
-  PlayIcon,
-  TrashIcon,
   ArrowPathIcon,
-  XMarkIcon,
   CalendarIcon,
-  ExclamationTriangleIcon,
-  CheckCircleIcon,
-  XCircleIcon,
   ChatBubbleLeftRightIcon,
-  PauseIcon,
+  CheckCircleIcon,
   ChevronDownIcon,
+  ClockIcon,
+  ExclamationTriangleIcon,
+  PauseIcon,
+  PlayIcon,
+  PlusIcon,
+  TrashIcon,
+  XCircleIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import type { ScheduledTask, ScheduledTaskInput, Schedule } from '../../../scheduledTask/types';
+import type { Schedule,ScheduledTask, ScheduledTaskInput } from '../../../scheduledTask/types';
 import { i18nService } from '../../services/i18n';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { RootState } from '../../store';
-import { formatDateTime, formatScheduleLabel } from './utils';
-import WindowTitleBar from '../window/WindowTitleBar';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
+import SidebarToggleIcon from '../icons/SidebarToggleIcon';
+import WindowTitleBar from '../window/WindowTitleBar';
 import TaskRunHistory from './TaskRunHistory';
+import { formatDateTime, formatScheduleLabel } from './utils';
 
 // ── Schedule Builder Types ─────────────────────────────────────────
 

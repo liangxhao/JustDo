@@ -593,6 +593,9 @@ export class OpenClawConfigSync {
       },
       session: {
         dmScope: 'per-account-channel-peer',
+        reset: {
+          mode: 'idle',
+        },
       },
       commands: {
         ownerAllowFrom: MANAGED_OWNER_ALLOW_FROM,
