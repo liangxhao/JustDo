@@ -64,6 +64,15 @@ describe('openclawHistory', () => {
     expect(entry).toEqual({ role: 'system', text: 'Reminder fired' });
   });
 
+  test('filters synthetic tool failure system notices', () => {
+    const entry = extractGatewayHistoryEntry({
+      role: 'system',
+      content:
+        '⚠️ 🛠️ `Get-ChildItem ~\\justdo\\project\\memory\\* -Er…MEMORY.md -ErrorAction SilentlyContinue` failed',
+    });
+    expect(entry).toBeNull();
+  });
+
   test('filters unsupported roles and empty messages', () => {
     const entries = extractGatewayHistoryEntries([
       { role: 'user', content: 'Set a reminder' },

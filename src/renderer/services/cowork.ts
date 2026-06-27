@@ -1,6 +1,7 @@
 import { flushSync } from 'react-dom';
 
 import { classifyErrorKey } from '../../common/coworkErrorClassify';
+import { isGatewayToolFailureNotice } from '../../common/toolFailureNotice';
 import { store } from '../store';
 import {
   addGroup,
@@ -221,6 +222,12 @@ class CoworkService {
 
     // Error listener
     const errorCleanup = cowork.onStreamError(({ sessionId, error }) => {
+      // A failed tool call is already represented by its tool_result and does
+      // not mean the overall run failed. OpenClaw can forward this synthetic
+      // notice after a successfully completed turn.
+      if (isGatewayToolFailureNotice(error)) {
+        return;
+      }
       store.dispatch(updateSessionStatus({ sessionId, status: 'error' }));
       // Surface the error as a visible message so the user knows what happened.
       if (error) {

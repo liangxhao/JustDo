@@ -1,3 +1,4 @@
+import { isGatewayToolFailureNotice } from '../../common/toolFailureNotice';
 import {
   parseScheduledReminderPrompt,
   parseSimpleScheduledReminderText,
@@ -115,6 +116,13 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
   }
 
   const text = extractGatewayMessageText(message).trim();
+
+  // OpenClaw writes a synthetic system notice after a failed tool call. The
+  // corresponding tool_result is already shown in its tool group, so replaying
+  // this notice during final history reconciliation creates a duplicate bubble.
+  if (normalizedRole === 'system' && isGatewayToolFailureNotice(text)) {
+    return null;
+  }
 
   // Handle scheduled reminder system message for user role
   if (normalizedRole === 'user') {
