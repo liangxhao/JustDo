@@ -124,6 +124,38 @@ function verifyPreinstalledPlugins(runtimeRoot, buildHint) {
   console.log(`[electron-builder-hooks] Verified ${plugins.length} preinstalled OpenClaw plugin(s).`);
 }
 
+function verifyOpenClawReasoningStreamPatches(gatewayBundlePath, buildHint) {
+  const bundle = readFileSync(gatewayBundlePath, 'utf8');
+  const requiredPatterns = [
+    {
+      label: 'reasoning stream callback gate',
+      pattern: /streamReasoning:\s*reasoningMode === "stream" && canShowReasoning,/,
+    },
+    {
+      label: 'tagged reasoning delta forwarding',
+      pattern:
+        /const appendPartitionedVisibleDelta = \(delta\) => \{\s*appendRoutedContentDelta\(delta\);\s*\};/,
+    },
+    {
+      label: 'strict streaming for content reasoning tags',
+      pattern:
+        /const routedDeltas = reasoningTagTextPartitioner\.push\(contentDelta\.text\);/,
+    },
+  ];
+  const missing = requiredPatterns
+    .filter(({ pattern }) => !pattern.test(bundle))
+    .map(({ label }) => label);
+
+  if (missing.length > 0) {
+    throw new Error(
+      '[electron-builder-hooks] OpenClaw reasoning stream patches are incomplete. '
+      + `Missing: ${missing.join(', ')}. Run \`${buildHint}\` before packaging.`,
+    );
+  }
+
+  console.log('[electron-builder-hooks] Verified OpenClaw reasoning stream patches.');
+}
+
 function ensureBundledOpenClawRuntime(context) {
   const { runtimeRoot, targetId } = syncCurrentOpenClawRuntimeForTarget(context);
   const buildHint = getOpenClawRuntimeBuildHint(targetId);
@@ -167,6 +199,7 @@ function ensureBundledOpenClawRuntime(context) {
       + ' bytes, expected ~27MB). Rebuild with: `npm run openclaw:bundle`.',
     );
   }
+  verifyOpenClawReasoningStreamPatches(gatewayBundlePath, buildHint);
 
   const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
   if (existsSync(gatewayAsarPath)) {
