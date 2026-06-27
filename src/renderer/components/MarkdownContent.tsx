@@ -26,6 +26,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
 import { i18nService } from '../services/i18n';
+import { matchAutoLinkPathPrefix } from '../utils/markdownPathLinks';
 
 const CODE_BLOCK_LINE_LIMIT = 200;
 const CODE_BLOCK_CHAR_LIMIT = 20000;
@@ -124,18 +125,14 @@ const getAutoLinkPathCandidate = (
   if (!isPathStartBoundary(input, start)) return null;
 
   const rest = input.slice(start);
-  const match =
-    rest.match(/^file:\/\/[^\s<>"'`|[\]{}]+/i) ??
-    rest.match(/^[A-Za-z]:[\\/][^\s<>"'`|[\]{}]+/) ??
-    rest.match(/^\/(?:[^\s<>"'`|[\]{}]+\/)+[^\s<>"'`|[\]{}]+/);
-
+  const match = matchAutoLinkPathPrefix(rest);
   if (!match) return null;
 
-  const { path, suffix } = trimAutoLinkedPath(match[0]);
+  const { path, suffix } = trimAutoLinkedPath(match);
   if (!path || path === '/' || path.endsWith(':')) return null;
   if (!/^file:\/\//i.test(path) && !isLikelyLocalFilePath(path)) return null;
 
-  return { path, suffix, rawLength: match[0].length };
+  return { path, suffix, rawLength: match.length };
 };
 
 const autoLinkLocalFilePathsInText = (content: string): string => {
