@@ -4,25 +4,25 @@ import { OpenClawApi,OpenClawProviderId, ProviderName } from '../../shared/provi
 
 const providerApiKeyEnvVar = (providerName: string): string => {
   const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return `GUCCIAI_APIKEY_${envName}`;
+  return `JustDo_APIKEY_${envName}`;
 };
 
 describe('providerApiKeyEnvVar', () => {
   test('converts ollama provider name', () => {
-    expect(providerApiKeyEnvVar(ProviderName.Ollama)).toBe('GUCCIAI_APIKEY_OLLAMA');
+    expect(providerApiKeyEnvVar(ProviderName.Ollama)).toBe('JustDo_APIKEY_OLLAMA');
   });
 
   test('converts custom provider name', () => {
-    expect(providerApiKeyEnvVar(ProviderName.Custom)).toBe('GUCCIAI_APIKEY_CUSTOM');
+    expect(providerApiKeyEnvVar(ProviderName.Custom)).toBe('JustDo_APIKEY_CUSTOM');
   });
 
   test('handles custom provider indices', () => {
-    expect(providerApiKeyEnvVar('custom_0')).toBe('GUCCIAI_APIKEY_CUSTOM_0');
-    expect(providerApiKeyEnvVar('custom_5')).toBe('GUCCIAI_APIKEY_CUSTOM_5');
+    expect(providerApiKeyEnvVar('custom_0')).toBe('JustDo_APIKEY_CUSTOM_0');
+    expect(providerApiKeyEnvVar('custom_5')).toBe('JustDo_APIKEY_CUSTOM_5');
   });
 
   test('server key matches hardcoded convention', () => {
-    expect(providerApiKeyEnvVar('server')).toBe('GUCCIAI_APIKEY_SERVER');
+    expect(providerApiKeyEnvVar('server')).toBe('JustDo_APIKEY_SERVER');
   });
 });
 
@@ -34,13 +34,13 @@ describe('env var stability on model switch', () => {
     const env: Record<string, string> = {};
 
     if (serverToken) {
-      env.GUCCIAI_APIKEY_SERVER = serverToken;
+      env.JustDo_APIKEY_SERVER = serverToken;
     }
 
     for (const [name, config] of Object.entries(providers)) {
       if (!config.enabled) continue;
       const envName = name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-      env[`GUCCIAI_APIKEY_${envName}`] = config.apiKey;
+      env[`JustDo_APIKEY_${envName}`] = config.apiKey;
     }
 
     return env;
@@ -68,8 +68,8 @@ describe('env var stability on model switch', () => {
     const envAfter = simulateCollectEnvVars(providers);
 
     expect(JSON.stringify(envBefore)).toBe(JSON.stringify(envAfter));
-    expect(envBefore.GUCCIAI_APIKEY_OLLAMA).toBe('ollama-key-123');
-    expect(envBefore.GUCCIAI_APIKEY_CUSTOM).toBe('custom-key-456');
+    expect(envBefore.JustDo_APIKEY_OLLAMA).toBe('ollama-key-123');
+    expect(envBefore.JustDo_APIKEY_CUSTOM).toBe('custom-key-456');
   });
 
   test('only editing apiKey value causes env var change', () => {
@@ -144,7 +144,7 @@ const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
 };
 
 const DEFAULT_DESCRIPTOR: ProviderDescriptor = {
-  providerId: OpenClawProviderId.GucciAI,
+  providerId: OpenClawProviderId.JustDo,
   resolveApi: ({ apiType }) => mapApiTypeToOpenClawApi(apiType),
   normalizeBaseUrl: stripChatCompletionsSuffix,
 };
@@ -164,7 +164,7 @@ const resolveDescriptor = (
   }
   return {
     ...DEFAULT_DESCRIPTOR,
-    providerId: providerName || OpenClawProviderId.GucciAI,
+    providerId: providerName || OpenClawProviderId.JustDo,
   };
 };
 
@@ -180,14 +180,14 @@ describe('resolveDescriptor', () => {
     expect(d.providerId).toBe(OpenClawProviderId.Ollama);
   });
 
-  test('unknown provider falls back to gucciai providerId', () => {
+  test('unknown provider falls back to JustDo providerId', () => {
     const d = resolveDescriptor('some-unknown', false);
     expect(d.providerId).toBe('some-unknown');
   });
 
-  test('empty provider name falls back to gucciai', () => {
+  test('empty provider name falls back to JustDo', () => {
     const d = resolveDescriptor('', false);
-    expect(d.providerId).toBe(OpenClawProviderId.GucciAI);
+    expect(d.providerId).toBe(OpenClawProviderId.JustDo);
   });
 
   test('custom provider uses fallback descriptor', () => {
@@ -216,7 +216,7 @@ describe('provider registry coverage', () => {
   test('ollama resolves to correct providerId', () => {
     const d = resolveDescriptor(ProviderName.Ollama, false);
     expect(d.providerId).toBe(OpenClawProviderId.Ollama);
-    expect(d.providerId).not.toBe(OpenClawProviderId.GucciAI);
+    expect(d.providerId).not.toBe(OpenClawProviderId.JustDo);
   });
 
   test('ollama has non-empty providerId', () => {

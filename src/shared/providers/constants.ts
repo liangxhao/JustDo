@@ -21,7 +21,7 @@
 // ═══════════════════════════════════════════════════════
 
 // ─── Provider Name ──────────────────────────────────────────────────────
-// providerName identifies the GucciAI internal provider (config key).
+// providerName identifies the JustDo internal provider (config key).
 // Only Ollama and Custom providers are retained.
 export const ProviderName = {
   Ollama: 'ollama',
@@ -34,7 +34,7 @@ export type ProviderName = (typeof ProviderName)[keyof typeof ProviderName];
 // Only Ollama is retained as built-in provider.
 export const OpenClawProviderId = {
   Ollama: 'ollama',
-  GucciAI: 'gucciai',
+  JustDo: 'JustDo',
 } as const;
 export type OpenClawProviderId = (typeof OpenClawProviderId)[keyof typeof OpenClawProviderId];
 
@@ -255,7 +255,7 @@ class ProviderRegistryImpl {
     return (
       this.idIndex.get(providerName)?.openClawProviderId ??
       providerName ??
-      OpenClawProviderId.GucciAI
+      OpenClawProviderId.JustDo
     );
   }
 

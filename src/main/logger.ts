@@ -3,9 +3,9 @@
  * Intercepts console.* methods and writes to file + console simultaneously.
  *
  * Log file locations:
- *   macOS:   ~/Library/Logs/GucciAI/main-YYYY-MM-DD.log
- *   Windows: %USERPROFILE%\AppData\Roaming\GucciAI\logs\main-YYYY-MM-DD.log
- *   Linux:   ~/.config/GucciAI/logs/main-YYYY-MM-DD.log
+ *   macOS:   ~/Library/Logs/JustDo/main-YYYY-MM-DD.log
+ *   Windows: %USERPROFILE%\AppData\Roaming\JustDo\logs\main-YYYY-MM-DD.log
+ *   Linux:   ~/.config/JustDo/logs/main-YYYY-MM-DD.log
  *
  * Rotation policy:
  *   - Daily log files (one file per calendar day)
@@ -91,7 +91,7 @@ export function initLogger(): void {
 
   // Log startup marker
   log.info('='.repeat(60));
-  log.info(`GucciAI started (${process.platform} ${process.arch})`);
+  log.info(`JustDo started (${process.platform} ${process.arch})`);
   log.info('='.repeat(60));
 }
 

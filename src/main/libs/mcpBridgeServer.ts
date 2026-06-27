@@ -206,7 +206,7 @@ export class McpBridgeServer {
 
         this.pendingAskUser.set(requestId, { requestId, resolve, timer });
 
-        // Notify GucciAI to show the modal
+        // Notify JustDo to show the modal
         if (this.onAskUserCallback) {
           this.onAskUserCallback({
             requestId,

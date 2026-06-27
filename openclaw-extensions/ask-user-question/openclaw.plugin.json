@@ -1,7 +1,7 @@
 {
   "id": "ask-user-question",
   "name": "AskUserQuestion",
-  "description": "Structured user confirmation tool for GucciAI desktop.",
+  "description": "Structured user confirmation tool for JustDo desktop.",
   "contracts": {
     "tools": [
       "AskUserQuestion"
@@ -13,7 +13,7 @@
     "properties": {
       "callbackUrl": {
         "type": "string",
-        "description": "GucciAI HTTP callback URL for approval requests"
+        "description": "JustDo HTTP callback URL for approval requests"
       },
       "secret": {
         "type": "string",

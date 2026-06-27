@@ -7,7 +7,7 @@
 ## 概述
 
 本报告针对每个 patch 提供：
-1. **GucciAI 使用证据** — 具体代码引用
+1. **JustDo 使用证据** — 具体代码引用
 2. **为什么必须在 OpenClaw 端修改** — 技术原因分析
 3. **测试验证建议** — 如何验证功能依赖
 
@@ -30,7 +30,7 @@
 +    emitAgentEvent({ runId, stream: "thinking", sessionKey, data: { text: rawText, delta } });
 ```
 
-### GucciAI 使用证据
+### JustDo 使用证据
 
 **文件**: [src/main/libs/agentEngine/openclawRuntimeAdapter.ts](src/main/libs/agentEngine/openclawRuntimeAdapter.ts)
 
@@ -101,7 +101,7 @@ interface CoworkMessageRow {
 
 **原因 1: 控制发送方行为**
 
-thinking stream 事件是通过 WebSocket 从 OpenClaw gateway 发出的。GucciAI 只是接收方，无法控制发送方的：
+thinking stream 事件是通过 WebSocket 从 OpenClaw gateway 发出的。JustDo 只是接收方，无法控制发送方的：
 - 是否发送 thinking 事件（`streamReasoning` 条件）
 - 发送什么内容（raw text vs formatted text）
 - 包含哪些字段（是否有 sessionKey）
@@ -114,29 +114,29 @@ streamReasoning: reasoningMode === "stream" && typeof params.onReasoningStream =
 ```
 
 **问题**：只有当 `params.onReasoningStream` 存在时才发送 thinking 事件。
-但在 GucciAI 的使用场景中，thinking 事件通过 WebSocket 发送给 Electron 客户端，不需要本地 callback。
+但在 JustDo 的使用场景中，thinking 事件通过 WebSocket 发送给 Electron 客户端，不需要本地 callback。
 
 **原因 3: 内容格式问题**
 
 原始代码发送 `formatReasoningMessage(text)`（格式化后的文本）。
-但 GucciAI 需要 raw text 来正确计算 delta（增量），避免格式化导致的 delta 计算错误。
+但 JustDo 需要 raw text 来正确计算 delta（增量），避免格式化导致的 delta 计算错误。
 
 **原因 4: sessionKey 字段**
 
-原始代码不包含 `sessionKey`，但 GucciAI 需要 sessionKey 来正确关联 thinking 事件到具体的 session。
+原始代码不包含 `sessionKey`，但 JustDo 需要 sessionKey 来正确关联 thinking 事件到具体的 session。
 
 ### 测试验证
 
 ```typescript
 // 测试 1: 验证 thinking stream 事件接收
-test('GucciAI receives thinking stream events via WebSocket', async () => {
+test('JustDo receives thinking stream events via WebSocket', async () => {
   // 启动 openclaw gateway（应用 patch）
   // 发送带 /reasoning stream 的 prompt
   // 验证 WebSocket 收到 { stream: "thinking", data: { text, delta }, sessionKey }
 });
 
 // 测试 2: 验证 thinking 内容显示
-test('GucciAI UI displays thinking content in real-time', async () => {
+test('JustDo UI displays thinking content in real-time', async () => {
   // Mock thinking update 事件
   // 验证 Redux store 更新
   // 验证 UI 组件显示
@@ -182,7 +182,7 @@ if (!state.deps.cronConfig?.skipMissedJobs) {
 }
 ```
 
-### GucciAI 使用证据
+### JustDo 使用证据
 
 **文件**: [src/main/libs/openclawConfigSync.ts](src/main/libs/openclawConfigSync.ts)
 
@@ -233,7 +233,7 @@ if (config.skipMissedJobs !== undefined) {
 
 **原因 1: 配置解析在 OpenClaw 端**
 
-`openclaw.json` 由 OpenClaw gateway 启动时读取和解析。GucciAI 只能写入配置，但：
+`openclaw.json` 由 OpenClaw gateway 启动时读取和解析。JustDo 只能写入配置，但：
 - 类型定义（`types.cron.ts`）必须在 OpenClaw 端
 - Schema 验证（`zod-schema.ts`）必须在 OpenClaw 端
 - 配置对象结构定义（`CronConfig` type）必须在 OpenClaw 端
@@ -246,15 +246,15 @@ cron 服务启动逻辑 `ops.ts:133`：
 await runMissedJobs(state, { skipJobIds });
 ```
 
-这个行为发生在 OpenClaw gateway 进程中，GucciAI 无法干预。
+这个行为发生在 OpenClaw gateway 进程中，JustDo 无法干预。
 
-**原因 3: 无法在 GucciAI 端替代**
+**原因 3: 无法在 JustDo 端替代**
 
 | 尝试替代的方式 | 为什么失败 |
 |---------------|-----------|
-| 在 GucciAI 启动前删除 missed jobs | ❌ cron store 是 OpenClaw 管理的 SQLite |
+| 在 JustDo 启动前删除 missed jobs | ❌ cron store 是 OpenClaw 管理的 SQLite |
 | 通过 WebSocket API 控制 | ❌ OpenClaw 没有 expose 相关 API |
-| 修改 GucciAI 配置文件 | ❌ 类型不存在会导致解析失败 |
+| 修改 JustDo 配置文件 | ❌ 类型不存在会导致解析失败 |
 
 ### 测试验证
 
@@ -301,7 +301,7 @@ test('Without patch, skipMissedJobs config is rejected by OpenClaw', async () =>
 +ownerOnly: false,
 ```
 
-### GucciAI 配置覆盖
+### JustDo 配置覆盖
 
 **文件**: [src/main/libs/openclawConfigSync.ts](src/main/libs/openclawConfigSync.ts)
 
@@ -315,7 +315,7 @@ const MANAGED_OWNER_ALLOW_FROM = [
 
 ### 为什么不需要
 
-**原因**: GucciAI 配置 `ownerAllowFrom: ['*']` 已让所有用户被视为 owner
+**原因**: JustDo 配置 `ownerAllowFrom: ['*']` 已让所有用户被视为 owner
 
 ```typescript
 // OpenClaw 源码 src/auto-reply/command-auth.ts
@@ -331,7 +331,7 @@ if (tool.ownerOnly !== true || senderIsOwner || !tool.execute) {
 }
 ```
 
-**结论**: ❌ **已移除** — GucciAI 配置已覆盖此限制
+**结论**: ❌ **已移除** — JustDo 配置已覆盖此限制
 
 ---
 
@@ -343,7 +343,7 @@ if (tool.ownerOnly !== true || senderIsOwner || !tool.execute) {
 - `gateway-entry-run.patch`: 导出 `GatewayRunOpts` 和 `runGatewayCommand`
 - `gateway-entry-tsdown.patch`: 在 `tsdown.config.ts` 添加构建入口
 
-### GucciAI 使用证据
+### JustDo 使用证据
 
 **文件**: [scripts/bundle-openclaw-gateway.cjs](scripts/bundle-openclaw-gateway.cjs)
 
@@ -380,7 +380,7 @@ import(bundleUrl).then(() => {
 2. 不需要导出 `GatewayRunOpts` — bundle 自动内联所有函数
 3. 不需要 `tsdown.config.ts` 修改 — bundle 不依赖 dist 构建
 
-**证据**：GucciAI 代码中明确优先使用 `gateway-bundle.mjs`：
+**证据**：JustDo 代码中明确优先使用 `gateway-bundle.mjs`：
 ```typescript
 // 行 789-792: bundle 优先路径
 if (fs.existsSync(bundlePath)) {
@@ -420,7 +420,7 @@ const TOOL_DENY_BY_MESSAGE_PROVIDER = {
 };
 ```
 
-### GucciAI 使用证据 — ❌ 不使用
+### JustDo 使用证据 — ❌ 不使用
 
 **文件**: [src/renderer/types/im.ts](src/renderer/types/im.ts)
 
@@ -435,11 +435,11 @@ export const DEFAULT_IM_CONFIG: Record<IMPlatform, IMConfigPlaceholder> = {
 };
 ```
 
-**结论**: GucciAI 项目不支持任何 IM channel（企业微信、钉钉、飞书等），`wecom-exec-deny.patch` 完全无意义。
+**结论**: JustDo 项目不支持任何 IM channel（企业微信、钉钉、飞书等），`wecom-exec-deny.patch` 完全无意义。
 
 ### 建议
 
-❌ **移除此 patch** — GucciAI 不使用企业微信功能
+❌ **移除此 patch** — JustDo 不使用企业微信功能
 
 ---
 
@@ -449,7 +449,7 @@ export const DEFAULT_IM_CONFIG: Record<IMPlatform, IMConfigPlaceholder> = {
 
 为 Windows 添加 `shell: true` 到 `spawnSync`/`execFileSync`。
 
-### GucciAI 使用证据
+### JustDo 使用证据
 
 **文件**: [package.json](package.json)
 
@@ -478,7 +478,7 @@ spawnSync("pnpm", [...]) → ENOENT
 解决: spawnSync("npm", [...], { shell: true })
 ```
 
-**无法在 GucciAI 端替代**: 这些脚本在 OpenClaw 的 npm 包发布过程中执行，GucciAI 无法控制。
+**无法在 JustDo 端替代**: 这些脚本在 OpenClaw 的 npm 包发布过程中执行，JustDo 无法控制。
 
 ### 测试验证
 
@@ -513,7 +513,7 @@ const FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES = [
 
 ### 为什么可能不需要
 
-**原因**: GucciAI 使用 bundle 方案，facade 模块可能被打包进去。
+**原因**: JustDo 使用 bundle 方案，facade 模块可能被打包进去。
 
 **需要测试验证**:
 ```bash
@@ -528,7 +528,7 @@ npm run electron:dev:openclaw
 
 ## 总结表格
 
-| Patch | GucciAI 使用证据 | 为什么必须在 OpenClaw | 状态 |
+| Patch | JustDo 使用证据 | 为什么必须在 OpenClaw | 状态 |
 |-------|-----------------|---------------------|------|
 | thinking-stream | ✅ WebSocket 接收、Redux 显示、DB 存储 | 发送方逻辑控制 | **保留** |
 | skipMissedJobs types | ✅ openclaw.json 配置 | 类型定义在 OpenClaw | **保留** |
@@ -550,7 +550,7 @@ npm run electron:dev:openclaw
 
 ✅ 移除了 7 个不必要的 patches：
 - gateway-entry (3个) → bundle 方案替代
-- wecom-exec-deny → GucciAI 不使用企业微信
+- wecom-exec-deny → JustDo 不使用企业微信
 - facade-runtime → bundle 已解决
 - cron-tool-owner-only → ownerAllowFrom: ['*'] 已覆盖
 - cron-current-time-suffix → UI 侧可显示时间
@@ -568,4 +568,4 @@ npm run electron:dev:openclaw
 
 ---
 
-*报告生成: GucciAI 项目组*
+*报告生成: JustDo 项目组*

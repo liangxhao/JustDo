@@ -335,12 +335,12 @@ const composeExportCanvas = async (
 
   ctx.fillStyle = brandColor;
   ctx.font = `600 ${brandFontSize}px ${fontStack}`;
-  ctx.fillText('GucciAI — 全场景个人助理 Agent', textX, footerCenterY - taglineFontSize / 2 - 2);
+  ctx.fillText('JustDo — 全场景个人助理 Agent', textX, footerCenterY - taglineFontSize / 2 - 2);
 
   ctx.fillStyle = subtitleColor;
   ctx.font = `400 ${taglineFontSize}px ${fontStack}`;
   ctx.fillText(
-    '7×24 小时帮你干活的硬件场景个人助理，由GucciAI开发',
+    '7×24 小时帮你干活的硬件场景个人助理，由JustDo开发',
     textX,
     footerCenterY + brandFontSize / 2 + 3,
   );
@@ -3608,7 +3608,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                     items.push({
                       key: `${getTranscriptItemId(item)}-asst`,
                       itemIndex: i,
-                      label: getLabel(content, 'GucciAI'),
+                      label: getLabel(content, 'JustDo'),
                       contentLen: content.length,
                       isUser: false,
                     });
@@ -3736,7 +3736,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             >
               {!railTooltip.isUser && (
                 <div className="text-[12px] font-medium mb-0.5 text-neutral-800 dark:text-neutral-200">
-                  GucciAI:
+                  JustDo:
                 </div>
               )}
               <div

@@ -185,7 +185,7 @@ async function resolveStdioCommand(server: McpServerRecord): Promise<ResolvedStd
           );
         } else {
           const enhancedEnv = await getEnhancedEnv();
-          const npmBinDir = enhancedEnv.GUCCIAI_NPM_BIN_DIR;
+          const npmBinDir = enhancedEnv.JUSTDO_NPM_BIN_DIR;
           const cliJs =
             nodeCommandType === 'npx'
               ? npmBinDir
@@ -208,7 +208,7 @@ async function resolveStdioCommand(server: McpServerRecord): Promise<ResolvedStd
         }
       } else {
         const enhancedEnv = await getEnhancedEnv();
-        const npmBinDir = enhancedEnv.GUCCIAI_NPM_BIN_DIR;
+        const npmBinDir = enhancedEnv.JUSTDO_NPM_BIN_DIR;
         const npxCliJs = npmBinDir ? path.join(npmBinDir, 'npx-cli.js') : '';
         const npmCliJs = npmBinDir ? path.join(npmBinDir, 'npm-cli.js') : '';
 
@@ -217,7 +217,7 @@ async function resolveStdioCommand(server: McpServerRecord): Promise<ResolvedStd
         ): Record<string, string> => ({
           ...(base || {}),
           ELECTRON_RUN_AS_NODE: '1',
-          GUCCIAI_ELECTRON_PATH: electronNodeRuntimePath,
+          JUSTDO_ELECTRON_PATH: electronNodeRuntimePath,
         });
 
         if (nodeCommandType === 'node') {
@@ -286,7 +286,7 @@ async function resolveStdioCommand(server: McpServerRecord): Promise<ResolvedStd
       stdioEnv = {
         ...(stdioEnv || {}),
         ELECTRON_RUN_AS_NODE: '1',
-        GUCCIAI_ELECTRON_PATH: electronNodeRuntimePath,
+        JUSTDO_ELECTRON_PATH: electronNodeRuntimePath,
       };
       log('INFO', `"${server.name}": rewrote macOS command → Electron helper`);
     }
@@ -432,7 +432,7 @@ export class McpServerManager {
     }
 
     const client = new Client(
-      { name: `gucciai-mcp-bridge`, version: '1.0.0' },
+      { name: `justdo-mcp-bridge`, version: '1.0.0' },
       { capabilities: {} },
     );
 

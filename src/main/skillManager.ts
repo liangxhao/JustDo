@@ -207,7 +207,7 @@ function buildSkillEnv(): Record<string, string | undefined> {
 
   // Expose Electron executable so skill scripts can run JS with ELECTRON_RUN_AS_NODE
   // even when system Node.js is not installed.
-  env.GUCCIAI_ELECTRON_PATH = getElectronNodeRuntimePath();
+  env.JUSTDO_ELECTRON_PATH = getElectronNodeRuntimePath();
   appendPythonRuntimeToEnv(env);
 
   // Re-normalize after appendPythonRuntimeToEnv may have added a PATH key

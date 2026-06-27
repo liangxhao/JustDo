@@ -1,16 +1,16 @@
-# GucciAI 数据存储与 SQLite 设计
+# JustDo 数据存储与 SQLite 设计
 
 ## 1. 概述
 
-GucciAI 所有数据存储在本地 SQLite 数据库，文件名为 `gucciai.sqlite`，位于用户数据目录。采用 better-sqlite3 作为 SQLite 库，支持高性能同步操作。
+JustDo 所有数据存储在本地 SQLite 数据库，文件名为 `JustDo.sqlite`，位于用户数据目录。采用 better-sqlite3 作为 SQLite 库，支持高性能同步操作。
 
 ### 1.1 数据库位置
 
 | 平台 | 数据目录 |
 |------|----------|
-| macOS | `~/Library/Application Support/GucciAI/` |
-| Windows | `%APPDATA%\GucciAI\` |
-| Linux | `~/.config/GucciAI/` |
+| macOS | `~/Library/Application Support/JustDo/` |
+| Windows | `%APPDATA%\JustDo\` |
+| Linux | `~/.config/JustDo/` |
 
 ### 1.2 数据库特性
 
@@ -238,7 +238,7 @@ class SQLiteStore {
   
   // 初始化
   init(): void {
-    this.dbPath = path.join(app.getPath('userData'), 'gucciai.sqlite');
+    this.dbPath = path.join(app.getPath('userData'), 'JustDo.sqlite');
     this.db = new Database(this.dbPath);
     
     // 启用 WAL 模式

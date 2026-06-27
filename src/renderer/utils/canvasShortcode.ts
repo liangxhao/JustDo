@@ -1,5 +1,5 @@
 /**
- * Canvas Shortcode Parser for GucciAI
+ * Canvas Shortcode Parser for JustDo
  *
  * Extracts [embed ...] shortcodes and MEDIA: paths from assistant text
  * and converts them to CanvasPreview objects for rendering.

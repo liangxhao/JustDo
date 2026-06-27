@@ -8,7 +8,7 @@
  * Usage:
  *   import { t, setLanguage } from './i18n';
  *   setLanguage('en');
- *   const label = t('trayShowWindow'); // "Open GucciAI"
+ *   const label = t('trayShowWindow'); // "Open JustDo"
  */
 
 export type LanguageType = 'zh' | 'en';
@@ -16,7 +16,7 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     // Tray menu
-    trayShowWindow: '打开 GucciAI',
+    trayShowWindow: '打开 JustDo',
     trayNewTask: '新建任务',
     traySettings: '设置',
     trayQuit: '退出',
@@ -77,7 +77,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
   en: {
     // Tray menu
-    trayShowWindow: 'Open GucciAI',
+    trayShowWindow: 'Open JustDo',
     trayNewTask: 'New Task',
     traySettings: 'Settings',
     trayQuit: 'Quit',

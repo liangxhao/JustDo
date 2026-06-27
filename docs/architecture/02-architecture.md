@@ -1,8 +1,8 @@
-# GucciAI 系统架构设计
+# JustDo 系统架构设计
 
 ## 1. 架构概述
 
-GucciAI 采用 Electron 的严格进程隔离架构，所有跨进程通信通过 IPC 实现。系统分为三层：UI 层（Renderer）、服务层（IPC + Redux）、主进程层（Main + Agent Runtime）。
+JustDo 采用 Electron 的严格进程隔离架构，所有跨进程通信通过 IPC 实现。系统分为三层：UI 层（Renderer）、服务层（IPC + Redux）、主进程层（Main + Agent Runtime）。
 
 ### 1.1 分层架构
 

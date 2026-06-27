@@ -1,8 +1,8 @@
-# GucciAI Cowork 会话系统设计
+# JustDo Cowork 会话系统设计
 
 ## 1. 系统概述
 
-Cowork 是 GucciAI 的核心功能 —— 一个 AI 工作会话系统，以 OpenClaw 作为主要 Agent 引擎。设计用于生产力场景，能够自主完成数据分析、文档生成、信息检索等复杂任务。
+Cowork 是 JustDo 的核心功能 —— 一个 AI 工作会话系统，以 OpenClaw 作为主要 Agent 引擎。设计用于生产力场景，能够自主完成数据分析、文档生成、信息检索等复杂任务。
 
 ### 1.1 设计原则
 

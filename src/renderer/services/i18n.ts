@@ -280,9 +280,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     initializationError: '初始化应用程序失败。请检查您的配置。',
     apiKeyNotConfigured: 'API密钥未配置。请在设置中设置您的API密钥。',
 
-    // GucciAI
-    cowork: 'GucciAI',
-    coworkSettings: 'GucciAI 设置',
+    // JustDo
+    cowork: 'JustDo',
+    coworkSettings: 'JustDo 设置',
     coworkHistory: '最近对话',
     groupedSessions: '对话分组',
     coworkNoSessions: '暂无最近对话',
@@ -323,13 +323,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkPlaceholder: '分配一个任务或提问任何问题',
     coworkWorkingDirectory: '工作目录',
     coworkWorkingDirectoryPlaceholder: '输入项目路径',
-    coworkWorkingDirectoryHint: 'GucciAI 将在此目录下执行命令',
+    coworkWorkingDirectoryHint: 'JustDo 将在此目录下执行命令',
     coworkSystemPrompt: '系统提示词',
-    coworkSystemPromptPlaceholder: '为 GucciAI 设置自定义指令...',
-    coworkSystemPromptHint: '可选的系统提示词，用于自定义 GucciAI 的行为',
+    coworkSystemPromptPlaceholder: '为 JustDo 设置自定义指令...',
+    coworkSystemPromptHint: '可选的系统提示词，用于自定义 JustDo 的行为',
     coworkModelSettingsRequired: '请先在模型设置中配置可用模型与 API Key。',
     coworkModelSettingsTitle: '模型设置',
-    coworkModelSettingsHint: 'GucciAI 使用模型设置中的当前模型与提供商配置。',
+    coworkModelSettingsHint: 'JustDo 使用模型设置中的当前模型与提供商配置。',
     coworkModelSettingsAction: '前往模型设置',
     modelGroupServer: '套餐模型',
     modelGroupUser: '自定义模型',
@@ -358,7 +358,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayPortTitle: '网关端口',
     openclawGatewayPortHint:
       '内置 OpenClaw 的网关服务端口。如果与其他 OpenClaw 冲突，可修改此端口。',
-    coworkConfigSaveFailed: '保存 GucciAI 配置失败，请稍后重试。',
+    coworkConfigSaveFailed: '保存 JustDo 配置失败，请稍后重试。',
     coworkApiProviderModel: '从模型设置选择',
     coworkApiProviderModelCustom: '自定义',
     coworkApiProviderModelHint: '仅显示已启用且已配置 API Key/地址的模型',
@@ -376,9 +376,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkStatusCompleted: '已完成',
     coworkStatusError: '错误',
     coworkPermissionRequired: '需要权限确认',
-    coworkPermissionDescription: 'GucciAI 请求执行以下操作',
+    coworkPermissionDescription: 'JustDo 请求执行以下操作',
     coworkSelectionRequired: '请选择',
-    coworkSelectionDescription: 'GucciAI 需要你做出选择',
+    coworkSelectionDescription: 'JustDo 需要你做出选择',
     coworkToolName: '工具名称',
     coworkToolInput: '工具参数',
     coworkToolResult: '执行结果',
@@ -611,7 +611,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillMissingRequirements: '技能缺少必要依赖',
 
     // Security scan
-    gucciaiGuardEnabled: '安全防护中',
+    JustDoGuardEnabled: '安全防护中',
     securityScanTitle: '技能安全扫描',
     securityRisk_safe: '风险评估',
     securityRisk_low: '风险评估',
@@ -1376,9 +1376,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     initializationError: 'Failed to initialize application. Please check your configuration.',
     apiKeyNotConfigured: 'API key not configured. Please set up your API key in settings.',
 
-    // GucciAI
-    cowork: 'GucciAI',
-    coworkSettings: 'GucciAI Settings',
+    // JustDo
+    cowork: 'JustDo',
+    coworkSettings: 'JustDo Settings',
     coworkHistory: 'Recent Chats',
     groupedSessions: 'Groups',
     coworkNoSessions: 'No chats yet',
@@ -1419,14 +1419,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkPlaceholder: 'Assign a task or ask any question',
     coworkWorkingDirectory: 'Working Directory',
     coworkWorkingDirectoryPlaceholder: 'Enter project path',
-    coworkWorkingDirectoryHint: 'GucciAI will execute commands in this directory',
+    coworkWorkingDirectoryHint: 'JustDo will execute commands in this directory',
     coworkSystemPrompt: 'System Prompt',
-    coworkSystemPromptPlaceholder: 'Set custom instructions for GucciAI...',
-    coworkSystemPromptHint: "Optional system prompt to customize GucciAI's behavior",
+    coworkSystemPromptPlaceholder: 'Set custom instructions for JustDo...',
+    coworkSystemPromptHint: "Optional system prompt to customize JustDo's behavior",
     coworkModelSettingsRequired: 'Please configure models and API keys in Model Settings first.',
     coworkModelSettingsTitle: 'Model Settings',
     coworkModelSettingsHint:
-      'GucciAI uses the current model and provider configuration from Model Settings.',
+      'JustDo uses the current model and provider configuration from Model Settings.',
     coworkModelSettingsAction: 'Go to Model Settings',
     modelGroupServer: 'Plan Models',
     modelGroupUser: 'Custom Models',
@@ -1458,7 +1458,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayPortTitle: 'Gateway Port',
     openclawGatewayPortHint:
       'Gateway service port for the built-in OpenClaw. Modify if it conflicts with other OpenClaw installations.',
-    coworkConfigSaveFailed: 'Failed to save GucciAI settings. Please try again.',
+    coworkConfigSaveFailed: 'Failed to save JustDo settings. Please try again.',
     coworkApiProviderModel: 'Select from provider models',
     coworkApiProviderModelCustom: 'Custom',
     coworkApiProviderModelHint:
@@ -1477,9 +1477,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkStatusCompleted: 'Completed',
     coworkStatusError: 'Error',
     coworkPermissionRequired: 'Permission Required',
-    coworkPermissionDescription: 'GucciAI is requesting to perform the following action',
+    coworkPermissionDescription: 'JustDo is requesting to perform the following action',
     coworkSelectionRequired: 'Please Choose',
-    coworkSelectionDescription: 'GucciAI needs your input',
+    coworkSelectionDescription: 'JustDo needs your input',
     coworkToolName: 'Tool Name',
     coworkToolInput: 'Tool Input',
     coworkToolResult: 'Result',
@@ -1732,7 +1732,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillMissingRequirements: 'Skill missing required dependencies',
 
     // Security scan
-    gucciaiGuardEnabled: 'Security Active',
+    JustDoGuardEnabled: 'Security Active',
     securityScanTitle: 'Skill Security Scan',
     securityRisk_safe: 'Risk Assessment',
     securityRisk_low: 'Risk Assessment',

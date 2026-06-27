@@ -5,7 +5,7 @@
 // Affected OpenClaw version: v2026.5.22.
 // Risk: Diverges from upstream reasoning-stream gating semantics.
 // Remove when: OpenClaw exposes thinking stream events without requiring a
-// callback gate, or GucciAI consumes the upstream event shape directly.
+// callback gate, or JustDo consumes the upstream event shape directly.
 // Upstream tracking: TODO(openclaw): file issue/PR with reasoning stream fixture.
 // Temporary: yes.
 

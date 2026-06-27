@@ -6,7 +6,7 @@ export interface ThemeStorage {
 }
 
 export interface ThemeManagerOptions {
-  /** localStorage key for persistence. Default: 'gucciai-theme' */
+  /** localStorage key for persistence. Default: 'justdo-theme' */
   storageKey?: string;
   /** Default theme ID (first theme if omitted) */
   defaultTheme?: string;
@@ -30,7 +30,7 @@ export class ThemeManager {
     const fallback = themes[0]?.meta.id ?? '';
     this.currentId = fallback;
     this.opts = {
-      storageKey: options.storageKey ?? 'gucciai-theme',
+      storageKey: options.storageKey ?? 'justdo-theme',
       defaultTheme: options.defaultTheme ?? fallback,
       followSystem: options.followSystem ?? false,
       storage: options.storage ?? {

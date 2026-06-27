@@ -16,8 +16,8 @@ export function toOpenClawModelRef(
   model: Pick<Model, 'id' | 'providerKey' | 'provider' | 'isServerModel'>,
 ): string {
   if (model.isServerModel) {
-    // Use GucciAI as the provider ID for server models (lowercase)
-    return `${OpenClawProviderId.GucciAI}/${model.id}`;
+    // Use JustDo as the provider ID for server models (lowercase)
+    return `${OpenClawProviderId.JustDo}/${model.id}`;
   }
 
   const providerKey = model.providerKey ?? '';
@@ -72,7 +72,7 @@ function buildAllPossibleModelRefs(
   const refs: string[] = [];
 
   if (model.isServerModel) {
-    refs.push(`${OpenClawProviderId.GucciAI}/${model.id}`);
+    refs.push(`${OpenClawProviderId.JustDo}/${model.id}`);
     return refs;
   }
 

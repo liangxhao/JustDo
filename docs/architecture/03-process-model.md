@@ -1,8 +1,8 @@
-# GucciAI 进程模型与 IPC 通信
+# JustDo 进程模型与 IPC 通信
 
 ## 1. Electron 进程模型
 
-GucciAI 采用 Electron 的严格进程隔离架构，所有跨进程通信通过 IPC 实现。
+JustDo 采用 Electron 的严格进程隔离架构，所有跨进程通信通过 IPC 实现。
 
 ### 1.1 三进程模型
 

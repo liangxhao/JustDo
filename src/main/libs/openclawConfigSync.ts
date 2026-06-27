@@ -183,7 +183,7 @@ const sessionSnapshotContainsDisabledManagedSkill = (_entry: Record<string, unkn
  */
 const providerApiKeyEnvVar = (providerName: string): string => {
   const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return `GUCCIAI_APIKEY_${envName}`;
+  return `JustDo_APIKEY_${envName}`;
 };
 
 type OpenClawProviderApi =
@@ -280,7 +280,7 @@ const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
 };
 
 const DEFAULT_DESCRIPTOR: ProviderDescriptor = {
-  providerId: OpenClawProviderId.GucciAI,
+  providerId: OpenClawProviderId.JustDo,
   resolveApi: ({ apiType, baseURL }) => mapApiTypeToOpenClawApi(apiType, undefined, baseURL),
   normalizeBaseUrl: stripChatCompletionsSuffix,
 };
@@ -300,7 +300,7 @@ const resolveDescriptor = (
   }
   return {
     ...DEFAULT_DESCRIPTOR,
-    providerId: providerName || OpenClawProviderId.GucciAI,
+    providerId: providerName || OpenClawProviderId.JustDo,
   };
 };
 
@@ -659,7 +659,7 @@ export class OpenClawConfigSync {
         ...entries[MCP_BRIDGE_PLUGIN_ID],
         config: {
           callbackUrl: mcpBridgeCfg.callbackUrl,
-          secret: '${GUCCIAI_MCP_BRIDGE_SECRET}',
+          secret: '${JustDo_MCP_BRIDGE_SECRET}',
           tools: mcpBridgeCfg.tools,
         },
       };
@@ -673,7 +673,7 @@ export class OpenClawConfigSync {
         enabled: true,
         config: {
           callbackUrl: mcpBridgeCfg.askUserCallbackUrl,
-          secret: '${GUCCIAI_MCP_BRIDGE_SECRET}',
+          secret: '${JustDo_MCP_BRIDGE_SECRET}',
         },
       };
     }
@@ -812,21 +812,21 @@ export class OpenClawConfigSync {
     // never changes env vars and avoids gateway process restarts.
     const allApiKeys = resolveAllProviderApiKeys();
     for (const [envSuffix, apiKey] of Object.entries(allApiKeys)) {
-      env[`GUCCIAI_APIKEY_${envSuffix}`] = apiKey;
+      env[`JustDo_APIKEY_${envSuffix}`] = apiKey;
     }
-    // Legacy fallback: keep GUCCIAI_PROVIDER_API_KEY set to a stable value so stale
+    // Legacy fallback: keep JustDo_PROVIDER_API_KEY set to a stable value so stale
     // openclaw.json files with the old placeholder don't crash the gateway.
     // Use the active provider's key if available, but ONLY for the first sync —
     // after that, openclaw.json uses provider-specific placeholders and this var
     // is never resolved. Use a fixed value to avoid secretEnvVarsChanged on switch.
-    env.GUCCIAI_PROVIDER_API_KEY = 'legacy-unused';
+    env.JustDo_PROVIDER_API_KEY = 'legacy-unused';
 
-    env.GUCCIAI_PROXY_TOKEN = getCoworkOpenAICompatProxyToken() || 'unconfigured';
+    env.JustDo_PROXY_TOKEN = getCoworkOpenAICompatProxyToken() || 'unconfigured';
 
     // MCP Bridge Secret — always set so stale openclaw.json with
-    // ${GUCCIAI_MCP_BRIDGE_SECRET} placeholder doesn't crash the gateway.
+    // ${JustDo_MCP_BRIDGE_SECRET} placeholder doesn't crash the gateway.
     const mcpBridgeCfg = this.getMcpBridgeConfig?.();
-    env.GUCCIAI_MCP_BRIDGE_SECRET = mcpBridgeCfg?.secret || 'unconfigured';
+    env.JustDo_MCP_BRIDGE_SECRET = mcpBridgeCfg?.secret || 'unconfigured';
 
     // IM channel secrets removed — channels disabled pending future adaptation
 
@@ -899,7 +899,7 @@ export class OpenClawConfigSync {
     };
 
     const shouldMigrateManagedModelRefs = !(
-      selection.providerId === 'gucciai' && selection.sessionModelId === selection.legacyModelId
+      selection.providerId === 'JustDo' && selection.sessionModelId === selection.legacyModelId
     );
     const fallbackTarget = parsePrimaryModelRef(selection.primaryModel) ?? {
       providerId: selection.providerId,
@@ -975,7 +975,7 @@ export class OpenClawConfigSync {
           changed = true;
         }
 
-        if (!/^agent:[^:]+:gucciai:/.test(sessionKey)) {
+        if (!/^agent:[^:]+:JustDo:/.test(sessionKey)) {
           continue;
         }
 
@@ -1081,7 +1081,7 @@ export class OpenClawConfigSync {
   }
 
   /**
-   * 不再向 agent workspace 写入任何 GucciAI 内容。
+   * 不再向 agent workspace 写入任何 JustDo 内容。
    * OpenClaw 自己管理 agent workspace。
    */
   private syncPerAgentWorkspaces(_mainWorkspaceDir: string, _coworkConfig: CoworkConfig): void {

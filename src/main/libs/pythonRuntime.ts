@@ -239,7 +239,7 @@ export function appendPythonRuntimeToEnv(
 
   if (pathEntries.length > 0) {
     env.PATH = appendWindowsPath(env.PATH, pathEntries);
-    env.GUCCIAI_PYTHON_ROOT = pathEntries[0];
+    env.JUSTDO_PYTHON_ROOT = pathEntries[0];
   }
 
   return env;

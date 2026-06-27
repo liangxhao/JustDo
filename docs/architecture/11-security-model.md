@@ -1,8 +1,8 @@
-# GucciAI 安全模型与权限控制
+# JustDo 安全模型与权限控制
 
 ## 1. 安全架构
 
-GucciAI 采用多层安全防护，确保用户数据和系统安全。
+JustDo 采用多层安全防护，确保用户数据和系统安全。
 
 ### 1.1 安全层次
 
@@ -470,7 +470,7 @@ channels:
     accounts:
       acc1:
         clientId: xxx
-        clientSecretEnv: GUCCIAI_DINGTALK_CLIENT_SECRET  # 环境变量名
+        clientSecretEnv: JustDo_DINGTALK_CLIENT_SECRET  # 环境变量名
 ```
 
 ## 6. 网络安全

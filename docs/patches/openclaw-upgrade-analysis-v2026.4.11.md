@@ -6,10 +6,10 @@
 
 ## Executive Summary
 
-从 OpenClaw v2026.3.2 升级到 v2026.4.11 是一个**中等复杂度的升级**，涉及多个 Breaking Changes 和配置迁移。GucciAI 项目通过 patches 机制深度定制了 OpenClaw，这些 patches 需要在升级前重新验证和适配。
+从 OpenClaw v2026.3.2 升级到 v2026.4.11 是一个**中等复杂度的升级**，涉及多个 Breaking Changes 和配置迁移。JustDo 项目通过 patches 机制深度定制了 OpenClaw，这些 patches 需要在升级前重新验证和适配。
 
 **核心风险点**：
-1. **Gateway Entry Patch** - GucciAI 自定义的 gateway 启动入口可能需要重写
+1. **Gateway Entry Patch** - JustDo 自定义的 gateway 启动入口可能需要重写
 2. **Exec Approvals 默认行为变更** - v2026.4.1 起默认启用 sandbox，可能影响现有工具执行
 3. **Config 路径迁移** - 多个配置路径从 core 迁移到 plugin-owned paths
 4. **已知 Regression 修复** - v2026.4.2 的 channels 初始化问题在后续版本已修复
@@ -18,7 +18,7 @@
 
 ---
 
-## 1. GucciAI 中 OpenClaw 的集成方式
+## 1. JustDo 中 OpenClaw 的集成方式
 
 ### 1.1 版本管理机制
 
@@ -107,7 +107,7 @@ npm run openclaw:runtime:win-x64
 - 使用 `openclaw doctor --fix` 自动迁移
 - 加载时保持兼容性（load-time compatibility）
 
-**对 GucciAI 影响**: 低 - GucciAI 通过 `openclawConfigSync.ts` 生成配置，需验证生成的配置是否使用旧路径。
+**对 JustDo 影响**: 低 - JustDo 通过 `openclawConfigSync.ts` 生成配置，需验证生成的配置是否使用旧路径。
 
 #### 2.2.2 v2026.4.2 - Plugin-Owned Config Paths
 
@@ -115,7 +115,7 @@ npm run openclaw:runtime:win-x64
 - `tools.web.x_search.*` → `plugins.entries.xai.config.xSearch.*`
 - `tools.web.fetch.firecrawl.*` → `plugins.entries.firecrawl.config.webFetch.*`
 
-**对 GucciAI 影响**: 低 - GucciAI 未使用 x_search 或 firecrawl。
+**对 JustDo 影响**: 低 - JustDo 未使用 x_search 或 firecrawl。
 
 #### 2.2.3 v2026.4.1/v2026.3.31 - Exec Approvals 变更
 
@@ -142,13 +142,13 @@ npm run openclaw:runtime:win-x64
 }
 ```
 
-**对 GucciAI 影响**: **高** - 需要在 `openclawConfigSync.ts` 中添加 exec approvals 配置。
+**对 JustDo 影响**: **高** - 需要在 `openclawConfigSync.ts` 中添加 exec approvals 配置。
 
 #### 2.2.4 v2026.3.2 - Plugin HTTP Registration API (当前版本已应用)
 
 **影响**: `api.registerHttpHandler(...)` 移除 → 使用 `api.registerHttpRoute({ path, auth, match, handler })`
 
-**对 GucciAI 影响**: 已处理 - GucciAI 的 mcp-bridge 扩展已使用新的 API。
+**对 JustDo 影响**: 已处理 - JustDo 的 mcp-bridge 扩展已使用新的 API。
 
 ---
 
@@ -405,7 +405,7 @@ const execApprovalsConfig = {
 
 Sub-questions investigated:
 1. OpenClaw v2026.3.2 → v2026.4.11 之间有哪些 breaking changes？
-2. GucciAI 如何集成和管理 OpenClaw 版本？
+2. JustDo 如何集成和管理 OpenClaw 版本？
 3. 现有 patches 在新版本中是否兼容？
 4. 已知的 regression 和修复状态？
 5. 升级需要哪些具体步骤？

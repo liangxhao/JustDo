@@ -6,7 +6,7 @@ import { inferOriginAndBinding } from './origin';
 
 test('infer: managed key without IM channel -> cowork origin + ui_session binding', () => {
   const result = inferOriginAndBinding(
-    makeTask({ sessionKey: 'agent:main:gucciai:sess-001', delivery: { mode: DeliveryMode.None } }),
+    makeTask({ sessionKey: 'agent:main:justdo:sess-001', delivery: { mode: DeliveryMode.None } }),
   );
   expect(result.origin).toEqual({ kind: OriginKind.Cowork, sessionId: 'sess-001' });
   expect(result.binding).toEqual({ kind: BindingKind.UISession, sessionId: 'sess-001' });
@@ -15,7 +15,7 @@ test('infer: managed key without IM channel -> cowork origin + ui_session bindin
 test('infer: managed key with IM announce channel -> im origin + im_session binding', () => {
   const result = inferOriginAndBinding(
     makeTask({
-      sessionKey: 'agent:main:gucciai:sess-002',
+      sessionKey: 'agent:main:justdo:sess-002',
       delivery: { mode: DeliveryMode.Announce, channel: 'telegram' },
     }),
   );
@@ -29,7 +29,7 @@ test('infer: managed key with IM announce channel -> im origin + im_session bind
 test('infer: non-main agentId managed key -> cowork origin', () => {
   const result = inferOriginAndBinding(
     makeTask({
-      sessionKey: 'agent:secondary:gucciai:sess-003',
+      sessionKey: 'agent:secondary:justdo:sess-003',
       delivery: { mode: DeliveryMode.None },
     }),
   );
@@ -40,7 +40,7 @@ test('infer: non-main agentId managed key -> cowork origin', () => {
 test('infer: managed key with channel=last -> cowork origin (last is not an IM platform)', () => {
   const result = inferOriginAndBinding(
     makeTask({
-      sessionKey: 'agent:main:gucciai:sess-004',
+      sessionKey: 'agent:main:justdo:sess-004',
       delivery: { mode: DeliveryMode.Announce, channel: DeliveryChannel.Last },
     }),
   );
@@ -95,14 +95,14 @@ test('infer: empty string sessionKey -> manual origin', () => {
 
 test('infer: sessionKey with whitespace is trimmed before parsing', () => {
   const result = inferOriginAndBinding(
-    makeTask({ sessionKey: '  agent:main:gucciai:sess-trimmed  ' }),
+    makeTask({ sessionKey: '  agent:main:justdo:sess-trimmed  ' }),
   );
   expect(result.origin.kind).toBe(OriginKind.Cowork);
   expect((result.origin as any).sessionId).toBe('sess-trimmed');
 });
 
 test('infer: pure function - same input, same output', () => {
-  const task = makeTask({ sessionKey: 'agent:main:gucciai:sess-stable' });
+  const task = makeTask({ sessionKey: 'agent:main:justdo:sess-stable' });
   const r1 = inferOriginAndBinding(task);
   const r2 = inferOriginAndBinding(task);
   expect(r1).toEqual(r2);

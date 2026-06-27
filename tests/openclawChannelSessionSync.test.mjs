@@ -31,14 +31,14 @@ function createSync() {
 }
 
 test('parseManagedSessionKey handles raw local session keys', () => {
-  assert.deepEqual(parseManagedSessionKey('gucciai:abc-123'), {
+  assert.deepEqual(parseManagedSessionKey('justdo:abc-123'), {
     agentId: null,
     sessionId: 'abc-123',
   });
 });
 
 test('parseManagedSessionKey handles canonical local session keys', () => {
-  assert.deepEqual(parseManagedSessionKey('agent:main:gucciai:abc-123'), {
+  assert.deepEqual(parseManagedSessionKey('agent:main:justdo:abc-123'), {
     agentId: 'main',
     sessionId: 'abc-123',
   });
@@ -47,26 +47,26 @@ test('parseManagedSessionKey handles canonical local session keys', () => {
 test('buildManagedSessionKey emits canonical local session keys', () => {
   assert.equal(
     buildManagedSessionKey('abc-123'),
-    `agent:${DEFAULT_MANAGED_AGENT_ID}:gucciai:abc-123`,
+    `agent:${DEFAULT_MANAGED_AGENT_ID}:justdo:abc-123`,
   );
   assert.equal(
     buildManagedSessionKey('abc-123', 'secondary'),
-    'agent:secondary:gucciai:abc-123',
+    'agent:secondary:justdo:abc-123',
   );
 });
 
 test('parseChannelSessionKey ignores managed local session keys', () => {
-  assert.equal(parseChannelSessionKey('gucciai:abc-123'), null);
-  assert.equal(parseChannelSessionKey('agent:main:gucciai:abc-123'), null);
+  assert.equal(parseChannelSessionKey('justdo:abc-123'), null);
+  assert.equal(parseChannelSessionKey('agent:main:justdo:abc-123'), null);
 });
 
 test('channel sync does not treat managed local session keys as channel sessions', () => {
   const sync = createSync();
 
-  assert.equal(isManagedSessionKey('agent:main:gucciai:abc-123'), true);
-  assert.equal(sync.isChannelSessionKey('agent:main:gucciai:abc-123'), false);
-  assert.equal(sync.resolveOrCreateSession('agent:main:gucciai:abc-123'), null);
-  assert.equal(sync.resolveOrCreateMainAgentSession('agent:main:gucciai:abc-123'), null);
+  assert.equal(isManagedSessionKey('agent:main:justdo:abc-123'), true);
+  assert.equal(sync.isChannelSessionKey('agent:main:justdo:abc-123'), false);
+  assert.equal(sync.resolveOrCreateSession('agent:main:justdo:abc-123'), null);
+  assert.equal(sync.resolveOrCreateMainAgentSession('agent:main:justdo:abc-123'), null);
 });
 
 test('channel sync still recognizes real channel session keys', () => {

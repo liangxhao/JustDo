@@ -1,7 +1,7 @@
-# GucciAI — 全场景个人助理 Agent
+# JustDo — 全场景个人助理 Agent
 
 <p align="center">
-  <img src="public/logo.png" alt="GucciAI" width="120">
+  <img src="public/logo.png" alt="JustDo" width="120">
 </p>
 
 <p align="center">
@@ -23,9 +23,9 @@
 
 ---
 
-**GucciAI** 是全场景个人助理 Agent。它 7×24 小时待命，能够帮你完成日常办公中的各类事务 —— 数据分析、制作 PPT、生成视频、撰写文档、搜索信息、收发邮件、定时任务，以及更多。
+**JustDo** 是全场景个人助理 Agent。它 7×24 小时待命，能够帮你完成日常办公中的各类事务 —— 数据分析、制作 PPT、生成视频、撰写文档、搜索信息、收发邮件、定时任务，以及更多。
 
-GucciAI 的核心是 **Cowork 模式**，它能在本地或沙箱环境中执行工具、操作文件、运行命令，一切都在你的监督下自主完成。
+JustDo 的核心是 **Cowork 模式**，它能在本地或沙箱环境中执行工具、操作文件、运行命令，一切都在你的监督下自主完成。
 
 ## 核心特性
 
@@ -59,8 +59,8 @@ GucciAI 的核心是 **Cowork 模式**，它能在本地或沙箱环境中执行
 ### 开发
 
 ```bash
-git clone https://github.com/liangxhao/GucciAI.git
-cd GucciAI
+git clone https://github.com/liangxhao/JustDo.git
+cd JustDo
 git checkout dev
 npm install
 
@@ -176,7 +176,7 @@ Cowork 会话使用 Gateway 进程生命周期（`idle → downloading → insta
 
 ### 数据存储
 
-本地 SQLite（`gucciai.sqlite`）：应用配置、会话、消息、子智能体、记忆、Agent、MCP 服务器、定时任务。
+本地 SQLite（`JustDo.sqlite`）：应用配置、会话、消息、子智能体、记忆、Agent、MCP 服务器、定时任务。
 
 ### 技术栈
 

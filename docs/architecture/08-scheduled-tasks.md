@@ -1,14 +1,14 @@
-# GucciAI 定时任务系统设计文档
+# JustDo 定时任务系统设计文档
 
 ## 1. 概述
 
-GucciAI 定时任务系统是一套横跨 **Renderer(UI) → Main Process(IPC) → OpenClaw Gateway(调度引擎)** 三层的端到端自动化执行框架。用户可通过 UI 界面或对话创建定时任务，由 OpenClaw Cron 引擎调度触发，执行结果可推送到 IM 平台或 Webhook。
+JustDo 定时任务系统是一套横跨 **Renderer(UI) → Main Process(IPC) → OpenClaw Gateway(调度引擎)** 三层的端到端自动化执行框架。用户可通过 UI 界面或对话创建定时任务，由 OpenClaw Cron 引擎调度触发，执行结果可推送到 IM 平台或 Webhook。
 
 ### 1.1 核心设计理念
 
 | 理念 | 说明 |
 |------|------|
-| **OpenClaw 驱动** | 所有调度、执行、投递由 OpenClaw Gateway 原生完成，GucciAI 仅负责任务 CRUD 和 UI 展示 |
+| **OpenClaw 驱动** | 所有调度、执行、投递由 OpenClaw Gateway 原生完成，JustDo 仅负责任务 CRUD 和 UI 展示 |
 | **策略模式(Policy Pattern)** | 不同来源的任务各自拥有独立策略类，控制默认参数、绑定关系、只读字段 |
 | **来源推断(Origin Inference)** | 通过 `sessionKey` 格式反向推断任务来源，实现与旧数据无缝兼容 |
 | **流式轮询** | 15 秒间隔轮询机制将 OpenClaw 状态变化实时推送到 UI |
@@ -231,7 +231,7 @@ export function inferOriginAndBinding(task: InferableTask): {
 } {
   const sk = (task.sessionKey ?? '').trim();
 
-  // 1. Managed session key: "agent:main:gucciai:{sessionId}"
+  // 1. Managed session key: "agent:main:JustDo:{sessionId}"
   if (sk && isManagedSessionKey(sk)) {
     const parsed = parseManagedSessionKey(sk);
     if (parsed) {
@@ -282,7 +282,7 @@ export function inferOriginAndBinding(task: InferableTask): {
 
 | 类型 | 格式 | 示例 | 用途 |
 |------|------|------|------|
-| 托管会话 | `agent:main:gucciai:{sessionId}` | `agent:main:gucciai:abc123` | UI/Cowork 创建的会话 |
+| 托管会话 | `agent:main:JustDo:{sessionId}` | `agent:main:JustDo:abc123` | UI/Cowork 创建的会话 |
 | 通道会话 | `agent:{agentId}:{platform}:{subtype}:{conversationId}` | `agent:main:telegram:direct:ou_xxx` | IM 通道会话 |
 | Cron 会话 | `cron:{jobId}` | `cron:job-456` | 隔离 Cron 任务的独立会话 |
 
@@ -584,7 +584,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
 
 ### 7.1 职责
 
-`CronJobService` 是 GucciAI 与 OpenClaw Gateway 之间的适配器层，封装所有 Cron RPC 调用。
+`CronJobService` 是 JustDo 与 OpenClaw Gateway 之间的适配器层，封装所有 Cron RPC 调用。
 
 定义在 [cronJobService.ts](src/scheduledTask/cronJobService.ts):
 
@@ -632,13 +632,13 @@ export class CronJobService {
 ### 7.3 类型映射
 
 ```typescript
-// Gateway 类型 → GucciAI 类型
+// Gateway 类型 → JustDo 类型
 export function mapGatewaySchedule(schedule: GatewaySchedule): Schedule;
 export function mapGatewayTaskState(state: GatewayJobState, deliveryMode?: DeliveryMode): TaskState;
 export function mapGatewayJob(job: GatewayJob): ScheduledTask;
 export function mapGatewayRun(entry: GatewayRunLogEntry): ScheduledTaskRun;
 
-// GucciAI 类型 → Gateway 类型
+// JustDo 类型 → Gateway 类型
 function toGatewaySchedule(schedule: Schedule): GatewaySchedule;
 function toGatewayPayload(payload: ScheduledTaskPayload): GatewayPayload;
 function toGatewayDelivery(delivery?: ScheduledTaskDelivery): GatewayDelivery | undefined;

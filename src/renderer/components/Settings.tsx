@@ -2345,7 +2345,7 @@ const Settings: React.FC<SettingsProps> = ({
             <div>
               <h4
                 className="text-sm font-medium mb-3"
-                style={{ color: 'var(--gucciai-text-primary)' }}
+                style={{ color: 'var(--JustDo-text-primary)' }}
               >
                 {i18nService.t('appearance')}
               </h4>
@@ -2366,9 +2366,9 @@ const Settings: React.FC<SettingsProps> = ({
                       className="flex flex-col items-center rounded-xl border-2 p-3 transition-colors cursor-pointer"
                       style={{
                         borderColor: isSelected
-                          ? 'var(--gucciai-primary)'
-                          : 'var(--gucciai-border)',
-                        backgroundColor: isSelected ? 'var(--gucciai-primary-muted)' : undefined,
+                          ? 'var(--JustDo-primary)'
+                          : 'var(--JustDo-border)',
+                        backgroundColor: isSelected ? 'var(--JustDo-primary-muted)' : undefined,
                       }}
                     >
                       <svg
@@ -2460,8 +2460,8 @@ const Settings: React.FC<SettingsProps> = ({
                         className="text-xs font-medium"
                         style={{
                           color: isSelected
-                            ? 'var(--gucciai-primary)'
-                            : 'var(--gucciai-text-primary)',
+                            ? 'var(--JustDo-primary)'
+                            : 'var(--JustDo-text-primary)',
                         }}
                       >
                         {i18nService.t(mode)}
@@ -2474,7 +2474,7 @@ const Settings: React.FC<SettingsProps> = ({
               {/* Theme color gallery — all themes */}
               <h4
                 className="text-sm font-medium mb-3 mt-5"
-                style={{ color: 'var(--gucciai-text-primary)' }}
+                style={{ color: 'var(--JustDo-text-primary)' }}
               >
                 {i18nService.t('themeColor')}
               </h4>
@@ -2501,9 +2501,9 @@ const Settings: React.FC<SettingsProps> = ({
                       className="flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer"
                       style={{
                         borderColor: isSelected
-                          ? 'var(--gucciai-primary)'
-                          : 'var(--gucciai-border)',
-                        backgroundColor: isSelected ? 'var(--gucciai-primary-muted)' : undefined,
+                          ? 'var(--JustDo-primary)'
+                          : 'var(--JustDo-border)',
+                        backgroundColor: isSelected ? 'var(--JustDo-primary-muted)' : undefined,
                       }}
                     >
                       <svg
@@ -2521,8 +2521,8 @@ const Settings: React.FC<SettingsProps> = ({
                         className="text-[10px] font-medium truncate w-full text-center"
                         style={{
                           color: isSelected
-                            ? 'var(--gucciai-primary)'
-                            : 'var(--gucciai-text-primary)',
+                            ? 'var(--JustDo-primary)'
+                            : 'var(--JustDo-text-primary)',
                         }}
                       >
                         {t.meta.name}
@@ -3255,7 +3255,7 @@ const Settings: React.FC<SettingsProps> = ({
               <div className="space-y-3">
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
                   <span className="text-sm text-secondary">{i18nService.t('appName')}</span>
-                  <span className="text-sm font-medium text-foreground">GucciAI</span>
+                  <span className="text-sm font-medium text-foreground">JustDo</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
                   <span className="text-sm text-secondary">{i18nService.t('appVersion')}</span>

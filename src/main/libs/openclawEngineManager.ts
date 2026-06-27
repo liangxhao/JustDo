@@ -407,8 +407,8 @@ export class OpenClawEngineManager extends EventEmitter {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       SKILLS_ROOT: userSkillsDir,
-      GUCCIAI_SKILLS_ROOT: userSkillsDir,
-      // Gateway checks OPENCLAW_BUNDLED_SKILLS_DIR (not GUCCIAI_BUNDLED_SKILLS_DIR)
+      JustDo_SKILLS_ROOT: userSkillsDir,
+      // Gateway checks OPENCLAW_BUNDLED_SKILLS_DIR (not JustDo_BUNDLED_SKILLS_DIR)
       OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
       // NOTE: OPENCLAW_HOME and OPENCLAW_USER_HOME are NOT set here.
       // This allows them to use the default user home directory (C:\Users\xxx).
@@ -416,7 +416,7 @@ export class OpenClawEngineManager extends EventEmitter {
       // to ~/... format because AppData is NOT a subdirectory of the home directory
       // (the path is C:\Users\xxx\AppData, not C:\Users\xxx\AppData).
       // Bundled skills (E:\...\runtime\current\skills) also won't be compacted.
-      // This prevents creation of __GUCCIAI_NO_HOME__ folder on C: drive root.
+      // This prevents creation of __JustDo_NO_HOME__ folder on C: drive root.
       OPENCLAW_STATE_DIR: this.stateDir,
       OPENCLAW_CONFIG_PATH: this.configPath,
       OPENCLAW_GATEWAY_TOKEN: token,
@@ -429,8 +429,8 @@ export class OpenClawEngineManager extends EventEmitter {
       // Enable V8 compile cache for both CJS and ESM modules.
       // This env var works for import() (ESM), unlike enableCompileCache() which is CJS-only.
       NODE_COMPILE_CACHE: compileCacheDir,
-      GUCCIAI_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
-      GUCCIAI_OPENCLAW_ENTRY: openclawEntry.replace(/\\/g, '/'),
+      JustDo_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
+      JustDo_OPENCLAW_ENTRY: openclawEntry.replace(/\\/g, '/'),
       // Inject secret values for ${VAR} placeholders in openclaw.json.
       // This keeps plaintext credentials out of the config file on disk.
       ...this.secretEnvVars,
@@ -465,7 +465,7 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     // Prepend bundled/user Python runtime paths so gateway exec commands
-    // find the GucciAI-managed Python instead of the Windows Store stub.
+    // find the JustDo-managed Python instead of the Windows Store stub.
     appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
 
     // Inject node/npm/npx shims so gateway exec commands can use them.
@@ -477,7 +477,7 @@ export class OpenClawEngineManager extends EventEmitter {
     if (nodeShimDir) {
       const curPath = env.PATH || env.Path || '';
       env.PATH = [nodeShimDir, curPath].filter(Boolean).join(path.delimiter);
-      env.GUCCIAI_NPM_BIN_DIR = npmBinDir || '';
+      env.JustDo_NPM_BIN_DIR = npmBinDir || '';
     }
 
     if (isSystemProxyEnabled()) {
@@ -732,32 +732,32 @@ export class OpenClawEngineManager extends EventEmitter {
     const shimDir = path.join(this.stateDir, 'bin');
     const shellWrapper = [
       '#!/usr/bin/env bash',
-      'if [ -z "${GUCCIAI_OPENCLAW_ENTRY:-}" ]; then',
-      '  echo "GUCCIAI_OPENCLAW_ENTRY is not set" >&2',
+      'if [ -z "${JustDo_OPENCLAW_ENTRY:-}" ]; then',
+      '  echo "JustDo_OPENCLAW_ENTRY is not set" >&2',
       '  exit 127',
       'fi',
-      'if [ -n "${GUCCIAI_ELECTRON_PATH:-}" ]; then',
-      '  exec env ELECTRON_RUN_AS_NODE=1 "${GUCCIAI_ELECTRON_PATH}" "${GUCCIAI_OPENCLAW_ENTRY}" "$@"',
+      'if [ -n "${JustDo_ELECTRON_PATH:-}" ]; then',
+      '  exec env ELECTRON_RUN_AS_NODE=1 "${JustDo_ELECTRON_PATH}" "${JustDo_OPENCLAW_ENTRY}" "$@"',
       'fi',
       'if command -v node >/dev/null 2>&1; then',
-      '  exec node "${GUCCIAI_OPENCLAW_ENTRY}" "$@"',
+      '  exec node "${JustDo_OPENCLAW_ENTRY}" "$@"',
       'fi',
-      'echo "Neither GUCCIAI_ELECTRON_PATH nor node is available for OpenClaw CLI." >&2',
+      'echo "Neither JustDo_ELECTRON_PATH nor node is available for OpenClaw CLI." >&2',
       'exit 127',
       '',
     ].join('\n');
     const windowsWrapper = [
       '@echo off',
-      'if "%GUCCIAI_OPENCLAW_ENTRY%"=="" (',
-      '  echo GUCCIAI_OPENCLAW_ENTRY is not set 1>&2',
+      'if "%JustDo_OPENCLAW_ENTRY%"=="" (',
+      '  echo JustDo_OPENCLAW_ENTRY is not set 1>&2',
       '  exit /b 127',
       ')',
-      'if not "%GUCCIAI_ELECTRON_PATH%"=="" (',
+      'if not "%JustDo_ELECTRON_PATH%"=="" (',
       '  set ELECTRON_RUN_AS_NODE=1',
-      '  "%GUCCIAI_ELECTRON_PATH%" "%GUCCIAI_OPENCLAW_ENTRY%" %*',
+      '  "%JustDo_ELECTRON_PATH%" "%JustDo_OPENCLAW_ENTRY%" %*',
       '  exit /b %ERRORLEVEL%',
       ')',
-      'node "%GUCCIAI_OPENCLAW_ENTRY%" %*',
+      'node "%JustDo_OPENCLAW_ENTRY%" %*',
       '',
     ].join('\r\n');
 

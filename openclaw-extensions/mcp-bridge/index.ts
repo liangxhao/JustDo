@@ -201,7 +201,7 @@ const invokeBridge = async (
 const plugin = {
   id: 'mcp-bridge',
   name: 'MCP Bridge',
-  description: 'Expose GucciAI-managed MCP servers as native OpenClaw tools.',
+  description: 'Expose JustDo-managed MCP servers as native OpenClaw tools.',
   configSchema: {
     parse(value: unknown): McpBridgePluginConfig {
       return parsePluginConfig(value);

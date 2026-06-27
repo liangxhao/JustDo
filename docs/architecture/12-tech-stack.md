@@ -1,8 +1,8 @@
-# GucciAI 技术栈与依赖说明
+# JustDo 技术栈与依赖说明
 
 ## 1. 概述
 
-GucciAI 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vite 构建。核心 Agent 引擎为 OpenClaw，数据存储使用 SQLite。
+JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vite 构建。核心 Agent 引擎为 OpenClaw，数据存储使用 SQLite。
 
 ## 2. 核心技术栈
 
@@ -191,8 +191,8 @@ export default defineConfig({
 ```json
 // electron-builder.json
 {
-  "appId": "com.gucciai.app",
-  "productName": "GucciAI",
+  "appId": "com.JustDo.app",
+  "productName": "JustDo",
   "directories": {
     "output": "release"
   },
@@ -341,9 +341,9 @@ npm run build:skills
 
 | 变量 | 说明 |
 |------|------|
-| `GUCCIAI_PORTABLE_PYTHON_ARCHIVE` | 本地预构建 Python runtime 路径 |
-| `GUCCIAI_PORTABLE_PYTHON_URL` | Python runtime 下载 URL |
-| `GUCCIAI_WINDOWS_EMBED_PYTHON_VERSION` | Windows Python 版本 |
+| `JustDo_PORTABLE_PYTHON_ARCHIVE` | 本地预构建 Python runtime 路径 |
+| `JustDo_PORTABLE_PYTHON_URL` | Python runtime 下载 URL |
+| `JustDo_WINDOWS_EMBED_PYTHON_VERSION` | Windows Python 版本 |
 
 ## 9. 版本管理
 
@@ -384,7 +384,7 @@ npm run build:skills
 ## 10. 目录结构
 
 ```
-GucciAI/
+JustDo/
 ├── package.json              # 依赖和脚本定义
 ├── package-lock.json         # 依赖锁定
 ├── tsconfig.json             # Renderer TypeScript 配置
@@ -478,7 +478,7 @@ npm audit fix
 ```typescript
 import Database from 'better-sqlite3';
 
-const db = new Database('gucciai.sqlite');
+const db = new Database('JustDo.sqlite');
 db.pragma('journal_mode = WAL'); // WAL 模式
 
 // 同步操作
@@ -511,9 +511,9 @@ import rehypeKatex from 'rehype-katex';
 import log from 'electron-log';
 
 // 日志文件位置
-// macOS: ~/Library/Logs/GucciAI/
-// Windows: %USERPROFILE%\AppData\Roaming\GucciAI\logs\
-// Linux: ~/.config/GucciAI/logs/
+// macOS: ~/Library/Logs/JustDo/
+// Windows: %USERPROFILE%\AppData\Roaming\JustDo\logs\
+// Linux: ~/.config/JustDo/logs/
 
 log.info('Session started');
 log.error('Failed to start engine:', error);

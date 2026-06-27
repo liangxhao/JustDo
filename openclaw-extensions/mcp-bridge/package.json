@@ -1,7 +1,7 @@
 {
-  "name": "@gucciai/openclaw-mcp-bridge",
+  "name": "@JustDo/openclaw-mcp-bridge",
   "version": "0.0.0",
-  "description": "Expose GucciAI-managed MCP servers as native OpenClaw tools.",
+  "description": "Expose JustDo-managed MCP servers as native OpenClaw tools.",
   "type": "module",
   "openclaw": {
     "extensions": [

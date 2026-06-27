@@ -7,7 +7,7 @@
 
 import type { CoworkStore } from '../coworkStore';
 
-const GUCCIAI_SESSION_PREFIX = 'gucciai:';
+const JUSTDO_SESSION_PREFIX = 'justdo:';
 export const DEFAULT_MANAGED_AGENT_ID = 'main';
 
 export interface ManagedSessionKey {
@@ -21,7 +21,7 @@ export function buildManagedSessionKey(
 ): string {
   const normalizedSessionId = sessionId.trim();
   const normalizedAgentId = agentId.trim() || DEFAULT_MANAGED_AGENT_ID;
-  return `agent:${normalizedAgentId}:gucciai:${normalizedSessionId}`;
+  return `agent:${normalizedAgentId}:justdo:${normalizedSessionId}`;
 }
 
 export function parseManagedSessionKey(
@@ -30,8 +30,8 @@ export function parseManagedSessionKey(
   const raw = (sessionKey ?? '').trim();
   if (!raw) return null;
 
-  if (raw.startsWith(GUCCIAI_SESSION_PREFIX)) {
-    const sessionId = raw.slice(GUCCIAI_SESSION_PREFIX.length).trim();
+  if (raw.startsWith(JUSTDO_SESSION_PREFIX)) {
+    const sessionId = raw.slice(JUSTDO_SESSION_PREFIX.length).trim();
     return sessionId ? { agentId: null, sessionId } : null;
   }
 
@@ -40,7 +40,7 @@ export function parseManagedSessionKey(
   }
 
   const parts = raw.split(':');
-  if (parts.length < 4 || parts[0] !== 'agent' || parts[2] !== 'gucciai') {
+  if (parts.length < 4 || parts[0] !== 'agent' || parts[2] !== 'justdo') {
     return null;
   }
 

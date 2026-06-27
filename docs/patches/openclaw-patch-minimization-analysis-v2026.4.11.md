@@ -31,7 +31,7 @@
 - **Patch目的**: 跳过 Commander CLI overhead，直接启动 gateway
 - **替代方案**: ✅ **已有替代** — `scripts/bundle-openclaw-gateway.cjs`
   
-  GucciAI 项目已实现了 esbuild 打包方案，将 gateway 入口打包成单文件 `gateway-bundle.mjs`：
+  JustDo 项目已实现了 esbuild 打包方案，将 gateway 入口打包成单文件 `gateway-bundle.mjs`：
   ```javascript
   // bundle-openclaw-gateway.cjs
   esbuild.build({
@@ -87,7 +87,7 @@
   // src/agents/tools/cron-tool.ts:391
   ownerOnly: isOpenClawOwnerOnlyCoreToolName("cron"),  // 返回 true
   ```
-- **GucciAI 配置**: `ownerAllowFrom: ['*']` 已让所有用户被视为 owner
+- **JustDo 配置**: `ownerAllowFrom: ['*']` 已让所有用户被视为 owner
   
   ```typescript
   // OpenClaw command-auth.ts
@@ -96,7 +96,7 @@
   
   即使 `cron.ownerOnly = true`，工具也不被限制。
 
-**建议**: ❌ **已移除** — GucciAI 配置已覆盖此限制
+**建议**: ❌ **已移除** — JustDo 配置已覆盖此限制
 
 ---
 
@@ -112,7 +112,7 @@
     // 无 skipMissedJobs 字段
   };
   ```
-- **GucciAI 使用**: ✅ 正在使用 — `openclawConfigSync.ts:744`
+- **JustDo 使用**: ✅ 正在使用 — `openclawConfigSync.ts:744`
   ```typescript
   cron: {
     enabled: true,
@@ -120,7 +120,7 @@
   }
   ```
 
-**建议**: ✅ **必须保留** — GucciAI 配置系统依赖此字段
+**建议**: ✅ **必须保留** — JustDo 配置系统依赖此字段
 
 ---
 
@@ -160,9 +160,9 @@
   // src/infra/heartbeat-runner.ts:896
   Body: appendCronStyleCurrentTimeLine(prompt, cfg, startedAt),  // 始终添加
   ```
-- **移除原因**: 时间信息可在 GucciAI UI 显示，不需要 Agent 引用
+- **移除原因**: 时间信息可在 JustDo UI 显示，不需要 Agent 引用
 
-**建议**: ❌ **已移除** — UX 可在 GucciAI 侧处理
+**建议**: ❌ **已移除** — UX 可在 JustDo 侧处理
 
 ---
 
@@ -204,7 +204,7 @@
     // 无 wecom 配置
   };
   ```
-- **GucciAI 使用**: ❌ **不使用** — GucciAI 不支持任何 IM channel
+- **JustDo 使用**: ❌ **不使用** — JustDo 不支持任何 IM channel
   ```typescript
   // src/renderer/types/im.ts:23-31
   export const DEFAULT_IM_CONFIG = {
@@ -214,7 +214,7 @@
   };
   ```
 
-**建议**: ❌ **移除此 patch** — GucciAI 不使用企业微信，此安全配置无意义
+**建议**: ❌ **移除此 patch** — JustDo 不使用企业微信，此安全配置无意义
 
 ---
 
@@ -253,7 +253,7 @@
   // 无 dist/ 前缀
   ```
 - **Patch目的**: 解决 ESM 模块 require 问题
-- **替代方案**: ✅ **可替代** — GucciAI bundle 方案可能已解决此问题
+- **替代方案**: ✅ **可替代** — JustDo bundle 方案可能已解决此问题
   
   但需要实际测试验证。如果 bundle 后 facade 模块正常加载，可移除此 patch。
 
@@ -274,9 +274,9 @@
   2. 发送 raw text 而非 formatted text
   3. 添加 sessionKey 到事件
 
-- **GucciAI 使用**: ✅ 正在使用 — WebSocket 实时显示 thinking 内容
+- **JustDo 使用**: ✅ 正在使用 — WebSocket 实时显示 thinking 内容
 
-**建议**: ✅ **必须保留** — GucciAI UI 功能依赖此 patch
+**建议**: ✅ **必须保留** — JustDo UI 功能依赖此 patch
 
 ---
 
@@ -289,7 +289,7 @@
 | `openclaw-gateway-entry-new-file.patch` | 替代方案：`scripts/bundle-openclaw-gateway.cjs` |
 | `openclaw-gateway-entry-run.patch` | bundle 方案自动内联 |
 | `openclaw-gateway-entry-tsdown.patch` | bundle 使用 entry.js fallback |
-| `openclaw-wecom-exec-deny.patch` | GucciAI 不使用企业微信，无意义 |
+| `openclaw-wecom-exec-deny.patch` | JustDo 不使用企业微信，无意义 |
 | `openclaw-facade-runtime-dist-path.patch` | bundle 方案已解决路径问题 |
 | `openclaw-cron-tool-owner-only.patch` | `ownerAllowFrom: ['*']` 已覆盖 |
 | `openclaw-cron-current-time-suffix.patch` | 时间信息可在 UI 显示 |
@@ -360,12 +360,12 @@
 ## 8. 结论
 
 通过分析，14 个 patches 中：
-- **4 个可通过 GucciAI 项目内部 bundle 方案替代**
-- **1 个完全不需要**（wecom-exec-deny，GucciAI 不支持企业微信）
+- **4 个可通过 JustDo 项目内部 bundle 方案替代**
+- **1 个完全不需要**（wecom-exec-deny，JustDo 不支持企业微信）
 - **9 个必须保留**（业务需求、Windows 兼容性、UI 功能）
 
 建议优先验证 bundle 方案，确认可移除的 patches 后更新 patch 应用脚本。
 
 ---
 
-*报告生成: GucciAI 项目组*
+*报告生成: JustDo 项目组*

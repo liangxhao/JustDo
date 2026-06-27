@@ -6,13 +6,13 @@
 
 ## Executive Summary
 
-通过分析 OpenClaw v2026.4.11 源码与 GucciAI 使用场景，将 patches 从 **14 个精简为 7 个**。
+通过分析 OpenClaw v2026.4.11 源码与 JustDo 使用场景，将 patches 从 **14 个精简为 7 个**。
 
 **精简结果**：
 
 | 操作 | 数量 | 说明 |
 |------|------|------|
-| 移除 | 7 | bundle替代 / GucciAI不使用 / 配置已覆盖 |
+| 移除 | 7 | bundle替代 / JustDo不使用 / 配置已覆盖 |
 | 保留 | 7 | 业务需求 / Windows兼容 / UX改善 |
 
 ---
@@ -46,7 +46,7 @@ esbuild.build({
 
 ### 2. wecom-exec-deny.patch — 不使用企业微信
 
-**移除原因**: GucciAI 不支持任何 IM channel
+**移除原因**: JustDo 不支持任何 IM channel
 
 ```typescript
 // src/renderer/types/im.ts:23-31
@@ -64,7 +64,7 @@ export const DEFAULT_IM_CONFIG = {
 
 ### 4. cron-tool-owner-only.patch — 配置已覆盖
 
-**移除原因**: GucciAI 配置 `ownerAllowFrom: ['*']` 已让所有用户被视为 owner
+**移除原因**: JustDo 配置 `ownerAllowFrom: ['*']` 已让所有用户被视为 owner
 
 ```typescript
 // src/main/libs/openclawConfigSync.ts:128-137
@@ -81,7 +81,7 @@ senderIsOwner = senderIsOwnerByIdentity || senderIsOwnerByScope || ownerState.ow
 
 ### 5. cron-current-time-suffix.patch — UI侧可处理
 
-**移除原因**: 时间信息可在 GucciAI UI 显示，不需要 Agent 引用
+**移除原因**: 时间信息可在 JustDo UI 显示，不需要 Agent 引用
 
 ---
 
@@ -96,7 +96,7 @@ senderIsOwner = senderIsOwnerByIdentity || senderIsOwnerByScope || ownerState.ow
 - Schema验证 (`zod-schema.ts`) 在 OpenClaw  
 - 业务逻辑 (`ops.ts`) 在 OpenClaw
 
-**GucciAI使用证据**:
+**JustDo使用证据**:
 ```typescript
 // src/main/libs/openclawConfigSync.ts:744
 cron: {
@@ -111,7 +111,7 @@ const [skipMissedJobs, setSkipMissedJobs] = useState(false);  // ✅ UI配置
 
 **为什么必须在OpenClaw端**:
 - Prompt 是发给 Agent 的，不是发给用户的
-- Agent 回复内容不可预测，GucciAI 无法从回复中智能提取核心内容
+- Agent 回复内容不可预测，JustDo 无法从回复中智能提取核心内容
 - 在发送端简化 prompt → Agent 自然生成简洁回复
 
 ### 2. thinking-stream.patch — 控制发送方行为
@@ -120,9 +120,9 @@ const [skipMissedJobs, setSkipMissedJobs] = useState(false);  // ✅ UI配置
 ```typescript
 // OpenClaw决定是否发送thinking事件
 streamReasoning: reasoningMode === "stream" 
-  && typeof params.onReasoningStream === "function"  // GucciAI无法控制
+  && typeof params.onReasoningStream === "function"  // JustDo无法控制
 
-// GucciAI只是WebSocket接收方
+// JustDo只是WebSocket接收方
 runtime.on('thinkingUpdate', (sessionId, messageId, thinkingDelta) => {
   win.webContents.send('cowork:stream:thinkingUpdate', data);  // 被动接收
 });
@@ -145,7 +145,7 @@ spawnSync("npm", [...], { shell: true })  // 正常工作
 | 场景 | 原方案(14 patches) | 精简方案(7 patches) |
 |------|-------------------|-------------------|
 | 升级到新版本 | 需适配14个patches | 需适配7个patches |
-| Gateway启动优化 | 依赖OpenClaw修改 | GucciAI内部bundle |
+| Gateway启动优化 | 依赖OpenClaw修改 | JustDo内部bundle |
 | 新版本gateway-entry冲突 | 必须重新patch | 无需patch |
 | Cron权限控制 | 依赖patch | 配置已覆盖 |
 
@@ -159,4 +159,4 @@ spawnSync("npm", [...], { shell: true })  // 正常工作
 
 ---
 
-*报告生成: GucciAI 项目组*
+*报告生成: JustDo 项目组*

@@ -12,7 +12,7 @@ implementation_doc: ../../features/thinking-stream-implementation.md
 > **STATUS: IMPLEMENTED** - See [thinking-stream-implementation.md](../../features/thinking-stream-implementation.md) for the final implementation details.
 
 **Date**: 2026-04-13
-**Project**: GucciAI
+**Project**: JustDo
 **Author**: Claude
 
 ## Overview

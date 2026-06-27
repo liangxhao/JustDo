@@ -48,7 +48,7 @@ describe('openclawModelRef', () => {
       expect(ref).toBe('anthropic/claude-sonnet-4-6');
     });
 
-    test('generates gucciai ref for server models', () => {
+    test('generates justdo ref for server models', () => {
       const model: Model = {
         id: 'gpt-4o',
         name: 'GPT-4o',
@@ -57,7 +57,7 @@ describe('openclawModelRef', () => {
       };
 
       const ref = toOpenClawModelRef(model);
-      expect(ref).toBe('gucciai/gpt-4o');
+      expect(ref).toBe('justdo/gpt-4o');
     });
   });
 
@@ -103,8 +103,8 @@ describe('openclawModelRef', () => {
       expect(result?.id).toBe('claude-sonnet-4-6');
     });
 
-    test('matches server model with gucciai provider', () => {
-      const result = resolveOpenClawModelRef('gucciai/gpt-4o', customModels);
+    test('matches server model with justdo provider', () => {
+      const result = resolveOpenClawModelRef('justdo/gpt-4o', customModels);
       expect(result?.id).toBe('gpt-4o');
       expect(result?.isServerModel).toBe(true);
     });

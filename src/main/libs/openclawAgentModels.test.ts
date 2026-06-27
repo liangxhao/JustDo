@@ -17,7 +17,7 @@ describe('buildAgentEntry', () => {
         description: '',
         systemPrompt: '',
         identity: '',
-        model: 'gucciai-server/deepseek-v3.2',
+        model: 'justdo-server/deepseek-v3.2',
         icon: '',
         skillIds: [],
         enabled: true,
@@ -33,7 +33,7 @@ describe('buildAgentEntry', () => {
     expect(result).toMatchObject({
       id: 'main',
       default: true,
-      model: { primary: 'gucciai-server/deepseek-v3.2' },
+      model: { primary: 'justdo-server/deepseek-v3.2' },
     });
   });
 
@@ -130,10 +130,10 @@ describe('buildManagedAgentEntries', () => {
 
 describe('parsePrimaryModelRef', () => {
   test('parses provider-qualified primary model refs', () => {
-    expect(parsePrimaryModelRef('gucciai-server/deepseek-v3.2')).toEqual({
-      providerId: 'gucciai-server',
+    expect(parsePrimaryModelRef('justdo-server/deepseek-v3.2')).toEqual({
+      providerId: 'justdo-server',
       modelId: 'deepseek-v3.2',
-      primaryModel: 'gucciai-server/deepseek-v3.2',
+      primaryModel: 'justdo-server/deepseek-v3.2',
     });
   });
 
@@ -144,7 +144,7 @@ describe('parsePrimaryModelRef', () => {
 
 describe('resolveManagedSessionModelTarget', () => {
   const availableProviders = {
-    'gucciai-server': { models: [{ id: 'qwen3.5-plus' }, { id: 'deepseek-v3.2' }] },
+    'justdo-server': { models: [{ id: 'qwen3.5-plus' }, { id: 'deepseek-v3.2' }] },
     minimax: { models: [{ id: 'MiniMax-M2.7' }] },
   };
 
@@ -152,13 +152,13 @@ describe('resolveManagedSessionModelTarget', () => {
     expect(
       resolveManagedSessionModelTarget({
         agentModel: '',
-        fallbackPrimaryModel: 'gucciai-server/qwen3.5-plus',
+        fallbackPrimaryModel: 'justdo-server/qwen3.5-plus',
         availableProviders,
       }),
     ).toEqual({
-      providerId: 'gucciai-server',
+      providerId: 'justdo-server',
       modelId: 'qwen3.5-plus',
-      primaryModel: 'gucciai-server/qwen3.5-plus',
+      primaryModel: 'justdo-server/qwen3.5-plus',
     });
   });
 
@@ -166,7 +166,7 @@ describe('resolveManagedSessionModelTarget', () => {
     expect(
       resolveManagedSessionModelTarget({
         agentModel: 'minimax/MiniMax-M2.7',
-        fallbackPrimaryModel: 'gucciai-server/qwen3.5-plus',
+        fallbackPrimaryModel: 'justdo-server/qwen3.5-plus',
         availableProviders,
       }),
     ).toEqual({
@@ -180,13 +180,13 @@ describe('resolveManagedSessionModelTarget', () => {
     expect(
       resolveManagedSessionModelTarget({
         agentModel: 'deepseek-v3.2',
-        fallbackPrimaryModel: 'gucciai-server/qwen3.5-plus',
+        fallbackPrimaryModel: 'justdo-server/qwen3.5-plus',
         availableProviders,
       }),
     ).toEqual({
-      providerId: 'gucciai-server',
+      providerId: 'justdo-server',
       modelId: 'deepseek-v3.2',
-      primaryModel: 'gucciai-server/deepseek-v3.2',
+      primaryModel: 'justdo-server/deepseek-v3.2',
     });
   });
 
@@ -194,14 +194,14 @@ describe('resolveManagedSessionModelTarget', () => {
     expect(
       resolveManagedSessionModelTarget({
         agentModel: 'unknown-model',
-        fallbackPrimaryModel: 'gucciai-server/qwen3.5-plus',
+        fallbackPrimaryModel: 'justdo-server/qwen3.5-plus',
         availableProviders,
-        currentProviderId: 'gucciai-server',
+        currentProviderId: 'justdo-server',
       }),
     ).toEqual({
-      providerId: 'gucciai-server',
+      providerId: 'justdo-server',
       modelId: 'unknown-model',
-      primaryModel: 'gucciai-server/unknown-model',
+      primaryModel: 'justdo-server/unknown-model',
     });
   });
 });
@@ -212,13 +212,13 @@ describe('resolveQualifiedAgentModelRef', () => {
       resolveQualifiedAgentModelRef({
         agentModel: 'deepseek-v3.2',
         availableProviders: {
-          'gucciai-server': { models: [{ id: 'deepseek-v3.2' }] },
+          'justdo-server': { models: [{ id: 'deepseek-v3.2' }] },
           minimax: { models: [{ id: 'MiniMax-M2.7' }] },
         },
       }),
     ).toEqual({
       status: 'qualified',
-      primaryModel: 'gucciai-server/deepseek-v3.2',
+      primaryModel: 'justdo-server/deepseek-v3.2',
     });
   });
 
@@ -228,13 +228,13 @@ describe('resolveQualifiedAgentModelRef', () => {
         agentModel: 'deepseek-v3.2',
         availableProviders: {
           anthropic: { models: [{ id: 'deepseek-v3.2' }] },
-          'gucciai-server': { models: [{ id: 'deepseek-v3.2' }] },
+          'justdo-server': { models: [{ id: 'deepseek-v3.2' }] },
         },
       }),
     ).toEqual({
       status: 'ambiguous',
       modelId: 'deepseek-v3.2',
-      providerIds: ['anthropic', 'gucciai-server'],
+      providerIds: ['anthropic', 'justdo-server'],
     });
   });
 });

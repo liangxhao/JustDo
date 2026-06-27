@@ -34,7 +34,7 @@
 
 | Patch | 文件 | 说明 |
 |-------|------|------|
-| `openclaw-skills-snapshot-managed-dir.patch` | skills snapshot | 支持从 GucciAI resources/skills 目录拷贝技能到运行时 |
+| `openclaw-skills-snapshot-managed-dir.patch` | skills snapshot | 支持从 JustDo resources/skills 目录拷贝技能到运行时 |
 
 ---
 
@@ -49,10 +49,10 @@
 | `openclaw-gateway-entry-new-file.patch` | 替代方案：`scripts/bundle-openclaw-gateway.cjs` 打包 |
 | `openclaw-gateway-entry-run.patch` | bundle 方案自动内联，不需要单独导出 |
 | `openclaw-gateway-entry-tsdown.patch` | bundle 不依赖 dist 构建 |
-| `openclaw-wecom-exec-deny.patch` | GucciAI 不支持企业微信，无意义 |
+| `openclaw-wecom-exec-deny.patch` | JustDo 不支持企业微信，无意义 |
 | `openclaw-facade-runtime-dist-path.patch` | bundle 方案已解决路径问题 |
 | `openclaw-cron-tool-owner-only.patch` | `ownerAllowFrom: ['*']` 已让所有用户被视为 owner |
-| `openclaw-cron-current-time-suffix.patch` | 时间信息可在 GucciAI UI 侧显示，不需要 Agent 引用 |
+| `openclaw-cron-current-time-suffix.patch` | 时间信息可在 JustDo UI 侧显示，不需要 Agent 引用 |
 
 ---
 
@@ -112,4 +112,4 @@ npm run electron:dev:openclaw
 
 ---
 
-*报告生成: GucciAI 项目组*
+*报告生成: JustDo 项目组*
