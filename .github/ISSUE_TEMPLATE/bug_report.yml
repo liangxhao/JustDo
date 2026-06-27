@@ -1,5 +1,5 @@
 name: Bug Report
-about: Create a report to help us improve GucciAI
+about: Create a report to help us improve JustDo
 title: '[Bug] '
 labels: ['bug']
 body:
@@ -55,11 +55,11 @@ body:
       description: |
         Please provide the following information:
         - OS: [e.g., macOS 14, Windows 11, Ubuntu 22.04]
-        - GucciAI Version: [e.g., 2026.3.19]
+        - JustDo Version: [e.g., 2026.3.19]
         - Node.js Version: [e.g., 24.0.0]
       placeholder: |
         - OS: 
-        - GucciAI Version: 
+        - JustDo Version: 
         - Node.js Version: 
     validations:
       required: true

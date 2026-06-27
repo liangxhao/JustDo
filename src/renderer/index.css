@@ -19,12 +19,12 @@
 }
 
 .dark .katex {
-  color: var(--gucciai-text-primary);
+  color: var(--justdo-text-primary);
 }
 
 /* Improve code block styles */
 pre {
-  background-color: var(--gucciai-surface-raised);
+  background-color: var(--justdo-surface-raised);
   border-radius: 0.75rem !important;
   padding: 1em !important;
   margin: 1em 0 !important;
@@ -43,20 +43,20 @@ table {
 }
 
 th, td {
-  border-color: var(--gucciai-border);
+  border-color: var(--justdo-border);
   padding: 0.5em;
 }
 
 th {
-  background-color: var(--gucciai-surface-raised);
+  background-color: var(--justdo-surface-raised);
   opacity: 0.8;
   font-weight: bold;
 }
 
 /* Style for blockquotes */
 blockquote {
-  border-left-color: var(--gucciai-primary);
-  color: var(--gucciai-text-secondary);
+  border-left-color: var(--justdo-primary);
+  color: var(--justdo-text-secondary);
   border-left-width: 3px;
   padding-left: 1em;
   font-style: italic;
@@ -82,8 +82,8 @@ blockquote {
 /* Theme colors are driven by CSS variables from themes.css.
  * color-scheme is set by the [data-theme] selectors. */
 body, #root, .App, main {
-  background-color: var(--gucciai-background);
-  color: var(--gucciai-foreground);
+  background-color: var(--justdo-background);
+  color: var(--justdo-foreground);
 }
 
 body {
@@ -107,18 +107,18 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: var(--gucciai-scroll-thumb);
+  background-color: var(--justdo-scroll-thumb);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--gucciai-scroll-thumb-hover);
+  background-color: var(--justdo-scroll-thumb-hover);
 }
 
 /* Style for select options to match theme */
 option {
-  background-color: var(--gucciai-surface);
-  color: var(--gucciai-foreground);
+  background-color: var(--justdo-surface);
+  color: var(--justdo-foreground);
 }
 
 /* Ensure select elements have proper styling in Firefox */
@@ -153,7 +153,7 @@ select::-ms-expand {
 /* Focus ring */
 .focus-ring {
   @apply focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2;
-  --tw-ring-offset-color: var(--gucciai-background);
+  --tw-ring-offset-color: var(--justdo-background);
 }
 
 /* Button styles */
@@ -162,13 +162,13 @@ select::-ms-expand {
 }
 
 .btn-secondary {
-  background-color: var(--gucciai-surface);
-  color: var(--gucciai-text-primary);
-  border: 1px solid var(--gucciai-border);
+  background-color: var(--justdo-surface);
+  color: var(--justdo-text-primary);
+  border: 1px solid var(--justdo-border);
   @apply font-medium py-2 px-4 rounded-lg transition-colors;
 }
 .btn-secondary:hover {
-  background-color: var(--gucciai-surface-raised);
+  background-color: var(--justdo-surface-raised);
 }
 
 /* Sidebar width transition - instant toggle, no animation */
@@ -178,7 +178,7 @@ select::-ms-expand {
 
 /* Subtle separator line */
 .separator {
-  border-color: var(--gucciai-border-subtle);
+  border-color: var(--justdo-border-subtle);
   border-top-width: 1px;
 }
 
@@ -200,7 +200,7 @@ select::-ms-expand {
 
 /* Skeleton loading */
 .skeleton {
-  background-color: var(--gucciai-surface-raised);
+  background-color: var(--justdo-surface-raised);
   @apply rounded;
   position: relative;
   overflow: hidden;
@@ -235,7 +235,7 @@ select::-ms-expand {
 }
 /* Streaming bar glow uses primary color */
 .streaming-bar::before {
-  box-shadow: 0 0 6px var(--gucciai-primary-muted);
+  box-shadow: 0 0 6px var(--justdo-primary-muted);
 }
 @keyframes streaming-slide {
   0% { left: -40%; }
@@ -257,7 +257,7 @@ select::-ms-expand {
 .session-group-header {
   @apply flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer transition-colors border;
   position: relative;
-  background-color: var(--gucciai-surface-raised);
+  background-color: var(--justdo-surface-raised);
   margin-bottom: 2px;
   margin-top: 0;
   border-color: transparent;

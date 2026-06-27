@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the final implementation of the "Thinking Stream Display" feature for OpenClaw models in GucciAI. The feature allows real-time display of model thinking/reasoning content during assistant message generation.
+This document describes the final implementation of the "Thinking Stream Display" feature for OpenClaw models in JustDo. The feature allows real-time display of model thinking/reasoning content during assistant message generation.
 
 **Implementation Date**: 2026-04-14
 **Key Commits**:

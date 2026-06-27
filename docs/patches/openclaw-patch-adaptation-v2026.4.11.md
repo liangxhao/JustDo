@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-通过对比 `../openclaw` (v2026.3.2 patched) 和 v2026.4.11 源码，完成了 GucciAI patches 的适配工作。
+通过对比 `../openclaw` (v2026.3.2 patched) 和 v2026.4.11 源码，完成了 JustDo patches 的适配工作。
 
 **适配结果汇总**：
 
@@ -16,7 +16,7 @@
 | `openclaw-thinking-stream.patch` | ✅ 完成 | thinking stream 发送逻辑修改 |
 | `openclaw-prepack-shell.patch` | ✅ 完成 | Windows spawnSync pnpm 兼容 |
 | `openclaw-release-check-shell.patch` | ✅ 完成 | Windows spawnSync npm 兼容 |
-| `openclaw-skills-snapshot-managed-dir.patch` | ✅ 完成 | skills 从 GucciAI 目录拷贝 |
+| `openclaw-skills-snapshot-managed-dir.patch` | ✅ 完成 | skills 从 JustDo 目录拷贝 |
 
 ---
 
@@ -48,7 +48,7 @@
 
 ### skills-snapshot-managed-dir.patch
 
-支持从 GucciAI `resources/skills` 目录拷贝技能到运行时目录。
+支持从 JustDo `resources/skills` 目录拷贝技能到运行时目录。
 
 ---
 
@@ -74,11 +74,11 @@
 ### 其他 (4 个)
 | Patch | 移除原因 |
 |-------|---------|
-| `openclaw-wecom-exec-deny.patch` | GucciAI 不支持企业微信，无意义 |
+| `openclaw-wecom-exec-deny.patch` | JustDo 不支持企业微信，无意义 |
 | `openclaw-facade-runtime-dist-path.patch` | bundle 方案已解决路径问题 |
 | `openclaw-cron-tool-owner-only.patch` | `ownerAllowFrom: ['*']` 已让所有用户被视为 owner |
-| `openclaw-cron-current-time-suffix.patch` | 时间信息可在 GucciAI UI 侧显示，不需要 Agent 引用 |
+| `openclaw-cron-current-time-suffix.patch` | 时间信息可在 JustDo UI 侧显示，不需要 Agent 引用 |
 
 ---
 
-*报告生成: GucciAI 项目组*
+*报告生成: JustDo 项目组*

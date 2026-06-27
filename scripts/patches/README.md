@@ -1,6 +1,6 @@
 # OpenClaw Runtime Patch Policy
 
-GucciAI is an OpenClaw desktop frontend, not a long-term fork of the OpenClaw
+JustDo is an OpenClaw desktop frontend, not a long-term fork of the OpenClaw
 Runtime. Runtime patches are temporary compatibility shims and must stay small,
 auditable, and removable.
 
@@ -20,7 +20,7 @@ Every patch under `scripts/patches/<openclaw-version>/` must start with metadata
 ## Rules
 
 - Do not add a runtime patch without the header above.
-- Prefer upstream OpenClaw issues or PRs over expanding GucciAI patch logic.
+- Prefer upstream OpenClaw issues or PRs over expanding JustDo patch logic.
 - Mark bug-fix and prompt-semantic patches as `Temporary: yes`.
 - Electron, Windows, or packaging compatibility patches may be temporary or
   permanent, but still need a removal condition.

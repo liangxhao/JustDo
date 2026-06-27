@@ -1,7 +1,7 @@
 {
-  "appId": "com.gucciai.app",
-  "productName": "GucciAI",
-  "executableName": "GucciAI",
+  "appId": "com.justdo.app",
+  "productName": "JustDo",
+  "executableName": "JustDo",
   "directories": {
     "output": "release"
   },
@@ -53,8 +53,8 @@
   ],
   "protocols": [
     {
-      "name": "GucciAI",
-      "schemes": ["gucciai"]
+      "name": "JustDo",
+      "schemes": ["justdo"]
     }
   ],
   "mac": {
@@ -69,9 +69,9 @@
     "entitlementsInherit": "build/entitlements.mac.plist",
     "extendInfo": {
       "CFBundleIconName": "icon",
-      "NSCalendarsUsageDescription": "GucciAI 需要访问您的日历来帮助您查看和管理日程安排，例如查找事件、创建会议等。",
-      "NSRemindersUsageDescription": "GucciAI 需要访问您的提醒事项来帮助您管理待办事项。",
-      "NSAppleEventsUsageDescription": "GucciAI 需要使用 Apple Events 来控制 Calendar 应用执行自动化操作。"
+      "NSCalendarsUsageDescription": "JustDo 需要访问您的日历来帮助您查看和管理日程安排，例如查找事件、创建会议等。",
+      "NSRemindersUsageDescription": "JustDo 需要访问您的提醒事项来帮助您管理待办事项。",
+      "NSAppleEventsUsageDescription": "JustDo 需要使用 Apple Events 来控制 Calendar 应用执行自动化操作。"
     },
     "extraResources": [
       {
@@ -231,7 +231,7 @@
       }
     ],
     "desktop": {
-      "Name": "GucciAI",
+      "Name": "JustDo",
       "Comment": "AI-assisted coding and productivity tool",
       "Terminal": "false"
     }

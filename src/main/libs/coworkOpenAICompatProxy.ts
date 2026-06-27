@@ -2363,7 +2363,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   }
 
   // OpenClaw sends requests to /v1/chat/completions (OpenAI format) when using
-  // the gucciai provider. Transparently proxy these requests to the upstream with
+  // the justdo provider. Transparently proxy these requests to the upstream with
   // IDE headers injected (needed for GitHub Copilot).
   if (
     method === 'POST' &&
@@ -2518,9 +2518,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   const upstreamAPIType = resolveUpstreamAPIType(upstreamConfig.provider);
   const openAIRequest = anthropicToOpenAI(parsedRequestBody);
 
-  // Inject session_id and user_message for gucciai-server logging only.
+  // Inject session_id and user_message for justdo-server logging only.
   // Strict providers (e.g. Gemini) reject unknown payload fields.
-  if (upstreamConfig.provider === 'gucciai-server') {
+  if (upstreamConfig.provider === 'justdo-server') {
     if (currentCoworkSessionId) {
       openAIRequest.session_id = currentCoworkSessionId;
     }

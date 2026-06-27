@@ -85,7 +85,7 @@ fix_icon_display() {
 
   if [ -z "$APP_PATH" ]; then
     echo "Usage: $0 fix-display <path-to-app>"
-    echo "Example: $0 fix-display release/mac-arm64/GucciAI.app"
+    echo "Example: $0 fix-display release/mac-arm64/JustDo.app"
     exit 1
   fi
 

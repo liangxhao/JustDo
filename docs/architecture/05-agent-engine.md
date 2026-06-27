@@ -1,8 +1,8 @@
-# GucciAI Agent 引擎与 OpenClaw 集成
+# JustDo Agent 引擎与 OpenClaw 集成
 
 ## 1. 概述
 
-GucciAI 采用 OpenClaw 作为主要 Agent 引擎，通过 Gateway API 进行实时通信。OpenClaw 提供完整的 Agent 运行时能力，包括工具执行、沙箱隔离、持久化记忆等。
+JustDo 采用 OpenClaw 作为主要 Agent 引擎，通过 Gateway API 进行实时通信。OpenClaw 提供完整的 Agent 运行时能力，包括工具执行、沙箱隔离、持久化记忆等。
 
 ### 1.1 架构关系
 
@@ -351,7 +351,7 @@ OpenClawRuntimeAdapter 负责将 Cowork API 转换为 Gateway API：
 
 | 类型 | 格式 | 示例 |
 |------|------|------|
-| GUI Cowork | `agent:main:gucciai:{sessionId}` | `agent:main:gucciai:abc123` |
+| GUI Cowork | `agent:main:justdo:{sessionId}` | `agent:main:justdo:abc123` |
 | IM Managed | `agent:{agentId}:{platform}:{conversationId}` | `agent:bot1:im:private:12345` |
 | IM Channel | `agent:{agentId}:{channel}:{accountId}:{peerKind}:{peerId}` | `agent:bot1:im:acc1:direct:user1` |
 | Cron | `cron:{jobId}` | `cron:task-001` |
@@ -441,7 +441,7 @@ class OpenClawConfigSync {
   
   // Secret 环境变量命名
   private getSecretEnvKey(platform: string, index: number): string {
-    const prefix = 'GUCCIAI'; // 前缀
+    const prefix = 'JUSTDO'; // 前缀
     const platformUpper = platform.toUpperCase();
     
     if (index === 0) {

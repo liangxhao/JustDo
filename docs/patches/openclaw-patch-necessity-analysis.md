@@ -139,7 +139,7 @@
   - threadId 传递
 
 **结论**: 
-- 如果 GucciAI 需要**企业微信/钉钉等特殊渠道的 delivery 推断**，patch **必要**
+- 如果 JustDo 需要**企业微信/钉钉等特殊渠道的 delivery 推断**，patch **必要**
 - 如果仅使用标准渠道（Telegram 等），patch **可能不必要**
 
 ---
@@ -182,7 +182,7 @@
 - `isOwnerOnlyToolName()` 通过 `resolveOwnerOnlyToolApprovalClass()` 判断
 
 **结论**: 
-- 如果 GucciAI 需要**非 owner 用户使用 cron**，patch **必要**
+- 如果 JustDo 需要**非 owner 用户使用 cron**，patch **必要**
 - 这是业务需求决定的功能，不是技术缺失
 
 ---
@@ -236,4 +236,4 @@ npm run electron:dev:openclaw
 
 ---
 
-*报告生成: GucciAI 项目组*
+*报告生成: JustDo 项目组*

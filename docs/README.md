@@ -1,6 +1,6 @@
-# GucciAI 设计文档
+# JustDo 设计文档
 
-本目录包含 GucciAI 软件的完整设计文档，按类别组织。
+本目录包含 JustDo 软件的完整设计文档，按类别组织。
 
 ## 目录结构
 
@@ -73,7 +73,7 @@ docs/
 
 ---
 
-GucciAI — All-in-One Personal Assistant Agent
+JustDo — All-in-One Personal Assistant Agent
 
 ## 致谢
 

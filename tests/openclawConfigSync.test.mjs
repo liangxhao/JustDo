@@ -79,21 +79,21 @@ const createOpenAICompatAppConfig = () => ({
 });
 
 const createSessionStore = () => ({
-  'agent:main:gucciai:current-session': {
+  'agent:main:justdo:current-session': {
     sessionId: 'session-current',
-    modelProvider: 'gucciai',
+    modelProvider: 'justdo',
     model: 'kimi-k2.5',
     systemPromptReport: {
-      provider: 'gucciai',
+      provider: 'justdo',
       model: 'kimi-k2.5',
     },
   },
-  'agent:main:gucciai:old-claude-session': {
+  'agent:main:justdo:old-claude-session': {
     sessionId: 'session-old-claude',
-    modelProvider: 'gucciai',
+    modelProvider: 'justdo',
     model: 'claude-sonnet-4-5-20250929',
     systemPromptReport: {
-      provider: 'gucciai',
+      provider: 'justdo',
       model: 'claude-sonnet-4-5-20250929',
     },
   },
@@ -163,11 +163,11 @@ test('sync writes native moonshot provider config and migrates matching managed 
   assert.equal(config.browser.enabled, true);
 
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].modelProvider, 'moonshot');
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].model, 'kimi-k2.5');
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].systemPromptReport.provider, 'moonshot');
-  assert.equal(sessionStore['agent:main:gucciai:old-claude-session'].modelProvider, 'gucciai');
-  assert.equal(sessionStore['agent:main:gucciai:old-claude-session'].model, 'claude-sonnet-4-5-20250929');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].modelProvider, 'moonshot');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].model, 'kimi-k2.5');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].systemPromptReport.provider, 'moonshot');
+  assert.equal(sessionStore['agent:main:justdo:old-claude-session'].modelProvider, 'justdo');
+  assert.equal(sessionStore['agent:main:justdo:old-claude-session'].model, 'claude-sonnet-4-5-20250929');
   assert.equal(sessionStore['agent:main:telegram:dm:user_123'].execSecurity, 'deny');
   assert.equal(sessionStore['agent:main:discord:dm:user_456'].execSecurity, 'deny');
 });
@@ -197,10 +197,10 @@ test('sync maps moonshot coding plan sessions to kimi-coding model refs', (t) =>
   assert.deepEqual(config.commands.ownerAllowFrom, ['gateway-client', '*']);
 
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].modelProvider, 'kimi-coding');
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].model, 'k2p5');
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].systemPromptReport.provider, 'kimi-coding');
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].systemPromptReport.model, 'k2p5');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].modelProvider, 'kimi-coding');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].model, 'k2p5');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].systemPromptReport.provider, 'kimi-coding');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].systemPromptReport.model, 'k2p5');
   assert.equal(sessionStore['agent:main:telegram:dm:user_123'].execSecurity, 'deny');
   assert.equal(sessionStore['agent:main:discord:dm:user_456'].execSecurity, 'deny');
 });
@@ -225,8 +225,8 @@ test('sync denies exec for native channel sessions even without provider migrati
   assert.equal(result.changed, true);
 
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].modelProvider, 'gucciai');
-  assert.equal(sessionStore['agent:main:gucciai:current-session'].model, 'kimi-k2.5');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].modelProvider, 'justdo');
+  assert.equal(sessionStore['agent:main:justdo:current-session'].model, 'kimi-k2.5');
   assert.equal(sessionStore['agent:main:telegram:dm:user_123'].execSecurity, 'deny');
   assert.equal(sessionStore['agent:main:discord:dm:user_456'].execSecurity, 'deny');
 });
@@ -269,7 +269,7 @@ test('sync writes scheduled-task policy into managed AGENTS.md for native channe
   assert.match(agentsMd, /Always answer in Chinese\./);
 });
 
-test('sync preserves existing AGENTS.md content above the GucciAI managed marker', (t) => {
+test('sync preserves existing AGENTS.md content above the JustDo managed marker', (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-config-sync-agents-preserve-'));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
   setElectronPaths(tmpDir);
@@ -291,11 +291,11 @@ test('sync preserves existing AGENTS.md content above the GucciAI managed marker
 
   const agentsMd = fs.readFileSync(path.join(workspaceDir, 'AGENTS.md'), 'utf8');
   assert.match(agentsMd, /^# Custom Workspace Notes\n\nKeep this line\./);
-  assert.match(agentsMd, /<!-- GucciAI managed: do not edit below this line -->/);
+  assert.match(agentsMd, /<!-- JustDo managed: do not edit below this line -->/);
   assert.doesNotMatch(agentsMd, /^# AGENTS\.md - Your Workspace/m);
 });
 
-test('sync backfills the default OpenClaw AGENTS template when an old workspace only has GucciAI managed content', (t) => {
+test('sync backfills the default OpenClaw AGENTS template when an old workspace only has JustDo managed content', (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-config-sync-agents-backfill-'));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
   setElectronPaths(tmpDir);
@@ -305,7 +305,7 @@ test('sync backfills the default OpenClaw AGENTS template when an old workspace 
   fs.writeFileSync(
     path.join(workspaceDir, 'AGENTS.md'),
     [
-      '<!-- GucciAI managed: do not edit below this line -->',
+      '<!-- JustDo managed: do not edit below this line -->',
       '',
       '## System Prompt',
       '',
@@ -325,7 +325,7 @@ test('sync backfills the default OpenClaw AGENTS template when an old workspace 
   const agentsMd = fs.readFileSync(path.join(workspaceDir, 'AGENTS.md'), 'utf8');
   assert.match(agentsMd, /^# AGENTS\.md - Your Workspace/m);
   assert.match(agentsMd, /## Every Session/);
-  assert.match(agentsMd, /<!-- GucciAI managed: do not edit below this line -->/);
+  assert.match(agentsMd, /<!-- JustDo managed: do not edit below this line -->/);
   assert.match(agentsMd, /## Scheduled Tasks/);
   assert.doesNotMatch(agentsMd, /Old managed-only content\./);
 });
@@ -397,8 +397,8 @@ test('sync writes non-empty placeholder apiKey for providers that do not require
   assert.equal(result.changed, true);
 
   const config = JSON.parse(fs.readFileSync(path.join(tmpDir, 'state', 'openclaw.json'), 'utf8'));
-  const providerConfig = config.models.providers.gucciai;
-  assert.ok(providerConfig, 'gucciai provider should exist in config');
+  const providerConfig = config.models.providers.justdo;
+  assert.ok(providerConfig, 'justdo provider should exist in config');
   assert.ok(providerConfig.apiKey, 'apiKey must be a non-empty string');
-  assert.equal(providerConfig.apiKey, 'sk-gucciai-local');
+  assert.equal(providerConfig.apiKey, 'sk-justdo-local');
 });

@@ -6,9 +6,9 @@ import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
  *
  * Registers a structured tool that lets the model ask the user a question
  * with predefined options (single/multi select). The tool pauses execution
- * and waits for the user's response via an HTTP callback to GucciAI.
+ * and waits for the user's response via an HTTP callback to JustDo.
  *
- * This enables delete-confirmation modals on the GucciAI desktop app
+ * This enables delete-confirmation modals on the JustDo desktop app
  * without relying on OpenClaw's exec.approval mechanism.
  */
 
@@ -131,7 +131,7 @@ async function askUser(
 const plugin = {
   id: 'ask-user-question',
   name: 'AskUserQuestion',
-  description: 'Structured user confirmation tool for GucciAI desktop.',
+  description: 'Structured user confirmation tool for JustDo desktop.',
   configSchema: {
     parse(value: unknown): PluginConfig {
       return parsePluginConfig(value);
@@ -144,13 +144,13 @@ const plugin = {
       return;
     }
 
-    // Use a factory so the tool is only available for GucciAI desktop sessions.
+    // Use a factory so the tool is only available for JustDo desktop sessions.
     // IM channel sessions (qqbot, dingtalk, weixin, feishu, etc.) get null -> tool hidden.
     api.registerTool((ctx) => {
       const sessionKey = ctx.sessionKey ?? '';
       const isLocalDesktop =
-        sessionKey.startsWith('gucciai:')
-        || /^agent:[^:]+:gucciai:/.test(sessionKey);
+        sessionKey.startsWith('justdo:')
+        || /^agent:[^:]+:justdo:/.test(sessionKey);
       if (!isLocalDesktop) {
         return null;
       }

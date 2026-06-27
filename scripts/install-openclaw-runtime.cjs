@@ -164,7 +164,7 @@ fs.mkdirSync(extractDir, { recursive: true });
     patchFacadeRuntime(outDir);
 
     // ---------------------------------------------------------------------------
-    // 7. Patch compiled OpenClaw dist for GucciAI integration
+    // 7. Patch compiled OpenClaw dist for JustDo integration
     // ---------------------------------------------------------------------------
     console.log(`[install-openclaw-runtime] [5/8] Patching OpenClaw integration...`);
     patchOpenClawRuntime(outDir, { label: 'install-openclaw-runtime' });
@@ -357,7 +357,7 @@ function processSkills(electronRoot, runtimeRoot) {
   }
 
   const runtimeSkillsDir = path.join(runtimeRoot, 'skills');
-  const gucciAiSkillsDir = path.join(electronRoot, 'resources', 'skills');
+  const justDoSkillsDir = path.join(electronRoot, 'resources', 'skills');
 
   if (!fs.existsSync(runtimeSkillsDir)) {
     fs.mkdirSync(runtimeSkillsDir, { recursive: true });
@@ -379,9 +379,9 @@ function processSkills(electronRoot, runtimeRoot) {
       console.log(`[install-openclaw-runtime] [skills] Skipping disabled skill: ${skillConfig.id}`);
       continue;
     }
-    const sourceDir = path.join(gucciAiSkillsDir, skillConfig.id);
+    const sourceDir = path.join(justDoSkillsDir, skillConfig.id);
     if (!fs.existsSync(sourceDir)) {
-      console.warn(`[install-openclaw-runtime] [skills] Skill "${skillConfig.id}" not found in GucciAI skills directory`);
+      console.warn(`[install-openclaw-runtime] [skills] Skill "${skillConfig.id}" not found in JustDo skills directory`);
       continue;
     }
     fs.cpSync(sourceDir, path.join(runtimeSkillsDir, skillConfig.id), { recursive: true, force: true });

@@ -2,13 +2,13 @@
 
 ## Background
 
-> **实现状态（2026-06）**：本重构方案已在 v2026.5-v2026.6 中部分落地。GucciAI 不再做 OpenClaw Runtime 二次状态机，Gateway 为权威数据源。Subagent 逻辑已收缩。剩余工作包括历史兼容性 shim 清理和 runtime patch 精简。
+> **实现状态（2026-06）**：本重构方案已在 v2026.5-v2026.6 中部分落地。JustDo 不再做 OpenClaw Runtime 二次状态机，Gateway 为权威数据源。Subagent 逻辑已收缩。剩余工作包括历史兼容性 shim 清理和 runtime patch 精简。
 
-GucciAI is intended to act as an Electron/React frontend for OpenClaw, similar to ClawX. The current `OpenClawRuntimeAdapter` has gradually grown into a second orchestration layer: it tracks active turns, run IDs, subagent status, visible announce runs, deferred history reloads, tool streams, SQLite persistence, and completion fallbacks.
+JustDo is intended to act as an Electron/React frontend for OpenClaw, similar to ClawX. The current `OpenClawRuntimeAdapter` has gradually grown into a second orchestration layer: it tracks active turns, run IDs, subagent status, visible announce runs, deferred history reloads, tool streams, SQLite persistence, and completion fallbacks.
 
-Recent logs in `build.log` show the risk of this approach. OpenClaw successfully spawned and completed two subagents, and emitted completion announce runs, but GucciAI's adapter state and completion handling did not reliably let the parent agent receive the full set of child results. This suggests the local adapter can interfere with OpenClaw's native webchat/runtime semantics.
+Recent logs in `build.log` show the risk of this approach. OpenClaw successfully spawned and completed two subagents, and emitted completion announce runs, but JustDo's adapter state and completion handling did not reliably let the parent agent receive the full set of child results. This suggests the local adapter can interfere with OpenClaw's native webchat/runtime semantics.
 
-The goal is to move GucciAI toward the ClawX model: OpenClaw Gateway is the authority, and GucciAI projects Gateway events/history into its UI with minimal custom orchestration.
+The goal is to move JustDo toward the ClawX model: OpenClaw Gateway is the authority, and JustDo projects Gateway events/history into its UI with minimal custom orchestration.
 
 ## Reference
 
@@ -31,7 +31,7 @@ Important ClawX pattern:
 
 ## Goals
 
-1. Make GucciAI a thin OpenClaw frontend.
+1. Make JustDo a thin OpenClaw frontend.
 2. Treat Gateway `chat.history`, `sessions.list`, and native Gateway events as authoritative.
 3. Reduce custom state machines in `src/main/libs/agentEngine/openclawRuntimeAdapter.ts`.
 4. Keep existing Cowork UI and SQLite message persistence working.
@@ -39,7 +39,7 @@ Important ClawX pattern:
 
 ## Non-Goals
 
-- Do not rewrite OpenClaw runtime behavior in GucciAI.
+- Do not rewrite OpenClaw runtime behavior in JustDo.
 - Do not patch OpenClaw announce/yield semantics in app code unless absolutely necessary.
 - Do not remove SQLite persistence in the first pass.
 - Do not redesign Cowork UI during this refactor.
@@ -186,14 +186,14 @@ Tasks:
 2. Use `chat.history(childSessionKey)` for subtask detail view.
 3. Use persisted SQLite subagent rows only as UI cache/fallback.
 4. Remove local status transitions that compete with Gateway.
-5. Do not send custom aggregate completion messages from GucciAI.
+5. Do not send custom aggregate completion messages from JustDo.
 
 Validation:
 
 - Spawned subagents appear in UI.
 - Status changes to running/done/failed based on Gateway.
 - Clicking a subagent opens history from Gateway.
-- Two subagents completing does not require GucciAI to inject a custom wake.
+- Two subagents completing does not require JustDo to inject a custom wake.
 
 ## Phase 4: Switch Cowork Runtime Behind a Feature Flag
 
@@ -285,7 +285,7 @@ Expected behavior:
 
 The refactor is successful when:
 
-- GucciAI no longer needs custom subagent aggregate wake logic.
+- JustDo no longer needs custom subagent aggregate wake logic.
 - The adapter has fewer local lifecycle maps.
 - Parent/subagent completion is handled by OpenClaw-native announce/yield behavior.
 - UI still supports streaming, tool display, thinking display, and SQLite persistence.

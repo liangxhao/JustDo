@@ -3,8 +3,8 @@
  * Prepare bundled Windows Python runtime under resources/python-win.
  *
  * This script mirrors setup-mingit.js behavior:
- * - Supports local offline archive via GUCCIAI_PORTABLE_PYTHON_ARCHIVE
- * - Supports optional mirror URL via GUCCIAI_PORTABLE_PYTHON_URL
+ * - Supports local offline archive via JUSTDO_PORTABLE_PYTHON_ARCHIVE
+ * - Supports optional mirror URL via JUSTDO_PORTABLE_PYTHON_URL
  * - Can run cross-platform for Windows packaging
  * - Bundles interpreter runtime only (no preinstalled skill dependencies)
  */
@@ -22,15 +22,15 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'python-win');
 const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', 'python-win-runtime.zip');
 const DEFAULT_WINDOWS_EMBED_PYTHON_VERSION =
-  process.env.GUCCIAI_WINDOWS_EMBED_PYTHON_VERSION || '3.12.10';
+  process.env.JUSTDO_WINDOWS_EMBED_PYTHON_VERSION || '3.12.10';
 const DEFAULT_WINDOWS_EMBED_PYTHON_ZIP = `python-${DEFAULT_WINDOWS_EMBED_PYTHON_VERSION}-embed-amd64.zip`;
 const DEFAULT_WINDOWS_EMBED_PYTHON_URL =
-  process.env.GUCCIAI_WINDOWS_EMBED_PYTHON_URL ||
+  process.env.JUSTDO_WINDOWS_EMBED_PYTHON_URL ||
   `https://www.python.org/ftp/python/${DEFAULT_WINDOWS_EMBED_PYTHON_VERSION}/${DEFAULT_WINDOWS_EMBED_PYTHON_ZIP}`;
 const DEFAULT_GET_PIP_URL =
-  process.env.GUCCIAI_WINDOWS_GET_PIP_URL || 'https://bootstrap.pypa.io/get-pip.py';
+  process.env.JUSTDO_WINDOWS_GET_PIP_URL || 'https://bootstrap.pypa.io/get-pip.py';
 const DEFAULT_PIP_PYZ_URL =
-  process.env.GUCCIAI_WINDOWS_PIP_PYZ_URL || 'https://bootstrap.pypa.io/pip/pip.pyz';
+  process.env.JUSTDO_WINDOWS_PIP_PYZ_URL || 'https://bootstrap.pypa.io/pip/pip.pyz';
 const DEFAULT_RUNTIME_URL = DEFAULT_WINDOWS_EMBED_PYTHON_URL;
 
 const REQUIRED_FILES = ['python.exe', 'python3.exe'];
@@ -268,7 +268,7 @@ async function ensurePipPayload(rootDir, options = {}) {
       if (required) {
         throw new Error(
           'Unable to obtain pip runtime archive (pip.pyz). ' +
-            'Set GUCCIAI_WINDOWS_PIP_PYZ_URL to a reachable mirror if needed. ' +
+            'Set JUSTDO_WINDOWS_PIP_PYZ_URL to a reachable mirror if needed. ' +
             `Original error: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
@@ -385,13 +385,13 @@ async function downloadArchive(url, destination) {
 }
 
 async function resolveArchive(required) {
-  const envArchive = resolveInputPath(process.env.GUCCIAI_PORTABLE_PYTHON_ARCHIVE);
+  const envArchive = resolveInputPath(process.env.JUSTDO_PORTABLE_PYTHON_ARCHIVE);
   if (envArchive) {
     if (!isNonEmptyFile(envArchive)) {
-      throw new Error(`GUCCIAI_PORTABLE_PYTHON_ARCHIVE points to an invalid file: ${envArchive}`);
+      throw new Error(`JUSTDO_PORTABLE_PYTHON_ARCHIVE points to an invalid file: ${envArchive}`);
     }
     console.log(
-      `[setup-python-runtime] Using local archive from GUCCIAI_PORTABLE_PYTHON_ARCHIVE: ${envArchive}`,
+      `[setup-python-runtime] Using local archive from JUSTDO_PORTABLE_PYTHON_ARCHIVE: ${envArchive}`,
     );
     return { archivePath: envArchive, source: 'env-archive' };
   }
@@ -402,8 +402,8 @@ async function resolveArchive(required) {
   }
 
   const urlFromEnv =
-    typeof process.env.GUCCIAI_PORTABLE_PYTHON_URL === 'string'
-      ? process.env.GUCCIAI_PORTABLE_PYTHON_URL.trim()
+    typeof process.env.JUSTDO_PORTABLE_PYTHON_URL === 'string'
+      ? process.env.JUSTDO_PORTABLE_PYTHON_URL.trim()
       : '';
   const downloadUrl = urlFromEnv || DEFAULT_RUNTIME_URL;
 
@@ -411,8 +411,8 @@ async function resolveArchive(required) {
     if (required) {
       throw new Error(
         'Portable Python archive is not available. ' +
-          'Set GUCCIAI_PORTABLE_PYTHON_ARCHIVE to a local package or ' +
-          'GUCCIAI_PORTABLE_PYTHON_URL to a downloadable runtime archive URL.',
+          'Set JUSTDO_PORTABLE_PYTHON_ARCHIVE to a local package or ' +
+          'JUSTDO_PORTABLE_PYTHON_URL to a downloadable runtime archive URL.',
       );
     }
     console.warn(
@@ -433,8 +433,8 @@ async function resolveArchive(required) {
     if (required) {
       throw new Error(
         'Unable to obtain portable Python runtime archive. ' +
-          'Set GUCCIAI_PORTABLE_PYTHON_ARCHIVE to a local offline package or ' +
-          'set GUCCIAI_PORTABLE_PYTHON_URL to a reachable mirror. ' +
+          'Set JUSTDO_PORTABLE_PYTHON_ARCHIVE to a local offline package or ' +
+          'set JUSTDO_PORTABLE_PYTHON_URL to a reachable mirror. ' +
           `Original error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -615,7 +615,7 @@ async function ensurePortablePythonRuntime(options = {}) {
   const shouldRun =
     process.platform === 'win32' ||
     required ||
-    process.env.GUCCIAI_SETUP_PYTHON_RUNTIME_FORCE === '1';
+    process.env.JUSTDO_SETUP_PYTHON_RUNTIME_FORCE === '1';
 
   if (!shouldRun) {
     console.log(
@@ -659,8 +659,8 @@ async function ensurePortablePythonRuntime(options = {}) {
   } else if (required) {
     throw new Error(
       'Portable Python archive is not available for non-Windows host. ' +
-        'Set GUCCIAI_PORTABLE_PYTHON_ARCHIVE to a local package or ' +
-        'GUCCIAI_PORTABLE_PYTHON_URL to a downloadable runtime archive URL.',
+        'Set JUSTDO_PORTABLE_PYTHON_ARCHIVE to a local package or ' +
+        'JUSTDO_PORTABLE_PYTHON_URL to a downloadable runtime archive URL.',
     );
   } else {
     return { ok: true, skipped: true, pythonPath: null };

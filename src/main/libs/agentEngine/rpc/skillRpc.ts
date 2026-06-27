@@ -266,7 +266,7 @@ export class SkillRpcHandler {
 
     const session = this.callbacks.store.getSession(sessionId);
     const effectiveAgentId = agentId || session?.agentId || 'main';
-    const sessionKey = `agent:${effectiveAgentId}:gucciai:${sessionId}`;
+    const sessionKey = `agent:${effectiveAgentId}:justdo:${sessionId}`;
 
     const normalizedModel = model.trim();
     if (!normalizedModel) {

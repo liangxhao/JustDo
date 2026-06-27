@@ -83,11 +83,11 @@ test('getSessionKeysForSession prefers channel keys before managed fallback', ()
     'session-1',
     'agent:main:openai-user:telegram:__default__:2459325231940374',
   );
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
 
   expect(adapter.getSessionKeysForSession('session-1')).toEqual([
     'agent:main:openai-user:telegram:__default__:2459325231940374',
-    'agent:main:gucciai:session-1',
+    'agent:main:justdo:session-1',
   ]);
 });
 
@@ -707,15 +707,15 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
     subagentMessages.push(message),
   );
 
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
-  adapter.ensureActiveTurn('session-1', 'agent:main:gucciai:session-1', 'main-run');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
   adapter.handleGatewayEvent({
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'thinking',
       data: { text: 'thinking snapshot' },
     },
@@ -724,7 +724,7 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'assistant',
       data: { text: 'I will inspect the file.' },
     },
@@ -732,7 +732,7 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
   adapter.handleGatewayEvent({
     event: 'chat',
     payload: {
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       state: 'delta',
       message: {
         role: 'assistant',
@@ -744,7 +744,7 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'assistant',
       data: { text: 'I will inspect the file and then report back.' },
     },
@@ -753,7 +753,7 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'tool',
       data: {
         phase: 'start',
@@ -767,7 +767,7 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'tool',
       data: {
         phase: 'result',
@@ -780,7 +780,7 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
   adapter.handleGatewayEvent({
     event: 'chat',
     payload: {
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       state: 'final',
       message: {
         role: 'assistant',
@@ -846,13 +846,13 @@ test('announce item and command_output events render tool messages', () => {
   const mainMessages: Array<Record<string, unknown>> = [];
   adapter.on('message', (_sessionId, message) => mainMessages.push(message));
 
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
-  adapter.ensureActiveTurn('session-1', 'agent:main:gucciai:session-1', 'main-run');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
   adapter.handleGatewayEvent({
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'item',
       data: {
         itemId: 'command:call-1',
@@ -869,7 +869,7 @@ test('announce item and command_output events render tool messages', () => {
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'command_output',
       data: {
         itemId: 'command:call-1',
@@ -929,12 +929,12 @@ test('announce events after parent turn cleanup do not render assistant deltas',
   const mainMessages: Array<Record<string, unknown>> = [];
   adapter.on('message', (_sessionId, message) => mainMessages.push(message));
 
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
   adapter.handleGatewayEvent({
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'assistant',
       data: { text: '已汇总两个子agent的祝福语并写入Excel： | 序号 |' },
     },
@@ -943,7 +943,7 @@ test('announce events after parent turn cleanup do not render assistant deltas',
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'assistant',
       data: {
         text: '已汇总两个子agent的祝福语并写入Excel： | 序号 | 祝福语 | |:---:|---|',
@@ -954,7 +954,7 @@ test('announce events after parent turn cleanup do not render assistant deltas',
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'tool',
       data: {
         phase: 'start',
@@ -968,7 +968,7 @@ test('announce events after parent turn cleanup do not render assistant deltas',
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'tool',
       data: {
         phase: 'result',
@@ -982,7 +982,7 @@ test('announce events after parent turn cleanup do not render assistant deltas',
     event: 'agent',
     payload: {
       runId: 'announce:v1:agent:main:subagent:child-run',
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       stream: 'lifecycle',
       data: { phase: 'end' },
     },
@@ -990,7 +990,7 @@ test('announce events after parent turn cleanup do not render assistant deltas',
   adapter.handleGatewayEvent({
     event: 'chat',
     payload: {
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       state: 'final',
       message: {
         role: 'assistant',
@@ -1070,7 +1070,7 @@ test('detached announce final does not append composite assistant snapshot', () 
   const mainMessages: Array<Record<string, unknown>> = [];
   adapter.on('message', (_sessionId, message) => mainMessages.push(message));
 
-  const sessionKey = 'agent:main:gucciai:session-1';
+  const sessionKey = 'agent:main:justdo:session-1';
   const runId = 'announce:v1:agent:main:subagent:child-run';
   const beforeTool = '两个祝福语都收到了！现在汇总写入 Excel。';
   const afterTool = '✅ **完成！** 两个 subagent 的祝福语已汇总写入 Excel';
@@ -1171,7 +1171,7 @@ test('agent assistant stream wins over duplicate chat deltas for active run', ()
     updates.push({ messageId, content });
   });
 
-  const sessionKey = 'agent:main:gucciai:session-1';
+  const sessionKey = 'agent:main:justdo:session-1';
   const runId = 'run-1';
   const firstSnapshot = '完成！两条祝福语已汇总写入 Excel 文件：';
   const finalSnapshot =
@@ -1257,13 +1257,13 @@ test('chat delta without run id is ignored while a turn is active', () => {
     getSubagentsByParentSession: () => [],
   };
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
-  adapter.ensureActiveTurn('session-1', 'agent:main:gucciai:session-1', 'main-run');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
 
   adapter.handleGatewayEvent({
     event: 'chat',
     payload: {
-      sessionKey: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
       state: 'delta',
       message: { role: 'assistant', content: 'unowned partial' },
     },
@@ -1307,20 +1307,20 @@ test('session.message reload is deferred until sessions.changed clears active ru
       historyReconciler: { reconcileWithHistory: typeof reconcileWithHistory };
     }
   ).historyReconciler = { reconcileWithHistory };
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
-  adapter.ensureActiveTurn('session-1', 'agent:main:gucciai:session-1', 'main-run');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
 
   adapter.handleGatewayEvent({
     event: 'session.message',
-    payload: { sessionKey: 'agent:main:gucciai:session-1' },
+    payload: { sessionKey: 'agent:main:justdo:session-1' },
   });
   expect(reconcileWithHistory).not.toHaveBeenCalled();
 
   adapter.handleGatewayEvent({
     event: 'sessions.changed',
     payload: {
-      sessionKey: 'agent:main:gucciai:session-1',
-      key: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
+      key: 'agent:main:justdo:session-1',
       status: 'idle',
       hasActiveRun: false,
     },
@@ -1328,7 +1328,7 @@ test('session.message reload is deferred until sessions.changed clears active ru
 
   expect(reconcileWithHistory).toHaveBeenCalledWith(
     'session-1',
-    'agent:main:gucciai:session-1',
+    'agent:main:justdo:session-1',
   );
   expect(session.status).toBe('idle');
 });
@@ -1370,8 +1370,8 @@ test('patchSessionModel defers gateway patch while session is active', async () 
     }
   ).skillRpcHandler = { patchSessionModel };
 
-  adapter.rememberSessionKey('session-1', 'agent:main:gucciai:session-1');
-  adapter.ensureActiveTurn('session-1', 'agent:main:gucciai:session-1', 'main-run');
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
   const result = await adapter.patchSessionModel('session-1', 'bailian/qwen3.6-plus');
 
   expect(result).toEqual({ ok: true });
@@ -1380,8 +1380,8 @@ test('patchSessionModel defers gateway patch while session is active', async () 
   adapter.handleGatewayEvent({
     event: 'sessions.changed',
     payload: {
-      sessionKey: 'agent:main:gucciai:session-1',
-      key: 'agent:main:gucciai:session-1',
+      sessionKey: 'agent:main:justdo:session-1',
+      key: 'agent:main:justdo:session-1',
       status: 'idle',
       hasActiveRun: false,
     },

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "GucciAI built-in skills configuration for OpenClaw runtime",
+  "description": "JustDo built-in skills configuration for OpenClaw runtime",
   "skills": [
     { "id": "agent-browser", "enabled": false },
     { "id": "algorithmic-art", "enabled": true },

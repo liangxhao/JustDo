@@ -1,5 +1,5 @@
 /**
- * Tailwind CSS v3 plugin — bridges --gucciai-* CSS variables into Tailwind utility classes.
+ * Tailwind CSS v3 plugin — bridges --justdo-* CSS variables into Tailwind utility classes.
  *
  * Usage in tailwind.config.js:
  *   plugins: [require('./src/renderer/theme/tailwind/plugin.cjs')]
@@ -16,79 +16,79 @@ module.exports = plugin(function () {
     extend: {
       colors: {
         // === Semantic theme colors (driven by CSS variables) ===
-        background:    'var(--gucciai-background)',
-        foreground:    'var(--gucciai-foreground)',
+        background:    'var(--justdo-background)',
+        foreground:    'var(--justdo-foreground)',
         primary: {
-          DEFAULT:     'var(--gucciai-primary)',
-          foreground:  'var(--gucciai-primary-foreground)',
-          hover:       'var(--gucciai-primary-hover)',
-          muted:       'var(--gucciai-primary-muted)',
-          dark:        'var(--gucciai-primary-hover)',  // backward compat alias
+          DEFAULT:     'var(--justdo-primary)',
+          foreground:  'var(--justdo-primary-foreground)',
+          hover:       'var(--justdo-primary-hover)',
+          muted:       'var(--justdo-primary-muted)',
+          dark:        'var(--justdo-primary-hover)',  // backward compat alias
         },
         accent: {
-          DEFAULT:     'var(--gucciai-accent)',
-          foreground:  'var(--gucciai-accent-foreground)',
+          DEFAULT:     'var(--justdo-accent)',
+          foreground:  'var(--justdo-accent-foreground)',
         },
         surface: {
-          DEFAULT:     'var(--gucciai-surface)',
-          foreground:  'var(--gucciai-surface-foreground)',
-          raised:      'var(--gucciai-surface-raised)',
-          overlay:     'var(--gucciai-surface-overlay)',
-          inset:       'var(--gucciai-surface-raised)',  // alias
+          DEFAULT:     'var(--justdo-surface)',
+          foreground:  'var(--justdo-surface-foreground)',
+          raised:      'var(--justdo-surface-raised)',
+          overlay:     'var(--justdo-surface-overlay)',
+          inset:       'var(--justdo-surface-raised)',  // alias
         },
         border: {
-          DEFAULT:     'var(--gucciai-border)',
-          subtle:      'var(--gucciai-border-subtle)',
-          input:       'var(--gucciai-input-border)',
+          DEFAULT:     'var(--justdo-border)',
+          subtle:      'var(--justdo-border-subtle)',
+          input:       'var(--justdo-input-border)',
         },
-        muted:         'var(--gucciai-text-muted)',
+        muted:         'var(--justdo-text-muted)',
         destructive: {
-          DEFAULT:     'var(--gucciai-destructive)',
-          foreground:  'var(--gucciai-destructive-foreground)',
+          DEFAULT:     'var(--justdo-destructive)',
+          foreground:  'var(--justdo-destructive-foreground)',
         },
-        success:       'var(--gucciai-success)',
-        warning:       'var(--gucciai-warning)',
+        success:       'var(--justdo-success)',
+        warning:       'var(--justdo-warning)',
 
-        // === Legacy claude.* aliases (map to --gucciai-* for backward compat) ===
+        // === Legacy claude.* aliases (map to --justdo-* for backward compat) ===
         claude: {
-          bg:                'var(--gucciai-background)',
-          surface:           'var(--gucciai-surface)',
-          surfaceHover:      'var(--gucciai-surface-raised)',
-          surfaceMuted:      'var(--gucciai-surface-raised)',
-          surfaceInset:      'var(--gucciai-surface-raised)',
-          border:            'var(--gucciai-border)',
-          borderLight:       'var(--gucciai-border-subtle)',
-          text:              'var(--gucciai-text-primary)',
-          textSecondary:     'var(--gucciai-text-secondary)',
+          bg:                'var(--justdo-background)',
+          surface:           'var(--justdo-surface)',
+          surfaceHover:      'var(--justdo-surface-raised)',
+          surfaceMuted:      'var(--justdo-surface-raised)',
+          surfaceInset:      'var(--justdo-surface-raised)',
+          border:            'var(--justdo-border)',
+          borderLight:       'var(--justdo-border-subtle)',
+          text:              'var(--justdo-text-primary)',
+          textSecondary:     'var(--justdo-text-secondary)',
           // dark.* aliases point to the same vars — theme handles light/dark
-          darkBg:            'var(--gucciai-background)',
-          darkSurface:       'var(--gucciai-surface)',
-          darkSurfaceHover:  'var(--gucciai-surface-raised)',
-          darkSurfaceMuted:  'var(--gucciai-surface-raised)',
-          darkSurfaceInset:  'var(--gucciai-surface-raised)',
-          darkBorder:        'var(--gucciai-border)',
-          darkBorderLight:   'var(--gucciai-border-subtle)',
-          darkText:          'var(--gucciai-text-primary)',
-          darkTextSecondary: 'var(--gucciai-text-secondary)',
+          darkBg:            'var(--justdo-background)',
+          darkSurface:       'var(--justdo-surface)',
+          darkSurfaceHover:  'var(--justdo-surface-raised)',
+          darkSurfaceMuted:  'var(--justdo-surface-raised)',
+          darkSurfaceInset:  'var(--justdo-surface-raised)',
+          darkBorder:        'var(--justdo-border)',
+          darkBorderLight:   'var(--justdo-border-subtle)',
+          darkText:          'var(--justdo-text-primary)',
+          darkTextSecondary: 'var(--justdo-text-secondary)',
           // Accent
-          accent:            'var(--gucciai-primary)',
-          accentHover:       'var(--gucciai-primary-hover)',
-          accentLight:       'var(--gucciai-primary)',
-          accentMuted:       'var(--gucciai-primary-muted)',
+          accent:            'var(--justdo-primary)',
+          accentHover:       'var(--justdo-primary-hover)',
+          accentLight:       'var(--justdo-primary)',
+          accentMuted:       'var(--justdo-primary-muted)',
         },
         chat: {
-          user:        'var(--gucciai-chat-user)',
-          'user-fg':   'var(--gucciai-chat-user-foreground)',
-          bot:         'var(--gucciai-chat-bot)',
-          'bot-fg':    'var(--gucciai-chat-bot-foreground)',
+          user:        'var(--justdo-chat-user)',
+          'user-fg':   'var(--justdo-chat-user-foreground)',
+          bot:         'var(--justdo-chat-bot)',
+          'bot-fg':    'var(--justdo-chat-bot-foreground)',
         },
         secondary: {
-          DEFAULT: 'var(--gucciai-text-secondary)',
-          dark:    'var(--gucciai-border)',
+          DEFAULT: 'var(--justdo-text-secondary)',
+          dark:    'var(--justdo-border)',
         },
       },
       borderRadius: {
-        theme: 'var(--gucciai-radius)',
+        theme: 'var(--justdo-radius)',
       },
     },
   },

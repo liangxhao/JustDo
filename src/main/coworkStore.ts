@@ -5,10 +5,10 @@ import { v4 as uuidv4 } from 'uuid';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
-  return path.join(os.homedir(), 'gucciai', 'project');
+  return path.join(os.homedir(), 'justdo', 'project');
 };
 
-const TASK_WORKSPACE_CONTAINER_DIR = '.gucciai-tasks';
+const TASK_WORKSPACE_CONTAINER_DIR = '.justdo-tasks';
 
 const normalizeRecentWorkspacePath = (cwd: string): string => {
   const resolved = path.resolve(cwd);

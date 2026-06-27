@@ -301,7 +301,7 @@ export function resolveCurrentApiConfig(
   // placeholder so downstream components (OpenClaw gateway, compat proxy)
   // don't reject the request with "No API key found for provider".
   const effectiveApiKey =
-    resolvedApiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-gucciai-local' : '');
+    resolvedApiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-justdo-local' : '');
 
   if (matched.apiFormat === 'anthropic') {
     return {
@@ -346,7 +346,7 @@ export function resolveCurrentApiConfig(
 
   return {
     config: {
-      apiKey: resolvedApiKey || 'gucciai-openai-compat',
+      apiKey: resolvedApiKey || 'justdo-openai-compat',
       baseURL: proxyBaseURL,
       model: matched.modelId,
       apiType: 'openai',
@@ -443,7 +443,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
   // leaves the key blank we supply a placeholder so the gateway doesn't reject
   // the request with "No API key found for provider".
   const effectiveApiKey =
-    apiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-gucciai-local' : '');
+    apiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-justdo-local' : '');
   return {
     config: {
       apiKey: effectiveApiKey,
@@ -471,7 +471,7 @@ function normalizeQwenBaseUrl(value: string | undefined): string {
 }
 
 /**
- * Map GucciAI model IDs to OAuth endpoint model names
+ * Map JustDo model IDs to OAuth endpoint model names
  * OAuth endpoint only supports 'coder-model' and 'vision-model'
  */
 function mapQwenModelToOAuthModel(modelId: string, supportsImage?: boolean): string {
@@ -504,7 +504,7 @@ export function resolveAllProviderApiKeys(): Record<string, string> {
     const apiKey = providerConfig.apiKey?.trim();
     if (!apiKey && providerRequiresApiKey(providerName)) continue;
     const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-    result[envName] = apiKey || 'sk-gucciai-local';
+    result[envName] = apiKey || 'sk-justdo-local';
   }
 
   return result;
@@ -577,7 +577,7 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
     result.push({
       providerName,
       baseURL: effectiveBaseURL,
-      apiKey: apiKey || 'sk-gucciai-local',
+      apiKey: apiKey || 'sk-justdo-local',
       apiType: effectiveApiFormat === 'anthropic' ? 'anthropic' : 'openai',
       codingPlanEnabled: !!providerConfig.codingPlanEnabled,
       models,

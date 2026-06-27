@@ -4,7 +4,7 @@ Guidance for Claude Code when working with this repository.
 
 ## Project Overview
 
-GucciAI is a **24/7 personal assistant Agent** — an AI that actually executes tasks, not just suggests. Core capabilities: real task execution, local-first SQLite storage, 17 bundled skills, scheduled tasks via OpenClaw cron, and IM remote control (in development).
+JustDo is a **24/7 personal assistant Agent** — an AI that actually executes tasks, not just suggests. Core capabilities: real task execution, local-first SQLite storage, 17 bundled skills, scheduled tasks via OpenClaw cron, and IM remote control (in development).
 
 **Version**: 2026.6.12 | **Electron**: 41.2.0 | **OpenClaw**: v2026.6.9
 
@@ -62,7 +62,7 @@ In development with UI placeholders. Types: `src/renderer/types/im.ts` (Telegram
 
 ### Data Storage
 
-SQLite (`gucciai.sqlite`) at standard platform data dirs. Key tables: `kv`, `cowork_config`, `cowork_sessions`, `cowork_messages`, `cowork_subagents`, `session_groups`, `agents`, `mcp_servers`.
+SQLite (`justdo.sqlite`) at standard platform data dirs. Key tables: `kv`, `cowork_config`, `cowork_sessions`, `cowork_messages`, `cowork_subagents`, `session_groups`, `agents`, `mcp_servers`.
 
 ### Key Files
 

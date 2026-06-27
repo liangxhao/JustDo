@@ -1,9 +1,9 @@
 {
-  "name": "gucciai",
+  "name": "justdo",
   "private": true,
-  "description": "GucciAI - AI-powered assistant application",
+  "description": "JustDo - AI-powered assistant application",
   "author": {
-    "name": "GucciAI",
+    "name": "JustDo",
     "email": "liangxhao@example.com"
   },
   "license": "MIT",

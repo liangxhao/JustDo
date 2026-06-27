@@ -27,10 +27,10 @@ test('generateTitle falls back quietly when the gateway title request times out'
     store: {} as CoworkStore,
   });
 
-  const titlePromise = handler.generateTitle('请帮我介绍一下 GucciAI', 1_000);
+  const titlePromise = handler.generateTitle('请帮我介绍一下 JustDo', 1_000);
   await vi.advanceTimersByTimeAsync(1_000);
 
-  await expect(titlePromise).resolves.toBe('请帮我介绍一下 GucciAI');
+  await expect(titlePromise).resolves.toBe('请帮我介绍一下 JustDo');
   expect(debugSpy).toHaveBeenCalledWith(
     '[OpenClawRuntime] generateTitle: timed out after 1000ms. Using fallback title.',
   );

@@ -1,7 +1,7 @@
-# GucciAI — All-in-One Personal Assistant Agent
+# JustDo — All-in-One Personal Assistant Agent
 
 <p align="center">
-  <img src="public/logo.png" alt="GucciAI" width="120">
+  <img src="public/logo.png" alt="JustDo" width="120">
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 
 ---
 
-**GucciAI** is an all-in-one personal assistant Agent. It works around the clock to handle your everyday tasks — data analysis, making presentations, generating videos, writing documents, searching the web, sending emails, scheduling tasks, and more.
+**JustDo** is an all-in-one personal assistant Agent. It works around the clock to handle your everyday tasks — data analysis, making presentations, generating videos, writing documents, searching the web, sending emails, scheduling tasks, and more.
 
 At its core is **Cowork mode** — it executes tools, manipulates files, and runs commands in a local or sandboxed environment, all under your supervision.
 
@@ -59,8 +59,8 @@ At its core is **Cowork mode** — it executes tools, manipulates files, and run
 ### Development
 
 ```bash
-git clone https://github.com/liangxhao/GucciAI.git
-cd GucciAI
+git clone https://github.com/liangxhao/JustDo.git
+cd JustDo
 git checkout dev
 npm install
 
@@ -176,7 +176,7 @@ Cowork sessions use a Gateway-based process lifecycle (`idle → downloading →
 
 ### Data Storage
 
-Local SQLite (`gucciai.sqlite`): app config, sessions, messages, subagents, memories, agents, MCP servers, scheduled tasks.
+Local SQLite (`justdo.sqlite`): app config, sessions, messages, subagents, memories, agents, MCP servers, scheduled tasks.
 
 ### Tech Stack
 

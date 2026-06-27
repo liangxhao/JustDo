@@ -5,8 +5,8 @@
  * Features:
  * - Cross-platform execution (macOS/Linux can prepare assets for Windows packaging)
  * - Optional strict mode: --required (fail build if not prepared)
- * - Offline archive support via GUCCIAI_PORTABLE_GIT_ARCHIVE
- * - Mirror URL override via GUCCIAI_PORTABLE_GIT_URL
+ * - Offline archive support via JUSTDO_PORTABLE_GIT_ARCHIVE
+ * - Mirror URL override via JUSTDO_PORTABLE_GIT_URL
  * - Unified extraction via 7zip-bin (path7za)
  */
 
@@ -200,13 +200,13 @@ function ensurePortableGitRuntimeDirs(required) {
 }
 
 async function resolveArchive(required) {
-  const envArchive = resolveInputPath(process.env.GUCCIAI_PORTABLE_GIT_ARCHIVE);
+  const envArchive = resolveInputPath(process.env.JUSTDO_PORTABLE_GIT_ARCHIVE);
   if (envArchive) {
     if (!isNonEmptyFile(envArchive)) {
-      throw new Error(`GUCCIAI_PORTABLE_GIT_ARCHIVE points to an invalid file: ${envArchive}`);
+      throw new Error(`JUSTDO_PORTABLE_GIT_ARCHIVE points to an invalid file: ${envArchive}`);
     }
     console.log(
-      `[setup-mingit] Using local archive from GUCCIAI_PORTABLE_GIT_ARCHIVE: ${envArchive}`,
+      `[setup-mingit] Using local archive from JUSTDO_PORTABLE_GIT_ARCHIVE: ${envArchive}`,
     );
     return { archivePath: envArchive, source: 'env-archive' };
   }
@@ -217,8 +217,8 @@ async function resolveArchive(required) {
   }
 
   const urlFromEnv =
-    typeof process.env.GUCCIAI_PORTABLE_GIT_URL === 'string'
-      ? process.env.GUCCIAI_PORTABLE_GIT_URL.trim()
+    typeof process.env.JUSTDO_PORTABLE_GIT_URL === 'string'
+      ? process.env.JUSTDO_PORTABLE_GIT_URL.trim()
       : '';
   const downloadUrl = urlFromEnv || DEFAULT_PORTABLE_GIT_URL;
 
@@ -232,8 +232,8 @@ async function resolveArchive(required) {
     if (required) {
       throw new Error(
         'Unable to obtain PortableGit archive. ' +
-          'Set GUCCIAI_PORTABLE_GIT_ARCHIVE to a local offline package or ' +
-          'set GUCCIAI_PORTABLE_GIT_URL to a reachable mirror. ' +
+          'Set JUSTDO_PORTABLE_GIT_ARCHIVE to a local offline package or ' +
+          'set JUSTDO_PORTABLE_GIT_URL to a reachable mirror. ' +
           `Original error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -249,7 +249,7 @@ async function resolveArchive(required) {
 async function ensurePortableGit(options = {}) {
   const required = Boolean(options.required);
   const shouldRun =
-    process.platform === 'win32' || required || process.env.GUCCIAI_SETUP_MINGIT_FORCE === '1';
+    process.platform === 'win32' || required || process.env.JUSTDO_SETUP_MINGIT_FORCE === '1';
 
   if (!shouldRun) {
     console.log(

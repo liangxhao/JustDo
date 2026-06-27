@@ -133,7 +133,7 @@ const API_FORMAT_MAP: Record<string, 'anthropic' | 'openai'> = {
 /**
  * Reverse-map openclaw.json models.providers → app_config.providers.
  * Enterprise openclaw.json should use real provider names as keys
- * (e.g., 'deepseek', 'anthropic') instead of the generic 'gucciai'.
+ * (e.g., 'deepseek', 'anthropic') instead of the generic 'justdo'.
  */
 function syncModelConfig(configPath: string, store: SqliteStore): void {
   const openclawPath = path.join(configPath, 'openclaw.json');
@@ -170,7 +170,7 @@ function syncModelConfig(configPath: string, store: SqliteStore): void {
         supportsImage: Array.isArray(m.input) && m.input.includes('image'),
       }));
 
-      // Resolve apiKey: use plain text value, skip placeholders like ${GUCCIAI_...}
+      // Resolve apiKey: use plain text value, skip placeholders like ${JUSTDO_...}
       const apiKey =
         typeof providerConfig.apiKey === 'string' && !providerConfig.apiKey.startsWith('${')
           ? providerConfig.apiKey

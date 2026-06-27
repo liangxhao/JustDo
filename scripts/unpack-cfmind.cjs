@@ -4,9 +4,9 @@
  * Windows 安装后资源 tar 解压脚本
  *
  * 由 NSIS installer.nsh 的 customInstall 宏调用。
- * 通过 GucciAI.exe (ELECTRON_RUN_AS_NODE=1 模式) 执行。
+ * 通过 JustDo.exe (ELECTRON_RUN_AS_NODE=1 模式) 执行。
  *
- * 用法: GucciAI.exe <本脚本路径> <tarPath> <destDir>
+ * 用法: JustDo.exe <本脚本路径> <tarPath> <destDir>
  *
  * 效果:
  *   输入: $INSTDIR/resources/win-resources.tar
@@ -27,7 +27,7 @@ const tarPath = process.argv[2];
 const destDir = process.argv[3];
 
 if (!tarPath || !destDir) {
-  console.error('[unpack-cfmind] Usage: GucciAI.exe unpack-cfmind.cjs <tarPath> <destDir>');
+  console.error('[unpack-cfmind] Usage: JustDo.exe unpack-cfmind.cjs <tarPath> <destDir>');
   process.exit(1);
 }
 

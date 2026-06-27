@@ -235,7 +235,7 @@ const resolveInlineAttachmentDir = (cwd?: string): string => {
       return path.join(resolved, '.cowork-temp', 'attachments', 'manual');
     }
   }
-  return path.join(app.getPath('temp'), 'gucciai', 'attachments');
+  return path.join(app.getPath('temp'), 'justdo', 'attachments');
 };
 
 const ensurePngFileName = (value: string): string => {
@@ -260,7 +260,7 @@ const buildLogExportFileName = (): string => {
   const now = new Date();
   const datePart = `${now.getFullYear()}${padTwoDigits(now.getMonth() + 1)}${padTwoDigits(now.getDate())}`;
   const timePart = `${padTwoDigits(now.getHours())}${padTwoDigits(now.getMinutes())}${padTwoDigits(now.getSeconds())}`;
-  return `gucciai-logs-${datePart}-${timePart}.zip`;
+  return `justdo-logs-${datePart}-${timePart}.zip`;
 };
 
 const truncateIpcString = (value: string, maxChars: number): string => {
@@ -457,8 +457,8 @@ const DEV_SERVER_URL = process.env.ELECTRON_START_URL || 'http://localhost:5175'
 const enableVerboseLogging =
   process.env.ELECTRON_ENABLE_LOGGING === '1' || process.env.ELECTRON_ENABLE_LOGGING === 'true';
 const disableGpu =
-  process.env.GUCCIAI_DISABLE_GPU === '1' ||
-  process.env.GUCCIAI_DISABLE_GPU === 'true' ||
+  process.env.JUSTDO_DISABLE_GPU === '1' ||
+  process.env.JUSTDO_DISABLE_GPU === 'true' ||
   process.env.ELECTRON_DISABLE_GPU === '1' ||
   process.env.ELECTRON_DISABLE_GPU === 'true';
 const reloadOnChildProcessGone =
@@ -1262,7 +1262,7 @@ const bindCoworkRuntimeForwarder = (): void => {
       // If session used a server model, notify renderer to refresh quota
       try {
         const apiConfig = resolveCurrentApiConfig();
-        if (apiConfig.providerMetadata?.providerName === 'gucciai-server') {
+        if (apiConfig.providerMetadata?.providerName === 'justdo-server') {
           const windows = BrowserWindow.getAllWindows();
           windows.forEach(win => {
             if (win.isDestroyed()) return;
@@ -4574,7 +4574,7 @@ if (!gotTheLock) {
     // We don't trigger permission dialogs at startup to avoid annoying users
 
     // Ensure default working directory exists
-    const defaultProjectDir = path.join(os.homedir(), 'gucciai', 'project');
+    const defaultProjectDir = path.join(os.homedir(), 'justdo', 'project');
     if (!fs.existsSync(defaultProjectDir)) {
       fs.mkdirSync(defaultProjectDir, { recursive: true });
       console.log('Created default project directory:', defaultProjectDir);

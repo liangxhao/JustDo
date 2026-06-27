@@ -89,7 +89,7 @@ jobs:
       - name: Setup Python Runtime
         run: npm run setup:python-runtime
         env:
-          GUCCIAI_PORTABLE_PYTHON_ARCHIVE: ${{ secrets.WINDOWS_PYTHON_ARCHIVE }}
+          JUSTDO_PORTABLE_PYTHON_ARCHIVE: ${{ secrets.WINDOWS_PYTHON_ARCHIVE }}
       
       - name: Build Windows
         run: npm run dist:win
