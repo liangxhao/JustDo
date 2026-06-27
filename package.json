@@ -71,7 +71,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@electron/remote": "^2.0.12",
-    "@headlessui/react": "^1.7.18",
+    "@headlessui/react": "^2.2.10",
     "@heroicons/react": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@monaco-editor/react": "^4.7.0",
