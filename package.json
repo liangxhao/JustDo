@@ -7,7 +7,7 @@
     "email": "liangxhao@example.com"
   },
   "license": "MIT",
-  "version": "2026.6.22",
+  "version": "2026.6.25",
   "openclaw": {
     "version": "v2026.6.9",
     "repo": "https://github.com/openclaw/openclaw.git",
@@ -42,7 +42,7 @@
     "dist:mac:arm64": "npm run build && npm run compile:electron && npm run openclaw:runtime:mac-arm64 && electron-builder --mac --arm64",
     "dist:mac:universal": "npm run build && npm run compile:electron && electron-builder --mac --universal",
     "predist:win": "npm run openclaw:runtime:win-x64",
-    "dist:win": "npm run setup:python-runtime && npm run build && npm run compile:electron && electron-builder --win --x64",
+    "dist:win": "npm run setup:mingit && npm run setup:python-runtime && npm run predist:win && npm run build && npm run compile:electron && electron-builder --win --x64",
     "predist:linux": "npm run openclaw:runtime:linux-x64",
     "dist:linux": "npm run build && npm run compile:electron && electron-builder --linux",
     "clean:release": "rimraf release",

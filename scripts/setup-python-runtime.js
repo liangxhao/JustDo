@@ -17,6 +17,16 @@ const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { spawnSync } = require('child_process');
 const extractZip = require('extract-zip');
+const { path7za } = (() => {
+  try {
+    return require('7zip-bin');
+  } catch (error) {
+    throw new Error(
+      'Missing dependency "7zip-bin". Run npm install and retry. ' +
+        `Original error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+})();
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'python-win');
@@ -570,10 +580,38 @@ async function bootstrapRuntimeOnWindows() {
   }
 }
 
+function extractArchiveWith7z(archivePath, destDir) {
+  if (!path7za || !fs.existsSync(path7za)) {
+    throw new Error(`7zip-bin executable not found: ${path7za || '(empty path)'}`);
+  }
+
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
+
+  console.log(`[setup-python-runtime] Extracting with 7zip-bin: ${archivePath}`);
+  const result = spawnSync(path7za, ['x', archivePath, `-o${destDir}`, '-y'], {
+    stdio: 'inherit',
+    timeout: 5 * 60 * 1000,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`7zip extraction failed with exit code ${result.status}`);
+  }
+}
+
 async function extractArchiveToRuntime(archivePath) {
   const tempRoot = fs.mkdtempSync(path.join(PROJECT_ROOT, 'tmp-python-runtime-'));
   try {
-    await extractZip(archivePath, { dir: tempRoot });
+    // Use 7zip-bin instead of extract-zip (yauzl).
+    // yauzl's lazyEntries mode can hang indefinitely on Windows when
+    // extracting certain zip files (e.g. python embeddable runtime).
+    // 7z reliably extracts these in under 1 second.
+    extractArchiveWith7z(archivePath, tempRoot);
+
     const runtimeRoot = findRuntimeRoot(tempRoot);
     if (!runtimeRoot) {
       throw new Error('Could not locate python runtime root after extraction.');

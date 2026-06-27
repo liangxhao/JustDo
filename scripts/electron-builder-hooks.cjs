@@ -5,6 +5,7 @@ const { existsSync, readdirSync, statSync, mkdirSync, readFileSync, rmSync, cpSy
 const { spawnSync } = require('child_process');
 const asar = require('@electron/asar');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
+const { ensurePortableGit } = require('./setup-mingit.js');
 const { syncLocalOpenClawExtensions } = require('./sync-local-openclaw-extensions.cjs');
 const { packMultipleSources } = require('./pack-openclaw-tar.cjs');
 
@@ -453,15 +454,21 @@ function installSkillDependencies() {
     }
 
     console.log(`[electron-builder-hooks]   ${entry}: installing dependencies...`);
-    // On Windows, use shell: true so cmd.exe resolves npm.cmd correctly
     const isWin = process.platform === 'win32';
-    const result = spawnSync('npm', ['install'], {
-      cwd: skillPath,
-      encoding: 'utf-8',
-      stdio: 'pipe',
-      timeout: 5 * 60 * 1000, // 5 minute timeout
-      shell: isWin,
-    });
+    // On Windows use cmd.exe /c to avoid DEP0190 warning from shell:true + args
+    const result = isWin
+      ? spawnSync('cmd.exe', ['/c', 'npm', 'install'], {
+          cwd: skillPath,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+          timeout: 5 * 60 * 1000, // 5 minute timeout
+        })
+      : spawnSync('npm', ['install'], {
+          cwd: skillPath,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+          timeout: 5 * 60 * 1000,
+        });
 
     if (result.status === 0) {
       console.log(`[electron-builder-hooks]   ${entry}: ✓ installed`);
@@ -487,6 +494,26 @@ async function beforePack(context) {
   installSkillDependencies();
 
   if (isWindowsTarget(context)) {
+    // ── Prepare runtime resources BEFORE tar packing ──
+    // These must be ready before we build the combined tar, otherwise the
+    // directories will be empty and the installed app will lack Python/Git.
+
+    console.log('[electron-builder-hooks] Windows target detected, ensuring portable Python runtime is prepared...');
+    await ensurePortablePythonRuntime({ required: true });
+    const pythonRoot = path.join(__dirname, '..', 'resources', 'python-win');
+    const pythonHealth = checkRuntimeHealth(pythonRoot, { requirePip: true });
+    if (!pythonHealth.ok) {
+      throw new Error(
+        'Portable Python runtime health check failed before pack. Missing files: '
+        + pythonHealth.missing.join(', ')
+      );
+    }
+
+    console.log('[electron-builder-hooks] Ensuring PortableGit (mingit) is prepared...');
+    await ensurePortableGit({ required: true });
+    const mingitRoot = path.join(__dirname, '..', 'resources', 'mingit');
+
+    // ── Build combined tar for NSIS ──
     // Pack all large resource directories into a single tar for faster NSIS
     // installation.  NSIS extracts thousands of small files very slowly on NTFS;
     // a single tar archive is extracted by 7z almost instantly, and we unpack
@@ -508,17 +535,22 @@ async function beforePack(context) {
       },
       {
         label: 'Python runtime',
-        dir: path.join(__dirname, '..', 'resources', 'python-win'),
+        dir: pythonRoot,
         prefix: 'python-win',
+      },
+      {
+        label: 'PortableGit',
+        dir: mingitRoot,
+        prefix: 'mingit',
       },
     ];
 
     console.log(`[electron-builder-hooks] Packing combined Windows tar: ${outputTar}`);
-    const t0 = Date.now();
 
     // Remove old tar if exists
     if (existsSync(outputTar)) rmSync(outputTar);
 
+    const t0 = Date.now();
     const { totalFiles, skipped } = packMultipleSources(sources, outputTar);
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     const sizeMB = (statSync(outputTar).size / (1024 * 1024)).toFixed(1);
@@ -526,23 +558,45 @@ async function beforePack(context) {
       `[electron-builder-hooks] Combined tar packed in ${elapsed}s: `
       + `${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`
     );
-  }
 
-  if (!isWindowsTarget(context)) {
-    return;
-  }
+    // ── Validate the combined tar ──
+    // Verify that each expected prefix actually has content in the archive.
+    // This catches build misconfigurations early instead of at install time.
+    const requiredPrefixes = ['cfmind/', 'skills/', 'python-win/'];
+    const optionalPrefixes = ['mingit/'];
+    const tarEntries = [];
+    const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
+    const normalizedTarPath = outputTar.replace(/\\/g, '/');
 
-  console.log('[electron-builder-hooks] Windows target detected, ensuring portable Python runtime is prepared...');
-  await ensurePortablePythonRuntime({ required: true });
-  const runtimeRoot = path.join(__dirname, '..', 'resources', 'python-win');
-  const runtimeHealth = checkRuntimeHealth(runtimeRoot, { requirePip: true });
-  if (!runtimeHealth.ok) {
-    throw new Error(
-      'Portable Python runtime health check failed before pack. Missing files: '
-      + runtimeHealth.missing.join(', ')
+    tarModule.list({
+      file: normalizedTarPath,
+      sync: true,
+      onReadEntry: (entry) => { tarEntries.push(entry); }
+    });
+
+    const tarPrefixes = [...new Set(tarEntries.map(e => e.path.split('/')[0] + '/'))];
+
+    const missingRequired = requiredPrefixes.filter(p => !tarPrefixes.includes(p));
+    if (missingRequired.length > 0) {
+      throw new Error(
+        '[electron-builder-hooks] Combined tar validation FAILED. '
+        + `Missing required prefixes: ${missingRequired.join(', ')}. `
+        + `Found: ${tarPrefixes.join(', ') || '(none)'}`
+      );
+    }
+
+    const missingOptional = optionalPrefixes.filter(p => !tarPrefixes.includes(p));
+    if (missingOptional.length > 0) {
+      console.warn(
+        `[electron-builder-hooks] Tar validation: optional prefixes missing: ${missingOptional.join(', ')}. `
+        + 'These will not be available in the installed app.'
+      );
+    }
+
+    console.log(
+      `[electron-builder-hooks] Tar validation passed. Prefixes: ${tarPrefixes.join(', ')}`
     );
   }
-
 }
 
 async function afterPack(context) {
