@@ -64,6 +64,10 @@ type TabType =
   | 'shortcuts'
   | 'help';
 
+const isSettingsTabEnabled = (tab: TabType): boolean => tab !== 'myAgents';
+const getEnabledSettingsTab = (tab?: TabType): TabType =>
+  tab && isSettingsTabEnabled(tab) ? tab : 'general';
+
 export type SettingsOpenOptions = {
   initialTab?: TabType;
   notice?: string;
@@ -166,24 +170,17 @@ const providerLinks: Partial<Record<ProviderType, { website: string; apiKey?: st
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'ollama';
 const normalizeBaseUrl = (baseUrl: string): string =>
   baseUrl.trim().replace(/\/+$/, '').toLowerCase();
-const normalizeApiFormat = (value: unknown): 'anthropic' | 'openai' =>
-  value === 'openai' ? 'openai' : 'anthropic';
-
 const getFixedApiFormatForProvider = (
   _provider: string,
 ): 'anthropic' | 'openai' | 'gemini' | null => {
-  // No fixed format for remaining providers (Ollama, Custom)
-  return null;
+  // Model settings only support OpenAI-compatible endpoints.
+  return 'openai';
 };
 const getEffectiveApiFormat = (
   provider: string,
-  value: unknown,
+  _value: unknown,
 ): 'anthropic' | 'openai' | 'gemini' =>
-  getFixedApiFormatForProvider(provider) ?? normalizeApiFormat(value);
-const shouldShowApiFormatSelector = (_provider: string): boolean => {
-  // Always show API format selector for Ollama and Custom providers
-  return true;
-};
+  getFixedApiFormatForProvider(provider) ?? 'openai';
 const getProviderDefaultBaseUrl = (
   provider: ProviderType,
   apiFormat: 'anthropic' | 'openai' | 'gemini',
@@ -652,7 +649,7 @@ const Settings: React.FC<SettingsProps> = ({
 }) => {
   const dispatch = useDispatch();
   // 状态
-  const [activeTab, setActiveTab] = useState<TabType>(initialTab ?? 'general');
+  const [activeTab, setActiveTab] = useState<TabType>(getEnabledSettingsTab(initialTab));
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [themeId, setThemeId] = useState<string>(themeService.getThemeId());
   const [language, setLanguage] = useState<LanguageType>('zh');
@@ -785,9 +782,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [openClawEngineStatus, setOpenClawEngineStatus] = useState<OpenClawEngineStatus | null>(
     null,
   );
-  const [openClawGatewayPort, setOpenClawGatewayPort] = useState<number>(42879);
+  const [openClawGatewayPort, setOpenClawGatewayPort] = useState<number>(42871);
   const [openClawGatewayPortEditing, setOpenClawGatewayPortEditing] = useState<boolean>(false);
-  const [openClawGatewayPortInput, setOpenClawGatewayPortInput] = useState<string>('42879');
+  const [openClawGatewayPortInput, setOpenClawGatewayPortInput] = useState<string>('42871');
   const [openClawGatewayPortSaving, setOpenClawGatewayPortSaving] = useState<boolean>(false);
 
   useEffect(() => {
@@ -981,7 +978,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   useEffect(() => {
     if (initialTab) {
-      setActiveTab(initialTab);
+      setActiveTab(getEnabledSettingsTab(initialTab));
     }
   }, [initialTab]);
 
@@ -2186,11 +2183,12 @@ const Settings: React.FC<SettingsProps> = ({
     // Filter out tabs hidden by enterprise config
     // Filter out tabs with 'hide' action in enterprise config
     // e.g., ui: { "settings.im": "hide" } → hide the 'im' tab
+    const enabledTabs = allTabs.filter(tab => isSettingsTabEnabled(tab.key));
     const ui = enterpriseConfig?.ui;
     if (ui) {
-      return allTabs.filter(tab => ui[`settings.${tab.key}`] !== 'hide');
+      return enabledTabs.filter(tab => ui[`settings.${tab.key}`] !== 'hide');
     }
-    return allTabs;
+    return enabledTabs;
   }, [language, enterpriseConfig]);
 
   const activeTabLabel = useMemo(() => {
@@ -2973,13 +2971,6 @@ const Settings: React.FC<SettingsProps> = ({
                   <div className="mt-1.5 space-y-0.5 text-[11px] text-secondary">
                     <p>
                       <span className="text-sm text-muted mr-1">•</span>
-                      {i18nService.t('baseUrlHint1')}
-                      <code className="ml-1 text-primary break-all">
-                        {i18nService.t('baseUrlHintExample1')}
-                      </code>
-                    </p>
-                    <p>
-                      <span className="text-sm text-muted mr-1">•</span>
                       {i18nService.t('baseUrlHint2')}
                       <code className="ml-1 text-primary break-all">
                         {i18nService.t('baseUrlHintExample2')}
@@ -2988,61 +2979,6 @@ const Settings: React.FC<SettingsProps> = ({
                   </div>
                 )}
               </div>
-
-              {/* API 格式选择器 */}
-              {shouldShowApiFormatSelector(activeProvider) && (
-                <div>
-                  <label
-                    htmlFor={`${activeProvider}-apiFormat`}
-                    className="block text-xs font-medium text-foreground mb-1"
-                  >
-                    {i18nService.t('apiFormat')}
-                  </label>
-                  <div className="flex items-center space-x-4">
-                    <label className="flex items-center">
-                      <input
-                        type="radio"
-                        name={`${activeProvider}-apiFormat`}
-                        value="anthropic"
-                        checked={
-                          getEffectiveApiFormat(
-                            activeProvider,
-                            providers[activeProvider].apiFormat,
-                          ) !== 'openai'
-                        }
-                        onChange={() =>
-                          handleProviderConfigChange(activeProvider, 'apiFormat', 'anthropic')
-                        }
-                        className="h-3.5 w-3.5 text-claude-accent focus:ring-claude-accent dark:bg-claude-darkSurface bg-claude-surface disabled:opacity-50"
-                      />
-                      <span className="ml-2 text-xs text-foreground">
-                        {i18nService.t('apiFormatNative')}
-                      </span>
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="radio"
-                        name={`${activeProvider}-apiFormat`}
-                        value="openai"
-                        checked={
-                          getEffectiveApiFormat(
-                            activeProvider,
-                            providers[activeProvider].apiFormat,
-                          ) === 'openai'
-                        }
-                        onChange={() =>
-                          handleProviderConfigChange(activeProvider, 'apiFormat', 'openai')
-                        }
-                        className="h-3.5 w-3.5 text-claude-accent focus:ring-claude-accent dark:bg-claude-darkSurface bg-claude-surface disabled:opacity-50"
-                      />
-                      <span className="ml-2 text-xs text-foreground">
-                        {i18nService.t('apiFormatOpenAI')}
-                      </span>
-                    </label>
-                  </div>
-                  <p className="mt-1 text-xs text-secondary">{i18nService.t('apiFormatHint')}</p>
-                </div>
-              )}
 
               {/* 测试连接按钮 */}
               <div className="flex items-center space-x-3">

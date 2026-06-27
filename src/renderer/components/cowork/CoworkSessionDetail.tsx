@@ -1368,7 +1368,7 @@ const AssistantMessageItem: React.FC<{
   // Extract canvas shortcodes for inline preview rendering
   // Use default gateway port for [embed] URLs; MEDIA: paths don't need it
   const { text: strippedText, previews } = useMemo(() => {
-    return extractCanvasShortcodes(displayContent, 42879);
+    return extractCanvasShortcodes(displayContent, 42871);
   }, [displayContent]);
 
   // Check if thinking content exists

@@ -50,10 +50,10 @@ const normalizeProviderApiFormat = (providerKey: string, apiFormat: unknown): 'a
   if (fixed) {
     return fixed;
   }
-  if (apiFormat === 'openai') {
+  if (providerKey === 'ollama' || isCustomProvider(providerKey)) {
     return 'openai';
   }
-  return 'anthropic';
+  return apiFormat === 'openai' ? 'openai' : 'anthropic';
 };
 
 const normalizeProvidersConfig = (providers: AppConfig['providers']): AppConfig['providers'] => {

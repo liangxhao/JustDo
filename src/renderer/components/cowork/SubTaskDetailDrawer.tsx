@@ -122,7 +122,7 @@ const SubagentAssistantMessage: React.FC<{ message: CoworkMessage }> = ({ messag
 
   // Extract canvas shortcodes for inline preview rendering
   const { text: strippedText, previews } = useMemo(() => {
-    return extractCanvasShortcodes(message.content, 42879);
+    return extractCanvasShortcodes(message.content, 42871);
   }, [message.content]);
 
   return (
