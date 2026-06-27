@@ -88,7 +88,7 @@
     "extract-zip": "^2.0.1",
     "form-data": "^4.0.5",
     "js-yaml": "^4.1.1",
-    "katex": "^0.16.21",
+    "katex": "^0.17.0",
     "mermaid": "^10.9.5",
     "npm": "^11.11.0",
     "qrcode.react": "^4.2.0",
