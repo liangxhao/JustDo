@@ -15,6 +15,54 @@ import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from './markdown';
 import { renderChatAvatar } from './chat-avatar';
 import { resolveToolDisplay } from './tool-display';
 import { detectTextDirection } from '../pipeline/text-direction';
+import { i18nService } from '../../../services/i18n';
+
+const COPY_ICON = html`
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="15" height="15"
+    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect width="14" height="14" x="8" y="8" rx="2"></rect>
+    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+  </svg>
+`;
+
+async function copyMessage(event: Event, text: string): Promise<void> {
+  event.stopPropagation();
+  const button = event.currentTarget as HTMLButtonElement;
+  try {
+    await navigator.clipboard.writeText(text);
+    button.classList.add('message-copy--copied');
+    button.setAttribute('aria-label', i18nService.t('copied'));
+    window.setTimeout(() => {
+      button.classList.remove('message-copy--copied');
+      button.setAttribute('aria-label', i18nService.t('copyToClipboard'));
+    }, 1500);
+  } catch (error) {
+    console.error('[GroupedRender] Failed to copy message', error);
+  }
+}
+
+function renderCopyButton(text: string): TemplateResult {
+  const label = i18nService.t('copyToClipboard');
+  return html`
+    <button
+      type="button"
+      class="message-copy"
+      aria-label=${label}
+      title=${label}
+      @click=${(event: Event) => void copyMessage(event, text)}
+    >${COPY_ICON}</button>
+  `;
+}
+
+function formatToolValue(value: unknown): string {
+  if (value === undefined || value === null) return '{}';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
 
 // ─── Message Group Rendering ────────────────────────────────────────────────
 
@@ -75,6 +123,7 @@ function renderUserMessage(msg: NormalizedMessage): TemplateResult {
 
   return html`
     <div class="chat-bubble chat-bubble--user" dir=${dir}>
+      ${renderCopyButton(text)}
       <div class="chat-bubble__text">${unsafeHTML(htmlContent)}</div>
     </div>
   `;
@@ -95,6 +144,7 @@ function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): Te
     ${toolCards.length > 0 ? renderToolCardsInline(toolCards) : nothing}
     ${text ? html`
       <div class="chat-bubble chat-bubble--assistant">
+        ${renderCopyButton(text)}
         <div class="chat-bubble__text markdown-content" dir=${dir}>
           ${unsafeHTML(toSanitizedMarkdownHtml(text))}
         </div>
@@ -123,26 +173,31 @@ function renderToolMessage(message: unknown): TemplateResult {
   const m = message as Record<string, unknown>;
   const toolName = (m.toolName ?? m.tool_name ?? 'tool') as string;
   const text = extractTextCached(message) ?? '';
+  const input = m.args ?? m.arguments ?? m.input ?? m.toolInput ?? m.tool_input;
   const isError = Boolean(m.isError) || text.toLowerCase().includes('error');
   const display = resolveToolDisplay(toolName);
 
   return html`
-    <div class="tool-message ${isError ? 'tool-message--error' : ''}">
-      <div class="tool-message__header">
+    <details class="tool-message ${isError ? 'tool-message--error' : ''}">
+      <summary class="tool-message__header">
         <span class="tool-message__icon">
           ${isError
             ? html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`
             : html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>`}
         </span>
         <span class="tool-message__name">${display.title}</span>
+      </summary>
+      <div class="tool-message__details">
+        <section class="tool-detail-box">
+          <div class="tool-detail-box__label">${i18nService.t('coworkToolInput')}</div>
+          <pre><code>${formatToolValue(input)}</code></pre>
+        </section>
+        <section class="tool-detail-box">
+          <div class="tool-detail-box__label">${i18nService.t('coworkToolResult')}</div>
+          <pre><code>${text || i18nService.t('coworkToolRunning')}</code></pre>
+        </section>
       </div>
-      ${text ? html`
-        <details class="tool-message__body">
-          <summary>Show output</summary>
-          <pre class="tool-message__output"><code>${text}</code></pre>
-        </details>
-      ` : nothing}
-    </div>
+    </details>
   `;
 }
 
@@ -154,15 +209,19 @@ function renderToolCardsInline(cards: ToolCard[]): TemplateResult {
       ${cards.map(card => {
         const display = resolveToolDisplay(card.name);
         return html`
-          <div class="tool-card ${card.isError ? 'tool-card--error' : ''}">
-            <span class="tool-card__name">${display.title}</span>
-            ${card.outputText ? html`
-              <details class="tool-card__output">
-                <summary>Output</summary>
-                <pre><code>${card.outputText.slice(0, 500)}</code></pre>
-              </details>
-            ` : nothing}
-          </div>
+          <details class="tool-card ${card.isError ? 'tool-card--error' : ''}">
+            <summary class="tool-card__name">${display.title}</summary>
+            <div class="tool-card__details">
+              <section class="tool-detail-box">
+                <div class="tool-detail-box__label">${i18nService.t('coworkToolInput')}</div>
+                <pre><code>${card.inputText ?? formatToolValue(card.args)}</code></pre>
+              </section>
+              <section class="tool-detail-box">
+                <div class="tool-detail-box__label">${i18nService.t('coworkToolResult')}</div>
+                <pre><code>${card.outputText ?? i18nService.t('coworkToolRunning')}</code></pre>
+              </section>
+            </div>
+          </details>
         `;
       })}
     </div>
@@ -231,6 +290,7 @@ export function renderStreamingGroup(
       <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
       <div class="chat-group__content">
         <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
+          ${renderCopyButton(text)}
           <div class="chat-bubble__text markdown-content">
             ${unsafeHTML(toStreamingMarkdownHtml(text))}
           </div>

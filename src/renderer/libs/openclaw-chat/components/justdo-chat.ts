@@ -169,10 +169,47 @@ export class JustDoChatElement extends LitElement {
 
     .chat-bubble {
       padding: 10px 14px;
+      padding-right: 38px;
       border-radius: 12px;
       max-width: 100%;
       word-wrap: break-word;
       overflow-wrap: break-word;
+      position: relative;
+    }
+
+    .message-copy {
+      position: absolute;
+      top: 7px;
+      right: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+    }
+
+    .chat-bubble:hover .message-copy,
+    .message-copy:focus-visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .message-copy:hover {
+      background: rgba(0, 0, 0, 0.08);
+    }
+
+    .message-copy--copied {
+      color: #16a34a;
+      opacity: 1;
     }
 
     .chat-bubble--user {
@@ -514,6 +551,13 @@ export class JustDoChatElement extends LitElement {
       gap: 6px;
       font-size: 12px;
       font-weight: 500;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .tool-message__header::-webkit-details-marker,
+    .tool-card__name::-webkit-details-marker {
+      display: none;
     }
 
     .tool-message__icon {
@@ -527,6 +571,40 @@ export class JustDoChatElement extends LitElement {
       max-height: 200px;
       overflow: auto;
       margin: 4px 0 0 0;
+    }
+
+    .tool-message__details,
+    .tool-card__details {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .tool-detail-box {
+      overflow: hidden;
+      border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.08));
+      border-radius: 6px;
+      background: var(--justdo-chat-assistant-bg, #fff);
+    }
+
+    .tool-detail-box__label {
+      padding: 5px 8px;
+      border-bottom: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.08));
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .tool-detail-box pre {
+      max-height: 240px;
+      margin: 0;
+      padding: 8px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 12px;
     }
 
     /* ── Tool Cards ─────────────────────────────────────────────────── */
@@ -544,6 +622,13 @@ export class JustDoChatElement extends LitElement {
       border-radius: 6px;
       font-size: 12px;
       border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.06));
+      min-width: min(520px, 100%);
+    }
+
+    .tool-card__name {
+      cursor: pointer;
+      list-style: none;
+      font-weight: 500;
     }
 
     .tool-card--error {

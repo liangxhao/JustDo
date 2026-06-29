@@ -416,6 +416,18 @@ const TodoWriteInputView: React.FC<{ items: ParsedTodoItem[] }> = ({ items }) =>
 // Module-level Map to persist tool expand state across re-renders
 const toolExpandStateMap = new Map<string, boolean>();
 
+const ToolDetailBox: React.FC<{
+  title: string;
+  children: React.ReactNode;
+}> = ({ title, children }) => (
+  <div className="rounded-lg overflow-hidden border border-border">
+    <div className="px-3 py-1.5 bg-surfaceInset text-[10px] font-medium text-secondary uppercase tracking-wider">
+      {title}
+    </div>
+    <div className="bg-surface-inset px-3 py-3 max-h-72 overflow-y-auto">{children}</div>
+  </div>
+);
+
 export const ToolCallGroup: React.FC<{
   group: ToolGroupItem;
   isLastInSequence?: boolean;
@@ -432,7 +444,7 @@ export const ToolCallGroup: React.FC<{
   const todoItems = isTodoWriteTool ? parseTodoWriteItems(toolInput) : null;
   const mapText = mapDisplayText ?? ((value: string) => value);
   const toolInputDisplayRaw = formatToolInput(rawToolName, toolInput);
-  const toolInputDisplay = toolInputDisplayRaw ? mapText(toolInputDisplayRaw) : null;
+  const toolInputDisplay = mapText(toolInputDisplayRaw ?? formatUnknown(toolInput ?? {}));
   const toolInputSummaryRaw = getToolInputSummary(rawToolName, toolInput) ?? toolInputDisplayRaw;
   const toolInputSummary = toolInputSummaryRaw ? mapText(toolInputSummaryRaw) : null;
   const toolResultDisplayRaw = toolResult ? getToolResultDisplay(toolResult) : '';
@@ -519,122 +531,38 @@ export const ToolCallGroup: React.FC<{
         </div>
       </button>
       {isExpanded && (
-        <div className="ml-4 mt-2">
-          {isBashTool ? (
-            // Terminal-style display for Bash commands - separate input/output boxes
-            <div className="space-y-2">
-              {/* Command input box */}
-              {toolInputDisplay && (
-                <div className="rounded-lg overflow-hidden border border-border">
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surfaceInset">
-                    <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                    <span className="ml-2 text-[10px] text-secondary font-medium">Command</span>
-                  </div>
-                  <div className="bg-surface-inset px-3 py-3 font-mono text-xs">
-                    <div className="text-foreground">
-                      <span className="text-primary select-none">$ </span>
-                      <span className="whitespace-pre-wrap break-words">{toolInputDisplay}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-              {/* Result output box */}
-              <div className="rounded-lg overflow-hidden border border-border">
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surfaceInset">
-                  <span className="text-[10px] text-secondary font-medium">Output</span>
-                  {toolResult &&
-                    (isToolError ? (
-                      <span className="ml-auto text-[10px] text-red-500">Error</span>
-                    ) : (
-                      <span className="ml-auto text-[10px] text-green-500">Success</span>
-                    ))}
-                </div>
-                <div className="bg-surface-inset px-3 py-3 max-h-72 overflow-y-auto font-mono text-xs">
-                  {toolResult && (hasToolResultText || showNoDetailError) && (
-                    <div
-                      className={`whitespace-pre-wrap break-words ${
-                        isToolError
-                          ? 'text-red-400'
-                          : hasToolResultText
-                            ? 'text-secondary'
-                            : 'text-muted italic'
-                      }`}
-                    >
-                      {displayToolResult}
-                    </div>
-                  )}
-                  {!toolResult && (
-                    <div className="text-muted italic">{i18nService.t('coworkToolRunning')}</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : isTodoWriteTool && todoItems ? (
-            <TodoWriteInputView items={todoItems} />
-          ) : isEditWithDiff && diffDataList ? (
-            // Diff view for Edit/MultiEdit tools - all edits in single window
-            <div className="space-y-2">
+        <div className="ml-4 mt-2 space-y-2">
+          <ToolDetailBox title={i18nService.t('coworkToolInput')}>
+            {isTodoWriteTool && todoItems ? (
+              <TodoWriteInputView items={todoItems} />
+            ) : isEditWithDiff && diffDataList ? (
               <MonacoDiffView diffDataList={diffDataList} />
-              {toolResult && (hasToolResultText || showNoDetailError) && (
-                <div>
-                  <div className="text-[10px] font-medium dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70 uppercase tracking-wider mb-1">
-                    {i18nService.t('coworkToolResult')}
-                  </div>
-                  <div className="max-h-32 overflow-y-auto">
-                    <pre
-                      className={`text-xs whitespace-pre-wrap break-words font-mono ${
-                        isToolError
-                          ? 'text-red-500'
-                          : hasToolResultText
-                            ? 'dark:text-claude-darkText text-claude-text'
-                            : 'dark:text-claude-darkTextSecondary text-claude-textSecondary italic'
-                      }`}
-                    >
-                      {displayToolResult}
-                    </pre>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            // Standard display for other tools with input/output labels
-            <div className="space-y-2">
-              {toolInputDisplay && (
-                <div>
-                  <div className="text-[10px] font-medium text-muted uppercase tracking-wider mb-1">
-                    {i18nService.t('coworkToolInput')}
-                  </div>
-                  <div className="max-h-48 overflow-y-auto">
-                    <pre className="text-xs text-foreground whitespace-pre-wrap break-words font-mono">
-                      {toolInputDisplay}
-                    </pre>
-                  </div>
-                </div>
-              )}
-              {toolResult && (hasToolResultText || showNoDetailError) && (
-                <div>
-                  <div className="text-[10px] font-medium text-muted uppercase tracking-wider mb-1">
-                    {i18nService.t('coworkToolResult')}
-                  </div>
-                  <div className="max-h-64 overflow-y-auto">
-                    <pre
-                      className={`text-xs whitespace-pre-wrap break-words font-mono ${
-                        isToolError
-                          ? 'text-red-500'
-                          : hasToolResultText
-                            ? 'text-foreground'
-                            : 'text-secondary italic'
-                      }`}
-                    >
-                      {displayToolResult}
-                    </pre>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+            ) : (
+              <pre className="text-xs text-foreground whitespace-pre-wrap break-words font-mono">
+                {isBashTool && <span className="text-primary select-none">$ </span>}
+                {toolInputDisplay}
+              </pre>
+            )}
+          </ToolDetailBox>
+          <ToolDetailBox title={i18nService.t('coworkToolResult')}>
+            {toolResult ? (
+              <pre
+                className={`text-xs whitespace-pre-wrap break-words font-mono ${
+                  isToolError
+                    ? 'text-red-500'
+                    : hasToolResultText
+                      ? 'text-foreground'
+                      : 'text-secondary italic'
+                }`}
+              >
+                {displayToolResult}
+              </pre>
+            ) : (
+              <div className="text-xs text-muted italic">
+                {i18nService.t('coworkToolRunning')}
+              </div>
+            )}
+          </ToolDetailBox>
         </div>
       )}
     </div>
@@ -661,7 +589,9 @@ const CopyButton: React.FC<{
 
   return (
     <button
+      type="button"
       onClick={handleCopy}
+      aria-label={i18nService.t('copyToClipboard')}
       className={`p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-all duration-200 ${
         visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}
@@ -766,7 +696,7 @@ export const UserMessageItem: React.FC<{
             </div>
             <div className="w-full min-w-0 flex flex-col items-end">
               {/* User message bubble: w-fit for adaptive width, max-w for right boundary */}
-              <div className="relative w-fit max-w-[calc(100%-44px)] rounded-2xl px-4 py-2.5 bg-chat-user text-foreground">
+              <div className="relative w-fit max-w-[calc(100%-44px)] rounded-2xl pl-4 pr-10 py-2.5 bg-chat-user text-foreground">
                 {/* Copy button — top-right inside bubble */}
                 <div className="absolute top-1.5 right-1.5">
                   <CopyButton content={message.content} visible={isHovered} />
@@ -905,7 +835,7 @@ const AssistantMessageItem: React.FC<{
       {/* Normal content */}
       {hasVisibleContent && (
         <div
-          className={`relative rounded-2xl px-4 py-2.5 bg-chat-bot text-foreground ${bubbleWidthClass}`}
+          className={`relative rounded-2xl pl-4 pr-10 py-2.5 bg-chat-bot text-foreground ${bubbleWidthClass}`}
         >
           {/* Copy button — top-right inside bubble */}
           {showCopyButton && (

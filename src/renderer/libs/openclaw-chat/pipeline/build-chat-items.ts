@@ -673,11 +673,49 @@ function resolveHistoryStartIndex(
   return startIndex;
 }
 
+function enrichToolResultsWithInputs(messages: unknown[]): unknown[] {
+  const calls = new Map<string, { name?: string; input: unknown }>();
+
+  for (const message of messages) {
+    const raw = asRecord(message);
+    if (!raw || !Array.isArray(raw.content)) continue;
+    for (const block of raw.content) {
+      const item = asRecord(block);
+      if (!item) continue;
+      const type = typeof item.type === 'string' ? item.type.toLowerCase() : '';
+      if (!['toolcall', 'tool_call', 'tooluse', 'tool_use'].includes(type)) continue;
+      const id = [item.id, item.toolCallId, item.tool_call_id, item.tool_use_id]
+        .find(value => typeof value === 'string' && value.trim()) as string | undefined;
+      if (!id) continue;
+      calls.set(id, {
+        name: typeof item.name === 'string' ? item.name : undefined,
+        input: item.arguments ?? item.args ?? item.input ?? {},
+      });
+    }
+  }
+
+  return messages.map(message => {
+    const raw = asRecord(message);
+    if (!raw) return message;
+    const id = [raw.toolCallId, raw.tool_call_id, raw.toolUseId, raw.tool_use_id]
+      .find(value => typeof value === 'string' && value.trim()) as string | undefined;
+    const call = id ? calls.get(id) : undefined;
+    if (!call || raw.toolInput !== undefined || raw.tool_input !== undefined) return message;
+    return {
+      ...raw,
+      toolName: raw.toolName ?? raw.tool_name ?? call.name,
+      toolInput: call.input,
+    };
+  });
+}
+
 export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | MessageGroup> {
   let items: ChatItem[] = [];
   const historyRenderLimit = resolveHistoryRenderLimit(props.historyRenderLimit);
-  const history = (Array.isArray(props.messages) ? props.messages : []).filter(
-    (message) => !isAssistantHeartbeatAckForDisplay(message),
+  const history = enrichToolResultsWithInputs(
+    (Array.isArray(props.messages) ? props.messages : []).filter(
+      message => !isAssistantHeartbeatAckForDisplay(message),
+    ),
   );
   const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];
   const segments = props.streamSegments ?? [];
