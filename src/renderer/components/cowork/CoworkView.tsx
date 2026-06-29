@@ -31,7 +31,7 @@ import { PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
-import CoworkSessionDetail from './CoworkSessionDetail';
+import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
@@ -51,9 +51,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const [isInitialized, setIsInitialized] = useState(false);
   const [openClawStatus, setOpenClawStatus] = useState<OpenClawEngineStatus | null>(null);
   const [isRestartingGateway, setIsRestartingGateway] = useState(false);
-  // Track if we're starting/continuing a session to prevent duplicate submissions
+  // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
-  const isContinuingRef = useRef(false);
   // Track pending start request so stop can cancel delayed startup.
   const pendingStartRef = useRef<{
     requestId: number;
@@ -63,6 +62,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const startRequestIdRef = useRef(0);
   // Ref for CoworkPromptInput
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
+  // Ref for JustDoChatWrapper (to call sendMessage)
+  const chatWrapperRef = useRef<JustDoChatWrapperRef>(null);
+  // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
+  const pendingPromptRef = useRef<string | null>(null);
 
   const currentSession = useSelector(selectCurrentSession);
   const isStreaming = useSelector(selectIsStreaming);
@@ -262,6 +265,18 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       dispatch(setCurrentSession(tempSession));
       dispatch(setStreaming(true));
 
+      // Set the pending user message on the ChatController so it appears
+      // immediately in the Lit chat element, surviving session transitions.
+      // Buffer in ref first (survives across renders), then try immediate apply.
+      pendingPromptRef.current = prompt;
+      const wrapperSet = chatWrapperRef.current;
+      console.log('[CoworkView] handleStartSession:', {
+        prompt: prompt.slice(0, 60),
+        wrapperRefExists: !!wrapperSet,
+        tempSessionId: tempSessionId,
+      });
+      wrapperSet?.setPendingUserMessage(prompt);
+
       // Clear active skills and quick action selection after starting session
       // so they don't persist to next session
       dispatch(clearActiveSkills());
@@ -293,6 +308,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           }),
         );
         dispatch(updateSessionStatus({ sessionId: tempSessionId, status: 'error' }));
+        chatWrapperRef.current?.clearSending();
         return;
       }
 
@@ -326,48 +342,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     }
   };
 
-  const handleContinueSession = async (
-    prompt: string,
-    imageAttachments?: CoworkImageAttachment[],
-  ) => {
-    if (!currentSession) return;
-    // Prevent duplicate submissions
-    if (isContinuingRef.current) return;
-    if (isOpenClawEngine && openClawStatus && !isOpenClawReadyForSession(openClawStatus)) {
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: i18nService.t('coworkErrorEngineNotReady') }),
-      );
-      return false;
-    }
-
-    isContinuingRef.current = true;
-    try {
-      console.log('[CoworkView] handleContinueSession called', {
-        hasImageAttachments: !!imageAttachments,
-        imageAttachmentsCount: imageAttachments?.length ?? 0,
-        imageAttachmentsNames: imageAttachments?.map(a => a.name),
-        imageAttachmentsBase64Lengths: imageAttachments?.map(a => a.base64Data.length),
-      });
-
-      // Capture active skill IDs before clearing
-      const sessionSkillIds = [...activeSkillIds];
-
-      // Clear active skills after capturing so they don't persist to next message
-      if (sessionSkillIds.length > 0) {
-        dispatch(clearActiveSkills());
-      }
-
-      await coworkService.continueSession({
-        sessionId: currentSession.id,
-        prompt,
-        activeSkillIds: sessionSkillIds.length > 0 ? sessionSkillIds : undefined,
-        imageAttachments,
-      });
-    } finally {
-      isContinuingRef.current = false;
-    }
-  };
-
   const handleStopSession = async () => {
     if (!currentSession) return;
     if (currentSession.id.startsWith('temp-') && pendingStartRef.current) {
@@ -375,14 +349,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       pendingStartRef.current.cancellationAction = 'stop';
     }
     await coworkService.stopSession(currentSession.id);
-  };
-
-  const handleDeleteSession = async (sessionId: string) => {
-    if (sessionId.startsWith('temp-') && pendingStartRef.current) {
-      pendingStartRef.current.cancelled = true;
-      pendingStartRef.current.cancellationAction = 'delete';
-    }
-    await coworkService.deleteSession(sessionId);
   };
 
   // Get selected quick action
@@ -439,6 +405,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       window.removeEventListener('focus', handleWindowFocus);
     };
   }, [currentSession, isOpenClawEngine]);
+
+  // Apply pending prompt to ChatController once the wrapper is mounted
+  useEffect(() => {
+    if (!pendingPromptRef.current || !chatWrapperRef.current) return;
+    console.log('[CoworkView] useEffect applying pendingPrompt:', pendingPromptRef.current.slice(0, 60));
+    chatWrapperRef.current.setPendingUserMessage(pendingPromptRef.current);
+    pendingPromptRef.current = null;
+  });
 
   if (!isInitialized) {
     return (
@@ -520,18 +494,65 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   // When there's a current session, show the session detail view
   if (currentSession) {
+    const handleSendMessage = async (prompt: string) => {
+      try {
+        await chatWrapperRef.current?.sendMessage(prompt);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkErrorSessionStartFailed').replace('{error}', message),
+          }),
+        );
+      }
+    };
+
     return (
       <div className="flex-1 flex flex-col h-full">
         {engineStatusBanner}
-        <CoworkSessionDetail
-          onContinue={handleContinueSession}
-          onStop={handleStopSession}
-          onDeleteSession={handleDeleteSession}
-          onNavigateHome={() => dispatch(clearCurrentSession())}
-          isSidebarCollapsed={isSidebarCollapsed}
-          onToggleSidebar={onToggleSidebar}
-          onNewChat={onNewChat}
-        />
+        {/* Header */}
+        <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
+          <div className="non-draggable h-8 flex items-center">
+            {isSidebarCollapsed && (
+              <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
+                <button
+                  type="button"
+                  onClick={onToggleSidebar}
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                >
+                  <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
+                </button>
+                <button
+                  type="button"
+                  onClick={onNewChat}
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                >
+                  <ComposeIcon className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="non-draggable flex items-center">
+            <WindowTitleBar inline />
+          </div>
+        </div>
+        {/* Messages */}
+        <JustDoChatWrapper ref={chatWrapperRef} className="flex-1 min-h-0" />
+        {/* Input */}
+        <div className="shrink-0 px-4 pb-4 pt-2">
+          <div className="shadow-glow-accent rounded-2xl">
+            <CoworkPromptInput
+              onSubmit={handleSendMessage}
+              onStop={handleStopSession}
+              isStreaming={isStreaming}
+              disabled={!isEngineReady}
+              placeholder={i18nService.t('coworkPlaceholder')}
+              size="large"
+              showModelSelector={true}
+              sessionId={currentSession.id}
+            />
+          </div>
+        </div>
       </div>
     );
   }

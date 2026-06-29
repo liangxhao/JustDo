@@ -8,7 +8,7 @@ import MarkdownContent from '../MarkdownContent';
 import {
   buildTranscriptItems,
   ToolCallGroup,
-} from './CoworkSessionDetail';
+} from './TranscriptComponents';
 
 // Copy button component for subagent messages
 const CopyButton: React.FC<{

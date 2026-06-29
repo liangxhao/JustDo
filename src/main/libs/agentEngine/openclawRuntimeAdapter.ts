@@ -13,6 +13,7 @@ import { t } from '../../i18n';
 import { resolveRawApiConfig } from '../claudeSettings';
 import { getCommandDangerLevel, isDeleteCommand } from '../commandSafety';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
+import { coworkLog } from '../coworkLogger';
 import {
   buildManagedSessionKey,
   type OpenClawChannelSessionSync,
@@ -161,7 +162,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly confirmationModeBySession = new Map<string, 'modal' | 'text'>();
   private readonly stoppedSessions = new Map<string, number>();
   private readonly manuallyStoppedSessions = new Set<string>();
-  private readonly pendingSubagentCompletionSessions = new Set<string>();
   private readonly pendingSessionModelPatches = new Map<string, PendingSessionModelPatch>();
   private readonly visibleRunStreams = new Map<string, VisibleRunStreamState>();
 
@@ -349,12 +349,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (turn) {
       turn.stopRequested = true;
       this.manuallyStoppedSessions.add(sessionId);
-      this.pendingSubagentCompletionSessions.delete(sessionId);
       const client = this.gatewayClient;
       if (client) {
         void client
           .request('chat.abort', { sessionKey: turn.sessionKey, runId: turn.runId })
-          .catch(error => console.warn('[OpenClawRuntime] Failed to abort chat run:', error));
+          .catch(error => coworkLog('WARN', 'OpenClawRuntime', 'Failed to abort chat run', { error: String(error) }));
       }
     }
     this.stoppedSessions.set(sessionId, Date.now());
@@ -397,7 +396,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (!this.store.getSession(sessionId)) return;
           if (!this.isSessionActive(sessionId)) {
             void this.continueSession(sessionId, prompt).catch(error =>
-              console.warn('[OpenClawRuntime] failed to continue session after approval:', error),
+              coworkLog('WARN', 'OpenClawRuntime', 'Failed to continue session after approval', { error: String(error), sessionId }),
             );
             return;
           }
@@ -2250,7 +2249,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (typeof upsertSubagent !== 'function') return;
       upsertSubagent.call(this.store, toolCallId, parentSessionId, label, status, options);
     } catch (error) {
-      console.warn('[OpenClawRuntime] Failed to persist subagent status:', error);
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to persist subagent status', { error: String(error) });
     }
   }
 
@@ -2280,7 +2279,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         store.updateSubagentStatus(identifier, status, errorReason);
       }
     } catch (error) {
-      console.warn('[OpenClawRuntime] Failed to persist subagent status update:', error);
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to persist subagent status update', { error: String(error) });
     }
   }
 
@@ -2553,14 +2552,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     void this.skillRpcHandler
       .patchSessionModel(sessionId, pendingPatch.model, pendingPatch.agentId)
       .catch(error =>
-        console.warn('[OpenClawRuntime] deferred patchSessionModel failed:', error),
+        coworkLog('WARN', 'OpenClawRuntime', 'Deferred patchSessionModel failed', { error: String(error), sessionId }),
       );
   }
 
   private ensureActiveTurn(sessionId: string, sessionKey: string, runId: string): void {
     if (this.activeTurns.has(sessionId)) return;
     if (this.isSessionInStopCooldown(sessionId)) return;
-    if (this.pendingSubagentCompletionSessions.has(sessionId)) return;
     if (this.manuallyStoppedSessions.has(sessionId)) {
       this.manuallyStoppedSessions.delete(sessionId);
     }
@@ -2795,10 +2793,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         lastError = error;
         const delay = GATEWAY_CONNECT_RETRY_DELAYS[attempt];
         if (attempt < GATEWAY_CONNECT_RETRY_DELAYS.length - 1) {
-          console.warn(
-            `[OpenClawRuntime] Gateway client handshake failed; retrying in ${delay}ms:`,
-            error,
-          );
+          coworkLog('WARN', 'OpenClawRuntime', `Gateway client handshake failed; retrying in ${delay}ms`, { error: String(error) });
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
@@ -2899,7 +2894,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     try {
       clientToStop?.stop();
     } catch (error) {
-      console.warn('[OpenClawRuntime] Failed to stop gateway client:', error);
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to stop gateway client', { error: String(error) });
     }
     this.gatewayClient = null;
     this.pendingGatewayClient = null;
@@ -2924,7 +2919,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     try {
       await client.request('sessions.subscribe', {});
     } catch (error) {
-      console.warn('[OpenClawRuntime] Failed to subscribe to Gateway session events:', error);
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to subscribe to Gateway session events', { error: String(error) });
     }
   }
 
@@ -3160,6 +3155,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       removedKeys.push(this.toSessionKey(sessionId, effectiveAgentId));
     }
 
+    // Collect toolCallIds that belong to this session (parent or child)
+    const toolCallIdsToClean: string[] = [];
+    for (const [tcId, parentId] of this.toolCallIdToParentSessionId.entries()) {
+      if (parentId === sessionId) toolCallIdsToClean.push(tcId);
+    }
+
     for (const key of removedKeys) this.deletedChannelKeys.add(key);
     this.knownChannelSessionIds.delete(sessionId);
     this.fullySyncedSessions.delete(sessionId);
@@ -3173,7 +3174,31 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.clearPendingApprovalsBySession(sessionId);
     this.confirmationModeBySession.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
+    this.orchestrationSessionIds.delete(sessionId);
+    this.mainAgentLifecycleEnded.delete(sessionId);
     this.channelSessionSync?.onSessionDeleted(sessionId);
+
+    // Clean up subagent tracking maps keyed by session key
+    for (const key of removedKeys) {
+      this.sessionKeyToLabel.delete(key);
+      this.subagentMessages.delete(key);
+      this.subagentStatus.delete(key);
+      this.subagentFinishedOrFinishing.delete(key);
+      this.subagentGatewayStatusCache.delete(key);
+    }
+
+    // Clean up toolCallId-keyed maps for this session's tool calls
+    for (const tcId of toolCallIdsToClean) {
+      this.toolCallIdToParentSessionId.delete(tcId);
+      this.toolCallIdToLabel.delete(tcId);
+      this.toolCallIdToSessionKey.delete(tcId);
+      this.toolCallArgs.delete(tcId);
+    }
+
+    // Clean up subagent stream states belonging to this parent session
+    for (const [runId, stream] of this.subagentStreamByRunId.entries()) {
+      if (stream.parentSessionId === sessionId) this.subagentStreamByRunId.delete(runId);
+    }
 
     // Delete remote sessions
     this.deleteOpenClawSessionByKeysWithRetry(sessionId, removedKeys).catch(() => {});
@@ -3437,7 +3462,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.getSubagentDisplayLabel(sessionId, sessionKey),
       });
     } catch (error) {
-      console.warn('[OpenClawRuntime] sessions.list for subagents failed:', error);
+      coworkLog('WARN', 'OpenClawRuntime', 'sessions.list for subagents failed', { error: String(error) });
     }
 
     if (subagents.length > 0) {
@@ -3659,11 +3684,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<{ ok: boolean; error?: string }> {
     if (this.isSessionActive(sessionId)) {
       this.pendingSessionModelPatches.set(sessionId, { model, agentId });
-      console.log(
-        '[OpenClawRuntime] patchSessionModel: deferred active session sessionId=%s model=%s',
-        sessionId,
-        model,
-      );
+      coworkLog('INFO', 'OpenClawRuntime', 'patchSessionModel: deferred active session', { sessionId, model });
       return { ok: true };
     }
     return this.skillRpcHandler.patchSessionModel(sessionId, model, agentId);

@@ -109,16 +109,30 @@ class CoworkService {
       // Check if session exists in current list
       const state = store.getState().cowork;
       const sessionExists = state.sessions.some(s => s.id === sessionId);
+      const currentSessionId = state.currentSession?.id;
+      const isCurrentSession = currentSessionId === sessionId;
+
+      // Summarize message content for logging
+      const msg = message as unknown as Record<string, unknown>;
+      const contentPreview = typeof msg.content === 'string'
+        ? msg.content.slice(0, 80)
+        : Array.isArray(msg.content)
+          ? `[${(msg.content as unknown[]).length} blocks]`
+          : String(msg.content ?? '').slice(0, 80);
 
       console.log(
-        '[CoworkService] onStreamMessage: sessionId=',
-        sessionId,
-        'type=',
-        message.type,
-        'sessionExists=',
-        sessionExists,
-        'totalSessions=',
-        state.sessions.length,
+        '[CoworkService] ▶ onStreamMessage',
+        {
+          sessionId: sessionId.slice(0, 8),
+          type: message.type,
+          messageId: message.id?.slice?.(0, 8),
+          sessionExists,
+          isCurrentSession,
+          currentSessionId: currentSessionId?.slice?.(0, 8),
+          totalSessions: state.sessions.length,
+          isStreaming: state.isStreaming,
+          contentPreview,
+        },
       );
       if (!sessionExists) {
         // Session was created by IM or another source, refresh the session list

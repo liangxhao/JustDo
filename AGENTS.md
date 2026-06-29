@@ -105,22 +105,3 @@ Vitest, co-located `.test.ts` files. `import { test, expect } from 'vitest'`. Ma
 
 Conventional Commits (English): `type(scope): imperative summary`. Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`.
 
-## Key Documentation
-
-| Doc | Path |
-|-----|------|
-| Overview | `docs/architecture/01-overview.md` |
-| Architecture | `docs/architecture/02-architecture.md` |
-| Process Model | `docs/architecture/03-process-model.md` |
-| Cowork System | `docs/architecture/04-cowork-system.md` |
-| Agent Engine | `docs/architecture/05-agent-engine.md` |
-| Skills System | `docs/architecture/07-skills-system.md` |
-| Scheduled Tasks | `docs/architecture/08-scheduled-tasks.md` |
-| Data Storage | `docs/architecture/10-data-storage.md` |
-| Security Model | `docs/architecture/11-security-model.md` |
-| Tech Stack | `docs/architecture/12-tech-stack.md` |
-| Frontend Design | `docs/architecture/13-pure-frontend-design.md` |
-| OpenClaw Boundary | `docs/architecture/14-openclaw-frontend-boundary-plan.md` |
-| Gateway Matrix | `docs/architecture/openclaw-gateway-capability-matrix.md` |
-| Thinking Stream | `docs/features/thinking-stream-implementation.md` |
-| Thin Frontend Plan | `docs/features/openclaw-thin-frontend-refactor-plan.md` |

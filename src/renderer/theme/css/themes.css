@@ -14,9 +14,9 @@
   --justdo-surface-foreground: #1A1D23;
   --justdo-surface-raised: #F0F1F4;
   --justdo-surface-overlay: rgba(240,241,244,0.92);
-  --justdo-chat-user: #DBEAFE;
-  --justdo-chat-user-foreground: #1e3a8a;
-  --justdo-chat-bot: #F0F1F4;
+  --justdo-chat-user: #EAF1FC;
+  --justdo-chat-user-foreground: #1A1D23;
+  --justdo-chat-bot: #FFFFFF;
   --justdo-chat-bot-foreground: #1A1D23;
   --justdo-text-primary: #1A1D23;
   --justdo-text-secondary: #6B7280;

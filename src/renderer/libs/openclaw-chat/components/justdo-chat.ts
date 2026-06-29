@@ -1,0 +1,795 @@
+/**
+ * <justdo-chat> Lit custom element.
+ * Renders OpenClaw-style chat messages in a shadow DOM.
+ *
+ * Can receive messages either:
+ * 1. Directly via properties (messages, stream, etc.)
+ * 2. Via a ChatController reference (controller property)
+ */
+import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
+
+import type { GatewayMessage, ChatItem, MessageGroup } from '../types';
+import type { ChatController } from '../gateway/chat-controller';
+import { buildChatItems } from '../pipeline/build-chat-items';
+import {
+  renderMessageGroup,
+  renderStreamingGroup,
+  renderStreamingThinkingGroup,
+  renderReadingIndicatorGroup,
+} from './grouped-render';
+
+@customElement('justdo-chat')
+export class JustDoChatElement extends LitElement {
+  // ─── Properties ─────────────────────────────────────────────────────────
+
+  /** Direct message input (when not using controller) */
+  @property({ type: Array, attribute: false })
+  declare messages: GatewayMessage[];
+
+  @property({ type: String, attribute: false })
+  declare stream: string | null;
+
+  @property({ type: Number, attribute: false })
+  declare streamStartedAt: number | null;
+
+  @property({ type: Boolean, attribute: false })
+  declare isStreaming: boolean;
+
+  @property({ type: String, attribute: false })
+  declare searchQuery: string;
+
+  constructor() {
+    super();
+    this.messages = [];
+    this.stream = null;
+    this.streamStartedAt = null;
+    this.isStreaming = false;
+    this.searchQuery = '';
+  }
+
+  /** ChatController reference (preferred — connects directly to gateway) */
+  private _controller: ChatController | null = null;
+  private _controllerUnsubscribe: (() => void) | null = null;
+  private _streamUnsubscribe: (() => void) | null = null;
+  private lastRenderSignature = '';
+
+  get controller(): ChatController | null {
+    return this._controller;
+  }
+
+  set controller(ctrl: ChatController | null) {
+    if (this._controller === ctrl) return;
+    this.unsubscribeController();
+    this._controller = ctrl;
+    if (ctrl) this.subscribeController(ctrl);
+    this.requestUpdate();
+  }
+
+  // ─── Styles ─────────────────────────────────────────────────────────────
+
+  static styles = css`
+    :host {
+      display: block;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--justdo-chat-text, #1a1a1a);
+      background: var(--justdo-chat-bg, transparent);
+      overflow-y: auto;
+      height: 100%;
+    }
+
+    .chat-container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    /* ── Chat Group ─────────────────────────────────────────────────── */
+
+    .chat-group {
+      display: flex;
+      gap: 12px;
+      padding: 8px 0;
+      align-items: flex-start;
+    }
+
+    .chat-group--user {
+      flex-direction: row-reverse;
+    }
+
+    .chat-group__avatar {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .chat-group__avatar .chat-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .chat-avatar.user {
+      background: var(--justdo-chat-user-avatar-bg, #e0e7ff);
+      color: var(--justdo-chat-user-avatar-text, #4338ca);
+    }
+
+    .chat-avatar.assistant {
+      background: var(--justdo-chat-assistant-avatar-bg, #f3e8ff);
+      color: var(--justdo-chat-assistant-avatar-text, #7c3aed);
+    }
+
+    .chat-avatar.tool {
+      background: var(--justdo-chat-tool-avatar-bg, rgba(0,0,0,0.05));
+      color: var(--justdo-chat-tool-avatar-text, #6b7280);
+    }
+
+    .chat-avatar.other {
+      background: rgba(0,0,0,0.05);
+      color: #6b7280;
+    }
+
+    .chat-avatar--logo {
+      object-fit: cover;
+    }
+
+    .chat-group__content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .chat-group__footer {
+      font-size: 11px;
+      color: var(--justdo-chat-text-secondary, #9ca3af);
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chat-group--user .chat-group__footer {
+      justify-content: flex-end;
+    }
+
+    .chat-group__sender {
+      font-weight: 500;
+    }
+
+    /* ── Chat Bubble ────────────────────────────────────────────────── */
+
+    .chat-bubble {
+      padding: 10px 14px;
+      border-radius: 12px;
+      max-width: 100%;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .chat-bubble--user {
+      background: var(--justdo-chat-user-bg, #EAF1FC);
+      color: var(--justdo-chat-user-text, #1a1a1a);
+      border-bottom-right-radius: 4px;
+      margin-left: auto;
+      max-width: calc(100% - 44px);
+      width: fit-content;
+    }
+
+    /* Remove default <p> margins inside user bubble — these add
+       ~28px of phantom vertical space per paragraph.
+       Also override pre-wrap → normal so trailing \n after </p>
+       does not create an empty line at the bottom. */
+    .chat-bubble--user .chat-bubble__text {
+      white-space: normal;
+    }
+
+    .chat-bubble--user .chat-bubble__text > p {
+      margin: 0;
+      padding: 0;
+    }
+
+    .chat-bubble--user .chat-bubble__text > p + p {
+      margin-top: 8px;
+    }
+
+    .chat-bubble--user a {
+      color: inherit;
+      text-decoration: underline;
+    }
+
+    .chat-bubble--assistant {
+      background: var(--justdo-chat-assistant-bg, #FFFFFF);
+      color: var(--justdo-chat-assistant-text, inherit);
+      border-bottom-left-radius: 4px;
+      max-width: calc(100% - 44px);
+      width: fit-content;
+    }
+
+    .chat-bubble--streaming {
+      border-left: 3px solid var(--justdo-chat-accent, #6366f1);
+    }
+
+    .chat-bubble__text {
+      white-space: pre-wrap;
+    }
+
+    .chat-bubble__text.markdown-content {
+      white-space: normal;
+    }
+
+    /* ── Markdown Content ───────────────────────────────────────────── */
+
+    .markdown-content p {
+      margin: 0 0 8px 0;
+    }
+
+    .markdown-content p:last-child {
+      margin-bottom: 0;
+    }
+
+    .markdown-content h1, .markdown-content h2, .markdown-content h3,
+    .markdown-content h4 {
+      margin: 16px 0 8px 0;
+      font-weight: 600;
+    }
+
+    .markdown-content h1 { font-size: 1.3em; }
+    .markdown-content h2 { font-size: 1.2em; }
+    .markdown-content h3 { font-size: 1.1em; }
+
+    .markdown-content ul, .markdown-content ol {
+      padding-left: 20px;
+      margin: 4px 0;
+    }
+
+    .markdown-content li {
+      margin: 2px 0;
+    }
+
+    .markdown-content blockquote {
+      border-left: 3px solid var(--justdo-chat-border, #d1d5db);
+      margin: 8px 0;
+      padding: 4px 12px;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+    }
+
+    .markdown-content table {
+      border-collapse: collapse;
+      margin: 8px 0;
+      width: 100%;
+    }
+
+    .markdown-content th, .markdown-content td {
+      border: 1px solid var(--justdo-chat-border, #e5e7eb);
+      padding: 6px 10px;
+      text-align: left;
+    }
+
+    .markdown-content th {
+      background: var(--justdo-chat-table-header-bg, rgba(0,0,0,0.03));
+      font-weight: 600;
+    }
+
+    .markdown-content a {
+      color: var(--justdo-chat-link, #6366f1);
+      text-decoration: none;
+    }
+
+    .markdown-content a:hover {
+      text-decoration: underline;
+    }
+
+    .markdown-content img.markdown-inline-image {
+      max-width: 100%;
+      border-radius: 8px;
+      margin: 4px 0;
+    }
+
+    .markdown-content .markdown-plain-text-fallback {
+      white-space: pre-wrap;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* ── Code Blocks ────────────────────────────────────────────────── */
+
+    .markdown-content pre {
+      background: var(--justdo-chat-code-bg, #1e1e1e);
+      color: var(--justdo-chat-code-text, #d4d4d4);
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+      margin: 8px 0;
+    }
+
+    .markdown-content code {
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 0.9em;
+    }
+
+    .markdown-content :not(pre) > code {
+      background: var(--justdo-chat-inline-code-bg, rgba(0,0,0,0.06));
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .code-block-wrapper {
+      position: relative;
+      margin: 8px 0;
+    }
+
+    .code-block-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      background: var(--justdo-chat-code-header-bg, #2d2d2d);
+      border-radius: 8px 8px 0 0;
+      font-size: 12px;
+    }
+
+    .code-block-wrapper pre {
+      margin-top: 0;
+      border-radius: 0 0 8px 8px;
+    }
+
+    .code-block-lang {
+      color: var(--justdo-chat-text-secondary, #9ca3af);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .code-block-copy {
+      background: none;
+      border: 1px solid var(--justdo-chat-border, rgba(255,255,255,0.15));
+      color: var(--justdo-chat-text-secondary, #9ca3af);
+      cursor: pointer;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      transition: all 0.15s;
+    }
+
+    .code-block-copy:hover {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+    }
+
+    .code-block-copy__done {
+      display: none;
+    }
+
+    .code-block-copy.copied .code-block-copy__idle {
+      display: none;
+    }
+
+    .code-block-copy.copied .code-block-copy__done {
+      display: inline;
+    }
+
+    /* JSON collapse */
+    .json-collapse {
+      margin: 8px 0;
+    }
+
+    .json-collapse > summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--justdo-chat-text-secondary, #9ca3af);
+      padding: 4px 0;
+    }
+
+    /* ── highlight.js (GitHub theme) ────────────────────────────────── */
+
+    .hljs { color: #24292e; }
+    .hljs-comment, .hljs-quote { color: #6a737d; font-style: italic; }
+    .hljs-keyword, .hljs-selector-tag { color: #d73a49; }
+    .hljs-literal, .hljs-number, .hljs-tag .hljs-attr { color: #005cc5; }
+    .hljs-string, .hljs-doctag, .hljs-regexp { color: #032f62; }
+    .hljs-title, .hljs-section, .hljs-selector-id { color: #6f42c1; font-weight: 600; }
+    .hljs-subst { font-weight: normal; }
+    .hljs-type, .hljs-class .hljs-title { color: #6f42c1; }
+    .hljs-tag, .hljs-name, .hljs-attribute { color: #22863a; }
+    .hljs-symbol, .hljs-bullet { color: #e36209; }
+    .hljs-built_in, .hljs-builtin-name { color: #005cc5; }
+    .hljs-meta { color: #735c0f; }
+    .hljs-deletion { color: #b31d28; background: #ffeef0; }
+    .hljs-addition { color: #22863a; background: #f0fff4; }
+    .hljs-emphasis { font-style: italic; }
+    .hljs-strong { font-weight: bold; }
+
+    :host(.dark) .hljs,
+    :host([data-theme="dark"]) .hljs { color: #e1e4e8; }
+    :host(.dark) .hljs-comment,
+    :host([data-theme="dark"]) .hljs-comment { color: #6a737d; }
+    :host(.dark) .hljs-keyword,
+    :host([data-theme="dark"]) .hljs-keyword { color: #ff7b72; }
+    :host(.dark) .hljs-string,
+    :host([data-theme="dark"]) .hljs-string { color: #a5d6ff; }
+    :host(.dark) .hljs-number,
+    :host([data-theme="dark"]) .hljs-number { color: #79c0ff; }
+    :host(.dark) .hljs-title,
+    :host([data-theme="dark"]) .hljs-title { color: #d2a8ff; }
+    :host(.dark) .hljs-tag,
+    :host([data-theme="dark"]) .hljs-tag { color: #7ee787; }
+    :host(.dark) .hljs-attr,
+    :host([data-theme="dark"]) .hljs-attr { color: #79c0ff; }
+
+    /* Detect dark mode via host class — follows app theme, not OS */
+    :host(.dark) .hljs { color: #e1e4e8; }
+    :host(.dark) .hljs-comment { color: #6a737d; }
+    :host(.dark) .hljs-keyword { color: #ff7b72; }
+    :host(.dark) .hljs-string { color: #a5d6ff; }
+    :host(.dark) .hljs-number { color: #79c0ff; }
+    :host(.dark) .hljs-title { color: #d2a8ff; }
+    :host(.dark) .hljs-tag { color: #7ee787; }
+    :host(.dark) .hljs-attr { color: #79c0ff; }
+    :host(.dark) .code-block-header { background: #161b22; }
+    :host(.dark) .markdown-content pre { background: #161b22; }
+
+    /* ── Thinking Block ─────────────────────────────────────────────── */
+
+    .chat-thinking {
+      margin-bottom: 8px;
+    }
+
+    .chat-thinking__summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--justdo-chat-text-secondary, #9ca3af);
+      padding: 4px 0;
+      user-select: none;
+    }
+
+    .chat-thinking__content {
+      padding: 8px 12px;
+      background: var(--justdo-chat-thinking-bg, rgba(0,0,0,0.02));
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      margin-top: 4px;
+      border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.04));
+    }
+
+    .chat-thinking--streaming .chat-thinking__content {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .chat-thinking__header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--justdo-chat-text-secondary, #9ca3af);
+      padding: 4px 0;
+    }
+
+    .chat-thinking__indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--justdo-chat-accent, #6366f1);
+      animation: thinking-pulse 1.5s infinite ease-in-out;
+    }
+
+    .chat-thinking__label {
+      font-weight: 500;
+    }
+
+    @keyframes thinking-pulse {
+      0%, 100% { opacity: 0.4; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+
+    /* ── Tool Messages ──────────────────────────────────────────────── */
+
+    .tool-message {
+      margin: 4px 0;
+      padding: 8px 12px;
+      background: var(--justdo-chat-tool-bg, rgba(0,0,0,0.02));
+      border-radius: 8px;
+      border-left: 3px solid var(--justdo-chat-tool-border, #6b7280);
+    }
+
+    .tool-message--error {
+      border-left-color: var(--justdo-chat-error, #ef4444);
+    }
+
+    .tool-message__header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .tool-message__icon {
+      display: flex;
+      align-items: center;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+    }
+
+    .tool-message__output {
+      font-size: 12px;
+      max-height: 200px;
+      overflow: auto;
+      margin: 4px 0 0 0;
+    }
+
+    /* ── Tool Cards ─────────────────────────────────────────────────── */
+
+    .tool-cards-inline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 4px 0;
+    }
+
+    .tool-card {
+      padding: 4px 8px;
+      background: var(--justdo-chat-tool-bg, rgba(0,0,0,0.02));
+      border-radius: 6px;
+      font-size: 12px;
+      border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.06));
+    }
+
+    .tool-card--error {
+      border-color: var(--justdo-chat-error, #ef4444);
+      background: rgba(239, 68, 68, 0.05);
+    }
+
+    /* ── Tool Activity Group ────────────────────────────────────────── */
+
+    .tool-activity-group {
+      margin: 4px 0;
+    }
+
+    .tool-activity-group__disclosure {
+      border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.06));
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .tool-activity-group__summary {
+      padding: 8px 12px;
+      background: var(--justdo-chat-tool-bg, rgba(0,0,0,0.02));
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+    }
+
+    .tool-activity-group__messages {
+      padding: 8px;
+    }
+
+    /* ── Reading Indicator ──────────────────────────────────────────── */
+
+    .chat-reading-indicator {
+      display: flex;
+      gap: 4px;
+      padding: 8px 0;
+    }
+
+    .chat-reading-indicator span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--justdo-chat-text-secondary, #9ca3af);
+      animation: typing-bounce 1.4s infinite ease-in-out;
+    }
+
+    .chat-reading-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .chat-reading-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes typing-bounce {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    /* ── Empty State ────────────────────────────────────────────────── */
+
+    .empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--justdo-chat-text-secondary, #9ca3af);
+      font-size: 14px;
+    }
+
+    /* ── Dark mode overrides ────────────────────────────────────────── */
+
+    /* Use CSS custom properties controlled by the app's data-theme,
+       NOT prefers-color-scheme which follows the OS setting. */
+    :host(.dark) {
+      color: #e5e7eb;
+    }
+    :host(.dark) .chat-bubble--assistant {
+      background: var(--justdo-chat-assistant-bg, #1f2937);
+      border-color: rgba(255,255,255,0.06);
+    }
+    :host(.dark) .chat-thinking__content {
+      background: rgba(255,255,255,0.03);
+      border-color: rgba(255,255,255,0.06);
+    }
+    :host(.dark) .tool-message {
+      background: rgba(255,255,255,0.03);
+    }
+    :host(.dark) .tool-activity-group__disclosure {
+      border-color: rgba(255,255,255,0.06);
+    }
+    :host(.dark) .tool-activity-group__summary {
+      background: rgba(255,255,255,0.02);
+    }
+  `;
+
+  // ─── Rendering ──────────────────────────────────────────────────────────
+
+  render(): TemplateResult {
+    // Use controller state if available, otherwise use direct properties
+    const ctrl = this._controller;
+    let messages = ctrl ? (ctrl.state.chatMessages as GatewayMessage[]) : this.messages;
+    const thinkingMessages = ctrl ? ctrl.state.chatThinkingMessages : [];
+    const toolMessages = ctrl ? ctrl.state.chatToolMessages : [];
+    const streamSegments = ctrl ? ctrl.state.chatStreamSegments : [];
+    const stream = ctrl ? ctrl.state.chatStream : this.stream;
+    const thinkingStream = ctrl ? ctrl.state.chatThinkingStream : null;
+    const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
+
+    const prePendingMsgCount = messages.length;
+
+    // Append pending user message (optimistic display during session transitions)
+    if (ctrl?.state.pendingUserMessage) {
+      const pending = ctrl.state.pendingUserMessage as GatewayMessage;
+      const alreadyInHistory = messages.some(
+        m => (m as Record<string, unknown>).role === 'user' &&
+             (m as Record<string, unknown>).content === pending.content &&
+             (m as Record<string, unknown>).timestamp === pending.timestamp,
+      );
+      if (!alreadyInHistory) {
+        messages = [...messages, pending];
+      }
+    }
+
+    const timelineMessages = thinkingMessages.length > 0
+      ? [...messages, ...(thinkingMessages as GatewayMessage[])]
+      : messages;
+    const items = this.buildItems(timelineMessages, toolMessages, streamSegments, stream);
+
+    // Detailed render diagnostic
+    const msgRoles = messages.slice(-5).map(m => (m as Record<string, unknown>).role);
+    const itemKinds = items.slice(-8).map(item => {
+      if ('kind' in item) {
+        if (item.kind === 'group') {
+          const group = item as MessageGroup;
+          return `group:${group.role}:${group.messages.length}`;
+        }
+        if (item.kind === 'stream') {
+          const streamItem = item as { kind: 'stream'; text: string };
+          return `stream:${streamItem.text.length}`;
+        }
+        return item.kind;
+      }
+      return '?';
+    });
+    const renderSignature = [
+      messages.length,
+      thinkingMessages.length,
+      toolMessages.length,
+      streamSegments.length,
+      stream?.length ?? 0,
+      thinkingStream?.length ?? 0,
+      isStreaming ? 1 : 0,
+      itemKinds.join('|'),
+    ].join(':');
+    if (renderSignature !== this.lastRenderSignature) {
+      this.lastRenderSignature = renderSignature;
+      console.log('[justdo-chat] ▶ render-state', {
+        hasCtrl: !!ctrl,
+        prePendingMsgCount,
+        postPendingMsgCount: messages.length,
+        thinkingMsgCount: thinkingMessages.length,
+        toolMsgCount: toolMessages.length,
+        segCount: streamSegments.length,
+        buildItemsStreamLen: stream?.length ?? 0,
+        streamLen: stream?.length ?? 0,
+        thinkingLen: thinkingStream?.length ?? 0,
+        isStreaming,
+        itemCount: items.length,
+        itemKinds,
+        msgRoles,
+      });
+    }
+
+    // Always render the chat container — never show "No messages"
+    return html`
+      <div class="chat-container">
+        ${items.map(item => this.renderItem(item))}
+        ${thinkingStream ? renderStreamingThinkingGroup(thinkingStream) : nothing}
+        ${isStreaming && items.length === 0 && !stream && !thinkingStream ? renderReadingIndicatorGroup() : nothing}
+      </div>
+    `;
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.unsubscribeController();
+  }
+
+  private subscribeController(ctrl: ChatController): void {
+    this._controllerUnsubscribe = ctrl.subscribe(() => this.requestUpdate());
+    this._streamUnsubscribe = ctrl.onStream(() => this.requestUpdate());
+  }
+
+  private unsubscribeController(): void {
+    this._controllerUnsubscribe?.();
+    this._streamUnsubscribe?.();
+    this._controllerUnsubscribe = null;
+    this._streamUnsubscribe = null;
+  }
+
+  private buildItems(
+    messages?: unknown[],
+    toolMessages?: unknown[],
+    streamSegments?: Array<{ text: string; ts: number }>,
+    stream?: string | null,
+  ): Array<ChatItem | MessageGroup> {
+    const msgs = messages ?? this.messages;
+    if (!msgs || msgs.length === 0) return [];
+
+    try {
+      const result = buildChatItems({
+        sessionKey: '',
+        messages: msgs,
+        toolMessages: toolMessages ?? [],
+        stream: stream ?? this.stream,
+        streamStartedAt: this._controller?.state.chatStreamStartedAt ?? this.streamStartedAt,
+        streamSegments: streamSegments ?? [],
+        queue: [],
+        showToolCalls: true,
+      });
+      return result ?? [];
+    } catch (err) {
+      console.error('[justdo-chat] buildChatItems error:', err);
+      return [];
+    }
+  }
+
+  private renderItem(item: ChatItem | MessageGroup): TemplateResult | typeof nothing {
+    if (!item) return nothing;
+
+    if ('kind' in item) {
+      if (item.kind === 'group') {
+        return renderMessageGroup(item as MessageGroup, { searchQuery: this.searchQuery });
+      }
+      if (item.kind === 'stream') {
+        const streamItem = item as { kind: 'stream'; text: string; startedAt: number };
+        return renderStreamingGroup(streamItem.text, streamItem.startedAt);
+      }
+      if (item.kind === 'reading-indicator') {
+        return renderReadingIndicatorGroup();
+      }
+    }
+
+    return nothing;
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'justdo-chat': JustDoChatElement;
+  }
+}

@@ -7,7 +7,7 @@ import {
   AssistantTranscriptBlock,
   buildTranscriptItems,
   UserMessageItem,
-} from '../cowork/CoworkSessionDetail';
+} from '../cowork/TranscriptComponents';
 
 interface RunSessionModalProps {
   sessionId?: string | null;
