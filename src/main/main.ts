@@ -3144,18 +3144,15 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:subTask:status', async (_event, sessionId?: string) => {
     try {
       if (!openClawRuntimeAdapter) {
-        return { success: true, statuses: {}, displayLabels: {} };
+        return { success: true, subagents: [] };
       }
-      const result = await (openClawRuntimeAdapter as any).getSubagentStatuses(sessionId);
+      const result = await openClawRuntimeAdapter.getSubagentStatuses(sessionId);
       return {
         success: true,
-        statuses: result.statuses || {},
-        displayLabels: result.displayLabels || {},
-        sessionKeys: result.sessionKeys || {},
         subagents: result.subagents || [],
       };
-    } catch (error) {
-      return { success: false, statuses: {}, displayLabels: {}, sessionKeys: {}, subagents: [] };
+    } catch {
+      return { success: false, subagents: [] };
     }
   });
 

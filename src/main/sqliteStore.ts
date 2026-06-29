@@ -123,27 +123,6 @@ export class SqliteStore {
       );
     `);
 
-    // Create subagents status table - stores subagent state independent of messages
-    // This ensures subagent status survives restart even when tool_use message metadata is lost
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS cowork_subagents (
-        tool_call_id TEXT PRIMARY KEY,
-        parent_session_id TEXT NOT NULL,
-        child_session_key TEXT,
-        label TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        tool_input TEXT,
-        error_reason TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (parent_session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
-      );
-    `);
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_subagents_parent_session ON cowork_subagents(parent_session_id);
-    `);
-
     // Create session groups table
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (

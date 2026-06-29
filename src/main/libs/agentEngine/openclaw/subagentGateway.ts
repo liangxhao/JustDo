@@ -1,131 +1,66 @@
 import type { GatewayClientLike } from '../gateway/types';
 
-export type SubagentStatus = 'pending' | 'running' | 'done' | 'failed';
+export const SUBAGENT_STATUSES = {
+  RUNNING: 'running',
+  DONE: 'done',
+  FAILED: 'failed',
+  KILLED: 'killed',
+  TIMEOUT: 'timeout',
+} as const;
 
-export type PersistedSubagentCacheRow = {
-  toolCallId: string;
-  parentSessionId: string;
-  childSessionKey: string | null;
-  label: string;
-  status: SubagentStatus;
-};
+export type SubagentStatus =
+  (typeof SUBAGENT_STATUSES)[keyof typeof SUBAGENT_STATUSES];
 
 export type GatewaySubagent = {
   id: string;
   sessionKey: string;
   label: string;
   status: SubagentStatus;
-  toolCallId?: string;
-};
-
-export type SubagentStatusView = {
-  statuses: Record<string, SubagentStatus>;
-  displayLabels: Record<string, string>;
-  sessionKeys: Record<string, string>;
-  subagents: Array<{
-    id: string;
-    sessionKey: string;
-    label: string;
-    status: SubagentStatus;
-  }>;
 };
 
 export const normalizeSubagentSessionKey = (sessionKey: string): string => {
   const key = sessionKey.trim();
-  if (!key) return '';
   if (key.startsWith('subagent:')) return `agent:main:${key}`;
-  if (!key.includes(':subagent:')) return '';
-  return key;
+  return key.includes(':subagent:') ? key : '';
 };
 
-export const normalizeGatewaySubagentStatus = (
-  row: Record<string, unknown>,
-): SubagentStatus => {
-  const status = typeof row.status === 'string' ? row.status.toLowerCase() : '';
-  const runState =
-    typeof row.subagentRunState === 'string' ? row.subagentRunState.toLowerCase() : '';
-  const active = row.hasActiveSubagentRun === true;
-  const endedAt =
-    (typeof row.endedAt === 'number' && Number.isFinite(row.endedAt)) ||
-    (typeof row.endedAt === 'string' && row.endedAt.trim() !== '');
-  const startedAt =
-    (typeof row.startedAt === 'number' && Number.isFinite(row.startedAt)) ||
-    (typeof row.startedAt === 'string' && row.startedAt.trim() !== '');
+const isSubagentStatus = (value: unknown): value is SubagentStatus =>
+  Object.values(SUBAGENT_STATUSES).includes(value as SubagentStatus);
 
-  if (active || runState === 'active') return 'running';
-  if (
-    endedAt &&
-    ['failed', 'error', 'killed', 'timeout', 'timed_out', 'cancelled'].includes(status)
-  ) {
-    return 'failed';
+const resolveStatus = (row: Record<string, unknown>): SubagentStatus => {
+  if (row.hasActiveSubagentRun === true || row.subagentRunState === 'active') {
+    return SUBAGENT_STATUSES.RUNNING;
   }
-  if (
-    endedAt ||
-    ['done', 'ok', 'completed', 'complete'].includes(status) ||
-    runState === 'historical'
-  ) {
-    return 'done';
-  }
-  if (status === 'running') return 'running';
-  return startedAt ? 'running' : 'pending';
+  if (isSubagentStatus(row.status)) return row.status;
+  if (row.subagentRunState === 'interrupted') return SUBAGENT_STATUSES.FAILED;
+  return SUBAGENT_STATUSES.DONE;
 };
 
-export const buildSubagentStatusView = (
-  subagents: GatewaySubagent[],
-): SubagentStatusView => {
-  const statuses: Record<string, SubagentStatus> = {};
-  const displayLabels: Record<string, string> = {};
-  const sessionKeys: Record<string, string> = {};
-  const byId = new Map<
-    string,
-    {
-      id: string;
-      sessionKey: string;
-      label: string;
-      status: SubagentStatus;
-    }
-  >();
-
-  const addAlias = (id: string, subagent: GatewaySubagent) => {
-    if (!id) return;
-    statuses[id] = subagent.status;
-    displayLabels[id] = subagent.label;
-    if (subagent.sessionKey) sessionKeys[id] = subagent.sessionKey;
-  };
-
-  for (const subagent of subagents) {
-    const normalizedSessionKey =
-      normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
-    const primaryId = normalizedSessionKey || subagent.id;
-    byId.set(primaryId, {
-      id: primaryId,
-      sessionKey: subagent.sessionKey,
-      label: subagent.label,
-      status: subagent.status,
-    });
-
-    addAlias(primaryId, subagent);
-    addAlias(subagent.id, subagent);
-    addAlias(subagent.sessionKey, subagent);
-    addAlias(normalizedSessionKey, subagent);
-    if (subagent.toolCallId) addAlias(subagent.toolCallId, subagent);
+const resolveLabel = (row: Record<string, unknown>, sessionKey: string): string => {
+  // OpenClaw's registry naming semantics first; session-derived fields are
+  // fallbacks because older Gateway versions do not project taskName/task.
+  for (const value of [
+    row.label,
+    row.taskName,
+    row.task,
+    row.derivedTitle,
+    row.displayName,
+  ]) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
   }
-
-  return {
-    statuses,
-    displayLabels,
-    sessionKeys,
-    subagents: Array.from(byId.values()),
-  };
+  return sessionKey.split(':').at(-1) || 'Subagent';
 };
 
+/**
+ * Mirrors OpenClaw's `/subagents` data source through the public Gateway API.
+ * `sessions.list({ spawnedBy })` projects the same subagent run registry used by
+ * `listControlledSubagentRuns`, including its authoritative runtime status.
+ */
 export const listGatewaySubagents = async (options: {
   client: GatewayClientLike;
   parentKeys: string[];
-  persistedRows: PersistedSubagentCacheRow[];
-  getLabel: (sessionKey: string, persisted?: PersistedSubagentCacheRow) => string;
 }): Promise<GatewaySubagent[]> => {
-  const byKey = new Map<string, GatewaySubagent>();
+  const bySessionKey = new Map<string, GatewaySubagent>();
 
   for (const parentKey of options.parentKeys) {
     const result = await options.client.request<{
@@ -133,30 +68,20 @@ export const listGatewaySubagents = async (options: {
     }>('sessions.list', {
       spawnedBy: parentKey,
       limit: 100,
-      includeLastMessage: true,
+      includeDerivedTitles: true,
     });
 
     for (const row of result.sessions ?? []) {
-      const sessionKey = typeof row.key === 'string' ? row.key : '';
-      if (!sessionKey) continue;
-      const normalizedSessionKey = normalizeSubagentSessionKey(sessionKey) || sessionKey;
-      const persisted = options.persistedRows.find(cacheRow => {
-        const childSessionKey = cacheRow.childSessionKey || '';
-        return (
-          childSessionKey === sessionKey ||
-          normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
-        );
-      });
-
-      byKey.set(sessionKey, {
-        id: normalizedSessionKey,
+      const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
+      if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
+      bySessionKey.set(sessionKey, {
+        id: sessionKey,
         sessionKey,
-        label: options.getLabel(sessionKey, persisted),
-        status: normalizeGatewaySubagentStatus(row),
-        toolCallId: persisted?.toolCallId,
+        label: resolveLabel(row, sessionKey),
+        status: resolveStatus(row),
       });
     }
   }
 
-  return Array.from(byKey.values());
+  return [...bySessionKey.values()];
 };

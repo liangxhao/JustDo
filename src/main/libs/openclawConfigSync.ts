@@ -84,6 +84,10 @@ const mapExecutionModeToSandboxMode = (
  * Also used by the runtime adapter's client-side timeout watchdog.
  */
 export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
+// OpenClaw treats zero as "never archive" for completed run-mode subagents.
+export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
+// Allow substantial work while still terminating runaway subagent runs.
+export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 
 function shouldUseOpenAIResponsesApi(_providerName?: string, baseURL?: string): boolean {
   if (!baseURL) return true;
@@ -586,7 +590,8 @@ export class OpenClawConfigSync {
             maxSpawnDepth: 1,
             maxChildrenPerAgent: 5,
             maxConcurrent: 8,
-            runTimeoutSeconds: 900,
+            runTimeoutSeconds: OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS,
+            archiveAfterMinutes: OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES,
           },
         },
         ...this.buildAgentsList(primaryModel),

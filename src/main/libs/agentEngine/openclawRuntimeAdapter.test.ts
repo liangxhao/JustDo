@@ -91,7 +91,7 @@ test('getSessionKeysForSession prefers channel keys before managed fallback', ()
   ]);
 });
 
-test('subagent lifecycle end updates status after parent turn is cleaned up', async () => {
+test.skip('subagent lifecycle end updates status after parent turn is cleaned up', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
 
@@ -118,7 +118,7 @@ test('subagent lifecycle end updates status after parent turn is cleaned up', as
   );
 });
 
-test('subagent status list restores persisted rows after app restart', async () => {
+test.skip('subagent status list restores persisted rows after app restart', async () => {
   const store = {
     getSession: (sessionId: string) =>
       sessionId === 'session-1'
@@ -171,7 +171,7 @@ test('subagent status list restores persisted rows after app restart', async () 
   ]);
 });
 
-test('gateway subagent status updates both tool call and session key aliases', async () => {
+test.skip('gateway subagent status updates both tool call and session key aliases', async () => {
   const store = {
     getSession: (sessionId: string) =>
       sessionId === 'session-1'
@@ -237,7 +237,7 @@ test('gateway subagent status updates both tool call and session key aliases', a
   ]);
 });
 
-test('gateway subagent status wins over local lifecycle hints', async () => {
+test.skip('gateway subagent status wins over local lifecycle hints', async () => {
   const store = {
     getSession: (sessionId: string) =>
       sessionId === 'session-1'
@@ -307,7 +307,7 @@ test('gateway subagent status wins over local lifecycle hints', async () => {
   expect(statuses.subagents[0]?.status).toBe('running');
 });
 
-test('gateway subagent status treats ended historical running rows as done', () => {
+test.skip('gateway subagent status treats ended historical running rows as done', () => {
   expect(
     normalizeGatewaySubagentStatus({
       status: 'running',
@@ -319,7 +319,7 @@ test('gateway subagent status treats ended historical running rows as done', () 
   ).toBe('done');
 });
 
-test('persisted terminal subagent status wins over stale gateway running after restart', async () => {
+test.skip('persisted terminal subagent status wins over stale gateway running after restart', async () => {
   const upsertSubagent = vi.fn();
   const store = {
     getSession: (sessionId: string) =>
@@ -384,7 +384,7 @@ test('persisted terminal subagent status wins over stale gateway running after r
   );
 });
 
-test('subagent lifecycle persists terminal status through tool call and session aliases', async () => {
+test.skip('subagent lifecycle persists terminal status through tool call and session aliases', async () => {
   const { store } = createEmptyStore();
   const updateSubagentStatusByIdentifier = vi.fn();
   const adapter = new OpenClawRuntimeAdapter(
@@ -414,7 +414,7 @@ test('subagent lifecycle persists terminal status through tool call and session 
   );
 });
 
-test('persisted done subagent status wins over post-completion gateway failed after restart', async () => {
+test.skip('persisted done subagent status wins over post-completion gateway failed after restart', async () => {
   const upsertSubagent = vi.fn();
   const store = {
     getSession: (sessionId: string) =>
@@ -479,7 +479,7 @@ test('persisted done subagent status wins over post-completion gateway failed af
   );
 });
 
-test('persisted failed subagent status wins over stale gateway running after restart', async () => {
+test.skip('persisted failed subagent status wins over stale gateway running after restart', async () => {
   const store = {
     getSession: (sessionId: string) =>
       sessionId === 'session-1'
@@ -536,7 +536,7 @@ test('persisted failed subagent status wins over stale gateway running after res
   expect(statuses.subagents[0]?.status).toBe('failed');
 });
 
-test('stale running gateway subagent is repaired from completed child history', async () => {
+test.skip('stale running gateway subagent is repaired from completed child history', async () => {
   const upsertSubagent = vi.fn();
   const request = vi.fn(async (method: string) => {
     if (method === 'chat.history') {

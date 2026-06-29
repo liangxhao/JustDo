@@ -9,16 +9,14 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
-import { RootState } from '../../store';
 import {
   selectExpandedGroupIds,
   selectGroups,
-  selectHideFailedSubagents,
   selectUnreadSessionIds,
 } from '../../store/selectors/coworkSelectors';
 import {
@@ -26,7 +24,6 @@ import {
   moveSessionToGroup,
   reorderGroups,
   toggleGroupExpanded,
-  toggleHideFailedSubagents,
   updateGroup,
 } from '../../store/slices/coworkSlice';
 import type {
@@ -39,61 +36,37 @@ import CoworkSessionItem from './CoworkSessionItem';
 import CreateGroupModal from './CreateGroupModal';
 import SessionGroupHeader from './SessionGroupHeader';
 import SessionGroupPanel from './SessionGroupPanel';
-import SubAgentList, { SubTaskInfo } from './SubAgentList';
-import SubTaskDetailDrawer from './SubTaskDetailDrawer';
 
 interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
   unreadSessionIdSet: Set<string>;
   currentSessionId: string | null;
-  activeSessionId: string | undefined;
   isBatchMode: boolean;
   selectedIds: Set<string>;
   showBatchOption?: boolean;
   groups: SessionGroup[];
-  enrichedSubTasks: SubTaskInfo[];
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, title: string) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
-  setActiveSubTask: React.Dispatch<
-    React.SetStateAction<{
-      agentId: string;
-      sessionKey?: string;
-      displayName?: string;
-      parentSessionId: string;
-      status: 'pending' | 'running' | 'done' | 'failed';
-    } | null>
-  >;
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
-  collapsedSubagentSessions: Set<string>;
-  onToggleSubagentCollapse: (sessionId: string) => void;
-  hideFailedSubagents?: boolean;
-  onToggleHideFailedSubagents?: () => void;
 }
 
 const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   unGroupedSessions,
   unreadSessionIdSet,
   currentSessionId,
-  activeSessionId,
   isBatchMode,
   selectedIds,
   showBatchOption,
   groups,
-  enrichedSubTasks,
   onSelectSession,
   onDeleteSession,
   onRenameSession,
   onToggleSelection,
   onEnterBatchMode,
-  setActiveSubTask,
   onMoveToGroup,
-  collapsedSubagentSessions,
-  onToggleSubagentCollapse,
-  hideFailedSubagents = false,
-  onToggleHideFailedSubagents,
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id: 'ungrouped' });
 
@@ -104,8 +77,8 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
       </div>
       <div className={isOver ? 'rounded-lg bg-blue-500/10 ring-1 ring-blue-400/30' : ''}>
         {unGroupedSessions.map(session => (
-          <React.Fragment key={session.id}>
             <CoworkSessionItem
+              key={session.id}
               session={session}
               hasUnread={unreadSessionIdSet.has(session.id)}
               isActive={session.id === currentSessionId}
@@ -122,21 +95,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
                 await coworkService.moveSessionToGroup(session.id, groupId);
                 onMoveToGroup(session.id, groupId);
               }}
-              hasSubagents={session.id === activeSessionId && enrichedSubTasks.length > 0}
-              subagentsCollapsed={collapsedSubagentSessions.has(session.id)}
-              onToggleSubagentCollapse={() => onToggleSubagentCollapse(session.id)}
-              hideFailedSubagents={hideFailedSubagents}
-              onToggleHideFailedSubagents={onToggleHideFailedSubagents}
             />
-            <SubAgentList
-              sessionId={session.id}
-              currentSessionId={currentSessionId}
-              enrichedSubTasks={enrichedSubTasks}
-              setActiveSubTask={setActiveSubTask}
-              isCollapsed={collapsedSubagentSessions.has(session.id)}
-              hideFailedSubagents={hideFailedSubagents}
-            />
-          </React.Fragment>
         ))}
       </div>
     </div>
@@ -175,7 +134,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
-  const hideFailedSubagents = useSelector(selectHideFailedSubagents);
 
   // DnD state
   const [activeSession, setActiveSession] = useState<CoworkSessionSummary | null>(null);
@@ -241,22 +199,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   // Group handlers
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
 
-  // Subagent collapse state per session
-  const [collapsedSubagentSessions, setCollapsedSubagentSessions] = useState<Set<string>>(
-    new Set(),
-  );
-
-  const handleToggleSubagentCollapse = (sessionId: string) => {
-    setCollapsedSubagentSessions(prev => {
-      const next = new Set(prev);
-      if (next.has(sessionId)) {
-        next.delete(sessionId);
-      } else {
-        next.add(sessionId);
-      }
-      return next;
-    });
-  };
 
   const handleToggleGroupExpand = (groupId: string) => {
     dispatch(toggleGroupExpanded(groupId));
@@ -320,141 +262,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     }
     return result;
   }, [sessions, groups]);
-
-  const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
-
-  // Poll OpenClaw for subagent rows.
-  const [backendStatuses, setBackendStatuses] = useState<
-    Record<string, 'pending' | 'running' | 'done' | 'failed'>
-  >({});
-  const [backendDisplayLabels, setBackendDisplayLabels] = useState<Record<string, string>>({});
-  const [backendSessionKeys, setBackendSessionKeys] = useState<Record<string, string>>({});
-  const [backendSubagents, setBackendSubagents] = useState<
-    Array<{
-      id: string;
-      sessionKey: string;
-      label: string;
-      status: 'pending' | 'running' | 'done' | 'failed';
-    }>
-  >([]);
-  const isSessionActive = currentSession?.status === 'running';
-  const activeSessionId = currentSession?.id;
-  const hasRunningRef = React.useRef(false);
-
-  useEffect(() => {
-    setBackendStatuses({});
-    setBackendDisplayLabels({});
-    setBackendSessionKeys({});
-    setBackendSubagents([]);
-    hasRunningRef.current = false;
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    hasRunningRef.current =
-      Object.values(backendStatuses).some(s => s === 'running' || s === 'pending') ||
-      backendSubagents.some(t => t.status === 'running' || t.status === 'pending');
-  }, [backendStatuses, backendSubagents]);
-
-  useEffect(() => {
-    if (!activeSessionId) return;
-    const poll = async () => {
-      try {
-        const result = await window.electron.cowork.getSubTaskStatus(activeSessionId);
-        if (result.success && result.statuses) {
-          setBackendStatuses(result.statuses);
-          if (result.displayLabels) {
-            setBackendDisplayLabels(result.displayLabels);
-          }
-          setBackendSessionKeys(result.sessionKeys || {});
-          setBackendSubagents(result.subagents || []);
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    poll();
-    const timer = setInterval(() => {
-      if (!hasRunningRef.current) {
-        clearInterval(timer);
-        return;
-      }
-      poll();
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [activeSessionId, isSessionActive]);
-
-  // One-time subagent status query for the currently-viewed session
-  // (non-active/historical sessions): when a user selects a session that is not
-  // the active running session, fetch its subagent statuses once.
-  useEffect(() => {
-    const currentSessionId = currentSession?.id;
-    if (!currentSessionId || currentSessionId === activeSessionId) return;
-    const fetchOnce = async () => {
-      try {
-        const result = await window.electron.cowork.getSubTaskStatus(currentSessionId);
-        if (result.success && result.statuses) {
-          setBackendStatuses(result.statuses);
-          if (result.displayLabels) setBackendDisplayLabels(result.displayLabels);
-          setBackendSessionKeys(result.sessionKeys || {});
-          setBackendSubagents(result.subagents || []);
-        }
-      } catch { /* ignore */ }
-    };
-    fetchOnce();
-  }, [currentSession?.id, activeSessionId]);
-  const enrichedSubTasks = useMemo(() => {
-    if (backendSubagents.length > 0) {
-      return backendSubagents
-        .filter(subagent => subagent.label.trim())
-        .map(subagent => ({
-          agentId: subagent.id,
-          sessionKey: subagent.sessionKey,
-          childSessionId: subagent.sessionKey,
-          task: subagent.label,
-          status: subagent.status,
-        }));
-    }
-
-    if (Object.keys(backendStatuses).length > 0) {
-      return Object.entries(backendStatuses).flatMap(([agentId, status]) => {
-        const task = backendDisplayLabels[agentId] || '';
-        if (!task.trim()) return [];
-        return {
-          agentId,
-          sessionKey: backendSessionKeys[agentId],
-          childSessionId: backendSessionKeys[agentId],
-          task,
-          status,
-        };
-      });
-    }
-
-    return [];
-  }, [backendStatuses, backendDisplayLabels, backendSessionKeys, backendSubagents]);
-
-  // Subtask detail drawer state
-  const [activeSubTask, setActiveSubTask] = useState<{
-    agentId: string;
-    sessionKey?: string;
-    childSessionId?: string;
-    displayName?: string;
-    parentSessionId: string;
-    status: 'pending' | 'running' | 'done' | 'failed';
-  } | null>(null);
-  // Keep activeSubTask.status in sync with enrichedSubTasks so the
-  // SubTaskDetailDrawer title bar and SubAgentList breathing light use
-  // the same source of truth.
-  useEffect(() => {
-    if (!activeSubTask) return;
-    const match = enrichedSubTasks.find(
-      (s) => s.agentId === activeSubTask.agentId,
-    );
-    if (match && match.status !== activeSubTask.status) {
-      setActiveSubTask((prev) =>
-        prev ? { ...prev, status: match.status } : prev,
-      );
-    }
-  }, [enrichedSubTasks, activeSubTask?.agentId]);
 
 
   if (unGroupedSessions.length === 0 && sessions.length === 0) {
@@ -545,7 +352,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     groups={groups}
                     isExpanded={isExpanded}
                     currentSessionId={currentSessionId}
-                    activeSessionId={activeSessionId}
                     unreadSessionIds={unreadSessionIds}
                     isBatchMode={isBatchMode}
                     selectedIds={selectedIds}
@@ -558,12 +364,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                       await coworkService.moveSessionToGroup(sessionId, groupId);
                       dispatch(moveSessionToGroup({ sessionId, groupId }));
                     }}
-                    enrichedSubTasks={enrichedSubTasks}
-                    setActiveSubTask={setActiveSubTask}
-                    collapsedSubagentSessions={collapsedSubagentSessions}
-                    onToggleSubagentCollapse={handleToggleSubagentCollapse}
-                    hideFailedSubagents={hideFailedSubagents}
-                    onToggleHideFailedSubagents={() => dispatch(toggleHideFailedSubagents())}
                   />
                 </React.Fragment>
               );
@@ -576,26 +376,19 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           unGroupedSessions={unGroupedSessions}
           unreadSessionIdSet={unreadSessionIdSet}
           currentSessionId={currentSessionId}
-          activeSessionId={activeSessionId}
           isBatchMode={isBatchMode}
           selectedIds={selectedIds}
           showBatchOption={showBatchOption}
           groups={groups}
-          enrichedSubTasks={enrichedSubTasks}
           onSelectSession={onSelectSession}
           onDeleteSession={onDeleteSession}
           onRenameSession={onRenameSession}
           onToggleSelection={onToggleSelection}
           onEnterBatchMode={onEnterBatchMode}
-          setActiveSubTask={setActiveSubTask}
           onMoveToGroup={async (sessionId, groupId) => {
             await coworkService.moveSessionToGroup(sessionId, groupId);
             dispatch(moveSessionToGroup({ sessionId, groupId }));
           }}
-          collapsedSubagentSessions={collapsedSubagentSessions}
-          onToggleSubagentCollapse={handleToggleSubagentCollapse}
-          hideFailedSubagents={hideFailedSubagents}
-          onToggleHideFailedSubagents={() => dispatch(toggleHideFailedSubagents())}
         />
       </div>
 
@@ -617,18 +410,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         existingColors={groups.map(g => g.color)}
       />
 
-      {/* Subtask detail drawer */}
-      {activeSubTask && (
-        <SubTaskDetailDrawer
-          agentId={activeSubTask.agentId}
-          sessionKey={activeSubTask.sessionKey}
-          childSessionId={activeSubTask.childSessionId}
-          displayName={activeSubTask.displayName}
-          parentSessionId={activeSubTask.parentSessionId}
-          status={activeSubTask.status}
-          onClose={() => setActiveSubTask(null)}
-        />
-      )}
     </DndContext>
   );
 };

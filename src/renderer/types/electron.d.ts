@@ -614,14 +614,11 @@ interface IElectronAPI {
     ) => () => void;
     getSubTaskStatus: (sessionId?: string) => Promise<{
       success: boolean;
-      statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
-      displayLabels?: Record<string, string>;
-      sessionKeys?: Record<string, string>;
       subagents?: Array<{
         id: string;
         sessionKey: string;
         label: string;
-        status: 'pending' | 'running' | 'done' | 'failed';
+        status: 'running' | 'done' | 'failed' | 'killed' | 'timeout';
       }>;
     }>;
     getSubTaskHistory: (options: {

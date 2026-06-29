@@ -12,8 +12,8 @@ import type {
 import { t } from '../../i18n';
 import { resolveRawApiConfig } from '../claudeSettings';
 import { getCommandDangerLevel, isDeleteCommand } from '../commandSafety';
-import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import { coworkLog } from '../coworkLogger';
+import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import {
   buildManagedSessionKey,
   type OpenClawChannelSessionSync,
@@ -38,8 +38,6 @@ import type {
 import { HistoryReconciler } from './history/historyReconciler';
 import { SubtaskHistory } from './history/subtaskHistory';
 import {
-  buildSubagentStatusView,
-  type GatewaySubagent,
   listGatewaySubagents,
   normalizeSubagentSessionKey,
   type SubagentStatus,
@@ -79,7 +77,6 @@ const TICK_TIMEOUT_MS = 90_000;
 const AGENT_ACTIVITY_ALIVE_WINDOW_MS = 60_000;
 const MESSAGE_UPDATE_THROTTLE_MS = 200;
 const CLIENT_TIMEOUT_GRACE_MS = 30_000;
-const SUBAGENT_STATUS_CACHE_TTL_MS = 2_000;
 const GATEWAY_RECONNECT_MAX_ATTEMPTS = 10;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
@@ -132,14 +129,6 @@ type VisibleRunStreamState = {
   thinkingContent: string;
   toolStreamById: Map<string, ToolStreamEntry>;
   modelName: string;
-};
-
-type PersistedSubagentRow = {
-  toolCallId: string;
-  parentSessionId: string;
-  childSessionKey: string | null;
-  label: string;
-  status: 'pending' | 'running' | 'done' | 'failed';
 };
 
 type PendingSessionModelPatch = {
@@ -201,9 +190,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly latestTurnTokenBySession = new Map<string, number>();
   private readonly pendingSessionMessageReloadSessionIds = new Set<string>();
 
-  // Subagent status tracking (simplified)
-  private readonly subagentStatus = new Map<string, SubagentStatus>();
-  private readonly subagentFinishedOrFinishing = new Set<string>();
+  // Subagent message routing. Status is queried directly from OpenClaw.
   private readonly toolCallIdToLabel = new Map<string, string>();
   private readonly toolCallIdToSessionKey = new Map<string, string>();
   private readonly sessionKeyToLabel = new Map<string, string>();
@@ -211,19 +198,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly subagentMessages = new Map<
     string,
     Array<{ role: string; content: string; metadata?: Record<string, unknown> }>
-  >();
-  private readonly subagentGatewayStatusCache = new Map<
-    string,
-    {
-      expiresAt: number;
-      subagents: Array<{
-        id: string;
-        sessionKey: string;
-        label: string;
-        status: 'pending' | 'running' | 'done' | 'failed';
-        toolCallId?: string;
-      }>;
-    }
   >();
   private readonly subagentStreamByRunId = new Map<string, SubagentStreamState>();
   private readonly orchestrationSessionIds = new Set<string>();
@@ -697,7 +671,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               resolvedAgentId,
               msg.metadata,
             );
-            this.updateSubagentStatusFromCompletion(resolvedAgentId, msg.metadata);
             const savedMsg = this.store.addMessage(sessionId, {
               type: msg.type as CoworkMessage['type'],
               content: msg.content,
@@ -708,19 +681,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               this.emit('subagentMessage', sessionId, resolvedAgentId, savedMsg);
             }
           }
-          if (resolvedAgentId !== agentId) {
-            this.subagentStatus.delete(agentId);
-          }
         }
         this.finalizeSubagentStream(runId);
-        if (this.subagentStatus.get(resolvedAgentId) !== 'failed') {
-          this.subagentStatus.set(resolvedAgentId, 'done');
-          this.persistSubagentStatus(resolvedAgentId, 'done');
-        }
         turn.knownRunIds.add(runId);
       } else if (state === 'error') {
-        this.subagentStatus.set(agentId, 'failed');
-        this.persistSubagentStatus(agentId, 'failed');
         this.finalizeSubagentStream(runId);
       }
       return;
@@ -918,40 +882,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.emitSubagentAssistantSnapshot(sessionId, runId, agentId, text, false);
       } else if (stream === 'lifecycle') {
         const phase = typeof data.phase === 'string' ? data.phase : '';
-        if (phase === 'start') {
-          this.setLocalSubagentStatusHint(agentId, 'running', {
-            parentSessionId: sessionId,
-            persist: true,
-          });
-        } else if (phase === 'end') {
-          if (this.subagentStatus.get(agentId) !== 'failed') {
-            this.setLocalSubagentStatusHint(agentId, 'done', {
-              parentSessionId: sessionId,
-              persist: true,
-            });
-          }
-          this.finalizeSubagentStream(runId);
-        } else if (phase === 'finishing') {
-          const aborted = typeof data.aborted === 'boolean' ? data.aborted : false;
-          if (!aborted && this.subagentStatus.get(agentId) !== 'failed') {
-            this.setLocalSubagentStatusHint(agentId, 'done', {
-              parentSessionId: sessionId,
-              persist: true,
-            });
-          }
-          this.subagentFinishedOrFinishing.add(agentId);
-          this.finalizeSubagentStream(runId);
-        } else if (phase === 'error') {
-          if (
-            this.subagentStatus.get(agentId) !== 'done' &&
-            !this.subagentFinishedOrFinishing.has(agentId) &&
-            !this.isSubagentPersistedAsTerminal(agentId, sessionId)
-          ) {
-            this.setLocalSubagentStatusHint(agentId, 'failed', {
-              parentSessionId: sessionId,
-              persist: true,
-            });
-          }
+        if (phase === 'end' || phase === 'finishing' || phase === 'error') {
           this.finalizeSubagentStream(runId);
         }
       }
@@ -1102,40 +1033,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         'error=' + (eventData.error ?? ''),
       );
     }
-    if (phase === 'start') {
-      this.setLocalSubagentStatusHint(resolved.subagentId, 'running', {
-        parentSessionId: resolved.parentSessionId,
-        persist: true,
-      });
-    } else if (phase === 'end') {
-      if (this.subagentStatus.get(resolved.subagentId) !== 'failed') {
-        this.setLocalSubagentStatusHint(resolved.subagentId, 'done', {
-          parentSessionId: resolved.parentSessionId,
-          persist: true,
-        });
-      }
-      this.finalizeSubagentStream(runId);
-    } else if (phase === 'finishing') {
-      const aborted = typeof eventData.aborted === 'boolean' ? eventData.aborted : false;
-      if (!aborted && this.subagentStatus.get(resolved.subagentId) !== 'failed') {
-        this.setLocalSubagentStatusHint(resolved.subagentId, 'done', {
-          parentSessionId: resolved.parentSessionId,
-          persist: true,
-        });
-      }
-      this.subagentFinishedOrFinishing.add(resolved.subagentId);
-      this.finalizeSubagentStream(runId);
-    } else if (phase === 'error') {
-      if (
-        this.subagentStatus.get(resolved.subagentId) !== 'done' &&
-        !this.subagentFinishedOrFinishing.has(resolved.subagentId) &&
-        !this.isSubagentPersistedAsTerminal(resolved.subagentId, resolved.parentSessionId)
-      ) {
-        this.setLocalSubagentStatusHint(resolved.subagentId, 'failed', {
-          parentSessionId: resolved.parentSessionId,
-          persist: true,
-        });
-      }
+    if (phase === 'end' || phase === 'finishing' || phase === 'error') {
       this.finalizeSubagentStream(runId);
     }
   }
@@ -1256,53 +1154,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private normalizeSubagentSessionKey(sessionKey: string): string {
     return normalizeSubagentSessionKey(sessionKey);
-  }
-
-  private getSubagentIdentifierAliases(identifier: string, parentSessionId?: string): string[] {
-    const value = identifier.trim();
-    if (!value) return [];
-    const aliases = new Set<string>([value]);
-    const normalized = this.normalizeSubagentSessionKey(value);
-    if (normalized) aliases.add(normalized);
-    const mappedSessionKey = this.toolCallIdToSessionKey.get(value);
-    if (mappedSessionKey) {
-      aliases.add(mappedSessionKey);
-      const normalizedMapped = this.normalizeSubagentSessionKey(mappedSessionKey);
-      if (normalizedMapped) aliases.add(normalizedMapped);
-    }
-    for (const [toolCallId, sessionKey] of this.toolCallIdToSessionKey.entries()) {
-      if (parentSessionId && this.toolCallIdToParentSessionId.get(toolCallId) !== parentSessionId) continue;
-      const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey);
-      if (sessionKey === value || normalizedSessionKey === value || normalizedSessionKey === normalized) {
-        aliases.add(toolCallId);
-        aliases.add(sessionKey);
-        if (normalizedSessionKey) aliases.add(normalizedSessionKey);
-      }
-    }
-    return Array.from(aliases);
-  }
-
-  private setLocalSubagentStatusHint(
-    identifier: string,
-    status: SubagentStatus,
-    options?: {
-      parentSessionId?: string;
-      persist?: boolean;
-      errorReason?: string;
-    },
-  ): void {
-    const aliases = this.getSubagentIdentifierAliases(identifier, options?.parentSessionId);
-    for (const alias of aliases) {
-      this.subagentStatus.set(alias, status);
-      if (options?.parentSessionId) {
-        this.toolCallIdToParentSessionId.set(alias, options.parentSessionId);
-      }
-    }
-    if (options?.persist) {
-      for (const alias of aliases) {
-        this.persistSubagentStatus(alias, status, options.errorReason);
-      }
-    }
   }
 
   private finalizeThinkingSegment(sessionId: string, turn: SessionTurn): void {
@@ -1922,9 +1773,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           toolName: entry.name,
           toolUseId: entry.toolCallId,
           toolResult,
-          isError:
-            entry.name === 'sessions_spawn' &&
-            this.subagentStatus.get(entry.toolCallId) === 'failed',
           isStreaming: false,
         },
       });
@@ -1946,11 +1794,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (label) {
       this.toolCallIdToLabel.set(toolCallId, label);
     }
-    this.subagentStatus.set(toolCallId, 'pending');
     this.toolCallArgs.set(toolCallId, args as Record<string, unknown>);
-    this.persistSubagent(toolCallId, sessionId, label, 'pending', {
-      toolInput: args as Record<string, unknown>,
-    });
   }
 
   private resolveSubagentToolCallId(
@@ -2026,7 +1870,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         thinkingContent: '',
       };
       this.subagentStreamByRunId.set(runId, stream);
-      this.subagentStatus.set(agentId, 'running');
       this.emit('subagentMessage', parentSessionId, agentId, {
         id: stream.assistantMessageId,
         type: 'assistant',
@@ -2082,7 +1925,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       thinkingContent: '',
     };
     this.subagentStreamByRunId.set(runId, stream);
-    this.subagentStatus.set(agentId, 'running');
 
     const thinkingSnapshot =
       typeof data.thinking === 'string'
@@ -2155,247 +1997,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): void {
     this.toolCallIdToParentSessionId.set(toolCallId, parentSessionId);
     const parsed = this.parseToolOutputObject(output);
-    const status = typeof parsed?.status === 'string' ? parsed.status.toLowerCase() : '';
-    const outcome = typeof parsed?.outcome === 'string' ? parsed.outcome.toLowerCase() : '';
-    const error = typeof parsed?.error === 'string' ? parsed.error : '';
-    const failed =
-      Boolean(error) ||
-      ['error', 'failed', 'forbidden', 'cancelled'].includes(status) ||
-      outcome === 'failed';
-    const nextStatus: SubagentStatus = failed ? 'failed' : 'running';
-    this.setLocalSubagentStatusHint(toolCallId, nextStatus, {
-      parentSessionId,
-    });
     const sessionKey = this.extractSpawnedSessionKey(parsed);
-    this.persistSubagent(
-      toolCallId,
-      parentSessionId,
-      this.toolCallIdToLabel.get(toolCallId) || '',
-      failed ? 'failed' : 'running',
-      {
-        childSessionKey: sessionKey || undefined,
-        toolInput: this.toolCallArgs.get(toolCallId),
-        errorReason: error || undefined,
-      },
-    );
     if (sessionKey) {
       this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
       const label = this.toolCallIdToLabel.get(toolCallId) || '';
       if (label) this.sessionKeyToLabel.set(sessionKey, label);
       const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey) || sessionKey;
       this.toolCallIdToParentSessionId.set(normalizedSessionKey, parentSessionId);
-      this.setLocalSubagentStatusHint(normalizedSessionKey, nextStatus, {
-        parentSessionId,
-      });
-    }
-  }
-
-  private updateSubagentStatusFromCompletion(
-    toolCallId: string,
-    metadata: Record<string, unknown> | undefined,
-  ): void {
-    if (!metadata?.isSubagentCompletion) return;
-    const sessionKey = typeof metadata.sessionKey === 'string' ? metadata.sessionKey : '';
-    if (sessionKey) {
-      this.toolCallIdToSessionKey.set(toolCallId, sessionKey);
-      const label = this.toolCallIdToLabel.get(toolCallId) || '';
-      if (label) this.sessionKeyToLabel.set(sessionKey, label);
-    }
-    const status = typeof metadata.status === 'string' ? metadata.status.toLowerCase() : '';
-    const normalizedStatus: 'done' | 'failed' = ['error', 'failed', 'cancelled'].includes(status)
-      ? 'failed'
-      : 'done';
-    this.setLocalSubagentStatusHint(toolCallId, normalizedStatus, {
-      persist: true,
-    });
-    if (sessionKey) {
-      const parentSessionId = this.toolCallIdToParentSessionId.get(toolCallId);
-      this.setLocalSubagentStatusHint(
-        this.normalizeSubagentSessionKey(sessionKey) || sessionKey,
-        normalizedStatus,
-        {
-          parentSessionId,
-          persist: true,
-        },
-      );
-    }
-  }
-
-  private persistSubagent(
-    toolCallId: string,
-    parentSessionId: string,
-    label: string,
-    status: 'pending' | 'running' | 'done' | 'failed',
-    options?: {
-      childSessionKey?: string;
-      toolInput?: Record<string, unknown>;
-      errorReason?: string;
-    },
-  ): void {
-    try {
-      const upsertSubagent = (this.store as unknown as {
-        upsertSubagent?: (
-          toolCallId: string,
-          parentSessionId: string,
-          label: string,
-          status: 'pending' | 'running' | 'done' | 'failed',
-          options?: {
-            childSessionKey?: string;
-            toolInput?: Record<string, unknown>;
-            errorReason?: string;
-          },
-        ) => void;
-      }).upsertSubagent;
-      if (typeof upsertSubagent !== 'function') return;
-      upsertSubagent.call(this.store, toolCallId, parentSessionId, label, status, options);
-    } catch (error) {
-      coworkLog('WARN', 'OpenClawRuntime', 'Failed to persist subagent status', { error: String(error) });
-    }
-  }
-
-  private persistSubagentStatus(
-    identifier: string,
-    status: 'pending' | 'running' | 'done' | 'failed',
-    errorReason?: string,
-  ): void {
-    try {
-      const store = this.store as unknown as {
-        updateSubagentStatusByIdentifier?: (
-          identifier: string,
-          status: 'pending' | 'running' | 'done' | 'failed',
-          errorReason?: string,
-        ) => void;
-        updateSubagentStatus?: (
-          toolCallId: string,
-          status: 'pending' | 'running' | 'done' | 'failed',
-          errorReason?: string,
-        ) => void;
-      };
-      if (typeof store.updateSubagentStatusByIdentifier === 'function') {
-        store.updateSubagentStatusByIdentifier(identifier, status, errorReason);
-        return;
-      }
-      if (typeof store.updateSubagentStatus === 'function') {
-        store.updateSubagentStatus(identifier, status, errorReason);
-      }
-    } catch (error) {
-      coworkLog('WARN', 'OpenClawRuntime', 'Failed to persist subagent status update', { error: String(error) });
-    }
-  }
-
-  private isSubagentPersistedAsTerminal(identifier: string, parentSessionId: string): boolean {
-    try {
-      const rows = this.getPersistedSubagentRows(parentSessionId);
-      return rows.some(row => {
-        if (row.status !== 'done' && row.status !== 'failed') return false;
-        const normalizedRowKey = this.normalizeSubagentSessionKey(row.childSessionKey || '');
-        const normalizedId = this.normalizeSubagentSessionKey(identifier);
-        return (
-          row.toolCallId === identifier ||
-          row.childSessionKey === identifier ||
-          normalizedRowKey === identifier ||
-          (normalizedId !== '' && (row.toolCallId === normalizedId || row.childSessionKey === normalizedId || normalizedRowKey === normalizedId))
-        );
-      });
-    } catch {
-      return false;
-    }
-  }
-
-  private reconcilePersistedSubagentsFromSession(sessionId: string): void {
-    const session = this.store.getSession(sessionId);
-    if (!session?.messages?.length) return;
-    const completionStatusBySessionKey = new Map<string, 'done' | 'failed'>();
-
-    for (const message of session.messages) {
-      if (message.type !== 'subagent_completion') continue;
-      const sessionKey =
-        typeof message.metadata?.sessionKey === 'string' ? message.metadata.sessionKey : '';
-      if (!sessionKey) continue;
-      const status = typeof message.metadata?.status === 'string' ? message.metadata.status : '';
-      const normalizedStatus: 'done' | 'failed' = ['error', 'failed', 'cancelled'].includes(
-        status.toLowerCase(),
-      )
-        ? 'failed'
-        : 'done';
-      completionStatusBySessionKey.set(sessionKey, normalizedStatus);
-      const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey);
-      if (normalizedSessionKey) completionStatusBySessionKey.set(normalizedSessionKey, normalizedStatus);
-    }
-
-    for (const message of session.messages) {
-      if (message.type !== 'tool_use' || message.metadata?.toolName !== 'sessions_spawn') {
-        continue;
-      }
-
-      const toolCallId =
-        typeof message.metadata?.toolUseId === 'string' ? message.metadata.toolUseId : '';
-      if (!toolCallId) continue;
-
-      const toolInput = isRecord(message.metadata?.toolInput)
-        ? (message.metadata.toolInput as Record<string, unknown>)
-        : this.parseToolOutputObject(message.content);
-      const label = this.getSubagentDisplayLabelFromToolInput(toolInput);
-      const toolResult = session.messages.find(
-        candidate =>
-          candidate.type === 'tool_result' &&
-          candidate.metadata?.toolName === 'sessions_spawn' &&
-          candidate.metadata?.toolUseId === toolCallId,
-      );
-      const parsedResult =
-        typeof toolResult?.content === 'string'
-          ? this.parseToolOutputObject(toolResult.content)
-          : null;
-      const status = typeof parsedResult?.status === 'string' ? parsedResult.status.toLowerCase() : '';
-      const outcome =
-        typeof parsedResult?.outcome === 'string' ? parsedResult.outcome.toLowerCase() : '';
-      const error = typeof parsedResult?.error === 'string' ? parsedResult.error : '';
-      const failed =
-        Boolean(error) ||
-        ['error', 'failed', 'forbidden', 'cancelled'].includes(status) ||
-        outcome === 'failed';
-      const childSessionKey = this.extractSpawnedSessionKey(parsedResult);
-      const completionStatus = childSessionKey
-        ? completionStatusBySessionKey.get(childSessionKey) ||
-          completionStatusBySessionKey.get(this.normalizeSubagentSessionKey(childSessionKey))
-        : undefined;
-      const persistedStatus = completionStatus || (toolResult ? (failed ? 'failed' : 'running') : 'pending');
-
-      this.toolCallIdToParentSessionId.set(toolCallId, sessionId);
-      this.toolCallIdToLabel.set(toolCallId, label);
-      this.subagentStatus.set(toolCallId, persistedStatus);
-      if (toolInput) this.toolCallArgs.set(toolCallId, toolInput);
-      if (childSessionKey) {
-        this.toolCallIdToSessionKey.set(toolCallId, childSessionKey);
-        if (label) this.sessionKeyToLabel.set(childSessionKey, label);
-        const normalizedSessionKey = this.normalizeSubagentSessionKey(childSessionKey) || childSessionKey;
-        this.toolCallIdToParentSessionId.set(normalizedSessionKey, sessionId);
-        this.subagentStatus.set(normalizedSessionKey, persistedStatus);
-      }
-      this.persistSubagent(toolCallId, sessionId, label, persistedStatus, {
-        childSessionKey: childSessionKey || undefined,
-        toolInput: toolInput || undefined,
-        errorReason: error || undefined,
-      });
-    }
-
-    // Restore subagentFinishedOrFinishing from persisted data so adapter
-    // rebuilds do not lose the guard against spurious error events.
-    for (const row of this.getPersistedSubagentRows(sessionId)) {
-      if (row.status !== 'done' && row.status !== 'failed') continue;
-      for (const alias of this.getSubagentIdentifierAliases(row.toolCallId)) {
-        this.subagentFinishedOrFinishing.add(alias);
-        if (!this.subagentStatus.has(alias)) {
-          this.subagentStatus.set(alias, row.status);
-        }
-      }
-      if (row.childSessionKey) {
-        const normalized = this.normalizeSubagentSessionKey(row.childSessionKey);
-        if (normalized) {
-          this.subagentFinishedOrFinishing.add(normalized);
-          if (!this.subagentStatus.has(normalized)) this.subagentStatus.set(normalized, row.status);
-        }
-      }
     }
   }
 
@@ -3182,9 +2790,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     for (const key of removedKeys) {
       this.sessionKeyToLabel.delete(key);
       this.subagentMessages.delete(key);
-      this.subagentStatus.delete(key);
-      this.subagentFinishedOrFinishing.delete(key);
-      this.subagentGatewayStatusCache.delete(key);
     }
 
     // Clean up toolCallId-keyed maps for this session's tool calls
@@ -3267,211 +2872,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async getSubagentStatuses(sessionId?: string): Promise<{
-    statuses: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
-    displayLabels: Record<string, string>;
-    sessionKeys: Record<string, string>;
     subagents: Array<{
       id: string;
       sessionKey: string;
       label: string;
-      status: 'pending' | 'running' | 'done' | 'failed';
+      status: SubagentStatus;
     }>;
   }> {
-    const empty = buildSubagentStatusView([]);
-    if (!sessionId) return empty;
-
-    const persistedRows = this.getPersistedSubagentRows(sessionId);
-    const gatewaySubagents = await Promise.all(
-      (await this.listSubagentsFromGateway(sessionId)).map(async subagent => {
-        const normalizedSessionKey =
-          this.normalizeSubagentSessionKey(subagent.sessionKey) || subagent.sessionKey;
-        const persisted = persistedRows.find(row => {
-          const childSessionKey = row.childSessionKey || '';
-          return (
-            childSessionKey === subagent.sessionKey ||
-            this.normalizeSubagentSessionKey(childSessionKey) === normalizedSessionKey
-          );
-        });
-        // Prefer a previously-recorded "done" over later Gateway status. Gateway
-        // can report post-completion announce errors as failed even though the
-        // subagent itself already reached a non-aborted finishing lifecycle.
-        const inMemoryStatus =
-          this.subagentStatus.get(subagent.toolCallId || '') ||
-          this.subagentStatus.get(normalizedSessionKey);
-        const persistedTerminal =
-          persisted?.status === 'done' || persisted?.status === 'failed'
-            ? persisted.status
-            : null;
-        const inMemoryDone = inMemoryStatus === 'done';
-        let reconciledStatus: SubagentStatus =
-          persistedTerminal === 'done'
-            ? 'done'
-            : persistedTerminal === 'failed' && subagent.status !== 'failed'
-              ? 'failed'
-              : inMemoryDone && subagent.status === 'failed'
-                ? 'done'
-                : subagent.status;
-        if (
-          reconciledStatus === 'running' &&
-          !persistedTerminal &&
-          (await this.hasCompletedSubagentHistory(subagent.sessionKey))
-        ) {
-          reconciledStatus = 'done';
-        }
-        return {
-          ...subagent,
-          status: reconciledStatus,
-          label: subagent.label || this.sanitizeCachedSubagentLabel(persisted?.label),
-          toolCallId: subagent.toolCallId || persisted?.toolCallId,
-        };
-      }),
-    );
-    if (gatewaySubagents.length > 0) {
-      for (const subagent of gatewaySubagents) {
-        const cacheKey = subagent.toolCallId || subagent.id || subagent.sessionKey;
-        if (!cacheKey) continue;
-        this.persistSubagent(cacheKey, sessionId, subagent.label, subagent.status, {
-          childSessionKey: subagent.sessionKey,
-        });
-        this.toolCallIdToParentSessionId.set(cacheKey, sessionId);
-        if (subagent.toolCallId) {
-          this.toolCallIdToSessionKey.set(subagent.toolCallId, subagent.sessionKey);
-        }
-        if (subagent.label) {
-          this.sessionKeyToLabel.set(subagent.sessionKey, subagent.label);
-          this.toolCallIdToLabel.set(cacheKey, subagent.label);
-        }
-      }
-      return buildSubagentStatusView(gatewaySubagents);
-    }
-
-    this.reconcilePersistedSubagentsFromSession(sessionId);
-
-    const cachedSubagents = this.getPersistedSubagentRows(sessionId).map(row => {
-      const label = this.sanitizeCachedSubagentLabel(row.label);
-      if (label) this.toolCallIdToLabel.set(row.toolCallId, label);
-      if (row.childSessionKey) this.toolCallIdToSessionKey.set(row.toolCallId, row.childSessionKey);
-      this.toolCallIdToParentSessionId.set(row.toolCallId, row.parentSessionId);
-      // If the in-memory guard already recorded a "done" from finishing lifecycle,
-      // but the persisted row shows "failed" (from a prior Gateway poll), prefer "done".
-      const inMemoryFallback = this.subagentStatus.get(row.toolCallId);
-      const fallbackReconciled =
-        row.status === 'failed' && inMemoryFallback === 'done' ? 'done' : row.status;
-      return {
-        id: row.childSessionKey || row.toolCallId,
-        sessionKey: row.childSessionKey || '',
-        label,
-        status: fallbackReconciled,
-        toolCallId: row.toolCallId,
-      };
-    });
-
-    const liveHints: GatewaySubagent[] = [];
-    for (const [identifier, status] of this.subagentStatus.entries()) {
-      if (this.toolCallIdToParentSessionId.get(identifier) !== sessionId) continue;
-      const normalizedId = this.normalizeSubagentSessionKey(identifier);
-      if (cachedSubagents.some(subagent => {
-        if (subagent.id === identifier || subagent.toolCallId === identifier) return true;
-        if (normalizedId) {
-          const subagentNormalizedId = this.normalizeSubagentSessionKey(subagent.id);
-          const subagentNormalizedKey = this.normalizeSubagentSessionKey(subagent.sessionKey);
-          return subagent.id === normalizedId ||
-            subagentNormalizedId === normalizedId ||
-            subagentNormalizedKey === normalizedId;
-        }
-        return false;
-      })) {
-        continue;
-      }
-      const sessionKey = this.toolCallIdToSessionKey.get(identifier) || this.normalizeSubagentSessionKey(identifier);
-      const label = this.sanitizeCachedSubagentLabel(
-        this.toolCallIdToLabel.get(identifier) || this.sessionKeyToLabel.get(identifier),
-      );
-      liveHints.push({
-        id: sessionKey || identifier,
-        sessionKey: sessionKey || '',
-        label,
-        status,
-        toolCallId: identifier,
-      });
-    }
-
-    const finalView = buildSubagentStatusView([...cachedSubagents, ...liveHints]);
-    for (const s of finalView.subagents) {
-      if (s.label) {
-        console.debug(
-          '[OpenClawRuntime] getSubagentStatuses result:',
-          'label=' + s.label,
-          'status=' + s.status,
-          'sessionKey=' + (s.sessionKey?.slice(-20) || ''),
-          'id=' + (s.id?.slice(-20) || ''),
-        );
-      }
-    }
-    return finalView;
-  }
-
-  private getPersistedSubagentRows(parentSessionId: string): PersistedSubagentRow[] {
-    const getSubagentsByParentSession = (this.store as unknown as {
-      getSubagentsByParentSession?: (parentSessionId: string) => PersistedSubagentRow[];
-    }).getSubagentsByParentSession;
-    return typeof getSubagentsByParentSession === 'function'
-      ? getSubagentsByParentSession.call(this.store, parentSessionId)
-      : [];
-  }
-
-  private async hasCompletedSubagentHistory(sessionKey: string): Promise<boolean> {
-    const normalizedSessionKey = this.normalizeSubagentSessionKey(sessionKey) || sessionKey;
-    if (!normalizedSessionKey || !this.gatewayClient) return false;
-    try {
-      const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
-        sessionKey: normalizedSessionKey,
-        limit: 20,
-      });
-      if (!Array.isArray(history?.messages)) return false;
-      return extractGatewayHistoryEntries(history.messages).some(entry => {
-        return entry.role === 'assistant' && entry.text.trim() !== '' && !isNoReply(entry.text);
-      });
-    } catch {
-      return false;
-    }
-  }
-
-  private async listSubagentsFromGateway(sessionId: string): Promise<GatewaySubagent[]> {
-    const cached = this.subagentGatewayStatusCache.get(sessionId);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.subagents;
-    }
-
-    try {
-      await this.ensureGatewayClientReady();
-    } catch {
-      return [];
-    }
-    const client = this.gatewayClient;
-    if (!client) return [];
-
-    let subagents: GatewaySubagent[] = [];
-    try {
-      subagents = await listGatewaySubagents({
-        client,
+    if (!sessionId) return { subagents: [] };
+    await this.ensureGatewayClientReady();
+    if (!this.gatewayClient) return { subagents: [] };
+    return {
+      subagents: await listGatewaySubagents({
+        client: this.gatewayClient,
         parentKeys: this.getSessionKeysForSession(sessionId),
-        persistedRows: this.getPersistedSubagentRows(sessionId),
-        getLabel: (sessionKey, persisted) =>
-          this.sanitizeCachedSubagentLabel(persisted?.label) ||
-          this.getSubagentDisplayLabel(sessionId, sessionKey),
-      });
-    } catch (error) {
-      coworkLog('WARN', 'OpenClawRuntime', 'sessions.list for subagents failed', { error: String(error) });
-    }
-
-    if (subagents.length > 0) {
-      this.subagentGatewayStatusCache.set(sessionId, {
-        expiresAt: Date.now() + SUBAGENT_STATUS_CACHE_TTL_MS,
-        subagents,
-      });
-    }
-    return subagents;
+      }),
+    };
   }
 
   private getSubagentDisplayLabel(

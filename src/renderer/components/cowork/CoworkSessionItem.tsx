@@ -24,11 +24,6 @@ interface CoworkSessionItemProps {
   onToggleSelection: () => void;
   onEnterBatchMode: () => void;
   onMoveToGroup?: (groupId: string | null) => void;
-  hasSubagents?: boolean;
-  subagentsCollapsed?: boolean;
-  onToggleSubagentCollapse?: () => void;
-  hideFailedSubagents?: boolean;
-  onToggleHideFailedSubagents?: () => void;
 }
 
 const statusLabels: Record<CoworkSessionStatus, string> = {
@@ -88,11 +83,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   onToggleSelection,
   onEnterBatchMode,
   onMoveToGroup,
-  hasSubagents = false,
-  subagentsCollapsed = false,
-  onToggleSubagentCollapse,
-  hideFailedSubagents = false,
-  onToggleHideFailedSubagents,
 }) => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -269,7 +259,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
 
   const renameLabel = i18nService.t('renameConversation');
   const deleteLabel = i18nService.t('deleteSession');
-  const hideFailedSubagentsLabel = i18nService.t('hideFailedSubagents');
   const relativeTime = formatRelativeTime(session.updatedAt);
   const showRunningIndicator = session.status === 'running';
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
@@ -292,21 +281,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       { key: 'rename', label: renameLabel, onClick: handleRenameClick, tone: 'neutral' as const },
       { key: 'delete', label: deleteLabel, onClick: handleDeleteClick, tone: 'danger' as const },
     ];
-    // Add hideFailedSubagents checkbox after delete
-    if (onToggleHideFailedSubagents) {
-      items.push({
-        key: 'hideFailedSubagents',
-        label: hideFailedSubagentsLabel,
-        onClick: (e: React.MouseEvent) => {
-          e.stopPropagation();
-          onToggleHideFailedSubagents();
-          closeMenu();
-        },
-        tone: 'neutral' as const,
-        isCheckbox: true,
-        checked: hideFailedSubagents,
-      });
-    }
     if (showBatchOption) {
       items.unshift({
         key: 'batch',
@@ -330,7 +304,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   }, [
     batchLabel,
     deleteLabel,
-    hideFailedSubagentsLabel,
     handleBatchClick,
     handleDeleteClick,
     handleRenameClick,
@@ -339,8 +312,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     onMoveToGroup,
     groups.length,
     moveToGroupLabel,
-    onToggleHideFailedSubagents,
-    hideFailedSubagents,
   ]);
 
   const handleMoveToGroup = (groupId: string | null) => {
@@ -428,30 +399,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 >
                   <h3 className="text-xs font-medium text-foreground truncate">{session.title}</h3>
                 </Tooltip>
-                {hasSubagents && onToggleSubagentCollapse && (
-                  <button
-                    type="button"
-                    onClick={e => {
-                      e.stopPropagation();
-                      onToggleSubagentCollapse();
-                    }}
-                    className="flex-shrink-0 p-1 rounded text-secondary hover:text-foreground hover:bg-black/[0.06] dark:hover:bg-white/[0.06] transition-colors"
-                    title={subagentsCollapsed ? 'Show subagents' : 'Hide subagents'}
-                    aria-label={subagentsCollapsed ? 'Show subagents' : 'Hide subagents'}
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className={`w-3.5 h-3.5 transition-transform duration-150 ${subagentsCollapsed ? '-rotate-90' : 'rotate-0'}`}
-                    >
-                      <path d="M9 18l6-6-6-6" />
-                    </svg>
-                  </button>
-                )}
               </div>
             )}
           </div>

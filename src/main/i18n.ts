@@ -20,6 +20,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     trayNewTask: '新建任务',
     traySettings: '设置',
     trayQuit: '退出',
+    subagents: 'Subagent',
+    subagentEmpty: '当前会话暂无 Subagent',
+    subagentStatusRunning: '运行中',
+    subagentStatusDone: '已完成',
+    subagentStatusFailed: '已失败',
+    subagentStatusKilled: '已终止',
+    subagentStatusTimeout: '已超时',
 
     // Session titles (created by ChannelSessionSync)
     cronSessionPrefix: '定时',
@@ -81,6 +88,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     trayNewTask: 'New Task',
     traySettings: 'Settings',
     trayQuit: 'Quit',
+    subagents: 'Subagents',
+    subagentEmpty: 'No subagents in this session',
+    subagentStatusRunning: 'Running',
+    subagentStatusDone: 'Completed',
+    subagentStatusFailed: 'Failed',
+    subagentStatusKilled: 'Killed',
+    subagentStatusTimeout: 'Timed out',
 
     // Session titles
     cronSessionPrefix: 'Cron',

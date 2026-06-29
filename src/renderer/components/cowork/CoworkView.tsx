@@ -32,6 +32,7 @@ import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
+import SubagentMenu from './SubagentMenu';
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
@@ -533,6 +534,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             )}
           </div>
           <div className="non-draggable flex items-center">
+            <SubagentMenu sessionId={currentSession.id} />
             <WindowTitleBar inline />
           </div>
         </div>
