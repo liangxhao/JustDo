@@ -36,7 +36,6 @@ import type {
   CoworkApiConfig,
   CoworkConfigUpdate,
   CoworkContinueOptions,
-  CoworkMessage,
   CoworkPermissionResult,
   CoworkSession,
   CoworkStartOptions,
@@ -802,78 +801,6 @@ class CoworkService {
     }
   }
 
-  // Subagent streaming listeners - for use by SubTaskDetailDrawer
-  // Returns cleanup functions to be called when drawer closes
-  setupSubagentListeners(
-    parentSessionId: string,
-    callbacks: {
-      onMessage: (agentId: string, message: CoworkMessage) => void;
-      onMessageUpdate?: (agentId: string, messageId: string, content: string) => void;
-      onThinkingUpdate?: (agentId: string, messageId: string, thinkingDelta: string) => void;
-      onMessageMetadataUpdate?: (
-        agentId: string,
-        messageId: string,
-        metadata: Record<string, unknown>,
-      ) => void;
-    },
-  ): () => void {
-    const cowork = window.electron?.cowork;
-    if (!cowork) return () => {};
-
-    const cleanups: Array<() => void> = [];
-
-    // Subagent message listener
-    const messageCleanup = cowork.onSubagentMessage(data => {
-      if (data.parentSessionId === parentSessionId) {
-        callbacks.onMessage(data.agentId, data.message);
-      }
-    });
-    cleanups.push(messageCleanup);
-
-    const messageUpdateCleanup = cowork.onSubagentMessageUpdate?.(data => {
-      if (data.parentSessionId === parentSessionId) {
-        callbacks.onMessageUpdate?.(data.agentId, data.messageId, data.content);
-      }
-    });
-    if (messageUpdateCleanup) cleanups.push(messageUpdateCleanup);
-
-    const thinkingUpdateCleanup = cowork.onSubagentThinkingUpdate?.(data => {
-      if (data.parentSessionId === parentSessionId) {
-        callbacks.onThinkingUpdate?.(data.agentId, data.messageId, data.thinkingDelta);
-      }
-    });
-    if (thinkingUpdateCleanup) cleanups.push(thinkingUpdateCleanup);
-
-    const metadataUpdateCleanup = cowork.onSubagentMessageMetadataUpdate?.(data => {
-      if (data.parentSessionId === parentSessionId) {
-        callbacks.onMessageMetadataUpdate?.(data.agentId, data.messageId, data.metadata);
-      }
-    });
-    if (metadataUpdateCleanup) cleanups.push(metadataUpdateCleanup);
-
-    // Return cleanup function
-    return () => {
-      cleanups.forEach(cleanup => cleanup());
-    };
-  }
-
-  // Get subagent history (returns full CoworkMessage[])
-  async getSubTaskHistory(options: {
-    parentSessionId: string;
-    agentId: string;
-    sessionKey?: string;
-    childSessionId?: string;
-  }): Promise<CoworkMessage[]> {
-    const cowork = window.electron?.cowork;
-    if (!cowork?.getSubTaskHistory) return [];
-
-    const result = await cowork.getSubTaskHistory(options);
-    if (result.success && result.messages) {
-      return result.messages;
-    }
-    return [];
-  }
-
   // Get subagent status for a session
   async getSubTaskStatus(sessionId?: string): Promise<{
     subagents?: Array<{
@@ -901,29 +828,6 @@ class CoworkService {
       };
     }
     return { subagents: [] };
-  }
-
-  // Get subagent error info for failed subagents
-  async getSubagentError(options: {
-    parentSessionId: string;
-    agentId: string;
-    sessionKey?: string;
-  }): Promise<{
-    state?: string;
-    status?: string;
-    outcome?: string;
-    endedAt?: number;
-    errorMessage?: string;
-    lastMessage?: string;
-  } | null> {
-    const cowork = window.electron?.cowork;
-    if (!cowork?.getSubagentError) return null;
-
-    const result = await cowork.getSubagentError(options);
-    if (result.success && result.errorInfo) {
-      return result.errorInfo;
-    }
-    return null;
   }
 
   async createGroup(input: CreateGroupInput): Promise<SessionGroup | null> {

@@ -156,17 +156,5 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
       this.emit('sessionStopped', sessionId);
     });
 
-    runtime.on('subagentMessage', (parentSessionId, agentId, message) => {
-      this.emit('subagentMessage', parentSessionId, agentId, message);
-    });
-    runtime.on('subagentMessageUpdate', (parentSessionId, agentId, messageId, content) => {
-      this.emit('subagentMessageUpdate', parentSessionId, agentId, messageId, content);
-    });
-    runtime.on('subagentThinkingUpdate', (parentSessionId, agentId, messageId, thinkingDelta) => {
-      this.emit('subagentThinkingUpdate', parentSessionId, agentId, messageId, thinkingDelta);
-    });
-    runtime.on('subagentMessageMetadataUpdate', (parentSessionId, agentId, messageId, metadata) => {
-      this.emit('subagentMessageMetadataUpdate', parentSessionId, agentId, messageId, metadata);
-    });
   }
 }

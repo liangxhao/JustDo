@@ -26,12 +26,6 @@ export type GatewaySubagent = {
 
 const SUBAGENT_RECENT_MINUTES = 24 * 60;
 
-export const normalizeSubagentSessionKey = (sessionKey: string): string => {
-  const key = sessionKey.trim();
-  if (key.startsWith('subagent:')) return `agent:main:${key}`;
-  return key.includes(':subagent:') ? key : '';
-};
-
 const isSubagentStatus = (value: unknown): value is SubagentStatus =>
   Object.values(SUBAGENT_STATUSES).includes(value as SubagentStatus);
 

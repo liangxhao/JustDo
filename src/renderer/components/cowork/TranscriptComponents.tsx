@@ -16,15 +16,6 @@ import MarkdownContent from '../MarkdownContent';
 import InlineCanvasPreviews from './InlineCanvasPreviews';
 import MonacoDiffView, { extractDiffFromToolInput } from './MonacoDiffView';
 
-export type ActiveSubTask = {
-  agentId: string;
-  sessionKey?: string;
-  childSessionId?: string;
-  displayName?: string;
-  parentSessionId: string;
-  status: 'pending' | 'running' | 'done' | 'failed';
-};
-
 const formatUnknown = (value: unknown): string => {
   if (typeof value === 'string') {
     return value;
@@ -984,8 +975,7 @@ const AssistantMessageItem: React.FC<{
 const SubagentCompletionMessageItem: React.FC<{
   message: CoworkMessage;
   mapDisplayText?: (value: string) => string;
-  onOpenDetail?: () => void;
-}> = ({ message, mapDisplayText, onOpenDetail }) => {
+}> = ({ message, mapDisplayText }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
@@ -1080,16 +1070,6 @@ const SubagentCompletionMessageItem: React.FC<{
                   </span>
                 )}
                 <span className="text-[10px] text-muted">▼</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onOpenDetail?.(); }}
-                  className="flex-shrink-0 p-0.5 mt-0.5 rounded hover:bg-teal-500/10 text-teal-500 transition-colors"
-                  title="Open subagent detail"
-                >
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-                  </svg>
                 </button>
               </div>
             )}
@@ -1290,7 +1270,6 @@ export const AssistantTranscriptBlock: React.FC<{
   sessionId?: string;
   toolExpanded?: boolean;
   activeSearchItemId?: string | null;
-  onOpenSubTaskDetail?: (subTask: ActiveSubTask) => void;
 }> = ({
   item,
   resolveLocalFilePath,
@@ -1304,7 +1283,6 @@ export const AssistantTranscriptBlock: React.FC<{
   sessionId,
   toolExpanded = true,
   activeSearchItemId = null,
-  onOpenSubTaskDetail,
 }) => {
   const renderSystemMessage = (message: CoworkMessage) => {
     const isError = !hasText(message.content) && typeof message.metadata?.error === 'string';
@@ -1418,17 +1396,6 @@ export const AssistantTranscriptBlock: React.FC<{
         <SubagentCompletionMessageItem
           message={item.message}
           mapDisplayText={mapDisplayText}
-          onOpenDetail={() => {
-            const meta = item.message.metadata as Record<string, unknown> | undefined;
-            onOpenSubTaskDetail?.({
-              agentId: (meta?.toolCallId as string) || (meta?.sessionKey as string) || '',
-              sessionKey: (meta?.sessionKey as string) || '',
-              childSessionId: (meta?.sessionKey as string) || '',
-              displayName: (meta?.taskLabel as string) || 'Subagent Task',
-              parentSessionId: sessionId ?? '',
-              status: 'done',
-            });
-          }}
         />
       );
     }

@@ -580,38 +580,6 @@ interface IElectronAPI {
     ) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onSessionsChanged: (callback: () => void) => () => void;
-    // Subagent streaming events
-    onSubagentMessage: (
-      callback: (data: {
-        parentSessionId: string;
-        agentId: string;
-        message: CoworkMessage;
-      }) => void,
-    ) => () => void;
-    onSubagentMessageUpdate: (
-      callback: (data: {
-        parentSessionId: string;
-        agentId: string;
-        messageId: string;
-        content: string;
-      }) => void,
-    ) => () => void;
-    onSubagentThinkingUpdate: (
-      callback: (data: {
-        parentSessionId: string;
-        agentId: string;
-        messageId: string;
-        thinkingDelta: string;
-      }) => void,
-    ) => () => void;
-    onSubagentMessageMetadataUpdate: (
-      callback: (data: {
-        parentSessionId: string;
-        agentId: string;
-        messageId: string;
-        metadata: Record<string, unknown>;
-      }) => void,
-    ) => () => void;
     getSubTaskStatus: (sessionId?: string) => Promise<{
       success: boolean;
       subagents?: Array<{
@@ -626,32 +594,6 @@ interface IElectronAPI {
         runtimeMs?: number;
         totalTokens?: number;
       }>;
-    }>;
-    getSubTaskHistory: (options: {
-      parentSessionId: string;
-      agentId: string;
-      sessionKey?: string;
-      childSessionId?: string;
-    }) => Promise<{
-      success: boolean;
-      messages?: CoworkMessage[];
-      error?: string;
-    }>;
-    getSubagentError: (options: {
-      parentSessionId: string;
-      agentId: string;
-      sessionKey?: string;
-    }) => Promise<{
-      success: boolean;
-      errorInfo?: {
-        state?: string;
-        status?: string;
-        outcome?: string;
-        endedAt?: number;
-        errorMessage?: string;
-        lastMessage?: string;
-      };
-      error?: string;
     }>;
   };
   sessionGroup: {

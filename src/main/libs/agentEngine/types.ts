@@ -186,26 +186,6 @@ export interface CoworkRuntimeEvents {
   ) => void;
   error: (sessionId: string, error: string) => void;
   sessionStopped: (sessionId: string) => void;
-  // Subagent streaming events
-  subagentMessage: (parentSessionId: string, agentId: string, message: CoworkMessage) => void;
-  subagentMessageUpdate: (
-    parentSessionId: string,
-    agentId: string,
-    messageId: string,
-    content: string,
-  ) => void;
-  subagentThinkingUpdate: (
-    parentSessionId: string,
-    agentId: string,
-    messageId: string,
-    thinkingDelta: string,
-  ) => void;
-  subagentMessageMetadataUpdate: (
-    parentSessionId: string,
-    agentId: string,
-    messageId: string,
-    metadata: Partial<CoworkMessage['metadata']>,
-  ) => void;
 }
 
 export type CoworkImageAttachment = {

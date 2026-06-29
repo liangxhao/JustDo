@@ -658,7 +658,7 @@ export class HistoryReconciler {
 
   /**
    * Patch toolInput in CoworkMessage[] from raw Gateway history messages.
-   * Used by getSubTaskHistory to fill missing toolInput for subagent tool_use messages.
+   * Patch missing tool input from raw Gateway history.
    */
   patchToolInputFromHistoryRaw(
     coworkMessages: CoworkMessage[],
