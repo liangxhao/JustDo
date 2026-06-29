@@ -7,16 +7,13 @@
  * This replaces the Redux → CoworkMessage → gateway conversion approach
  * with a direct gateway connection, identical to OpenClaw's webchat.
  */
-// Import to register the custom element
-import '../../libs/openclaw-chat/components/justdo-chat';
-
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import type { JustDoChatElement } from '../../libs/openclaw-chat/components/justdo-chat';
 import { ChatController } from '../../libs/openclaw-chat/gateway/chat-controller';
 import { selectCurrentSession } from '../../store/selectors/coworkSelectors';
 import type { CoworkSession } from '../../types/cowork';
+import ChatMessageDisplay from './ChatMessageDisplay';
 
 interface JustDoChatWrapperProps {
   className?: string;
@@ -32,9 +29,8 @@ export interface JustDoChatWrapperRef {
 
 const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(({ className }, ref) => {
   const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
-  const chatRef = useRef<JustDoChatElement | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<ChatController | null>(null);
+  const [controller, setController] = useState<ChatController | null>(null);
   const connectedRef = useRef(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   // Buffer for pending user message when the controller is not yet created
@@ -66,24 +62,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
   // Create the Lit element and controller on mount
   useEffect(() => {
-    if (!containerRef.current) return;
-
-    const el = document.createElement('justdo-chat') as unknown as JustDoChatElement;
-    containerRef.current.appendChild(el);
-    chatRef.current = el;
-
-    // Propagate the app's dark/light theme to the Lit element
-    const syncThemeClass = () => {
-      const isDark = document.documentElement.classList.contains('dark');
-      el.classList.toggle('dark', isDark);
-    };
-    syncThemeClass();
-    const themeObserver = new MutationObserver(syncThemeClass);
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-
     const controller = new ChatController();
     controllerRef.current = controller;
-    el.controller = controller;
+    setController(controller);
 
     // Apply any buffered pending user message (set before controller existed)
     if (pendingUserMessageRef.current) {
@@ -124,10 +105,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         setConnectionError(err instanceof Error ? err.message : 'Unknown connection error');
       });
 
-    const container = containerRef.current;
     return () => {
       cancelled = true;
-      themeObserver.disconnect();
       console.log('[JustDoChatWrapper] cleanup — disconnecting controller');
       try {
         controller.disconnect();
@@ -135,15 +114,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         // Cleanup errors are non-fatal
       }
       controllerRef.current = null;
+      setController(null);
       connectedRef.current = false;
-      if (chatRef.current && container) {
-        try {
-          container.removeChild(chatRef.current);
-        } catch {
-          // Already removed
-        }
-        chatRef.current = null;
-      }
     };
   }, []);
 
@@ -164,27 +136,6 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSession?.id, currentSession?.agentId]);
-
-  // Auto-scroll: use MutationObserver instead of running on every render
-  const checkAndScroll = useCallback(() => {
-    const el = chatRef.current;
-    if (!el) return;
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
-    if (isNearBottom) {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    const el = chatRef.current;
-    if (!el?.shadowRoot) return;
-
-    const observer = new MutationObserver(checkAndScroll);
-    observer.observe(el.shadowRoot, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [checkAndScroll]);
 
   if (connectionError) {
     return (
@@ -217,13 +168,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     );
   }
 
-  return (
-    <div
-      ref={containerRef}
-      className={className}
-      style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}
-    />
-  );
+  return <ChatMessageDisplay className={className} controller={controller} />;
 });
 
 // ─── Gateway Connection ─────────────────────────────────────────────────────
