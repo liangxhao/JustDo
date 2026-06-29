@@ -42,32 +42,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     cronSessionPrefix: '定时',
     // IM channel prefixes will be added when integration is implemented
 
-    // OAuth flow messages
-    qwenOAuthRequestingDeviceCode: '正在请求设备授权码...',
-    qwenOAuthOpeningBrowser: '正在打开浏览器进行授权...',
-    qwenOAuthWaitingForUser: '等待用户授权...',
-    qwenOAuthSuccess: 'OAuth 授权成功',
-    qwenOAuthFailed: 'OAuth 授权失败',
-    qwenOAuthTimeout: 'OAuth 授权超时',
     // Thinking-only hint
     taskThinkingOnly:
       '[模型未输出内容] 模型已完成思考但未生成可见回复。你可以继续对话，让模型重新输出结果。',
 
-    // Cowork error messages (shared with renderer via classifyErrorKey)
-    coworkErrorAuthInvalid: 'API 密钥无效或已过期，请检查配置。',
-    coworkErrorInsufficientBalance: 'API 余额不足，请充值后重试。',
-    coworkErrorInputTooLong: '输入内容过长，超出模型上下文限制。',
-    coworkErrorCouldNotProcessPdf: '无法处理 PDF 文件。',
-    coworkErrorModelNotFound: '请求的模型不存在或不可用。',
-    coworkErrorGatewayDisconnected: 'AI 引擎连接中断，请重试。',
-    coworkErrorServiceRestart: 'AI 引擎正在重启，请稍后重试。',
-    coworkErrorGatewayDraining: 'AI 引擎正在重启中，请稍等片刻后重试。',
-    coworkErrorNetworkError: '网络连接失败，请检查网络设置。',
-    coworkErrorRateLimit: '请求过于频繁，请稍后再试。',
-    coworkErrorContentFiltered: '内容未通过安全审核，请修改后重试。',
-    coworkErrorServerError: '服务端出现错误，请稍后重试。',
-    coworkErrorEngineNotReady: 'AI 引擎正在启动中，请稍等几秒后重试。',
-    coworkErrorUnknown: '任务执行出错，请重试。如果问题持续出现，请检查模型配置。',
     // IM error messages will be added when integration is implemented
 
     // Exec approval continuation
@@ -120,35 +98,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     cronSessionPrefix: 'Cron',
     // IM channel prefixes will be added when integration is implemented
 
-    // OAuth flow messages
-    qwenOAuthRequestingDeviceCode: 'Requesting device authorization code...',
-    qwenOAuthOpeningBrowser: 'Opening browser for authorization...',
-    qwenOAuthWaitingForUser: 'Waiting for user authorization...',
-    qwenOAuthSuccess: 'OAuth authorization successful',
-    qwenOAuthFailed: 'OAuth authorization failed',
-    qwenOAuthTimeout: 'OAuth authorization timeout',
     // Thinking-only hint
     taskThinkingOnly:
       '[No output] The model finished thinking but did not generate a visible reply. You can continue the conversation to ask it to output the result.',
     // IM error messages will be added when integration is implemented
 
-    // Cowork error messages
-    coworkErrorAuthInvalid: 'Invalid or expired API key. Please check your configuration.',
-    coworkErrorInsufficientBalance: 'Insufficient API balance. Please top up and try again.',
-    coworkErrorInputTooLong: 'Input too long, exceeding model context limit.',
-    coworkErrorCouldNotProcessPdf: 'Unable to process the PDF file.',
-    coworkErrorModelNotFound: 'The requested model does not exist or is unavailable.',
-    coworkErrorGatewayDisconnected: 'AI engine connection lost. Please retry.',
-    coworkErrorServiceRestart: 'AI engine is restarting. Please try again later.',
-    coworkErrorGatewayDraining: 'AI engine is restarting. Please wait a moment and try again.',
-    coworkErrorNetworkError: 'Network connection failed. Please check your network settings.',
-    coworkErrorRateLimit: 'Too many requests. Please try again later.',
-    coworkErrorContentFiltered:
-      'Content did not pass the safety review. Please modify and try again.',
-    coworkErrorServerError: 'Server error occurred. Please try again later.',
-    coworkErrorEngineNotReady: 'AI engine is starting up. Please wait a few seconds and try again.',
-    coworkErrorUnknown:
-      'Task failed due to an unexpected error. Please retry. If the issue persists, check your model configuration.',
 
     // Exec approval continuation
     execApprovalApproved:

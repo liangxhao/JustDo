@@ -172,15 +172,6 @@ const MANAGED_OWNER_ALLOW_FROM = [
 
 const MANAGED_TOOL_DENY = ['web_search'] as const;
 
-// 不再注入 skill entries，此常量保留用于未来可能的扩展
-const MANAGED_SKILL_ENTRY_OVERRIDES: Record<string, { enabled: boolean }> = {};
-
-// sessionSnapshotContainsDisabledManagedSkill 现在总是返回 false
-// 因为 MANAGED_SKILL_ENTRY_OVERRIDES 是空对象
-const sessionSnapshotContainsDisabledManagedSkill = (_entry: Record<string, unknown>): boolean => {
-  return false;
-};
-
 /**
  * Build the env var name for a provider's apiKey.
  * Must match the key format produced by resolveAllProviderApiKeys() in claudeSettings.ts.
@@ -476,8 +467,6 @@ export class OpenClawConfigSync {
     let allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> = {};
     let primaryModel = '';
     let providerSelection: OpenClawProviderSelection | null = null;
-    const displayNameMap = getProviderDisplayNameMap();
-
     if (apiResolution.config) {
       const { baseURL, apiKey, model, apiType } = apiResolution.config;
       const modelId = model.trim();
@@ -974,12 +963,6 @@ export class OpenClawConfigSync {
         }
 
         const entry = rawEntry as Record<string, unknown>;
-        // IM channel session handling removed — only cron sessions remain
-        if (sessionSnapshotContainsDisabledManagedSkill(entry)) {
-          delete entry.skillsSnapshot;
-          changed = true;
-        }
-
         if (!/^agent:[^:]+:justdo:/.test(sessionKey)) {
           continue;
         }

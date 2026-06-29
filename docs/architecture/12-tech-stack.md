@@ -35,7 +35,6 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **@headlessui/react** | 1.7.18 | 无样式 UI 组件 |
 | **@heroicons/react** | 2.1.1 | SVG 图标库 |
 | **react-markdown** | 10.0.0 | Markdown 渲染 |
 | **remark-gfm** | 4.0.1 | GitHub Flavored Markdown |
@@ -53,12 +52,9 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 | 技术 | 版本 | 用途 |
 |------|------|------|
 | **electron-log** | 5.4.3 | 日志管理 |
-| **cron-parser** | 5.5.0 | Cron 表达式解析 |
 | **cronstrue** | 3.14.0 | Cron 表达式人类可读化 |
 | **uuid** | 11.1.0 | UUID 生成 |
 | **zod** | 4.3.6 | Schema 验证 |
-| **cheerio** | 1.2.0 | HTML 解析 |
-| **qrcode.react** | 4.2.0 | QR 码生成 |
 
 ## 3. 开发依赖
 

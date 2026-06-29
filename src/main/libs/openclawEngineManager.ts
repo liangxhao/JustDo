@@ -6,7 +6,7 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 
-import { ensureElectronNodeShim, getElectronNodeRuntimePath, getSkillsRoot } from './coworkUtil';
+import { ensureElectronNodeShim, getElectronNodeRuntimePath } from './coworkUtil';
 import { syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
@@ -52,10 +52,6 @@ type RuntimeMetadata = {
   root: string | null;
   version: string | null;
   expectedPathHint: string;
-};
-
-const sleep = async (ms: number): Promise<void> => {
-  await new Promise(resolve => setTimeout(resolve, ms));
 };
 
 const parseJsonFile = <T>(filePath: string): T | null => {

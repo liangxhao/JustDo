@@ -1,6 +1,3 @@
-import { app } from 'electron';
-import { join } from 'path';
-
 import { ProviderName, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import type { SqliteStore } from '../sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
@@ -57,45 +54,6 @@ let storeGetter: (() => SqliteStore | null) | null = null;
 
 export function setStoreGetter(getter: () => SqliteStore | null): void {
   storeGetter = getter;
-}
-
-// Auth token getter injected from main.ts for server model provider
-let authTokensGetter: (() => { accessToken: string; refreshToken: string } | null) | null = null;
-
-export function setAuthTokensGetter(
-  getter: () => { accessToken: string; refreshToken: string } | null,
-): void {
-  authTokensGetter = getter;
-}
-
-// Server base URL getter injected from main.ts
-let serverBaseUrlGetter: (() => string) | null = null;
-
-export function setServerBaseUrlGetter(getter: () => string): void {
-  serverBaseUrlGetter = getter;
-}
-
-// Cached server model metadata (populated when auth:getModels is called)
-// Keyed by modelId → { supportsImage }
-let serverModelMetadataCache: Map<string, { supportsImage?: boolean }> = new Map();
-
-export function updateServerModelMetadata(
-  models: Array<{ modelId: string; supportsImage?: boolean }>,
-): void {
-  serverModelMetadataCache = new Map(
-    models.map(m => [m.modelId, { supportsImage: m.supportsImage }]),
-  );
-}
-
-export function clearServerModelMetadata(): void {
-  serverModelMetadataCache.clear();
-}
-
-export function getAllServerModelMetadata(): Array<{ modelId: string; supportsImage?: boolean }> {
-  return Array.from(serverModelMetadataCache.entries()).map(([modelId, meta]) => ({
-    modelId,
-    supportsImage: meta.supportsImage,
-  }));
 }
 
 const getStore = (): SqliteStore | null => {

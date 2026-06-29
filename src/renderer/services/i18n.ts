@@ -97,15 +97,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     zhipuCodingPlanEndpointHint: '使用 GLM Coding Plan 时，系统将自动切换到 Coding 专属端点',
     qwenCodingPlanHint: '启用后使用阿里云百炼 Coding Plan 专属 API 端点',
     qwenCodingPlanEndpointHint: '使用 Coding Plan 时，需要配置专属的 API Key（格式：sk-sp-xxxxx）',
-    qwenOAuthTab: 'OAuth 登录',
-    qwenOAuthLogin: 'OAuth 登录',
-    qwenOAuthLoginFree: 'OAuth 登录',
-    qwenOAuthLoggingIn: '正在登录...',
-    qwenOAuthLoggedIn: 'OAuth 已登录',
-    qwenOAuthLogout: '退出登录',
-    qwenOAuthTokenExpires: 'Token 将于 {date} 到期',
-    qwenOAuthSuccess: 'OAuth 登录成功！',
-    qwenOAuthFailed: 'OAuth 登录失败',
     qwenAuthMethod: '认证方式',
     qwenApiKeyOptional: 'API Key (可选)',
     qwenApiKeyPriority: 'sk-xxxxx (传统方式，优先级高于OAuth)',
@@ -551,22 +542,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenFolder: '打开文件夹',
 
     // Cowork 错误消息
-    coworkErrorAuthInvalid: 'API 密钥无效或已过期，请在设置中检查并更新您的 API 密钥。',
-    coworkErrorInsufficientBalance: 'API 余额不足，请充值后重试。',
-    coworkErrorInputTooLong: '输入内容过长，超出模型上下文限制，请缩短对话内容后重试。',
-    coworkErrorCouldNotProcessPdf: '无法处理 PDF 文件。请尝试将 PDF 转换为文本格式后重新发送。',
-    coworkErrorModelNotFound: '请求的模型不存在或不可用，请在设置中检查模型配置。',
-    coworkErrorGatewayDisconnected: 'AI 引擎连接中断，请重试。如果问题持续，请尝试重启应用。',
-    coworkErrorServiceRestart: 'AI 引擎正在重启，请稍后重试。',
-    coworkErrorGatewayDraining: 'AI 引擎正在重启中，请稍等片刻后重试。',
-    coworkErrorNetworkError: '网络连接失败，请检查网络设置后重试。',
-    coworkErrorRateLimit: '请求过于频繁，请稍后再试。',
-    coworkErrorContentFiltered: '内容未通过安全审核，请修改后重试。',
-    coworkErrorServerError: '服务端出现错误，请稍后重试。',
     coworkErrorSessionStartFailed: '会话启动失败：{error}',
     coworkErrorSessionContinueFailed: '发送消息失败：{error}',
     coworkErrorEngineNotReady: 'AI 引擎正在启动中，请稍等几秒后重试。',
-    coworkErrorUnknown: '任务执行出错，请重试。如果问题持续出现，请检查模型配置。',
 
     // Skills
     skills: '技能',
@@ -1190,15 +1168,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'When enabled, uses the Alibaba Cloud Bailian Coding Plan dedicated API endpoint',
     qwenCodingPlanEndpointHint:
       'When using Coding Plan, you need a dedicated API Key (format: sk-sp-xxxxx)',
-    qwenOAuthTab: 'OAuth Login',
-    qwenOAuthLogin: 'OAuth Login',
-    qwenOAuthLoginFree: 'OAuth Login',
-    qwenOAuthLoggingIn: 'Logging in...',
-    qwenOAuthLoggedIn: 'OAuth Logged In',
-    qwenOAuthLogout: 'Logout',
-    qwenOAuthTokenExpires: 'Token expires at {date}',
-    qwenOAuthSuccess: 'OAuth login successful!',
-    qwenOAuthFailed: 'OAuth login failed',
     qwenAuthMethod: 'Authentication Method',
     qwenApiKeyOptional: 'API Key (Optional)',
     qwenApiKeyPriority: 'sk-xxxxx (Traditional method, higher priority than OAuth)',
@@ -1670,30 +1639,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenFolder: 'Open folder',
 
     // Cowork error messages
-    coworkErrorAuthInvalid:
-      'Invalid or expired API key. Please check and update your API key in settings.',
-    coworkErrorInsufficientBalance: 'Insufficient API balance. Please top up and try again.',
-    coworkErrorInputTooLong:
-      'Input too long, exceeding model context limit. Please shorten the conversation and try again.',
-    coworkErrorCouldNotProcessPdf:
-      'Unable to process the PDF file. Please try converting the PDF to text format and resend.',
-    coworkErrorModelNotFound:
-      'The requested model does not exist or is unavailable. Please check the model configuration in settings.',
-    coworkErrorGatewayDisconnected:
-      'AI engine connection lost. Please retry. If the issue persists, try restarting the app.',
-    coworkErrorServiceRestart: 'AI engine is restarting. Please try again later.',
-    coworkErrorGatewayDraining: 'AI engine is restarting. Please wait a moment and try again.',
-    coworkErrorNetworkError:
-      'Network connection failed. Please check your network settings and try again.',
-    coworkErrorRateLimit: 'Too many requests. Please try again later.',
-    coworkErrorContentFiltered:
-      'Content did not pass the safety review. Please modify and try again.',
-    coworkErrorServerError: 'Server error occurred. Please try again later.',
     coworkErrorSessionStartFailed: 'Failed to start session: {error}',
     coworkErrorSessionContinueFailed: 'Failed to send message: {error}',
     coworkErrorEngineNotReady: 'AI engine is starting up. Please wait a few seconds and try again.',
-    coworkErrorUnknown:
-      'Task failed due to an unexpected error. Please retry. If the issue persists, check your model configuration.',
 
     // Skills
     skills: 'Skills',

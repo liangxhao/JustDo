@@ -1,6 +1,5 @@
 import { flushSync } from 'react-dom';
 
-import { classifyErrorKey } from '../../common/coworkErrorClassify';
 import { isGatewayToolFailureNotice } from '../../common/toolFailureNotice';
 import { store } from '../store';
 import {
@@ -45,11 +44,6 @@ import type {
   UpdateGroupInput,
 } from '../types/cowork';
 import { i18nService } from './i18n';
-
-const classifyError = (error: string): string => {
-  const key = classifyErrorKey(error);
-  return key ? i18nService.t(key) : error;
-};
 
 class CoworkService {
   private streamListenerCleanups: Array<() => void> = [];
@@ -250,7 +244,7 @@ class CoworkService {
             message: {
               id: `error-${Date.now()}`,
               type: 'system',
-              content: classifyError(error),
+              content: error,
               timestamp: Date.now(),
             },
           }),
@@ -373,7 +367,7 @@ class CoworkService {
       const errorContent =
         result.code === 'ENGINE_NOT_READY'
           ? i18nService.t('coworkErrorEngineNotReady')
-          : classifyError(result.error);
+          : result.error;
       window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
     }
 
@@ -426,7 +420,7 @@ class CoworkService {
         const errorContent =
           result.code === 'ENGINE_NOT_READY'
             ? i18nService.t('coworkErrorEngineNotReady')
-            : classifyError(result.error);
+            : result.error;
         store.dispatch(
           addMessage({
             sessionId: options.sessionId,

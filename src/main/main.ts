@@ -22,7 +22,6 @@ import {
   migrateScheduledTaskRunsToOpenclaw,
   migrateScheduledTasksToOpenclaw,
 } from '../scheduledTask/migrate';
-import { PlatformRegistry } from '../shared/platform';
 import { AgentManager } from './agentManager';
 import { APP_NAME } from './appConstants';
 import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
@@ -42,13 +41,11 @@ import {
 } from './libs/agentEngine';
 import type { PermissionResult } from './libs/agentEngine/types';
 import {
-  clearServerModelMetadata,
   getCurrentApiConfig,
   resolveAllEnabledProviderConfigs,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
   setStoreGetter,
-  updateServerModelMetadata,
 } from './libs/claudeSettings';
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
@@ -56,7 +53,7 @@ import {
   startCoworkOpenAICompatProxy,
   stopCoworkOpenAICompatProxy,
 } from './libs/coworkOpenAICompatProxy';
-import { generateSessionTitle, probeCoworkModelReadiness } from './libs/coworkUtil';
+import { probeCoworkModelReadiness } from './libs/coworkUtil';
 import {
   mergeEnterpriseOpenclawConfig,
   resolveEnterpriseConfigPath,
@@ -69,7 +66,6 @@ import { resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
-  OpenClawChannelSessionSync,
   parseManagedSessionKey,
 } from './libs/openclawChannelSessionSync';
 import type { McpBridgeConfig } from './libs/openclawConfigSync';
@@ -4066,53 +4062,6 @@ if (!gotTheLock) {
     return false;
   });
 
-  // Qwen OAuth 登录
-  ipcMain.handle('qwen:oauth:login', async event => {
-    const { startQwenOAuth } = await import('./libs/qwenOAuth');
-
-    const progressCallback = {
-      update: (message: string) => {
-        event.sender.send('qwen:oauth:progress', message);
-      },
-      stop: (message?: string) => {
-        if (message) {
-          event.sender.send('qwen:oauth:progress', message);
-        }
-      },
-    };
-
-    try {
-      const oauthToken = await startQwenOAuth(progressCallback);
-      return {
-        success: true,
-        data: oauthToken,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'OAuth login failed',
-      };
-    }
-  });
-
-  // Qwen OAuth 刷新 token
-  ipcMain.handle('qwen:oauth:refresh', async (_event, refreshToken: string) => {
-    const { refreshQwenOAuthToken } = await import('./libs/qwenOAuth');
-
-    try {
-      const oauthToken = await refreshQwenOAuthToken(refreshToken);
-      return {
-        success: true,
-        data: oauthToken,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Token refresh failed',
-      };
-    }
-  });
-
   // 设置 Content Security Policy
   const setContentSecurityPolicy = () => {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -4581,15 +4530,6 @@ if (!gotTheLock) {
         console.warn('[Main] Failed to sync OpenClaw config after skills change:', error);
       });
     });
-
-    // Non-critical: sync bundled skills to user data.
-    // Wrapped in try-catch so a failure here does not block window creation.
-    try {
-      manager.syncBundledSkillsToUserData();
-      console.log('[Main] initApp: syncBundledSkillsToUserData done');
-    } catch (error) {
-      console.error('[Main] initApp: syncBundledSkillsToUserData failed:', error);
-    }
 
     try {
       const runtimeResult = await ensurePythonRuntimeReady();

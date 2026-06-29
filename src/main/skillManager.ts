@@ -308,30 +308,6 @@ const extractDescription = (content: string): string => {
   return '';
 };
 
-const normalizeFolderName = (name: string): string => {
-  const normalized = name.replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '');
-  return normalized || 'skill';
-};
-
-const isZipFile = (filePath: string): boolean => path.extname(filePath).toLowerCase() === '.zip';
-
-/**
- * Compare two semver-like version strings (e.g. "1.0.0" vs "1.0.1").
- * Returns 1 if a > b, -1 if a < b, 0 if equal.
- * Non-numeric segments are treated as 0.
- */
-const compareVersions = (a: string, b: string): number => {
-  const pa = a.split('.').map(s => parseInt(s, 10) || 0);
-  const pb = b.split('.').map(s => parseInt(s, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = pa[i] || 0;
-    const nb = pb[i] || 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
-  }
-  return 0;
-};
-
 const resolveWithin = (root: string, target: string): string => {
   const resolvedRoot = path.resolve(root);
   const resolvedTarget = path.resolve(root, target);
@@ -750,13 +726,6 @@ export class SkillManager {
       fs.mkdirSync(root, { recursive: true });
     }
     return root;
-  }
-
-  syncBundledSkillsToUserData(): void {
-    // Deprecated: Skills are now managed by Gateway via skills.status RPC.
-    // Bundled skills are loaded directly from Resources/skills by Gateway.
-    // This function no longer creates the userData/skills directory.
-    console.log('[skills] syncBundledSkillsToUserData: deprecated, skipping');
   }
 
   /**
