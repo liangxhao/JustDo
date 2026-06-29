@@ -3,11 +3,8 @@ import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
 import type { CoworkMessage,CoworkSession } from '../../types/cowork';
-import {
-  AssistantTranscriptBlock,
-  buildTranscriptItems,
-  UserMessageItem,
-} from '../cowork/TranscriptComponents';
+import ChatMessageDisplay from '../cowork/ChatMessageDisplay';
+import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
 
 interface RunSessionModalProps {
   sessionId?: string | null;
@@ -126,8 +123,22 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
     }
   };
 
-  const messages = useMemo<CoworkMessage[]>(() => session?.messages ?? [], [session?.messages]);
-  const transcriptItems = useMemo(() => buildTranscriptItems(messages), [messages]);
+  const rawMessages = useMemo<CoworkMessage[]>(() => session?.messages ?? [], [session?.messages]);
+  const messages = useMemo(() => {
+    return rawMessages.flatMap(msg => {
+      if (msg.type === 'system') {
+        const displayText = msg.content ? getScheduledReminderDisplayText(msg.content) : null;
+        if (displayText) {
+          return [{ ...msg, content: displayText }];
+        }
+        // Filter out system messages with no visible content after transformation
+        if (!msg.content?.trim()) {
+          return [];
+        }
+      }
+      return [msg];
+    });
+  }, [rawMessages]);
 
   return (
     <div
@@ -157,7 +168,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           {loading && (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <svg className="w-5 h-5 animate-spin text-secondary" viewBox="0 0 24 24" fill="none">
@@ -186,7 +197,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
             </div>
           )}
 
-          {!loading && !error && transcriptItems.length === 0 && (
+          {!loading && !error && messages.length === 0 && (
             <div className="flex items-center justify-center py-16">
               <span className="text-sm text-secondary">
                 {i18nService.t('scheduledTasksNoRuns')}
@@ -194,21 +205,8 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
             </div>
           )}
 
-          {!loading && !error && transcriptItems.length > 0 && (
-            <div className="py-2">
-              {transcriptItems.map(item =>
-                item.type === 'user' ? (
-                  <UserMessageItem key={item.message.id} message={item.message} skills={[]} />
-                ) : (
-                  <AssistantTranscriptBlock
-                    key={item.type === 'tool_group' ? item.group.toolUse.id : item.message.id}
-                    item={item}
-                    showTypingIndicator={false}
-                    showCopyButtons={true}
-                  />
-                ),
-              )}
-            </div>
+          {!loading && !error && messages.length > 0 && (
+            <ChatMessageDisplay messages={messages} isStreaming={false} />
           )}
         </div>
       </div>
