@@ -881,6 +881,12 @@ class CoworkService {
       sessionKey: string;
       label: string;
       status: 'running' | 'done' | 'failed' | 'killed' | 'timeout';
+      task?: string;
+      model?: string;
+      startedAt?: number;
+      endedAt?: number;
+      runtimeMs?: number;
+      totalTokens?: number;
     }>;
   }> {
     const cowork = window.electron?.cowork;

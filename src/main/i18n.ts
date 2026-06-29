@@ -27,6 +27,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     subagentStatusFailed: '已失败',
     subagentStatusKilled: '已终止',
     subagentStatusTimeout: '已超时',
+    subagentShowInfo: '查看详情',
+    subagentInfoStatus: '状态',
+    subagentInfoTask: '任务描述',
+    subagentInfoModel: '模型',
+    subagentInfoRuntime: '运行时长',
+    subagentInfoStarted: '开始时间',
+    subagentInfoEnded: '结束时间',
+    subagentInfoTokens: 'Token 用量',
+    subagentInfoSession: '会话标识',
+    subagentInfoUnavailable: '暂无',
 
     // Session titles (created by ChannelSessionSync)
     cronSessionPrefix: '定时',
@@ -95,6 +105,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     subagentStatusFailed: 'Failed',
     subagentStatusKilled: 'Killed',
     subagentStatusTimeout: 'Timed out',
+    subagentShowInfo: 'View details',
+    subagentInfoStatus: 'Status',
+    subagentInfoTask: 'Task',
+    subagentInfoModel: 'Model',
+    subagentInfoRuntime: 'Runtime',
+    subagentInfoStarted: 'Started',
+    subagentInfoEnded: 'Ended',
+    subagentInfoTokens: 'Token usage',
+    subagentInfoSession: 'Session',
+    subagentInfoUnavailable: 'Unavailable',
 
     // Session titles
     cronSessionPrefix: 'Cron',

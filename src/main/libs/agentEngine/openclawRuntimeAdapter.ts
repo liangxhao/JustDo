@@ -1786,7 +1786,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private trackSubagentSpawn(sessionId: string, entry: ToolStreamEntry): void {
     const args = entry.args;
     if (!isRecord(args)) return;
-    const label = this.getSubagentDisplayLabelFromToolInput(args);
+    const label = this.getSubagentSpawnInfoFromToolInput(args).label;
     const toolCallId = entry.toolCallId;
     if (!toolCallId) return;
 
@@ -2877,6 +2877,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       sessionKey: string;
       label: string;
       status: SubagentStatus;
+      task?: string;
+      model?: string;
+      startedAt?: number;
+      endedAt?: number;
+      runtimeMs?: number;
+      totalTokens?: number;
     }>;
   }> {
     if (!sessionId) return { subagents: [] };
@@ -2890,66 +2896,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     };
   }
 
-  private getSubagentDisplayLabel(
-    parentSessionId: string,
-    sessionKey: string,
-  ): string {
-    const mappedLabel = this.sanitizeCachedSubagentLabel(this.sessionKeyToLabel.get(sessionKey));
-    if (mappedLabel) return mappedLabel;
-
-    const parentSession = this.store.getSession(parentSessionId);
-    const spawnToolUses =
-      parentSession?.messages.filter(
-        message => message.type === 'tool_use' && message.metadata?.toolName === 'sessions_spawn',
-      ) ?? [];
-
-    for (const toolUse of spawnToolUses) {
-      const toolUseId = typeof toolUse.metadata?.toolUseId === 'string' ? toolUse.metadata.toolUseId : '';
-      const mappedSessionKey = toolUseId ? this.toolCallIdToSessionKey.get(toolUseId) : '';
-      if (
-        mappedSessionKey &&
-        this.normalizeSubagentSessionKey(mappedSessionKey) ===
-          this.normalizeSubagentSessionKey(sessionKey)
-      ) {
-        const label = this.getSubagentDisplayLabelFromToolInput(toolUse.metadata?.toolInput);
-        if (label) return label;
-      }
-    }
-
-    for (const toolUse of spawnToolUses) {
-      const toolUseId = typeof toolUse.metadata?.toolUseId === 'string' ? toolUse.metadata.toolUseId : '';
-      if (!toolUseId) continue;
-      const toolResult = parentSession?.messages.find(
-        message =>
-          message.type === 'tool_result' &&
-          message.metadata?.toolName === 'sessions_spawn' &&
-          message.metadata?.toolUseId === toolUseId,
-      );
-      const parsed =
-        typeof toolResult?.content === 'string' ? this.parseToolOutputObject(toolResult.content) : null;
-      const spawnedSessionKey = this.extractSpawnedSessionKey(parsed);
-      if (
-        spawnedSessionKey &&
-        this.normalizeSubagentSessionKey(spawnedSessionKey) ===
-          this.normalizeSubagentSessionKey(sessionKey)
-      ) {
-        const label = this.getSubagentDisplayLabelFromToolInput(toolUse.metadata?.toolInput);
-        if (label) return label;
-      }
-    }
-
-    return '';
-  }
-
-  private getSubagentDisplayLabelFromToolInput(input: unknown): string {
-    if (!isRecord(input)) return '';
+  private getSubagentSpawnInfoFromToolInput(
+    input: unknown,
+    fallbackLabel = '',
+  ): { label: string; task?: string } {
+    if (!isRecord(input)) return { label: fallbackLabel };
     const label = typeof input.label === 'string' ? input.label.trim() : '';
-    if (label) return label;
     const taskName = typeof input.taskName === 'string' ? input.taskName.trim() : '';
-    if (taskName) return taskName;
     const task = typeof input.task === 'string' ? input.task.trim() : '';
-    if (task) return this.truncateSubagentTaskLabel(task);
-    return '';
+    return {
+      label: label || taskName || (task ? this.truncateSubagentTaskLabel(task) : fallbackLabel),
+      task: task || undefined,
+    };
   }
 
   private truncateSubagentTaskLabel(task: string): string {

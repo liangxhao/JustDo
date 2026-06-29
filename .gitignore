@@ -41,6 +41,12 @@ nul
 
 sandbox/
 
+# Local dev files
+devtool.log
+logs/
+run_log.log
+run_log.ps1
+
 # Accidentally committed git hook files outside git-hooks/
 **/**/post-commit
 openspec/
