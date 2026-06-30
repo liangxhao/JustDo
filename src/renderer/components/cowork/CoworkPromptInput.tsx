@@ -27,6 +27,15 @@ import { ActiveSkillBadge } from '../skills';
 import { resolveAgentModelSelection } from './agentModelSelection';
 import AttachmentCard from './AttachmentCard';
 import FolderSelectorPopover from './FolderSelectorPopover';
+import {
+  getHiddenCommandCount,
+  getSlashCommandByName,
+  getSlashCommandCompletions,
+  SLASH_COMMANDS,
+  type SlashCommandCategory,
+  SlashCommandCategoryLabels,
+  type SlashCommandDef,
+} from './slashCommands';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
@@ -164,6 +173,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
     const [isAddingFile, setIsAddingFile] = useState(false);
     const [imageVisionHint, setImageVisionHint] = useState(false);
+    const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+    const [slashMenuItems, setSlashMenuItems] = useState<SlashCommandDef[]>([]);
+    const [slashMenuIndex, setSlashMenuIndex] = useState(0);
+    const [slashMenuMode, setSlashMenuMode] = useState<'command' | 'args'>('command');
+    const [slashMenuCommand, setSlashMenuCommand] = useState<SlashCommandDef | null>(null);
+    const [slashMenuArgItems, setSlashMenuArgItems] = useState<string[]>([]);
+    const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
     const [contextUsage, setContextUsage] = useState<{
       totalTokens: number;
       contextTokens: number;
@@ -176,6 +192,106 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
     const contextMenuRef = useRef<HTMLDivElement>(null);
+    const [slashCommands, setSlashCommands] = useState<SlashCommandDef[]>(SLASH_COMMANDS);
+    const slashCommandRefreshPendingRef = useRef(false);
+    const slashCommandRefreshSeqRef = useRef(0);
+    const latestValueRef = useRef(value);
+
+    const resetSlashMenuState = useCallback(() => {
+      setSlashMenuOpen(false);
+      setSlashMenuItems([]);
+      setSlashMenuIndex(0);
+      setSlashMenuMode('command');
+      setSlashMenuCommand(null);
+      setSlashMenuArgItems([]);
+      setSlashMenuExpanded(false);
+    }, []);
+
+    const updateSlashMenu = useCallback(
+      (
+        nextValue: string,
+        options?: { commandsOverride?: SlashCommandDef[]; keepExpanded?: boolean },
+      ) => {
+        const showAll = options?.keepExpanded ?? slashMenuExpanded;
+        const activeSlashCommands = options?.commandsOverride ?? slashCommands;
+        const argMatch = nextValue.match(/^\/(\S+)\s(.*)$/);
+        if (argMatch) {
+          const command = getSlashCommandByName(argMatch[1], activeSlashCommands);
+          const filter = argMatch[2].toLowerCase();
+          if (command?.argOptions?.length) {
+            const filtered = filter
+              ? command.argOptions.filter(option => option.toLowerCase().startsWith(filter))
+              : command.argOptions;
+            if (filtered.length > 0) {
+              setSlashMenuMode('args');
+              setSlashMenuCommand(command);
+              setSlashMenuArgItems(filtered);
+              setSlashMenuItems([]);
+              setSlashMenuIndex(0);
+              setSlashMenuOpen(true);
+              return;
+            }
+          }
+          resetSlashMenuState();
+          return;
+        }
+
+        const commandMatch = nextValue.match(/^\/(\S*)$/);
+        if (!commandMatch) {
+          resetSlashMenuState();
+          return;
+        }
+
+        const items = getSlashCommandCompletions(commandMatch[1], {
+          commands: activeSlashCommands,
+          showAll,
+        });
+        setSlashMenuMode('command');
+        setSlashMenuCommand(null);
+        setSlashMenuArgItems([]);
+        setSlashMenuItems(items);
+        setSlashMenuIndex(0);
+        setSlashMenuOpen(items.length > 0);
+      },
+      [resetSlashMenuState, slashCommands, slashMenuExpanded],
+    );
+
+    const refreshSlashCommands = useCallback(
+      (nextValue: string) => {
+        if (!/^\/(?:\S*(?:\s.*)?)?$/.test(nextValue) || slashCommandRefreshPendingRef.current) {
+          return;
+        }
+
+        const seq = ++slashCommandRefreshSeqRef.current;
+        slashCommandRefreshPendingRef.current = true;
+        void window.electron.slashCommands
+          .list({ agentId: currentAgentId })
+          .then(result => {
+            if (seq !== slashCommandRefreshSeqRef.current) return;
+            if (!result.success || !result.commands?.length) return;
+            setSlashCommands(result.commands);
+            updateSlashMenu(latestValueRef.current, {
+              commandsOverride: result.commands,
+              keepExpanded: slashMenuExpanded,
+            });
+          })
+          .finally(() => {
+            if (seq === slashCommandRefreshSeqRef.current) {
+              slashCommandRefreshPendingRef.current = false;
+            }
+          });
+      },
+      [currentAgentId, slashMenuExpanded, updateSlashMenu],
+    );
+
+    const commitValue = useCallback(
+      (nextValue: string) => {
+        latestValueRef.current = nextValue;
+        setValue(nextValue);
+        updateSlashMenu(nextValue);
+      },
+      [updateSlashMenu],
+    );
 
     // 暴露方法给父组件
     React.useImperativeHandle(ref, () => ({
@@ -257,7 +373,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
     }, [value, draftPrompt, dispatch, draftKey]);
 
-    const handleSubmit = useCallback(async () => {
+    const handleSubmit = useCallback(async (promptOverride?: string) => {
       if (showFolderSelector && !workingDirectory?.trim()) {
         setShowFolderRequiredWarning(true);
         if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
@@ -268,7 +384,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         return;
       }
 
-      const trimmedValue = value.trim();
+      const promptValue = promptOverride ?? value;
+      const trimmedValue = promptValue.trim();
       if ((!trimmedValue && attachments.length === 0) || isStreaming || disabled) return;
       setShowFolderRequiredWarning(false);
 
@@ -341,9 +458,148 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       draftKey,
     ]);
 
+    const handleSlashCommandSelect = useCallback(
+      (command: SlashCommandDef, executeInstant = true) => {
+        if (command.argOptions?.length) {
+          commitValue(`/${command.name} `);
+          setSlashMenuMode('args');
+          setSlashMenuCommand(command);
+          setSlashMenuArgItems(command.argOptions);
+          setSlashMenuItems([]);
+          setSlashMenuIndex(0);
+          setSlashMenuOpen(true);
+          requestAnimationFrame(() => textareaRef.current?.focus());
+          return;
+        }
+
+        const nextValue = command.args ? `/${command.name} ` : `/${command.name}`;
+        commitValue(nextValue);
+        resetSlashMenuState();
+        requestAnimationFrame(() => textareaRef.current?.focus());
+
+        if (executeInstant && command.executeLocal && !command.args) {
+          requestAnimationFrame(() => {
+            void handleSubmit(nextValue);
+          });
+        }
+      },
+      [commitValue, handleSubmit, resetSlashMenuState],
+    );
+
+    const handleSlashArgSelect = useCallback(
+      (arg: string, execute = true) => {
+        const commandName = slashMenuCommand?.name ?? '';
+        if (!commandName) return;
+        commitValue(`/${commandName} ${arg}`);
+        resetSlashMenuState();
+        requestAnimationFrame(() => textareaRef.current?.focus());
+        if (execute) {
+          requestAnimationFrame(() => {
+            void handleSubmit(`/${commandName} ${arg}`);
+          });
+        }
+      },
+      [commitValue, handleSubmit, resetSlashMenuState, slashMenuCommand?.name],
+    );
+
+    const handleSlashButtonClick = useCallback(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        const nextValue = value ? `${value}/` : '/';
+        commitValue(nextValue);
+        if (!value) {
+          refreshSlashCommands(nextValue);
+        }
+        return;
+      }
+
+      textarea.focus();
+      const start = textarea.selectionStart ?? value.length;
+      const end = textarea.selectionEnd ?? value.length;
+      const nextValue = `${value.slice(0, start)}/${value.slice(end)}`;
+      const nextCaret = start + 1;
+      latestValueRef.current = nextValue;
+      setValue(nextValue);
+      if (value.length === 0) {
+        updateSlashMenu(nextValue);
+        refreshSlashCommands(nextValue);
+      } else {
+        resetSlashMenuState();
+      }
+      requestAnimationFrame(() => {
+        textarea.selectionStart = nextCaret;
+        textarea.selectionEnd = nextCaret;
+      });
+    }, [commitValue, refreshSlashCommands, resetSlashMenuState, updateSlashMenu, value]);
+
+    const handleInputChange = useCallback(
+      (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const nextValue = event.target.value;
+        latestValueRef.current = nextValue;
+        setValue(nextValue);
+        updateSlashMenu(nextValue);
+        refreshSlashCommands(nextValue);
+      },
+      [refreshSlashCommands, updateSlashMenu],
+    );
+
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       const isComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
-      if (event.key !== 'Enter' || isComposing) return;
+      if (isComposing) return;
+
+      if (slashMenuOpen && slashMenuMode === 'args' && slashMenuArgItems.length > 0) {
+        const len = slashMenuArgItems.length;
+        switch (event.key) {
+          case 'ArrowDown':
+            event.preventDefault();
+            setSlashMenuIndex(index => (index + 1) % len);
+            return;
+          case 'ArrowUp':
+            event.preventDefault();
+            setSlashMenuIndex(index => (index - 1 + len) % len);
+            return;
+          case 'Tab':
+            event.preventDefault();
+            handleSlashArgSelect(slashMenuArgItems[slashMenuIndex] ?? slashMenuArgItems[0], false);
+            return;
+          case 'Enter':
+            event.preventDefault();
+            handleSlashArgSelect(slashMenuArgItems[slashMenuIndex] ?? slashMenuArgItems[0], true);
+            return;
+          case 'Escape':
+            event.preventDefault();
+            resetSlashMenuState();
+            return;
+        }
+      }
+
+      if (slashMenuOpen && slashMenuItems.length > 0) {
+        const len = slashMenuItems.length;
+        switch (event.key) {
+          case 'ArrowDown':
+            event.preventDefault();
+            setSlashMenuIndex(index => (index + 1) % len);
+            return;
+          case 'ArrowUp':
+            event.preventDefault();
+            setSlashMenuIndex(index => (index - 1 + len) % len);
+            return;
+          case 'Tab':
+            event.preventDefault();
+            handleSlashCommandSelect(slashMenuItems[slashMenuIndex] ?? slashMenuItems[0], false);
+            return;
+          case 'Enter':
+            event.preventDefault();
+            handleSlashCommandSelect(slashMenuItems[slashMenuIndex] ?? slashMenuItems[0], true);
+            return;
+          case 'Escape':
+            event.preventDefault();
+            resetSlashMenuState();
+            return;
+        }
+      }
+
+      if (event.key !== 'Enter') return;
 
       // Use synced state (kept up-to-date via config-updated event) so that
       // changes made in the Settings panel are reflected immediately without
@@ -939,6 +1195,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       };
     }, [sessionId, isStreaming, effectiveSelectedModel?.contextLength]);
 
+    const slashMenuVisible =
+      slashMenuOpen &&
+      (slashMenuMode === 'args'
+        ? !!slashMenuCommand && slashMenuArgItems.length > 0
+        : slashMenuItems.length > 0);
+    const groupedSlashItems = useMemo(() => {
+      const grouped = new Map<SlashCommandCategory, Array<{ command: SlashCommandDef; index: number }>>();
+      slashMenuItems.forEach((command, index) => {
+        const category = command.category ?? 'session';
+        const existing = grouped.get(category) ?? [];
+        existing.push({ command, index });
+        grouped.set(category, existing);
+      });
+      return Array.from(grouped.entries());
+    }, [slashMenuItems]);
+    const hiddenCommandCount = slashMenuExpanded ? 0 : getHiddenCommandCount(slashCommands);
+
     return (
       <div className="relative">
         {attachments.length > 0 && (
@@ -965,6 +1238,104 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             </button>
           </div>
         )}
+        {slashMenuVisible && (
+          <div
+            className="absolute bottom-full left-0 right-0 z-40 mb-2 max-h-80 overflow-y-auto rounded-lg border border-border bg-surface p-1.5 shadow-elevated"
+            role="listbox"
+            aria-label="Slash commands"
+          >
+            {slashMenuMode === 'args' && slashMenuCommand ? (
+              <div>
+                <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-primary/75">
+                  /{slashMenuCommand.name} {slashMenuCommand.description}
+                </div>
+                {slashMenuArgItems.map((arg, index) => (
+                  <button
+                    key={arg}
+                    type="button"
+                    onClick={() => handleSlashArgSelect(arg, true)}
+                    onMouseEnter={() => setSlashMenuIndex(index)}
+                    className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
+                      index === slashMenuIndex ? 'bg-primary/10' : 'hover:bg-surface-raised'
+                    }`}
+                    role="option"
+                    aria-selected={index === slashMenuIndex}
+                  >
+                    <span className="font-mono text-sm font-semibold text-primary">{arg}</span>
+                    <span className="min-w-0 flex-1 truncate text-right text-xs text-secondary">
+                      /{slashMenuCommand.name} {arg}
+                    </span>
+                  </button>
+                ))}
+                <div className="mt-1 border-t border-border px-2.5 py-1.5 text-[11px] text-secondary">
+                  ↑↓ navigate · Tab fill · Enter run · Esc close
+                </div>
+              </div>
+            ) : (
+              <>
+                {groupedSlashItems.map(([category, entries]) => (
+                  <div
+                    key={category}
+                    className="border-border pt-1 first:pt-0 [&:not(:first-child)]:mt-1 [&:not(:first-child)]:border-t"
+                  >
+                    <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-primary/75">
+                      {SlashCommandCategoryLabels[category]}
+                    </div>
+                    {entries.map(({ command, index }) => (
+                      <button
+                        key={command.key}
+                        type="button"
+                        onClick={() => handleSlashCommandSelect(command, true)}
+                        onMouseEnter={() => setSlashMenuIndex(index)}
+                        className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
+                          index === slashMenuIndex ? 'bg-primary/10' : 'hover:bg-surface-raised'
+                        }`}
+                        role="option"
+                        aria-selected={index === slashMenuIndex}
+                      >
+                        <span className="font-mono text-sm font-semibold text-primary">
+                          /{command.name}
+                        </span>
+                        {command.args && (
+                          <span className="font-mono text-xs text-secondary/70">{command.args}</span>
+                        )}
+                        <span className="min-w-0 flex-1 truncate text-right text-xs text-secondary">
+                          {command.description}
+                        </span>
+                        {command.argOptions?.length ? (
+                          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
+                            {command.argOptions.length} options
+                          </span>
+                        ) : command.executeLocal && !command.args ? (
+                          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
+                            instant
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+                {hiddenCommandCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={event => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSlashMenuExpanded(true);
+                      updateSlashMenu(value, { keepExpanded: true });
+                    }}
+                    className="mt-1 w-full border-t border-border px-2.5 py-2 text-center text-xs font-semibold text-primary hover:bg-primary/10"
+                  >
+                    Show {hiddenCommandCount} more command{hiddenCommandCount !== 1 ? 's' : ''}
+                  </button>
+                )}
+                <div className="mt-1 border-t border-border px-2.5 py-1.5 text-[11px] text-secondary">
+                  ↑↓ navigate · Tab fill · Enter select · Esc close
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <div
           className={enhancedContainerClass}
           onDragEnter={handleDragEnter}
@@ -982,7 +1353,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               <textarea
                 ref={textareaRef}
                 value={value}
-                onChange={e => setValue(e.target.value)}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 onContextMenu={handleContextMenu}
@@ -1089,6 +1460,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     <>
                       <button
                         type="button"
+                        onClick={handleSlashButtonClick}
+                        className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
+                        title={i18nService.t('slashCommandButton')}
+                        aria-label={i18nService.t('slashCommandButton')}
+                        disabled={disabled || isStreaming}
+                      >
+                        /
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleAddFile}
                         className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
                         title={i18nService.t('coworkAddFile')}
@@ -1115,7 +1496,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   ) : (
                     <button
                       type="button"
-                      onClick={handleSubmit}
+                      onClick={() => void handleSubmit()}
                       disabled={!canSubmit}
                       className={`p-2 rounded-xl bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${!canSubmit ? 'opacity-50' : ''}`}
                       aria-label="Send"
@@ -1132,7 +1513,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               <textarea
                 ref={textareaRef}
                 value={value}
-                onChange={e => setValue(e.target.value)}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 onContextMenu={handleContextMenu}
@@ -1144,6 +1525,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
               {!remoteManaged && (
                 <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handleSlashButtonClick}
+                    className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
+                    title={i18nService.t('slashCommandButton')}
+                    aria-label={i18nService.t('slashCommandButton')}
+                    disabled={disabled || isStreaming}
+                  >
+                    /
+                  </button>
                   <button
                     type="button"
                     onClick={handleAddFile}
@@ -1170,7 +1561,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               ) : (
                 <button
                   type="button"
-                  onClick={handleSubmit}
+                  onClick={() => void handleSubmit()}
                   disabled={!canSubmit}
                   className={`flex-shrink-0 p-2 rounded-lg bg-primary hover:bg-primary-hover text-white transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:cursor-not-allowed ${!canSubmit ? 'opacity-50' : ''}`}
                   aria-label="Send"

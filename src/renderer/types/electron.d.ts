@@ -330,6 +330,24 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; result?: EmailConnectivityTestResult; error?: string }>;
     onChanged: (callback: () => void) => () => void;
   };
+  slashCommands: {
+    list: (options?: { agentId?: string | null }) => Promise<{
+      success: boolean;
+      commands?: Array<{
+        key: string;
+        name: string;
+        aliases?: string[];
+        description: string;
+        args?: string;
+        category?: 'session' | 'model' | 'agents' | 'tools';
+        executeLocal?: boolean;
+        argOptions?: string[];
+        tier?: 'essential' | 'standard' | 'power';
+      }>;
+      error?: string;
+      gatewayOffline?: boolean;
+    }>;
+  };
   mcp: {
     list: () => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     create: (

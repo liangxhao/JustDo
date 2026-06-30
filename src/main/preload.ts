@@ -40,6 +40,10 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('skills:changed', handler);
     },
   },
+  slashCommands: {
+    list: (options?: { agentId?: string | null }) =>
+      ipcRenderer.invoke('slashCommands:list', options || {}),
+  },
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),
     create: (data: any) => ipcRenderer.invoke('mcp:create', data),

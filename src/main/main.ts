@@ -1957,6 +1957,178 @@ if (!gotTheLock) {
     }
   });
 
+  type SlashCommandCategory = 'session' | 'model' | 'agents' | 'tools';
+  type SlashCommandTier = 'essential' | 'standard' | 'power';
+  type SlashCommandArg = {
+    name?: unknown;
+    required?: unknown;
+    choices?: unknown;
+  };
+  type GatewayCommandEntry = {
+    key?: unknown;
+    name?: unknown;
+    textAliases?: unknown;
+    description?: unknown;
+    args?: unknown;
+    category?: unknown;
+    tier?: unknown;
+  };
+
+  const slashCategoryOverrides: Record<string, SlashCommandCategory> = {
+    help: 'tools',
+    commands: 'tools',
+    tools: 'tools',
+    skill: 'tools',
+    status: 'tools',
+    export_session: 'tools',
+    usage: 'tools',
+    tts: 'tools',
+    agents: 'agents',
+    subagents: 'agents',
+    steer: 'agents',
+    redirect: 'agents',
+    session: 'session',
+    stop: 'session',
+    reset: 'session',
+    new: 'session',
+    compact: 'session',
+    model: 'model',
+    models: 'model',
+    think: 'model',
+    verbose: 'model',
+    fast: 'model',
+    reasoning: 'model',
+    elevated: 'model',
+    queue: 'model',
+  };
+
+  const localSlashCommands = new Set([
+    'help',
+    'new',
+    'reset',
+    'stop',
+    'compact',
+    'model',
+    'think',
+    'fast',
+    'verbose',
+    'export-session',
+    'usage',
+    'agents',
+    'steer',
+    'redirect',
+  ]);
+
+  const normalizeSlashAlias = (alias: string): string =>
+    alias.trim().replace(/^\//u, '').toLowerCase();
+
+  const normalizeSlashKey = (value: string): string => value.replace(/[:.-]/g, '_');
+
+  const formatSlashArgs = (args: SlashCommandArg[]): string | undefined => {
+    if (args.length === 0) return undefined;
+    return args
+      .map(arg => {
+        const name = typeof arg.name === 'string' ? arg.name.trim() : '';
+        if (!name) return null;
+        return arg.required === true ? `<${name}>` : `[${name}]`;
+      })
+      .filter((part): part is string => part !== null)
+      .join(' ');
+  };
+
+  const slashChoiceToValue = (choice: unknown): string | null => {
+    if (typeof choice === 'string') return choice;
+    if (choice && typeof choice === 'object' && 'value' in choice) {
+      const value = (choice as { value?: unknown }).value;
+      return typeof value === 'string' ? value : null;
+    }
+    return null;
+  };
+
+  const getSlashArgOptions = (args: SlashCommandArg[]): string[] | undefined => {
+    const choices = args[0]?.choices;
+    if (!Array.isArray(choices)) return undefined;
+    const options = choices.map(slashChoiceToValue).filter((value): value is string => !!value);
+    return options.length > 0 ? options : undefined;
+  };
+
+  const mapSlashCategory = (entry: GatewayCommandEntry): SlashCommandCategory => {
+    const key = typeof entry.key === 'string' ? normalizeSlashKey(entry.key) : '';
+    const override = slashCategoryOverrides[key];
+    if (override) return override;
+    switch (entry.category) {
+      case 'session':
+        return 'session';
+      case 'options':
+        return 'model';
+      case 'management':
+        return 'tools';
+      default:
+        return 'tools';
+    }
+  };
+
+  const mapSlashTier = (entry: GatewayCommandEntry): SlashCommandTier => {
+    return entry.tier === 'essential' || entry.tier === 'standard' || entry.tier === 'power'
+      ? entry.tier
+      : 'standard';
+  };
+
+  ipcMain.handle('slashCommands:list', async (_event, options?: { agentId?: string | null }) => {
+    try {
+      const gatewayClient = openClawRuntimeAdapter.getGatewayClient();
+      if (!gatewayClient) {
+        return { success: false, error: 'Gateway client not connected', gatewayOffline: true };
+      }
+
+      const result = await gatewayClient.request<{ commands?: GatewayCommandEntry[] }>(
+        'commands.list',
+        {
+          ...(options?.agentId ? { agentId: options.agentId } : {}),
+          includeArgs: true,
+          scope: 'text',
+        },
+      );
+      const entries = Array.isArray(result.commands) ? result.commands : [];
+      const commands = entries
+        .map(entry => {
+          const aliases = Array.isArray(entry.textAliases)
+            ? entry.textAliases.filter((alias): alias is string => typeof alias === 'string')
+            : [];
+          const name =
+            aliases.map(normalizeSlashAlias).find(Boolean) ??
+            (typeof entry.name === 'string' ? normalizeSlashAlias(entry.name) : '');
+          if (!name) return null;
+          const args = Array.isArray(entry.args) ? (entry.args as SlashCommandArg[]) : [];
+          const key = typeof entry.key === 'string' && entry.key.trim() ? entry.key.trim() : name;
+          return {
+            key,
+            name,
+            aliases: aliases
+              .map(normalizeSlashAlias)
+              .filter(alias => alias && alias !== name),
+            description: typeof entry.description === 'string' ? entry.description : '',
+            args: formatSlashArgs(args),
+            category: mapSlashCategory(entry),
+            executeLocal: localSlashCommands.has(key),
+            argOptions: getSlashArgOptions(args),
+            tier: mapSlashTier(entry),
+          };
+        })
+        .filter((command): command is NonNullable<typeof command> => command !== null);
+
+      return { success: true, commands };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to list slash commands';
+      console.error('[SlashCommands] slashCommands:list error:', errorMsg);
+      return {
+        success: false,
+        error: errorMsg,
+        gatewayOffline: errorMsg.includes('not connected'),
+      };
+    }
+  });
+
   ipcMain.handle('skills:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
     try {
       const adapter = openClawRuntimeAdapter;
