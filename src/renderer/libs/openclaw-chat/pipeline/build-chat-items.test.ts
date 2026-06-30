@@ -12,6 +12,10 @@ function attachedToolMessages(message: unknown): unknown[] {
   return Array.isArray(attached) ? attached : [];
 }
 
+function toolTimelineIsOpen(message: unknown): boolean {
+  return (message as Record<string, unknown>).__justdoToolTimelineOpen === true;
+}
+
 test('keeps a live tool attached to the preceding thinking message during incremental updates', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',
@@ -127,6 +131,82 @@ test('keeps split live tool start and result attached to the first tool location
   const secondMessage = assistantGroups[1]?.messages[0]?.message;
   expect(attachedToolMessages(firstMessage)).toHaveLength(2);
   expect(attachedToolMessages(secondMessage)).toHaveLength(0);
+});
+
+test('collapses a live tool timeline as soon as that tool result arrives', () => {
+  const baseProps = {
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'Thinking' }],
+        timestamp: 1000,
+        __openclawLiveThinking: true,
+      },
+    ],
+    streamSegments: [],
+    stream: 'Content',
+    streamStartedAt: 1300,
+    queue: [],
+    showToolCalls: true,
+  };
+
+  const withStartedTool = buildChatItems({
+    ...baseProps,
+    toolMessages: [
+      {
+        role: 'assistant',
+        toolCallId: 'tool-1',
+        toolName: 'Read',
+        timestamp: 1100,
+        __justdoToolActive: true,
+        content: [
+          {
+            type: 'toolcall',
+            toolCallId: 'tool-1',
+            name: 'Read',
+            arguments: { file_path: 'README.md' },
+          },
+        ],
+      },
+    ],
+  });
+
+  const startedMessage = groups(withStartedTool).find(group => group.role === 'assistant')
+    ?.messages[0]?.message;
+  expect(toolTimelineIsOpen(startedMessage)).toBe(true);
+
+  const withCompletedTool = buildChatItems({
+    ...baseProps,
+    toolMessages: [
+      {
+        role: 'assistant',
+        toolCallId: 'tool-1',
+        toolName: 'Read',
+        timestamp: 1100,
+        __justdoToolActive: false,
+        content: [
+          {
+            type: 'toolcall',
+            toolCallId: 'tool-1',
+            name: 'Read',
+            arguments: { file_path: 'README.md' },
+          },
+          {
+            type: 'toolresult',
+            toolCallId: 'tool-1',
+            name: 'Read',
+            text: 'ok',
+          },
+        ],
+      },
+    ],
+  });
+
+  const completedMessage = groups(withCompletedTool).find(group => group.role === 'assistant')
+    ?.messages[0]?.message;
+  expect(attachedToolMessages(completedMessage)).toHaveLength(1);
+  expect(toolTimelineIsOpen(completedMessage)).toBe(false);
 });
 
 test('keeps split history tool start and result attached consistently after full refresh', () => {

@@ -541,8 +541,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         {/* Messages */}
         <JustDoChatWrapper ref={chatWrapperRef} className="flex-1 min-h-0" />
         {/* Input */}
-        <div className="shrink-0 px-4 pb-4 pt-2">
-          <div className="shadow-glow-accent rounded-2xl">
+        <div className="shrink-0 pb-4 pt-2">
+          <div
+            className="mx-auto min-w-0 shadow-glow-accent rounded-2xl"
+            style={{ width: 'clamp(320px, 75%, 1120px)', maxWidth: 'calc(100% - 32px)' }}
+          >
             <CoworkPromptInput
               onSubmit={handleSendMessage}
               onStop={handleStopSession}

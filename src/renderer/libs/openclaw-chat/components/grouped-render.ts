@@ -134,6 +134,44 @@ function shouldOpenToolTimeline(rawMessage: unknown): boolean {
   return (rawMessage as Record<string, unknown> | null)?.__justdoToolTimelineOpen === true;
 }
 
+function extractToolCallId(message: unknown): string | null {
+  const raw = message as Record<string, unknown> | null;
+  if (!raw) return null;
+
+  const direct = [raw.toolCallId, raw.tool_call_id, raw.toolUseId, raw.tool_use_id].find(
+    value => typeof value === 'string' && value.trim(),
+  ) as string | undefined;
+  if (direct) return direct.trim();
+
+  const content = Array.isArray(raw.content) ? raw.content : [];
+  for (const block of content) {
+    const item = block as Record<string, unknown> | null;
+    if (!item) continue;
+    const nested = [item.toolCallId, item.tool_call_id, item.toolUseId, item.tool_use_id, item.id]
+      .find(value => typeof value === 'string' && value.trim()) as string | undefined;
+    if (nested) return nested.trim();
+  }
+  return null;
+}
+
+function hasLiveToolMessage(messages: unknown[]): boolean {
+  const activeByToolId = new Map<string, boolean>();
+  let anonymousActive = false;
+
+  for (const message of messages) {
+    const raw = message as Record<string, unknown> | null;
+    const isActive = raw?.__justdoToolActive === true;
+    const toolCallId = extractToolCallId(message);
+    if (toolCallId) {
+      activeByToolId.set(toolCallId, isActive);
+    } else if (isActive) {
+      anonymousActive = true;
+    }
+  }
+
+  return anonymousActive || [...activeByToolId.values()].some(Boolean);
+}
+
 // ─── Message Group Rendering ────────────────────────────────────────────────
 
 export function renderMessageGroup(
@@ -364,7 +402,7 @@ export function renderStreamingGroup(
       <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
       <div class="chat-group__content">
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
-        ${toolCards.length > 0 ? renderToolTimeline(toolCards, false) : nothing}
+        ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
         <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
           ${renderCopyButton(text)}
           <div class="chat-bubble__text markdown-content">

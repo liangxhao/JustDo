@@ -81,9 +81,11 @@ export class JustDoChatElement extends LitElement {
     }
 
     .chat-container {
-      max-width: 800px;
+      width: clamp(320px, 75%, 1120px);
+      max-width: calc(100% - 32px);
+      box-sizing: border-box;
       margin: 0 auto;
-      padding: 16px;
+      padding: 16px 0;
     }
 
     /* ── Chat Group ─────────────────────────────────────────────────── */
@@ -172,6 +174,8 @@ export class JustDoChatElement extends LitElement {
       padding-right: 38px;
       border-radius: 12px;
       max-width: 100%;
+      box-sizing: border-box;
+      min-width: 0;
       word-wrap: break-word;
       overflow-wrap: break-word;
       position: relative;
@@ -266,6 +270,11 @@ export class JustDoChatElement extends LitElement {
       white-space: normal;
     }
 
+    .markdown-content {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
     /* ── Markdown Content ───────────────────────────────────────────── */
 
     .markdown-content p {
@@ -314,6 +323,7 @@ export class JustDoChatElement extends LitElement {
     .markdown-content table {
       border-collapse: collapse;
       margin: 8px 0;
+      max-width: 100%;
       width: 100%;
     }
 
@@ -358,6 +368,8 @@ export class JustDoChatElement extends LitElement {
       color: var(--justdo-chat-code-text, #d4d4d4);
       padding: 12px;
       border-radius: 8px;
+      max-width: 100%;
+      box-sizing: border-box;
       overflow-x: auto;
       font-size: 13px;
       line-height: 1.5;
@@ -578,6 +590,8 @@ export class JustDoChatElement extends LitElement {
 
     .chat-thinking {
       margin-bottom: 8px;
+      max-width: calc(100% - 44px);
+      box-sizing: border-box;
     }
 
     .chat-thinking__summary {
@@ -644,6 +658,8 @@ export class JustDoChatElement extends LitElement {
       background: var(--justdo-chat-tool-bg, rgba(0, 0, 0, 0.02));
       border-radius: 8px;
       border-left: 3px solid var(--justdo-chat-tool-border, #6b7280);
+      max-width: calc(100% - 44px);
+      box-sizing: border-box;
     }
 
     .tool-message--error {
@@ -716,19 +732,41 @@ export class JustDoChatElement extends LitElement {
 
     .tool-timeline {
       margin: 6px 0 8px;
-      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.06));
-      border-radius: 8px;
-      overflow: hidden;
-      background: var(--justdo-chat-tool-bg, rgba(0, 0, 0, 0.02));
+      max-width: calc(100% - 44px);
+      box-sizing: border-box;
     }
 
     .tool-timeline__summary {
-      padding: 8px 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 0;
       cursor: pointer;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #6b7280);
       list-style: none;
       user-select: none;
+    }
+
+    .tool-timeline__summary::before {
+      content: '>';
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 12px;
+      height: 12px;
+      color: currentColor;
+      font-size: 11px;
+      line-height: 1;
+      transition: transform 120ms ease;
+    }
+
+    .tool-timeline[open] .tool-timeline__summary::before {
+      transform: rotate(90deg);
+    }
+
+    .tool-timeline__summary:hover {
+      color: var(--justdo-chat-text, #1a1a1a);
     }
 
     .tool-timeline__summary::-webkit-details-marker,
@@ -741,16 +779,16 @@ export class JustDoChatElement extends LitElement {
       display: grid;
       gap: 10px;
       margin: 0;
-      padding: 0 12px 12px 24px;
+      padding: 6px 0 0 18px;
       list-style: none;
     }
 
     .tool-timeline__list::before {
       content: '';
       position: absolute;
-      left: 30px;
+      left: 6px;
       top: 2px;
-      bottom: 14px;
+      bottom: 2px;
       width: 1px;
       background: var(--justdo-chat-border, rgba(0, 0, 0, 0.12));
     }
@@ -875,8 +913,7 @@ export class JustDoChatElement extends LitElement {
       background: rgba(255, 255, 255, 0.03);
     }
     :host(.dark) .tool-timeline {
-      border-color: rgba(255, 255, 255, 0.06);
-      background: rgba(255, 255, 255, 0.03);
+      background: transparent;
     }
     :host(.dark) .tool-timeline__body,
     :host(.dark) .tool-detail-box {

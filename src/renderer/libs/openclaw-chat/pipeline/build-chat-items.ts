@@ -263,16 +263,37 @@ function findAssistantWithAttachedToolIndex(items: ChatItem[], toolMessage: unkn
   return null;
 }
 
+function hasActiveToolTimeline(toolMessages: unknown[]): boolean {
+  const activeByToolId = new Map<string, boolean>();
+  let anonymousActive = false;
+
+  for (const message of toolMessages) {
+    const toolCallId = extractToolCallId(message);
+    const isActive = isLiveToolMessage(message);
+    if (toolCallId) {
+      activeByToolId.set(toolCallId, isActive);
+    } else if (isActive) {
+      anonymousActive = true;
+    }
+  }
+
+  return anonymousActive || [...activeByToolId.values()].some(Boolean);
+}
+
 function withAttachedToolMessage(
   message: unknown,
   toolMessage: unknown,
   options: { keepTimelineOpen?: boolean } = {},
 ): unknown {
   const raw = asRecord(message) ?? {};
+  const { __justdoToolTimelineOpen: _ignoredTimelineOpen, ...rest } = raw;
+  const attachedToolMessages = [...getAttachedToolMessages(raw), toolMessage];
+  const keepTimelineOpen =
+    options.keepTimelineOpen === true || hasActiveToolTimeline(attachedToolMessages);
   return {
-    ...raw,
-    __justdoAttachedToolMessages: [...getAttachedToolMessages(raw), toolMessage],
-    ...(options.keepTimelineOpen ? { __justdoToolTimelineOpen: true } : {}),
+    ...rest,
+    __justdoAttachedToolMessages: attachedToolMessages,
+    ...(keepTimelineOpen ? { __justdoToolTimelineOpen: true } : {}),
   };
 }
 
@@ -298,6 +319,10 @@ function withStreamToolMessage(item: Extract<ChatItem, { kind: 'stream' }>, tool
     ...item,
     toolMessages: [...(item.toolMessages ?? []), toolMessage],
   };
+}
+
+function isLiveToolMessage(toolMessage: unknown): boolean {
+  return asRecord(toolMessage)?.__justdoToolActive === true;
 }
 
 function isToolMessageRole(message: unknown): boolean {
@@ -382,10 +407,11 @@ function attachToolToNearestAssistant(items: ChatItem[], toolMessage: unknown): 
 }
 
 function attachLiveToolToVisibleTail(items: ChatItem[], toolMessage: unknown): void {
+  const keepTimelineOpen = isLiveToolMessage(toolMessage);
   const existingToolIndex = findAssistantWithAttachedToolIndex(items, toolMessage);
   if (
     existingToolIndex != null &&
-    attachToolToAssistantAtIndex(items, existingToolIndex, toolMessage, { keepTimelineOpen: true })
+    attachToolToAssistantAtIndex(items, existingToolIndex, toolMessage, { keepTimelineOpen })
   ) {
     return;
   }
@@ -394,7 +420,7 @@ function attachLiveToolToVisibleTail(items: ChatItem[], toolMessage: unknown): v
   const assistantIndex = findPreviousAssistantMessageIndex(items, timestamp);
   if (
     assistantIndex != null &&
-    attachToolToAssistantAtIndex(items, assistantIndex, toolMessage, { keepTimelineOpen: true })
+    attachToolToAssistantAtIndex(items, assistantIndex, toolMessage, { keepTimelineOpen })
   ) {
     return;
   }
@@ -413,13 +439,13 @@ function attachLiveToolToVisibleTail(items: ChatItem[], toolMessage: unknown): v
       if (raw?.__justdoToolTimelineOpen === true) {
         items[index] = {
           ...item,
-          message: withAttachedToolMessage(item.message, toolMessage, { keepTimelineOpen: true }),
+          message: withAttachedToolMessage(item.message, toolMessage, { keepTimelineOpen }),
         };
         return;
       }
     }
   }
-  appendSyntheticAssistantToolMessage(items, toolMessage, { keepTimelineOpen: true });
+  appendSyntheticAssistantToolMessage(items, toolMessage, { keepTimelineOpen });
 }
 
 function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {

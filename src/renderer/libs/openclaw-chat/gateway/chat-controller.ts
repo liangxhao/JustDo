@@ -290,6 +290,7 @@ export class ChatController {
     args: unknown;
     output?: string;
     isError?: boolean;
+    isActive?: boolean;
   }): Record<string, unknown> {
     const content: ToolContentBlock[] = [
       {
@@ -316,6 +317,7 @@ export class ChatController {
       toolName: params.name,
       content,
       timestamp: Date.now(),
+      __justdoToolActive: params.isActive === true,
     };
   }
 
@@ -930,6 +932,7 @@ export class ChatController {
         runId,
         name,
         args,
+        isActive: true,
       });
       const upsert = this.upsertToolMessage(toolMessage);
       console.log('[ChatCtrl] ▶ tool upsert(start)', { sourceEvent, toolCallId, existingIndex: upsert.existingIndex, nextCount: upsert.nextCount });
@@ -940,6 +943,16 @@ export class ChatController {
     // On tool-result/update: update the tool message with the best available
     // output. OpenClaw may send object results or partialResult updates.
     const error = stringifyToolOutput(data.error);
+    const hasPartialResult = data.partialResult !== undefined;
+    const isNonTerminalToolEvent = isNonTerminalToolPhase(phase);
+    const hasTerminalOutput =
+      data.result !== undefined ||
+      data.output !== undefined ||
+      data.content !== undefined ||
+      (data.text !== undefined && !isNonTerminalToolEvent) ||
+      error !== null;
+    const isTerminalToolEvent =
+      !isNonTerminalToolEvent && (isTerminalToolPhase(phase) || hasTerminalOutput);
     const output = stringifyToolOutput(
       data.result ?? data.partialResult ?? data.output ?? data.content ?? data.text,
     ) ?? error ?? '';
@@ -951,6 +964,7 @@ export class ChatController {
       args,
       output,
       isError: Boolean(error),
+      isActive: isNonTerminalToolEvent || (hasPartialResult && !isTerminalToolEvent),
     });
     const upsert = this.upsertToolMessage(toolMessage);
     console.log('[ChatCtrl] ▶ tool upsert(result)', {
@@ -1187,6 +1201,16 @@ function stringifyToolOutput(value: unknown): string | null {
   } catch {
     return String(value);
   }
+}
+
+function isTerminalToolPhase(phase: string): boolean {
+  return ['end', 'complete', 'completed', 'finish', 'finished', 'result', 'error'].includes(
+    phase.toLowerCase(),
+  );
+}
+
+function isNonTerminalToolPhase(phase: string): boolean {
+  return ['delta', 'partial', 'progress', 'update', 'streaming'].includes(phase.toLowerCase());
 }
 
 function isUnknownMethodError(err: unknown): boolean {
