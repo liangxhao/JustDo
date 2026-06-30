@@ -589,8 +589,9 @@ export class JustDoChatElement extends LitElement {
     /* ── Thinking Block ─────────────────────────────────────────────── */
 
     .chat-thinking {
-      margin-bottom: 8px;
+      width: fit-content;
       max-width: calc(100% - 44px);
+      margin-bottom: 4px;
       box-sizing: border-box;
     }
 
@@ -598,18 +599,32 @@ export class JustDoChatElement extends LitElement {
       cursor: pointer;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #9ca3af);
-      padding: 4px 0;
+      padding: 1px 0;
       user-select: none;
     }
 
     .chat-thinking__content {
-      padding: 8px 12px;
+      padding: 3px 6px;
       background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.02));
-      border-radius: 8px;
+      border-radius: 6px;
       font-size: 13px;
       color: var(--justdo-chat-text-secondary, #6b7280);
-      margin-top: 4px;
+      margin-top: 2px;
       border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.04));
+    }
+
+    .chat-thinking__content p,
+    .chat-thinking__content ul,
+    .chat-thinking__content ol,
+    .chat-thinking__content pre {
+      margin: 0;
+    }
+
+    .chat-thinking__content p + p,
+    .chat-thinking__content ul + p,
+    .chat-thinking__content ol + p,
+    .chat-thinking__content pre + p {
+      margin-top: 3px;
     }
 
     .chat-thinking--streaming .chat-thinking__content {
@@ -623,7 +638,7 @@ export class JustDoChatElement extends LitElement {
       gap: 6px;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #9ca3af);
-      padding: 4px 0;
+      padding: 1px 0;
     }
 
     .chat-thinking__indicator {
@@ -653,6 +668,7 @@ export class JustDoChatElement extends LitElement {
     /* ── Tool Messages ──────────────────────────────────────────────── */
 
     .tool-message {
+      width: fit-content;
       margin: 4px 0;
       padding: 8px 12px;
       background: var(--justdo-chat-tool-bg, rgba(0, 0, 0, 0.02));
@@ -731,6 +747,7 @@ export class JustDoChatElement extends LitElement {
     /* ── Tool Timeline ──────────────────────────────────────────────── */
 
     .tool-timeline {
+      width: fit-content;
       margin: 6px 0 8px;
       max-width: calc(100% - 44px);
       box-sizing: border-box;
