@@ -1,3 +1,4 @@
+import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
@@ -26,26 +27,12 @@ type Subagent = {
   totalTokens?: number;
 };
 
-type ContextMenuState = {
-  x: number;
-  y: number;
-  subagent: Subagent;
-};
-
 const statusStyles: Record<SubagentStatus, string> = {
   running: 'bg-blue-500 animate-pulse',
   done: 'bg-green-500',
   failed: 'bg-red-500',
   killed: 'bg-red-500',
   timeout: 'bg-red-500',
-};
-
-const statusLabels: Record<SubagentStatus, string> = {
-  running: 'subagentStatusRunning',
-  done: 'subagentStatusDone',
-  failed: 'subagentStatusFailed',
-  killed: 'subagentStatusKilled',
-  timeout: 'subagentStatusTimeout',
 };
 
 interface SubagentMenuProps {
@@ -56,7 +43,6 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [subagents, setSubagents] = useState<Subagent[]>([]);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [detailSubagent, setDetailSubagent] = useState<Subagent | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const refreshInFlightRef = useRef(false);
@@ -93,7 +79,6 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId }) => {
   useEffect(() => {
     hasLoadedRef.current = false;
     setSubagents([]);
-    setContextMenu(null);
     setDetailSubagent(null);
   }, [sessionId]);
 
@@ -109,23 +94,11 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId }) => {
     const close = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
         setIsOpen(false);
-        setContextMenu(null);
       }
     };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [isOpen]);
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener('resize', close);
-    window.addEventListener('blur', close);
-    return () => {
-      window.removeEventListener('resize', close);
-      window.removeEventListener('blur', close);
-    };
-  }, [contextMenu]);
 
   const formatDateTime = (value?: number): string =>
     value ? new Date(value).toLocaleString() : i18nService.t('subagentInfoUnavailable');
@@ -143,7 +116,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId }) => {
 
   const detailRows = detailSubagent
     ? [
-        [i18nService.t('subagentInfoStatus'), i18nService.t(statusLabels[detailSubagent.status])],
+        [i18nService.t('subagentInfoStatus'), detailSubagent.status],
         [i18nService.t('subagentInfoTask'), detailSubagent.task],
         [i18nService.t('subagentInfoModel'), detailSubagent.model],
         [i18nService.t('subagentInfoRuntime'), formatRuntime(detailSubagent.runtimeMs)],
@@ -203,15 +176,6 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId }) => {
               subagents.map(subagent => (
                 <div
                   key={subagent.id}
-                  onContextMenu={event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setContextMenu({
-                      x: Math.min(event.clientX, window.innerWidth - 180),
-                      y: Math.min(event.clientY, window.innerHeight - 48),
-                      subagent,
-                    });
-                  }}
                   className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-surface-raised"
                 >
                   <span
@@ -220,31 +184,22 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId }) => {
                   <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                     {subagent.label}
                   </span>
+                  <button
+                    type="button"
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface hover:text-foreground"
+                    onClick={() => setDetailSubagent(subagent)}
+                    aria-label={i18nService.t('subagentShowInfo')}
+                    title={i18nService.t('subagentShowInfo')}
+                  >
+                    <InformationCircleIcon className="h-4 w-4" />
+                  </button>
                   <span className="shrink-0 text-xs text-secondary">
-                    {i18nService.t(statusLabels[subagent.status])}
+                    {subagent.status}
                   </span>
                 </div>
               ))
             )}
           </div>
-        </div>
-      )}
-
-      {contextMenu && (
-        <div
-          className="context-menu fixed z-[90] min-w-44"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            type="button"
-            className="menu-item w-full text-left"
-            onClick={() => {
-              setDetailSubagent(contextMenu.subagent);
-              setContextMenu(null);
-            }}
-          >
-            {i18nService.t('subagentShowInfo')}
-          </button>
         </div>
       )}
 
