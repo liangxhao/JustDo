@@ -2,7 +2,6 @@
  * Message normalization utilities for chat rendering.
  */
 
-import { mediaKindFromMime } from '../shims/media-core';
 import { stripInboundMetadata } from '../shims/backend-helpers';
 import { extractCanvasShortcodes } from '../shims/backend-helpers';
 import {
@@ -12,7 +11,8 @@ import {
 } from '../shims/backend-helpers';
 import { splitMediaFromOutput } from '../shims/backend-helpers';
 import { parseInlineDirectives } from '../shims/backend-helpers';
-import type { NormalizedMessage, MessageContentItem } from '../types';
+import { mediaKindFromMime } from '../shims/media-core';
+import type { MessageContentItem, NormalizedMessage } from '../types';
 export { isToolResultMessage, normalizeRoleForGrouping } from './role-normalizer';
 
 function coerceCanvasPreview(
@@ -111,7 +111,9 @@ function getFileExtension(url: string): string | undefined {
       if (/^https?:\/\//i.test(trimmed)) {
         return new URL(trimmed).pathname;
       }
-    } catch {}
+    } catch {
+      return trimmed;
+    }
     return trimmed;
   })();
   const fileName = source.split(/[\\/]/).pop() ?? source;
@@ -138,7 +140,10 @@ function inferAttachmentKind(url: string): {
         const name = parsed.pathname.split('/').pop()?.trim();
         return name || parsed.hostname || url;
       }
-    } catch {}
+    } catch {
+      const name = url.split(/[\\/]/).pop()?.trim();
+      return name || url;
+    }
     const name = url.split(/[\\/]/).pop()?.trim();
     return name || url;
   })();
@@ -202,12 +207,12 @@ function mergeAdjacentTextItems(items: MessageContentItem[]): MessageContentItem
   for (const item of items) {
     const previous = merged[merged.length - 1];
     if (item.type === 'text' && previous?.type === 'text') {
-      previous.text = [previous.text, item.text].filter((value) => value !== undefined).join('\n');
+      previous.text = [previous.text, item.text].filter(value => value !== undefined).join('\n');
       continue;
     }
     merged.push(item);
   }
-  return merged.filter((item) => item.type !== 'text' || Boolean(item.text?.trim()));
+  return merged.filter(item => item.type !== 'text' || Boolean(item.text?.trim()));
 }
 
 export function stripMessageDisplayMetadataText(text: string): string {
@@ -216,13 +221,13 @@ export function stripMessageDisplayMetadataText(text: string): string {
 
 function stripMessageDisplayMetadata(items: MessageContentItem[]): MessageContentItem[] {
   return items
-    .map((item) => {
+    .map(item => {
       if (item.type !== 'text' || typeof item.text !== 'string') {
         return item;
       }
       return { ...item, text: stripMessageDisplayMetadataText(item.text) };
     })
-    .filter((item) => item.type !== 'text' || Boolean(item.text?.trim()));
+    .filter(item => item.type !== 'text' || Boolean(item.text?.trim()));
 }
 
 function expandTextContent(text: string): {
@@ -277,7 +282,7 @@ function expandTextContent(text: string): {
   }
 
   const content = mergeAdjacentTextItems(
-    parts.map((item) => {
+    parts.map(item => {
       if (item.type === 'attachment' && item.attachment.kind === 'audio' && audioAsVoice) {
         return Object.assign({}, item, { attachment: { ...item.attachment, isVoiceNote: true } });
       }
@@ -289,10 +294,10 @@ function expandTextContent(text: string): {
     content:
       content.length > 0
         ? content
-        : (parsed.mediaUrls ?? []).some((url) => shouldPreserveRelativeAssistantAttachment(url))
+        : (parsed.mediaUrls ?? []).some(url => shouldPreserveRelativeAssistantAttachment(url))
           ? (parsed.mediaUrls ?? [])
-              .filter((url) => shouldPreserveRelativeAssistantAttachment(url))
-              .map((url) => ({ type: 'text' as const, text: `MEDIA:${url}` }))
+              .filter(url => shouldPreserveRelativeAssistantAttachment(url))
+              .map(url => ({ type: 'text' as const, text: `MEDIA:${url}` }))
           : replyTarget === null && !audioAsVoice && parsed.text.trim().length > 0
             ? [{ type: 'text', text: parsed.text }]
             : [],
@@ -315,14 +320,14 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
   const contentItems = Array.isArray(contentRaw) ? contentRaw : null;
   const hasToolContent =
     Array.isArray(contentItems) &&
-    contentItems.some((item) => {
+    contentItems.some(item => {
       const x = item as Record<string, unknown>;
       return isToolResultContentType(x.type) || isToolCallContentType(x.type);
     });
 
   const hasToolName = typeof m.toolName === 'string' || typeof m.tool_name === 'string';
 
-  if (hasToolId || hasToolContent || hasToolName) {
+  if (hasToolId || hasToolName || (hasToolContent && role !== 'assistant')) {
     role = 'toolResult';
   }
   const isAssistantMessage = role === 'assistant';

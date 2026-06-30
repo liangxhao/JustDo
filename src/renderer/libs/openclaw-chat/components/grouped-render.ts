@@ -6,20 +6,33 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
-import type { MessageGroup, NormalizedMessage, ToolCard } from '../types';
-import { extractTextCached, extractThinkingCached, formatReasoningMarkdown } from '../pipeline/message-extract';
+import { i18nService } from '../../../services/i18n';
+import {
+  extractTextCached,
+  extractThinkingCached,
+  formatReasoningMarkdown,
+} from '../pipeline/message-extract';
 import { normalizeMessage } from '../pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '../pipeline/role-normalizer';
-import { extractToolCardsCached } from '../pipeline/tool-cards';
-import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from './markdown';
-import { renderChatAvatar } from './chat-avatar';
-import { resolveToolDisplay } from './tool-display';
 import { detectTextDirection } from '../pipeline/text-direction';
-import { i18nService } from '../../../services/i18n';
+import { extractToolCardsCached } from '../pipeline/tool-cards';
+import type { MessageGroup, NormalizedMessage, ToolCard } from '../types';
+import { renderChatAvatar } from './chat-avatar';
+import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from './markdown';
+import { resolveToolDisplay } from './tool-display';
 
 const COPY_ICON = html`
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="15" height="15"
-    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    width="15"
+    height="15"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
     <rect width="14" height="14" x="8" y="8" rx="2"></rect>
     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
   </svg>
@@ -50,7 +63,9 @@ function renderCopyButton(text: string): TemplateResult {
       aria-label=${label}
       title=${label}
       @click=${(event: Event) => void copyMessage(event, text)}
-    >${COPY_ICON}</button>
+    >
+      ${COPY_ICON}
+    </button>
   `;
 }
 
@@ -64,6 +79,61 @@ function formatToolValue(value: unknown): string {
   }
 }
 
+function getAttachedToolMessages(message: unknown): unknown[] {
+  const attached = (message as Record<string, unknown> | null)?.__justdoAttachedToolMessages;
+  return Array.isArray(attached) ? attached : [];
+}
+
+function toolMessagesToCards(messages: unknown[]): ToolCard[] {
+  return messages.flatMap((message, index) =>
+    extractToolCardsCached(message, `attached-tool:${index}`),
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function toolCardDedupeKey(card: ToolCard): string {
+  const normalizedId = card.id.replace(/^(?:attached-tool:\d+|preview|tool):/, '');
+  const isGeneratedFallbackId = new RegExp(`^(?:${escapeRegExp(card.name)}|tool):\\d+$`).test(
+    normalizedId,
+  );
+  return isGeneratedFallbackId ? `${card.id}:${card.name}` : normalizedId;
+}
+
+function mergeToolCard(existing: ToolCard, incoming: ToolCard): ToolCard {
+  return {
+    ...existing,
+    args: existing.args ?? incoming.args,
+    inputText: existing.inputText ?? incoming.inputText,
+    outputText: incoming.outputText ?? existing.outputText,
+    isError: incoming.isError ?? existing.isError,
+    messageId: incoming.messageId ?? existing.messageId,
+    preview: incoming.preview ?? existing.preview,
+  };
+}
+
+function dedupeToolCards(cards: ToolCard[]): ToolCard[] {
+  const indexByKey = new Map<string, number>();
+  const result: ToolCard[] = [];
+  for (const card of cards) {
+    const key = toolCardDedupeKey(card);
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex !== undefined) {
+      result[existingIndex] = mergeToolCard(result[existingIndex] ?? card, card);
+      continue;
+    }
+    indexByKey.set(key, result.length);
+    result.push(card);
+  }
+  return result;
+}
+
+function shouldOpenToolTimeline(rawMessage: unknown): boolean {
+  return (rawMessage as Record<string, unknown> | null)?.__justdoToolTimelineOpen === true;
+}
+
 // ─── Message Group Rendering ────────────────────────────────────────────────
 
 export function renderMessageGroup(
@@ -73,12 +143,6 @@ export function renderMessageGroup(
   if (!group.messages || group.messages.length === 0) return nothing;
 
   const role = normalizeRoleForGrouping(group.role);
-  const isTool = role === 'tool';
-
-  // For tool groups with multiple messages, collapse into activity
-  if (isTool && group.messages.length > 1) {
-    return renderToolActivityGroup(group);
-  }
 
   // Single message groups
   const msg = group.messages[0];
@@ -116,7 +180,9 @@ function renderSingleMessage(
 // ─── User Message ───────────────────────────────────────────────────────────
 
 function renderUserMessage(msg: NormalizedMessage): TemplateResult {
-  const textContent = msg.content.filter((c): c is { type: 'text'; text?: string } => c.type === 'text');
+  const textContent = msg.content.filter(
+    (c): c is { type: 'text'; text?: string } => c.type === 'text',
+  );
   const text = textContent.map(c => c.text ?? '').join('\n');
   const dir = detectTextDirection(text);
   const htmlContent = toSanitizedMarkdownHtml(text);
@@ -133,23 +199,31 @@ function renderUserMessage(msg: NormalizedMessage): TemplateResult {
 
 function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): TemplateResult {
   const thinking = extractThinkingCached(rawMessage);
-  const toolCards = extractToolCardsCached(rawMessage) as ToolCard[];
-  const textContent = msg.content.filter((c): c is { type: 'text'; text?: string } => c.type === 'text');
+  const toolCards = dedupeToolCards([
+    ...(extractToolCardsCached(rawMessage) as ToolCard[]),
+    ...toolMessagesToCards(getAttachedToolMessages(rawMessage)),
+  ]);
+  const textContent = msg.content.filter(
+    (c): c is { type: 'text'; text?: string } => c.type === 'text',
+  );
   const text = textContent.map(c => c.text ?? '').join('\n');
   const dir = detectTextDirection(text);
 
-  // Render thinking, tools, and content as SEPARATE blocks (not nested in one bubble)
   return html`
     ${thinking ? renderThinkingBlock(thinking) : nothing}
-    ${toolCards.length > 0 ? renderToolCardsInline(toolCards) : nothing}
-    ${text ? html`
-      <div class="chat-bubble chat-bubble--assistant">
-        ${renderCopyButton(text)}
-        <div class="chat-bubble__text markdown-content" dir=${dir}>
-          ${unsafeHTML(toSanitizedMarkdownHtml(text))}
-        </div>
-      </div>
-    ` : nothing}
+    ${toolCards.length > 0
+      ? renderToolTimeline(toolCards, !shouldOpenToolTimeline(rawMessage))
+      : nothing}
+    ${text
+      ? html`
+          <div class="chat-bubble chat-bubble--assistant">
+            ${renderCopyButton(text)}
+            <div class="chat-bubble__text markdown-content" dir=${dir}>
+              ${unsafeHTML(toSanitizedMarkdownHtml(text))}
+            </div>
+          </div>
+        `
+      : nothing}
   `;
 }
 
@@ -160,9 +234,7 @@ function renderThinkingBlock(thinking: string): TemplateResult {
   return html`
     <details class="chat-thinking">
       <summary class="chat-thinking__summary">Thinking</summary>
-      <div class="chat-thinking__content">
-        ${unsafeHTML(toSanitizedMarkdownHtml(reasoning))}
-      </div>
+      <div class="chat-thinking__content">${unsafeHTML(toSanitizedMarkdownHtml(reasoning))}</div>
     </details>
   `;
 }
@@ -182,8 +254,16 @@ function renderToolMessage(message: unknown): TemplateResult {
       <summary class="tool-message__header">
         <span class="tool-message__icon">
           ${isError
-            ? html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`
-            : html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>`}
+            ? html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                <path
+                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+                />
+              </svg>`
+            : html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                <path
+                  d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"
+                />
+              </svg>`}
         </span>
         <span class="tool-message__name">${display.title}</span>
       </summary>
@@ -201,47 +281,43 @@ function renderToolMessage(message: unknown): TemplateResult {
   `;
 }
 
-// ─── Tool Cards Inline ──────────────────────────────────────────────────────
+// ─── Tool Timeline ──────────────────────────────────────────────────────────
 
-function renderToolCardsInline(cards: ToolCard[]): TemplateResult {
+function renderToolTimeline(cards: ToolCard[], collapsed: boolean): TemplateResult {
+  const toolNames = cards.map(card => resolveToolDisplay(card.name).title).join('、');
+  const summary = `${cards.length} ${i18nService.t('coworkToolTimelineSummaryLabel')}: ${toolNames}`;
   return html`
-    <div class="tool-cards-inline">
-      ${cards.map(card => {
-        const display = resolveToolDisplay(card.name);
-        return html`
-          <details class="tool-card ${card.isError ? 'tool-card--error' : ''}">
-            <summary class="tool-card__name">${display.title}</summary>
-            <div class="tool-card__details">
-              <section class="tool-detail-box">
-                <div class="tool-detail-box__label">${i18nService.t('coworkToolInput')}</div>
-                <pre><code>${card.inputText ?? formatToolValue(card.args)}</code></pre>
-              </section>
-              <section class="tool-detail-box">
-                <div class="tool-detail-box__label">${i18nService.t('coworkToolResult')}</div>
-                <pre><code>${card.outputText ?? i18nService.t('coworkToolRunning')}</code></pre>
-              </section>
-            </div>
-          </details>
-        `;
-      })}
-    </div>
+    <details class="tool-timeline" ?open=${!collapsed}>
+      <summary class="tool-timeline__summary">${summary}</summary>
+      <ol class="tool-timeline__list">
+        ${cards.map(card => renderToolTimelineItem(card))}
+      </ol>
+    </details>
   `;
 }
 
-// ─── Tool Activity Group ────────────────────────────────────────────────────
-
-function renderToolActivityGroup(group: MessageGroup): TemplateResult {
+function renderToolTimelineItem(card: ToolCard): TemplateResult {
+  const display = resolveToolDisplay(card.name);
+  const resultText = card.outputText ?? i18nService.t('coworkToolRunning');
   return html`
-    <div class="tool-activity-group" data-group-key=${group.key}>
-      <details class="tool-activity-group__disclosure">
-        <summary class="tool-activity-group__summary">
-          ${group.messages.length} tool operations
+    <li class="tool-timeline__item ${card.isError ? 'tool-timeline__item--error' : ''}">
+      <div class="tool-timeline__marker" aria-hidden="true"></div>
+      <details class="tool-timeline__body">
+        <summary class="tool-timeline__title">
+          <span class="tool-timeline__name">${display.title}</span>
         </summary>
-        <div class="tool-activity-group__messages">
-          ${group.messages.map(m => renderToolMessage(m.message))}
+        <div class="tool-message__details">
+          <section class="tool-detail-box">
+            <div class="tool-detail-box__label">${i18nService.t('coworkToolInput')}</div>
+            <pre><code>${card.inputText ?? formatToolValue(card.args)}</code></pre>
+          </section>
+          <section class="tool-detail-box">
+            <div class="tool-detail-box__label">${i18nService.t('coworkToolResult')}</div>
+            <pre><code>${resultText}</code></pre>
+          </section>
         </div>
       </details>
-    </div>
+    </li>
   `;
 }
 
@@ -274,9 +350,7 @@ export function renderStreamingThinkingGroup(text: string): TemplateResult {
         <span class="chat-thinking__indicator"></span>
         <span class="chat-thinking__label">Thinking</span>
       </div>
-      <div class="chat-thinking__content">
-        ${unsafeHTML(toStreamingMarkdownHtml(text))}
-      </div>
+      <div class="chat-thinking__content">${unsafeHTML(toStreamingMarkdownHtml(text))}</div>
     </div>
   `;
 }
@@ -284,11 +358,14 @@ export function renderStreamingThinkingGroup(text: string): TemplateResult {
 export function renderStreamingGroup(
   text: string,
   _startedAt: number,
+  toolMessages: unknown[] = [],
 ): TemplateResult {
+  const toolCards = dedupeToolCards(toolMessagesToCards(toolMessages));
   return html`
     <div class="chat-group chat-group--assistant chat-group--streaming">
       <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
       <div class="chat-group__content">
+        ${toolCards.length > 0 ? renderToolTimeline(toolCards, false) : nothing}
         <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
           ${renderCopyButton(text)}
           <div class="chat-bubble__text markdown-content">
@@ -306,9 +383,7 @@ export function renderReadingIndicatorGroup(): TemplateResult {
       <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
       <div class="chat-group__content">
         <div class="chat-bubble chat-bubble--assistant">
-          <div class="chat-reading-indicator">
-            <span></span><span></span><span></span>
-          </div>
+          <div class="chat-reading-indicator"><span></span><span></span><span></span></div>
         </div>
       </div>
     </div>

@@ -16,7 +16,14 @@ export type ChatItem =
       action?: { kind: 'session-checkpoints'; label: string };
       timestamp: number;
     }
-  | { kind: 'stream'; key: string; text: string; startedAt: number; isStreaming: boolean }
+  | {
+      kind: 'stream';
+      key: string;
+      text: string;
+      startedAt: number;
+      isStreaming: boolean;
+      toolMessages?: unknown[];
+    }
   | { kind: 'reading-indicator'; key: string };
 
 /** A group of consecutive messages from the same role (Slack-style layout) */
@@ -152,7 +159,14 @@ export type ChatQueueItem = {
   text: string;
   createdAt: number;
   sendSubmittedAtMs?: number;
-  sendState?: 'queued' | 'sending' | 'sent' | 'error' | 'failed' | 'waiting-model' | 'waiting-reconnect';
+  sendState?:
+    | 'queued'
+    | 'sending'
+    | 'sent'
+    | 'error'
+    | 'failed'
+    | 'waiting-model'
+    | 'waiting-reconnect';
   attachments?: ChatAttachment[];
 };
 

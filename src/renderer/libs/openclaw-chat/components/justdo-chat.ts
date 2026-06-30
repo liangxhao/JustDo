@@ -6,17 +6,17 @@
  * 1. Directly via properties (messages, stream, etc.)
  * 2. Via a ChatController reference (controller property)
  */
-import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
+import { css, html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { GatewayMessage, ChatItem, MessageGroup } from '../types';
 import type { ChatController } from '../gateway/chat-controller';
 import { buildChatItems } from '../pipeline/build-chat-items';
+import type { ChatItem, GatewayMessage, MessageGroup } from '../types';
 import {
   renderMessageGroup,
+  renderReadingIndicatorGroup,
   renderStreamingGroup,
   renderStreamingThinkingGroup,
-  renderReadingIndicatorGroup,
 } from './grouped-render';
 
 @customElement('justdo-chat')
@@ -71,7 +71,8 @@ export class JustDoChatElement extends LitElement {
   static styles = css`
     :host {
       display: block;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-family:
+        -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       font-size: 14px;
       line-height: 1.6;
       color: var(--justdo-chat-text, #1a1a1a);
@@ -130,12 +131,12 @@ export class JustDoChatElement extends LitElement {
     }
 
     .chat-avatar.tool {
-      background: var(--justdo-chat-tool-avatar-bg, rgba(0,0,0,0.05));
+      background: var(--justdo-chat-tool-avatar-bg, rgba(0, 0, 0, 0.05));
       color: var(--justdo-chat-tool-avatar-text, #6b7280);
     }
 
     .chat-avatar.other {
-      background: rgba(0,0,0,0.05);
+      background: rgba(0, 0, 0, 0.05);
       color: #6b7280;
     }
 
@@ -194,7 +195,10 @@ export class JustDoChatElement extends LitElement {
       cursor: pointer;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+      transition:
+        opacity 120ms ease,
+        background 120ms ease,
+        color 120ms ease;
     }
 
     .chat-bubble:hover .message-copy,
@@ -213,7 +217,7 @@ export class JustDoChatElement extends LitElement {
     }
 
     .chat-bubble--user {
-      background: var(--justdo-chat-user-bg, #EAF1FC);
+      background: var(--justdo-chat-user-bg, #eaf1fc);
       color: var(--justdo-chat-user-text, #1a1a1a);
       border-bottom-right-radius: 4px;
       margin-left: auto;
@@ -244,7 +248,7 @@ export class JustDoChatElement extends LitElement {
     }
 
     .chat-bubble--assistant {
-      background: var(--justdo-chat-assistant-bg, #FFFFFF);
+      background: var(--justdo-chat-assistant-bg, #ffffff);
       color: var(--justdo-chat-assistant-text, inherit);
       border-bottom-left-radius: 4px;
       max-width: calc(100% - 44px);
@@ -273,17 +277,26 @@ export class JustDoChatElement extends LitElement {
       margin-bottom: 0;
     }
 
-    .markdown-content h1, .markdown-content h2, .markdown-content h3,
+    .markdown-content h1,
+    .markdown-content h2,
+    .markdown-content h3,
     .markdown-content h4 {
       margin: 16px 0 8px 0;
       font-weight: 600;
     }
 
-    .markdown-content h1 { font-size: 1.3em; }
-    .markdown-content h2 { font-size: 1.2em; }
-    .markdown-content h3 { font-size: 1.1em; }
+    .markdown-content h1 {
+      font-size: 1.3em;
+    }
+    .markdown-content h2 {
+      font-size: 1.2em;
+    }
+    .markdown-content h3 {
+      font-size: 1.1em;
+    }
 
-    .markdown-content ul, .markdown-content ol {
+    .markdown-content ul,
+    .markdown-content ol {
       padding-left: 20px;
       margin: 4px 0;
     }
@@ -305,14 +318,15 @@ export class JustDoChatElement extends LitElement {
       width: 100%;
     }
 
-    .markdown-content th, .markdown-content td {
+    .markdown-content th,
+    .markdown-content td {
       border: 1px solid var(--justdo-chat-border, #e5e7eb);
       padding: 6px 10px;
       text-align: left;
     }
 
     .markdown-content th {
-      background: var(--justdo-chat-table-header-bg, rgba(0,0,0,0.03));
+      background: var(--justdo-chat-table-header-bg, rgba(0, 0, 0, 0.03));
       font-weight: 600;
     }
 
@@ -357,7 +371,7 @@ export class JustDoChatElement extends LitElement {
     }
 
     .markdown-content :not(pre) > code {
-      background: var(--justdo-chat-inline-code-bg, rgba(0,0,0,0.06));
+      background: var(--justdo-chat-inline-code-bg, rgba(0, 0, 0, 0.06));
       padding: 2px 6px;
       border-radius: 4px;
     }
@@ -390,7 +404,7 @@ export class JustDoChatElement extends LitElement {
 
     .code-block-copy {
       background: none;
-      border: 1px solid var(--justdo-chat-border, rgba(255,255,255,0.15));
+      border: 1px solid var(--justdo-chat-border, rgba(255, 255, 255, 0.15));
       color: var(--justdo-chat-text-secondary, #9ca3af);
       cursor: pointer;
       padding: 2px 8px;
@@ -400,7 +414,7 @@ export class JustDoChatElement extends LitElement {
     }
 
     .code-block-copy:hover {
-      background: rgba(255,255,255,0.1);
+      background: rgba(255, 255, 255, 0.1);
       color: #fff;
     }
 
@@ -430,51 +444,136 @@ export class JustDoChatElement extends LitElement {
 
     /* ── highlight.js (GitHub theme) ────────────────────────────────── */
 
-    .hljs { color: #24292e; }
-    .hljs-comment, .hljs-quote { color: #6a737d; font-style: italic; }
-    .hljs-keyword, .hljs-selector-tag { color: #d73a49; }
-    .hljs-literal, .hljs-number, .hljs-tag .hljs-attr { color: #005cc5; }
-    .hljs-string, .hljs-doctag, .hljs-regexp { color: #032f62; }
-    .hljs-title, .hljs-section, .hljs-selector-id { color: #6f42c1; font-weight: 600; }
-    .hljs-subst { font-weight: normal; }
-    .hljs-type, .hljs-class .hljs-title { color: #6f42c1; }
-    .hljs-tag, .hljs-name, .hljs-attribute { color: #22863a; }
-    .hljs-symbol, .hljs-bullet { color: #e36209; }
-    .hljs-built_in, .hljs-builtin-name { color: #005cc5; }
-    .hljs-meta { color: #735c0f; }
-    .hljs-deletion { color: #b31d28; background: #ffeef0; }
-    .hljs-addition { color: #22863a; background: #f0fff4; }
-    .hljs-emphasis { font-style: italic; }
-    .hljs-strong { font-weight: bold; }
+    .hljs {
+      color: #24292e;
+    }
+    .hljs-comment,
+    .hljs-quote {
+      color: #6a737d;
+      font-style: italic;
+    }
+    .hljs-keyword,
+    .hljs-selector-tag {
+      color: #d73a49;
+    }
+    .hljs-literal,
+    .hljs-number,
+    .hljs-tag .hljs-attr {
+      color: #005cc5;
+    }
+    .hljs-string,
+    .hljs-doctag,
+    .hljs-regexp {
+      color: #032f62;
+    }
+    .hljs-title,
+    .hljs-section,
+    .hljs-selector-id {
+      color: #6f42c1;
+      font-weight: 600;
+    }
+    .hljs-subst {
+      font-weight: normal;
+    }
+    .hljs-type,
+    .hljs-class .hljs-title {
+      color: #6f42c1;
+    }
+    .hljs-tag,
+    .hljs-name,
+    .hljs-attribute {
+      color: #22863a;
+    }
+    .hljs-symbol,
+    .hljs-bullet {
+      color: #e36209;
+    }
+    .hljs-built_in,
+    .hljs-builtin-name {
+      color: #005cc5;
+    }
+    .hljs-meta {
+      color: #735c0f;
+    }
+    .hljs-deletion {
+      color: #b31d28;
+      background: #ffeef0;
+    }
+    .hljs-addition {
+      color: #22863a;
+      background: #f0fff4;
+    }
+    .hljs-emphasis {
+      font-style: italic;
+    }
+    .hljs-strong {
+      font-weight: bold;
+    }
 
     :host(.dark) .hljs,
-    :host([data-theme="dark"]) .hljs { color: #e1e4e8; }
+    :host([data-theme='dark']) .hljs {
+      color: #e1e4e8;
+    }
     :host(.dark) .hljs-comment,
-    :host([data-theme="dark"]) .hljs-comment { color: #6a737d; }
+    :host([data-theme='dark']) .hljs-comment {
+      color: #6a737d;
+    }
     :host(.dark) .hljs-keyword,
-    :host([data-theme="dark"]) .hljs-keyword { color: #ff7b72; }
+    :host([data-theme='dark']) .hljs-keyword {
+      color: #ff7b72;
+    }
     :host(.dark) .hljs-string,
-    :host([data-theme="dark"]) .hljs-string { color: #a5d6ff; }
+    :host([data-theme='dark']) .hljs-string {
+      color: #a5d6ff;
+    }
     :host(.dark) .hljs-number,
-    :host([data-theme="dark"]) .hljs-number { color: #79c0ff; }
+    :host([data-theme='dark']) .hljs-number {
+      color: #79c0ff;
+    }
     :host(.dark) .hljs-title,
-    :host([data-theme="dark"]) .hljs-title { color: #d2a8ff; }
+    :host([data-theme='dark']) .hljs-title {
+      color: #d2a8ff;
+    }
     :host(.dark) .hljs-tag,
-    :host([data-theme="dark"]) .hljs-tag { color: #7ee787; }
+    :host([data-theme='dark']) .hljs-tag {
+      color: #7ee787;
+    }
     :host(.dark) .hljs-attr,
-    :host([data-theme="dark"]) .hljs-attr { color: #79c0ff; }
+    :host([data-theme='dark']) .hljs-attr {
+      color: #79c0ff;
+    }
 
     /* Detect dark mode via host class — follows app theme, not OS */
-    :host(.dark) .hljs { color: #e1e4e8; }
-    :host(.dark) .hljs-comment { color: #6a737d; }
-    :host(.dark) .hljs-keyword { color: #ff7b72; }
-    :host(.dark) .hljs-string { color: #a5d6ff; }
-    :host(.dark) .hljs-number { color: #79c0ff; }
-    :host(.dark) .hljs-title { color: #d2a8ff; }
-    :host(.dark) .hljs-tag { color: #7ee787; }
-    :host(.dark) .hljs-attr { color: #79c0ff; }
-    :host(.dark) .code-block-header { background: #161b22; }
-    :host(.dark) .markdown-content pre { background: #161b22; }
+    :host(.dark) .hljs {
+      color: #e1e4e8;
+    }
+    :host(.dark) .hljs-comment {
+      color: #6a737d;
+    }
+    :host(.dark) .hljs-keyword {
+      color: #ff7b72;
+    }
+    :host(.dark) .hljs-string {
+      color: #a5d6ff;
+    }
+    :host(.dark) .hljs-number {
+      color: #79c0ff;
+    }
+    :host(.dark) .hljs-title {
+      color: #d2a8ff;
+    }
+    :host(.dark) .hljs-tag {
+      color: #7ee787;
+    }
+    :host(.dark) .hljs-attr {
+      color: #79c0ff;
+    }
+    :host(.dark) .code-block-header {
+      background: #161b22;
+    }
+    :host(.dark) .markdown-content pre {
+      background: #161b22;
+    }
 
     /* ── Thinking Block ─────────────────────────────────────────────── */
 
@@ -492,12 +591,12 @@ export class JustDoChatElement extends LitElement {
 
     .chat-thinking__content {
       padding: 8px 12px;
-      background: var(--justdo-chat-thinking-bg, rgba(0,0,0,0.02));
+      background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.02));
       border-radius: 8px;
       font-size: 13px;
       color: var(--justdo-chat-text-secondary, #6b7280);
       margin-top: 4px;
-      border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.04));
+      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.04));
     }
 
     .chat-thinking--streaming .chat-thinking__content {
@@ -527,8 +626,15 @@ export class JustDoChatElement extends LitElement {
     }
 
     @keyframes thinking-pulse {
-      0%, 100% { opacity: 0.4; transform: scale(0.8); }
-      50% { opacity: 1; transform: scale(1.2); }
+      0%,
+      100% {
+        opacity: 0.4;
+        transform: scale(0.8);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.2);
+      }
     }
 
     /* ── Tool Messages ──────────────────────────────────────────────── */
@@ -536,7 +642,7 @@ export class JustDoChatElement extends LitElement {
     .tool-message {
       margin: 4px 0;
       padding: 8px 12px;
-      background: var(--justdo-chat-tool-bg, rgba(0,0,0,0.02));
+      background: var(--justdo-chat-tool-bg, rgba(0, 0, 0, 0.02));
       border-radius: 8px;
       border-left: 3px solid var(--justdo-chat-tool-border, #6b7280);
     }
@@ -582,14 +688,14 @@ export class JustDoChatElement extends LitElement {
 
     .tool-detail-box {
       overflow: hidden;
-      border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.08));
+      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
       border-radius: 6px;
       background: var(--justdo-chat-assistant-bg, #fff);
     }
 
     .tool-detail-box__label {
       padding: 5px 8px;
-      border-bottom: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.08));
+      border-bottom: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
       color: var(--justdo-chat-text-secondary, #6b7280);
       font-size: 10px;
       font-weight: 600;
@@ -607,57 +713,100 @@ export class JustDoChatElement extends LitElement {
       font-size: 12px;
     }
 
-    /* ── Tool Cards ─────────────────────────────────────────────────── */
+    /* ── Tool Timeline ──────────────────────────────────────────────── */
 
-    .tool-cards-inline {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      margin: 4px 0;
-    }
-
-    .tool-card {
-      padding: 4px 8px;
-      background: var(--justdo-chat-tool-bg, rgba(0,0,0,0.02));
-      border-radius: 6px;
-      font-size: 12px;
-      border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.06));
-      min-width: min(520px, 100%);
-    }
-
-    .tool-card__name {
-      cursor: pointer;
-      list-style: none;
-      font-weight: 500;
-    }
-
-    .tool-card--error {
-      border-color: var(--justdo-chat-error, #ef4444);
-      background: rgba(239, 68, 68, 0.05);
-    }
-
-    /* ── Tool Activity Group ────────────────────────────────────────── */
-
-    .tool-activity-group {
-      margin: 4px 0;
-    }
-
-    .tool-activity-group__disclosure {
-      border: 1px solid var(--justdo-chat-border, rgba(0,0,0,0.06));
+    .tool-timeline {
+      margin: 6px 0 8px;
+      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.06));
       border-radius: 8px;
       overflow: hidden;
+      background: var(--justdo-chat-tool-bg, rgba(0, 0, 0, 0.02));
     }
 
-    .tool-activity-group__summary {
+    .tool-timeline__summary {
       padding: 8px 12px;
-      background: var(--justdo-chat-tool-bg, rgba(0,0,0,0.02));
       cursor: pointer;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #6b7280);
+      list-style: none;
+      user-select: none;
     }
 
-    .tool-activity-group__messages {
-      padding: 8px;
+    .tool-timeline__summary::-webkit-details-marker,
+    .tool-timeline__title::-webkit-details-marker {
+      display: none;
+    }
+
+    .tool-timeline__list {
+      position: relative;
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0 12px 12px 24px;
+      list-style: none;
+    }
+
+    .tool-timeline__list::before {
+      content: '';
+      position: absolute;
+      left: 30px;
+      top: 2px;
+      bottom: 14px;
+      width: 1px;
+      background: var(--justdo-chat-border, rgba(0, 0, 0, 0.12));
+    }
+
+    .tool-timeline__item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 14px minmax(0, 1fr);
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .tool-timeline__marker {
+      position: relative;
+      z-index: 1;
+      width: 9px;
+      height: 9px;
+      margin-top: 7px;
+      border-radius: 50%;
+      background: var(--justdo-chat-accent, #6366f1);
+      box-shadow: 0 0 0 3px var(--justdo-chat-tool-bg, #f9fafb);
+    }
+
+    .tool-timeline__item--error .tool-timeline__marker {
+      background: var(--justdo-chat-error, #ef4444);
+    }
+
+    .tool-timeline__body {
+      min-width: 0;
+      padding: 7px 9px;
+      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.06));
+      border-radius: 7px;
+      background: var(--justdo-chat-assistant-bg, #fff);
+    }
+
+    .tool-timeline__title {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      font-size: 12px;
+      cursor: pointer;
+      list-style: none;
+      font-weight: 600;
+    }
+
+    .tool-timeline__name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+
+    .tool-timeline__body .tool-message__details {
+      margin-top: 8px;
     }
 
     /* ── Reading Indicator ──────────────────────────────────────────── */
@@ -676,12 +825,24 @@ export class JustDoChatElement extends LitElement {
       animation: typing-bounce 1.4s infinite ease-in-out;
     }
 
-    .chat-reading-indicator span:nth-child(2) { animation-delay: 0.2s; }
-    .chat-reading-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    .chat-reading-indicator span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+    .chat-reading-indicator span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
 
     @keyframes typing-bounce {
-      0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-      40% { transform: scale(1); opacity: 1; }
+      0%,
+      80%,
+      100% {
+        transform: scale(0.6);
+        opacity: 0.4;
+      }
+      40% {
+        transform: scale(1);
+        opacity: 1;
+      }
     }
 
     /* ── Empty State ────────────────────────────────────────────────── */
@@ -704,20 +865,29 @@ export class JustDoChatElement extends LitElement {
     }
     :host(.dark) .chat-bubble--assistant {
       background: var(--justdo-chat-assistant-bg, #1f2937);
-      border-color: rgba(255,255,255,0.06);
+      border-color: rgba(255, 255, 255, 0.06);
     }
     :host(.dark) .chat-thinking__content {
-      background: rgba(255,255,255,0.03);
-      border-color: rgba(255,255,255,0.06);
+      background: rgba(255, 255, 255, 0.03);
+      border-color: rgba(255, 255, 255, 0.06);
     }
     :host(.dark) .tool-message {
-      background: rgba(255,255,255,0.03);
+      background: rgba(255, 255, 255, 0.03);
     }
-    :host(.dark) .tool-activity-group__disclosure {
-      border-color: rgba(255,255,255,0.06);
+    :host(.dark) .tool-timeline {
+      border-color: rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.03);
     }
-    :host(.dark) .tool-activity-group__summary {
-      background: rgba(255,255,255,0.02);
+    :host(.dark) .tool-timeline__body,
+    :host(.dark) .tool-detail-box {
+      background: var(--justdo-chat-assistant-bg, #1f2937);
+      border-color: rgba(255, 255, 255, 0.06);
+    }
+    :host(.dark) .tool-timeline__list::before {
+      background: rgba(255, 255, 255, 0.14);
+    }
+    :host(.dark) .tool-timeline__marker {
+      box-shadow: 0 0 0 3px #1f2937;
     }
   `;
 
@@ -740,18 +910,20 @@ export class JustDoChatElement extends LitElement {
     if (ctrl?.state.pendingUserMessage) {
       const pending = ctrl.state.pendingUserMessage as GatewayMessage;
       const alreadyInHistory = messages.some(
-        m => (m as Record<string, unknown>).role === 'user' &&
-             (m as Record<string, unknown>).content === pending.content &&
-             (m as Record<string, unknown>).timestamp === pending.timestamp,
+        m =>
+          (m as Record<string, unknown>).role === 'user' &&
+          (m as Record<string, unknown>).content === pending.content &&
+          (m as Record<string, unknown>).timestamp === pending.timestamp,
       );
       if (!alreadyInHistory) {
         messages = [...messages, pending];
       }
     }
 
-    const timelineMessages = thinkingMessages.length > 0
-      ? [...messages, ...(thinkingMessages as GatewayMessage[])]
-      : messages;
+    const timelineMessages =
+      thinkingMessages.length > 0
+        ? [...messages, ...(thinkingMessages as GatewayMessage[])]
+        : messages;
     const items = this.buildItems(timelineMessages, toolMessages, streamSegments, stream);
 
     // Detailed render diagnostic
@@ -804,7 +976,9 @@ export class JustDoChatElement extends LitElement {
       <div class="chat-container">
         ${items.map(item => this.renderItem(item))}
         ${thinkingStream ? renderStreamingThinkingGroup(thinkingStream) : nothing}
-        ${isStreaming && items.length === 0 && !stream && !thinkingStream ? renderReadingIndicatorGroup() : nothing}
+        ${isStreaming && items.length === 0 && !stream && !thinkingStream
+          ? renderReadingIndicatorGroup()
+          : nothing}
       </div>
     `;
   }
@@ -861,8 +1035,17 @@ export class JustDoChatElement extends LitElement {
         return renderMessageGroup(item as MessageGroup, { searchQuery: this.searchQuery });
       }
       if (item.kind === 'stream') {
-        const streamItem = item as { kind: 'stream'; text: string; startedAt: number };
-        return renderStreamingGroup(streamItem.text, streamItem.startedAt);
+        const streamItem = item as {
+          kind: 'stream';
+          text: string;
+          startedAt: number;
+          toolMessages?: unknown[];
+        };
+        return renderStreamingGroup(
+          streamItem.text,
+          streamItem.startedAt,
+          streamItem.toolMessages ?? [],
+        );
       }
       if (item.kind === 'reading-indicator') {
         return renderReadingIndicatorGroup();

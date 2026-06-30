@@ -212,26 +212,19 @@ export class ChatController {
   }
 
   private upsertToolMessage(toolMessage: Record<string, unknown>): { existingIndex: number; nextCount: number } {
-    const toolCallId = typeof toolMessage.toolCallId === 'string' ? toolMessage.toolCallId : '';
+    const toolCallId = this.extractToolCallId(toolMessage);
     const existingIndex = this.state.chatToolMessages.findIndex(
-      m => (m as Record<string, unknown>).toolCallId === toolCallId,
+      m => this.extractToolCallId(m as Record<string, unknown>) === toolCallId,
     );
 
     if (existingIndex >= 0) {
       const updated = [...this.state.chatToolMessages];
       const existing = updated[existingIndex] as Record<string, unknown>;
-      const existingContent = Array.isArray(existing.content) ? existing.content : [];
-      const nextContent = Array.isArray(toolMessage.content) ? toolMessage.content : [];
-      const existingHasResult = existingContent.some(
-        item => (item as Record<string, unknown>).type === 'toolresult',
-      );
-      const nextHasResult = nextContent.some(
-        item => (item as Record<string, unknown>).type === 'toolresult',
-      );
       updated[existingIndex] = {
         ...existing,
         ...toolMessage,
-        content: existingHasResult && !nextHasResult ? existingContent : nextContent,
+        timestamp: existing.timestamp ?? toolMessage.timestamp,
+        content: this.mergeToolMessageContent(existing.content, toolMessage.content),
       };
       this.state.chatToolMessages = updated;
     } else {
@@ -239,6 +232,54 @@ export class ChatController {
     }
 
     return { existingIndex, nextCount: this.state.chatToolMessages.length };
+  }
+
+  private extractToolCallId(toolMessage: Record<string, unknown>): string {
+    const direct =
+      (typeof toolMessage.toolCallId === 'string' && toolMessage.toolCallId) ||
+      (typeof toolMessage.tool_call_id === 'string' && toolMessage.tool_call_id) ||
+      '';
+    if (direct) {
+      return direct;
+    }
+    const content = Array.isArray(toolMessage.content) ? toolMessage.content : [];
+    for (const item of content) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const block = item as Record<string, unknown>;
+      const id =
+        (typeof block.toolCallId === 'string' && block.toolCallId) ||
+        (typeof block.tool_call_id === 'string' && block.tool_call_id) ||
+        (typeof block.id === 'string' && block.id) ||
+        '';
+      if (id) {
+        return id;
+      }
+    }
+    return '';
+  }
+
+  private mergeToolMessageContent(existingContent: unknown, nextContent: unknown): unknown[] {
+    const existing = Array.isArray(existingContent) ? existingContent : [];
+    const next = Array.isArray(nextContent) ? nextContent : [];
+    const existingToolCall = existing.find(
+      item => (item as Record<string, unknown> | null)?.type === 'toolcall',
+    );
+    const nextToolCall = next.find(
+      item => (item as Record<string, unknown> | null)?.type === 'toolcall',
+    );
+    const existingResults = existing.filter(
+      item => (item as Record<string, unknown> | null)?.type === 'toolresult',
+    );
+    const nextResults = next.filter(
+      item => (item as Record<string, unknown> | null)?.type === 'toolresult',
+    );
+    const toolCall = existingToolCall ?? nextToolCall;
+    return [
+      ...(toolCall ? [toolCall] : []),
+      ...(nextResults.length > 0 ? nextResults : existingResults),
+    ];
   }
 
   private buildToolMessage(params: {
@@ -252,6 +293,7 @@ export class ChatController {
     const content: ToolContentBlock[] = [
       {
         type: 'toolcall',
+        toolCallId: params.toolCallId,
         name: params.name,
         arguments: params.args ?? {},
       },
@@ -259,6 +301,7 @@ export class ChatController {
     if (params.output !== undefined) {
       content.push({
         type: 'toolresult',
+        toolCallId: params.toolCallId,
         name: params.name,
         text: params.output,
         ...(params.isError ? { isError: true } : {}),
