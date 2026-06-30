@@ -790,44 +790,49 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="max-w-5xl mx-auto px-4 py-16 space-y-12">
-          {/* Welcome Section */}
-          <div className="text-center space-y-5">
-            <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto" />
-            <h2 className="text-3xl font-bold tracking-tight text-foreground">
-              {i18nService.t('coworkWelcome')}
-            </h2>
-            <p className="text-sm text-secondary max-w-md mx-auto">
-              {i18nService.t('coworkDescription')}
-            </p>
-          </div>
-
-          {/* Prompt Input Area - Large version with folder selector */}
-          <div className="space-y-3">
-            <div className="shadow-glow-accent rounded-2xl">
-              <CoworkPromptInput
-                ref={promptInputRef}
-                onSubmit={handleStartSession}
-                onStop={handleStopSession}
-                isStreaming={isStreaming}
-                disabled={!isEngineReady}
-                placeholder={i18nService.t('coworkPlaceholder')}
-                size="large"
-                workingDirectory={config.workingDirectory}
-                onWorkingDirectoryChange={async (dir: string) => {
-                  await coworkService.updateConfig({ workingDirectory: dir });
-                }}
-                showFolderSelector={true}
-                showModelSelector={true}
-              />
+        <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center px-4 py-10">
+          <div className="space-y-12">
+            {/* Welcome Section */}
+            <div className="text-center space-y-5">
+              <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto" />
+              <h2 className="text-3xl font-bold tracking-tight text-foreground">
+                {i18nService.t('coworkWelcome')}
+              </h2>
+              <p className="text-sm text-secondary max-w-md mx-auto">
+                {i18nService.t('coworkDescription')}
+              </p>
             </div>
-          </div>
 
-          {/* Quick Actions - temporarily hidden */}
-          <div className="space-y-4">
-            {selectedAction ? (
-              <PromptPanel action={selectedAction} onPromptSelect={handleQuickActionPromptSelect} />
-            ) : null}
+            {/* Prompt Input Area - Large version with folder selector */}
+            <div className="space-y-3">
+              <div className="shadow-glow-accent rounded-2xl">
+                <CoworkPromptInput
+                  ref={promptInputRef}
+                  onSubmit={handleStartSession}
+                  onStop={handleStopSession}
+                  isStreaming={isStreaming}
+                  disabled={!isEngineReady}
+                  placeholder={i18nService.t('coworkPlaceholder')}
+                  size="large"
+                  workingDirectory={config.workingDirectory}
+                  onWorkingDirectoryChange={async (dir: string) => {
+                    await coworkService.updateConfig({ workingDirectory: dir });
+                  }}
+                  showFolderSelector={true}
+                  showModelSelector={true}
+                />
+              </div>
+            </div>
+
+            {/* Quick Actions - temporarily hidden */}
+            <div className="space-y-4">
+              {selectedAction ? (
+                <PromptPanel
+                  action={selectedAction}
+                  onPromptSelect={handleQuickActionPromptSelect}
+                />
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
