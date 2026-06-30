@@ -13,6 +13,11 @@ interface ChatMessageDisplayProps {
   messages?: CoworkMessage[];
   isStreaming?: boolean;
   fullWidth?: boolean;
+  searchQuery?: string;
+  searchCaseSensitive?: boolean;
+  searchNavigationToken?: number;
+  searchNavigationDirection?: 1 | -1;
+  onSearchMatchCountChange?: (total: number, index: number) => void;
 }
 
 /**
@@ -26,6 +31,11 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   messages = [],
   isStreaming = false,
   fullWidth = false,
+  searchQuery = '',
+  searchCaseSensitive = false,
+  searchNavigationToken = 0,
+  searchNavigationDirection = 1,
+  onSearchMatchCountChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<JustDoChatElement | null>(null);
@@ -64,14 +74,21 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       contentObserver.observe(chat.shadowRoot, { childList: true, subtree: true });
     }
 
+    const handleSearchMatchCountChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ total?: number; index?: number }>).detail;
+      onSearchMatchCountChange?.(detail?.total ?? 0, detail?.index ?? -1);
+    };
+    chat.addEventListener('search-match-count-change', handleSearchMatchCountChange);
+
     return () => {
       themeObserver.disconnect();
       contentObserver.disconnect();
+      chat.removeEventListener('search-match-count-change', handleSearchMatchCountChange);
       chat.controller = null;
       chat.remove();
       chatRef.current = null;
     };
-  }, [fullWidth]);
+  }, [fullWidth, onSearchMatchCountChange]);
 
   useEffect(() => {
     const chat = chatRef.current;
@@ -82,6 +99,23 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       chat.isStreaming = isStreaming;
     }
   }, [controller, gatewayMessages, isStreaming]);
+
+  useEffect(() => {
+    const chat = chatRef.current;
+    if (!chat) return;
+    chat.searchQuery = searchQuery;
+    chat.searchCaseSensitive = searchCaseSensitive;
+    requestAnimationFrame(() => {
+      onSearchMatchCountChange?.(chat.getSearchMatchCount(), -1);
+    });
+  }, [onSearchMatchCountChange, searchCaseSensitive, searchQuery]);
+
+  useEffect(() => {
+    const chat = chatRef.current;
+    if (!chat || searchNavigationToken === 0) return;
+    const result = chat.navigateSearch(searchNavigationDirection);
+    onSearchMatchCountChange?.(result.total, result.index);
+  }, [onSearchMatchCountChange, searchNavigationDirection, searchNavigationToken]);
 
   useEffect(() => {
     const chat = chatRef.current;

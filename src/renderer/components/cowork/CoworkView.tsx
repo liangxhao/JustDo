@@ -28,6 +28,7 @@ import type {
 import { getCompactFolderName } from '../../utils/path';
 import ComposeIcon from '../icons/ComposeIcon';
 import FolderIcon from '../icons/FolderIcon';
+import SearchIcon from '../icons/SearchIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
@@ -56,6 +57,17 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const [openClawStatus, setOpenClawStatus] = useState<OpenClawEngineStatus | null>(null);
   const [isRestartingGateway, setIsRestartingGateway] = useState(false);
   const [selectedSubagent, setSelectedSubagent] = useState<Subagent | null>(null);
+  const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
+  const [sessionSearchQuery, setSessionSearchQuery] = useState('');
+  const [sessionSearchIgnoreCase, setSessionSearchIgnoreCase] = useState(true);
+  const [sessionSearchMatchCount, setSessionSearchMatchCount] = useState(0);
+  const [sessionSearchActiveIndex, setSessionSearchActiveIndex] = useState(-1);
+  const [sessionSearchNavigation, setSessionSearchNavigation] = useState<{
+    token: number;
+    direction: 1 | -1;
+  }>({ token: 0, direction: 1 });
+  const sessionSearchInputRef = useRef<HTMLInputElement>(null);
+  const sessionSearchPanelRef = useRef<HTMLDivElement>(null);
   // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
   // Track pending start request so stop can cancel delayed startup.
@@ -422,6 +434,62 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     setSelectedSubagent(null);
   }, [currentSession?.id]);
 
+  useEffect(() => {
+    setIsSessionSearchOpen(false);
+    setSessionSearchQuery('');
+    setSessionSearchMatchCount(0);
+    setSessionSearchActiveIndex(-1);
+    setSessionSearchNavigation({ token: 0, direction: 1 });
+  }, [currentSession?.id]);
+
+  useEffect(() => {
+    if (!isSessionSearchOpen) return;
+    requestAnimationFrame(() => {
+      sessionSearchInputRef.current?.focus();
+      sessionSearchInputRef.current?.select();
+    });
+  }, [isSessionSearchOpen]);
+
+  useEffect(() => {
+    if (!isSessionSearchOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (sessionSearchPanelRef.current?.contains(target)) return;
+      setIsSessionSearchOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsSessionSearchOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSessionSearchOpen]);
+
+  const handleSessionSearchMatchCountChange = useCallback((total: number, index: number) => {
+    setSessionSearchMatchCount(total);
+    setSessionSearchActiveIndex(index);
+  }, []);
+
+  const navigateSessionSearch = useCallback((direction: 1 | -1) => {
+    setSessionSearchNavigation(current => ({
+      token: current.token + 1,
+      direction,
+    }));
+  }, []);
+
+  const sessionSearchMatchCountText = i18nService
+    .t('coworkSearchMatchCount')
+    .replace('{current}', String(sessionSearchActiveIndex >= 0 ? sessionSearchActiveIndex + 1 : 0))
+    .split('{total}')
+    .join(String(sessionSearchMatchCount));
+
   const currentSessionFolderPath = currentSession?.cwd?.trim() || '';
   const currentSessionFolderName = currentSessionFolderPath
     ? getCompactFolderName(currentSessionFolderPath, 32)
@@ -553,7 +621,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       <div className="relative flex-1 flex flex-col h-full">
         {engineStatusBanner}
         {/* Header */}
-        <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
+        <div className="draggable relative flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
           <div className="non-draggable h-8 flex items-center">
             {isSidebarCollapsed && (
               <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
@@ -587,6 +655,23 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                 <span className="truncate">{currentSessionFolderName}</span>
               </button>
             )}
+            <button
+              type="button"
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
+                setIsSessionSearchOpen(open => !open);
+              }}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                isSessionSearchOpen
+                  ? 'text-primary hover:bg-surface-raised'
+                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+              }`}
+              title={i18nService.t('coworkSearchInSession')}
+              aria-label={i18nService.t('coworkSearchInSession')}
+            >
+              <SearchIcon className="h-4 w-4" />
+            </button>
             <SubagentMenu
               sessionId={currentSession.id}
               onOpenSubagent={setSelectedSubagent}
@@ -595,10 +680,73 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             />
             <WindowTitleBar inline />
           </div>
+          {isSessionSearchOpen && (
+            <div
+              ref={sessionSearchPanelRef}
+              className="non-draggable absolute right-16 top-full z-40 mt-2 flex min-h-9 max-w-[calc(100vw-5rem)] items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 shadow-popover"
+            >
+              <SearchIcon className="h-4 w-4 shrink-0 text-muted" />
+              <input
+                ref={sessionSearchInputRef}
+                value={sessionSearchQuery}
+                onChange={event => {
+                  setSessionSearchQuery(event.target.value);
+                  setSessionSearchActiveIndex(-1);
+                }}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    navigateSessionSearch(event.shiftKey ? -1 : 1);
+                  }
+                }}
+                className="h-7 w-48 bg-transparent text-sm text-foreground placeholder:text-muted focus:outline-none"
+                placeholder={i18nService.t('coworkSearchInSessionPlaceholder')}
+              />
+              <label className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised">
+                <input
+                  type="checkbox"
+                  checked={sessionSearchIgnoreCase}
+                  onChange={event => {
+                    setSessionSearchIgnoreCase(event.target.checked);
+                    setSessionSearchActiveIndex(-1);
+                  }}
+                  className="h-3.5 w-3.5 rounded border-border accent-primary"
+                />
+                <span className="whitespace-nowrap">{i18nService.t('ignoreCase')}</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => navigateSessionSearch(-1)}
+                disabled={sessionSearchMatchCount === 0}
+                className="h-7 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+              >
+                {i18nService.t('previous')}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigateSessionSearch(1)}
+                disabled={sessionSearchMatchCount === 0}
+                className="h-7 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+              >
+                {i18nService.t('next')}
+              </button>
+              <span className="min-w-[88px] text-center text-xs tabular-nums text-muted">
+                {sessionSearchMatchCountText}
+              </span>
+            </div>
+          )}
         </div>
         <div className="relative flex min-h-0 flex-1 flex-col">
           {/* Messages */}
-          <JustDoChatWrapper ref={chatWrapperRef} className="flex-1 min-h-0" />
+          <JustDoChatWrapper
+            ref={chatWrapperRef}
+            className="flex-1 min-h-0"
+            searchQuery={isSessionSearchOpen ? sessionSearchQuery : ''}
+            searchCaseSensitive={!sessionSearchIgnoreCase}
+            searchNavigationToken={sessionSearchNavigation.token}
+            searchNavigationDirection={sessionSearchNavigation.direction}
+            onSearchMatchCountChange={handleSessionSearchMatchCountChange}
+          />
           {/* Input */}
           <div className="shrink-0 pb-4 pt-2">
             <div

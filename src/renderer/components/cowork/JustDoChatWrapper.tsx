@@ -17,6 +17,11 @@ import ChatMessageDisplay from './ChatMessageDisplay';
 
 interface JustDoChatWrapperProps {
   className?: string;
+  searchQuery?: string;
+  searchCaseSensitive?: boolean;
+  searchNavigationToken?: number;
+  searchNavigationDirection?: 1 | -1;
+  onSearchMatchCountChange?: (total: number, index: number) => void;
 }
 
 export interface JustDoChatWrapperRef {
@@ -27,7 +32,14 @@ export interface JustDoChatWrapperRef {
   clearSending: () => void;
 }
 
-const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(({ className }, ref) => {
+const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(({
+  className,
+  searchQuery,
+  searchCaseSensitive,
+  searchNavigationToken,
+  searchNavigationDirection,
+  onSearchMatchCountChange,
+}, ref) => {
   const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
   const controllerRef = useRef<ChatController | null>(null);
   const [controller, setController] = useState<ChatController | null>(null);
@@ -168,7 +180,17 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     );
   }
 
-  return <ChatMessageDisplay className={className} controller={controller} />;
+  return (
+    <ChatMessageDisplay
+      className={className}
+      controller={controller}
+      searchQuery={searchQuery}
+      searchCaseSensitive={searchCaseSensitive}
+      searchNavigationToken={searchNavigationToken}
+      searchNavigationDirection={searchNavigationDirection}
+      onSearchMatchCountChange={onSearchMatchCountChange}
+    />
+  );
 });
 
 // ─── Gateway Connection ─────────────────────────────────────────────────────

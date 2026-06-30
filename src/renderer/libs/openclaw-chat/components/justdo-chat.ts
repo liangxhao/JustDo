@@ -50,6 +50,9 @@ export class JustDoChatElement extends LitElement {
   @property({ type: String, attribute: false })
   declare searchQuery: string;
 
+  @property({ type: Boolean, attribute: false })
+  declare searchCaseSensitive: boolean;
+
   @state()
   declare private currentMinimapIndex: number;
 
@@ -69,6 +72,7 @@ export class JustDoChatElement extends LitElement {
     this.streamStartedAt = null;
     this.isStreaming = false;
     this.searchQuery = '';
+    this.searchCaseSensitive = false;
     this.currentMinimapIndex = -1;
     this.hoveredMinimapIndex = null;
     this.isMinimapHovered = false;
@@ -81,6 +85,7 @@ export class JustDoChatElement extends LitElement {
   private _streamUnsubscribe: (() => void) | null = null;
   private isMinimapNavigating = false;
   private minimapNavigatingTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeSearchIndex = -1;
 
   get controller(): ChatController | null {
     return this._controller;
@@ -1165,6 +1170,13 @@ export class JustDoChatElement extends LitElement {
     :host(.dark) .tool-timeline__marker {
       box-shadow: 0 0 0 3px #1f2937;
     }
+
+    .chat-search-mark {
+      border-radius: 3px;
+      background: rgba(250, 204, 21, 0.75);
+      color: #422006;
+      box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.45);
+    }
   `;
 
   // ─── Rendering ──────────────────────────────────────────────────────────
@@ -1252,8 +1264,16 @@ export class JustDoChatElement extends LitElement {
     this.updateCurrentMinimapIndex();
   }
 
-  protected updated(): void {
+  protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
     requestAnimationFrame(() => this.updateCurrentMinimapIndex());
+    if (
+      changedProperties?.has('searchQuery') ||
+      changedProperties?.has('searchCaseSensitive')
+    ) {
+      this.activeSearchIndex = -1;
+      this.clearSearchMarks();
+    }
+    requestAnimationFrame(() => this.emitSearchMatchCount());
   }
 
   private subscribeController(ctrl: ChatController): void {
@@ -1266,6 +1286,118 @@ export class JustDoChatElement extends LitElement {
     this._streamUnsubscribe?.();
     this._controllerUnsubscribe = null;
     this._streamUnsubscribe = null;
+  }
+
+  public getSearchMatchCount(): number {
+    return this.collectSearchMatches().length;
+  }
+
+  public navigateSearch(direction: 1 | -1): { index: number; total: number } {
+    this.clearSearchMarks();
+    const matches = this.collectSearchMatches();
+    const total = matches.length;
+    if (total === 0) {
+      this.activeSearchIndex = -1;
+      this.clearSearchMarks();
+      return { index: -1, total: 0 };
+    }
+
+    this.activeSearchIndex =
+      this.activeSearchIndex < 0
+        ? direction === 1
+          ? 0
+          : total - 1
+        : (this.activeSearchIndex + direction + total) % total;
+
+    this.highlightSearchMatch(matches[this.activeSearchIndex]);
+    return { index: this.activeSearchIndex, total };
+  }
+
+  private emitSearchMatchCount(): void {
+    const total = this.getSearchMatchCount();
+    if (this.activeSearchIndex >= total) {
+      this.activeSearchIndex = total > 0 ? total - 1 : -1;
+    }
+    this.dispatchEvent(
+      new CustomEvent('search-match-count-change', {
+        detail: { total, index: this.activeSearchIndex },
+      }),
+    );
+  }
+
+  private collectSearchMatches(): Array<{ node: Text; start: number; end: number }> {
+    const query = this.searchQuery.trim();
+    const root = this.shadowRoot?.querySelector('.chat-container');
+    if (!query || !root) return [];
+
+    const matcher = new RegExp(this.escapeRegExp(query), this.searchCaseSensitive ? 'g' : 'gi');
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || !node.nodeValue) return NodeFilter.FILTER_REJECT;
+        if (parent.closest('.chat-group__footer, button, input, textarea, select')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        matcher.lastIndex = 0;
+        return matcher.test(node.nodeValue)
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      },
+    });
+
+    const matches: Array<{ node: Text; start: number; end: number }> = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      const text = node.nodeValue ?? '';
+      matcher.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = matcher.exec(text))) {
+        matches.push({ node, start: match.index, end: match.index + match[0].length });
+        if (match[0].length === 0) matcher.lastIndex += 1;
+      }
+    }
+    return matches;
+  }
+
+  private highlightSearchMatch(match: { node: Text; start: number; end: number } | undefined): void {
+    this.clearSearchMarks();
+    if (!match) return;
+
+    const range = document.createRange();
+    range.setStart(match.node, match.start);
+    range.setEnd(match.node, match.end);
+
+    const mark = document.createElement('span');
+    mark.className = 'chat-search-mark';
+    mark.dataset.justdoSearchMark = 'true';
+    range.surroundContents(mark);
+    this.expandSearchMatchContainers(mark);
+    mark.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+  }
+
+  private expandSearchMatchContainers(mark: HTMLElement): void {
+    let current: HTMLElement | null = mark;
+    while (current) {
+      const details: HTMLDetailsElement | null = current.closest('details');
+      if (!details) return;
+      details.open = true;
+      current = details.parentElement;
+    }
+  }
+
+  private clearSearchMarks(): void {
+    const root = this.shadowRoot;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>('[data-justdo-search-mark="true"]').forEach(mark => {
+      const parent = mark.parentNode;
+      if (!parent) return;
+      parent.replaceChild(document.createTextNode(mark.textContent ?? ''), mark);
+      parent.normalize();
+    });
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   private buildItems(
