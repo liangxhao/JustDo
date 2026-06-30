@@ -337,8 +337,13 @@ function renderToolTimeline(cards: ToolCard[], collapsed: boolean): TemplateResu
 function renderToolTimelineItem(card: ToolCard): TemplateResult {
   const display = resolveToolDisplay(card.name);
   const resultText = card.outputText ?? i18nService.t('coworkToolRunning');
+  const statusClass = card.isError
+    ? 'tool-timeline__item--error'
+    : card.outputText
+      ? 'tool-timeline__item--completed'
+      : 'tool-timeline__item--running';
   return html`
-    <li class="tool-timeline__item ${card.isError ? 'tool-timeline__item--error' : ''}">
+    <li class="tool-timeline__item ${statusClass}">
       <div class="tool-timeline__marker" aria-hidden="true"></div>
       <details class="tool-timeline__body">
         <summary class="tool-timeline__title">

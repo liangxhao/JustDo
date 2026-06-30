@@ -550,19 +550,24 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           {/* Input */}
           <div className="shrink-0 pb-4 pt-2">
             <div
-              className="mx-auto min-w-0 shadow-glow-accent rounded-2xl"
+              className="mx-auto min-w-0 space-y-1.5"
               style={{ width: 'clamp(320px, 75%, 1120px)', maxWidth: 'calc(100% - 32px)' }}
             >
-              <CoworkPromptInput
-                onSubmit={handleSendMessage}
-                onStop={handleStopSession}
-                isStreaming={isStreaming}
-                disabled={!isEngineReady}
-                placeholder={i18nService.t('coworkPlaceholder')}
-                size="large"
-                showModelSelector={true}
-                sessionId={currentSession.id}
-              />
+              <div className="shadow-glow-accent rounded-2xl">
+                <CoworkPromptInput
+                  onSubmit={handleSendMessage}
+                  onStop={handleStopSession}
+                  isStreaming={isStreaming}
+                  disabled={!isEngineReady}
+                  placeholder={i18nService.t('coworkContinuePlaceholder')}
+                  size="large"
+                  showModelSelector={true}
+                  sessionId={currentSession.id}
+                />
+              </div>
+              <p className="px-1 text-center text-[11px] font-light leading-4 text-muted">
+                {i18nService.t('aiGeneratedDisclaimer')}
+              </p>
             </div>
           </div>
           <SubagentMessageDrawer

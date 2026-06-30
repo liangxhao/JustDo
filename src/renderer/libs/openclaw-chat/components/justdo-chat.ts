@@ -358,7 +358,6 @@ export class JustDoChatElement extends LitElement {
 
     .chat-bubble {
       padding: 10px 14px;
-      padding-right: 38px;
       border-radius: 12px;
       max-width: 100%;
       box-sizing: border-box;
@@ -370,8 +369,9 @@ export class JustDoChatElement extends LitElement {
 
     .message-copy {
       position: absolute;
-      top: 7px;
-      right: 8px;
+      top: 6px;
+      right: 6px;
+      z-index: 2;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -380,11 +380,13 @@ export class JustDoChatElement extends LitElement {
       padding: 0;
       border: 0;
       border-radius: 5px;
-      background: transparent;
+      background: color-mix(in srgb, var(--justdo-chat-assistant-bg, #ffffff) 86%, transparent);
       color: var(--justdo-chat-text-secondary, #6b7280);
       cursor: pointer;
       opacity: 0;
       pointer-events: none;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+      backdrop-filter: blur(4px);
       transition:
         opacity 120ms ease,
         background 120ms ease,
@@ -398,7 +400,7 @@ export class JustDoChatElement extends LitElement {
     }
 
     .message-copy:hover {
-      background: rgba(0, 0, 0, 0.08);
+      background: color-mix(in srgb, var(--justdo-chat-assistant-bg, #ffffff) 74%, rgba(0, 0, 0, 0.14));
     }
 
     .message-copy--copied {
@@ -413,6 +415,14 @@ export class JustDoChatElement extends LitElement {
       margin-left: auto;
       max-width: calc(100% - 44px);
       width: fit-content;
+    }
+
+    .chat-bubble--user .message-copy {
+      background: color-mix(in srgb, var(--justdo-chat-user-bg, #eaf1fc) 86%, transparent);
+    }
+
+    .chat-bubble--user .message-copy:hover {
+      background: color-mix(in srgb, var(--justdo-chat-user-bg, #eaf1fc) 74%, rgba(0, 0, 0, 0.14));
     }
 
     /* Remove default <p> margins inside user bubble — these add
@@ -778,7 +788,7 @@ export class JustDoChatElement extends LitElement {
     .chat-thinking {
       width: fit-content;
       max-width: calc(100% - 44px);
-      margin-bottom: 4px;
+      margin: 2px 0 6px;
       box-sizing: border-box;
     }
 
@@ -786,17 +796,17 @@ export class JustDoChatElement extends LitElement {
       cursor: pointer;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #9ca3af);
-      padding: 1px 0;
+      padding: 2px 0 3px;
       user-select: none;
     }
 
     .chat-thinking__content {
-      padding: 3px 6px;
+      padding: 7px 10px;
       background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.02));
-      border-radius: 6px;
+      border-radius: 8px;
       font-size: 13px;
       color: var(--justdo-chat-text-secondary, #6b7280);
-      margin-top: 2px;
+      margin-top: 3px;
       border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.04));
     }
 
@@ -825,7 +835,7 @@ export class JustDoChatElement extends LitElement {
       gap: 6px;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #9ca3af);
-      padding: 1px 0;
+      padding: 2px 0 3px;
     }
 
     .chat-thinking__indicator {
@@ -858,7 +868,7 @@ export class JustDoChatElement extends LitElement {
       width: fit-content;
       margin: 4px 0;
       padding: 8px 12px;
-      background: var(--justdo-chat-tool-bg, rgba(0, 0, 0, 0.02));
+      background: var(--justdo-chat-tool-bg, #f3f4f6);
       border-radius: 8px;
       border-left: 3px solid var(--justdo-chat-tool-border, #6b7280);
       max-width: calc(100% - 44px);
@@ -908,7 +918,7 @@ export class JustDoChatElement extends LitElement {
       overflow: hidden;
       border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
       border-radius: 6px;
-      background: var(--justdo-chat-assistant-bg, #fff);
+      background: var(--justdo-chat-tool-detail-bg, rgba(255, 255, 255, 0.72));
     }
 
     .tool-detail-box__label {
@@ -981,7 +991,7 @@ export class JustDoChatElement extends LitElement {
     .tool-timeline__list {
       position: relative;
       display: grid;
-      gap: 10px;
+      gap: 8px;
       margin: 0;
       padding: 6px 0 0 18px;
       list-style: none;
@@ -1012,8 +1022,12 @@ export class JustDoChatElement extends LitElement {
       height: 9px;
       margin-top: 7px;
       border-radius: 50%;
-      background: var(--justdo-chat-accent, #6366f1);
-      box-shadow: 0 0 0 3px var(--justdo-chat-tool-bg, #f9fafb);
+      background: var(--justdo-chat-text-secondary, #9ca3af);
+      box-shadow: 0 0 0 3px var(--justdo-chat-tool-bg, #f3f4f6);
+    }
+
+    .tool-timeline__item--completed .tool-timeline__marker {
+      background: var(--justdo-success, #22c55e);
     }
 
     .tool-timeline__item--error .tool-timeline__marker {
@@ -1022,10 +1036,10 @@ export class JustDoChatElement extends LitElement {
 
     .tool-timeline__body {
       min-width: 0;
-      padding: 7px 9px;
+      padding: 7px 10px;
       border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.06));
       border-radius: 7px;
-      background: var(--justdo-chat-assistant-bg, #fff);
+      background: var(--justdo-chat-tool-bg, #f3f4f6);
     }
 
     .tool-timeline__title {

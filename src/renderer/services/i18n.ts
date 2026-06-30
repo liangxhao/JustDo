@@ -461,7 +461,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkNewSession: '新会话',
     coworkContinuePlaceholder: '继续对话...',
     coworkRemoteManagedPlaceholder: '该会话由 IM 通道创建，请在对应的 IM 平台操作',
-    aiGeneratedDisclaimer: '内容由 AI 生成，仅供参考',
+    aiGeneratedDisclaimer: '内容由AI生成，仅供参考',
     updateAvailablePill: '有新版本',
     updateAvailableTitle: '检测到新版本',
     updateAvailableMessage: '检测到新版本，请前往官网下载并覆盖安装。',
