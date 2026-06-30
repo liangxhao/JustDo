@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vite 构建。核心 Agent 引擎为 OpenClaw，数据存储使用 SQLite。
+JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vite 构建。核心 Agent 引擎为 OpenClaw Gateway（以预构建 npm 包方式分发），数据存储使用 SQLite（UI 缓存层），消息渲染采用 Lit 自定义元素。
 
 ## 2. 核心技术栈
 
@@ -10,51 +10,92 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **Electron** | 41.2.0 | 跨平台桌面应用框架 |
-| **React** | 18.2.0 | UI 组件框架 |
-| **TypeScript** | 5.7.3 | 类型安全的 JavaScript |
-| **Vite** | 5.1.4 | 前端构建工具 |
-| **Redux Toolkit** | 2.2.1 | 状态管理 |
-| **Tailwind CSS** | 3.4.1 | 样式框架 |
+| **Electron** | ^41.2.0 | 跨平台桌面应用框架 |
+| **React** | ^18.2.0 | UI 组件框架（状态管理、设置、布局） |
+| **React DOM** | ^18.2.0 | React DOM 渲染器 |
+| **TypeScript** | ^5.7.3 | 类型安全的 JavaScript |
+| **Vite** | ^5.1.4 | 前端构建工具 |
+| **Redux Toolkit** | ^2.2.1 | 状态管理 |
+| **Tailwind CSS** | ^3.4.1 | 样式框架 |
 
 ### 2.2 Agent 层
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **OpenClaw** | v2026.6.9 | 主要 Agent 引擎 |
-| **@anthropic-ai/claude-agent-sdk** | 0.2.12 | 内置 Agent SDK（弃用但保留） |
-| **@modelcontextprotocol/sdk** | 1.27.1 | MCP 协议 SDK |
+| **OpenClaw Gateway** | v2026.6.9 | 单一 Agent 引擎（预构建 npm 包） |
+| **@modelcontextprotocol/sdk** | ^1.27.1 | MCP 协议 SDK |
+
+> **注意**：`@anthropic-ai/claude-agent-sdk` 已弃用并移除。JustDo 仅使用 OpenClaw Gateway 作为唯一 Agent 引擎，不维护任何双引擎架构。
 
 ### 2.3 数据层
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **better-sqlite3** | 12.8.0 | SQLite 数据库 |
+| **better-sqlite3** | ^12.8.0 | SQLite 数据库（UI 缓存） |
 
 ### 2.4 UI 层
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **@heroicons/react** | 2.1.1 | SVG 图标库 |
-| **react-markdown** | 10.0.0 | Markdown 渲染 |
-| **remark-gfm** | 4.0.1 | GitHub Flavored Markdown |
-| **remark-math** | 6.0.0 | 数学公式支持 |
-| **rehype-katex** | 7.0.1 | LaTeX 渲染 |
-| **mermaid** | 10.9.5 | 流程图渲染 |
-| **dompurify** | 3.3.1 | HTML/SVG 净化 |
+| **@dnd-kit/core** | ^6.3.1 | 拖放功能 |
+| **@heroicons/react** | ^2.1.1 | SVG 图标库 |
+| **@monaco-editor/react** | ^4.7.0 | Monaco 代码编辑器 |
+| **highlight.js** | ^11.11.1 | 代码语法高亮 |
+| **katex** | ^0.16.21 | LaTeX 数学公式渲染 |
+| **lit** | ^3.3.3 | Lit 自定义元素（`<justdo-chat>` 消息渲染） |
+| **markdown-it** | ^14.2.0 | Markdown 解析 |
+| **markdown-it-task-lists** | ^2.1.1 | 任务列表扩展 |
+| **mermaid** | ^10.9.5 | 流程图渲染 |
+| **react-markdown** | ^10.0.0 | React Markdown 渲染 |
+| **react-syntax-highlighter** | ^15.6.1 | 代码块语法高亮 |
+| **rehype-katex** | ^7.0.1 | KaTeX React 集成 |
+| **remark-gfm** | ^4.0.1 | GitHub Flavored Markdown |
+| **remark-math** | ^6.0.0 | 数学公式支持 |
+| **dompurify** | ^3.3.1 | HTML/SVG 净化 |
 
-### 2.5 IM 层
+### 2.5 聊天渲染层
 
-> IM 平台 SDK 将在集成后添加。
+消息渲染采用 Lit 自定义元素 `<justdo-chat>`，与 OpenClaw webchat 一致的渲染管线：
+
+| 组件 | 路径 | 用途 |
+|------|------|------|
+| `<justdo-chat>` Lit Element | `src/renderer/libs/openclaw-chat/components/justdo-chat.ts` | 消息列表渲染 |
+| GatewayClient | `src/renderer/libs/openclaw-chat/gateway/client.ts` | Gateway WebSocket 连接 |
+| ChatController | `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts` | 聊天状态与事件管理 |
+| buildChatItems | `src/renderer/libs/openclaw-chat/pipeline/build-chat-items.ts` | 消息管线处理 |
+| grouped-render | `src/renderer/libs/openclaw-chat/components/grouped-render.ts` | 消息组分段渲染 |
+| tool-display | `src/renderer/libs/openclaw-chat/components/tool-display.ts` | 工具调用显示 |
 
 ### 2.6 其他工具
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **electron-log** | 5.4.3 | 日志管理 |
-| **cronstrue** | 3.14.0 | Cron 表达式人类可读化 |
-| **uuid** | 11.1.0 | UUID 生成 |
-| **zod** | 4.3.6 | Schema 验证 |
+| **electron-log** | ^5.4.3 | 日志管理 |
+| **cronstrue** | ^3.14.0 | Cron 表达式人类可读化 |
+| **js-yaml** | ^4.1.1 | YAML 解析 |
+| **uuid** | ^11.1.0 | UUID 生成 |
+
+### 2.7 主题系统
+
+JustDo 内置 14 套完整主题，位于 `src/renderer/theme/themes/`：
+
+| 主题 | 说明 |
+|------|------|
+| `classic-light` / `classic-dark` | 经典浅色/深色 |
+| `cyber` | 赛博风格 |
+| `dawn` | 黎明 |
+| `daylight` | 日光 |
+| `emerald` | 翡翠绿 |
+| `midnight` | 午夜深色 |
+| `mocha` | 摩卡咖啡 |
+| `nord` | 北欧极简 |
+| `ocean` | 海洋蓝 |
+| `paper` | 纸张质感 |
+| `rose` | 玫瑰粉 |
+| `sakura` | 樱花 |
+| `sunset` | 日落 |
+
+主题引擎在 `src/renderer/theme/engine/`，通过 CSS 自定义属性和 Tailwind 配置实现。
 
 ## 3. 开发依赖
 
@@ -62,26 +103,26 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **electron-builder** | 24.12.0 | 打包分发 |
-| **esbuild** | 0.21.5 | 快速打包 |
-| **vite-plugin-electron** | 0.28.0 | Electron + Vite 集成 |
+| **electron-builder** | ^24.12.0 | 打包分发 |
+| **esbuild** | ^0.21.5 | 快速打包 |
+| **vite-plugin-electron** | ^0.28.0 | Electron + Vite 集成 |
 
 ### 3.2 测试工具
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **vitest** | 4.1.0 | 单元测试 |
-| **@types/better-sqlite3** | 7.6.13 | SQLite 类型定义 |
+| **vitest** | ^4.1.0 | 单元测试 |
+| **@types/better-sqlite3** | ^7.6.13 | SQLite 类型定义 |
 
 ### 3.3 代码质量
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **eslint** | 9.39.4 | 代码检查 |
-| **prettier** | 3.8.1 | 代码格式化 |
-| **husky** | 9.1.7 | Git hooks |
-| **lint-staged** | 16.4.0 | 暂存区检查 |
-| **@commitlint/cli** | 20.5.0 | 提交消息检查 |
+| **eslint** | ^9.39.4 | 代码检查 |
+| **prettier** | ^3.8.1 | 代码格式化 |
+| **husky** | ^9.1.7 | Git hooks |
+| **lint-staged** | ^16.4.0 | 暂存区检查 |
+| **@commitlint/cli** | ^20.5.0 | 提交消息检查 |
 
 ## 4. TypeScript 配置
 
@@ -148,36 +189,20 @@ export default defineConfig({
     electron([
       {
         entry: 'src/main/main.ts',
-        onstart: (options) => {
-          // 启动 Electron
-        },
-        vite: {
-          build: {
-            outDir: 'dist-electron',
-          },
-        },
+        onstart: (options) => { /* 启动 Electron */ },
+        vite: { build: { outDir: 'dist-electron' } },
       },
       {
         entry: 'src/main/preload.ts',
-        vite: {
-          build: {
-            outDir: 'dist-electron',
-          },
-        },
+        vite: { build: { outDir: 'dist-electron' } },
       },
     ]),
     renderer(),
   ],
-  server: {
-    port: 5175,
-  },
-  build: {
-    outDir: 'dist',
-  },
+  server: { port: 5175 },
+  build: { outDir: 'dist' },
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, 'src/renderer'),
-    },
+    alias: { '@': path.resolve(__dirname, 'src/renderer') },
   },
 });
 ```
@@ -189,20 +214,9 @@ export default defineConfig({
 {
   "appId": "com.justdo.app",
   "productName": "JustDo",
-  "directories": {
-    "output": "release"
-  },
-  "files": [
-    "dist/**/*",
-    "dist-electron/**/*",
-    "package.json"
-  ],
+  "directories": { "output": "release" },
+  "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
   "extraResources": [
-    {
-      "from": "resources/python-win",
-      "to": "python-win",
-      "filter": ["**/*"]
-    },
     {
       "from": "release/openclaw-runtime-current.asar",
       "to": "cfmind.asar"
@@ -210,19 +224,14 @@ export default defineConfig({
   ],
   "mac": {
     "category": "public.app-category.productivity",
-    "icon": "public/icon.icns",
     "target": ["dmg"]
   },
-  "win": {
-    "icon": "public/icon.ico",
-    "target": ["nsis"]
-  },
-  "linux": {
-    "icon": "public/icon.png",
-    "target": ["AppImage", "deb"]
-  }
+  "win": { "target": ["nsis"] },
+  "linux": { "target": ["AppImage", "deb"] }
 }
 ```
+
+> **注意**：`resources/python-win` 已不再打包在 electron-builder 配置中。Windows Python 运行时通过 `setup:python-runtime` 脚本动态处理。
 
 ## 7. NPM Scripts
 
@@ -232,10 +241,10 @@ export default defineConfig({
 # 开发模式（Vite + Electron hot reload）
 npm run electron:dev
 
-# 开发模式（含 OpenClaw 引擎）
+# 开发模式（含 OpenClaw 运行时）
 npm run electron:dev:openclaw
 
-# 仅启动 Vite
+# 仅启动 Vite dev server
 npm run dev
 
 # TypeScript 编译（仅 Electron）
@@ -262,64 +271,39 @@ npm test
 
 ```bash
 # macOS
-npm run dist:mac          # .dmg
-npm run dist:mac:x64      # Intel
-npm run dist:mac:arm64    # Apple Silicon
-npm run dist:mac:universal # 双架构
+npm run dist:mac              # Apple Silicon (arm64)
+npm run dist:mac:x64          # Intel
+npm run dist:mac:arm64        # Apple Silicon
+npm run dist:mac:universal    # 双架构
 
 # Windows
-npm run dist:win          # .exe NSIS
+npm run dist:win              # .exe NSIS
 
 # Linux
-npm run dist:linux        # .AppImage + .deb
+npm run dist:linux            # .AppImage + .deb
 ```
 
-### 7.4 OpenClaw 命令
+### 7.4 OpenClaw 运行时管理
 
 ```bash
-# 确保 OpenClaw 版本
-npm run openclaw:ensure
-
-# 应用 patches
-npm run openclaw:patch
-
-# 安装 plugins
-npm run openclaw:plugins
-
-# 同步本地扩展
-npm run openclaw:extensions:local
-
-# 打包 gateway
-npm run openclaw:bundle
-
-# 预编译扩展
-npm run openclaw:precompile
-
-# 清理 runtime
-npm run openclaw:prune
-
-# 构建 runtime（各平台）
-npm run openclaw:runtime:host     # 当前平台
+# 构建运行时（各平台）
+npm run openclaw:runtime:host           # 当前平台
 npm run openclaw:runtime:mac-arm64
+npm run openclaw:runtime:mac-x64
 npm run openclaw:runtime:win-x64
+npm run openclaw:runtime:win-arm64
 npm run openclaw:runtime:linux-x64
+npm run openclaw:runtime:linux-arm64
+
+# 运行时辅助
+npm run openclaw:plugins                # 安装 plugins
+npm run openclaw:extensions:local       # 同步本地扩展
+npm run openclaw:bundle                 # 打包 gateway
+npm run openclaw:precompile             # 预编译扩展
+npm run openclaw:prune                  # 清理运行时
 ```
 
-### 7.5 Skills 命令
-
-```bash
-# 构建 web-search skill
-npm run build:skill:web-search
-
-# 构建 tech-news skill
-npm run build:skill:tech-news
-
-# 构建 email skill
-npm run build:skill:email
-
-# 构建所有 skills
-npm run build:skills
-```
+> **注意**：`openclaw:ensure`、`openclaw:patch` 脚本已移除。Runtime 以预构建 npm 包形式下载，无需本地构建操作。Skills 由 OpenClaw Gateway 管理，本地不执行构建。
 
 ## 8. 环境变量
 
@@ -329,18 +313,6 @@ npm run build:skills
 |------|------|--------|
 | `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | — |
 
-### 8.2 IM Secrets
-
-> IM 平台相关环境变量将在集成后定义。
-
-### 8.3 Python Runtime（Windows 打包）
-
-| 变量 | 说明 |
-|------|------|
-| `JUSTDO_PORTABLE_PYTHON_ARCHIVE` | 本地预构建 Python runtime 路径 |
-| `JUSTDO_PORTABLE_PYTHON_URL` | Python runtime 下载 URL |
-| `JUSTDO_WINDOWS_EMBED_PYTHON_VERSION` | Windows Python 版本 |
-
 ## 9. 版本管理
 
 ### 9.1 应用版本
@@ -349,7 +321,7 @@ npm run build:skills
 
 ```json
 {
-  "version": "2026.4.12"
+  "version": "2026.6.25"
 }
 ```
 
@@ -367,6 +339,8 @@ npm run build:skills
 }
 ```
 
+OpenClaw 运行时以预构建 npm 包方式分发，通过平台特定脚本下载（`openclaw:runtime:*`）。
+
 ### 9.3 Node.js 版本要求
 
 ```json
@@ -382,7 +356,6 @@ npm run build:skills
 ```
 JustDo/
 ├── package.json              # 依赖和脚本定义
-├── package-lock.json         # 依赖锁定
 ├── tsconfig.json             # Renderer TypeScript 配置
 ├── electron-tsconfig.json    # Main TypeScript 配置
 ├── vite.config.ts            # Vite 构建配置
@@ -396,78 +369,76 @@ JustDo/
 │
 ├── src/
 │   ├── main/                 # Electron 主进程
-│   ├── renderer/             # React UI
-│   ├── shared/               # 共享代码
-│   ├── scheduledTask/        # 定时任务
-│   └── common/               # 公共代码
+│   │   ├── main.ts           # 入口
+│   │   ├── preload.ts        # contextBridge 安全层
+│   │   ├── sqliteStore.ts    # SQLite 数据库管理
+│   │   ├── coworkStore.ts    # Cowork 数据 CRUD
+│   │   └── libs/             # 引擎管理、配置同步
+│   │
+│   ├── renderer/             # React UI + Lit chat
+│   │   ├── App.tsx           # 根组件
+│   │   ├── theme/            # 主题系统
+│   │   │   ├── engine/       # 主题引擎
+│   │   │   ├── themes/       # 14 套主题定义
+│   │   │   ├── tailwind/     # Tailwind 主题集成
+│   │   │   └── tokens/       # 设计令牌
+│   │   ├── components/       # UI 组件
+│   │   │   ├── cowork/       # Cowork 相关组件
+│   │   │   │   ├── JustDoChatWrapper.tsx   # React ↔ Lit 桥接
+│   │   │   │   ├── CoworkView.tsx
+│   │   │   │   ├── CoworkSessionList.tsx
+│   │   │   │   └── ...
+│   │   │   └── ...
+│   │   ├── libs/
+│   │   │   └── openclaw-chat/ # Lit 聊天渲染管线
+│   │   │       ├── gateway/   # GatewayClient + ChatController
+│   │   │       ├── components/# Lit 组件
+│   │   │       ├── pipeline/  # 消息处理管线
+│   │   │       ├── conversion/# 数据转换
+│   │   │       └── shims/     # 兼容层
+│   │   ├── store/             # Redux store
+│   │   └── types/             # TypeScript 类型
+│   │
+│   ├── scheduledTask/         # 定时任务（cron 引擎、元数据）
+│   └── shared/                # 共享常量和类型
 │
-├── resources/skills/                   # Skills 定义
-│   ├── skills.config.json
-│   ├── web-search/
-│   ├── docx/
-│   ├── xlsx/
-│   ├── pptx/
-│   └── ...
+├── resources/skills/          # 17 个内置技能定义（Gateway 管理）
 │
-├── scripts/                  # 构建脚本
+├── scripts/                   # 构建和工具脚本
+│   ├── install-openclaw-runtime.cjs
+│   ├── openclaw-runtime-host.cjs
 │   ├── setup-python-runtime.js
 │   └── ...
 │
-├── openclaw-extensions/      # OpenClaw 本地扩展
+├── openclaw-extensions/       # OpenClaw 本地扩展
 │   ├── mcp-bridge/
-│   ├── ask-user-question/
-│   └── ...
+│   └── ask-user-question/
 │
-├── tests/                    # 测试文件
-│   ├── openclawConfigSync.test.mjs
-│   └── ...
+├── tests/                     # 测试文件
 │
-├── docs/                     # 设计文档
-│   ├── README.md
-│   ├── 01-overview.md
-│   └── ...
-│
-├── release/                  # 打包输出
-│
-├── dist/                     # Vite 构建输出
-│
-├── dist-electron/            # Electron 编译输出
-│
-└── resources/                # 打包资源
-    └── python-win/           # Windows Python runtime
+└── docs/                      # 设计文档
 ```
 
-## 11. 依赖更新策略
+## 11. 关键依赖说明
 
-### 11.1 安全更新
+### 11.1 Lit + `<justdo-chat>`（消息渲染）
 
-定期检查安全漏洞：
+JustDo 使用 Lit 自定义元素 `<justdo-chat>` 渲染聊天消息，替代了原有的 React CoworkSessionDetail（3800+ 行）。Lit 元素直接通过 GatewayClient 连接 Gateway WebSocket，使用与 OpenClaw webchat 完全一致的渲染管线。
 
-```bash
-npm audit
-npm audit fix
+```typescript
+import { LitElement, html } from 'lit';
+import { customElement } from 'lit/decorators.js';
+
+@customElement('justdo-chat')
+export class JustDoChatElement extends LitElement {
+  // 通过 ChatController 连接 Gateway
+  set controller(ctrl: ChatController) { /* ... */ }
+}
 ```
 
-### 11.2 OpenClaw 更新
+在 React 中通过 `JustDoChatWrapper.tsx` 嵌入。
 
-更新 OpenClaw 版本：
-
-1. 修改 `package.json` 中的 `openclaw.version`
-2. 运行 `npm run electron:dev:openclaw`
-3. 自动 checkout 新版本并构建
-4. 提交 `package.json` 更新
-
-### 11.3 主要依赖升级
-
-遵循以下原则：
-- Electron：跟随最新稳定版
-- React：跟随最新稳定版
-- TypeScript：跟随最新稳定版
-- Node.js：锁定 24.x（engines 定义）
-
-## 12. 关键依赖说明
-
-### 12.1 better-sqlite3
+### 11.2 better-sqlite3
 
 同步 API 的 SQLite 库，高性能：
 
@@ -476,52 +447,40 @@ import Database from 'better-sqlite3';
 
 const db = new Database('justdo.sqlite');
 db.pragma('journal_mode = WAL'); // WAL 模式
-
-// 同步操作
-const row = db.get('SELECT * FROM kv WHERE key = ?', ['appConfig']);
 ```
 
-### 12.2 react-markdown + remark-gfm
+### 11.3 markdown-it + highlight.js + katex
 
-完整 Markdown 渲染支持：
+Lit 聊天组件中的 Markdown 渲染链：
 
 ```typescript
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
+import MarkdownIt from 'markdown-it';
+import hljs from 'highlight.js';
 
-<ReactMarkdown
-  remarkPlugins={[remarkGfm, remarkMath]}
-  rehypePlugins={[rehypeKatex]}
->
-  {content}
-</ReactMarkdown>
+const md = new MarkdownIt({
+  highlight: (str, lang) => {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(str, { language: lang }).value;
+    }
+    return '';
+  }
+});
 ```
 
-### 12.3 electron-log
+### 11.4 electron-log
 
 主进程日志管理，自动写入日志文件：
 
 ```typescript
 import log from 'electron-log';
-
-// 日志文件位置
 // macOS: ~/Library/Logs/JustDo/
 // Windows: %USERPROFILE%\AppData\Roaming\JustDo\logs\
 // Linux: ~/.config/JustDo/logs/
-
-log.info('Session started');
-log.error('Failed to start engine:', error);
 ```
 
-### 12.4 uuid
+## 12. 版本信息
 
-唯一 ID 生成：
-
-```typescript
-import { v4 as uuidv4 } from 'uuid';
-
-const sessionId = uuidv4();
-// 'abc123-def456-...'
-```
+- **Last Updated**: 2026-06-30
+- **JustDo Version**: v2026.6.25
+- **OpenClaw Gateway**: v2026.6.9
+- **Node.js**: >= 24 < 25

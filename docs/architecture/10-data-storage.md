@@ -2,9 +2,23 @@
 
 ## 1. 概述
 
-JustDo 所有数据存储在本地 SQLite 数据库，文件名为 `justdo.sqlite`，位于用户数据目录。采用 better-sqlite3 作为 SQLite 库，支持高性能同步操作。
+JustDo 使用本地 SQLite 数据库作为 **UI 缓存层**，文件名为 `justdo.sqlite`，位于用户数据目录。采用 better-sqlite3 作为 SQLite 库，支持高性能同步操作。
 
-### 1.1 数据库位置
+> **重要**：SQLite 是 UI 缓存，**不是**权威数据源。OpenClaw Gateway 的 `chat.history` 是消息历史的权威来源。`cowork_messages` 仅作为本地缓存存在，Gateway 是单⼀权责中心。
+
+### 1.1 数据库定位
+
+| 数据类别 | 权威来源 | 本地 SQLite 职责 |
+|----------|----------|----------------|
+| 会话消息历史 | Gateway `chat.history` API | UI 缓存，加速本地渲染 |
+| 会话元数据 | JustDo 本地存储 | 会话列表、标题、状态 |
+| 配置 | JustDo 本地存储 | 应用设置、Cowork 配置、API 凭据 |
+| Agent 定义 | JustDo 本地存储 | 自定义 Agent 配置 |
+| MCP 服务器 | JustDo 本地存储 | MCP 服务器配置 |
+| 定时任务元数据 | JustDo 本地存储 | 任务来源和绑定信息 |
+| 分组信息 | JustDo 本地存储 | 会话分组组织 |
+
+### 1.2 数据库位置
 
 | 平台 | 数据目录 |
 |------|----------|
@@ -12,7 +26,7 @@ JustDo 所有数据存储在本地 SQLite 数据库，文件名为 `justdo.sqlit
 | Windows | `%APPDATA%\JustDo\` |
 | Linux | `~/.config/JustDo/` |
 
-### 1.2 数据库特性
+### 1.3 数据库特性
 
 - **单文件存储**：便于备份和迁移
 - **同步操作**：better-sqlite3 提供高性能同步 API
@@ -23,53 +37,44 @@ JustDo 所有数据存储在本地 SQLite 数据库，文件名为 `justdo.sqlit
 
 ### 2.1 kv 表（键值存储）
 
-应用级配置存储：
+应用级配置存储，通用键值对：
 
 ```sql
 CREATE TABLE kv (
   key TEXT PRIMARY KEY,
-  value TEXT               -- JSON 格式存储
+  value TEXT NOT NULL,          -- JSON 格式存储
+  updated_at INTEGER NOT NULL
 );
 
 -- 示例数据
-INSERT INTO kv (key, value) VALUES 
-  ('appConfig', '{"language":"zh","theme":"dark"}'),
-  ('auth_tokens', '{"accessToken":"xxx","refreshToken":"yyy"}'),
-  ('skillsConfig', '{"skills":[{"id":"web-search","enabled":true}]}');
+INSERT INTO kv (key, value, updated_at) VALUES 
+  ('appConfig', '{"language":"zh","theme":"dark"}', 1712851200000),
+  ('auth_tokens', '{"accessToken":"xxx","refreshToken":"yyy"}', 1712851200000),
+  ('skillsConfig', '{"skills":[{"id":"web-search","enabled":true}]}', 1712851200000);
 ```
 
 ### 2.2 cowork_config 表
 
-Cowork 系统配置：
+Cowork 系统配置（键值对形式）：
 
 ```sql
 CREATE TABLE cowork_config (
-  working_directory TEXT,
-  system_prompt TEXT,
-  execution_mode TEXT,        -- 'auto' | 'local'
-  agent_engine TEXT,          -- 'openclaw' | 'yd_cowork'
-  model_provider TEXT,
-  model_name TEXT,
-  api_key TEXT,               -- 加密存储
-  api_format TEXT,            -- 'anthropic' | 'openai'
-  coding_plan_enabled INTEGER,
-  updated_at INTEGER
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,          -- JSON 格式
+  updated_at INTEGER NOT NULL
 );
 
--- 单行配置
-INSERT INTO cowork_config VALUES (
-  '/Users/username/work',
-  'You are a helpful assistant...',
-  'auto',
-  'openclaw',
-  'anthropic',
-  'claude-sonnet-4-6',
-  NULL,                       -- API key 由 Provider 配置管理
-  'anthropic',
-  0,
-  1712851200000
-);
+-- 示例数据
+INSERT INTO cowork_config (key, value, updated_at) VALUES
+  ('workingDirectory', '"/Users/username/work"', 1712851200000),
+  ('systemPrompt', '"You are a helpful assistant..."', 1712851200000),
+  ('executionMode', '"auto"', 1712851200000),
+  ('agentEngine', '"openclaw"', 1712851200000),
+  ('modelProvider', '"anthropic"', 1712851200000),
+  ('modelName', '"claude-sonnet-4-6"', 1712851200000);
 ```
+
+> **注意**：`api_key` 字段不在 cowork_config 中管理。API 密钥由 Provider 配置独立管理，通过 OpenClaw Gateway 的 provider 配置系统处理。
 
 ### 2.3 cowork_sessions 表
 
@@ -78,12 +83,17 @@ INSERT INTO cowork_config VALUES (
 ```sql
 CREATE TABLE cowork_sessions (
   id TEXT PRIMARY KEY,
-  title TEXT,
-  working_directory TEXT,
-  status TEXT,                 -- 'idle' | 'running' | 'completed' | 'error' | 'stopped'
-  created_at INTEGER,
-  updated_at INTEGER,
-  message_count INTEGER DEFAULT 0
+  title TEXT NOT NULL,
+  claude_session_id TEXT,         -- OpenClaw Gateway session key
+  status TEXT NOT NULL DEFAULT 'idle',  -- 'idle' | 'running' | 'completed' | 'error' | 'stopped'
+  pinned INTEGER NOT NULL DEFAULT 0,
+  cwd TEXT NOT NULL,               -- working directory
+  execution_mode TEXT,             -- 'auto' | 'local'
+  agent_id TEXT NOT NULL DEFAULT 'main',
+  active_skill_ids TEXT,           -- JSON array of active skill IDs
+  group_id TEXT REFERENCES session_groups(id),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 
 -- 索引
@@ -93,57 +103,41 @@ CREATE INDEX idx_sessions_status ON cowork_sessions(status);
 
 ### 2.4 cowork_messages 表
 
-会话消息历史：
+会话消息历史（UI 缓存，**非权威来源**）：
 
 ```sql
 CREATE TABLE cowork_messages (
   id TEXT PRIMARY KEY,
-  session_id TEXT,
-  type TEXT,                   -- 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system'
-  content TEXT,
-  thinking_content TEXT,       -- 思考/推理内容（模型 thinking 流，可选）
-  metadata TEXT,               -- JSON: { isStreaming, isThinking, toolName, toolInput, ... }
-  timestamp INTEGER,
-  sequence INTEGER,            -- 消息顺序号
+  session_id TEXT NOT NULL,
+  type TEXT NOT NULL,              -- 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system'
+  content TEXT NOT NULL,
+  thinking_content TEXT,           -- 思考/推理内容（模型 thinking 流，可选）
+  metadata TEXT,                   -- JSON: { isStreaming, isThinking, toolName, toolInput, ... }
+  model_name TEXT,                 -- AI model used for this message
+  usage TEXT,                      -- JSON: token usage data
+  created_at INTEGER NOT NULL,
+  sequence INTEGER,                -- 消息顺序号
 
-  FOREIGN KEY (session_id) REFERENCES cowork_sessions(id)
+  FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
 );
 
 -- 索引
-CREATE INDEX idx_messages_session ON cowork_messages(session_id, sequence);
-CREATE INDEX idx_messages_type ON cowork_messages(type);
+CREATE INDEX idx_cowork_messages_session_id ON cowork_messages(session_id);
 ```
 
-> **thinking_content 字段**：存储模型的思考/推理内容。详见 [thinking-stream-implementation.md](../features/thinking-stream-implementation.md)。
+> **权威来源说明**：消息历史的权威数据源是 Gateway 的 `chat.history` RPC 调用。`cowork_messages` 表作为本地缓存存在，用于快速 UI 渲染。当 Gateway 返回更新后的历史时，本地缓存会被替换。
 
-### 2.X cowork_subagents 表
+### 2.5 session_groups 表
 
-子 Agent 追踪（UI 缓存，非运行时权威）：
-
-```sql
-CREATE TABLE cowork_subagents (
-  id TEXT PRIMARY KEY,
-  parent_session_id TEXT,
-  child_session_key TEXT,
-  label TEXT,
-  status TEXT,
-  created_at INTEGER,
-  FOREIGN KEY (parent_session_id) REFERENCES cowork_sessions(id)
-);
-
-CREATE INDEX idx_cowork_subagents_parent_session ON cowork_subagents(parent_session_id);
-```
-
-### 2.Y session_groups 表
-
-会话分组：
+会话分组组织：
 
 ```sql
 CREATE TABLE session_groups (
   id TEXT PRIMARY KEY,
-  name TEXT,
-  sort_order INTEGER,
-  created_at INTEGER
+  name TEXT NOT NULL,
+  color TEXT DEFAULT '#6366f1',
+  sort_order INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
 );
 ```
 
@@ -154,13 +148,19 @@ CREATE TABLE session_groups (
 ```sql
 CREATE TABLE agents (
   id TEXT PRIMARY KEY,
-  name TEXT,
-  description TEXT,
-  system_prompt TEXT,
-  skills TEXT,                 -- JSON: ["web-search", "docx", ...]
-  bindings TEXT,               -- JSON: [{platform, conversationId}, ...]
-  created_at INTEGER,
-  updated_at INTEGER
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  system_prompt TEXT NOT NULL DEFAULT '',
+  identity TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  icon TEXT NOT NULL DEFAULT '',
+  skill_ids TEXT NOT NULL DEFAULT '[]',  -- JSON: ["web-search", "docx", ...]
+  enabled INTEGER NOT NULL DEFAULT 1,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'custom',  -- 'custom' | 'preset'
+  preset_id TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 ```
 
@@ -171,180 +171,91 @@ MCP 服务器配置：
 ```sql
 CREATE TABLE mcp_servers (
   id TEXT PRIMARY KEY,
-  name TEXT,
-  command TEXT,
-  args TEXT,                   -- JSON: ["--port", "8080"]
-  env TEXT,                    -- JSON: {"KEY": "value"}
-  enabled INTEGER DEFAULT 1,
-  created_at INTEGER
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  transport_type TEXT NOT NULL DEFAULT 'stdio',
+  config_json TEXT NOT NULL DEFAULT '{}',  -- JSON: command, args, env
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 ```
 
-### 2.8 im_config 表
+### 2.8 scheduled_task_meta 表
 
-IM 网关配置（规划中）：
-
-```sql
-CREATE TABLE im_config (
-  key TEXT PRIMARY KEY,        -- 配置键
-  value TEXT                   -- JSON 配置
-);
-```
-
-### 2.9 im_session_mappings 表
-
-IM 会话与 Cowork 会话映射（规划中）：
-
-```sql
-CREATE TABLE im_session_mappings (
-  platform TEXT,               -- 平台标识
-  conversation_id TEXT,        -- IM 会话 ID
-  session_id TEXT,             -- Cowork session ID
-  agent_id TEXT,               -- 绑定的 Agent ID
-  created_at INTEGER,
-
-  PRIMARY KEY (platform, conversation_id),
-  FOREIGN KEY (session_id) REFERENCES cowork_sessions(id)
-);
-```
-
-### 2.10 scheduled_task_meta 表
-
-定时任务元数据：
+定时任务元数据（本地持久化 OpenClaw cron 任务的自定义元数据）：
 
 ```sql
 CREATE TABLE scheduled_task_meta (
   task_id TEXT PRIMARY KEY,
-  origin TEXT,                 -- 'conversation' | 'gui' | 'migration'
-  origin_session_id TEXT,
-  origin_message_id TEXT,
-  agent_id TEXT,
-  im_delivery TEXT,            -- JSON: {platform, conversationId}
-  created_at INTEGER,
-  updated_at INTEGER
+  origin TEXT NOT NULL,              -- JSON: TaskOrigin { type: 'conversation' | 'gui' | 'migration', sessionId, messageId }
+  binding TEXT NOT NULL              -- JSON: ExecutionBinding { agentId, imDelivery? }
 );
 ```
 
-## 3. SQLiteStore 实现
+> OpenClaw Gateway 的 `cron.*` API 不支持自定义字段，因此将任务来源和绑定信息本地持久化在此表中。
 
-### 3.1 核心类
+## 3. 文件级记忆系统
+
+除 SQLite 外，JustDo 通过 OpenClaw Gateway 管理一组文件级持久记忆文件，存储在 `~/.openclaw/` 目录中：
+
+| 文件 | 用途 |
+|------|------|
+| `MEMORY.md` | 持久化事实与偏好 |
+| `USER.md` | 用户档案 |
+| `SOUL.md` | Agent 个性与行为准则 |
+| `memory/YYYY-MM-DD.md` | 每日笔记 |
+
+记忆文件由 Gateway 自动管理，JustDo 不直接写入这些文件。
+
+## 4. SQLiteStore 实现
+
+### 4.1 核心类
 
 **文件**：`src/main/sqliteStore.ts`
 
 ```typescript
-class SQLiteStore {
+class SqliteStore {
   private db: Database;
   private dbPath: string;
   
-  // 初始化
-  init(): void {
-    this.dbPath = path.join(app.getPath('userData'), 'justdo.sqlite');
-    this.db = new Database(this.dbPath);
+  static create(userDataPath?: string): SqliteStore {
+    // 初始化路径
+    const dbPath = path.join(basePath, 'justdo.sqlite');
+    const db = new Database(dbPath);
     
     // 启用 WAL 模式
-    this.db.pragma('journal_mode = WAL');
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
+    db.pragma('cache_size = -8000'); // 8 MB
+    db.pragma('wal_autocheckpoint = 1000');
     
-    // 创建表
-    this.createTables();
-    
-    // 迁移
-    this.runMigrations();
-  }
-  
-  // 创建表
-  private createTables(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS kv (
-        key TEXT PRIMARY KEY,
-        value TEXT
-      );
-      
-      CREATE TABLE IF NOT EXISTS cowork_config (
-        working_directory TEXT,
-        system_prompt TEXT,
-        execution_mode TEXT,
-        agent_engine TEXT,
-        model_provider TEXT,
-        model_name TEXT,
-        api_key TEXT,
-        api_format TEXT,
-        coding_plan_enabled INTEGER,
-        updated_at INTEGER
-      );
-      
-      CREATE TABLE IF NOT EXISTS cowork_sessions (
-        id TEXT PRIMARY KEY,
-        title TEXT,
-        working_directory TEXT,
-        status TEXT,
-        created_at INTEGER,
-        updated_at INTEGER,
-        message_count INTEGER DEFAULT 0
-      );
-      
-      CREATE TABLE IF NOT EXISTS cowork_messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT,
-        type TEXT,
-        content TEXT,
-        thinking_content TEXT,   -- 思考内容字段
-        metadata TEXT,
-        timestamp INTEGER,
-        sequence INTEGER
-      );
-      
-      -- 其他表...
-    `);
-    
-    // 创建索引
-    this.createIndexes();
+    // 创建表和迁移
+    store.initializeTables(basePath);
+    return store;
   }
   
   // KV 操作
-  get(key: string): unknown | null {
-    const row = this.db.get<{ value: string }>(
-      'SELECT value FROM kv WHERE key = ?',
-      [key]
-    );
-    return row ? JSON.parse(row.value) : null;
-  }
+  get<T>(key: string): T | undefined { /* ... */ }
+  set<T>(key: string, value: T): void { /* ... */ }
+  delete(key: string): void { /* ... */ }
   
-  set(key: string, value: unknown): void {
-    this.db.run(
-      'INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)',
-      [key, JSON.stringify(value)]
-    );
-  }
+  // 变更监听
+  onDidChange<T>(key: string, callback): () => void { /* ... */ }
   
-  delete(key: string): void {
-    this.db.run('DELETE FROM kv WHERE key = ?', [key]);
-  }
-  
-  // 保存数据库
-  saveDb(): void {
-    // WAL 模式自动持久化，此方法用于显式保存
-  }
-  
-  // 关闭连接
-  close(): void {
-    this.db.close();
-  }
+  close(): void { /* ... */ }
 }
 ```
 
-### 3.2 WAL 模式
+### 4.2 WAL 模式
 
 启用 Write-Ahead Logging 提高性能：
 
 ```typescript
-// 启用 WAL 模式
-this.db.pragma('journal_mode = WAL');
-
-// 设置 busy timeout（等待锁释放）
-this.db.pragma('busy_timeout = 5000');
-
-// 设置 synchronous 模式
-this.db.pragma('synchronous = NORMAL');
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('cache_size = -8000');    // 8 MB 缓存
+db.pragma('wal_autocheckpoint = 1000'); // 每 ~4 MB WAL 写入后 checkpoint
 ```
 
 WAL 模式优势：
@@ -352,398 +263,79 @@ WAL 模式优势：
 - 更好的并发性能
 - 更少的数据损坏风险
 
-## 4. CoworkStore 实现
-
-### 4.1 核心类
+### 4.3 CoworkStore
 
 **文件**：`src/main/coworkStore.ts`
+
+CoworkStore 封装会话和消息的 CRUD 操作。消息缓存操作包括替换会话消息（从 Gateway 对账）：
 
 ```typescript
 class CoworkStore {
   private db: Database;
   
-  constructor(db: Database) {
-    this.db = db;
-  }
-  
-  // 配置管理
-  getConfig(): CoworkConfig {
-    const row = this.db.get<CoworkConfigRow>(
-      'SELECT * FROM cowork_config LIMIT 1'
-    );
-    
-    if (!row) {
-      return DEFAULT_COWORK_CONFIG;
-    }
-    
-    return {
-      workingDirectory: row.working_directory,
-      systemPrompt: row.system_prompt,
-      executionMode: row.execution_mode || 'auto',
-      agentEngine: row.agent_engine || 'openclaw',
-      // ...
-    };
-  }
-  
-  setConfig(config: CoworkConfig): void {
-    this.db.run(`
-      UPDATE cowork_config SET
-        working_directory = ?,
-        system_prompt = ?,
-        execution_mode = ?,
-        agent_engine = ?,
-        updated_at = ?
-    `, [
-      config.workingDirectory,
-      config.systemPrompt,
-      config.executionMode,
-      config.agentEngine,
-      Date.now(),
-    ]);
-    
-    // 如果没有行，插入
-    if (this.db.changes === 0) {
-      this.db.run(`
-        INSERT INTO cowork_config VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [/* ... */]);
-    }
-  }
+  // 配置管理（通过 kv 表）
+  getConfig(): CoworkConfig { /* ... */ }
+  setConfig(config: CoworkConfig): void { /* ... */ }
   
   // 会话管理
-  createSession(sessionId: string, meta: SessionMeta): void {
-    this.db.run(`
-      INSERT INTO cowork_sessions (id, title, working_directory, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [sessionId, meta.title, meta.workingDirectory, meta.status, Date.now(), Date.now()]);
-  }
+  createSession(sessionId, meta): void { /* ... */ }
+  getSession(sessionId): Session | null { /* ... */ }
+  listSessions(): Session[] { /* ... */ }
+  updateSessionStatus(sessionId, status): void { /* ... */ }
+  deleteSession(sessionId): void { /* ... */ }
   
-  getSession(sessionId: string): Session | null {
-    return this.db.get<Session>(
-      'SELECT * FROM cowork_sessions WHERE id = ?',
-      [sessionId]
-    );
-  }
-  
-  listSessions(): Session[] {
-    return this.db.all<Session[]>(
-      'SELECT * FROM cowork_sessions ORDER BY created_at DESC'
-    );
-  }
-  
-  updateSessionStatus(sessionId: string, status: SessionStatus): void {
-    this.db.run(`
-      UPDATE cowork_sessions SET status = ?, updated_at = ? WHERE id = ?
-    `, [status, Date.now(), sessionId]);
-  }
-  
-  deleteSession(sessionId: string): void {
-    // 删除消息
-    this.db.run('DELETE FROM cowork_messages WHERE session_id = ?', [sessionId]);
-    
-    // 删除会话
-    this.db.run('DELETE FROM cowork_sessions WHERE id = ?', [sessionId]);
-    
-    // 删除 IM 映射
-    this.db.run('DELETE FROM im_session_mappings WHERE session_id = ?', [sessionId]);
-  }
-  
-  // 消息管理
-  addMessage(sessionId: string, message: CoworkMessage): void {
-    const sequence = this.getNextSequence(sessionId);
-    
-    this.db.run(`
-      INSERT INTO cowork_messages (id, session_id, type, content, metadata, timestamp, sequence)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [
-      message.id,
-      sessionId,
-      message.type,
-      message.content,
-      JSON.stringify(message.metadata || {}),
-      message.timestamp || Date.now(),
-      sequence,
-    ]);
-    
-    // 更新消息计数
-    this.updateMessageCount(sessionId);
-  }
-  
-  getSessionMessages(sessionId: string): CoworkMessage[] {
-    return this.db.all<CoworkMessage[]>(
-      'SELECT * FROM cowork_messages WHERE session_id = ? ORDER BY sequence',
-      [sessionId]
-    ).map(row => ({
-      ...row,
-      metadata: JSON.parse(row.metadata || '{}'),
-    }));
-  }
-  
-  updateMessageContent(sessionId: string, messageId: string, content: string): void {
-    this.db.run(`
-      UPDATE cowork_messages SET content = ? WHERE id = ?
-    `, [content, messageId]);
-  }
-  
-  // 消息替换（对账使用）
-  replaceConversationMessages(
-    sessionId: string,
-    authoritative: Array<{ role: 'user' | 'assistant'; text: string }>
-  ): void {
-    // 1. 删除现有 user/assistant 消息
-    this.db.run(`
-      DELETE FROM cowork_messages 
-      WHERE session_id = ? AND type IN ('user', 'assistant')
-    `, [sessionId]);
-    
-    // 2. 获取最大 sequence
-    let nextSeq = this.getMaxSequence(sessionId) + 1;
-    
-    // 3. 按顺序重新插入
-    for (const entry of authoritative) {
-      this.db.run(`
-        INSERT INTO cowork_messages (id, session_id, type, content, metadata, timestamp, sequence)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [
-        uuid(),
-        sessionId,
-        entry.role,
-        entry.text,
-        JSON.stringify({ isStreaming: false, isFinal: true }),
-        Date.now(),
-        nextSeq++,
-      ]);
-    }
-    
-    // 4. 更新消息计数
-    this.updateMessageCount(sessionId);
-  }
-  
-  // 辅助方法
-  private getNextSequence(sessionId: string): number {
-    const max = this.getMaxSequence(sessionId);
-    return max + 1;
-  }
-  
-  private getMaxSequence(sessionId: string): number {
-    const row = this.db.get<{ max: number }>(
-      'SELECT MAX(sequence) as max FROM cowork_messages WHERE session_id = ?',
-      [sessionId]
-    );
-    return row?.max || 0;
-  }
-  
-  private updateMessageCount(sessionId: string): void {
-    const count = this.db.get<{ count: number }>(
-      'SELECT COUNT(*) as count FROM cowork_messages WHERE session_id = ?',
-      [sessionId]
-    );
-    
-    this.db.run(`
-      UPDATE cowork_sessions SET message_count = ?, updated_at = ? WHERE id = ?
-    `, [count?.count || 0, Date.now(), sessionId]);
-  }
+  // 消息管理（UI 缓存）
+  addMessage(sessionId, message): void { /* ... */ }
+  getSessionMessages(sessionId): CoworkMessage[] { /* ... */ }
+  replaceConversationMessages(sessionId, authoritative): void { /* ... */ }
 }
 ```
 
-## 5. IMStore 实现
+## 5. 数据迁移
 
-**文件**：`src/main/im/imStore.ts`
+### 5.1 迁移策略
 
-参见 [06-im-integration.md](06-im-integration.md) 中的 IMStore 部分。
-
-## 6. 数据迁移
-
-### 6.1 迁移框架
+迁移在 `sqliteStore.ts` 的 `initializeTables` 中处理：
 
 ```typescript
-interface Migration {
-  version: number;
-  name: string;
-  up: (db: Database) => void;
-  down?: (db: Database) => void;
-}
+// 检查列是否存在后添加
+const columns = this.db.pragma('table_info(cowork_sessions)');
+const colNames = columns.map(c => c.name);
 
-const migrations: Migration[] = [
-  {
-    version: 1,
-    name: 'initial',
-    up: (db) => {
-      // 创建初始表
-    },
-  },
-  {
-    version: 2,
-    name: 'add_coding_plan',
-    up: (db) => {
-      db.run('ALTER TABLE cowork_config ADD COLUMN coding_plan_enabled INTEGER DEFAULT 0');
-    },
-  },
-  {
-    version: 3,
-    name: 'add_agent_engine',
-    up: (db) => {
-      db.run('ALTER TABLE cowork_config ADD COLUMN agent_engine TEXT DEFAULT "openclaw"');
-    },
-  },
-  {
-    version: 4,
-    name: 'im_multi_instance',
-    up: (db) => {
-      // IM 多实例迁移
-      migrateIMConfig(db);
-    },
-  },
-  {
-    version: 5,
-    name: 'add_thinking_content',
-    up: (db) => {
-      db.run('ALTER TABLE cowork_messages ADD COLUMN thinking_content TEXT');
-    },
-  },
-];
-
-function runMigrations(db: Database): void {
-  // 获取当前版本
-  const row = db.get<{ value: string }>(
-    'SELECT value FROM kv WHERE key = "db_version"'
-  );
-  const currentVersion = row ? parseInt(row.value) : 0;
-  
-  // 运行未执行的迁移
-  for (const migration of migrations) {
-    if (migration.version > currentVersion) {
-      migration.up(db);
-      
-      // 更新版本
-      db.run(
-        'INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)',
-        ['db_version', migration.version.toString()]
-      );
-    }
-  }
+if (!colNames.includes('execution_mode')) {
+  this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN execution_mode TEXT;');
 }
+// ... 其他迁移
 ```
 
-## 7. 数据备份与恢复
+迁移版本（历史变更，当前均为幂等操作）：
 
-### 7.1 自动备份
+| 变更 | 说明 |
+|------|------|
+| execution_mode 列 | 从 'container' 迁移到 'local' |
+| pinned 列 | 会话置顶功能 |
+| sequence 列 | 消息顺序号 |
+| thinking_content 列 | 思考内容存储 |
+| model_name 列 | 消息对应的 AI 模型 |
+| usage 列 | token 用量统计 |
+| agent_id 列 | 会话绑定的 Agent |
+| group_id 列 | 会话分组外键 |
 
-```typescript
-function autoBackup(dbPath: string): void {
-  const backupPath = `${dbPath}.backup`;
-  
-  // 复制数据库文件
-  fs.copyFileSync(dbPath, backupPath);
-  
-  // 保留最近 7 天的备份
-  const backupDir = path.join(app.getPath('userData'), 'backups');
-  
-  // 清理旧备份
-  const files = fs.readdirSync(backupDir);
-  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  
-  for (const file of files) {
-    const stat = fs.statSync(path.join(backupDir, file));
-    if (stat.mtimeMs < cutoff) {
-      fs.unlinkSync(path.join(backupDir, file));
-    }
-  }
-}
-```
+### 5.2 旧数据迁移
 
-### 7.2 数据导出
+首次启动时，如果 `kv` 表为空，尝试从 legacy `config.json`（electron-store 格式）导入数据。
 
-```typescript
-function exportData(db: Database): ExportedData {
-  return {
-    kv: db.all('SELECT * FROM kv'),
-    coworkConfig: db.get('SELECT * FROM cowork_config'),
-    coworkSessions: db.all('SELECT * FROM cowork_sessions'),
-    coworkMessages: db.all('SELECT * FROM cowork_messages'),
-    agents: db.all('SELECT * FROM agents'),
-    mcpServers: db.all('SELECT * FROM mcp_servers'),
-    exportedAt: Date.now(),
-    version: '2026.4',
-  };
-}
-```
-
-### 7.3 数据导入
-
-```typescript
-function importData(db: Database, data: ExportedData): void {
-  // 清空现有数据
-  db.exec(`
-    DELETE FROM kv;
-    DELETE FROM cowork_config;
-    DELETE FROM cowork_sessions;
-    DELETE FROM cowork_messages;
-    DELETE FROM agents;
-    DELETE FROM mcp_servers;
-  `);
-  
-  // 导入数据
-  for (const row of data.kv) {
-    db.run('INSERT INTO kv (key, value) VALUES (?, ?)', [row.key, row.value]);
-  }
-  
-  // ... 其他表
-}
-```
-
-## 8. 性能优化
-
-### 8.1 索引策略
-
-| 表 | 索引 | 用途 |
-|------|------|------|
-| cowork_sessions | `created_at DESC` | 按时间排序会话列表 |
-| cowork_sessions | `status` | 按状态过滤会话 |
-| cowork_messages | `session_id, sequence` | 查询会话消息 |
-| cowork_messages | `type` | 按类型过滤消息 |
-| im_session_mappings | `platform, conversation_id` | IM 映射查询 |
-
-### 8.2 批量操作
-
-```typescript
-// 批量插入消息
-function batchInsertMessages(sessionId: string, messages: CoworkMessage[]): void {
-  const stmt = this.db.prepare(`
-    INSERT INTO cowork_messages (id, session_id, type, content, metadata, timestamp, sequence)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  this.db.transaction(() => {
-    for (const msg of messages) {
-      stmt.run(msg.id, sessionId, msg.type, msg.content, JSON.stringify(msg.metadata), msg.timestamp, msg.sequence);
-    }
-  })();
-}
-```
-
-### 8.3 连接池
-
-better-sqlite3 是同步库，无需连接池。但应避免频繁打开/关闭连接：
-
-```typescript
-// 单例模式
-let dbInstance: Database | null = null;
-
-function getDb(): Database {
-  if (!dbInstance) {
-    dbInstance = new Database(dbPath);
-  }
-  return dbInstance;
-}
-```
-
-## 9. 关键文件清单
+## 6. 关键文件清单
 
 | 文件 | 职责 |
 |------|------|
-| `src/main/sqliteStore.ts` | SQLite 数据库管理 |
-| `src/main/coworkStore.ts` | Cowork 数据 CRUD |
-| `src/main/im/imStore.ts` | IM 数据 CRUD |
-| `src/main/scheduledTask/modelMapper.ts` | 定时任务数据映射 |
+| `src/main/sqliteStore.ts` | SQLite 数据库管理（建表、迁移、KV 操作） |
+| `src/main/coworkStore.ts` | Cowork 会话和消息 CRUD |
+| `src/scheduledTask/metaStore.ts` | 定时任务元数据持久化 |
 | `src/main/scheduledTask/migrate.ts` | 定时任务迁移 |
-| `tests/*.test.mjs` | 数据层测试 |
+
+## 7. 版本信息
+
+- **Last Updated**: 2026-06-30
+- **JustDo Version**: v2026.6.25
+- **OpenClaw Gateway**: v2026.6.9

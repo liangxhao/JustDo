@@ -1,5 +1,7 @@
 # JustDo 安全模型与权限控制
 
+**版本**: v2026.6.25
+
 ## 1. 安全架构
 
 JustDo 采用多层安全防护，确保用户数据和系统安全。
@@ -10,9 +12,9 @@ JustDo 采用多层安全防护，确保用户数据和系统安全。
 ┌─────────────────────────────────────────────────────────────┐
 │                    应用层安全                                 │
 │                                                             │
-│  - 用户认证（OAuth/Portal）                                   │
-│  - API Key 加密存储                                           │
-│  - Secrets 环境变量注入                                        │
+│  - API Key 环境变量管理                                       │
+│  - 安全配置存储 (Electron safeStorage)                        │
+│  - Gateway 配置同步安全                                        │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -39,10 +41,9 @@ JustDo 采用多层安全防护，确保用户数据和系统安全。
 ┌─────────────────────────────────────────────────────────────┐
 │                    内容安全层                                 │
 │                                                             │
-│  - HTML Sandbox                                              │
-│  - DOMPurify 净化                                            │
+│  - DOMPurify 净化 (HTML/SVG)                                 │
 │  - Mermaid Strict Mode                                       │
-│  - iframe 隔离                                                │
+│  - 隔离 iframe 渲染                                           │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -51,10 +52,11 @@ JustDo 采用多层安全防护，确保用户数据和系统安全。
 │                                                             │
 │  - CORS 限制                                                  │
 │  - HTTPS 强制                                                 │
-│  - API 请求签名                                               │
-│  - Rate Limiting                                              │
+│  - Gateway 通信本地回环                                        │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## 2. 进程安全
 
@@ -64,22 +66,22 @@ JustDo 采用多层安全防护，确保用户数据和系统安全。
 const mainWindow = new BrowserWindow({
   webPreferences: {
     preload: path.join(__dirname, 'preload.js'),
-    
+
     // Context Isolation: 启用
     // Renderer 无法直接访问 Node.js API
     contextIsolation: true,
-    
+
     // Node Integration: 禁用
     // Renderer 无法使用 require()
     nodeIntegration: false,
-    
+
     // Sandbox: 启用
     // Renderer 运行在 Chromium 沙箱
     sandbox: true,
-    
+
     // Web Security: 启用
     webSecurity: true,
-    
+
     // 禁用远程模块
     enableRemoteModule: false,
   }
@@ -103,7 +105,7 @@ contextBridge.exposeInMainWorld('electron', {
     set: (key, value) => ipcRenderer.invoke('store:set', key, value),
   },
   // ... 其他命名空间
-  
+
   // 不暴露：
   // - ipcRenderer.send
   // - ipcRenderer.sendSync
@@ -119,26 +121,25 @@ contextBridge.exposeInMainWorld('electron', {
 ```typescript
 // main.ts - IPC handler
 ipcMain.handle('cowork:startSession', (event, params) => {
-  // 参数类型验证
   if (!params || typeof params !== 'object') {
     throw new Error('Invalid params');
   }
-  
+
   if (!params.prompt || typeof params.prompt !== 'string') {
     throw new Error('Invalid prompt');
   }
-  
-  // 工作目录验证
+
   if (params.workingDirectory) {
     if (!isAbsolutePath(params.workingDirectory)) {
       throw new Error('Working directory must be absolute path');
     }
   }
-  
-  // 执行业务逻辑
+
   return handleStartSession(params);
 });
 ```
+
+---
 
 ## 3. 权限控制
 
@@ -153,28 +154,17 @@ ipcMain.handle('cowork:startSession', (event, params) => {
 
 ### 3.2 权限请求流程
 
-```mermaid
-sequenceDiagram
-  participant Agent
-  participant Engine as Engine Router
-  participant Main as Main Process
-  participant UI as Renderer
-  participant User
-  
-  Agent->>Engine: 调用工具 write_file
-  Engine->>Main: 发起权限请求
-  Main->>UI: permissionRequest event
-  UI->>User: 显示权限 Modal
-  User->>UI: 点击"允许"或"拒绝"
-  UI->>Main: respondToPermission
-  Main->>Engine: 权限响应
-  alt 允许
-    Engine->>Agent: 执行工具
-    Agent-->>Engine: 工具结果
-  else 拒绝
-    Engine->>Agent: 工具被拒绝
-    Agent-->>Engine: 处理拒绝
-  end
+```
+Agent → Engine Router: 调用工具 write_file
+Engine Router → Main Process: 发起权限请求
+Main Process → Renderer: permissionRequest event
+Renderer → User: 显示权限 Modal
+User → Renderer: 点击"允许"或"拒绝"
+Renderer → Main Process: respondToPermission
+Main Process → Engine Router: 权限响应
+
+  允许 → Engine Router → Agent: 执行工具
+  拒绝 → Engine Router → Agent: 工具被拒绝
 ```
 
 ### 3.3 权限请求结构
@@ -182,20 +172,19 @@ sequenceDiagram
 ```typescript
 interface PermissionRequest {
   sessionId: string;
-  permissionId: string;        // 请求 ID
-  toolName: string;            // 工具名称
-  toolInput: Record<string, unknown>;  // 工具输入
+  permissionId: string;         // 请求 ID
+  toolName: string;             // 工具名称
+  toolInput: Record<string, unknown>; // 工具输入
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
-  description: string;         // 工具用途描述
-  warnings?: string[];         // 风险警告
+  description: string;          // 工具用途描述
+  warnings?: string[];          // 风险警告
 }
 
-// 权限响应
 interface PermissionResponse {
   sessionId: string;
   permissionId: string;
   approved: boolean;
-  scope: 'single' | 'session'; // 单次或会话级
+  scope: 'single' | 'session';  // 单次或会话级
 }
 ```
 
@@ -203,7 +192,6 @@ interface PermissionResponse {
 
 ```typescript
 function assessRiskLevel(toolName: string, toolInput: Record<string, unknown>): RiskLevel {
-  // 工具风险表
   const toolRiskMap: Record<string, RiskLevel> = {
     'read_file': 'low',
     'list_directory': 'low',
@@ -215,24 +203,18 @@ function assessRiskLevel(toolName: string, toolInput: Record<string, unknown>): 
     'delete_file': 'high',
     'delete_directory': 'critical',
   };
-  
+
   let level = toolRiskMap[toolName] || 'medium';
-  
-  // 根据输入调整风险级别
-  if (toolName === 'execute_command') {
-    // 检查命令是否危险
-    if (isDangerousCommand(toolInput.command as string)) {
-      level = 'critical';
-    }
+
+  // 根据输入动态调整风险级别
+  if (toolName === 'execute_command' && isDangerousCommand(toolInput.command)) {
+    level = 'critical';
   }
-  
-  if (toolName === 'write_file') {
-    // 检查是否写入系统目录
-    if (isSystemPath(toolInput.file_path as string)) {
-      level = 'critical';
-    }
+
+  if (toolName === 'write_file' && isSystemPath(toolInput.file_path)) {
+    level = 'critical';
   }
-  
+
   return level;
 }
 
@@ -247,7 +229,6 @@ function isDangerousCommand(command: string): boolean {
     /curl\s+.*\|\s*bash/,
     /wget\s+.*\|\s*sh/,
   ];
-  
   return dangerousPatterns.some(p => p.test(command));
 }
 ```
@@ -260,15 +241,11 @@ function isDangerousCommand(command: string): boolean {
 function isWithinWorkingDirectory(filePath: string, workingDir: string): boolean {
   const resolvedPath = path.resolve(filePath);
   const resolvedWorkingDir = path.resolve(workingDir);
-  
-  // 检查路径是否以工作目录开头
   return resolvedPath.startsWith(resolvedWorkingDir);
 }
 
-// 工具执行前检查
 function validateFilePath(toolInput: Record<string, unknown>, workingDir: string): void {
   const filePath = toolInput.file_path || toolInput.path;
-  
   if (filePath && !isWithinWorkingDirectory(filePath, workingDir)) {
     throw new Error(`路径 ${filePath} 超出工作目录 ${workingDir}`);
   }
@@ -277,96 +254,15 @@ function validateFilePath(toolInput: Record<string, unknown>, workingDir: string
 
 ### 3.6 权限 Modal UI
 
-**文件**：`src/renderer/components/cowork/CoworkPermissionModal.tsx`
+**文件**: `src/renderer/components/cowork/CoworkPermissionModal.tsx`
 
-```typescript
-function CoworkPermissionModal({ request, onRespond }: Props) {
-  const [scope, setScope] = useState<'single' | 'session'>('single');
-  
-  const getRiskColor = (level: RiskLevel): string => {
-    switch (level) {
-      case 'low': return 'green';
-      case 'medium': return 'yellow';
-      case 'high': return 'orange';
-      case 'critical': return 'red';
-    }
-  };
-  
-  return (
-    <Modal className="permission-modal">
-      <div className="permission-header">
-        <h3>工具执行请求</h3>
-        <span className={`risk-badge ${getRiskColor(request.riskLevel)}`}>
-          {request.riskLevel} risk
-        </span>
-      </div>
-      
-      <div className="permission-body">
-        <p className="tool-name">{request.toolName}</p>
-        <p className="description">{request.description}</p>
-        
-        <div className="tool-input">
-          <pre>{JSON.stringify(request.toolInput, null, 2)}</pre>
-        </div>
-        
-        {request.warnings && (
-          <div className="warnings">
-            {request.warnings.map(w => (
-              <p className="warning">{w}</p>
-            ))}
-          </div>
-        )}
-      </div>
-      
-      <div className="permission-footer">
-        {request.riskLevel === 'low' && (
-          <label>
-            <input
-              type="checkbox"
-              checked={scope === 'session'}
-              onChange={(e) => setScope(e.target.checked ? 'session' : 'single')}
-            />
-            本次会话自动允许此类操作
-          </label>
-        )}
-        
-        <div className="actions">
-          <button
-            className="approve"
-            onClick={() => onRespond({ approved: true, scope })}
-          >
-            允许
-          </button>
-          
-          <button
-            className="deny"
-            onClick={() => onRespond({ approved: false })}
-          >
-            拒绝
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-```
+显示工具调用请求，根据风险等级显示不同 UI，支持单次/会话级授权。
+
+---
 
 ## 4. 内容安全
 
-### 4.1 HTML Sandbox
-
-Artifact HTML 在隔离 iframe 中渲染：
-
-```typescript
-// iframe sandbox 属性
-<iframe
-  srcDoc={htmlContent}
-  sandbox="allow-scripts"  // 仅允许脚本，不允许同源
-  // 不包含：allow-same-origin, allow-forms, allow-popups
-/>
-```
-
-### 4.2 DOMPurify 净化
+### 4.1 DOMPurify 净化
 
 SVG 和用户输入 HTML 使用 DOMPurify 净化：
 
@@ -387,7 +283,7 @@ const cleanHtml = DOMPurify.sanitize(htmlContent, {
 });
 ```
 
-### 4.3 Mermaid Strict Mode
+### 4.2 Mermaid Strict Mode
 
 Mermaid 图表使用严格安全模式：
 
@@ -398,33 +294,19 @@ mermaid.initialize({
 });
 ```
 
-### 4.4 React Artifact 隔离
+### 4.3 iframe 隔离
 
-React 组件在完全隔离的 iframe 中编译和渲染：
+用户生成内容在隔离 iframe 中渲染：
 
-```typescript
-// React artifact iframe
+```html
 <iframe
-  srcDoc={`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <script src="https://unpkg.com/babel-standalone"></script>
-      <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-      <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    </head>
-    <body>
-      <div id="root"></div>
-      <script type="text/babel">
-        ${componentCode}
-      </script>
-    </body>
-    </html>
-  `}
-  sandbox="allow-scripts"  // 仅允许脚本
-  // 无网络访问权限
+  srcDoc={htmlContent}
+  sandbox="allow-scripts"
+  <!-- 不包含: allow-same-origin, allow-forms, allow-popups -->
 />
 ```
+
+---
 
 ## 5. Secrets 管理
 
@@ -433,24 +315,24 @@ React 组件在完全隔离的 iframe 中编译和渲染：
 API Keys 和 Secrets 通过环境变量注入，不硬编码：
 
 ```typescript
-// OpenClaw 环境变量
+// Gateway 环境变量
 const gatewayEnv = {
-  // IM 平台凭证将在集成后配置
-  // ...
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+  // ... 其他 Provider API Keys
 };
 
 // 启动 Gateway
-spawn(gatewayPath, [], { env: gatewayEnv });
+spawn(gatewayPath, [], { env: { ...process.env, ...gatewayEnv } });
 ```
 
-### 5.2 SQLite 加密存储
+### 5.2 安全凭证存储
 
-敏感数据在 SQLite 中加密存储：
+敏感配置使用 Electron `safeStorage` 加密：
 
 ```typescript
-// API Key 加密
+// API Key 加密存储
 function encryptApiKey(key: string): string {
-  // 使用 Electron safeStorage 加密
   return safeStorage.encryptString(key).toString('base64');
 }
 
@@ -461,7 +343,7 @@ function decryptApiKey(encrypted: string): string {
 
 ### 5.3 配置文件安全
 
-OpenClaw managed.yaml 不包含 Secrets：
+OpenClaw 配置不包含明文 Secrets：
 
 ```yaml
 # managed.yaml - Secrets 通过环境变量引用
@@ -472,6 +354,8 @@ channels:
         clientId: xxx
         clientSecretEnv: JUSTDO_DINGTALK_CLIENT_SECRET  # 环境变量名
 ```
+
+---
 
 ## 6. 网络安全
 
@@ -487,26 +371,9 @@ function validateApiUrl(url: string): void {
 }
 ```
 
-### 6.2 CORS 限制
+### 6.2 Gateway 通信安全
 
-Renderer 只能访问特定域名：
-
-```typescript
-// 网络请求限制
-const allowedDomains = [
-  'localhost',
-  '127.0.0.1',
-  // 用户自定义的本地模型服务地址
-  // ...
-];
-
-function validateRequestDomain(url: string): void {
-  const domain = new URL(url).hostname;
-  if (!allowedDomains.includes(domain)) {
-    throw new Error(`域名 ${domain} 不在允许列表中`);
-  }
-}
-```
+JustDo 与 OpenClaw Gateway 之间的通信通过本地 IPC 或 localhost HTTP 进行，不暴露到外部网络。
 
 ### 6.3 Rate Limiting
 
@@ -515,18 +382,16 @@ API 调用实施速率限制：
 ```typescript
 class RateLimiter {
   private requests: Map<string, number[]> = new Map();
-  
+
   check(key: string, maxRequests: number, windowMs: number): boolean {
     const now = Date.now();
     const requests = this.requests.get(key) || [];
-    
-    // 过滤窗口外的请求
     const validRequests = requests.filter(t => t > now - windowMs);
-    
+
     if (validRequests.length >= maxRequests) {
       return false; // 超过限制
     }
-    
+
     validRequests.push(now);
     this.requests.set(key, validRequests);
     return true;
@@ -534,105 +399,76 @@ class RateLimiter {
 }
 ```
 
+---
+
 ## 7. Skills 安全审计
 
 ### 7.1 SkillSecurityScanner
 
-**文件**：`src/main/libs/skillSecurity/skillSecurityScanner.ts`
+**文件**: `src/main/libs/skillSecurity/skillSecurityScanner.ts`
 
-安装第三方 Skill 前进行安全扫描：
+安装第三方 Skill（从 ClawHub 或本地文件）前进行安全扫描：
 
 ```typescript
-class SkillSecurityScanner {
-  scan(skillPath: string): SecurityScanResult {
-    const issues: SecurityIssue[] = [];
-    
-    // 1. 脚本内容扫描
-    issues.push(...this.scanScripts(skillPath));
-    
-    // 2. 依赖扫描
-    issues.push(...this.scanDependencies(skillPath));
-    
-    // 3. 网络访问扫描
-    issues.push(...this.scanNetworkAccess(skillPath));
-    
-    // 4. 文件访问扫描
-    issues.push(...this.scanFileAccess(skillPath));
-    
-    return {
-      skillPath,
-      issues,
-      riskLevel: this.calculateRiskLevel(issues),
-      passed: issues.every(i => i.severity !== 'critical'),
-    };
+export async function scanSkillSecurity(skillDir: string): Promise<SkillSecurityReport> {
+  // 1. 收集可扫描文件（最多 500 个，512KB 限制）
+  const files = collectScannableFiles(skillDir);
+
+  for (const file of files) {
+    // 2. SKILL.md → prompt injection 审计
+    if (isSkillMdFile(file)) {
+      findings.push(...scanPromptInjection(content, file.relativePath));
+      continue;
+    }
+
+    // 3. JS/TS → js-x-ray AST 分析 + 正则规则
+    if (isJsFile(file)) {
+      findings.push(...await scanFileWithJsxray(file, content));
+      findings.push(...scanFileWithRegex(file, content));
+      continue;
+    }
+
+    // 4. 其他文件 → 正则规则
+    findings.push(...scanFileWithRegex(file, content));
   }
-  
-  scanScripts(skillPath: string): SecurityIssue[] {
-    const issues: SecurityIssue[] = [];
-    
-    // 扫描危险模式
-    const dangerousPatterns = [
-      /eval\s*\(/,
-      /Function\s*\(/,
-      /child_process/,
-      /exec\s*\(/,
-      /spawn\s*\(/,
-      /require\s*\(\s*['"]child_process['"]\s*\)/,
-    ];
-    
-    // 扫描硬编码密钥
-    const secretPatterns = [
-      /api[_-]?key\s*=\s*['"][^'"]+['"]/i,
-      /secret\s*=\s*['"][^'"]+['"]/i,
-      /password\s*=\s*['"][^'"]+['"]/i,
-      /token\s*=\s*['"][^'"]+['"]/i,
-    ];
-    
-    return issues;
-  }
+
+  // 5. package.json install scripts 检查
+  findings.push(...auditPackageJson(skillDir));
+
+  return { riskLevel, riskScore, findings, dimensionSummary, ... };
 }
 ```
 
-### 7.2 SecurityIssue 类型
+### 7.2 检测工具链
 
-```typescript
-interface SecurityIssue {
-  type: 'dangerous_pattern' | 'hardcoded_secret' | 'unsafe_dependency' | 'network_access';
-  severity: 'low' | 'medium' | 'high' | 'critical';
-  file: string;
-  line?: number;
-  description: string;
-  recommendation?: string;
-}
+| 工具 | 用途 | 文件 |
+|------|------|------|
+| js-x-ray (`@nodesecure/js-x-ray`) | AST 级 JS 安全分析 | `skillSecurityScanner.ts` |
+| 正则规则引擎 | 覆盖 Shell、Python、YAML 等 | `skillSecurityRules.ts` |
+| Prompt Injection 审计 | 检测 SKILL.md 中的提示注入 | `skillSecurityPromptAudit.ts` |
 
-interface SecurityScanResult {
-  skillPath: string;
-  issues: SecurityIssue[];
-  riskLevel: RiskLevel;
-  passed: boolean;
-}
-```
+### 7.3 检测维度
+
+| 维度 | 说明 | 严重级别 |
+|------|------|----------|
+| `dangerous_command` | 危险命令执行 (eval, child_process) | danger |
+| `network` | 网络请求、数据外泄 | warning / critical |
+| `process` | 可疑进程、原型污染 | info / critical |
+| `file_access` | 敏感文件访问 | info |
+| `prompt_injection` | 提示注入攻击 | critical |
+
+---
 
 ## 8. 日志安全
 
 ### 8.1 敏感信息过滤
 
-日志输出过滤敏感信息：
-
 ```typescript
 function sanitizeLogMessage(message: string): string {
-  // 过滤 API Keys
   message = message.replace(/api[_-]?key[=:]\s*\S+/gi, 'api_key=REDACTED');
-  
-  // 过滤 Secrets
   message = message.replace(/secret[=:]\s*\S+/gi, 'secret=REDACTED');
-  
-  // 过滤 Tokens
   message = message.replace(/token[=:]\s*\S+/gi, 'token=REDACTED');
-  
-  // 过滤密码
   message = message.replace(/password[=:]\s*\S+/gi, 'password=REDACTED');
-  
   return message;
 }
 ```
@@ -643,22 +479,19 @@ function sanitizeLogMessage(message: string): string {
 
 ```typescript
 function sanitizeErrorMessage(error: Error): string {
-  // 不暴露内部路径
   let message = error.message.replace(/\/Users\/\w+/g, '/Users/xxx');
   message = message.replace(/C:\\Users\\\w+/g, 'C:\\Users\\xxx');
-  
-  // 不暴露 API URLs
   message = message.replace(/https:\/\/[^\s]+/g, 'https://api.example.com');
-  
   return message;
 }
 ```
+
+---
 
 ## 9. 安全清单
 
 ### 9.1 提交前检查
 
-```markdown
 - [ ] 无硬编码密钥（API keys, passwords, tokens）
 - [ ] 所有用户输入已验证
 - [ ] SQL 注入防护（使用参数化查询）
@@ -667,7 +500,6 @@ function sanitizeErrorMessage(error: Error): string {
 - [ ] 认证/授权已验证
 - [ ] 所有端点启用 Rate Limiting
 - [ ] 错误信息不泄露敏感数据
-```
 
 ### 9.2 代码审查重点
 
@@ -677,6 +509,8 @@ function sanitizeErrorMessage(error: Error): string {
 - 用户输入：检查净化和验证
 - Secrets 存储：检查加密和环境变量
 
+---
+
 ## 10. 关键文件清单
 
 | 文件 | 职责 |
@@ -684,7 +518,9 @@ function sanitizeErrorMessage(error: Error): string {
 | `src/main/main.ts` | BrowserWindow 安全配置 |
 | `src/main/preload.ts` | Preload 安全桥接 |
 | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | 权限请求处理 |
-| `src/main/libs/skillSecurity/skillSecurityScanner.ts` | Skill 安全扫描 |
+| `src/main/libs/skillSecurity/skillSecurityScanner.ts` | Skill 安全扫描主入口 |
 | `src/main/libs/skillSecurity/skillSecurityRules.ts` | 安全规则定义 |
-| `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限 UI |
-| `src/renderer/utils/dompurify.ts` | DOMPurify 配置 |
+| `src/main/libs/skillSecurity/skillSecurityTypes.ts` | 安全扫描类型定义 |
+| `src/main/libs/skillSecurity/skillSecurityPromptAudit.ts` | Prompt Injection 审计 |
+| `src/main/libs/commandSafety.ts` | 危险命令检测 |
+| `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求 UI |

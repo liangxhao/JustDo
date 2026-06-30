@@ -2,78 +2,80 @@
 
 ## 1. 概述
 
-JustDo 采用 OpenClaw 作为主要 Agent 引擎，通过 Gateway API 进行实时通信。OpenClaw 提供完整的 Agent 运行时能力，包括工具执行、沙箱隔离、持久化记忆等。
+JustDo 采用 OpenClaw 作为唯一的 Agent 引擎（v2026.6.9），通过 Gateway WebSocket API 进行实时通信。OpenClaw 提供完整的 Agent 运行时能力，包括工具执行、沙箱隔离、持久化记忆等。JustDo 作为纯薄前端，所有 Agent 逻辑由 OpenClaw Gateway 全权负责。
 
 ### 1.1 架构关系
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Main Process                             │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │           OpenClaw Engine Manager                    │    │
-│  │                                                     │    │
-│  │  Status Machine:                                    │    │
-│  │  not_installed → ready → starting → running | error │    │
-│  │                                                     │    │
-│  │  Lifecycle:                                         │    │
-│  │  - ensureRunning(): 启动网关                         │    │
-│  │  - stop(): 停止网关                                  │    │
-│  │  - install(): 安装 runtime                          │    │
-│  │  - getStatus(): 查询状态                             │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                              │                              │
-│                              ▼                              │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │           OpenClaw Runtime Adapter                   │    │
-│  │                                                     │    │
-│  │  负责将 Cowork 会话请求转换为 Gateway API 调用        │    │
-│  │                                                     │    │
-│  │  API:                                               │    │
-│  │  - chat.send: 发送对话请求                           │    │
-│  │  - chat.history: 获取历史消息                         │    │
-│  │  - approval.respond: 响应权限请求                     │    │
-│  │  - session.stop: 停止会话                            │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                              │                              │
-│                              │ WebSocket                   │
-│                              ▼                              │
-├─────────────────────────────────────────────────────────────┤
-│                     OpenClaw Runtime                         │
-│                   (bundled Gateway)                          │
-│                                                             │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐  │
-│  │ Tool Execution  │  │ Memory System   │  │ Sandbox     │  │
-│  │                 │  │                 │  │             │  │
-│  │ read_file       │  │ MEMORY.md       │  │ filesystem  │  │
-│  │ write_file      │  │ USER.md         │  │ network     │  │
-│  │ execute_command │  │ SOUL.md         │  │ process     │  │
-│  │ web_search      │  │ memory/YYYY/    │  │             │  │
-│  │ ...             │  │                 │  │             │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Main Process                                 │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │                  OpenClaw Engine Manager                      │    │
+│  │                                                              │    │
+│  │  Status Machine:                                             │    │
+│  │  not_installed → installing → ready → starting → running     │    │
+│  │                                              ↓                │    │
+│  │                                            error              │    │
+│  │                                                              │    │
+│  │  Lifecycle:                                                  │    │
+│  │  - ensureReady(): 确保 runtime 就绪                          │    │
+│  │  - startGateway(): 启动 Gateway 进程                         │    │
+│  │  - stopGateway(): 停止 Gateway 进程                          │    │
+│  │  - getStatus(): 查询状态                                     │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                              │                                      │
+│                              ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │              OpenClaw Runtime Adapter                         │    │
+│  │                                                              │    │
+│  │  Gateway 客户端 + 事件映射层                                  │    │
+│  │  将 Cowork 会话请求转换为 Gateway RPC 调用                    │    │
+│  │                                                              │    │
+│  │  RPC 方法:                                                   │    │
+│  │  - chat.send: 发送对话请求                                   │    │
+│  │  - chat.history: 获取权威历史消息                              │    │
+│  │  - chat.abort: 取消运行                                      │    │
+│  │  - exec.approval.resolve: 响应权限请求                        │    │
+│  │  - sessions.subscribe: 注册会话事件监听                       │    │
+│  │  - sessions.list: 列出活跃会话                               │    │
+│  │  - sessions.delete: 删除会话                                 │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                              │                                      │
+│                              │ WebSocket ws://localhost:{port}      │
+│                              ▼                                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                     OpenClaw Runtime                                 │
+│             (vendor/openclaw-runtime/current/)                        │
+│                   预构建 npm 包（预编译）                             │
+│                                                                     │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
+│  │ Tool Execution  │  │ Memory System   │  │ Subagent Manager    │  │
+│  │                 │  │                 │  │                     │  │
+│  │ read_file       │  │ MEMORY.md       │  │ subagent dispatch   │  │
+│  │ write_file      │  │ USER.md         │  │ lifecycle mgmt      │  │
+│  │ execute_command │  │ SOUL.md         │  │                     │  │
+│  │ web_search      │  │ memory/YYYY/    │  │                     │  │
+│  │ ...             │  │                 │  │                     │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 1.2 版本管理
 
-OpenClaw 版本在 `package.json` 中声明：
+OpenClaw 版本在 `package.json` 的 `openclaw` 字段中声明：
 
 ```json
 {
   "openclaw": {
     "version": "v2026.6.9",
-    "repo": "https://github.com/openclaw/openclaw.git"
+    "repo": "https://github.com/openclaw/openclaw.git",
+    "plugins": []
   }
 }
 ```
 
-版本管理流程：
-
-| 步骤 | 说明 | 触发时机 |
-|------|------|----------|
-| **ensure** | 克隆/checkout pinned version | 运行时启动前 |
-| **build check** | 检查 runtime-build-info.json | 每次构建前 |
-| **build** | pnpm install → build → ui:build → pack | 仅当版本变化 |
+Runtime 是预构建的 npm 包，直接从 npm registry 下载（非从 git clone + build）。
 
 ## 2. OpenClaw Engine Manager
 
@@ -82,19 +84,20 @@ OpenClaw 版本在 `package.json` 中声明：
 **文件**：`src/main/libs/openclawEngineManager.ts`
 
 ```typescript
-type EnginePhase = 
-  | 'not_installed'   // Runtime 未安装
-  | 'ready'           // Runtime 已就绪，网关未启动
-  | 'starting'        // 网关启动中
-  | 'running'         // 网关运行中
-  | 'error';          // 网关出错
+type OpenClawEnginePhase = 
+  | 'not_installed'   // Runtime 未安装/未找到
+  | 'installing'      // 安装中
+  | 'ready'           // Runtime 已就绪，Gateway 未启动
+  | 'starting'        // Gateway 启动中
+  | 'running'         // Gateway 运行中
+  | 'error';          // Gateway 出错
 
-interface EngineStatus {
-  phase: EnginePhase;
-  version?: string;       // Runtime 版本
-  lastError?: string;     // 错误信息
-  lastStartedAt?: number; // 最后启动时间
-  gatewayPid?: number;    // 网关进程 PID
+interface OpenClawEngineStatus {
+  phase: OpenClawEnginePhase;
+  version: string | null;
+  progressPercent?: number;
+  message?: string;
+  canRetry: boolean;
 }
 ```
 
@@ -102,112 +105,100 @@ interface EngineStatus {
 
 ```mermaid
 stateDiagram-v2
-  [*] --> not_installed: 首次运行
-  not_installed --> ready: 安装完成
-  ready --> starting: start()
+  [*] --> not_installed: Runtime 文件缺失
+  not_installed --> ready: 找到 runtime 文件
+  not_installed --> installing: ensureReady()（需安装）
+  installing --> ready: 安装完成
+  ready --> starting: startGateway()
   starting --> running: Gateway 启动成功
   starting --> error: 启动失败
-  running --> error: Gateway crash
-  running --> ready: stop()
-  error --> ready: reset()
+  running --> error: Gateway crash / 超时
+  running --> ready: stopGateway()
+  error --> ready: resetGatewayState() / restartGateway()
+  installing --> error: 安装失败
   ready --> [*]: 应用关闭
+  running --> [*]: 应用关闭
 ```
 
 ### 2.2 核心方法
 
 ```typescript
-class OpenClawEngineManager {
-  private status: EngineStatus;
-  private gatewayProcess: ChildProcess | null;
-  
-  // 获取状态
-  getStatus(): EngineStatus {
-    return this.status;
-  }
-  
-  // 确保 OpenClaw 运行（用于 Cowork）
-  async ensureRunningForCowork(): Promise<void> {
-    if (this.status.phase === 'running') return;
-    
-    if (this.status.phase === 'not_installed') {
-      await this.install();
-    }
-    
-    await this.start();
-  }
-  
-  // 安装 runtime
-  async install(): Promise<void> {
-    this.emitProgress({ phase: 'downloading', progress: 0 });
-    
-    // 1. ensure version
-    await this.ensureVersion();
-    
-    // 2. build runtime
-    await this.buildRuntime();
-    
-    // 3. bundle gateway
-    await this.bundleGateway();
-    
-    this.status.phase = 'ready';
-    this.emitProgress({ phase: 'complete', progress: 100 });
-  }
-  
-  // 启动网关
-  async start(): Promise<void> {
-    this.status.phase = 'starting';
-    this.emitStatusChange(this.status);
-    
-    // 1. 启动 gateway 进程
-    const gatewayPath = this.getGatewayPath();
-    this.gatewayProcess = spawn(gatewayPath, ['--port', '9750'], {
-      env: this.buildGatewayEnv(),
-    });
-    
-    // 2. 等待就绪
-    await this.waitForGatewayReady();
-    
-    // 3. 更新状态
-    this.status.phase = 'running';
-    this.status.gatewayPid = this.gatewayProcess.pid;
-    this.status.lastStartedAt = Date.now();
-    this.emitStatusChange(this.status);
-  }
-  
-  // 停止网关
-  stop(): void {
-    if (this.gatewayProcess) {
-      this.gatewayProcess.kill();
-      this.gatewayProcess = null;
-    }
-    this.status.phase = 'ready';
-    this.emitStatusChange(this.status);
-  }
-  
-  // 构建环境变量
-  private buildGatewayEnv(): Record<string, string> {
-    const env = { ...process.env };
+class OpenClawEngineManager extends EventEmitter {
+  private status: OpenClawEngineStatus;
+  private gatewayProcess: UtilityProcess | ChildProcess | null;
+  private gatewayPort: number | null;
 
-    return env;
+  /** Runtime 查找路径：
+   *  - 开发模式：vendor/openclaw-runtime/current/
+   *  - 打包模式：resources/cfmind/
+   */
+  private resolveRuntimeMetadata(): RuntimeMetadata { ... }
+
+  /** 确保 runtime 可用（不启动 Gateway） */
+  async ensureReady(options?: { forceReinstall?: boolean }): Promise<OpenClawEngineStatus> {
+    const runtime = this.resolveRuntimeMetadata();
+    if (!runtime.root) {
+      this.setStatus({ phase: 'not_installed', ... });
+      return this.getStatus();
+    }
+    // 同步本地扩展
+    syncLocalOpenClawExtensionsIntoRuntime(runtime.root);
+    this.setStatus({ phase: 'ready', version: this.desiredVersion, ... });
+    return this.getStatus();
+  }
+
+  /** 启动 Gateway 进程 */
+  async startGateway(): Promise<OpenClawEngineStatus> {
+    this.setStatus({ phase: 'starting', ... });
+    const runtime = this.resolveRuntimeMetadata();
+    // 1. 确保 bare entry 文件从 .asar 解压
+    this.ensureBareEntryFiles(runtime.root);
+    // 2. 生成 Gateway token
+    const token = this.ensureGatewayToken();
+    // 3. 扫描可用端口
+    const port = await this.resolveGatewayPort();
+    // 4. 启动 Gateway 进程（UtilityProcess.fork）
+    this.gatewayProcess = utilityProcess.fork(openclawEntry, [], {
+      env: this.buildGatewayEnv(token, port),
+      execArgv: ['--import', '...'],
+    });
+    // 5. 等待就绪（轮询端口可达 + HTTP 健康检查）
+    await this.waitForGatewayReady(port);
+    this.setStatus({ phase: 'running', ... });
+    return this.getStatus();
+  }
+
+  /** 停止 Gateway 进程 */
+  stopGateway(): Promise<void> { ... }
+
+  /** 获取连接信息 */
+  getGatewayConnectionInfo(): OpenClawGatewayConnectionInfo {
+    return {
+      version: runtime.version,
+      port: this.gatewayPort,
+      token: this.readGatewayToken(),
+      url: `ws://127.0.0.1:${this.gatewayPort}`,
+      clientEntryPath: this.resolveGatewayClientEntry(runtime.root),
+    };
   }
 }
 ```
 
-### 2.3 进度事件
+### 2.3 环境变量
+
+在启动 Gateway 时注入的环境变量：
 
 ```typescript
-interface InstallProgress {
-  phase: 'downloading' | 'building' | 'bundling' | 'complete' | 'error';
-  progress: number; // 0-100
-  message?: string;
-}
-
-// 通过 IPC 发送进度
-function emitProgress(progress: InstallProgress): void {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (win) {
-    win.webContents.send('openclaw:engine:onProgress', progress);
-  }
+private buildGatewayEnv(token: string, port: number): Record<string, string> {
+  return {
+    ...process.env,
+    OPENCLAW_GATEWAY_TOKEN: token,
+    OPENCLAW_GATEWAY_PORT: String(port),
+    JUSTDO_NODE_RUNTIME_PATH: electronNodeRuntimePath,
+    JUSTDO_NPM_BIN_DIR: npmBinDir,
+    // 注入 IM secrets
+    ...this.secretEnvVars,
+  };
 }
 ```
 
@@ -215,137 +206,100 @@ function emitProgress(progress: InstallProgress): void {
 
 ### 3.1 WebSocket 连接
 
-OpenClaw Gateway 通过 WebSocket 提供实时通信：
+OpenClaw Gateway 通过 WebSocket 提供实时通信，连接端口通过端口扫描自动确定（默认扫描端口范围，默认起始 42871）。
+
+连接握手协议：
+1. WebSocket 打开
+2. 等待服务端发送 `connect.challenge` 事件（750ms 超时）
+3. 发送 `connect` 请求（携带 auth token）
+4. 收到 `hello-ok` 响应
+
+### 3.2 事件类型
+
+Gateway 通过 WebSocket 推送以下事件：
+
+| 事件 | 载荷 | 说明 |
+|------|------|------|
+| `tick` | 无 | 心跳 |
+| `chat` | `{ runId?, sessionKey, state: 'delta'|'final'|'aborted'|'error', message? }` | 聊天流事件 |
+| `agent` | `{ runId?, sessionKey?, stream?, data?, tool?, call? }` | 代理事件（推理、工具流） |
+| `exec.approval.requested` | `{ id?, request: { command?, ... } }` | 工具执行权限请求 |
+| `exec.approval.resolved` | `{ id? }` | 权限请求已处理 |
+| `session.tool` | 同 `agent` | 会话工具流事件 |
+| `session.message` | 消息内容 | 会话级系统消息 |
+| `sessions.changed` | 会话列表变更 | 跨进程会话通知 |
+
+### 3.3 RPC 方法
+
+通过 WebSocket 请求-响应模式调用：
 
 ```typescript
-class OpenClawGatewayClient {
-  private ws: WebSocket;
-  private sessionId: string;
-  
-  connect(port: number = 9750): void {
-    this.ws = new WebSocket(`ws://localhost:${port}`);
-    
-    this.ws.on('message', (data) => {
-      const event = JSON.parse(data);
-      this.handleEvent(event);
-    });
-  }
-  
-  private handleEvent(event: GatewayEvent): void {
-    switch (event.type) {
-      case 'chat.delta':
-        this.emit('chatDelta', event.payload);
-        break;
-      case 'chat.final':
-        this.emit('chatFinal', event.payload);
-        break;
-      case 'approval.requested':
-        this.emit('approvalRequested', event.payload);
-        break;
-      case 'error':
-        this.emit('error', event.payload);
-        break;
-    }
-  }
-}
-```
-
-### 3.2 Chat API
-
-```typescript
-interface ChatSendRequest {
-  sessionKey: string;      // 会话标识
-  prompt: string;          // 用户输入
-  onDelta: (delta) => void; // 流式回调
-  onFinal: (final) => void; // 完成回调
-  onError: (error) => void; // 错误回调
-}
-
-interface ChatDelta {
-  messageId: string;
-  content: string;         // 增量文本
-  isStreaming: boolean;
-}
-
-interface ChatFinal {
-  messageId: string;
-  content: string;         // 最终文本
-  stopReason: string;      // 'tool_use' | 'end_turn' | 'error'
-  toolCalls?: ToolCall[];  // 工具调用（如果有）
-}
-
-// 发送对话
-chat.send(request: ChatSendRequest): void {
-  this.ws.send(JSON.stringify({
-    type: 'chat.send',
-    payload: {
-      sessionKey: request.sessionKey,
-      prompt: request.prompt,
-    },
-  }));
-  
-  // 注册回调
-  this.once(`chatDelta:${request.sessionKey}`, request.onDelta);
-  this.once(`chatFinal:${request.sessionKey}`, request.onFinal);
-  this.once(`error:${request.sessionKey}`, request.onError);
-}
-
-// 获取历史
-chat.history(sessionKey: string, limit?: number): Promise<ChatHistory> {
-  return this.request({
-    type: 'chat.history',
-    payload: { sessionKey, limit },
-  });
-}
-```
-
-### 3.3 Approval API
-
-```typescript
-interface ApprovalRequest {
+interface GatewayRequest {
+  type: 'req';
   id: string;
-  toolName: string;
-  toolInput: Record<string, unknown>;
-  description: string;
+  method: string;
+  params: unknown;
 }
 
-interface ApprovalResponse {
-  requestId: string;
-  approved: boolean;
-  reason?: string;        // 拒绝理由
-}
-
-// 响应权限请求
-approval.respond(response: ApprovalResponse): void {
-  this.ws.send(JSON.stringify({
-    type: 'approval.respond',
-    payload: response,
-  }));
+interface GatewayResponse {
+  type: 'res';
+  id: string;
+  ok: boolean;
+  payload?: unknown;
+  error?: { code: string; message: string; retryable?: boolean };
 }
 ```
 
-### 3.4 Session API
+#### Chat API
 
-```typescript
-// 停止会话
-session.stop(sessionKey: string): void {
-  this.ws.send(JSON.stringify({
-    type: 'session.stop',
-    payload: { sessionKey },
-  }));
-}
-```
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `chat.send` | `{ sessionKey, message, deliver?, idempotencyKey?, attachments? }` | 发送用户消息 |
+| `chat.history` | `{ sessionKey, limit? }` | 获取权威历史消息 |
+| `chat.startup` | `{ sessionKey }` | 加载会话初始状态 |
+| `chat.abort` | `{ sessionKey, runId }` | 取消当前运行 |
+| `chat.list` | — | 列出活跃聊天 |
+
+#### Sessions API
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `sessions.subscribe` | `{}` | 注册会话事件监听 |
+| `sessions.list` | `{ activeMinutes?, limit? }` | 列出活跃会话 |
+| `sessions.delete` | `{ key, deleteTranscript? }` | 删除会话 |
+
+#### Approval API
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `exec.approval.resolve` | `{ id, decision }` | 响应权限请求 |
+
+#### Cron API
+
+| 方法 | 说明 |
+|------|------|
+| `cron.add` | 添加定时任务 |
+| `cron.update` | 更新定时任务 |
+| `cron.remove` | 删除定时任务 |
+| `cron.list` | 列出定时任务 |
+| `cron.run` | 手动触发定时任务 |
+| `cron.runs` | 查看任务运行历史 |
 
 ## 4. Runtime Adapter
 
-### 4.1 核心职责
+### 4.1 OpenClawRuntimeAdapter
 
-OpenClawRuntimeAdapter 负责将 Cowork API 转换为 Gateway API：
+**文件**：`src/main/libs/agentEngine/openclawRuntimeAdapter.ts`
 
-1. **会话映射**：Cowork sessionId → OpenClaw sessionKey
-2. **事件转换**：Gateway events → Cowork stream events
-3. **历史对账**：确保本地消息与 Gateway 一致
-4. **权限管理**：转换 approval 请求和响应
+核心职责：
+1. **Gateway 客户端管理** — 管理 GatewayClient 生命周期和重连
+2. **会话映射** — Cowork sessionId → OpenClaw sessionKey
+3. **事件转换** — Gateway 事件 → Cowork 事件
+4. **历史对账** — 调用 HistoryReconciler 确保本地 UI 缓存与 Gateway 一致
+5. **权限管理** — 转换 approval 请求和响应
+6. **子代理路由** — 通过 `subagentGateway.ts` 获取子代理状态
+
+Adapter 已不再是厚重的编排层 —— 它只是 Gateway 的轻量客户端 + 事件映射器。
 
 ### 4.2 Session Key 格式
 
@@ -356,28 +310,67 @@ OpenClawRuntimeAdapter 负责将 Cowork API 转换为 Gateway API：
 | IM Channel | `agent:{agentId}:{channel}:{accountId}:{peerKind}:{peerId}` | `agent:bot1:im:acc1:direct:user1` |
 | Cron | `cron:{jobId}` | `cron:task-001` |
 
-### 4.3 历史对账
+### 4.3 子代理网关
 
-Gateway 的 `chat.history` 是消息的权威来源。Adapter 在 turn 完成后进行对账：
+**文件**：`src/main/libs/agentEngine/openclaw/subagentGateway.ts`
+
+Gateway 负责子代理的完整生命周期。JustDo 仅通过 Gateway 查询子代理状态：
 
 ```typescript
-// src/main/libs/agentEngine/openclawRuntimeAdapter.ts
-async reconcileWithHistory(sessionId: string, sessionKey: string): Promise<void> {
-  // 1. 调用 chat.history
-  const history = await this.gatewayClient.chat.history({
-    sessionKey,
-    limit: 50,
-  });
-  
-  // 2. 提取权威消息
-  const authoritative = this.extractAuthoritative(history);
-  
-  // 3. 与本地对比
-  const local = this.coworkStore.getSessionMessages(sessionId);
-  
-  if (!this.messagesMatch(local, authoritative)) {
-    // 4. 替换本地消息
-    this.coworkStore.replaceConversationMessages(sessionId, authoritative);
+export type SubagentStatus = 'running' | 'done' | 'failed' | 'killed' | 'timeout';
+
+export interface GatewaySubagent {
+  id: string;
+  sessionKey: string;
+  label: string;
+  status: SubagentStatus;
+  task?: string;
+  model?: string;
+  startedAt?: number;
+  endedAt?: number;
+  runtimeMs?: number;
+  totalTokens?: number;
+}
+
+// 查询子代理
+export async function listGatewaySubagents(
+  client: GatewayClientLike,
+  sessionKey: string,
+): Promise<GatewaySubagent[]> { ... }
+```
+
+### 4.4 历史对账
+
+**文件**：`src/main/libs/agentEngine/history/historyReconciler.ts`
+
+Gateway 的 `chat.history` 是消息的权威来源。Adapter 在每次 turn 完成后触发对账：
+
+```typescript
+class HistoryReconciler {
+  async reconcileWithHistory(
+    sessionId: string,
+    sessionKey: string,
+    options?: { finalSync?: boolean },
+  ): Promise<void> {
+    // 1. 调用 chat.history 获取权威消息
+    const history = await this.gatewayClient.request('chat.history', {
+      sessionKey,
+      limit: FINAL_HISTORY_SYNC_LIMIT,
+    });
+
+    // 2. 提取权威消息条目
+    const authoritative = extractGatewayHistoryEntries(history.messages);
+
+    // 3. 与本地 UI 缓存对比
+    const local = this.coworkStore.getSessionMessages(sessionId);
+
+    // 4. 不一致则替换
+    if (!this.messagesMatch(local, authoritative)) {
+      this.coworkStore.replaceConversationMessages(sessionId, authoritative);
+    }
+
+    // 5. 更新 token usage 等
+    this.syncTokenUsage(sessionId, history.messages);
   }
 }
 ```
@@ -388,145 +381,142 @@ async reconcileWithHistory(sessionId: string, sessionKey: string): Promise<void>
 
 **文件**：`src/main/libs/openclawConfigSync.ts`
 
-将 Cowork 配置同步到 OpenClaw 的 `managed.yaml`：
+将 JustDo 配置同步到 OpenClaw 的 `managed.yaml`：
 
 ```typescript
 interface ManagedConfig {
-  session: {
-    scope: string;        // 'per-account-channel-peer'
-  };
-  sandbox: {
-    mode: string;         // 'off' | 'non-main' | 'all'
-  };
-  channels: {
-    // IM 平台账号配置（规划中）
-    // 待 IM 集成后定义具体平台结构
-  };
+  session: { scope: string };
+  sandbox: { mode: string };
+  agents: AgentEntry[];
+  channels: { [platform: string]: { accounts: AccountConfig[] } };
+  mcpTools?: McpToolConfig[];
+  controlUI?: { readOnlyMessage?: string };
 }
 
 class OpenClawConfigSync {
-  // 同步配置
-  sync(coworkConfig: CoworkConfig, imConfig: IMConfig): void {
-    const managed = this.buildManaged(coworkConfig, imConfig);
+  sync(coworkConfig: CoworkConfig, agents: Agent[]): void {
+    const managed = this.buildManagedConfig(coworkConfig, agents);
     this.writeManagedYaml(managed);
-    this.syncEnvToOpenClawEnvFile(imConfig);
+    this.syncEnvToOpenClawEnvFile(agents);
   }
-  
-  // 映射执行模式
-  private mapExecutionMode(mode: ExecutionMode): SandboxMode {
+
+  mapExecutionMode(mode: ExecutionMode): string {
     switch (mode) {
       case 'local': return 'off';
       case 'auto': return 'non-main';
       default: return 'off';
     }
   }
-  
-  // 构建 accounts
-  private buildAccounts(platform: string, instances: InstanceConfig[]): Record<string, AccountConfig> {
-    const accounts: Record<string, AccountConfig> = {};
-    
-    for (let idx = 0; idx < instances.length; idx++) {
-      const inst = instances[idx];
-      if (!inst.enabled || !inst.clientId) continue;
-      
-      const accountKey = inst.instanceId.slice(0, 8);
-      accounts[accountKey] = {
-        clientId: inst.clientId,
-        clientSecretEnv: this.getSecretEnvKey(platform, idx),
-      };
-    }
-    
-    return accounts;
-  }
-  
-  // Secret 环境变量命名
-  private getSecretEnvKey(platform: string, index: number): string {
-    const prefix = 'JUSTDO'; // 前缀
-    const platformUpper = platform.toUpperCase();
-    
-    if (index === 0) {
-      return `${prefix}_${platformUpper}_CLIENT_SECRET`;
-    }
-    return `${prefix}_${platformUpper}_CLIENT_SECRET_${index}`;
+
+  buildManagedConfig(config: CoworkConfig, agents: Agent[]): ManagedConfig {
+    return {
+      session: { scope: 'per-account-channel-peer' },
+      sandbox: { mode: this.mapExecutionMode(config.executionMode) },
+      agents: buildManagedAgentEntries(agents),
+      channels: this.buildChannels(agents),
+    };
   }
 }
 ```
 
 ### 5.2 环境变量文件
 
-Secrets 通过 `.env` 文件传递给 Gateway：
+Secrets 通过 `.env` 文件传递给 Gateway，环境变量命名规则：
 
-```
-# .env (OpenClaw runtime)
-# IM 平台凭证将在集成后配置
-# ...
+```text
+JUSTDO_{PLATFORM}_CLIENT_SECRET
+JUSTDO_{PLATFORM}_CLIENT_SECRET_{INDEX}
 ```
 
 ## 6. 运行时打包
 
-### 6.1 打包流程
+### 6.1 安装流程（预构建 npm 包）
 
-桌面打包时会自动构建 OpenClaw runtime：
+Runtime 是预构建的 npm 包，从 npm registry 下载，无需本地编译。完整流程：
 
 ```
-npm run dist:win
+npm run openclaw:runtime:win-x64
   │
-  ├── npm run openclaw:ensure (checkout pinned version)
+  ├── [1/7]  scripts/install-openclaw-runtime.cjs win-x64
+  │          npm pack openclaw@{version}
+  │          tar xf (extract tarball)
+  │          patch facade-runtime (esbuild bundling 兼容)
+  │          patch OpenClaw dist (JustDo 集成)
+  │          process skills
+  │          install production dependencies
+  │          write runtime-build-info.json
   │
-  ├── npm run openclaw:patch (apply patches)
+  ├── [2/7]  scripts/sync-openclaw-runtime-current.cjs win-x64
+  │          symlink/junction target → vendor/openclaw-runtime/current
+  │          extract entry files from gateway.asar (for ESM support)
   │
-  ├── npm run openclaw:runtime:win-x64
-  │     │
-  │     ├── pnpm install
-  │     ├── pnpm run build
-  │     ├── pnpm run ui:build
-  │     └── pack to asar
+  ├── [3/7]  npm run openclaw:bundle
+  │          scripts/bundle-openclaw-gateway.cjs
+  │          bundle gateway 配置文件
   │
-  ├── npm run openclaw:bundle
-  │     │
-  │     ├── bundle gateway.js
-  │     └── bundle plugin configs
+  ├── [4/7]  npm run openclaw:plugins
+  │          scripts/ensure-openclaw-plugins.cjs
+  │          安装必需插件
   │
-  ├── npm run openclaw:plugins
-  │     │
-  │     └── install required plugins
+  ├── [5/7]  npm run openclaw:extensions:local
+  │          scripts/sync-local-openclaw-extensions.cjs
+  │          同步本地扩展
   │
-  ├── npm run openclaw:extensions:local
-  │     │
-  │     └── sync local extensions
+  ├── [6/7]  npm run openclaw:precompile
+  │          scripts/precompile-openclaw-extensions.cjs
+  │          预编译 TypeScript 扩展
   │
-  ├── npm run openclaw:precompile
-  │     │
-  │     └── precompile TypeScript extensions
-  │
-  └── npm run openclaw:prune
-        │
-        └── prune unnecessary files
+  └── [7/7]  npm run openclaw:prune
+             scripts/prune-openclaw-runtime.cjs
+             清理不必要文件
 ```
 
-### 6.2 Runtime 位置
+### 6.2 开发模式
+
+开发模式下 runtime 位于：
+
+```
+vendor/openclaw-runtime/current/   ← junction/symlink 指向具体平台目录
+vendor/openclaw-runtime/win-x64/  ← 具体平台目录
+vendor/openclaw-runtime/mac-arm64/
+vendor/openclaw-runtime/linux-x64/
+```
+
+启动命令：
+
+```bash
+npm run electron:dev:openclaw
+# 等同于:
+# npm run openclaw:runtime:host && npm run electron:dev
+```
+
+### 6.3 打包后位置
 
 打包后的 runtime 放置在应用资源目录：
 
 | 平台 | 位置 |
 |------|------|
-| macOS | `Contents/Resources/cfmind.asar` |
-| Windows | `resources/cfmind.asar` |
-| Linux | `resources/cfmind.asar` |
+| macOS | `Contents/Resources/cfmind/` |
+| Windows | `resources/cfmind/` |
+| Linux | `resources/cfmind/` |
 
-### 6.3 缓存机制
+### 6.4 缓存机制
 
-通过 `runtime-build-info.json` 记录已构建版本：
+通过 `runtime-build-info.json` 记录已安装版本，避免重复下载：
 
 ```json
 {
-  "version": "v2026.6.9",
-  "platform": "win-x64",
-  "builtAt": 1712851200000,
-  "outputPath": "release/openclaw-runtime-win-x64.asar"
+  "openclawVersion": "v2026.6.9",
+  "npmVersion": "2026.6.9",
+  "targetId": "win-x64",
+  "installedAt": 1712851200000,
+  "platform": "win32",
+  "arch": "x64",
+  "nodeVersion": "24.x"
 }
 ```
 
+设置 `OPENCLAW_FORCE_INSTALL=1` 环境变量可强制重新安装。
 
 ## 7. 环境变量
 
@@ -535,18 +525,63 @@ npm run dist:win
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | — |
+| `OPENCLAW_GATEWAY_TOKEN` | Gateway 认证令牌 | 自动生成 |
+| `OPENCLAW_GATEWAY_PORT` | Gateway 监听端口 | 42871（自动扫描） |
+| `JUSTDO_NODE_RUNTIME_PATH` | Electron Node.js 运行时路径 | 自动检测 |
+| `JUSTDO_NPM_BIN_DIR` | npm 二进制目录 | 自动检测 |
 
+### 7.2 IM 集成
+
+| 变量 | 说明 |
+|------|------|
+| `JUSTDO_INTERCOM_CLIENT_SECRET` | Intercom 客户端密钥 |
+| `JUSTDO_DISCORD_CLIENT_SECRET` | Discord 客户端密钥 |
 
 ## 8. 关键文件清单
 
+### 引擎管理
+
 | 文件 | 职责 |
 |------|------|
-| `src/main/libs/openclawEngineManager.ts` | 运行时生命周期 |
-| `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | Gateway 适配 |
-| `src/main/libs/openclawConfigSync.ts` | 配置同步 |
+| `src/main/libs/openclawEngineManager.ts` | Gateway 进程生命周期管理 |
+| `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | Gateway 客户端 + 事件映射 |
+| `src/main/libs/agentEngine/coworkEngineRouter.ts` | 引擎路由层（透传委托） |
+| `src/main/libs/agentEngine/gateway/types.ts` | Gateway 类型定义 |
+| `src/main/libs/agentEngine/utils/gatewayHelpers.ts` | Gateway 辅助函数 |
+
+### 历史与子代理
+
+| 文件 | 职责 |
+|------|------|
+| `src/main/libs/agentEngine/history/historyReconciler.ts` | 历史对账（Gateway 权威 → UI 缓存） |
+| `src/main/libs/agentEngine/openclaw/subagentGateway.ts` | 子代理状态查询 |
+| `src/main/libs/agentEngine/openclaw/webchatToolStream.ts` | Webchat 工具流同步 |
+| `src/main/libs/openclawHistory.ts` | Gateway 历史条目提取 |
+
+### 配置
+
+| 文件 | 职责 |
+|------|------|
+| `src/main/libs/openclawConfigSync.ts` | 配置同步到 managed.yaml |
 | `src/main/libs/openclawChannelSessionSync.ts` | Channel 会话同步 |
-| `scripts/bundle-openclaw-gateway.cjs` | Gateway 打包 |
-| `scripts/sync-openclaw-runtime-current.cjs` | 同步当前 runtime |
+| `src/main/libs/openclawAgentModels.ts` | Agent 模型配置解析 |
+| `src/main/libs/openclawLocalExtensions.ts` | 本地扩展同步 |
+
+### 打包脚本
+
+| 文件 | 职责 |
+|------|------|
+| `scripts/install-openclaw-runtime.cjs` | 下载预构建 npm 包 |
+| `scripts/sync-openclaw-runtime-current.cjs` | 同步 current 目录 |
+| `scripts/patch-openclaw-runtime.cjs` | 打补丁（JustDo 集成） |
+| `scripts/bundle-openclaw-gateway.cjs` | 打包 Gateway 配置 |
+| `scripts/ensure-openclaw-plugins.cjs` | 安装必需插件 |
 | `scripts/sync-local-openclaw-extensions.cjs` | 同步本地扩展 |
 | `scripts/precompile-openclaw-extensions.cjs` | 预编译扩展 |
 | `scripts/prune-openclaw-runtime.cjs` | 清理 runtime |
+| `scripts/pack-openclaw-tar.cjs` | 打包 tar 存档 |
+| `scripts/openclaw-runtime-host.cjs` | 开发模式 runtime host |
+
+---
+
+> **注意**：此文档反映 JustDo v2026.6.25 架构。当前 OpenClaw 版本为 v2026.6.9。Runtime 从 npm registry 下载预构建包，不再从 git 源码构建。

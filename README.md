@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Version-2026.6.12-green.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2026.6.25-green.svg?style=for-the-badge" alt="Version">
   <br>
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen?style=for-the-badge" alt="Platform">
   <img src="https://img.shields.io/badge/Electron-41-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
@@ -27,27 +27,64 @@
 
 At its core is **Cowork mode** — it executes tools, manipulates files, and runs commands in a local or sandboxed environment, all under your supervision.
 
+JustDo is a **thin frontend** for the [OpenClaw Gateway](https://github.com/openclaw/openclaw) — all AI inference, session lifecycle, message history, and subagent management are handled by the Gateway. JustDo owns the UI, configuration, and permission gating.
+
 ## Key Features
 
 | Feature | Description |
 |---------|-------------|
-| **All-in-One Productivity** | Data analysis, PPT creation, video generation, document writing, web search, email — covers the full range of daily work |
-| **Local + Sandbox Execution** | Run tasks directly on your machine or in an OpenClaw sandbox environment |
-| **Built-in Skills** | Office documents (Word/Excel/PPT/PDF), browser automation, data analysis, diagram creation, web search, AI art, skill creation — 17 skills bundled |
-| **Windows Python Runtime** | Windows packages bundle a ready-to-use Python interpreter; dependencies install on demand |
-| **Scheduled Tasks** | Create recurring tasks via conversation or GUI — daily news digests, inbox cleanup, periodic reports |
-| **Persistent Memory** | Automatically extracts preferences and facts from conversations, remembers across sessions |
-| **IM Integration** | Remote control via IM platforms (Telegram, Discord) — in development with UI placeholders |
-| **Subagents** | Delegate sub-sessions for parallel or scoped task execution — tracked in `cowork_subagents` |
+| **Thin Frontend for OpenClaw Gateway** | All AI execution, history, and subagent lifecycle delegated to OpenClaw. JustDo is a pure UI frontend |
+| **Cowork Mode (Auto/Local)** | AI working sessions that autonomously complete complex tasks in local or sandboxed environments |
+| **17 Built-in Skills** | Office documents, web search, browser automation, data analysis, diagram generation, AI art, and more |
+| **Scheduled Tasks** | Create recurring tasks via conversation or GUI using OpenClaw's cron engine |
+| **Persistent Memory** | Automatic extraction of preferences and facts across sessions (MEMORY.md, USER.md, SOUL.md) |
 | **Permission Gating** | All tool invocations require explicit user approval before execution |
+| **14 Themes** | Built-in theme system with 14 curated themes, i18n (Chinese + English) |
+| **Lit-based Chat Rendering** | Message rendering via `<justdo-chat>` Lit custom element, same pipeline as OpenClaw webchat |
+| **IM Integration** | Remote control via IM platforms (Telegram, Discord) — in development |
 | **Cross-Platform** | macOS (Intel + Apple Silicon), Windows, Linux desktop |
-| **Local Data** | SQLite storage keeps your chat history, sessions, and configuration on your device |
+| **Local Data** | SQLite as UI cache keeps your configuration and session metadata on your device |
 
 ## Architecture Overview
 
-<p align="center">
-  <img src="docs/res/architecture.png" alt="Architecture Overview" width="800">
-</p>
+JustDo is designed as a **thin frontend** for OpenClaw Gateway:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      JustDo (Frontend)                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │  React UI   │  │ Config Sync │  │   Skill Manager     │  │
+│  │ (renderer)  │  │ (API/model) │  │ (sync to Gateway)   │  │
+│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘  │
+│         │                │                     │             │
+│  ┌──────┴──────────────────────────────────────┴──────────┐  │
+│  │   <justdo-chat> Lit Element (direct WebSocket)         │  │
+│  │   GatewayClient → ChatController → justdo-chat         │  │
+│  └──────────────────────────┬──────────────────────────────┘  │
+└─────────────────────────────│─────────────────────────────────┘
+                              │ WebSocket
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    OpenClaw Gateway                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │  AI Engine  │  │  History    │  │    Skills System    │  │
+│  │ (inference) │  │ (storage)   │  │  (~/.openclaw/)     │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│  ┌─────────────┐  ┌─────────────┐                            │
+│  │  Sessions   │  │  Subagents  │                            │
+│  │ (lifecycle) │  │ (dispatch)  │                            │
+│  └─────────────┘  └─────────────┘                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Architecture Principles (v2026.6)
+
+1. **Thin Frontend** — JustDo does not inject custom system prompts, AGENTS.md policies, or per-agent workspace content. All AI context is managed by Gateway.
+2. **Single Engine** — OpenClaw Gateway is the only AI engine. No dual-engine architecture.
+3. **Runtime as pre-built npm package** — OpenClaw runtime is downloaded as a pre-built npm package, not cloned and built from source.
+4. **Gateway is Single Authority** — `chat.history` from Gateway is the authoritative source for message history. SQLite is a UI cache only.
+5. **Lit Chat Rendering** — Message rendering uses the same Lit pipeline as OpenClaw webchat (`<justdo-chat>` custom element connecting directly to Gateway WebSocket).
+6. **Subagent Logic Fully Contracted** — No local subagent state tracking; parent/child relationships managed by Gateway.
 
 ## Getting Started
 
@@ -67,7 +104,7 @@ npm install
 # Start development (Vite + Electron with hot reload)
 npm run electron:dev
 
-# With OpenClaw agent engine (auto clones & builds on first run)
+# With OpenClaw runtime (downloads pre-built package on first run)
 npm run electron:dev:openclaw
 ```
 
@@ -89,7 +126,7 @@ npm run build           # TypeScript + Vite bundle
 npm run lint            # ESLint check
 
 # Platform-specific installers (output to release/)
-npm run dist:mac        # macOS .dmg
+npm run dist:mac        # macOS .dmg (Apple Silicon)
 npm run dist:win        # Windows .exe (NSIS)
 npm run dist:linux      # Linux .AppImage & .deb
 ```
@@ -100,7 +137,7 @@ Desktop packages bundle a prebuilt OpenClaw runtime — no manual setup needed.
 
 ### Cowork System
 
-An AI working session system powered by OpenClaw, autonomously completing complex tasks.
+An AI working session system powered by OpenClaw Gateway, autonomously completing complex tasks.
 
 | Mode | Description |
 |------|-------------|
@@ -109,7 +146,11 @@ An AI working session system powered by OpenClaw, autonomously completing comple
 
 All tool invocations (filesystem, terminal, network) require explicit approval via `CoworkPermissionModal`.
 
+Chat messages are rendered by a Lit-based pipeline (`<justdo-chat>` element) connecting directly to Gateway WebSocket — the same approach as OpenClaw webchat.
+
 ### Skills System (17 bundled skills)
+
+Skills are managed by OpenClaw Gateway. JustDo syncs skill definitions from `resources/skills/` to the Gateway's state directory.
 
 | Skill | Category |
 |-------|----------|
@@ -130,9 +171,11 @@ Custom skills can be created via `skill-creator` and hot-loaded at runtime. User
 
 ### Scheduled Tasks
 
-Create recurring tasks via natural language or GUI using OpenClaw's cron engine. Examples: daily news collection, weekly reports, email cleanup. Managed by `cronJobService.ts`.
+Create recurring tasks via natural language or GUI using OpenClaw's cron engine. Examples: daily news collection, weekly reports, email cleanup. Task metadata is persisted locally in `scheduled_task_meta` table.
 
 ### Persistent Memory
+
+File-based memory system managed by OpenClaw Gateway:
 
 | File | Purpose |
 |------|---------|
@@ -140,6 +183,20 @@ Create recurring tasks via natural language or GUI using OpenClaw's cron engine.
 | `memory/YYYY-MM-DD.md` | Daily notes |
 | `USER.md` | User profile |
 | `SOUL.md` | Agent personality |
+
+### Chat Rendering
+
+Message rendering uses a Lit-based pipeline identical to OpenClaw webchat:
+
+```
+Gateway WebSocket → GatewayClient → ChatController → <justdo-chat> Lit Element → Shadow DOM
+```
+
+Key benefits:
+- Eliminates message duplication, truncation, and loss issues
+- Direct WebSocket connection (no IPC round-trip)
+- Same render pipeline as webchat (consistent behavior)
+- Streams, thinking content, and tool calls all handled in the pipeline
 
 ## Technical Details
 
@@ -149,46 +206,80 @@ Electron strict process isolation with IPC communication.
 
 | Process | Responsibilities |
 |---------|------------------|
-| **Main** (`src/main/`) | Window lifecycle, SQLite, OpenClaw engine, 40+ IPC handlers |
+| **Main** (`src/main/`) | Window lifecycle, SQLite, OpenClaw Gateway process management, 40+ IPC handlers |
 | **Preload** (`src/main/preload.ts`) | `contextBridge` API, `cowork` namespace |
-| **Renderer** (`src/renderer/`) | React 18 + Redux + Tailwind, all UI logic |
+| **Renderer** (`src/renderer/`) | React 18 + Redux + Tailwind, all UI logic, Lit chat rendering |
 
 ### Directory Structure
 
 ```
 src/
-├── main/           # Electron main process (IPC handlers)
-│   ├── main.ts     # Entry point
-│   ├── preload.ts  # contextBridge security layer
-│   └── libs/       # Engine manager, skill manager, MCP bridge, cowork store, config sync
-├── renderer/       # React frontend
-│   ├── App.tsx     # Root component
-│   ├── components/ # Cowork UI, Settings, scheduled tasks, quick actions
-│   └── store/      # Redux slices (agent, skill, mcp, cowork, scheduledTask, quickAction)
-├── scheduledTask/  # Cron engine, migration, policies
-└── shared/         # Platform & provider constants
-resources/skills/   # 17 bundled skill definitions (Gateway-managed)
+├── main/               # Electron main process
+│   ├── main.ts         # Entry point
+│   ├── preload.ts      # contextBridge security layer
+│   ├── sqliteStore.ts  # SQLite database management
+│   ├── coworkStore.ts  # Cowork session & message CRUD
+│   └── libs/           # Engine manager, config sync
+│
+├── renderer/           # React frontend + Lit chat
+│   ├── App.tsx         # Root component
+│   ├── theme/          # Theme system (14 themes)
+│   │   ├── engine/     # Theme engine
+│   │   ├── themes/     # Theme definitions
+│   │   ├── tailwind/   # Tailwind integration
+│   │   └── tokens/     # Design tokens
+│   ├── components/     # UI components
+│   │   └── cowork/
+│   │       ├── JustDoChatWrapper.tsx  # React ↔ Lit bridge
+│   │       ├── CoworkView.tsx
+│   │       ├── CoworkSessionList.tsx
+│   │       ├── CoworkPermissionModal.tsx
+│   │       └── ...
+│   ├── libs/
+│   │   └── openclaw-chat/ # Lit chat rendering pipeline
+│   │       ├── gateway/    # GatewayClient + ChatController
+│   │       ├── components/ # Lit components
+│   │       ├── pipeline/   # Message processing pipeline
+│   │       └── conversion/ # Data conversion
+│   ├── store/           # Redux slices
+│   └── types/           # TypeScript types
+│
+├── scheduledTask/      # Cron engine, task metadata
+└── shared/             # Platform & provider constants
+
+resources/skills/       # 17 bundled skill definitions (Gateway-managed)
+openclaw-extensions/    # OpenClaw local extensions
+scripts/                # Build and tool scripts
 ```
 
 ### Cowork Engine Architecture
 
-Cowork sessions use a Gateway-based process lifecycle (`idle → downloading → installing → ready → running`). History reconciliation via `historyReconciler.ts`, subagent dispatch via `subagentGateway.ts`.
+Cowork sessions use a Gateway-based lifecycle (`idle → downloading → installing → ready → running`). History is loaded from Gateway's `chat.startup` / `chat.history` RPC. No local subagent state tracking — parent/child relationships are entirely managed by Gateway.
 
 ### Data Storage
 
-Local SQLite (`justdo.sqlite`): app config, sessions, messages, subagents, memories, agents, MCP servers, scheduled tasks.
+Local SQLite (`justdo.sqlite`) serves as a **UI cache**, NOT the authoritative data source:
+
+| Data | Authority | SQLite Role |
+|------|-----------|-------------|
+| Message history | Gateway `chat.history` API | UI cache |
+| Session metadata | JustDo local | Primary storage |
+| App configuration | JustDo local | Primary storage |
+| Agent definitions | JustDo local | Primary storage |
+| MCP servers | JustDo local | Primary storage |
 
 ### Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
 | Framework | Electron 41 |
-| Frontend | React 18 + TypeScript |
+| Frontend | React 18 + TypeScript + Lit (chat rendering) |
 | Build | Vite 5 |
 | Styling | Tailwind CSS 3 |
 | State | Redux Toolkit |
-| AI Engine | OpenClaw (runtime download, auto-install, Gateway lifecycle) |
-| Storage | better-sqlite3 |
+| AI Engine | OpenClaw Gateway (pre-built npm package) |
+| Storage | better-sqlite3 (UI cache) |
+| Chat Render | Lit 3 + markdown-it + highlight.js + katex |
 
 ### Security
 
@@ -196,7 +287,7 @@ Local SQLite (`justdo.sqlite`): app config, sessions, messages, subagents, memor
 - Permission gating for sensitive tool invocations
 - Optional OpenClaw sandbox
 - HTML sandbox, DOMPurify, Mermaid strict mode
-- Enterprise config sync support via `enterpriseConfigSync.ts`
+- Enterprise config sync support
 
 ## Configuration
 
@@ -205,6 +296,8 @@ Local SQLite (`justdo.sqlite`): app config, sessions, messages, subagents, memor
 - **Working Directory** — Root for Agent operations
 - **System Prompt** — Customize Agent behavior
 - **Execution Mode** — `auto` / `local`
+- **Model Provider & Model** — AI model selection
+- **Agent Engine** — Always `openclaw` (single engine)
 
 ### OpenClaw Integration
 
@@ -214,16 +307,17 @@ Version pinned in `package.json`:
 {
   "openclaw": {
     "version": "v2026.6.9",
-    "repo": "https://github.com/openclaw/openclaw.git"
+    "repo": "https://github.com/openclaw/openclaw.git",
+    "plugins": []
   }
 }
 ```
 
-To update: change version in `package.json`, run build, commit.
+Runtime is distributed as a pre-built npm package, downloaded via platform-specific scripts.
 
 ### Internationalization
 
-English and Chinese supported. Switch in Settings panel.
+14 built-in themes. English and Chinese (default) supported. Switch in Settings panel.
 
 ## Development
 
@@ -250,8 +344,4 @@ npm test -- logger    # Specific module
 
 ## Acknowledgments
 
-Developed with reference to [LobsterAI](https://github.com/netease-youdao/LobsterAI). Thanks to the LobsterAI team for their pioneering work.
-
-
-
-
+Developed with reference to [LobsterAI](https://github.com/netease-youdao/LobsterAI). Thanks to the LobsterAI team for their pioneering work in personal assistant AI agents.
