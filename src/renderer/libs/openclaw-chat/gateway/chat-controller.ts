@@ -359,15 +359,24 @@ export class ChatController {
 
   /** Switch to a different session */
   async switchSession(sessionKey: string): Promise<void> {
+    const previousSessionKey = this.state.sessionKey;
+    const isTempSessionPromotion = isTempJustDoSessionKey(previousSessionKey) && !isTempJustDoSessionKey(sessionKey);
     console.log('[ChatCtrl] switchSession:', sessionKey, {
       hadPendingUserMsg: !!this.state.pendingUserMessage,
       chatSending: this.state.chatSending,
       msgCount: this.state.chatMessages.length,
+      previousSessionKey,
+      isTempSessionPromotion,
     });
     this.state.sessionKey = sessionKey;
-    // Preserve pendingUserMessage — it will be cleared by loadHistory once
-    // the gateway history is available. This ensures the user sees their
-    // message immediately during session transitions (e.g. temp→real).
+    // Only preserve the optimistic prompt while replacing the temporary UI
+    // session with the persisted JustDo session. For normal user-initiated
+    // switches, clear the active run state so the target session can load its
+    // own history even while another session is still running.
+    if (!isTempSessionPromotion) {
+      this.state.chatSending = false;
+      this.state.pendingUserMessage = null;
+    }
     this.state.chatMessages = [];
     this.state.chatThinkingMessages = [];
     this.state.chatToolMessages = [];
@@ -1060,6 +1069,10 @@ export class ChatController {
 function stringField(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function isTempJustDoSessionKey(sessionKey: string): boolean {
+  return /:justdo:temp-[^:]+$/.test(sessionKey);
 }
 
 function extractSnapshotText(message: unknown): string | null {
