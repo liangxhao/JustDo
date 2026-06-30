@@ -236,7 +236,8 @@ export class JustDoChatElement extends LitElement {
       position: absolute;
       right: 28px;
       z-index: 100;
-      max-width: 240px;
+      width: min(360px, calc(100vw - 96px));
+      box-sizing: border-box;
       padding: 8px 14px;
       border: 1px solid rgba(229, 229, 229, 0.8);
       background: #fafafa;

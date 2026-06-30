@@ -6,7 +6,7 @@ import { i18nService } from '../../services/i18n';
 import type { CoworkMessage } from '../../types/cowork';
 import Modal from '../common/Modal';
 import ChatMessageDisplay from './ChatMessageDisplay';
-import { type Subagent, SUBAGENT_STATUSES,subagentStatusStyles } from './SubagentMenu';
+import { type Subagent, SUBAGENT_STATUSES, subagentStatusStyles } from './SubagentMenu';
 
 const DRAWER_DEFAULT_WIDTH = 672;
 const DRAWER_MIN_WIDTH = 360;
@@ -115,8 +115,9 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
       .join(' ');
   };
 
+  const subagentStatus = subagent.status;
   const detailRows = [
-    [i18nService.t('subagentInfoStatus'), subagent.status],
+    [i18nService.t('subagentInfoStatus'), subagentStatus],
     [i18nService.t('subagentInfoTask'), subagent.task],
     [i18nService.t('subagentInfoModel'), subagent.model],
     [i18nService.t('subagentInfoRuntime'), formatRuntime(subagent.runtimeMs)],
@@ -150,7 +151,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface/80 px-4 py-2.5">
           <div className="flex min-w-0 flex-1 items-center gap-2.5">
             <span
-              className={`h-2.5 w-2.5 shrink-0 rounded-full ${subagentStatusStyles[subagent.status]}`}
+              className={`h-2.5 w-2.5 shrink-0 rounded-full ${subagentStatusStyles[subagentStatus]}`}
             />
             <h2 className="min-w-0 truncate text-sm font-semibold text-foreground">
               {i18nService.t('subagentDrawerTitle').replace('{title}', subagent.label)}
@@ -167,7 +168,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
               <InformationCircleIcon className="h-4 w-4" />
             </button>
             <span className="shrink-0 rounded-full border border-border bg-background px-2 py-0.5 text-xs font-medium text-secondary">
-              {subagent.status}
+              {subagentStatus}
             </span>
             <button
               type="button"

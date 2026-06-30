@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { coworkService } from '../../services/cowork';
@@ -354,6 +354,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     await coworkService.stopSession(currentSession.id);
   };
 
+  const handleSubagentsChange = useCallback((subagents: Subagent[]) => {
+    setSelectedSubagent(current => {
+      if (!current) return null;
+      return subagents.find(subagent => subagent.id === current.id) ?? current;
+    });
+  }, []);
+
   // Get selected quick action
   const selectedAction = React.useMemo(() => {
     return quickActions.find(action => action.id === selectedActionId);
@@ -540,7 +547,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             )}
           </div>
           <div className="non-draggable flex items-center">
-            <SubagentMenu sessionId={currentSession.id} onOpenSubagent={setSelectedSubagent} />
+            <SubagentMenu
+              sessionId={currentSession.id}
+              onOpenSubagent={setSelectedSubagent}
+              onSubagentsChange={handleSubagentsChange}
+              shouldRefresh={selectedSubagent !== null}
+            />
             <WindowTitleBar inline />
           </div>
         </div>

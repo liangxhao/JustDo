@@ -38,14 +38,22 @@ export const subagentStatusStyles: Record<SubagentStatus, string> = {
 interface SubagentMenuProps {
   sessionId: string;
   onOpenSubagent?: (subagent: Subagent) => void;
+  onSubagentsChange?: (subagents: Subagent[]) => void;
+  shouldRefresh?: boolean;
 }
 
-const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId, onOpenSubagent }) => {
+const SubagentMenu: React.FC<SubagentMenuProps> = ({
+  sessionId,
+  onOpenSubagent,
+  onSubagentsChange,
+  shouldRefresh = false,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [subagents, setSubagents] = useState<Subagent[]>([]);
   const [detailSubagent, setDetailSubagent] = useState<Subagent | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const subagentLabelsRef = useRef(new Map<string, string>());
   const refreshInFlightRef = useRef(false);
   const hasLoadedRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
@@ -59,13 +67,19 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId, onOpenSubagent }
       const result = await window.electron.cowork.getSubTaskStatus(sessionId);
       if (result.success && sessionIdRef.current === sessionId) {
         const nextSubagents = (result.subagents as Subagent[] | undefined) ?? [];
-        setSubagents(current => {
-          const stableLabels = new Map(current.map(subagent => [subagent.id, subagent.label]));
-          return nextSubagents.map(subagent => ({
-            ...subagent,
-            label: stableLabels.get(subagent.id) || subagent.label,
-          }));
+        const normalizedSubagents = nextSubagents.map(subagent => ({
+          ...subagent,
+          label: subagentLabelsRef.current.get(subagent.id) || subagent.label,
+        }));
+        subagentLabelsRef.current = new Map(
+          normalizedSubagents.map(subagent => [subagent.id, subagent.label]),
+        );
+        setSubagents(normalizedSubagents);
+        setDetailSubagent(current => {
+          if (!current) return null;
+          return normalizedSubagents.find(subagent => subagent.id === current.id) ?? current;
         });
+        onSubagentsChange?.(normalizedSubagents);
         hasLoadedRef.current = true;
         setIsLoading(false);
       }
@@ -75,20 +89,22 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId, onOpenSubagent }
       refreshInFlightRef.current = false;
       if (sessionIdRef.current === sessionId) setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [onSubagentsChange, sessionId]);
 
   useEffect(() => {
     hasLoadedRef.current = false;
+    subagentLabelsRef.current = new Map();
     setSubagents([]);
     setDetailSubagent(null);
-  }, [sessionId]);
+    onSubagentsChange?.([]);
+  }, [onSubagentsChange, sessionId]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen && !shouldRefresh) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(timer);
-  }, [isOpen, refresh]);
+  }, [isOpen, refresh, shouldRefresh]);
 
   useEffect(() => {
     if (!isOpen) return;
