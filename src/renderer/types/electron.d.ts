@@ -588,6 +588,11 @@ interface IElectronAPI {
         totalTokens?: number;
       }>;
     }>;
+    getSubTaskSession: (sessionKey: string) => Promise<{
+      success: boolean;
+      session?: CoworkSession | null;
+      error?: string;
+    }>;
   };
   sessionGroup: {
     list: () => Promise<{ success: boolean; groups?: SessionGroup[]; error?: string }>;

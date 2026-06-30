@@ -824,6 +824,19 @@ class CoworkService {
     return { subagents: [] };
   }
 
+  async getSubTaskSession(sessionKey: string): Promise<CoworkSession | null> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.getSubTaskSession) {
+      return null;
+    }
+
+    const result = await cowork.getSubTaskSession(sessionKey);
+    if (result.success) {
+      return result.session ?? null;
+    }
+    return null;
+  }
+
   async createGroup(input: CreateGroupInput): Promise<SessionGroup | null> {
     if (!window.electron?.sessionGroup?.create) return null;
     const result = await window.electron.sessionGroup.create(input);

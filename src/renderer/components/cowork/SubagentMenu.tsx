@@ -14,7 +14,7 @@ export const SUBAGENT_STATUSES = {
 
 export type SubagentStatus = (typeof SUBAGENT_STATUSES)[keyof typeof SUBAGENT_STATUSES];
 
-type Subagent = {
+export type Subagent = {
   id: string;
   sessionKey: string;
   label: string;
@@ -27,7 +27,7 @@ type Subagent = {
   totalTokens?: number;
 };
 
-const statusStyles: Record<SubagentStatus, string> = {
+export const subagentStatusStyles: Record<SubagentStatus, string> = {
   running: 'bg-blue-500 animate-pulse',
   done: 'bg-green-500',
   failed: 'bg-red-500',
@@ -37,9 +37,10 @@ const statusStyles: Record<SubagentStatus, string> = {
 
 interface SubagentMenuProps {
   sessionId: string;
+  onOpenSubagent?: (subagent: Subagent) => void;
 }
 
-const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId }) => {
+const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId, onOpenSubagent }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [subagents, setSubagents] = useState<Subagent[]>([]);
@@ -179,11 +180,18 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({ sessionId }) => {
                   className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-surface-raised"
                 >
                   <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${statusStyles[subagent.status]}`}
+                    className={`h-2 w-2 shrink-0 rounded-full ${subagentStatusStyles[subagent.status]}`}
                   />
-                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left text-sm text-foreground hover:text-primary"
+                    onClick={() => {
+                      onOpenSubagent?.(subagent);
+                      setIsOpen(false);
+                    }}
+                  >
                     {subagent.label}
-                  </span>
+                  </button>
                   <button
                     type="button"
                     className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface hover:text-foreground"

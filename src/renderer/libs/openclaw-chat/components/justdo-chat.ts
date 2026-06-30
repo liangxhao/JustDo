@@ -122,6 +122,13 @@ export class JustDoChatElement extends LitElement {
       padding: 16px 0;
     }
 
+    :host(.full-width) .chat-container {
+      width: 100%;
+      max-width: 100%;
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
     .chat-minimap {
       position: sticky;
       top: 50%;

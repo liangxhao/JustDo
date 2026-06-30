@@ -32,7 +32,8 @@ import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
-import SubagentMenu from './SubagentMenu';
+import SubagentMenu, { type Subagent } from './SubagentMenu';
+import SubagentMessageDrawer from './SubagentMessageDrawer';
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
@@ -52,6 +53,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const [isInitialized, setIsInitialized] = useState(false);
   const [openClawStatus, setOpenClawStatus] = useState<OpenClawEngineStatus | null>(null);
   const [isRestartingGateway, setIsRestartingGateway] = useState(false);
+  const [selectedSubagent, setSelectedSubagent] = useState<Subagent | null>(null);
   // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
   // Track pending start request so stop can cancel delayed startup.
@@ -407,6 +409,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     };
   }, [currentSession, isOpenClawEngine]);
 
+  useEffect(() => {
+    setSelectedSubagent(null);
+  }, [currentSession?.id]);
+
   // Apply pending prompt to ChatController once the wrapper is mounted
   useEffect(() => {
     if (!pendingPromptRef.current || !chatWrapperRef.current) return;
@@ -509,7 +515,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     };
 
     return (
-      <div className="flex-1 flex flex-col h-full">
+      <div className="relative flex-1 flex flex-col h-full">
         {engineStatusBanner}
         {/* Header */}
         <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
@@ -534,29 +540,35 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             )}
           </div>
           <div className="non-draggable flex items-center">
-            <SubagentMenu sessionId={currentSession.id} />
+            <SubagentMenu sessionId={currentSession.id} onOpenSubagent={setSelectedSubagent} />
             <WindowTitleBar inline />
           </div>
         </div>
-        {/* Messages */}
-        <JustDoChatWrapper ref={chatWrapperRef} className="flex-1 min-h-0" />
-        {/* Input */}
-        <div className="shrink-0 pb-4 pt-2">
-          <div
-            className="mx-auto min-w-0 shadow-glow-accent rounded-2xl"
-            style={{ width: 'clamp(320px, 75%, 1120px)', maxWidth: 'calc(100% - 32px)' }}
-          >
-            <CoworkPromptInput
-              onSubmit={handleSendMessage}
-              onStop={handleStopSession}
-              isStreaming={isStreaming}
-              disabled={!isEngineReady}
-              placeholder={i18nService.t('coworkPlaceholder')}
-              size="large"
-              showModelSelector={true}
-              sessionId={currentSession.id}
-            />
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {/* Messages */}
+          <JustDoChatWrapper ref={chatWrapperRef} className="flex-1 min-h-0" />
+          {/* Input */}
+          <div className="shrink-0 pb-4 pt-2">
+            <div
+              className="mx-auto min-w-0 shadow-glow-accent rounded-2xl"
+              style={{ width: 'clamp(320px, 75%, 1120px)', maxWidth: 'calc(100% - 32px)' }}
+            >
+              <CoworkPromptInput
+                onSubmit={handleSendMessage}
+                onStop={handleStopSession}
+                isStreaming={isStreaming}
+                disabled={!isEngineReady}
+                placeholder={i18nService.t('coworkPlaceholder')}
+                size="large"
+                showModelSelector={true}
+                sessionId={currentSession.id}
+              />
+            </div>
           </div>
+          <SubagentMessageDrawer
+            subagent={selectedSubagent}
+            onClose={() => setSelectedSubagent(null)}
+          />
         </div>
       </div>
     );

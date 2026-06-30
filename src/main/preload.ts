@@ -375,6 +375,8 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getSubTaskStatus: (sessionId?: string) =>
       ipcRenderer.invoke('cowork:subTask:status', sessionId),
+    getSubTaskSession: (sessionKey: string) =>
+      ipcRenderer.invoke('cowork:subTask:session', sessionKey),
   },
   sessionGroup: {
     list: () => ipcRenderer.invoke('sessionGroup:list'),

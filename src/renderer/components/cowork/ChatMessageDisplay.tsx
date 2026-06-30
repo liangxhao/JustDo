@@ -12,6 +12,7 @@ interface ChatMessageDisplayProps {
   controller?: ChatController | null;
   messages?: CoworkMessage[];
   isStreaming?: boolean;
+  fullWidth?: boolean;
 }
 
 /**
@@ -24,6 +25,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   controller = null,
   messages = [],
   isStreaming = false,
+  fullWidth = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<JustDoChatElement | null>(null);
@@ -34,6 +36,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     if (!container) return;
 
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.classList.toggle('full-width', fullWidth);
     container.appendChild(chat);
     chatRef.current = chat;
 
@@ -68,7 +71,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       chat.remove();
       chatRef.current = null;
     };
-  }, []);
+  }, [fullWidth]);
 
   useEffect(() => {
     const chat = chatRef.current;

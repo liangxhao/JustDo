@@ -3081,6 +3081,25 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:subTask:session', async (_event, sessionKey: string) => {
+    try {
+      if (!openClawRuntimeAdapter) {
+        return { success: false, session: null, error: 'OpenClaw runtime is not ready' };
+      }
+      if (!sessionKey || typeof sessionKey !== 'string') {
+        return { success: false, session: null, error: 'Session key is required' };
+      }
+      const session = await openClawRuntimeAdapter.fetchSessionByKey(sessionKey);
+      return { success: true, session };
+    } catch (error) {
+      return {
+        success: false,
+        session: null,
+        error: error instanceof Error ? error.message : 'Failed to get subagent session',
+      };
+    }
+  });
+
   // ========== Agent IPC Handlers ==========
 
   ipcMain.handle('agents:list', async () => {
