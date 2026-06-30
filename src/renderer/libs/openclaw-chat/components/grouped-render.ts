@@ -105,8 +105,8 @@ function toolCardDedupeKey(card: ToolCard): string {
 function mergeToolCard(existing: ToolCard, incoming: ToolCard): ToolCard {
   return {
     ...existing,
-    args: existing.args ?? incoming.args,
-    inputText: existing.inputText ?? incoming.inputText,
+    args: incoming.args ?? existing.args,
+    inputText: incoming.inputText ?? existing.inputText,
     outputText: incoming.outputText ?? existing.outputText,
     isError: incoming.isError ?? existing.isError,
     messageId: incoming.messageId ?? existing.messageId,
@@ -345,12 +345,9 @@ function renderGroupFooter(group: MessageGroup): TemplateResult | typeof nothing
  */
 export function renderStreamingThinkingGroup(text: string): TemplateResult {
   return html`
-    <div class="chat-thinking chat-thinking--streaming">
-      <div class="chat-thinking__header">
-        <span class="chat-thinking__indicator"></span>
-        <span class="chat-thinking__label">Thinking</span>
-      </div>
-      <div class="chat-thinking__content">${unsafeHTML(toStreamingMarkdownHtml(text))}</div>
+    <div class="chat-group chat-group--assistant chat-group--streaming-thinking">
+      <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
+      <div class="chat-group__content">${renderStreamingThinkingBlock(text)}</div>
     </div>
   `;
 }
@@ -359,12 +356,14 @@ export function renderStreamingGroup(
   text: string,
   _startedAt: number,
   toolMessages: unknown[] = [],
+  thinkingText: string | null = null,
 ): TemplateResult {
   const toolCards = dedupeToolCards(toolMessagesToCards(toolMessages));
   return html`
     <div class="chat-group chat-group--assistant chat-group--streaming">
       <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
       <div class="chat-group__content">
+        ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
         ${toolCards.length > 0 ? renderToolTimeline(toolCards, false) : nothing}
         <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
           ${renderCopyButton(text)}
@@ -377,13 +376,27 @@ export function renderStreamingGroup(
   `;
 }
 
+function renderStreamingThinkingBlock(text: string): TemplateResult {
+  return html`
+    <div class="chat-thinking chat-thinking--streaming">
+      <div class="chat-thinking__header">
+        <span class="chat-thinking__indicator"></span>
+        <span class="chat-thinking__label">Thinking</span>
+      </div>
+      <div class="chat-thinking__content">${unsafeHTML(toStreamingMarkdownHtml(text))}</div>
+    </div>
+  `;
+}
+
 export function renderReadingIndicatorGroup(): TemplateResult {
   return html`
-    <div class="chat-group chat-group--assistant">
+    <div class="chat-group chat-group--assistant chat-group--reading-indicator">
       <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
       <div class="chat-group__content">
-        <div class="chat-bubble chat-bubble--assistant">
-          <div class="chat-reading-indicator"><span></span><span></span><span></span></div>
+        <div class="chat-reading-indicator" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
         </div>
       </div>
     </div>

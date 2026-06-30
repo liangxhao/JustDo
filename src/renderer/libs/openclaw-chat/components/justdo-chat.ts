@@ -52,7 +52,6 @@ export class JustDoChatElement extends LitElement {
   private _controller: ChatController | null = null;
   private _controllerUnsubscribe: (() => void) | null = null;
   private _streamUnsubscribe: (() => void) | null = null;
-  private lastRenderSignature = '';
 
   get controller(): ChatController | null {
     return this._controller;
@@ -812,17 +811,18 @@ export class JustDoChatElement extends LitElement {
     /* ── Reading Indicator ──────────────────────────────────────────── */
 
     .chat-reading-indicator {
-      display: flex;
-      gap: 4px;
-      padding: 8px 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 0;
     }
 
     .chat-reading-indicator span {
-      width: 6px;
-      height: 6px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      background: var(--justdo-chat-text-secondary, #9ca3af);
-      animation: typing-bounce 1.4s infinite ease-in-out;
+      background: var(--justdo-chat-accent, #6366f1);
+      animation: reading-pulse 1.4s infinite ease-in-out;
     }
 
     .chat-reading-indicator span:nth-child(2) {
@@ -832,16 +832,16 @@ export class JustDoChatElement extends LitElement {
       animation-delay: 0.4s;
     }
 
-    @keyframes typing-bounce {
+    @keyframes reading-pulse {
       0%,
       80%,
       100% {
-        transform: scale(0.6);
-        opacity: 0.4;
+        transform: scale(0.7);
+        opacity: 0.35;
       }
       40% {
         transform: scale(1);
-        opacity: 1;
+        opacity: 0.9;
       }
     }
 
@@ -904,8 +904,6 @@ export class JustDoChatElement extends LitElement {
     const thinkingStream = ctrl ? ctrl.state.chatThinkingStream : null;
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
 
-    const prePendingMsgCount = messages.length;
-
     // Append pending user message (optimistic display during session transitions)
     if (ctrl?.state.pendingUserMessage) {
       const pending = ctrl.state.pendingUserMessage as GatewayMessage;
@@ -920,65 +918,35 @@ export class JustDoChatElement extends LitElement {
       }
     }
 
+    const hasAssistantStream = Boolean(stream && stream.trim().length > 0);
+    const thinkingMessagesForTimeline = hasAssistantStream
+      ? thinkingMessages.slice(0, -1)
+      : thinkingMessages;
+    const committedThinkingForStream = hasAssistantStream
+      ? this.extractThinkingText(thinkingMessages[thinkingMessages.length - 1])
+      : null;
+    const thinkingForStreamingGroup = thinkingStream ?? committedThinkingForStream;
     const timelineMessages =
-      thinkingMessages.length > 0
-        ? [...messages, ...(thinkingMessages as GatewayMessage[])]
+      thinkingMessagesForTimeline.length > 0
+        ? [...messages, ...(thinkingMessagesForTimeline as GatewayMessage[])]
         : messages;
     const items = this.buildItems(timelineMessages, toolMessages, streamSegments, stream);
-
-    // Detailed render diagnostic
-    const msgRoles = messages.slice(-5).map(m => (m as Record<string, unknown>).role);
-    const itemKinds = items.slice(-8).map(item => {
-      if ('kind' in item) {
-        if (item.kind === 'group') {
-          const group = item as MessageGroup;
-          return `group:${group.role}:${group.messages.length}`;
-        }
-        if (item.kind === 'stream') {
-          const streamItem = item as { kind: 'stream'; text: string };
-          return `stream:${streamItem.text.length}`;
-        }
-        return item.kind;
-      }
-      return '?';
-    });
-    const renderSignature = [
-      messages.length,
-      thinkingMessages.length,
-      toolMessages.length,
-      streamSegments.length,
-      stream?.length ?? 0,
-      thinkingStream?.length ?? 0,
-      isStreaming ? 1 : 0,
-      itemKinds.join('|'),
-    ].join(':');
-    if (renderSignature !== this.lastRenderSignature) {
-      this.lastRenderSignature = renderSignature;
-      console.log('[justdo-chat] ▶ render-state', {
-        hasCtrl: !!ctrl,
-        prePendingMsgCount,
-        postPendingMsgCount: messages.length,
-        thinkingMsgCount: thinkingMessages.length,
-        toolMsgCount: toolMessages.length,
-        segCount: streamSegments.length,
-        buildItemsStreamLen: stream?.length ?? 0,
-        streamLen: stream?.length ?? 0,
-        thinkingLen: thinkingStream?.length ?? 0,
-        isStreaming,
-        itemCount: items.length,
-        itemKinds,
-        msgRoles,
-      });
-    }
+    const hasLiveStreamItem = items.some(item => item.kind === 'stream' && item.isStreaming);
+    const hasReadingIndicator = items.some(item => item.kind === 'reading-indicator');
+    const shouldShowWaitingIndicator =
+      isStreaming &&
+      !hasReadingIndicator &&
+      !hasAssistantStream &&
+      !thinkingStream &&
+      toolMessages.length === 0 &&
+      streamSegments.length === 0;
 
     // Always render the chat container — never show "No messages"
     return html`
       <div class="chat-container">
-        ${items.map(item => this.renderItem(item))}
-        ${thinkingStream ? renderStreamingThinkingGroup(thinkingStream) : nothing}
-        ${isStreaming && items.length === 0 && !stream && !thinkingStream
-          ? renderReadingIndicatorGroup()
-          : nothing}
+        ${items.map(item => this.renderItem(item, thinkingForStreamingGroup))}
+        ${thinkingStream && !hasLiveStreamItem ? renderStreamingThinkingGroup(thinkingStream) : nothing}
+        ${shouldShowWaitingIndicator ? renderReadingIndicatorGroup() : nothing}
       </div>
     `;
   }
@@ -1027,7 +995,10 @@ export class JustDoChatElement extends LitElement {
     }
   }
 
-  private renderItem(item: ChatItem | MessageGroup): TemplateResult | typeof nothing {
+  private renderItem(
+    item: ChatItem | MessageGroup,
+    thinkingStream: string | null = null,
+  ): TemplateResult | typeof nothing {
     if (!item) return nothing;
 
     if ('kind' in item) {
@@ -1039,12 +1010,14 @@ export class JustDoChatElement extends LitElement {
           kind: 'stream';
           text: string;
           startedAt: number;
+          isStreaming: boolean;
           toolMessages?: unknown[];
         };
         return renderStreamingGroup(
           streamItem.text,
           streamItem.startedAt,
           streamItem.toolMessages ?? [],
+          streamItem.isStreaming ? thinkingStream : null,
         );
       }
       if (item.kind === 'reading-indicator') {
@@ -1053,6 +1026,18 @@ export class JustDoChatElement extends LitElement {
     }
 
     return nothing;
+  }
+
+  private extractThinkingText(message: unknown): string | null {
+    const content = (message as Record<string, unknown> | undefined)?.content;
+    if (!Array.isArray(content)) return null;
+
+    const text = content
+      .map(item => (item as Record<string, unknown> | undefined)?.thinking)
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join('\n')
+      .trim();
+    return text || null;
   }
 }
 

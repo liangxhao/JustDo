@@ -177,9 +177,90 @@ function findNearestAssistantMessageIndex(
   return assistantEntries[assistantEntries.length - 1]?.index ?? null;
 }
 
+function findPreviousAssistantMessageIndex(
+  items: ChatItem[],
+  toolTimestamp: number | null,
+): number | null {
+  let fallbackIndex: number | null = null;
+  let previousIndex: number | null = null;
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item?.kind !== 'message') {
+      continue;
+    }
+    const message = item.message as Record<string, unknown>;
+    const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
+    if (role !== 'assistant') {
+      continue;
+    }
+    fallbackIndex = index;
+    if (toolTimestamp == null) {
+      continue;
+    }
+    const timestamp = safeNormalizeMessage(item.message)?.timestamp ?? null;
+    if (timestamp != null && timestamp <= toolTimestamp && timestamp >= previousTimestamp) {
+      previousIndex = index;
+      previousTimestamp = timestamp;
+    }
+  }
+
+  return previousIndex ?? fallbackIndex;
+}
+
 function getAttachedToolMessages(message: unknown): unknown[] {
   const attached = asRecord(message)?.__justdoAttachedToolMessages;
   return Array.isArray(attached) ? attached : [];
+}
+
+function extractToolCallId(message: unknown): string | null {
+  const raw = asRecord(message);
+  if (!raw) {
+    return null;
+  }
+  const direct = [
+    raw.toolCallId,
+    raw.tool_call_id,
+    raw.toolUseId,
+    raw.tool_use_id,
+  ].find(value => typeof value === 'string' && value.trim()) as string | undefined;
+  if (direct) {
+    return direct.trim();
+  }
+
+  const content = Array.isArray(raw.content) ? raw.content : [];
+  for (const block of content) {
+    const item = asRecord(block);
+    if (!item) {
+      continue;
+    }
+    const nested = [item.toolCallId, item.tool_call_id, item.toolUseId, item.tool_use_id, item.id]
+      .find(value => typeof value === 'string' && value.trim()) as string | undefined;
+    if (nested) {
+      return nested.trim();
+    }
+  }
+  return null;
+}
+
+function findAssistantWithAttachedToolIndex(items: ChatItem[], toolMessage: unknown): number | null {
+  const toolCallId = extractToolCallId(toolMessage);
+  if (!toolCallId) {
+    return null;
+  }
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item?.kind !== 'message') {
+      continue;
+    }
+    const attached = getAttachedToolMessages(item.message);
+    if (attached.some(message => extractToolCallId(message) === toolCallId)) {
+      return index;
+    }
+  }
+  return null;
 }
 
 function withAttachedToolMessage(
@@ -195,6 +276,23 @@ function withAttachedToolMessage(
   };
 }
 
+function attachToolToAssistantAtIndex(
+  items: ChatItem[],
+  assistantIndex: number,
+  toolMessage: unknown,
+  options: { keepTimelineOpen?: boolean } = {},
+): boolean {
+  const item = items[assistantIndex];
+  if (item?.kind !== 'message') {
+    return false;
+  }
+  items[assistantIndex] = {
+    ...item,
+    message: withAttachedToolMessage(item.message, toolMessage, options),
+  };
+  return true;
+}
+
 function withStreamToolMessage(item: Extract<ChatItem, { kind: 'stream' }>, toolMessage: unknown) {
   return {
     ...item,
@@ -207,7 +305,41 @@ function isToolMessageRole(message: unknown): boolean {
   if (!normalized) {
     return false;
   }
-  return normalizeRoleForGrouping(normalized.role).toLowerCase() === 'tool';
+  if (normalizeRoleForGrouping(normalized.role).toLowerCase() === 'tool') {
+    return true;
+  }
+
+  const raw = asRecord(message);
+  if (!raw) {
+    return false;
+  }
+  const role = typeof raw?.role === 'string' ? raw.role.toLowerCase() : '';
+  if (role !== 'assistant') {
+    return false;
+  }
+  const content = Array.isArray(raw.content) ? raw.content : [];
+  if (content.length === 0) {
+    return false;
+  }
+  let hasToolBlock = false;
+  for (const block of content) {
+    const item = asRecord(block);
+    if (!item) {
+      continue;
+    }
+    const type = typeof item.type === 'string' ? item.type.toLowerCase() : '';
+    if (['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(type)) {
+      hasToolBlock = true;
+      continue;
+    }
+    if (type === 'text' && typeof item.text === 'string' && item.text.trim()) {
+      return false;
+    }
+    if (type === 'thinking' && typeof item.thinking === 'string' && item.thinking.trim()) {
+      return false;
+    }
+  }
+  return hasToolBlock;
 }
 
 function appendSyntheticAssistantToolMessage(
@@ -230,24 +362,43 @@ function appendSyntheticAssistantToolMessage(
 }
 
 function attachToolToNearestAssistant(items: ChatItem[], toolMessage: unknown): void {
+  const existingToolIndex = findAssistantWithAttachedToolIndex(items, toolMessage);
+  if (
+    existingToolIndex != null &&
+    attachToolToAssistantAtIndex(items, existingToolIndex, toolMessage)
+  ) {
+    return;
+  }
+
   const timestamp = safeNormalizeMessage(toolMessage)?.timestamp ?? null;
-  const assistantIndex = findNearestAssistantMessageIndex(items, timestamp);
+  const assistantIndex = findPreviousAssistantMessageIndex(items, timestamp);
   if (assistantIndex == null) {
     appendSyntheticAssistantToolMessage(items, toolMessage);
     return;
   }
-  const item = items[assistantIndex];
-  if (!item || item.kind !== 'message') {
+  if (!attachToolToAssistantAtIndex(items, assistantIndex, toolMessage)) {
     appendSyntheticAssistantToolMessage(items, toolMessage);
-    return;
   }
-  items[assistantIndex] = {
-    ...item,
-    message: withAttachedToolMessage(item.message, toolMessage),
-  };
 }
 
 function attachLiveToolToVisibleTail(items: ChatItem[], toolMessage: unknown): void {
+  const existingToolIndex = findAssistantWithAttachedToolIndex(items, toolMessage);
+  if (
+    existingToolIndex != null &&
+    attachToolToAssistantAtIndex(items, existingToolIndex, toolMessage, { keepTimelineOpen: true })
+  ) {
+    return;
+  }
+
+  const timestamp = safeNormalizeMessage(toolMessage)?.timestamp ?? null;
+  const assistantIndex = findPreviousAssistantMessageIndex(items, timestamp);
+  if (
+    assistantIndex != null &&
+    attachToolToAssistantAtIndex(items, assistantIndex, toolMessage, { keepTimelineOpen: true })
+  ) {
+    return;
+  }
+
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (!item) {
@@ -815,7 +966,6 @@ function enrichToolResultsWithInputs(messages: unknown[]): unknown[] {
 
 export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | MessageGroup> {
   let items: ChatItem[] = [];
-  const historyToolMessages: unknown[] = [];
   const historyRenderLimit = resolveHistoryRenderLimit(props.historyRenderLimit);
   const history = enrichToolResultsWithInputs(
     (Array.isArray(props.messages) ? props.messages : []).filter(
@@ -824,16 +974,6 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
   );
   const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];
   const segments = props.streamSegments ?? [];
-
-  console.log('[buildChatItems] ▶ input', {
-    historyCount: history.length,
-    historyRoles: history.slice(-5).map(m => (m as Record<string, unknown>)?.role ?? '?'),
-    toolCount: tools.length,
-    segmentCount: segments.length,
-    hasStream: !!props.stream,
-    streamLen: props.stream?.length ?? 0,
-    showToolCalls: props.showToolCalls,
-  });
 
   const liftedCanvasSources = tools
     .map(tool => extractChatMessagePreview(tool))
@@ -891,7 +1031,7 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
 
     if (isToolMessageRole(msg)) {
       if (props.showToolCalls) {
-        historyToolMessages.push(msg);
+        attachToolToNearestAssistant(items, msg);
       }
       continue;
     }
@@ -951,11 +1091,6 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
       ),
     };
   }
-  if (props.showToolCalls) {
-    for (const toolMessage of historyToolMessages) {
-      attachToolToNearestAssistant(items, toolMessage);
-    }
-  }
   items = items.filter(
     item => item.kind !== 'message' || hasRenderableNormalizedMessage(item.message),
   );
@@ -1005,22 +1140,6 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
 
   const collapsed = collapseSequentialDuplicateMessages(sortChatItemsByVisibleTime(items));
   const result = groupMessages(collapsed);
-
-  console.log('[buildChatItems] ▶ output', {
-    rawItemCount: items.length,
-    collapsedCount: collapsed.length,
-    groupCount: result.length,
-    itemSummary: result.slice(-8).map(item => {
-      if ('kind' in item) {
-        if (item.kind === 'group') {
-          const g = item as MessageGroup;
-          return `group:${g.role}:${g.messages.length}msgs`;
-        }
-        return item.kind;
-      }
-      return '?';
-    }),
-  });
 
   return result;
 }

@@ -50,6 +50,7 @@ export type ChatStateListener = (state: ChatState) => void;
 
 type ToolContentBlock = {
   type: 'toolcall' | 'toolresult';
+  toolCallId: string;
   name: string;
   arguments?: unknown;
   text?: string;
@@ -652,6 +653,7 @@ export class ChatController {
     this.commitActiveThinking('final');
     const message = payload.message;
     const willAppend = message && !shouldHideMessage(message);
+    const liveThinkingText = collectThinkingText(this.state.chatThinkingMessages);
     console.log('[ChatCtrl] ▶ chat.final', {
       hasMessage: !!message,
       willAppend,
@@ -660,12 +662,16 @@ export class ChatController {
       ...this._snap(),
     });
     if (willAppend) {
-      this.state.chatMessages = appendTerminalMessage(this.state.chatMessages, message);
+      const terminalMessage = liveThinkingText
+        ? withThinkingContent(message, liveThinkingText)
+        : message;
+      this.state.chatMessages = appendTerminalMessage(this.state.chatMessages, terminalMessage);
       this.state.chatStreamSegments = [];
     }
     this.state.chatStream = null;
     this.state.chatStreamStartedAt = null;
     this.state.chatThinkingStream = null;
+    this.state.chatThinkingMessages = [];
     this.state.chatSending = false;
     this.state.chatRunId = null;
     this.resetAssistantSnapshotSource();
@@ -1069,6 +1075,61 @@ function messageText(content: unknown): string {
       return typeof text === 'string' ? text : '';
     })
     .join('\n');
+}
+
+function collectThinkingText(messages: unknown[]): string | null {
+  const text = messages
+    .map(message => {
+      const content = (message as Record<string, unknown> | undefined)?.content;
+      if (!Array.isArray(content)) return '';
+      return content
+        .map(item => (item as Record<string, unknown> | undefined)?.thinking)
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .join('\n');
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  return text || null;
+}
+
+function withThinkingContent(message: unknown, thinkingText: string): unknown {
+  if (!message || typeof message !== 'object' || !thinkingText.trim()) return message;
+  const record = message as Record<string, unknown>;
+  const content = record.content;
+  const thinkingBlock = { type: 'thinking', thinking: thinkingText.trim() };
+
+  if (Array.isArray(content)) {
+    const alreadyHasThinking = content.some(item => {
+      const block = item as Record<string, unknown>;
+      return block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim();
+    });
+    return alreadyHasThinking
+      ? message
+      : {
+          ...record,
+          content: [thinkingBlock, ...content],
+        };
+  }
+
+  if (typeof content === 'string') {
+    return {
+      ...record,
+      content: [thinkingBlock, { type: 'text', text: content }],
+    };
+  }
+
+  if (typeof record.text === 'string') {
+    return {
+      ...record,
+      content: [thinkingBlock, { type: 'text', text: record.text }],
+    };
+  }
+
+  return {
+    ...record,
+    content: [thinkingBlock],
+  };
 }
 
 function shouldHideMessage(message: unknown): boolean {
