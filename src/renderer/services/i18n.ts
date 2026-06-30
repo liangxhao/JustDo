@@ -547,6 +547,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     folderDriveRootNotAllowed:
       '不支持使用磁盘根目录作为工作目录，请选择一个子文件夹（例如 D:\\Projects）。',
     coworkOpenFolder: '打开文件夹',
+    coworkOpenFolderFailed: '打开文件夹失败',
 
     // Cowork 错误消息
     coworkErrorSessionStartFailed: '会话启动失败：{error}',
@@ -1652,6 +1653,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     folderDriveRootNotAllowed:
       'Drive root directories are not supported as working directories. Please select a subfolder (e.g. D:\\Projects).',
     coworkOpenFolder: 'Open folder',
+    coworkOpenFolderFailed: 'Failed to open folder',
 
     // Cowork error messages
     coworkErrorSessionStartFailed: 'Failed to start session: {error}',

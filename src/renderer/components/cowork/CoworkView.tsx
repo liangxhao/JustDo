@@ -25,7 +25,9 @@ import type {
   CoworkSession,
   OpenClawEngineStatus,
 } from '../../types/cowork';
+import { getCompactFolderName } from '../../utils/path';
 import ComposeIcon from '../icons/ComposeIcon';
+import FolderIcon from '../icons/FolderIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
@@ -420,6 +422,32 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     setSelectedSubagent(null);
   }, [currentSession?.id]);
 
+  const currentSessionFolderPath = currentSession?.cwd?.trim() || '';
+  const currentSessionFolderName = currentSessionFolderPath
+    ? getCompactFolderName(currentSessionFolderPath, 32)
+    : '';
+
+  const handleOpenCurrentSessionFolder = useCallback(async () => {
+    if (!currentSessionFolderPath) return;
+    try {
+      const result = await window.electron.shell.openPath(currentSessionFolderPath);
+      if (!result.success) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: result.error || i18nService.t('coworkOpenFolderFailed'),
+          }),
+        );
+      }
+    } catch (error) {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail:
+            error instanceof Error ? error.message : i18nService.t('coworkOpenFolderFailed'),
+        }),
+      );
+    }
+  }, [currentSessionFolderPath]);
+
   // Apply pending prompt to ChatController once the wrapper is mounted
   useEffect(() => {
     if (!pendingPromptRef.current || !chatWrapperRef.current) return;
@@ -546,7 +574,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({
               </div>
             )}
           </div>
-          <div className="non-draggable flex items-center">
+          <div className="non-draggable flex min-w-0 items-center gap-1">
+            {currentSessionFolderPath && currentSessionFolderName && (
+              <button
+                type="button"
+                onClick={handleOpenCurrentSessionFolder}
+                className="inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-lg px-2.5 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-primary"
+                title={`${i18nService.t('coworkOpenFolder')}: ${currentSessionFolderPath}`}
+                aria-label={`${i18nService.t('coworkOpenFolder')}: ${currentSessionFolderName}`}
+              >
+                <FolderIcon className="h-4 w-4 shrink-0" />
+                <span className="truncate">{currentSessionFolderName}</span>
+              </button>
+            )}
             <SubagentMenu
               sessionId={currentSession.id}
               onOpenSubagent={setSelectedSubagent}
