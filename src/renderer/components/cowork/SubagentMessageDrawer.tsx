@@ -1,12 +1,12 @@
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { coworkService } from '../../services/cowork';
+import { ChatController } from '../../libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '../../services/i18n';
-import type { CoworkMessage } from '../../types/cowork';
 import Modal from '../common/Modal';
 import ChatMessageDisplay from './ChatMessageDisplay';
-import { type Subagent, SUBAGENT_STATUSES, subagentStatusStyles } from './SubagentMenu';
+import { connectToGateway } from './JustDoChatWrapper';
+import { type Subagent, subagentStatusStyles } from './SubagentMenu';
 
 const DRAWER_DEFAULT_WIDTH = 672;
 const DRAWER_MIN_WIDTH = 360;
@@ -24,51 +24,52 @@ const clampDrawerWidth = (width: number): number => {
 };
 
 const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent, onClose }) => {
-  const [messages, setMessages] = useState<CoworkMessage[]>([]);
+  const [controller, setController] = useState<ChatController | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const drawerRef = useRef<HTMLElement>(null);
-  const requestIdRef = useRef(0);
-  const hasLoadedRef = useRef(false);
+  const subagentSessionKey = subagent?.sessionKey;
 
-  const loadMessages = useCallback(async () => {
-    if (!subagent) return;
-    const requestId = ++requestIdRef.current;
-    if (!hasLoadedRef.current) setIsLoading(true);
-    setHasError(false);
-
-    try {
-      const session = await coworkService.getSubTaskSession(subagent.sessionKey);
-      if (requestId !== requestIdRef.current) return;
-      setMessages(session?.messages ?? []);
-      hasLoadedRef.current = true;
-    } catch {
-      if (requestId !== requestIdRef.current) return;
-      setHasError(true);
-    } finally {
-      if (requestId === requestIdRef.current) {
-        setIsLoading(false);
-      }
+  useEffect(() => {
+    if (!subagentSessionKey) {
+      setController(null);
+      return;
     }
-  }, [subagent]);
 
-  useEffect(() => {
-    requestIdRef.current += 1;
-    hasLoadedRef.current = false;
-    setMessages([]);
+    const nextController = new ChatController();
+    nextController.state.sessionKey = subagentSessionKey;
+    let cancelled = false;
+
+    setController(nextController);
+    setIsLoading(true);
     setHasError(false);
-    if (!subagent) return;
-    void loadMessages();
-  }, [loadMessages, subagent]);
+    connectToGateway(nextController)
+      .then(success => {
+        if (cancelled) {
+          nextController.disconnect();
+          return;
+        }
+        setHasError(!success);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHasError(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      });
 
-  useEffect(() => {
-    if (!subagent) return;
-    if (subagent.status !== SUBAGENT_STATUSES.RUNNING) return;
-    const timer = window.setInterval(() => void loadMessages(), 3000);
-    return () => window.clearInterval(timer);
-  }, [loadMessages, subagent]);
+    return () => {
+      cancelled = true;
+      nextController.disconnect();
+      setController(current => (current === nextController ? null : current));
+    };
+  }, [subagentSessionKey]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -182,12 +183,12 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
           </div>
         </div>
         <div className="flex min-h-0 flex-1 bg-background">
-          {messages.length > 0 ? (
-            <ChatMessageDisplay className="flex-1 min-h-0" messages={messages} fullWidth />
-          ) : (
+          {hasError || (isLoading && !controller) ? (
             <div className="flex flex-1 items-center justify-center px-3 text-center text-sm text-secondary">
               {emptyText}
             </div>
+          ) : (
+            <ChatMessageDisplay className="flex-1 min-h-0" controller={controller} fullWidth />
           )}
         </div>
       </aside>

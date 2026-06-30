@@ -187,7 +187,7 @@ function getEngineBridge(): OpenClawEngineBridge | undefined {
   return openclaw?.engine as OpenClawEngineBridge | undefined;
 }
 
-async function connectToGateway(controller: ChatController): Promise<boolean> {
+export async function connectToGateway(controller: ChatController): Promise<boolean> {
   const engine = getEngineBridge();
   if (!engine) {
     console.error('[JustDoChatWrapper] openclaw.engine API not available');
