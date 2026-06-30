@@ -626,6 +626,7 @@ export class OpenClawConfigSync {
           ),
           ...(hasMcpBridgePlugin ? { [MCP_BRIDGE_PLUGIN_ID]: { enabled: true } } : {}),
           ...(hasAskUserPlugin ? { 'ask-user-question': { enabled: true } } : {}),
+          workboard: { enabled: true },
         };
 
         return Object.keys(pluginEntries).length > 0
