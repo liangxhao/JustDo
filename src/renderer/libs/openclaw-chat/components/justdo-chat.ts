@@ -7,10 +7,11 @@
  * 2. Via a ChatController reference (controller property)
  */
 import { css, html, LitElement, nothing, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 
 import type { ChatController } from '../gateway/chat-controller';
 import { buildChatItems } from '../pipeline/build-chat-items';
+import { extractTextCached } from '../pipeline/message-extract';
 import type { ChatItem, GatewayMessage, MessageGroup } from '../types';
 import {
   renderMessageGroup,
@@ -18,6 +19,16 @@ import {
   renderStreamingGroup,
   renderStreamingThinkingGroup,
 } from './grouped-render';
+
+type ChatMinimapEntry = {
+  index: number;
+  role: 'user' | 'assistant';
+  label: string;
+  contentLen: number;
+};
+
+const MINIMAP_VISIBLE_ENTRY_THRESHOLD = 4;
+const MINIMAP_NAV_LOCK_DURATION = 800;
 
 @customElement('justdo-chat')
 export class JustDoChatElement extends LitElement {
@@ -39,6 +50,18 @@ export class JustDoChatElement extends LitElement {
   @property({ type: String, attribute: false })
   declare searchQuery: string;
 
+  @state()
+  declare private currentMinimapIndex: number;
+
+  @state()
+  declare private hoveredMinimapIndex: number | null;
+
+  @state()
+  declare private isMinimapHovered: boolean;
+
+  @state()
+  declare private minimapTooltipTop: number;
+
   constructor() {
     super();
     this.messages = [];
@@ -46,12 +69,18 @@ export class JustDoChatElement extends LitElement {
     this.streamStartedAt = null;
     this.isStreaming = false;
     this.searchQuery = '';
+    this.currentMinimapIndex = -1;
+    this.hoveredMinimapIndex = null;
+    this.isMinimapHovered = false;
+    this.minimapTooltipTop = 0;
   }
 
   /** ChatController reference (preferred — connects directly to gateway) */
   private _controller: ChatController | null = null;
   private _controllerUnsubscribe: (() => void) | null = null;
   private _streamUnsubscribe: (() => void) | null = null;
+  private isMinimapNavigating = false;
+  private minimapNavigatingTimer: ReturnType<typeof setTimeout> | null = null;
 
   get controller(): ChatController | null {
     return this._controller;
@@ -80,12 +109,163 @@ export class JustDoChatElement extends LitElement {
       height: 100%;
     }
 
+    .chat-shell {
+      position: relative;
+      min-height: 100%;
+    }
+
     .chat-container {
       width: clamp(320px, 75%, 1120px);
       max-width: calc(100% - 32px);
       box-sizing: border-box;
       margin: 0 auto;
       padding: 16px 0;
+    }
+
+    .chat-minimap {
+      position: sticky;
+      top: 50%;
+      float: right;
+      width: 20px;
+      max-height: calc(100vh - 40px);
+      margin: 20px 18px 20px 0;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      z-index: 10;
+      pointer-events: auto;
+    }
+
+    .chat-minimap__arrow {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      margin-right: -5px;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #525252;
+      cursor: pointer;
+      opacity: 1;
+      transition:
+        opacity 140ms ease,
+        background 140ms ease,
+        color 140ms ease;
+    }
+
+    .chat-minimap:not(.chat-minimap--hovered) .chat-minimap__arrow {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .chat-minimap__arrow:hover {
+      background: rgba(229, 229, 229, 0.7);
+      color: #262626;
+    }
+
+    .chat-minimap__arrow:disabled {
+      cursor: default;
+      opacity: 0.3;
+      background: transparent;
+    }
+
+    .chat-minimap__arrow--up {
+      margin-bottom: 8px;
+    }
+
+    .chat-minimap__arrow--down {
+      margin-top: 8px;
+    }
+
+    .chat-minimap__arrow svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .chat-minimap__lines {
+      width: 100%;
+      min-height: 0;
+      flex: 1;
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+
+    .chat-minimap__lines::-webkit-scrollbar {
+      display: none;
+    }
+
+    .chat-minimap__item {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      width: 20px;
+      padding: 5px 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .chat-minimap__line {
+      height: 2px;
+      border-radius: 999px;
+      background: #d4d4d4;
+      transition:
+        width 140ms ease,
+        background 140ms ease;
+    }
+
+    .chat-minimap__item--active .chat-minimap__line,
+    .chat-minimap__item:hover .chat-minimap__line {
+      width: 16px !important;
+      background: #262626;
+    }
+
+    .chat-minimap__tooltip {
+      position: absolute;
+      right: 28px;
+      z-index: 100;
+      max-width: 240px;
+      padding: 8px 14px;
+      border: 1px solid rgba(229, 229, 229, 0.8);
+      background: #fafafa;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+      transform: translateY(-50%);
+      pointer-events: none;
+      overflow: hidden;
+      font-size: 13px;
+      line-height: 1.35;
+      color: #525252;
+    }
+
+    .chat-minimap__tooltip--user {
+      border-radius: 12px 12px 4px 12px;
+      background: #ffffff;
+    }
+
+    .chat-minimap__tooltip-text {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      word-break: break-all;
+    }
+
+    @media (max-width: 760px) {
+      .chat-minimap {
+        display: none;
+      }
+    }
+
+    @media (max-height: 520px) {
+      .chat-minimap {
+        display: none;
+      }
     }
 
     /* ── Chat Group ─────────────────────────────────────────────────── */
@@ -922,6 +1102,26 @@ export class JustDoChatElement extends LitElement {
       background: var(--justdo-chat-assistant-bg, #1f2937);
       border-color: rgba(255, 255, 255, 0.06);
     }
+    :host(.dark) .chat-minimap__arrow {
+      color: #a3a3a3;
+    }
+    :host(.dark) .chat-minimap__arrow:hover {
+      background: rgba(64, 64, 64, 0.7);
+      color: #e5e5e5;
+    }
+    :host(.dark) .chat-minimap__line {
+      background: #525252;
+    }
+    :host(.dark) .chat-minimap__item--active .chat-minimap__line,
+    :host(.dark) .chat-minimap__item:hover .chat-minimap__line {
+      background: #e5e5e5;
+    }
+    :host(.dark) .chat-minimap__tooltip {
+      background: #262626;
+      border-color: #404040;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+      color: #d4d4d4;
+    }
     :host(.dark) .chat-thinking__content {
       background: rgba(255, 255, 255, 0.03);
       border-color: rgba(255, 255, 255, 0.06);
@@ -994,20 +1194,44 @@ export class JustDoChatElement extends LitElement {
       !thinkingStream &&
       toolMessages.length === 0 &&
       streamSegments.length === 0;
+    const minimapEntries = this.buildMinimapEntries(messages, stream);
 
     // Always render the chat container — never show "No messages"
     return html`
-      <div class="chat-container">
-        ${items.map(item => this.renderItem(item, thinkingForStreamingGroup))}
-        ${thinkingStream && !hasLiveStreamItem ? renderStreamingThinkingGroup(thinkingStream) : nothing}
-        ${shouldShowWaitingIndicator ? renderReadingIndicatorGroup() : nothing}
+      <div class="chat-shell">
+        ${this.renderMinimap(minimapEntries)}
+        <div class="chat-container">
+          ${items.map(item => this.renderItem(item, thinkingForStreamingGroup))}
+          ${thinkingStream && !hasLiveStreamItem
+            ? renderStreamingThinkingGroup(thinkingStream)
+            : nothing}
+          ${shouldShowWaitingIndicator ? renderReadingIndicatorGroup() : nothing}
+        </div>
       </div>
     `;
   }
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.addEventListener('scroll', this.handleScroll);
+  }
+
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.removeEventListener('scroll', this.handleScroll);
+    if (this.minimapNavigatingTimer) {
+      clearTimeout(this.minimapNavigatingTimer);
+      this.minimapNavigatingTimer = null;
+    }
     this.unsubscribeController();
+  }
+
+  protected firstUpdated(): void {
+    this.updateCurrentMinimapIndex();
+  }
+
+  protected updated(): void {
+    requestAnimationFrame(() => this.updateCurrentMinimapIndex());
   }
 
   private subscribeController(ctrl: ChatController): void {
@@ -1080,6 +1304,224 @@ export class JustDoChatElement extends LitElement {
     }
 
     return nothing;
+  }
+
+  private renderMinimap(entries: ChatMinimapEntry[]): TemplateResult | typeof nothing {
+    if (entries.length < MINIMAP_VISIBLE_ENTRY_THRESHOLD) {
+      return nothing;
+    }
+
+    const currentIndex = this.resolveCurrentMinimapIndex(entries.length);
+    const hoveredEntry =
+      this.hoveredMinimapIndex == null ? null : (entries[this.hoveredMinimapIndex] ?? null);
+    const maxContentLen = entries.reduce((max, entry) => Math.max(max, entry.contentLen), 1);
+    const canNavigateUp = currentIndex > 0;
+    const canNavigateDown = currentIndex < entries.length - 1;
+
+    return html`
+      <nav
+        class=${`chat-minimap ${this.isMinimapHovered ? 'chat-minimap--hovered' : ''}`}
+        @mouseenter=${() => {
+          this.isMinimapHovered = true;
+        }}
+        @mouseleave=${() => {
+          this.isMinimapHovered = false;
+          this.hoveredMinimapIndex = null;
+        }}
+      >
+        <button
+          type="button"
+          class="chat-minimap__arrow chat-minimap__arrow--up"
+          ?disabled=${!canNavigateUp}
+          @click=${() => this.navigateMinimapByStep(entries, -1)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
+          </svg>
+        </button>
+        <div class="chat-minimap__lines">
+          ${entries.map((entry, index) => {
+            const isActive = index === currentIndex;
+            const ratio = entry.contentLen / maxContentLen;
+            const lineWidth = Math.round(6 + ratio * 10);
+            return html`
+              <button
+                type="button"
+                class=${`chat-minimap__item ${isActive ? 'chat-minimap__item--active' : ''}`}
+                @click=${() => this.scrollToMinimapEntry(entry, entries.length, index)}
+                @mouseenter=${(event: MouseEvent) => this.showMinimapTooltip(index, event)}
+              >
+                <span class="chat-minimap__line" style=${`width: ${lineWidth}px;`}></span>
+              </button>
+            `;
+          })}
+        </div>
+        <button
+          type="button"
+          class="chat-minimap__arrow chat-minimap__arrow--down"
+          ?disabled=${!canNavigateDown}
+          @click=${() => this.navigateMinimapByStep(entries, 1)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+          </svg>
+        </button>
+        ${hoveredEntry
+          ? html`
+              <div
+                class=${`chat-minimap__tooltip ${
+                  hoveredEntry.role === 'user' ? 'chat-minimap__tooltip--user' : ''
+                }`}
+                style=${`top: ${this.minimapTooltipTop}px;`}
+              >
+                <div class="chat-minimap__tooltip-text">${hoveredEntry.label}</div>
+              </div>
+            `
+          : nothing}
+      </nav>
+    `;
+  }
+
+  private buildMinimapEntries(
+    messages: GatewayMessage[],
+    stream: string | null,
+  ): ChatMinimapEntry[] {
+    const entries: ChatMinimapEntry[] = [];
+
+    messages.forEach((message, index) => {
+      const role = this.normalizeMinimapRole(message);
+      if (!role) {
+        return;
+      }
+
+      const label = this.cleanMinimapText(extractTextCached(message));
+      if (!label) {
+        return;
+      }
+
+      entries.push({ index, role, label, contentLen: label.length });
+    });
+
+    const streamingLabel = this.cleanMinimapText(stream);
+    if (streamingLabel) {
+      entries.push({
+        index: messages.length,
+        role: 'assistant',
+        label: streamingLabel,
+        contentLen: streamingLabel.length,
+      });
+    }
+
+    return entries;
+  }
+
+  private normalizeMinimapRole(message: GatewayMessage): ChatMinimapEntry['role'] | null {
+    const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
+    return role === 'user' || role === 'assistant' ? role : null;
+  }
+
+  private cleanMinimapText(text: string | null | undefined): string {
+    return (text ?? '')
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/[#>*_\-~]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240);
+  }
+
+  private scrollToMinimapEntry(
+    entry: ChatMinimapEntry,
+    entryCount: number,
+    visualIndex = entry.index,
+  ): void {
+    const maxScrollTop = Math.max(0, this.scrollHeight - this.clientHeight);
+    if (maxScrollTop === 0) {
+      return;
+    }
+
+    const denominator = Math.max(1, entryCount - 1);
+    const nextScrollTop = (visualIndex / denominator) * maxScrollTop;
+    this.lockMinimapNavigation();
+    this.currentMinimapIndex = visualIndex;
+    this.scrollTo({ top: nextScrollTop, behavior: 'smooth' });
+  }
+
+  private handleScroll = (): void => {
+    this.updateCurrentMinimapIndex();
+  };
+
+  private updateCurrentMinimapIndex(): void {
+    if (this.isMinimapNavigating) {
+      return;
+    }
+
+    const entries = this.buildMinimapEntries(
+      this._controller ? (this._controller.state.chatMessages as GatewayMessage[]) : this.messages,
+      this._controller ? this._controller.state.chatStream : this.stream,
+    );
+    if (entries.length === 0) {
+      if (this.currentMinimapIndex !== -1) {
+        this.currentMinimapIndex = -1;
+      }
+      return;
+    }
+
+    const distanceToBottom = this.scrollHeight - this.scrollTop - this.clientHeight;
+    const nextIndex =
+      distanceToBottom <= 20
+        ? entries.length - 1
+        : Math.round(
+            (this.scrollTop / Math.max(1, this.scrollHeight - this.clientHeight)) *
+              (entries.length - 1),
+          );
+    const clampedIndex = Math.max(0, Math.min(entries.length - 1, nextIndex));
+    if (this.currentMinimapIndex !== clampedIndex) {
+      this.currentMinimapIndex = clampedIndex;
+    }
+  }
+
+  private resolveCurrentMinimapIndex(entryCount: number): number {
+    if (entryCount <= 0) {
+      return -1;
+    }
+    if (this.currentMinimapIndex < 0 || this.currentMinimapIndex >= entryCount) {
+      return entryCount - 1;
+    }
+    return this.currentMinimapIndex;
+  }
+
+  private navigateMinimapByStep(entries: ChatMinimapEntry[], direction: -1 | 1): void {
+    const currentIndex = this.resolveCurrentMinimapIndex(entries.length);
+    const nextIndex = Math.max(0, Math.min(entries.length - 1, currentIndex + direction));
+    const entry = entries[nextIndex];
+    if (!entry || nextIndex === currentIndex) {
+      return;
+    }
+    this.scrollToMinimapEntry(entry, entries.length, nextIndex);
+  }
+
+  private lockMinimapNavigation(): void {
+    this.isMinimapNavigating = true;
+    if (this.minimapNavigatingTimer) {
+      clearTimeout(this.minimapNavigatingTimer);
+    }
+    this.minimapNavigatingTimer = setTimeout(() => {
+      this.isMinimapNavigating = false;
+    }, MINIMAP_NAV_LOCK_DURATION);
+  }
+
+  private showMinimapTooltip(index: number, event: MouseEvent): void {
+    this.hoveredMinimapIndex = index;
+    const target = event.currentTarget as HTMLElement;
+    const rail = target.closest('.chat-minimap');
+    const targetRect = target.getBoundingClientRect();
+    const railRect = rail?.getBoundingClientRect();
+    this.minimapTooltipTop = railRect
+      ? targetRect.top + targetRect.height / 2 - railRect.top
+      : target.offsetTop + target.offsetHeight / 2;
   }
 
   private extractThinkingText(message: unknown): string | null {
