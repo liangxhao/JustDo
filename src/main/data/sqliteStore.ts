@@ -12,6 +12,35 @@ type ChangePayload<T = unknown> = {
   oldValue: T | undefined;
 };
 
+const REQUIRED_TABLE_COLUMNS: Record<string, string[]> = {
+  cowork_sessions: [
+    'id',
+    'title',
+    'claude_session_id',
+    'status',
+    'pinned',
+    'cwd',
+    'execution_mode',
+    'active_skill_ids',
+    'agent_id',
+    'group_id',
+    'created_at',
+    'updated_at',
+  ],
+  cowork_messages: [
+    'id',
+    'session_id',
+    'type',
+    'content',
+    'metadata',
+    'created_at',
+    'sequence',
+    'thinking_content',
+    'model_name',
+    'usage',
+  ],
+};
+
 export class SqliteStore {
   private db: Database.Database;
   private dbPath: string;
@@ -26,6 +55,8 @@ export class SqliteStore {
     const basePath = userDataPath ?? app.getPath('userData');
     const dbPath = path.join(basePath, DB_FILENAME);
 
+    SqliteStore.deleteLegacyDatabase(dbPath);
+
     const db = new Database(dbPath);
 
     // WAL mode: persists across connections, never reverts. NORMAL sync is safe under WAL
@@ -39,6 +70,47 @@ export class SqliteStore {
     const store = new SqliteStore(db, dbPath);
     store.initializeTables(basePath);
     return store;
+  }
+
+  private static deleteLegacyDatabase(dbPath: string): void {
+    if (!fs.existsSync(dbPath)) return;
+
+    let db: Database.Database | undefined;
+    try {
+      db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      if (!SqliteStore.hasLegacySchema(db)) return;
+    } catch (error) {
+      console.warn('[SqliteStore] Failed to inspect existing database schema:', error);
+      return;
+    } finally {
+      db?.close();
+    }
+
+    for (const filePath of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+      try {
+        fs.rmSync(filePath, { force: true });
+      } catch (error) {
+        console.warn(`[SqliteStore] Failed to delete legacy database file ${filePath}:`, error);
+      }
+    }
+    console.warn('[SqliteStore] Deleted legacy database schema. A fresh database will be created.');
+  }
+
+  private static hasLegacySchema(db: Database.Database): boolean {
+    for (const [tableName, requiredColumns] of Object.entries(REQUIRED_TABLE_COLUMNS)) {
+      const table = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(tableName);
+      if (!table) continue;
+
+      const columns = db.pragma(`table_info(${tableName})`) as Array<{ name: string }>;
+      const columnNames = new Set(columns.map(column => column.name));
+      if (requiredColumns.some(column => !columnNames.has(column))) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private initializeTables(basePath: string) {
@@ -60,6 +132,9 @@ export class SqliteStore {
         pinned INTEGER NOT NULL DEFAULT 0,
         cwd TEXT NOT NULL,
         execution_mode TEXT,
+        active_skill_ids TEXT,
+        agent_id TEXT NOT NULL DEFAULT 'main',
+        group_id TEXT REFERENCES session_groups(id),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -74,27 +149,15 @@ export class SqliteStore {
         metadata TEXT,
         created_at INTEGER NOT NULL,
         sequence INTEGER,
+        thinking_content TEXT,
+        model_name TEXT,
+        usage TEXT,
         FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
       );
     `);
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_id ON cowork_messages(session_id);
-    `);
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_sequence
-      ON cowork_messages(session_id, sequence, created_at);
-    `);
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_sessions_agent_order
-      ON cowork_sessions(agent_id, pinned DESC, updated_at DESC);
-    `);
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_sessions_order
-      ON cowork_sessions(pinned DESC, updated_at DESC);
     `);
 
     this.db.exec(`
@@ -150,94 +213,20 @@ export class SqliteStore {
       );
     `);
 
-    // Migrations - safely add columns if they don't exist
-    try {
-      // Check if execution_mode column exists
-      const columns = this.db.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
-      const colNames = columns.map(c => c.name);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_sequence
+      ON cowork_messages(session_id, sequence, created_at);
+    `);
 
-      if (!colNames.includes('execution_mode')) {
-        this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN execution_mode TEXT;');
-      }
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_sessions_agent_order
+      ON cowork_sessions(agent_id, pinned DESC, updated_at DESC);
+    `);
 
-      if (!colNames.includes('pinned')) {
-        this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;');
-      }
-
-      if (!colNames.includes('active_skill_ids')) {
-        this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN active_skill_ids TEXT;');
-      }
-
-      // Migration: Add sequence column to cowork_messages
-      const msgColumns = this.db.pragma('table_info(cowork_messages)') as Array<{ name: string }>;
-      const msgColNames = msgColumns.map(c => c.name);
-
-      if (!msgColNames.includes('sequence')) {
-        this.db.exec('ALTER TABLE cowork_messages ADD COLUMN sequence INTEGER');
-
-        // Assign sequence numbers to existing messages ordered by created_at + ROWID
-        this.db.exec(`
-          WITH numbered AS (
-            SELECT id, ROW_NUMBER() OVER (
-              PARTITION BY session_id
-              ORDER BY created_at ASC, ROWID ASC
-            ) as seq
-            FROM cowork_messages
-          )
-          UPDATE cowork_messages
-          SET sequence = (SELECT seq FROM numbered WHERE numbered.id = cowork_messages.id)
-        `);
-      }
-
-      // Migration: Add thinking_content column to cowork_messages
-      if (!msgColNames.includes('thinking_content')) {
-        this.db.exec('ALTER TABLE cowork_messages ADD COLUMN thinking_content TEXT');
-      }
-
-      // Migration: Add model_name column to cowork_messages
-      if (!msgColNames.includes('model_name')) {
-        this.db.exec('ALTER TABLE cowork_messages ADD COLUMN model_name TEXT');
-      }
-
-      // Migration: Add usage column to cowork_messages (stored as JSON)
-      if (!msgColNames.includes('usage')) {
-        this.db.exec('ALTER TABLE cowork_messages ADD COLUMN usage TEXT');
-      }
-    } catch {
-      // Column already exists or migration not needed.
-    }
-
-    try {
-      this.db.exec('UPDATE cowork_sessions SET pinned = 0 WHERE pinned IS NULL;');
-    } catch {
-      // Column might not exist yet.
-    }
-
-    // Migration: Add agent_id column to cowork_sessions
-    try {
-      const sessionCols = this.db.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
-      const sessionColNames = sessionCols.map(c => c.name);
-      if (!sessionColNames.includes('agent_id')) {
-        this.db.exec(
-          "ALTER TABLE cowork_sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main';",
-        );
-      }
-    } catch {
-      // Column already exists or migration not needed.
-    }
-
-    // Migration: Add group_id column to cowork_sessions
-    try {
-      const sessionCols = this.db.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
-      const sessionColNames = sessionCols.map(c => c.name);
-      if (!sessionColNames.includes('group_id')) {
-        this.db.exec(
-          'ALTER TABLE cowork_sessions ADD COLUMN group_id TEXT REFERENCES session_groups(id);',
-        );
-      }
-    } catch {
-      // Column already exists or migration not needed.
-    }
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_sessions_order
+      ON cowork_sessions(pinned DESC, updated_at DESC);
+    `);
 
     // Migration: Ensure default 'main' agent exists
     try {
