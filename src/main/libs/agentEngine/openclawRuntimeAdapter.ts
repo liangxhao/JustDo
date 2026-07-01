@@ -10,19 +10,19 @@ import type {
   CoworkStore,
 } from '../../coworkStore';
 import { t } from '../../i18n';
-import { resolveRawApiConfig } from '../providerApiConfig';
-import { getCommandDangerLevel, isDeleteCommand } from '../commandSafety';
-import { coworkLog } from '../coworkLogger';
+import { resolveRawApiConfig } from '../cowork/providerApiConfig';
+import { getCommandDangerLevel, isDeleteCommand } from '../infra/commandSafety';
+import { coworkLog } from '../cowork/coworkLogger';
 import {
   buildManagedSessionKey,
   type OpenClawChannelSessionSync,
-} from '../openclawChannelSessionSync';
-import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclawConfigSync';
+} from '../openclaw/openclawChannelSessionSync';
+import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclaw/openclawConfigSync';
 import {
   OpenClawEngineManager,
   type OpenClawGatewayConnectionInfo,
-} from '../openclawEngineManager';
-import { extractGatewayHistoryEntries } from '../openclawHistory';
+} from '../openclaw/openclawEngineManager';
+import { extractGatewayHistoryEntries } from '../openclaw/openclawHistory';
 import type {
   AgentEventPayload,
   ChatEventPayload,
@@ -1020,7 +1020,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const recentAssistantContents = session.messages
       .filter(message => message.type === 'assistant' && !message.metadata?.isThinking)
-      .map(message => message.content.replace(/\s+/g, ' ').trim())
+      .map((message: CoworkMessage) => message.content.replace(/\s+/g, ' ').trim())
       .filter(Boolean)
       .slice(-6);
 
@@ -1032,7 +1032,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (
         normalized.startsWith(segments[0]) &&
         normalized.endsWith(segments[segments.length - 1]) &&
-        segments.every(segment => normalized.includes(segment))
+        segments.every((segment: string) => normalized.includes(segment))
       ) {
         return true;
       }

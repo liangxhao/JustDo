@@ -1,4 +1,4 @@
-import type { Agent } from '../coworkStore';
+import type { Agent } from '../../coworkStore';
 
 type BuildManagedAgentEntriesInput = {
   agents: Agent[];

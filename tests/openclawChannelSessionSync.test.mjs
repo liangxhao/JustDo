@@ -10,7 +10,7 @@ const {
   isManagedSessionKey,
   parseChannelSessionKey,
   parseManagedSessionKey,
-} = require('../dist-electron/main/libs/openclawChannelSessionSync.js');
+} = require('../dist-electron/main/libs/openclaw/openclawChannelSessionSync.js');
 
 function createSync() {
   return new OpenClawChannelSessionSync({

@@ -6,7 +6,7 @@
  */
 
 import type { CoworkMessage } from '../../../coworkStore';
-import { extractGatewayMessageText } from '../../openclawHistory';
+import { extractGatewayMessageText } from '../../openclaw/openclawHistory';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 

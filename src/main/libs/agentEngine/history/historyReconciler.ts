@@ -11,8 +11,8 @@ import { BrowserWindow } from 'electron';
 import * as path from 'path';
 
 import type { CoworkMessage, CoworkStore } from '../../../coworkStore';
-import { isManagedSessionKey } from '../../openclawChannelSessionSync';
-import { extractGatewayHistoryEntries } from '../../openclawHistory';
+import { isManagedSessionKey } from '../../openclaw/openclawChannelSessionSync';
+import { extractGatewayHistoryEntries } from '../../openclaw/openclawHistory';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import {
   extractMessageText,

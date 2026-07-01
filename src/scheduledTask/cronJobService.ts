@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 
-import { isCronSessionKey } from '../main/libs/openclawChannelSessionSync';
+import { isCronSessionKey } from '../main/libs/openclaw/openclawChannelSessionSync';
 import type {
   DeliveryMode as DeliveryModeType,
   GatewayStatus as GatewayStatusType,

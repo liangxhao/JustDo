@@ -1,8 +1,8 @@
-import { isGatewayToolFailureNotice } from '../../common/toolFailureNotice';
+import { isGatewayToolFailureNotice } from '../../../common/toolFailureNotice';
 import {
   parseScheduledReminderPrompt,
   parseSimpleScheduledReminderText,
-} from '../../scheduledTask/reminderText';
+} from '../../../scheduledTask/reminderText';
 
 type GatewayHistoryRole = 'user' | 'assistant' | 'system' | 'tool_use' | 'tool_result';
 

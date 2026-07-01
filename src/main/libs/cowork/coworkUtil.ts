@@ -8,8 +8,8 @@ import {
   getCurrentApiConfig,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
-} from './providerApiConfig';
-import { coworkLog } from './coworkLogger';
+} from '../cowork/providerApiConfig';
+import { coworkLog } from '../cowork/coworkLogger';
 import {
   buildAnthropicMessagesUrl,
   buildGeminiGenerateContentUrl,
@@ -18,8 +18,8 @@ import {
   extractTextFromAnthropicResponse,
   extractTextFromGeminiResponse,
 } from './coworkModelApi';
-import { appendPythonRuntimeToEnv } from './pythonRuntime';
-import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
+import { appendPythonRuntimeToEnv } from '../infra/pythonRuntime';
+import { isSystemProxyEnabled, resolveSystemProxyUrl } from '../infra/systemProxy';
 
 function appendEnvPath(current: string | undefined, additions: string[]): string | undefined {
   const items = new Set<string>();

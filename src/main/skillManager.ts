@@ -5,8 +5,8 @@ import yaml from 'js-yaml';
 import path from 'path';
 
 import { cpRecursiveSync } from './core/fsCompat';
-import { getElectronNodeRuntimePath } from './libs/coworkUtil';
-import { appendPythonRuntimeToEnv } from './libs/pythonRuntime';
+import { getElectronNodeRuntimePath } from './libs/cowork/coworkUtil';
+import { appendPythonRuntimeToEnv } from './libs/infra/pythonRuntime';
 import { SqliteStore } from './data/sqliteStore';
 
 /**

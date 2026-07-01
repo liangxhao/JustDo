@@ -6,15 +6,15 @@ import {
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
   ProviderName,
-} from '../../shared/providers';
-import type { Agent, CoworkConfig, CoworkExecutionMode } from '../coworkStore';
+} from '../../../shared/providers';
+import type { Agent, CoworkConfig, CoworkExecutionMode } from '../../coworkStore';
 import {
   getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
-} from './providerApiConfig';
-import type { McpToolManifestEntry } from './mcpServerManager';
+} from '../cowork/providerApiConfig';
+import type { McpToolManifestEntry } from '../mcp/mcpServerManager';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,

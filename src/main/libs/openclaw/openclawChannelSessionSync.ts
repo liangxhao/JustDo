@@ -5,7 +5,7 @@
  * IM channel sync functionality removed for future adaptation.
  */
 
-import type { CoworkStore } from '../coworkStore';
+import type { CoworkStore } from '../../coworkStore';
 
 const JUSTDO_SESSION_PREFIX = 'justdo:';
 export const DEFAULT_MANAGED_AGENT_ID = 'main';

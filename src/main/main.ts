@@ -47,35 +47,35 @@ import {
   resolveCurrentApiConfig,
   resolveRawApiConfig,
   setStoreGetter,
-} from './libs/providerApiConfig';
-import { saveCoworkApiConfig } from './libs/coworkConfigStore';
-import { getCoworkLogPath } from './libs/coworkLogger';
-import { probeCoworkModelReadiness } from './libs/coworkUtil';
+} from './libs/cowork/providerApiConfig';
+import { saveCoworkApiConfig } from './libs/cowork/coworkConfigStore';
+import { getCoworkLogPath } from './libs/cowork/coworkLogger';
+import { probeCoworkModelReadiness } from './libs/cowork/coworkUtil';
 import {
   mergeEnterpriseOpenclawConfig,
   resolveEnterpriseConfigPath,
   syncEnterpriseConfig,
-} from './libs/enterpriseConfigSync';
-import { exportLogsZip } from './libs/logExport';
-import { McpBridgeServer } from './libs/mcpBridgeServer';
-import { McpServerManager } from './libs/mcpServerManager';
-import { resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
+} from './libs/infra/enterpriseConfigSync';
+import { exportLogsZip } from './libs/infra/logExport';
+import { McpBridgeServer } from './libs/mcp/mcpBridgeServer';
+import { McpServerManager } from './libs/mcp/mcpServerManager';
+import { resolveQualifiedAgentModelRef } from './libs/openclaw/openclawAgentModels';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
   parseManagedSessionKey,
-} from './libs/openclawChannelSessionSync';
-import type { McpBridgeConfig } from './libs/openclawConfigSync';
-import { buildProviderSelection, OpenClawConfigSync } from './libs/openclawConfigSync';
-import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclawEngineManager';
-import { stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
-import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
+} from './libs/openclaw/openclawChannelSessionSync';
+import type { McpBridgeConfig } from './libs/openclaw/openclawConfigSync';
+import { buildProviderSelection, OpenClawConfigSync } from './libs/openclaw/openclawConfigSync';
+import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclaw/openclawEngineManager';
+import { stopOpenClawTokenProxy } from './libs/openclaw/openclawTokenProxy';
+import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrl,
   restoreOriginalProxyEnv,
   setSystemProxyEnabled,
-} from './libs/systemProxy';
+} from './libs/infra/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
 import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';
@@ -3583,7 +3583,7 @@ if (!gotTheLock) {
               ? (result.updatedInput as Record<string, unknown>)
               : undefined;
           const answers = updatedInput?.answers as Record<string, string> | undefined;
-          const askUserResponse: import('./libs/mcpBridgeServer').AskUserResponse = {
+          const askUserResponse: import('./libs/mcp/mcpBridgeServer').AskUserResponse = {
             behavior: result.behavior === 'allow' ? 'allow' : 'deny',
             answers,
           };

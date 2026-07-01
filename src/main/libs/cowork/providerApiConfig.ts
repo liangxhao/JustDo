@@ -1,5 +1,5 @@
-import { ProviderName, resolveCodingPlanBaseUrl } from '../../shared/providers';
-import type { SqliteStore } from '../data/sqliteStore';
+import { ProviderName, resolveCodingPlanBaseUrl } from '../../../shared/providers';
+import type { SqliteStore } from '../../data/sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
 
@@ -422,9 +422,10 @@ export function resolveAllProviderApiKeys(): Record<string, string> {
   const sqliteStore = getStore();
   if (!sqliteStore) return result;
   const appConfig = sqliteStore.get<AppConfig>('app_config');
-  if (!appConfig?.providers) return result;
+  const providers = (appConfig?.providers ?? {}) as Record<string, ProviderConfig>;
+  if (!Object.keys(providers).length) return result;
 
-  for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
+  for (const [providerName, providerConfig] of Object.entries(providers)) {
     if (!providerConfig?.enabled) continue;
     const apiKey = providerConfig.apiKey?.trim();
     if (!apiKey && providerRequiresApiKey(providerName)) continue;
@@ -465,11 +466,12 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
   const sqliteStore = getStore();
   if (!sqliteStore) return [];
   const appConfig = sqliteStore.get<AppConfig>('app_config');
-  if (!appConfig?.providers) return [];
+  const providers = (appConfig?.providers ?? {}) as Record<string, ProviderConfig>;
+  if (!Object.keys(providers).length) return [];
 
   const result: ProviderRawConfig[] = [];
 
-  for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
+  for (const [providerName, providerConfig] of Object.entries(providers)) {
     if (!providerConfig?.enabled) continue;
 
     const apiKey = providerConfig.apiKey?.trim() || '';
@@ -493,7 +495,7 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
 
     if (!effectiveBaseURL) continue;
 
-    const models = (providerConfig.models ?? []).filter(m => m.id?.trim());
+    const models = (providerConfig.models ?? []).filter((m: ProviderModel) => m.id?.trim());
     if (models.length === 0) continue;
 
     // 获取 displayName（仅对 custom provider 有意义）
@@ -522,9 +524,10 @@ export function getProviderDisplayNameMap(): Record<string, string> {
   const sqliteStore = getStore();
   if (!sqliteStore) return result;
   const appConfig = sqliteStore.get<AppConfig>('app_config');
-  if (!appConfig?.providers) return result;
+  const providers = (appConfig?.providers ?? {}) as Record<string, ProviderConfig>;
+  if (!Object.keys(providers).length) return result;
 
-  for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
+  for (const [providerName, providerConfig] of Object.entries(providers)) {
     // 只处理 custom_* provider
     if (!providerName.startsWith('custom_')) continue;
     const displayName = providerConfig.displayName?.trim();

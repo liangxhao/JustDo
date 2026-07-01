@@ -1,4 +1,4 @@
-import { buildManagedSessionKey } from '../../main/libs/openclawChannelSessionSync';
+import { buildManagedSessionKey } from '../../main/libs/openclaw/openclawChannelSessionSync';
 import { BindingKind, DeliveryChannel, DeliveryMode, OriginKind, RunBehavior,SessionTarget, WakeMode } from '../constants';
 import type { ExecutionBinding } from '../origin';
 import type { PolicyDelivery, PolicyTaskInput, PolicyTaskModel, TaskPolicy, WireBinding } from './types';

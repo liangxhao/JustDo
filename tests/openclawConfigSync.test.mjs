@@ -28,8 +28,8 @@ Module._load = function patchedModuleLoad(request, parent, isMain) {
   return originalModuleLoad.call(this, request, parent, isMain);
 };
 
-const { setStoreGetter } = require('../dist-electron/main/libs/providerApiConfig.js');
-const { OpenClawConfigSync } = require('../dist-electron/main/libs/openclawConfigSync.js');
+const { setStoreGetter } = require('../dist-electron/main/libs/cowork/providerApiConfig.js');
+const { OpenClawConfigSync } = require('../dist-electron/main/libs/openclaw/openclawConfigSync.js');
 
 const setElectronPaths = (homeDir) => {
   currentAppPath = process.cwd();
