@@ -464,9 +464,10 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
 
     const normalized = normalizeMessage(item.message);
     const role = normalizeRoleForGrouping(normalized.role);
+    const modelName = role.toLowerCase() === 'assistant' ? (normalized.modelName ?? null) : null;
     const senderLabel =
       role.toLowerCase() === 'user' || role.toLowerCase() === 'assistant'
-        ? (normalized.senderLabel ?? null)
+        ? (modelName ?? normalized.senderLabel ?? null)
         : null;
     const timestamp = normalized.timestamp || Date.now();
     const shouldSplitBySender = role.toLowerCase() === 'user' || role.toLowerCase() === 'assistant';
@@ -511,6 +512,7 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
         key: `group:${role}:${item.key}`,
         role,
         senderLabel,
+        modelName,
         messages: [{ message: item.message, key: item.key, duplicateCount: item.duplicateCount }],
         timestamp,
         isStreaming: false,

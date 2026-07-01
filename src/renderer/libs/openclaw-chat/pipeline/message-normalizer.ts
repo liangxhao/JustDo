@@ -448,6 +448,16 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
   const id = typeof m.id === 'string' ? m.id : undefined;
   const senderLabel =
     typeof m.senderLabel === 'string' && m.senderLabel.trim() ? m.senderLabel.trim() : null;
+  const modelName =
+    typeof m.modelName === 'string' && m.modelName.trim()
+      ? m.modelName.trim()
+      : typeof m.metadata === 'object' &&
+          m.metadata !== null &&
+          !Array.isArray(m.metadata) &&
+          typeof (m.metadata as Record<string, unknown>).modelName === 'string' &&
+          ((m.metadata as Record<string, unknown>).modelName as string).trim()
+        ? ((m.metadata as Record<string, unknown>).modelName as string).trim()
+        : null;
 
   content = stripMessageDisplayMetadata(content);
 
@@ -457,6 +467,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
     timestamp,
     id,
     senderLabel,
+    modelName,
     ...(audioAsVoice ? { audioAsVoice: true } : {}),
     ...(replyTarget ? { replyTarget } : {}),
   };

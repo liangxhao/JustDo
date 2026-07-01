@@ -32,6 +32,7 @@ export type MessageGroup = {
   key: string;
   role: string;
   senderLabel?: string | null;
+  modelName?: string | null;
   messages: Array<{ message: unknown; key: string; duplicateCount?: number }>;
   timestamp: number;
   isStreaming: boolean;
@@ -80,6 +81,7 @@ export type NormalizedMessage = {
   timestamp: number;
   id?: string;
   senderLabel?: string | null;
+  modelName?: string | null;
   audioAsVoice?: boolean;
   replyTarget?: { kind: 'current' } | { kind: 'id'; id: string } | null;
 };

@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 
 import type { MessageGroup } from '../types';
 import {
+  formatGroupTimestamp,
+  getGroupFooterLabel,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
 } from './grouped-render';
@@ -72,5 +74,25 @@ describe('shouldRenderGroupAvatarByPrevItem', () => {
     expect(shouldRenderGroupAvatarByPrevItem(createGroup('assistant'), createGroup('user'))).toBe(
       true,
     );
+  });
+});
+
+describe('group footer helpers', () => {
+  test('uses assistant model name when present', () => {
+    expect(
+      getGroupFooterLabel({
+        ...createGroup('assistant'),
+        modelName: 'gpt-4.1',
+      }),
+    ).toBe('gpt-4.1');
+  });
+
+  test('falls back to assistant label when model name is missing', () => {
+    expect(getGroupFooterLabel(createGroup('assistant'))).toBe('Assistant');
+  });
+
+  test('formats timestamps as yyyy-mm-dd hh:mm', () => {
+    const date = new Date(2026, 6, 1, 9, 5);
+    expect(formatGroupTimestamp(date)).toBe('2026-07-01 09:05');
   });
 });

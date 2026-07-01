@@ -418,14 +418,33 @@ function renderGroupFooter(group: MessageGroup, showFooter: boolean): TemplateRe
   const ts = group.timestamp;
   if (!ts) return nothing;
   const date = new Date(ts);
-  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const roleName = group.role === 'user' ? 'You' : group.role === 'assistant' ? 'Assistant' : '';
+  const time = formatGroupTimestamp(date);
+  const roleName = getGroupFooterLabel(group);
   return html`
     <div class="chat-group__footer">
       ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
       <time class="chat-group__timestamp" datetime=${date.toISOString()}>${time}</time>
     </div>
   `;
+}
+
+export function getGroupFooterLabel(group: MessageGroup): string {
+  if (group.role === 'assistant') {
+    return group.modelName ?? group.senderLabel ?? 'Assistant';
+  }
+  if (group.role === 'user') {
+    return 'You';
+  }
+  return group.senderLabel ?? '';
+}
+
+export function formatGroupTimestamp(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
 export function shouldRenderGroupFooterByNextItem(

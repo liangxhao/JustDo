@@ -471,6 +471,29 @@ test('keeps split history tool start and result attached consistently after full
   expect(attachedToolMessages(contentMessage)).toHaveLength(0);
 });
 
+test('preserves assistant model name on grouped messages', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Content' }],
+        timestamp: 1000,
+        modelName: 'gpt-4.1',
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantGroup = groups(items).find(group => group.role === 'assistant');
+  expect(assistantGroup?.modelName).toBe('gpt-4.1');
+});
+
 test('treats cowork tool_use history messages as attachable tools after full refresh', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',
