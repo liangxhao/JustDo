@@ -2940,7 +2940,7 @@ if (!gotTheLock) {
       if (!openClawRuntimeAdapter) {
         return { success: false, error: 'OpenClaw runtime adapter not available' };
       }
-      if (openClawRuntimeAdapter.hasActiveSessions()) {
+      if (openClawRuntimeAdapter.isSessionActive(sessionId)) {
         return { success: false, error: 'Context usage is unavailable while a session is running' };
       }
       const gatewayClient = openClawRuntimeAdapter.getGatewayClient();
@@ -2956,111 +2956,6 @@ if (!gotTheLock) {
       ]);
       const readNumber = (value: unknown): number | undefined =>
         typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-      const isRecord = (value: unknown): value is Record<string, unknown> =>
-        value !== null && typeof value === 'object' && !Array.isArray(value);
-      const estimateStringChars = (text: string): number => {
-        const nonLatinCount = (text.match(/[^\u0000-\u007f]/g) ?? []).length;
-        return Array.from(text).length + nonLatinCount * 3;
-      };
-      const estimateStringTokens = (text: string, charsPerToken = 4): number =>
-        Math.ceil(estimateStringChars(text) / charsPerToken);
-      const estimateJsonTokens = (value: unknown, charsPerToken = 3): number => {
-        try {
-          return estimateStringTokens(JSON.stringify(value), charsPerToken);
-        } catch {
-          return 256;
-        }
-      };
-      const estimateContentTokens = (content: unknown): number => {
-        if (typeof content === 'string') return estimateStringTokens(content);
-        if (!Array.isArray(content)) return content === undefined ? 0 : estimateJsonTokens(content);
-        return content.reduce((sum, block) => {
-          if (typeof block === 'string') return sum + estimateStringTokens(block);
-          if (!isRecord(block)) return sum + estimateJsonTokens(block);
-          if (block.type === 'text' && typeof block.text === 'string') {
-            return sum + 6 + estimateStringTokens(block.text);
-          }
-          if (block.type === 'thinking' && typeof block.thinking === 'string') {
-            return sum + 6 + estimateStringTokens(block.thinking);
-          }
-          if (block.type === 'image') return sum + 2000;
-          return sum + 6 + estimateJsonTokens(block);
-        }, 0);
-      };
-      const estimateMessageTokens = (message: unknown): number => {
-        if (!isRecord(message)) return 0;
-        const payload = isRecord(message.message) ? message.message : message;
-        let tokens = 12;
-        if (payload.role === 'assistant') {
-          tokens += estimateContentTokens(payload.content);
-          return tokens;
-        }
-        if (
-          payload.role === 'toolResult' ||
-          payload.role === 'tool' ||
-          payload.type === 'toolResult'
-        ) {
-          tokens += estimateContentTokens(payload.content);
-          return tokens;
-        }
-        tokens += estimateContentTokens(payload.content);
-        return tokens;
-      };
-      const estimateFromOpenClawSessionState = (
-        sessionKey: string,
-      ): { totalTokens?: number; contextTokens?: number } => {
-        try {
-          const sessionsPath = path.join(
-            app.getPath('userData'),
-            'openclaw',
-            'state',
-            'agents',
-            effectiveAgentId,
-            'sessions',
-            'sessions.json',
-          );
-          const raw = fs.readFileSync(sessionsPath, 'utf-8');
-          const sessions = JSON.parse(raw) as Record<string, unknown>;
-          const entry = isRecord(sessions[sessionKey]) ? sessions[sessionKey] : undefined;
-          if (!entry) return {};
-
-          const report = isRecord(entry.systemPromptReport) ? entry.systemPromptReport : undefined;
-          const systemPrompt =
-            report && isRecord(report.systemPrompt) ? report.systemPrompt : undefined;
-          const systemChars = readNumber(systemPrompt?.chars) ?? 0;
-          const sessionFile =
-            typeof entry.sessionFile === 'string' && entry.sessionFile.trim()
-              ? entry.sessionFile
-              : undefined;
-          let transcriptTokens = 0;
-          if (sessionFile && fs.existsSync(sessionFile)) {
-            for (const line of fs.readFileSync(sessionFile, 'utf-8').split(/\r?\n/)) {
-              if (!line.trim()) continue;
-              try {
-                const item = JSON.parse(line) as unknown;
-                if (isRecord(item) && item.type === 'message') {
-                  transcriptTokens += estimateMessageTokens(item);
-                }
-              } catch {
-                // Ignore partial/corrupt jsonl lines; the file can be written while we read.
-              }
-            }
-          }
-          const contextTokens = readNumber(entry.contextTokens);
-          const totalTokens = Math.ceil((Math.ceil(systemChars / 4) + transcriptTokens) * 1.2);
-          return {
-            ...(totalTokens > 0 ? { totalTokens } : {}),
-            ...(contextTokens ? { contextTokens } : {}),
-          };
-        } catch (error) {
-          console.debug('[CoworkContextUsage] failed to estimate local context usage', {
-            sessionId,
-            sessionKey,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          return {};
-        }
-      };
       const readSessionTokens = (session: Record<string, unknown>) => {
         const budgetStatus =
           session.contextBudgetStatus && typeof session.contextBudgetStatus === 'object'
@@ -3120,10 +3015,10 @@ if (!gotTheLock) {
       }
       const usage = readSessionTokens(session);
       if (usage.totalTokens <= 0 || usage.contextTokens <= 0) {
-        const estimatedUsage = estimateFromOpenClawSessionState(session.key);
-        usage.totalTokens = Math.max(usage.totalTokens, estimatedUsage.totalTokens ?? 0);
-        usage.contextTokens = estimatedUsage.contextTokens ?? usage.contextTokens;
-        usage.totalTokensFresh = usage.totalTokens > 0 || usage.totalTokensFresh;
+        return {
+          success: false,
+          error: 'Context usage is not available from OpenClaw session state',
+        };
       }
       return {
         success: true,

@@ -679,9 +679,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return `${formatContextLength(usedTokens)} / ${formatContextLength(contextTokens)} · ${percentage}%`;
     }, [contextUsage, effectiveSelectedModel?.contextLength]);
     const contextUsageStatusText =
-      sessionId && !isStreaming
-        ? contextUsageText || i18nService.t('coworkContextUsageRefreshing')
-        : null;
+      sessionId && !isStreaming && contextUsageText ? contextUsageText : null;
     const contextUsageBadge = contextUsageStatusText ? (
       <span
         className="inline-flex h-7 max-w-[190px] items-center rounded-md border border-border/60 bg-surface-raised/70 px-2 text-[11px] font-medium leading-none text-secondary tabular-nums select-none shadow-subtle"
@@ -1165,8 +1163,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => window.removeEventListener('config-updated', syncFromConfig);
     }, []);
 
-    // Poll context usage from OpenClaw gateway only while idle. The gateway's
-    // sessions.list call can be expensive during an active agent turn.
+    // Fetch context usage from OpenClaw gateway only for the selected idle session.
     useEffect(() => {
       if (!sessionId || isStreaming) {
         setContextUsage(null);
@@ -1174,6 +1171,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
       let cancelled = false;
       const fetchUsage = async () => {
+        setContextUsage(null);
         try {
           const result = await window.electron.cowork.getContextUsage(sessionId);
           if (!cancelled && result.success && result.totalTokens != null) {
@@ -1188,10 +1186,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         }
       };
       void fetchUsage();
-      const timer = setInterval(fetchUsage, 15000);
       return () => {
         cancelled = true;
-        clearInterval(timer);
       };
     }, [sessionId, isStreaming, effectiveSelectedModel?.contextLength]);
 
