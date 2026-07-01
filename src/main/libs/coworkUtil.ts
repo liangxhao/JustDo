@@ -18,11 +18,6 @@ import {
   extractTextFromAnthropicResponse,
   extractTextFromGeminiResponse,
 } from './coworkModelApi';
-import type { OpenAICompatProxyTarget } from './coworkOpenAICompatProxy';
-import {
-  getCoworkOpenAICompatProxyBaseURL,
-  getCoworkOpenAICompatProxyToken,
-} from './coworkOpenAICompatProxy';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
 
@@ -1492,9 +1487,8 @@ export function getSkillsRoot(): string {
  * Async function to fetch system proxy and inject into environment variables
  */
 export async function getEnhancedEnv(
-  target: OpenAICompatProxyTarget = 'local',
 ): Promise<Record<string, string | undefined>> {
-  const config = getCurrentApiConfig(target);
+  const config = getCurrentApiConfig();
   const env = config ? buildEnvForConfig(config) : { ...process.env };
 
   applyPackagedEnvOverrides(env);
@@ -1562,9 +1556,8 @@ export function ensureCoworkTempDir(cwd: string): string {
  */
 export async function getEnhancedEnvWithTmpdir(
   cwd: string,
-  target: OpenAICompatProxyTarget = 'local',
 ): Promise<Record<string, string | undefined>> {
-  const env = await getEnhancedEnv(target);
+  const env = await getEnhancedEnv();
   const tempDir = ensureCoworkTempDir(cwd);
 
   // Set temp directory environment variables for all platforms
@@ -1705,22 +1698,12 @@ export async function probeCoworkModelReadiness(
         ? buildGeminiGenerateContentUrl(config.baseURL, config.model)
         : buildAnthropicMessagesUrl(config.baseURL);
 
-    // Detect if we're using the OpenAI compat proxy
-    const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL();
-    const isProxyRequest = proxyBaseURL && config.baseURL === proxyBaseURL;
-    const proxyToken = getCoworkOpenAICompatProxyToken();
-
-    // Build headers based on protocol and whether we're using proxy
+    // Build headers based on protocol
     let headers: Record<string, string>;
     if (config.protocol === CoworkModelProtocol.GeminiNative) {
       headers = {
         'Content-Type': 'application/json',
         'x-goog-api-key': config.apiKey,
-      };
-    } else if (isProxyRequest && proxyToken) {
-      headers = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${proxyToken}`,
       };
     } else {
       headers = {
@@ -1806,35 +1789,16 @@ export async function generateSessionTitle(userIntent: string | null): Promise<s
         : buildAnthropicMessagesUrl(config.baseURL);
     const prompt = `Generate a short title from this input, keep the same language, return plain text only (no markdown), and keep it within ${SESSION_TITLE_MAX_CHARS} characters: ${normalizedInput}`;
 
-    // Detect if we're using the OpenAI compat proxy by checking if baseURL matches proxy address
-    const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL();
-    const isProxyRequest = proxyBaseURL && config.baseURL === proxyBaseURL;
-    const proxyToken = getCoworkOpenAICompatProxyToken();
-
     console.log(
-      `[cowork-title] Generating title: protocol=${config.protocol}, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}, proxyBaseURL=${proxyBaseURL}, isProxy=${isProxyRequest}, hasProxyToken=${Boolean(proxyToken)}`,
+      `[cowork-title] Generating title: protocol=${config.protocol}, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}`,
     );
 
-    // Build headers based on protocol and whether we're using proxy
+    // Build headers based on protocol
     let headers: Record<string, string>;
     if (config.protocol === CoworkModelProtocol.GeminiNative) {
       headers = {
         'Content-Type': 'application/json',
         'x-goog-api-key': config.apiKey,
-      };
-    } else if (isProxyRequest && proxyToken) {
-      // When using proxy, we need Bearer Authorization with proxy token
-      headers = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${proxyToken}`,
-      };
-      console.log(`[cowork-title] Using proxy auth with token length=${proxyToken.length}`);
-    } else if (isProxyRequest) {
-      // Proxy request but no token - this shouldn't happen, log warning
-      console.warn('[cowork-title] Proxy request detected but no proxy token available!');
-      headers = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer `, // Empty token will fail auth
       };
     } else {
       headers = {

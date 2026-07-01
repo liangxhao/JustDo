@@ -14,7 +14,6 @@ import {
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
 } from './claudeSettings';
-import { getCoworkOpenAICompatProxyToken } from './coworkOpenAICompatProxy';
 import type { McpToolManifestEntry } from './mcpServerManager';
 import {
   buildAgentEntry,
@@ -816,8 +815,6 @@ export class OpenClawConfigSync {
     // after that, openclaw.json uses provider-specific placeholders and this var
     // is never resolved. Use a fixed value to avoid secretEnvVarsChanged on switch.
     env.JUSTDO_PROVIDER_API_KEY = 'legacy-unused';
-
-    env.JUSTDO_PROXY_TOKEN = getCoworkOpenAICompatProxyToken() || 'unconfigured';
 
     // MCP Bridge Secret — always set so stale openclaw.json with
     // ${JUSTDO_MCP_BRIDGE_SECRET} placeholder doesn't crash the gateway.

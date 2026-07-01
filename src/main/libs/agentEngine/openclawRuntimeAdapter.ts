@@ -13,7 +13,6 @@ import { t } from '../../i18n';
 import { resolveRawApiConfig } from '../claudeSettings';
 import { getCommandDangerLevel, isDeleteCommand } from '../commandSafety';
 import { coworkLog } from '../coworkLogger';
-import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import {
   buildManagedSessionKey,
   type OpenClawChannelSessionSync,
@@ -424,7 +423,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const sessionKey = this.toSessionKey(sessionId, agentId);
     this.rememberSessionKey(sessionId, sessionKey);
     this.store.updateSession(sessionId, { status: 'running' });
-    setCoworkProxySessionId(sessionId);
     await this.ensureGatewayClientReady();
 
     const runId = randomUUID();
@@ -1722,7 +1720,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.finalizeVisibleRun(runId);
     }
     this.activeTurns.delete(sessionId);
-    setCoworkProxySessionId(null);
     this.reCreatedChannelSessionIds.delete(sessionId);
     this.flushPendingSessionModelPatch(sessionId);
   }

@@ -2,12 +2,6 @@ import { ProviderName, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import type { SqliteStore } from '../sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
-import {
-  configureCoworkOpenAICompatProxy,
-  getCoworkOpenAICompatProxyBaseURL,
-  getCoworkOpenAICompatProxyStatus,
-  type OpenAICompatProxyTarget,
-} from './coworkOpenAICompatProxy';
 
 type ProviderModel = {
   id: string;
@@ -207,9 +201,7 @@ function resolveMatchedProvider(appConfig: AppConfig): {
   };
 }
 
-export function resolveCurrentApiConfig(
-  target: OpenAICompatProxyTarget = 'local',
-): ApiConfigResolution {
+export function resolveCurrentApiConfig(): ApiConfigResolution {
   const sqliteStore = getStore();
   if (!sqliteStore) {
     return {
@@ -279,33 +271,10 @@ export function resolveCurrentApiConfig(
     };
   }
 
-  const proxyStatus = getCoworkOpenAICompatProxyStatus();
-  if (!proxyStatus.running) {
-    return {
-      config: null,
-      error: 'OpenAI compatibility proxy is not running.',
-    };
-  }
-
-  configureCoworkOpenAICompatProxy({
-    baseURL: resolvedBaseURL,
-    apiKey: resolvedApiKey || undefined,
-    model: matched.modelId,
-    provider: matched.providerName,
-  });
-
-  const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL(target);
-  if (!proxyBaseURL) {
-    return {
-      config: null,
-      error: 'OpenAI compatibility proxy base URL is unavailable.',
-    };
-  }
-
   return {
     config: {
       apiKey: resolvedApiKey || 'justdo-openai-compat',
-      baseURL: proxyBaseURL,
+      baseURL: resolvedBaseURL,
       model: matched.modelId,
       apiType: 'openai',
     },
@@ -319,14 +288,12 @@ export function resolveCurrentApiConfig(
 }
 
 export function getCurrentApiConfig(
-  target: OpenAICompatProxyTarget = 'local',
 ): CoworkApiConfig | null {
-  return resolveCurrentApiConfig(target).config;
+  return resolveCurrentApiConfig().config;
 }
 
 /**
- * Resolve the raw API config directly from the app config,
- * without requiring the OpenAI compatibility proxy.
+ * Resolve the raw API config directly from the app config.
  * Used by OpenClaw config sync which has its own model routing.
  */
 export function resolveRawApiConfig(): ApiConfigResolution {

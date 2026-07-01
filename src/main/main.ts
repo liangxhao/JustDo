@@ -50,10 +50,6 @@ import {
 } from './libs/claudeSettings';
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
-import {
-  startCoworkOpenAICompatProxy,
-  stopCoworkOpenAICompatProxy,
-} from './libs/coworkOpenAICompatProxy';
 import { probeCoworkModelReadiness } from './libs/coworkUtil';
 import {
   mergeEnterpriseOpenclawConfig,
@@ -4551,10 +4547,6 @@ if (!gotTheLock) {
       coworkEngineRouter.stopAllSessions();
     }
 
-    await stopCoworkOpenAICompatProxy().catch(error => {
-      console.error('Failed to stop OpenAI compatibility proxy:', error);
-    });
-
     stopOpenClawTokenProxy();
 
     if (openClawEngineManager) {
@@ -4792,23 +4784,6 @@ if (!gotTheLock) {
 
     const appConfig = getStore().get<AppConfigSettings>('app_config');
     await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
-
-    await startCoworkOpenAICompatProxy().catch(error => {
-      console.error('Failed to start OpenAI compatibility proxy:', error);
-    });
-
-    // Re-sync OpenClaw config after proxy is ready so that providers that route
-    // through the proxy (e.g. github-copilot) get the correct baseUrl.
-    if (resolveCoworkAgentEngine() === 'openclaw') {
-      const proxyResync = await syncOpenClawConfig({
-        reason: 'proxy-ready',
-      });
-      if (proxyResync.changed) {
-        console.log(
-          '[Main] OpenClaw config updated after proxy ready, gateway will restart to pick up new config',
-        );
-      }
-    }
 
     // 设置安全策略
     setContentSecurityPolicy();

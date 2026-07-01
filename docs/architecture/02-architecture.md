@@ -75,7 +75,7 @@ JustDo 是一个 **Thin Frontend** 客户端 —— 所有 Agent 执行逻辑、
 |  |  mcpServerManager.ts | mcpBridgeServer.ts                       |   |
 |  |  claudeSettings.ts | coworkModelApi.ts                          |   |
 |  |  coworkConfigStore.ts | coworkFormatTransform.ts                |   |
-|  |  coworkLogger.ts | coworkOpenAICompatProxy.ts                   |   |
+|  |  coworkLogger.ts |                                         |   |
 |  |  coworkUtil.ts | commandSafety.ts                               |   |
 |  |  enterpriseConfigSync.ts | logExport.ts                         |   |
 |  |  pythonRuntime.ts | systemProxy.ts                              |   |
@@ -257,7 +257,6 @@ src/main/
 │   ├── coworkConfigStore.ts        # 配置存储
 │   ├── coworkFormatTransform.ts    # 格式转换
 │   ├── coworkLogger.ts             # 日志系统
-│   ├── coworkOpenAICompatProxy.ts  # OpenAI 兼容代理
 │   ├── coworkUtil.ts               # 工具函数
 │   ├── commandSafety.ts            # 命令安全检查
 │   ├── enterpriseConfigSync.ts     # 企业配置同步
