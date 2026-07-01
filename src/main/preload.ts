@@ -159,7 +159,7 @@ contextBridge.exposeInMainWorld('electron', {
     apiKey: string;
     baseURL: string;
     model: string;
-    apiType?: 'anthropic' | 'openai';
+    apiType?: 'openai';
   }) => ipcRenderer.invoke('save-api-config', config),
   generateSessionTitle: (userInput: string | null) =>
     ipcRenderer.invoke('generate-session-title', userInput),

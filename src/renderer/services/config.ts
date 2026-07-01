@@ -1,59 +1,17 @@
 import { AppConfig, CONFIG_KEYS, defaultConfig, isCustomProvider } from '../config';
 import { localStore } from './store';
 
-const getFixedProviderApiFormat = (providerKey: string): 'anthropic' | 'openai' | 'gemini' | null => {
-  if (providerKey === 'openai' || providerKey === 'stepfun' || providerKey === 'youdaozhiyun' || providerKey === 'github-copilot') {
-    return 'openai';
-  }
-  if (providerKey === 'anthropic') {
-    return 'anthropic';
-  }
-  if (providerKey === 'gemini') {
-    return 'gemini';
-  }
-  return null;
-};
+const SUPPORTED_BUILTIN_PROVIDERS = new Set(['ollama']);
 
-const normalizeProviderBaseUrl = (providerKey: string, baseUrl: unknown): string => {
+const isSupportedProvider = (providerKey: string): boolean =>
+  SUPPORTED_BUILTIN_PROVIDERS.has(providerKey) || isCustomProvider(providerKey);
+
+const normalizeProviderBaseUrl = (baseUrl: unknown): string => {
   if (typeof baseUrl !== 'string') {
     return '';
   }
 
-  const normalized = baseUrl.trim().replace(/\/+$/, '');
-  if (providerKey !== 'gemini') {
-    return normalized;
-  }
-
-  if (!normalized || !normalized.includes('generativelanguage.googleapis.com')) {
-    return normalized;
-  }
-
-  // Strip the /openai suffix for native Gemini API
-  if (normalized.endsWith('/v1beta/openai')) {
-    return normalized.slice(0, -'/openai'.length);
-  }
-  if (normalized.endsWith('/v1/openai')) {
-    return normalized.slice(0, -'/openai'.length);
-  }
-  if (normalized.endsWith('/v1beta')) {
-    return normalized;
-  }
-  if (normalized.endsWith('/v1')) {
-    return `${normalized.slice(0, -3)}v1beta`;
-  }
-
-  return 'https://generativelanguage.googleapis.com/v1beta';
-};
-
-const normalizeProviderApiFormat = (providerKey: string, apiFormat: unknown): 'anthropic' | 'openai' | 'gemini' => {
-  const fixed = getFixedProviderApiFormat(providerKey);
-  if (fixed) {
-    return fixed;
-  }
-  if (providerKey === 'ollama' || isCustomProvider(providerKey)) {
-    return 'openai';
-  }
-  return apiFormat === 'openai' ? 'openai' : 'anthropic';
+  return baseUrl.trim().replace(/\/+$/, '');
 };
 
 const normalizeProvidersConfig = (providers: AppConfig['providers']): AppConfig['providers'] => {
@@ -62,14 +20,16 @@ const normalizeProvidersConfig = (providers: AppConfig['providers']): AppConfig[
   }
 
   return Object.fromEntries(
-    Object.entries(providers).map(([providerKey, providerConfig]) => [
-      providerKey,
-      {
-        ...providerConfig,
-        baseUrl: normalizeProviderBaseUrl(providerKey, providerConfig.baseUrl),
-        apiFormat: normalizeProviderApiFormat(providerKey, providerConfig.apiFormat),
-      },
-    ])
+    Object.entries(providers)
+      .filter(([providerKey]) => isSupportedProvider(providerKey))
+      .map(([providerKey, providerConfig]) => [
+        providerKey,
+        {
+          ...providerConfig,
+          baseUrl: normalizeProviderBaseUrl(providerConfig.baseUrl),
+          apiFormat: 'openai' as const,
+        },
+      ])
   ) as AppConfig['providers'];
 };
 
@@ -97,36 +57,6 @@ const migrateCustomProviders = (config: AppConfig): AppConfig => {
   return config;
 };
 
-// Model IDs that have been removed from specific providers.
-// These will be filtered out from saved configs during migration.
-const REMOVED_PROVIDER_MODELS: Record<string, string[]> = {
-  deepseek: ['deepseek-chat'],
-  openai: ['gpt-5.2-2025-12-11'],
-};
-
-// Models to inject into existing saved configs (for existing users).
-// These models will be added on every startup if missing from the stored config.
-// Note: users cannot permanently remove these models — they will be re-injected
-// on next launch. Once all users have upgraded, entries here should be removed
-// so the models follow normal user-editable behavior (same as other models).
-// position: 'start' inserts at the beginning, 'end' appends at the end.
-const ADDED_PROVIDER_MODELS: Record<string, { models: Array<{ id: string; name: string; supportsImage?: boolean }>; position: 'start' | 'end' }> = {
-  minimax: {
-    models: [
-      { id: 'MiniMax-M2.7', name: 'MiniMax M2.7', supportsImage: false },
-    ],
-    position: 'start',
-  },
-  openai: {
-    models: [
-      { id: 'gpt-5.4', name: 'GPT-5.4', supportsImage: true },
-      { id: 'gpt-5.2', name: 'GPT-5.2', supportsImage: true },
-      { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', supportsImage: true },
-    ],
-    position: 'start',
-  },
-};
-
 class ConfigService {
   private config: AppConfig = defaultConfig;
 
@@ -139,51 +69,32 @@ class ConfigService {
               Object.entries({
                 ...(defaultConfig.providers ?? {}),
                 ...storedConfig.providers,
-              }).map(([providerKey, providerConfig]) => [
-                providerKey,
-                (() => {
+              })
+                .filter(([providerKey]) => isSupportedProvider(providerKey))
+                .map(([providerKey, providerConfig]) => {
                   const mergedProvider = {
                     ...(defaultConfig.providers as Record<string, any>)?.[providerKey],
                     ...providerConfig,
                   };
-                  // Filter out removed models
-                  const removedIds = REMOVED_PROVIDER_MODELS[providerKey];
-                  if (removedIds && mergedProvider.models) {
-                    mergedProvider.models = mergedProvider.models.filter(
-                      (m: { id: string }) => !removedIds.includes(m.id)
-                    );
-                  }
-                  // Inject added models (for existing users who already have saved config)
-                  const addedConfig = ADDED_PROVIDER_MODELS[providerKey];
-                  if (addedConfig && mergedProvider.models) {
-                    const existingIds = new Set(mergedProvider.models.map((m: { id: string }) => m.id));
-                    const newModels = addedConfig.models.filter(m => !existingIds.has(m.id));
-                    if (newModels.length > 0) {
-                      mergedProvider.models = addedConfig.position === 'start'
-                        ? [...newModels, ...mergedProvider.models]
-                        : [...mergedProvider.models, ...newModels];
-                    }
-                  }
-                  return {
-                    ...mergedProvider,
-                    baseUrl: normalizeProviderBaseUrl(providerKey, mergedProvider.baseUrl),
-                    apiFormat: normalizeProviderApiFormat(providerKey, mergedProvider.apiFormat),
-                  };
-                })(),
-              ])
+                  return [
+                    providerKey,
+                    {
+                      ...mergedProvider,
+                      baseUrl: normalizeProviderBaseUrl(mergedProvider.baseUrl),
+                      apiFormat: 'openai' as const,
+                    },
+                  ];
+                })
             )
           : defaultConfig.providers;
 
-        // Migrate model.defaultModel if it was removed
-        const allRemovedIds = Object.values(REMOVED_PROVIDER_MODELS).flat();
         const migratedModel = { ...defaultConfig.model, ...storedConfig.model };
-        if (allRemovedIds.includes(migratedModel.defaultModel)) {
+        if (
+          migratedModel.defaultModelProvider &&
+          !isSupportedProvider(migratedModel.defaultModelProvider)
+        ) {
           migratedModel.defaultModel = defaultConfig.model.defaultModel;
-        }
-        if (migratedModel.availableModels) {
-          migratedModel.availableModels = migratedModel.availableModels.filter(
-            (m: { id: string }) => !allRemovedIds.includes(m.id)
-          );
+          migratedModel.defaultModelProvider = defaultConfig.model.defaultModelProvider;
         }
 
         this.config = migrateCustomProviders({

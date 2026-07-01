@@ -89,51 +89,6 @@ export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 // Allow substantial work while still terminating runaway subagent runs.
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 
-function shouldUseOpenAIResponsesApi(_providerName?: string, baseURL?: string): boolean {
-  if (!baseURL) return true;
-  const normalized = baseURL.trim().toLowerCase();
-  return !normalized || normalized.includes('api.openai.com');
-}
-
-const mapApiTypeToOpenClawApi = (
-  apiType: 'anthropic' | 'openai' | undefined,
-  providerName?: string,
-  baseURL?: string,
-): OpenClawProviderApi => {
-  // Qwen/DashScope Anthropic-compatible endpoint auto-injects web_search and
-  // web_extractor built-in tools that cannot be disabled from the client side,
-  // causing HTTP 400 errors. Force OpenAI format for any URL pointing to DashScope.
-  if (apiType === 'anthropic' && isDashScopeUrl(baseURL)) {
-    return 'openai-completions';
-  }
-  if (apiType === 'openai') {
-    return shouldUseOpenAIResponsesApi(providerName, baseURL)
-      ? 'openai-responses'
-      : 'openai-completions';
-  }
-  return 'anthropic-messages';
-};
-
-/**
- * Detect DashScope (Qwen) URLs regardless of which provider the user configured.
- */
-const isDashScopeUrl = (url?: string): boolean => !!url && /dashscope\.aliyuncs\.com/i.test(url);
-
-/**
- * When a DashScope Anthropic URL is forced to OpenAI format, rewrite the base
- * URL to the corresponding OpenAI-compatible endpoint so the request actually
- * reaches the correct API server.
- *
- * dashscope.aliyuncs.com/apps/anthropic       → dashscope.aliyuncs.com/compatible-mode/v1
- * coding.dashscope.aliyuncs.com/apps/anthropic → coding.dashscope.aliyuncs.com/v1
- */
-const rewriteDashScopeAnthropicToOpenAI = (url: string): string => {
-  if (/coding\.dashscope\.aliyuncs\.com/i.test(url)) {
-    return url.replace(/\/apps\/anthropic\b/i, '/v1');
-  }
-  return url.replace(/\/apps\/anthropic\b/i, '/compatible-mode/v1');
-};
-
 const ensureDir = (dirPath: string): void => {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -181,11 +136,7 @@ const providerApiKeyEnvVar = (providerName: string): string => {
   return `JUSTDO_APIKEY_${envName}`;
 };
 
-type OpenClawProviderApi =
-  | 'anthropic-messages'
-  | 'openai-completions'
-  | 'openai-responses'
-  | 'google-generative-ai';
+type OpenClawProviderApi = 'openai-completions';
 
 type OpenClawProviderSelection = {
   providerId: string;
@@ -219,10 +170,6 @@ type OpenClawProviderSelection = {
  * Strip the `/chat/completions` endpoint suffix from a base URL so that the
  * OpenClaw gateway can append its own path without duplication.
  *
- * Aligned with the detection logic in `buildOpenAIChatCompletionsURL`
- * (coworkFormatTransform.ts) which returns the URL as-is when it already
- * ends with `/chat/completions`.
- *
  * e.g. "https://gw.example.com/v1/chat/completions" → "https://gw.example.com/v1"
  *      "https://gw.example.com/v1"                   → "https://gw.example.com/v1"  (unchanged)
  */
@@ -240,10 +187,6 @@ const stripChatCompletionsSuffix = (rawBaseUrl: string): string => {
 
 type ProviderDescriptor = {
   providerId: string;
-  resolveApi: (ctx: {
-    apiType: 'anthropic' | 'openai' | undefined;
-    baseURL: string;
-  }) => OpenClawProviderApi;
   normalizeBaseUrl: (rawBaseUrl: string) => string;
   resolveApiKey?: (ctx: { apiKey: string; providerName: string }) => string;
   resolveSessionModelId?: (modelId: string) => string;
@@ -257,7 +200,7 @@ type ProviderDescriptor = {
    * 基于 modelId 动态计算 reasoning 标志。
    * 优先级高于 modelDefaults.reasoning。
    */
-  resolveModelReasoning?: (modelId: string, codingPlanEnabled: boolean) => boolean | undefined;
+  resolveModelReasoning?: (modelId: string) => boolean | undefined;
   modelDefaults?: Partial<{
     reasoning: boolean;
     cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
@@ -269,27 +212,16 @@ type ProviderDescriptor = {
 const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
   [ProviderName.Ollama]: {
     providerId: OpenClawProviderId.Ollama,
-    resolveApi: () => OpenClawApiConst.OpenAICompletions as OpenClawProviderApi,
     normalizeBaseUrl: stripChatCompletionsSuffix,
   },
 };
 
 const DEFAULT_DESCRIPTOR: ProviderDescriptor = {
   providerId: OpenClawProviderId.JustDo,
-  resolveApi: ({ apiType, baseURL }) => mapApiTypeToOpenClawApi(apiType, undefined, baseURL),
   normalizeBaseUrl: stripChatCompletionsSuffix,
 };
 
-const resolveDescriptor = (
-  providerName: string,
-  codingPlanEnabled: boolean,
-): ProviderDescriptor => {
-  if (codingPlanEnabled) {
-    const compositeKey = `${providerName}:codingPlan`;
-    if (compositeKey in PROVIDER_REGISTRY) {
-      return PROVIDER_REGISTRY[compositeKey];
-    }
-  }
+const resolveDescriptor = (providerName: string): ProviderDescriptor => {
   if (providerName in PROVIDER_REGISTRY) {
     return PROVIDER_REGISTRY[providerName];
   }
@@ -303,9 +235,8 @@ export const buildProviderSelection = (options: {
   apiKey: string;
   baseURL: string;
   modelId: string;
-  apiType: 'anthropic' | 'openai' | undefined;
+  apiType: 'openai' | undefined;
   providerName?: string;
-  codingPlanEnabled?: boolean;
   supportsImage?: boolean;
   modelName?: string;
   displayName?: string; // 用于 OpenClaw 配置中的 providerId（仅对 custom provider 有效）
@@ -314,7 +245,7 @@ export const buildProviderSelection = (options: {
 }): OpenClawProviderSelection => {
   const providerName = options.providerName ?? '';
   const displayName = options.displayName?.trim();
-  const descriptor = resolveDescriptor(providerName, !!options.codingPlanEnabled);
+  const descriptor = resolveDescriptor(providerName);
 
   // 对于非注册 provider（不在 PROVIDER_REGISTRY 中），如果提供了 displayName，使用它作为 providerId
   // Gateway 的 normalizeProviderId 会将 provider 转为小写进行匹配
@@ -325,16 +256,7 @@ export const buildProviderSelection = (options: {
 
   let baseUrl =
     descriptor.resolveRuntimeBaseUrl?.() ?? descriptor.normalizeBaseUrl(options.baseURL);
-  const api = descriptor.resolveApi({
-    apiType: options.apiType,
-    baseURL: options.baseURL,
-  });
-
-  // When DashScope Anthropic URL is forced to OpenAI format, rewrite the
-  // base URL to the corresponding OpenAI-compatible endpoint.
-  if (api === 'openai-completions' && options.apiType === 'anthropic' && isDashScopeUrl(baseUrl)) {
-    baseUrl = rewriteDashScopeAnthropicToOpenAI(baseUrl);
-  }
+  const api = OpenClawApiConst.OpenAICompletions as OpenClawProviderApi;
   // apiKey placeholder still uses original providerName for env var consistency
   const apiKey = descriptor.resolveApiKey
     ? descriptor.resolveApiKey({ apiKey: options.apiKey, providerName })
@@ -348,7 +270,7 @@ export const buildProviderSelection = (options: {
 
   // reasoning：descriptor 动态计算 > modelDefaults 静态值
   const reasoning = descriptor.resolveModelReasoning
-    ? descriptor.resolveModelReasoning(options.modelId, !!options.codingPlanEnabled)
+    ? descriptor.resolveModelReasoning(options.modelId)
     : descriptor.modelDefaults?.reasoning;
 
   // Fallback defaults when the user hasn't explicitly set these values in Settings.
@@ -486,7 +408,6 @@ export class OpenClawConfigSync {
         modelId,
         apiType,
         providerName,
-        codingPlanEnabled: apiResolution.providerMetadata?.codingPlanEnabled,
         supportsImage: apiResolution.providerMetadata?.supportsImage,
         modelName: apiResolution.providerMetadata?.modelName,
         displayName: apiResolution.providerMetadata?.displayName, // 传递 displayName
@@ -503,7 +424,6 @@ export class OpenClawConfigSync {
             modelId: m.id,
             apiType: p.apiType,
             providerName: p.providerName,
-            codingPlanEnabled: p.codingPlanEnabled,
             supportsImage: m.supportsImage,
             modelName: m.name,
             displayName: p.displayName, // 传递 displayName

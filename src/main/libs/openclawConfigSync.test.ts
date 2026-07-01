@@ -95,25 +95,11 @@ describe('env var stability on model switch', () => {
 // the registry mapping correctness.
 // ═══════════════════════════════════════════════════════
 
-type OpenClawProviderApi =
-  | 'anthropic-messages'
-  | 'openai-completions'
-  | 'openai-responses'
-  | 'google-generative-ai';
-
-const mapApiTypeToOpenClawApi = (
-  apiType: 'anthropic' | 'openai' | undefined,
-): OpenClawProviderApi => {
-  if (apiType === 'openai') return 'openai-completions';
-  return 'anthropic-messages';
-};
+type OpenClawProviderApi = 'openai-completions';
 
 type ProviderDescriptor = {
   providerId: string;
-  resolveApi: (ctx: {
-    apiType: 'anthropic' | 'openai' | undefined;
-    baseURL: string;
-  }) => OpenClawProviderApi;
+  resolveApi: () => OpenClawProviderApi;
   normalizeBaseUrl: (rawBaseUrl: string) => string;
   resolveSessionModelId?: (modelId: string) => string;
   modelDefaults?: Partial<{
@@ -145,20 +131,11 @@ const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
 
 const DEFAULT_DESCRIPTOR: ProviderDescriptor = {
   providerId: OpenClawProviderId.JustDo,
-  resolveApi: ({ apiType }) => mapApiTypeToOpenClawApi(apiType),
+  resolveApi: () => OpenClawApi.OpenAICompletions as OpenClawProviderApi,
   normalizeBaseUrl: stripChatCompletionsSuffix,
 };
 
-const resolveDescriptor = (
-  providerName: string,
-  codingPlanEnabled: boolean,
-): ProviderDescriptor => {
-  if (codingPlanEnabled) {
-    const compositeKey = `${providerName}:codingPlan`;
-    if (compositeKey in PROVIDER_REGISTRY) {
-      return PROVIDER_REGISTRY[compositeKey];
-    }
-  }
+const resolveDescriptor = (providerName: string): ProviderDescriptor => {
   if (providerName in PROVIDER_REGISTRY) {
     return PROVIDER_REGISTRY[providerName];
   }
@@ -170,41 +147,35 @@ const resolveDescriptor = (
 
 describe('resolveDescriptor', () => {
   test('ollama maps to ollama providerId with openai-completions API', () => {
-    const d = resolveDescriptor(ProviderName.Ollama, false);
+    const d = resolveDescriptor(ProviderName.Ollama);
     expect(d.providerId).toBe(OpenClawProviderId.Ollama);
-    expect(d.resolveApi({ apiType: undefined, baseURL: '' })).toBe(OpenClawApi.OpenAICompletions);
+    expect(d.resolveApi()).toBe(OpenClawApi.OpenAICompletions);
   });
 
-  test('ollama with codingPlan falls back to ollama providerId', () => {
-    const d = resolveDescriptor(ProviderName.Ollama, true);
+  test('ollama falls back to ollama providerId', () => {
+    const d = resolveDescriptor(ProviderName.Ollama);
     expect(d.providerId).toBe(OpenClawProviderId.Ollama);
   });
 
   test('unknown provider falls back to justdo providerId', () => {
-    const d = resolveDescriptor('some-unknown', false);
+    const d = resolveDescriptor('some-unknown');
     expect(d.providerId).toBe('some-unknown');
   });
 
   test('empty provider name falls back to justdo', () => {
-    const d = resolveDescriptor('', false);
+    const d = resolveDescriptor('');
     expect(d.providerId).toBe(OpenClawProviderId.JustDo);
   });
 
   test('custom provider uses fallback descriptor', () => {
-    const d = resolveDescriptor(ProviderName.Custom, false);
+    const d = resolveDescriptor(ProviderName.Custom);
     expect(d.providerId).toBe(ProviderName.Custom);
-    expect(d.resolveApi({ apiType: 'openai', baseURL: '' })).toBe(OpenClawApi.OpenAICompletions);
-    expect(d.resolveApi({ apiType: 'anthropic', baseURL: '' })).toBe(OpenClawApi.AnthropicMessages);
+    expect(d.resolveApi()).toBe(OpenClawApi.OpenAICompletions);
   });
 
   test('custom provider index uses fallback descriptor', () => {
-    const d = resolveDescriptor('custom_5', false);
+    const d = resolveDescriptor('custom_5');
     expect(d.providerId).toBe('custom_5');
-  });
-
-  test('codingPlan flag is ignored for providers without codingPlan entry', () => {
-    const d = resolveDescriptor(ProviderName.Ollama, true);
-    expect(d.providerId).toBe(OpenClawProviderId.Ollama);
   });
 });
 

@@ -1,4 +1,3 @@
-export { resolveCodingPlanBaseUrl } from './codingPlan';
 export type { ProviderDef } from './constants';
 export {
   ApiFormat,

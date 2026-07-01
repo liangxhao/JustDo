@@ -102,7 +102,7 @@ interface CoworkApiConfig {
   apiKey: string;
   baseURL: string;
   model: string;
-  apiType?: 'anthropic' | 'openai';
+  apiType?: 'openai';
 }
 
 type OpenClawEnginePhase =

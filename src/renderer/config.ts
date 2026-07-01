@@ -21,232 +21,11 @@ export interface AppConfig {
   };
   // 多模型提供商配置
   providers?: {
-    openai: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      // API 协议格式：anthropic 为 Anthropic 兼容，openai 为 OpenAI 兼容
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    deepseek: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    moonshot: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      /** 是否启用 Moonshot Coding Plan 模式（使用专属 Coding API 端点） */
-      codingPlanEnabled?: boolean;
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    zhipu: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      /** 是否启用 GLM Coding Plan 模式（使用专属 Coding API 端点） */
-      codingPlanEnabled?: boolean;
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    minimax: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      /** OAuth auth type: 'apikey' (default) or 'oauth' (MiniMax Portal OAuth) */
-      authType?: 'apikey' | 'oauth';
-      /** OAuth refresh token for automatic token renewal */
-      oauthRefreshToken?: string;
-      /** OAuth token expiry as Unix timestamp in milliseconds */
-      oauthTokenExpiresAt?: number;
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    youdaozhiyun: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    qwen: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      /** 是否启用 Qwen Coding Plan 模式（使用专属 Coding API 端点） */
-      codingPlanEnabled?: boolean;
-      /** OAuth 凭据 */
-      oauthCredentials?: {
-        access: string;
-        refresh: string;
-        expires: number;
-        resourceUrl?: string;
-      };
-      /** OAuth 专用 Base URL（与 API Key 的 baseUrl 独立） */
-      oauthBaseUrl?: string;
-      /** 是否使用OAuth方式而非API Key */
-      useOAuth?: boolean;
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    openrouter: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    gemini: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    anthropic: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    volcengine: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      /** 是否启用 Volcengine Coding Plan 模式（使用专属 Coding API 端点） */
-      codingPlanEnabled?: boolean;
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    xiaomi: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    stepfun: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    'github-copilot': {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
     ollama: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
-    custom: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
+      apiFormat?: 'openai';
       models?: Array<{
         id: string;
         name: string;
@@ -259,19 +38,7 @@ export interface AppConfig {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      codingPlanEnabled?: boolean;
-      oauthCredentials?: {
-        access: string;
-        refresh: string;
-        expires: number;
-        resourceUrl?: string;
-      };
-      oauthBaseUrl?: string;
-      useOAuth?: boolean;
-      authType?: 'apikey' | 'oauth';
-      oauthRefreshToken?: string;
-      oauthTokenExpiresAt?: number;
+      apiFormat?: 'openai';
       displayName?: string;
       models?: Array<{
         id: string;
@@ -313,8 +80,7 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
-      apiFormat?: 'anthropic' | 'openai' | 'gemini';
-      codingPlanEnabled?: boolean;
+      apiFormat?: 'openai';
       models?: Array<{
         id: string;
         name: string;
@@ -332,7 +98,6 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
       apiKey: '',
       baseUrl: def.defaultBaseUrl,
       apiFormat: def.defaultApiFormat,
-      ...(def.codingPlanSupported ? { codingPlanEnabled: false } : {}),
       models: def.defaultModels.map(m => ({ ...m })),
     };
   }
@@ -344,12 +109,12 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
 export const defaultConfig: AppConfig = {
   api: {
     key: '',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    baseUrl: '',
   },
   model: {
-    availableModels: [{ id: 'qwen3.6-plus', name: 'Qwen3.6-Plus', supportsImage: true }],
-    defaultModel: 'qwen3.6-plus',
-    defaultModelProvider: 'qwen',
+    availableModels: [],
+    defaultModel: '',
+    defaultModelProvider: 'ollama',
   },
   providers: buildDefaultProviders(),
   theme: 'system',

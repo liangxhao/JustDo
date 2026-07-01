@@ -1,68 +1,39 @@
 import { describe, expect, test } from 'vitest';
 
 import {
-  buildAnthropicMessagesUrl,
-  buildGeminiGenerateContentUrl,
+  buildOpenAIChatCompletionsUrl,
   extractApiErrorSnippet,
-  extractTextFromAnthropicResponse,
-  extractTextFromGeminiResponse,
-  normalizeGeminiBaseUrl,
-} from './coworkModelApi';
+  extractTextFromOpenAIResponse,
+} from './cowork/coworkModelApi';
 
 describe('coworkModelApi', () => {
-  test('builds anthropic messages url from base url', () => {
-    expect(buildAnthropicMessagesUrl('https://example.com/v1')).toBe('https://example.com/v1/messages');
-    expect(buildAnthropicMessagesUrl('https://example.com')).toBe('https://example.com/v1/messages');
-    expect(buildAnthropicMessagesUrl('https://example.com/v1/messages')).toBe('https://example.com/v1/messages');
-  });
-
-  test('normalizes gemini base url variants', () => {
-    expect(normalizeGeminiBaseUrl('https://generativelanguage.googleapis.com/v1beta/openai')).toBe(
-      'https://generativelanguage.googleapis.com/v1beta'
+  test('builds openai chat completions url from base url', () => {
+    expect(buildOpenAIChatCompletionsUrl('https://example.com/v1')).toBe(
+      'https://example.com/v1/chat/completions',
     );
-    expect(normalizeGeminiBaseUrl('https://generativelanguage.googleapis.com/v1')).toBe(
-      'https://generativelanguage.googleapis.com/v1beta'
+    expect(buildOpenAIChatCompletionsUrl('https://example.com')).toBe(
+      'https://example.com/v1/chat/completions',
+    );
+    expect(buildOpenAIChatCompletionsUrl('https://example.com/v1/chat/completions')).toBe(
+      'https://example.com/v1/chat/completions',
     );
   });
 
-  test('builds gemini generate content url', () => {
-    expect(
-      buildGeminiGenerateContentUrl(
-        'https://generativelanguage.googleapis.com/v1beta/openai',
-        'gemini-3-pro-preview'
-      )
-    ).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent');
+  test('extracts api error message snippets', () => {
+    expect(extractApiErrorSnippet(JSON.stringify({ error: { message: 'bad key' } }))).toBe(
+      'bad key',
+    );
+    expect(extractApiErrorSnippet('plain failure')).toBe('plain failure');
   });
 
-  test('extracts api error snippet from json payload', () => {
+  test('extracts openai text content', () => {
     expect(
-      extractApiErrorSnippet(JSON.stringify({ error: { message: 'Invalid API key' } }))
-    ).toBe('Invalid API key');
-  });
-
-  test('extracts anthropic text content', () => {
-    expect(
-      extractTextFromAnthropicResponse({
-        content: [{ type: 'text', text: 'Generated title' }],
-      })
-    ).toBe('Generated title');
-  });
-
-  test('extracts gemini text from nested candidates and parts', () => {
-    expect(
-      extractTextFromGeminiResponse({
-        candidates: [
-          {
-            content: {
-              parts: [
-                { text: 'Gemini title' },
-                { inline_data: { mime_type: 'image/png', data: '...' } },
-                { text: 'Second line' },
-              ],
-            },
-          },
-        ],
-      })
-    ).toBe('Gemini title\nSecond line');
+      extractTextFromOpenAIResponse({
+        choices: [{ message: { content: 'hello' } }],
+      }),
+    ).toBe('hello');
+    expect(extractTextFromOpenAIResponse({ output_text: 'from responses' })).toBe(
+      'from responses',
+    );
   });
 });

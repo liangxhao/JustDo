@@ -2,7 +2,7 @@ import { app } from 'electron';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-export type CoworkApiType = 'anthropic' | 'openai';
+export type CoworkApiType = 'openai';
 
 export type CoworkApiConfig = {
   apiKey: string;
@@ -28,11 +28,7 @@ export function loadCoworkApiConfig(): CoworkApiConfig | null {
     const raw = readFileSync(configPath, 'utf8');
     const config = JSON.parse(raw) as CoworkApiConfig;
     if (config.apiKey && config.baseURL && config.model) {
-      const normalizedApiType =
-        config.apiType === 'openai' || config.apiType === 'anthropic'
-          ? config.apiType
-          : 'anthropic';
-      config.apiType = normalizedApiType;
+      config.apiType = 'openai';
       return config;
     }
 
@@ -59,7 +55,7 @@ export function saveCoworkApiConfig(config: CoworkApiConfig): void {
     apiKey: config.apiKey.trim(),
     baseURL: config.baseURL.trim(),
     model: config.model.trim(),
-    apiType: config.apiType === 'openai' ? 'openai' : 'anthropic',
+    apiType: 'openai',
   };
 
   writeFileSync(configPath, JSON.stringify(normalized, null, 2), 'utf8');

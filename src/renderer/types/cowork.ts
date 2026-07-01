@@ -127,7 +127,7 @@ export interface CoworkApiConfig {
   apiKey: string;
   baseURL: string;
   model: string;
-  apiType?: 'anthropic' | 'openai';
+  apiType?: 'openai';
 }
 
 export type OpenClawEnginePhase =

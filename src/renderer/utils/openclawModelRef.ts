@@ -6,7 +6,7 @@ import type { Model } from '../store/slices/modelSlice';
 
 /**
  * Normalize provider name to lowercase for OpenClaw Gateway compatibility.
- * Gateway uses lowercase provider IDs (e.g., "anthropic", "openai", "zai").
+ * Gateway uses lowercase provider IDs.
  */
 function normalizeProviderForGateway(provider: string): string {
   return provider.toLowerCase();
@@ -64,7 +64,7 @@ export function matchesOpenClawModelRef(
 /**
  * Build all possible model refs for a given model to handle different storage formats.
  * This handles the case where agent model was stored with a different displayName
- * (e.g., "Anthropic" -> "anthropic") but the current displayName might be "Custom0".
+ * but the current displayName might be "Custom0".
  */
 function buildAllPossibleModelRefs(
   model: Pick<Model, 'id' | 'providerKey' | 'provider' | 'isServerModel'>,

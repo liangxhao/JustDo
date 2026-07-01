@@ -123,6 +123,9 @@ const App: React.FC = () => {
                   contextLength?: number;
                   maxTokens?: number;
                 }) => {
+                  if (!model?.id) {
+                    return;
+                  }
                   providerModels.push({
                     id: model.id,
                     name: model.name,
@@ -137,14 +140,16 @@ const App: React.FC = () => {
             }
           });
         }
-        const fallbackModels = config.model.availableModels.map(model => ({
-          id: model.id,
-          name: model.name,
-          providerKey: undefined,
-          supportsImage: model.supportsImage ?? false,
-          contextLength: model.contextLength,
-          maxTokens: model.maxTokens,
-        }));
+        const fallbackModels = config.model.availableModels
+          .filter(model => model?.id)
+          .map(model => ({
+            id: model.id,
+            name: model.name,
+            providerKey: undefined,
+            supportsImage: model.supportsImage ?? false,
+            contextLength: model.contextLength,
+            maxTokens: model.maxTokens,
+          }));
         const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
         if (resolvedModels.length > 0) {
           dispatch(setAvailableModels(resolvedModels));
@@ -309,6 +314,9 @@ const App: React.FC = () => {
               contextLength?: number;
               maxTokens?: number;
             }) => {
+              if (!model?.id) {
+                return;
+              }
               allModels.push({
                 id: model.id,
                 name: model.name,

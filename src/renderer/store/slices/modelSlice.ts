@@ -11,17 +11,25 @@ export interface Model {
   contextLength?: number; // 模型支持的上下文窗口长度（token 数量）
   maxTokens?: number; // 模型最大输出 token 数量，默认 32k
   isServerModel?: boolean; // 是否为服务端套餐模型
-  serverApiFormat?: string; // 服务端模型的 API 格式 ("openai" | "anthropic")
+  serverApiFormat?: string; // 服务端模型的 API 格式
 }
+
+const fallbackModel: Model = {
+  id: '',
+  name: '',
+};
 
 export function getModelIdentityKey(model: Pick<Model, 'id' | 'providerKey'>): string {
   return `${model.providerKey ?? ''}::${model.id}`;
 }
 
 export function isSameModelIdentity(
-  modelA: Pick<Model, 'id' | 'providerKey'>,
-  modelB: Pick<Model, 'id' | 'providerKey'>,
+  modelA: Pick<Model, 'id' | 'providerKey'> | undefined,
+  modelB: Pick<Model, 'id' | 'providerKey'> | undefined,
 ): boolean {
+  if (!modelA?.id || !modelB?.id) {
+    return false;
+  }
   if (modelA.id !== modelB.id) {
     return false;
   }
@@ -39,6 +47,9 @@ function buildInitialModels(): Model[] {
     Object.entries(defaultConfig.providers).forEach(([providerName, config]) => {
       if (config.enabled && config.models) {
         config.models.forEach(model => {
+          if (!model?.id) {
+            return;
+          }
           models.push({
             id: model.id,
             name: model.name,
@@ -52,7 +63,7 @@ function buildInitialModels(): Model[] {
       }
     });
   }
-  return models.length > 0 ? models : defaultConfig.model.availableModels;
+  return models.length > 0 ? models : defaultConfig.model.availableModels.filter(model => model?.id);
 }
 
 // 初始可用模型列表（会在运行时更新）
@@ -71,7 +82,9 @@ const initialState: ModelState = {
       model =>
         model.id === defaultConfig.model.defaultModel &&
         (!defaultModelProvider || model.providerKey === defaultModelProvider),
-    ) || availableModels[0],
+    ) ||
+    availableModels[0] ||
+    fallbackModel,
   availableModels: availableModels,
 };
 
@@ -83,9 +96,10 @@ const modelSlice = createSlice({
       state.selectedModel = action.payload;
     },
     setAvailableModels: (state, action: PayloadAction<Model[]>) => {
+      const userModels = action.payload.filter(model => model?.id);
       // 保留已有的服务端模型，只更新用户自配模型（与 setServerModels 对称）
       const serverModels = state.availableModels.filter(m => m.isServerModel);
-      state.availableModels = [...serverModels, ...action.payload];
+      state.availableModels = [...serverModels, ...userModels];
       // 更新导出的 availableModels
       availableModels = state.availableModels;
       // 同步选中模型信息，确保名称与最新配置一致
@@ -102,9 +116,10 @@ const modelSlice = createSlice({
       }
     },
     setServerModels: (state, action: PayloadAction<Model[]>) => {
+      const serverModels = action.payload.filter(model => model?.id);
       // 服务端模型放前面，自配模型保留在后面
       const userModels = state.availableModels.filter(m => !m.isServerModel);
-      state.availableModels = [...action.payload, ...userModels];
+      state.availableModels = [...serverModels, ...userModels];
       availableModels = state.availableModels;
       // 同步选中模型信息（如 supportsImage 等属性可能随服务端更新）
       if (state.availableModels.length > 0) {

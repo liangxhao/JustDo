@@ -125,15 +125,10 @@ export function syncEnterpriseConfig(
   return manifest;
 }
 
-const API_FORMAT_MAP: Record<string, 'anthropic' | 'openai'> = {
-  'anthropic-messages': 'anthropic',
-  'openai-completions': 'openai',
-};
-
 /**
  * Reverse-map openclaw.json models.providers → app_config.providers.
  * Enterprise openclaw.json should use real provider names as keys
- * (e.g., 'deepseek', 'anthropic') instead of the generic 'justdo'.
+ * instead of the generic 'justdo'.
  */
 function syncModelConfig(configPath: string, store: SqliteStore): void {
   const openclawPath = path.join(configPath, 'openclaw.json');
@@ -163,7 +158,6 @@ function syncModelConfig(configPath: string, store: SqliteStore): void {
     }> = [];
 
     for (const [providerId, providerConfig] of Object.entries(models.providers)) {
-      const apiFormat = API_FORMAT_MAP[providerConfig.api] ?? 'anthropic';
       const providerModels = (providerConfig.models ?? []).map((m: any) => ({
         id: m.id,
         name: m.name ?? m.id,
@@ -180,7 +174,7 @@ function syncModelConfig(configPath: string, store: SqliteStore): void {
         enabled: true,
         apiKey,
         baseUrl: providerConfig.baseUrl ?? '',
-        apiFormat,
+        apiFormat: 'openai',
         models: providerModels,
       };
 

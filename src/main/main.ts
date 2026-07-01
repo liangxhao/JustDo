@@ -127,7 +127,6 @@ const resolveDefaultAgentModelRef = (): string => {
     modelId: config.model.trim(),
     apiType: config.apiType,
     providerName: apiResolution.providerMetadata?.providerName,
-    codingPlanEnabled: apiResolution.providerMetadata?.codingPlanEnabled,
     supportsImage: apiResolution.providerMetadata?.supportsImage,
     modelName: apiResolution.providerMetadata?.modelName,
   }).primaryModel;
@@ -144,7 +143,6 @@ const buildAvailableOpenClawProviders = (): Record<string, { models: Array<{ id:
         modelId: model.id,
         apiType: provider.apiType,
         providerName: provider.providerName,
-        codingPlanEnabled: provider.codingPlanEnabled,
         supportsImage: model.supportsImage,
         modelName: model.name,
       });
@@ -3902,7 +3900,7 @@ if (!gotTheLock) {
         apiKey: string;
         baseURL: string;
         model: string;
-        apiType?: 'anthropic' | 'openai';
+        apiType?: 'openai';
       },
     ) => {
       try {

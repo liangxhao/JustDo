@@ -1,16 +1,2 @@
-export { default as AnthropicIcon } from './AnthropicIcon';
 export { default as CustomProviderIcon } from './CustomProviderIcon';
-export { default as DeepSeekIcon } from './DeepSeekIcon';
-export { default as GeminiIcon } from './GeminiIcon';
-export { default as GitHubCopilotIcon } from './GitHubCopilotIcon';
-export { default as MiniMaxIcon } from './MiniMaxIcon';
-export { default as MoonshotIcon } from './MoonshotIcon';
 export { default as OllamaIcon } from './OllamaIcon';
-export { default as OpenAIIcon } from './OpenAIIcon';
-export { default as OpenRouterIcon } from './OpenRouterIcon';
-export { default as QwenIcon } from './QwenIcon';
-export { default as StepfunIcon } from './StepfunIcon';
-export { default as VolcengineIcon } from './VolcengineIcon';
-export { default as XiaomiIcon } from './XiaomiIcon';
-export { default as YouDaoZhiYunIcon } from './YouDaoZhiYunIcon';
-export { default as ZhipuIcon } from './ZhipuIcon';

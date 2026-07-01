@@ -14,7 +14,6 @@ import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
-import { ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import {
   type AppConfig,
   defaultConfig,
@@ -112,8 +111,7 @@ interface ProviderExportEntry {
   enabled: boolean;
   apiKey: PasswordEncryptedPayload;
   baseUrl: string;
-  apiFormat?: 'anthropic' | 'openai' | 'gemini';
-  codingPlanEnabled?: boolean;
+  apiFormat?: 'openai';
   models?: Model[];
   /** Display name shown in UI (for custom providers: displayName, for built-in: label) */
   displayName?: string;
@@ -137,8 +135,7 @@ interface ProvidersImportEntry {
   apiKeyEncrypted?: string;
   apiKeyIv?: string;
   baseUrl?: string;
-  apiFormat?: 'anthropic' | 'openai' | 'native';
-  codingPlanEnabled?: boolean;
+  apiFormat?: 'openai';
   models?: Model[];
   displayName?: string;
 }
@@ -169,62 +166,13 @@ const providerLinks: Partial<Record<ProviderType, { website: string; apiKey?: st
 };
 
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'ollama';
-const normalizeBaseUrl = (baseUrl: string): string =>
-  baseUrl.trim().replace(/\/+$/, '').toLowerCase();
-const getFixedApiFormatForProvider = (
-  _provider: string,
-): 'anthropic' | 'openai' | 'gemini' | null => {
-  // Model settings only support OpenAI-compatible endpoints.
-  return 'openai';
-};
-const getEffectiveApiFormat = (
-  provider: string,
-  _value: unknown,
-): 'anthropic' | 'openai' | 'gemini' =>
-  getFixedApiFormatForProvider(provider) ?? 'openai';
-const getProviderDefaultBaseUrl = (
-  provider: ProviderType,
-  apiFormat: 'anthropic' | 'openai' | 'gemini',
-): string | null => {
-  if (apiFormat === 'gemini') return null;
-  return ProviderRegistry.getSwitchableBaseUrl(provider, apiFormat) ?? null;
-};
-const resolveBaseUrl = (
-  provider: ProviderType,
-  baseUrl: string,
-  apiFormat: 'anthropic' | 'openai' | 'gemini',
-): string => {
+const getProviderDefaultBaseUrl = (provider: ProviderType): string | null =>
+  defaultConfig.providers?.[provider]?.baseUrl ?? null;
+const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
   if (baseUrl.trim()) {
-    if (
-      shouldAutoSwitchProviderBaseUrl(provider, baseUrl) &&
-      (apiFormat === 'anthropic' || apiFormat === 'openai')
-    ) {
-      const switchedUrl = ProviderRegistry.getSwitchableBaseUrl(provider, apiFormat);
-      if (switchedUrl) return switchedUrl;
-    }
     return baseUrl;
   }
-  return (
-    getProviderDefaultBaseUrl(provider, apiFormat) ||
-    defaultConfig.providers?.[provider]?.baseUrl ||
-    ''
-  );
-};
-const shouldAutoSwitchProviderBaseUrl = (
-  provider: ProviderType,
-  currentBaseUrl: string,
-): boolean => {
-  const anthropicUrl = ProviderRegistry.getSwitchableBaseUrl(provider, 'anthropic');
-  const openaiUrl = ProviderRegistry.getSwitchableBaseUrl(provider, 'openai');
-  if (!anthropicUrl && !openaiUrl) {
-    return false;
-  }
-
-  const normalizedCurrent = normalizeBaseUrl(currentBaseUrl);
-  return (
-    (anthropicUrl ? normalizedCurrent === normalizeBaseUrl(anthropicUrl) : false) ||
-    (openaiUrl ? normalizedCurrent === normalizeBaseUrl(openaiUrl) : false)
-  );
+  return getProviderDefaultBaseUrl(provider) || '';
 };
 const buildOpenAICompatibleChatCompletionsUrl = (baseUrl: string, _provider: string): string => {
   const normalized = baseUrl.trim().replace(/\/+$/, '');
@@ -253,20 +201,6 @@ const buildOpenAICompatibleChatCompletionsUrl = (baseUrl: string, _provider: str
   }
   return `${normalized}/v1/chat/completions`;
 };
-const buildOpenAIResponsesUrl = (baseUrl: string): string => {
-  const normalized = baseUrl.trim().replace(/\/+$/, '');
-  if (!normalized) {
-    return '/v1/responses';
-  }
-  if (normalized.endsWith('/responses')) {
-    return normalized;
-  }
-  if (normalized.endsWith('/v1')) {
-    return `${normalized}/responses`;
-  }
-  return `${normalized}/v1/responses`;
-};
-const shouldUseOpenAIResponsesForProvider = (_provider: string): boolean => false;
 const shouldUseMaxCompletionTokensForOpenAI = (_provider: string, _modelId?: string): boolean =>
   false;
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
@@ -911,7 +845,7 @@ const Settings: React.FC<SettingsProps> = ({
       if (config.providers) {
         setProviders(prev => {
           const merged = {
-            ...prev, // 保留默认的 providers（包括新添加的 anthropic）
+            ...prev,
             ...config.providers, // 覆盖已保存的配置
           };
 
@@ -936,10 +870,7 @@ const Settings: React.FC<SettingsProps> = ({
                 providerKey,
                 {
                   ...providerConfig,
-                  apiFormat: getEffectiveApiFormat(
-                    providerKey,
-                    (providerConfig as ProviderConfig).apiFormat,
-                  ),
+                  apiFormat: 'openai',
                   models,
                 },
               ];
@@ -1102,44 +1033,13 @@ const Settings: React.FC<SettingsProps> = ({
   const handleProviderConfigChange = (provider: ProviderType, field: string, value: string) => {
     setProviders(prev => {
       if (field === 'apiFormat') {
-        const nextApiFormat = getEffectiveApiFormat(provider, value);
-        const nextProviderConfig: ProviderConfig = {
-          ...prev[provider],
-          apiFormat: nextApiFormat,
-        };
-
-        // Only auto-switch URL when current value is still a known default URL.
-        if (shouldAutoSwitchProviderBaseUrl(provider, prev[provider].baseUrl)) {
-          const defaultBaseUrl = getProviderDefaultBaseUrl(provider, nextApiFormat);
-          if (defaultBaseUrl) {
-            nextProviderConfig.baseUrl = defaultBaseUrl;
-          }
-        }
-
         return {
           ...prev,
-          [provider]: nextProviderConfig,
+          [provider]: {
+            ...prev[provider],
+            apiFormat: 'openai',
+          },
         };
-      }
-
-      // Handle codingPlanEnabled toggle for all supported providers
-      if (field === 'codingPlanEnabled') {
-        const def = ProviderRegistry.get(provider);
-        if (def?.codingPlanSupported) {
-          const enabled = value === 'true';
-          const nextModels =
-            enabled && def.codingPlanModels
-              ? def.codingPlanModels.map(m => ({ ...m }))
-              : def.defaultModels.map(m => ({ ...m }));
-          return {
-            ...prev,
-            [provider]: {
-              ...prev[provider],
-              codingPlanEnabled: enabled,
-              models: nextModels,
-            },
-          };
-        }
       }
 
       return {
@@ -1238,17 +1138,12 @@ const Settings: React.FC<SettingsProps> = ({
     try {
       const normalizedProviders = Object.fromEntries(
         Object.entries(providers).map(([providerKey, providerConfig]) => {
-          const apiFormat = getEffectiveApiFormat(providerKey, providerConfig.apiFormat);
           return [
             providerKey,
             {
               ...providerConfig,
-              apiFormat,
-              baseUrl: resolveBaseUrl(
-                providerKey as ProviderType,
-                providerConfig.baseUrl,
-                apiFormat,
-              ),
+              apiFormat: 'openai',
+              baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl),
             },
           ];
         }),
@@ -1559,95 +1454,35 @@ const Settings: React.FC<SettingsProps> = ({
 
     try {
       let response: Awaited<ReturnType<typeof window.electron.api.fetch>>;
-      // Apply Coding Plan endpoint switch
-      let effectiveBaseUrl = resolveBaseUrl(
+      const effectiveBaseUrl = resolveBaseUrl(
         testingProvider,
         providerConfig.baseUrl,
-        getEffectiveApiFormat(testingProvider, providerConfig.apiFormat),
       );
-      let effectiveApiFormat = getEffectiveApiFormat(testingProvider, providerConfig.apiFormat);
-
-      // Handle Coding Plan endpoint switch for supported providers
-      if (
-        (providerConfig as { codingPlanEnabled?: boolean }).codingPlanEnabled &&
-        (effectiveApiFormat === 'anthropic' || effectiveApiFormat === 'openai')
-      ) {
-        const resolved = resolveCodingPlanBaseUrl(
-          testingProvider,
-          true,
-          effectiveApiFormat,
-          effectiveBaseUrl,
-        );
-        effectiveBaseUrl = resolved.baseUrl;
-        effectiveApiFormat = resolved.effectiveFormat;
-      }
-
       const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
       const effectiveApiKey = providerConfig.apiKey;
 
-      // Determine format after all overrides
-      // 统一为两种协议格式：
-      // - anthropic: /v1/messages
-      // - openai provider: /v1/responses
-      // - other openai-compatible providers: /v1/chat/completions
-      const useAnthropicFormat = effectiveApiFormat === 'anthropic';
-
-      if (useAnthropicFormat) {
-        const anthropicUrl = normalizedBaseUrl.endsWith('/v1')
-          ? `${normalizedBaseUrl}/messages`
-          : `${normalizedBaseUrl}/v1/messages`;
-        response = await window.electron.api.fetch({
-          url: anthropicUrl,
-          method: 'POST',
-          headers: {
-            'x-api-key': effectiveApiKey,
-            'anthropic-version': '2023-06-01',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: firstModel.id,
-            max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
-            messages: [{ role: 'user', content: 'Hi' }],
-          }),
-        });
-      } else {
-        const useResponsesApi = shouldUseOpenAIResponsesForProvider(testingProvider);
-        const openaiUrl = useResponsesApi
-          ? buildOpenAIResponsesUrl(normalizedBaseUrl)
-          : buildOpenAICompatibleChatCompletionsUrl(normalizedBaseUrl, testingProvider);
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (effectiveApiKey) {
-          headers.Authorization = `Bearer ${effectiveApiKey}`;
-        }
-        const openAIRequestBody: Record<string, unknown> = useResponsesApi
-          ? {
-              model: firstModel.id,
-              input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hi' }] }],
-              max_output_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
-            }
-          : {
-              model: firstModel.id,
-              messages: [{ role: 'user', content: 'Hi' }],
-            };
-        if (
-          !useResponsesApi &&
-          shouldUseMaxCompletionTokensForOpenAI(testingProvider, firstModel.id)
-        ) {
-          openAIRequestBody.max_completion_tokens = CONNECTIVITY_TEST_TOKEN_BUDGET;
-        } else {
-          if (!useResponsesApi) {
-            openAIRequestBody.max_tokens = CONNECTIVITY_TEST_TOKEN_BUDGET;
-          }
-        }
-        response = await window.electron.api.fetch({
-          url: openaiUrl,
-          method: 'POST',
-          headers,
-          body: JSON.stringify(openAIRequestBody),
-        });
+      const openaiUrl = buildOpenAICompatibleChatCompletionsUrl(normalizedBaseUrl, testingProvider);
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (effectiveApiKey) {
+        headers.Authorization = `Bearer ${effectiveApiKey}`;
       }
+      const openAIRequestBody: Record<string, unknown> = {
+        model: firstModel.id,
+        messages: [{ role: 'user', content: 'Hi' }],
+      };
+      if (shouldUseMaxCompletionTokensForOpenAI(testingProvider, firstModel.id)) {
+          openAIRequestBody.max_completion_tokens = CONNECTIVITY_TEST_TOKEN_BUDGET;
+      } else {
+        openAIRequestBody.max_tokens = CONNECTIVITY_TEST_TOKEN_BUDGET;
+      }
+      response = await window.electron.api.fetch({
+        url: openaiUrl,
+        method: 'POST',
+        headers,
+        body: JSON.stringify(openAIRequestBody),
+      });
 
       if (response.ok) {
         enableProvider(testingProvider);
@@ -1692,7 +1527,6 @@ const Settings: React.FC<SettingsProps> = ({
     const entries = await Promise.all(
       Object.entries(providers).map(async ([providerKey, providerConfig]) => {
         const apiKey = await encryptWithPassword(providerConfig.apiKey, password);
-        const apiFormat = getEffectiveApiFormat(providerKey, providerConfig.apiFormat);
         const isCustom = isCustomProvider(providerKey);
         const displayName = isCustom
           ? (providerConfig as ProviderConfig).displayName ||
@@ -1704,9 +1538,8 @@ const Settings: React.FC<SettingsProps> = ({
           {
             enabled: providerConfig.enabled,
             apiKey,
-            baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl, apiFormat),
-            apiFormat,
-            codingPlanEnabled: (providerConfig as ProviderConfig).codingPlanEnabled,
+            baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl),
+            apiFormat: 'openai' as const,
             models: providerConfig.models,
             displayName,
           },
@@ -1880,14 +1713,7 @@ const Settings: React.FC<SettingsProps> = ({
           apiKey: apiKey ?? currentConfig.apiKey,
           baseUrl:
             typeof providerData.baseUrl === 'string' ? providerData.baseUrl : currentConfig.baseUrl,
-          apiFormat: getEffectiveApiFormat(
-            providerKey,
-            providerData.apiFormat ?? currentConfig.apiFormat,
-          ),
-          codingPlanEnabled:
-            typeof providerData.codingPlanEnabled === 'boolean'
-              ? providerData.codingPlanEnabled
-              : currentConfig.codingPlanEnabled,
+          apiFormat: 'openai',
           models: models ?? currentConfig.models,
           ...(isCustom && providerData.displayName
             ? { displayName: providerData.displayName }
@@ -1998,14 +1824,7 @@ const Settings: React.FC<SettingsProps> = ({
           apiKey: apiKey ?? currentConfig.apiKey,
           baseUrl:
             typeof providerData.baseUrl === 'string' ? providerData.baseUrl : currentConfig.baseUrl,
-          apiFormat: getEffectiveApiFormat(
-            providerKey,
-            providerData.apiFormat ?? currentConfig.apiFormat,
-          ),
-          codingPlanEnabled:
-            typeof providerData.codingPlanEnabled === 'boolean'
-              ? providerData.codingPlanEnabled
-              : currentConfig.codingPlanEnabled,
+          apiFormat: 'openai',
           models: models ?? currentConfig.models,
           ...(isCustom && providerData.displayName
             ? { displayName: providerData.displayName }
@@ -2951,10 +2770,7 @@ const Settings: React.FC<SettingsProps> = ({
                     disabled={isBaseUrlLocked}
                     className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
                     placeholder={
-                      getProviderDefaultBaseUrl(
-                        activeProvider,
-                        getEffectiveApiFormat(activeProvider, providers[activeProvider].apiFormat),
-                      ) ||
+                      getProviderDefaultBaseUrl(activeProvider) ||
                       defaultConfig.providers?.[activeProvider]?.baseUrl ||
                       i18nService.t('baseUrlPlaceholder')
                     }

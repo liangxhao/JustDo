@@ -3,23 +3,19 @@ import { app } from 'electron';
 import { chmodSync, existsSync, mkdirSync, readdirSync,statSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 
+import { coworkLog } from '../cowork/coworkLogger';
 import {
   buildEnvForConfig,
   getCurrentApiConfig,
   resolveCurrentApiConfig,
-  resolveRawApiConfig,
 } from '../cowork/providerApiConfig';
-import { coworkLog } from '../cowork/coworkLogger';
-import {
-  buildAnthropicMessagesUrl,
-  buildGeminiGenerateContentUrl,
-  CoworkModelProtocol,
-  extractApiErrorSnippet,
-  extractTextFromAnthropicResponse,
-  extractTextFromGeminiResponse,
-} from './coworkModelApi';
 import { appendPythonRuntimeToEnv } from '../infra/pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from '../infra/systemProxy';
+import {
+  buildOpenAIChatCompletionsUrl,
+  extractApiErrorSnippet,
+  extractTextFromOpenAIResponse,
+} from './coworkModelApi';
 
 function appendEnvPath(current: string | undefined, additions: string[]): string | undefined {
   const items = new Set<string>();
@@ -1573,44 +1569,23 @@ const SESSION_TITLE_MAX_CHARS = 50;
 const SESSION_TITLE_TIMEOUT_MS = 8000;
 const COWORK_MODEL_PROBE_TIMEOUT_MS = 20000;
 
-type SessionTitleApiConfig =
-  | {
-      protocol: typeof CoworkModelProtocol.Anthropic;
-      apiKey: string;
-      baseURL: string;
-      model: string;
-    }
-  | {
-      protocol: typeof CoworkModelProtocol.GeminiNative;
-      apiKey: string;
-      baseURL: string;
-      model: string;
-    };
+type SessionTitleApiConfig = {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+};
 
 function resolveSessionTitleApiConfig(): { config: SessionTitleApiConfig | null; error?: string } {
-  const rawResolution = resolveRawApiConfig();
-  if (rawResolution.config && rawResolution.providerMetadata?.providerName === 'gemini') {
-    return {
-      config: {
-        protocol: CoworkModelProtocol.GeminiNative,
-        apiKey: rawResolution.config.apiKey,
-        baseURL: rawResolution.config.baseURL,
-        model: rawResolution.config.model,
-      },
-    };
-  }
-
   const resolution = resolveCurrentApiConfig();
   if (!resolution.config) {
     return {
       config: null,
-      error: resolution.error ?? rawResolution.error,
+      error: resolution.error,
     };
   }
 
   return {
     config: {
-      protocol: CoworkModelProtocol.Anthropic,
       apiKey: resolution.config.apiKey,
       baseURL: resolution.config.baseURL,
       model: resolution.config.model,
@@ -1693,45 +1668,23 @@ export async function probeCoworkModelReadiness(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const url =
-      config.protocol === CoworkModelProtocol.GeminiNative
-        ? buildGeminiGenerateContentUrl(config.baseURL, config.model)
-        : buildAnthropicMessagesUrl(config.baseURL);
-
-    // Build headers based on protocol
-    let headers: Record<string, string>;
-    if (config.protocol === CoworkModelProtocol.GeminiNative) {
-      headers = {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': config.apiKey,
-      };
-    } else {
-      headers = {
-        'Content-Type': 'application/json',
-        'x-api-key': config.apiKey,
-        'anthropic-version': '2023-06-01',
-      };
+    const url = buildOpenAIChatCompletionsUrl(config.baseURL);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (config.apiKey) {
+      headers.Authorization = `Bearer ${config.apiKey}`;
     }
 
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(
-        config.protocol === CoworkModelProtocol.GeminiNative
-          ? {
-              contents: [{ role: 'user', parts: [{ text: 'Reply with "ok".' }] }],
-              generationConfig: {
-                maxOutputTokens: 1,
-                temperature: 0,
-              },
-            }
-          : {
-              model: config.model,
-              max_tokens: 1,
-              temperature: 0,
-              messages: [{ role: 'user', content: 'Reply with "ok".' }],
-            },
-      ),
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: 1,
+        temperature: 0,
+        messages: [{ role: 'user', content: 'Reply with "ok".' }],
+      }),
       signal: controller.signal,
     });
 
@@ -1783,50 +1736,29 @@ export async function generateSessionTitle(userIntent: string | null): Promise<s
   const timeoutId = setTimeout(() => controller.abort(), SESSION_TITLE_TIMEOUT_MS);
 
   try {
-    const url =
-      config.protocol === CoworkModelProtocol.GeminiNative
-        ? buildGeminiGenerateContentUrl(config.baseURL, config.model)
-        : buildAnthropicMessagesUrl(config.baseURL);
+    const url = buildOpenAIChatCompletionsUrl(config.baseURL);
     const prompt = `Generate a short title from this input, keep the same language, return plain text only (no markdown), and keep it within ${SESSION_TITLE_MAX_CHARS} characters: ${normalizedInput}`;
 
     console.log(
-      `[cowork-title] Generating title: protocol=${config.protocol}, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}`,
+      `[cowork-title] Generating title: api=openai, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}`,
     );
 
-    // Build headers based on protocol
-    let headers: Record<string, string>;
-    if (config.protocol === CoworkModelProtocol.GeminiNative) {
-      headers = {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': config.apiKey,
-      };
-    } else {
-      headers = {
-        'Content-Type': 'application/json',
-        'x-api-key': config.apiKey,
-        'anthropic-version': '2023-06-01',
-      };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (config.apiKey) {
+      headers.Authorization = `Bearer ${config.apiKey}`;
     }
 
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(
-        config.protocol === CoworkModelProtocol.GeminiNative
-          ? {
-              contents: [{ role: 'user', parts: [{ text: prompt }] }],
-              generationConfig: {
-                maxOutputTokens: 80,
-                temperature: 0,
-              },
-            }
-          : {
-              model: config.model,
-              max_tokens: 80,
-              temperature: 0,
-              messages: [{ role: 'user', content: prompt }],
-            },
-      ),
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: 80,
+        temperature: 0,
+        messages: [{ role: 'user', content: prompt }],
+      }),
       signal: controller.signal,
     });
 
@@ -1842,10 +1774,7 @@ export async function generateSessionTitle(userIntent: string | null): Promise<s
 
     const payload = await response.json();
     console.log(`[cowork-title] Title response payload:`, JSON.stringify(payload).slice(0, 500));
-    const llmTitle =
-      config.protocol === CoworkModelProtocol.GeminiNative
-        ? extractTextFromGeminiResponse(payload)
-        : extractTextFromAnthropicResponse(payload);
+    const llmTitle = extractTextFromOpenAIResponse(payload);
     console.log(`[cowork-title] Extracted title text: "${llmTitle}"`);
     return normalizeTitleToPlainText(llmTitle, fallbackTitle);
   } catch (error) {
