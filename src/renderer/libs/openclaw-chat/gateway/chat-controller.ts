@@ -683,6 +683,8 @@ export class ChatController {
     this.state.chatStreamStartedAt = null;
     this.state.chatThinkingStream = null;
     this.state.chatThinkingMessages = [];
+    this.state.chatToolMessages = [];
+    this.state.chatStreamSegments = [];
     this.state.chatSending = false;
     this.state.chatRunId = null;
     this.resetAssistantSnapshotSource();

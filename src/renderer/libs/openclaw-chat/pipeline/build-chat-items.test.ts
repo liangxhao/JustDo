@@ -257,6 +257,40 @@ test('keeps the waiting indicator and first content delta on the same stream ite
   expect(waitingItems.some(item => item.kind === 'reading-indicator')).toBe(false);
 });
 
+test('groups committed stream segments as assistant content during incremental updates', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'user',
+        content: 'Hello',
+        timestamp: 1000,
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [
+      {
+        text: 'First content',
+        ts: 1100,
+      },
+      {
+        text: 'First content\nSecond content',
+        ts: 1200,
+      },
+    ],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantGroups = groups(items).filter(group => group.role === 'assistant');
+
+  expect(assistantGroups).toHaveLength(1);
+  expect(assistantGroups[0]?.messages).toHaveLength(2);
+  expect(streamItems(items)).toHaveLength(0);
+});
+
 test('keeps Thinking Tool order after full refresh', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',

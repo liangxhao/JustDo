@@ -233,7 +233,7 @@ export function renderMessageGroupWithTrailingStream(
         ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
         ${hasStreamText
           ? html`
-              <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
+              <div class="chat-bubble chat-bubble--assistant">
                 ${renderCopyButton(streamText)}
                 <div class="chat-bubble__text markdown-content">
                   ${unsafeHTML(toStreamingMarkdownHtml(streamText))}
@@ -530,7 +530,7 @@ export function renderStreamingGroup(
         ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
         ${hasText
           ? html`
-              <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
+              <div class="chat-bubble chat-bubble--assistant">
                 ${renderCopyButton(text)}
                 <div class="chat-bubble__text markdown-content">
                   ${unsafeHTML(toStreamingMarkdownHtml(text))}

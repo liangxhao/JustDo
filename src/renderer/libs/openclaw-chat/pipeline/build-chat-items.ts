@@ -1133,11 +1133,13 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
       }
       if (visibleText.length > 0) {
         items.push({
-          kind: 'stream',
+          kind: 'message',
           key: `stream-seg:${props.sessionKey}:${i}`,
-          text: visibleText,
-          startedAt: segments[i].ts,
-          isStreaming: false,
+          message: {
+            role: 'assistant',
+            content: visibleText,
+            timestamp: segments[i].ts,
+          },
         });
       }
     }
