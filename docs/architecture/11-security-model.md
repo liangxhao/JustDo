@@ -1,6 +1,6 @@
 # JustDo 安全模型与权限控制
 
-**版本**: v2026.6.25
+**版本**: v2026.7.1
 
 ## 1. 安全架构
 
@@ -460,5 +460,5 @@ function sanitizeErrorMessage(error: Error): string {
 | `src/main/main.ts` | BrowserWindow 安全配置 |
 | `src/main/preload.ts` | Preload 安全桥接 |
 | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | 权限请求处理 |
-| `src/main/libs/commandSafety.ts` | 危险命令检测 |
+| `src/main/libs/infra/commandSafety.ts` | 危险命令检测 |
 | `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求 UI |

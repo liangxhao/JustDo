@@ -212,7 +212,7 @@ CREATE TABLE scheduled_task_meta (
 
 ### 4.1 核心类
 
-**文件**：`src/main/sqliteStore.ts`
+**文件**：`src/main/data/sqliteStore.ts`
 
 ```typescript
 class SqliteStore {
@@ -336,6 +336,6 @@ if (!colNames.includes('execution_mode')) {
 
 ## 7. 版本信息
 
-- **Last Updated**: 2026-06-30
-- **JustDo Version**: v2026.6.25
+- **Last Updated**: 2026-07-01
+- **JustDo Version**: v2026.7.1
 - **OpenClaw Gateway**: v2026.6.9

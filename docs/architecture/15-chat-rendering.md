@@ -359,6 +359,6 @@ ChatController.handleEvent()
 
 ## 10. 版本信息
 
-- **Last Updated**: 2026-06-30
-- **JustDo Version**: v2026.6.25
+- **Last Updated**: 2026-07-01
+- **JustDo Version**: v2026.7.1
 - **OpenClaw Gateway**: v2026.6.9

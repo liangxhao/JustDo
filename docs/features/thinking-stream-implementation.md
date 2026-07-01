@@ -1,5 +1,7 @@
 # Thinking Stream Display Implementation
 
+> **历史参考**：本文档描述 v2026.4 时期基于 IPC 的 Thinking Stream 实现。自 v2026.6 起，Thinking content 已改为通过 Lit `<justdo-chat>` 管道直接由 Gateway WebSocket 渲染，不再经过 Redux + IPC 路径。请参见 [15-chat-rendering.md](../architecture/15-chat-rendering.md) 了解当前架构。
+
 ## Overview
 
 This document describes the final implementation of the "Thinking Stream Display" feature for OpenClaw models in JustDo. The feature allows real-time display of model thinking/reasoning content during assistant message generation.

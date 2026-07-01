@@ -576,4 +576,4 @@ sequenceDiagram
 
 ---
 
-> **注意**：此文档反映 JustDo v2026.6.25 架构。当前 OpenClaw 版本为 v2026.6.9。
+> **注意**：此文档反映 JustDo v2026.7.1 架构。当前 OpenClaw 版本为 v2026.6.9。

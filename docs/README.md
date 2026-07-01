@@ -7,9 +7,8 @@
 ```
 docs/
 ├── architecture/     # 系统架构与核心模块设计
-├── patches/          # OpenClaw Patch 适配文档（历史参考）
+├── patches/          # OpenClaw Patch 适配文档
 ├── features/         # 功能实现与重构方案文档
-├── superpowers/      # Superpowers 技能规格文档
 ├── res/              # 静态资源
 └── README.md         # 本索引文件
 ```
@@ -41,12 +40,9 @@ docs/
 
 | 文档 | 说明 |
 |------|------|
-| [openclaw-upgrade-analysis-v2026.4.11.md](patches/openclaw-upgrade-analysis-v2026.4.11.md) | OpenClaw v2026.4.11 升级分析 |
-| [openclaw-patch-necessity-analysis.md](patches/openclaw-patch-necessity-analysis.md) | Patch 必要性分析 |
-| [openclaw-patch-adaptation-v2026.4.11.md](patches/openclaw-patch-adaptation-v2026.4.11.md) | Patch 适配指南 |
-| [openclaw-patch-status-v2026.4.11.md](patches/openclaw-patch-status-v2026.4.11.md) | Patch 状态追踪 |
+| [openclaw-patch-guide.md](patches/openclaw-patch-guide.md) | OpenClaw Runtime Patch 完整文档：规范、当前 patch 列表、运维指南 |
 
-> **注意**：上述 Patch 文档记录的是 v2026.4.11 时期的适配工作，仅供历史参考。当前 v2026.6.x 版本中绝大多数 patch 已移除或上游化。
+> **注意**：当前 OpenClaw 版本为 v2026.6.9，共有 6 个 patches。详见 patch guide。
 
 ### 功能实现 (features/)
 
@@ -55,12 +51,6 @@ docs/
 | [openclaw-chat-migration-review.md](../openclaw-chat-migration-review.md) | OpenClaw WebChat 消息渲染管线迁移总结 |
 | [thinking-stream-implementation.md](features/thinking-stream-implementation.md) | Thinking 流式显示功能实现详解 |
 | [openclaw-thin-frontend-refactor-plan.md](features/openclaw-thin-frontend-refactor-plan.md) | OpenClaw 薄前端重构方案 |
-
-### Superpowers 规格 (superpowers/specs/)
-
-| 文档 | 说明 |
-|------|------|
-| [2026-04-13-thinking-stream-display-design.md](superpowers/specs/2026-04-13-thinking-stream-display-design.md) | Thinking Stream Display 功能设计规格 |
 
 ---
 
@@ -72,10 +62,19 @@ docs/
 | v2026.4.11 | 2026-04-14 | 添加 Thinking Stream 实现，文档目录整理 |
 | v2026.5 | 2026-05 | 薄前端架构规划，Gateway 能力矩阵，OpenClaw 前端边界规划 |
 | v2026.6 | 2026-06 | Thin Frontend 全面落地。消息渲染管线重写（Lit `<justdo-chat>`），Subagent 逻辑完全收缩至 Gateway，Runtime 以预构建 npm 包分发 |
+| v2026.7 | 2026-07 | 主进程按领域重组（core/data/features/libs/cowork/infra/mcp/openclaw）。移除企业模式、Skill Security Scanner、OpenAI Compat Proxy。精简为 OpenAI 兼容 providers only。 |
 
 ---
 
-## 架构演进摘要（v2026.6 重大变更）
+## 架构演进摘要（v2026.7 重大变更）
+
+v2026.7 是一次深度代码整理：
+
+1. **主进程领域重组** — `src/main/` 按功能拆分为 `core/`、`data/`、`features/`、`ipcHandlers/`；`libs/` 按领域分为 `agentEngine/`、`cowork/`、`infra/`、`mcp/`、`openclaw/` 五个子目录
+2. **移除企业模式** — 删除 `enterpriseConfigSync` 及相关 UI、IPC 通道
+3. **精简 Provider** — 仅保留 OpenAI 兼容 providers，移除 16 个特定 provider 图标和配置
+4. **移除 OpenAI Compat Proxy** — 删除 2900+ 行的 `coworkOpenAICompatProxy.ts`
+5. **移除 Skill Security Scanner** — 删除 `skillSecurity/` 目录全部文件（1750 行）
 
 v2026.6 是本项目架构演进的分水岭：
 

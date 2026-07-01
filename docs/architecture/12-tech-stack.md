@@ -321,7 +321,7 @@ npm run openclaw:prune                  # 清理运行时
 
 ```json
 {
-  "version": "2026.6.25"
+  "version": "2026.7.1"
 }
 ```
 
@@ -371,9 +371,12 @@ JustDo/
 │   ├── main/                 # Electron 主进程
 │   │   ├── main.ts           # 入口
 │   │   ├── preload.ts        # contextBridge 安全层
-│   │   ├── sqliteStore.ts    # SQLite 数据库管理
 │   │   ├── coworkStore.ts    # Cowork 数据 CRUD
-│   │   └── libs/             # 引擎管理、配置同步
+│   │   ├── core/             # 核心应用工具
+│   │   ├── data/             # 数据层 (sqliteStore.ts)
+│   │   ├── features/         # 功能管理
+│   │   ├── ipcHandlers/      # IPC 处理模块
+│   │   └── libs/             # 领域分组库 (agentEngine/cowork/infra/mcp/openclaw)
 │   │
 │   ├── renderer/             # React UI + Lit chat
 │   │   ├── App.tsx           # 根组件
@@ -480,7 +483,7 @@ import log from 'electron-log';
 
 ## 12. 版本信息
 
-- **Last Updated**: 2026-06-30
-- **JustDo Version**: v2026.6.25
+- **Last Updated**: 2026-07-01
+- **JustDo Version**: v2026.7.1
 - **OpenClaw Gateway**: v2026.6.9
 - **Node.js**: >= 24 < 25

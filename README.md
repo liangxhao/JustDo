@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Version-2026.6.25-green.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2026.7.1-green.svg?style=for-the-badge" alt="Version">
   <br>
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen?style=for-the-badge" alt="Platform">
   <img src="https://img.shields.io/badge/Electron-41-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
@@ -77,7 +77,7 @@ JustDo is designed as a **thin frontend** for OpenClaw Gateway:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Key Architecture Principles (v2026.6)
+### Key Architecture Principles (v2026.7)
 
 1. **Thin Frontend** — JustDo does not inject custom system prompts, AGENTS.md policies, or per-agent workspace content. All AI context is managed by Gateway.
 2. **Single Engine** — OpenClaw Gateway is the only AI engine. No dual-engine architecture.
@@ -214,21 +214,39 @@ Electron strict process isolation with IPC communication.
 
 ```
 src/
-├── main/               # Electron main process
-│   ├── main.ts         # Entry point
-│   ├── preload.ts      # contextBridge security layer
-│   ├── sqliteStore.ts  # SQLite database management
-│   ├── coworkStore.ts  # Cowork session & message CRUD
-│   └── libs/           # Engine manager, config sync
+├── main/                  # Electron main process
+│   ├── main.ts            # Entry point
+│   ├── preload.ts         # contextBridge security layer
+│   ├── coworkStore.ts     # Cowork session & message CRUD
+│   ├── skillManager.ts    # Skill import & sync to Gateway
+│   ├── groupStore.ts      # Session group management
+│   ├── mcpStore.ts        # MCP server configuration
+│   ├── core/              # Core app utilities
+│   │   ├── appConstants.ts
+│   │   ├── autoLaunchManager.ts
+│   │   ├── logger.ts
+│   │   └── trayManager.ts
+│   ├── data/              # Data layer
+│   │   └── sqliteStore.ts # SQLite database management
+│   ├── features/          # Feature managers
+│   │   ├── agentManager.ts
+│   │   └── presetAgents.ts
+│   ├── ipcHandlers/       # IPC handler modules
+│   └── libs/              # Domain-organized libraries
+│       ├── agentEngine/   # Cowork engine routing & OpenClaw adapter
+│       ├── cowork/        # Cowork config, logging, model API
+│       ├── infra/         # Command safety, system proxy, Python runtime
+│       ├── mcp/           # MCP bridge server & manager
+│       └── openclaw/      # Gateway engine, config sync, history, token proxy
 │
-├── renderer/           # React frontend + Lit chat
-│   ├── App.tsx         # Root component
-│   ├── theme/          # Theme system (14 themes)
-│   │   ├── engine/     # Theme engine
-│   │   ├── themes/     # Theme definitions
-│   │   ├── tailwind/   # Tailwind integration
-│   │   └── tokens/     # Design tokens
-│   ├── components/     # UI components
+├── renderer/              # React frontend + Lit chat
+│   ├── App.tsx            # Root component
+│   ├── theme/             # Theme system (14 themes)
+│   │   ├── engine/        # Theme engine
+│   │   ├── themes/        # Theme definitions
+│   │   ├── tailwind/      # Tailwind integration
+│   │   └── tokens/        # Design tokens
+│   ├── components/        # UI components
 │   │   └── cowork/
 │   │       ├── JustDoChatWrapper.tsx  # React ↔ Lit bridge
 │   │       ├── CoworkView.tsx
@@ -241,15 +259,14 @@ src/
 │   │       ├── components/ # Lit components
 │   │       ├── pipeline/   # Message processing pipeline
 │   │       └── conversion/ # Data conversion
-│   ├── store/           # Redux slices
-│   └── types/           # TypeScript types
+│   ├── store/             # Redux store & slices
+│   └── types/             # TypeScript types
 │
-├── scheduledTask/      # Cron engine, task metadata
-└── shared/             # Platform & provider constants
+├── scheduledTask/         # Cron engine, task metadata
+└── shared/                # Platform & provider constants
 
-resources/skills/       # 17 bundled skill definitions (Gateway-managed)
-openclaw-extensions/    # OpenClaw local extensions
-scripts/                # Build and tool scripts
+resources/skills/          # 17 bundled skill definitions (Gateway-managed)
+scripts/                   # Build and tool scripts
 ```
 
 ### Cowork Engine Architecture
@@ -287,7 +304,6 @@ Local SQLite (`justdo.sqlite`) serves as a **UI cache**, NOT the authoritative d
 - Permission gating for sensitive tool invocations
 - Optional OpenClaw sandbox
 - HTML sandbox, DOMPurify, Mermaid strict mode
-- Enterprise config sync support
 
 ## Configuration
 
@@ -296,7 +312,7 @@ Local SQLite (`justdo.sqlite`) serves as a **UI cache**, NOT the authoritative d
 - **Working Directory** — Root for Agent operations
 - **System Prompt** — Customize Agent behavior
 - **Execution Mode** — `auto` / `local`
-- **Model Provider & Model** — AI model selection
+- **Model Provider & Model** — AI model selection (OpenAI-compatible providers)
 - **Agent Engine** — Always `openclaw` (single engine)
 
 ### OpenClaw Integration
