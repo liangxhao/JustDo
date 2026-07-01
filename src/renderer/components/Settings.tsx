@@ -3414,11 +3414,6 @@ const Settings: React.FC<SettingsProps> = ({
         {(isAddingModel || isEditingModel) && (
           <div
             className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
-            onClick={e => {
-              if (e.target === e.currentTarget) {
-                handleCancelModelEdit();
-              }
-            }}
           >
             <div
               role="dialog"
