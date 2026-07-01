@@ -176,7 +176,12 @@ function hasLiveToolMessage(messages: unknown[]): boolean {
 
 export function renderMessageGroup(
   group: MessageGroup,
-  opts?: { searchQuery?: string; showFooter?: boolean; showAvatar?: boolean },
+  opts?: {
+    searchQuery?: string;
+    showFooter?: boolean;
+    showAvatar?: boolean;
+    assistantName?: string;
+  },
 ): TemplateResult | typeof nothing {
   if (!group.messages || group.messages.length === 0) return nothing;
 
@@ -197,7 +202,7 @@ export function renderMessageGroup(
       <div class="chat-group__avatar">${opts?.showAvatar ?? true ? avatar : nothing}</div>
       <div class="chat-group__content">
         ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
-        ${renderGroupFooter(group, opts?.showFooter ?? true)}
+        ${renderGroupFooter(group, opts?.showFooter ?? true, opts?.assistantName)}
       </div>
     </div>
   `;
@@ -413,13 +418,17 @@ function renderToolTimelineItem(card: ToolCard): TemplateResult {
 
 // ─── Group Footer ───────────────────────────────────────────────────────────
 
-function renderGroupFooter(group: MessageGroup, showFooter: boolean): TemplateResult | typeof nothing {
+function renderGroupFooter(
+  group: MessageGroup,
+  showFooter: boolean,
+  assistantName?: string,
+): TemplateResult | typeof nothing {
   if (!showFooter) return nothing;
   const ts = group.timestamp;
   if (!ts) return nothing;
   const date = new Date(ts);
   const time = formatGroupTimestamp(date);
-  const roleName = getGroupFooterLabel(group);
+  const roleName = getGroupFooterLabel(group, assistantName);
   return html`
     <div class="chat-group__footer">
       ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
@@ -428,14 +437,16 @@ function renderGroupFooter(group: MessageGroup, showFooter: boolean): TemplateRe
   `;
 }
 
-export function getGroupFooterLabel(group: MessageGroup): string {
+export function getGroupFooterLabel(group: MessageGroup, assistantName?: string): string {
   if (group.role === 'assistant') {
-    return group.modelName ?? group.senderLabel ?? 'Assistant';
+    const modelName = group.modelName?.trim() ?? '';
+    const senderLabel = group.senderLabel?.trim() ?? '';
+    return modelName || senderLabel || assistantName?.trim() || 'Assistant';
   }
   if (group.role === 'user') {
     return 'You';
   }
-  return group.senderLabel ?? '';
+  return group.senderLabel?.trim() ?? '';
 }
 
 export function formatGroupTimestamp(date: Date): string {

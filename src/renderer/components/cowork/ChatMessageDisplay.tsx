@@ -13,6 +13,7 @@ interface ChatMessageDisplayProps {
   messages?: CoworkMessage[];
   isStreaming?: boolean;
   fullWidth?: boolean;
+  assistantName?: string;
   searchQuery?: string;
   searchCaseSensitive?: boolean;
   searchNavigationToken?: number;
@@ -31,6 +32,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   messages = [],
   isStreaming = false,
   fullWidth = false,
+  assistantName,
   searchQuery = '',
   searchCaseSensitive = false,
   searchNavigationToken = 0,
@@ -47,6 +49,9 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
 
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     chat.classList.toggle('full-width', fullWidth);
+    if (assistantName) {
+      chat.assistantName = assistantName;
+    }
     container.appendChild(chat);
     chatRef.current = chat;
 
@@ -88,7 +93,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       chat.remove();
       chatRef.current = null;
     };
-  }, [fullWidth, onSearchMatchCountChange]);
+  }, [assistantName, fullWidth, onSearchMatchCountChange]);
 
   useEffect(() => {
     const chat = chatRef.current;
@@ -98,7 +103,8 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       chat.messages = gatewayMessages;
       chat.isStreaming = isStreaming;
     }
-  }, [controller, gatewayMessages, isStreaming]);
+    chat.assistantName = assistantName ?? '';
+  }, [assistantName, controller, gatewayMessages, isStreaming]);
 
   useEffect(() => {
     const chat = chatRef.current;

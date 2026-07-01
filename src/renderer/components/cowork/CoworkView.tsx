@@ -34,6 +34,7 @@ import { PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
+import { resolveAgentModelSelection } from './agentModelSelection';
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
 import SubagentMenu, { type Subagent } from './SubagentMenu';
 import SubagentMessageDrawer from './SubagentMessageDrawer';
@@ -88,11 +89,28 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const isStreaming = useSelector(selectIsStreaming);
   const config = useSelector(selectCoworkConfig);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
+  const agentState = useSelector((state: RootState) => state.agent);
+  const availableModels = useSelector((state: RootState) => state.model.availableModels);
+  const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
 
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
   const quickActions = useSelector((state: RootState) => state.quickAction.actions);
   const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
+  const currentSessionAgent = currentSession
+    ? agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null
+    : null;
+  const { selectedModel: sessionSelectedModel } = resolveAgentModelSelection({
+    agentModel: currentSessionAgent?.model ?? '',
+    availableModels,
+    fallbackModel: globalSelectedModel,
+    engine: config.agentEngine,
+  });
+  const assistantName =
+    sessionSelectedModel?.name?.trim() ||
+    sessionSelectedModel?.id?.trim() ||
+    currentSessionAgent?.name?.trim() ||
+    'Assistant';
 
   const buildApiConfigNotice = (
     error?: string,
@@ -741,6 +759,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           <JustDoChatWrapper
             ref={chatWrapperRef}
             className="flex-1 min-h-0"
+            assistantName={assistantName}
             searchQuery={isSessionSearchOpen ? sessionSearchQuery : ''}
             searchCaseSensitive={!sessionSearchIgnoreCase}
             searchNavigationToken={sessionSearchNavigation.token}

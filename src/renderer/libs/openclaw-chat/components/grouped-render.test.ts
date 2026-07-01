@@ -91,6 +91,15 @@ describe('group footer helpers', () => {
     expect(getGroupFooterLabel(createGroup('assistant'))).toBe('Assistant');
   });
 
+  test('ignores empty string model names and still falls back', () => {
+    expect(
+      getGroupFooterLabel({
+        ...createGroup('assistant'),
+        modelName: '   ',
+      }),
+    ).toBe('Assistant');
+  });
+
   test('formats timestamps as yyyy-mm-dd hh:mm', () => {
     const date = new Date(2026, 6, 1, 9, 5);
     expect(formatGroupTimestamp(date)).toBe('2026-07-01 09:05');

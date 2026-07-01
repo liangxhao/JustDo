@@ -17,6 +17,7 @@ import ChatMessageDisplay from './ChatMessageDisplay';
 
 interface JustDoChatWrapperProps {
   className?: string;
+  assistantName?: string;
   searchQuery?: string;
   searchCaseSensitive?: boolean;
   searchNavigationToken?: number;
@@ -34,6 +35,7 @@ export interface JustDoChatWrapperRef {
 
 const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(({
   className,
+  assistantName,
   searchQuery,
   searchCaseSensitive,
   searchNavigationToken,
@@ -184,6 +186,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     <ChatMessageDisplay
       className={className}
       controller={controller}
+      assistantName={assistantName}
       searchQuery={searchQuery}
       searchCaseSensitive={searchCaseSensitive}
       searchNavigationToken={searchNavigationToken}
