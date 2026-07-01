@@ -3075,6 +3075,21 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:session:runtimeStatus', async (_event, sessionId: string) => {
+    try {
+      const status = await getCoworkEngineRouter().getSessionRuntimeStatus(sessionId);
+      return { success: true, ...status };
+    } catch (error) {
+      return {
+        success: false,
+        mainRunning: false,
+        subagentRunning: false,
+        running: false,
+        error: error instanceof Error ? error.message : 'Failed to get session runtime status',
+      };
+    }
+  });
+
   ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
     try {
       if (!openClawRuntimeAdapter) {

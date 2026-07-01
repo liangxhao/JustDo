@@ -10,6 +10,7 @@ interface SessionGroupPanelProps {
   isExpanded: boolean;
   currentSessionId: string | null;
   unreadSessionIds: string[];
+  runtimeRunningSessionIds: Set<string>;
   isBatchMode: boolean;
   selectedIds: Set<string>;
   onSelectSession: (sessionId: string) => void;
@@ -27,6 +28,7 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   isExpanded,
   currentSessionId,
   unreadSessionIds,
+  runtimeRunningSessionIds,
   isBatchMode,
   selectedIds,
   onSelectSession,
@@ -45,6 +47,7 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
             key={session.id}
             session={session}
             hasUnread={unreadSessionIds.includes(session.id)}
+            isRuntimeRunning={runtimeRunningSessionIds.has(session.id)}
             isActive={currentSessionId === session.id}
             isBatchMode={isBatchMode}
             isSelected={selectedIds.has(session.id)}

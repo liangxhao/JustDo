@@ -20,6 +20,8 @@ import {
   setCurrentSession,
   setGroups,
   setRemoteManaged,
+  setSessionRuntimeActivities,
+  setSessionRuntimeActivity,
   setSessions,
   setStreaming,
   updateGroup,
@@ -155,6 +157,7 @@ class CoworkService {
       // A new user turn means this session is actively running again
       // (especially important for IM-triggered turns that do not call continueSession from renderer).
       if (message.type === 'user') {
+        store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
         store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
       }
 
@@ -232,6 +235,7 @@ class CoworkService {
       // Use finalStatus from backend if provided (includes subagent status check)
       // If not provided, default to 'completed' (backward compatibility)
       const status: 'idle' | 'running' | 'completed' | 'error' = finalStatus ?? 'completed';
+      store.dispatch(setSessionRuntimeActivity({ sessionId, running: status === 'running' }));
       store.dispatch(updateSessionStatus({ sessionId, status }));
     });
     this.streamListenerCleanups.push(completeCleanup);
@@ -244,6 +248,7 @@ class CoworkService {
       if (isGatewayToolFailureNotice(error)) {
         return;
       }
+      store.dispatch(setSessionRuntimeActivity({ sessionId, running: false }));
       store.dispatch(updateSessionStatus({ sessionId, status: 'error' }));
       // Surface the error as a visible message so the user knows what happened.
       if (error) {
@@ -326,6 +331,50 @@ class CoworkService {
     }
   }
 
+  async getSessionRuntimeStatus(sessionId: string): Promise<{
+    mainRunning: boolean;
+    subagentRunning: boolean;
+    running: boolean;
+  }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.getSessionRuntimeStatus) {
+      return { mainRunning: false, subagentRunning: false, running: false };
+    }
+    const result = await cowork.getSessionRuntimeStatus(sessionId);
+    if (!result.success) {
+      return { mainRunning: false, subagentRunning: false, running: false };
+    }
+    return {
+      mainRunning: result.mainRunning,
+      subagentRunning: result.subagentRunning,
+      running: result.running,
+    };
+  }
+
+  async refreshSessionRuntimeActivity(sessionId: string): Promise<void> {
+    const status = await this.getSessionRuntimeStatus(sessionId);
+    store.dispatch(setSessionRuntimeActivity({ sessionId, running: status.running }));
+  }
+
+  async refreshSessionRuntimeActivities(sessionIds: string[]): Promise<void> {
+    const uniqueSessionIds = [...new Set(sessionIds.filter(id => !id.startsWith('temp-')))];
+    if (uniqueSessionIds.length === 0) {
+      store.dispatch(setSessionRuntimeActivities({}));
+      return;
+    }
+    const entries = await Promise.all(
+      uniqueSessionIds.map(async sessionId => {
+        const status = await this.getSessionRuntimeStatus(sessionId);
+        return [sessionId, status.running] as const;
+      }),
+    );
+    store.dispatch(
+      setSessionRuntimeActivities(
+        Object.fromEntries(entries.filter(([, running]) => running)),
+      ),
+    );
+  }
+
   async loadConfig(): Promise<void> {
     const result = await window.electron?.cowork?.getConfig();
     if (result?.success && result.config) {
@@ -360,11 +409,10 @@ class CoworkService {
 
     const result = await cowork.startSession(options);
     if (result.success && result.session) {
-      store.dispatch(addSession(result.session));
-      if (result.session.status !== 'running') {
-        store.dispatch(setStreaming(false));
-      }
-      return { session: result.session };
+      const runningSession: CoworkSession = { ...result.session, status: 'running' };
+      store.dispatch(addSession(runningSession));
+      store.dispatch(setSessionRuntimeActivity({ sessionId: runningSession.id, running: true }));
+      return { session: runningSession };
     }
 
     if (result.engineStatus) {
@@ -393,6 +441,9 @@ class CoworkService {
     }
 
     store.dispatch(setStreaming(true));
+    if (options.sessionId) {
+      store.dispatch(setSessionRuntimeActivity({ sessionId: options.sessionId, running: true }));
+    }
     store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
 
     const result = await cowork.continueSession({
@@ -403,6 +454,7 @@ class CoworkService {
     });
     if (!result.success) {
       store.dispatch(setStreaming(false));
+      store.dispatch(setSessionRuntimeActivity({ sessionId: options.sessionId, running: false }));
       if (result.engineStatus) {
         this.notifyOpenClawStatus(result.engineStatus);
       }
@@ -456,6 +508,7 @@ class CoworkService {
     const result = await cowork.stopSession(sessionId);
     if (result.success) {
       store.dispatch(setStreaming(false));
+      store.dispatch(setSessionRuntimeActivity({ sessionId, running: false }));
       store.dispatch(updateSessionStatus({ sessionId, status: 'idle' }));
       return true;
     }
@@ -627,8 +680,15 @@ class CoworkService {
       if (requestId !== this.latestLoadSessionRequestId) {
         return result.session;
       }
-      store.dispatch(setCurrentSession(result.session));
-      store.dispatch(setStreaming(result.session.status === 'running'));
+      const runtimeRunning =
+        store.getState().cowork.sessionRuntimeActivity[sessionId] === true ||
+        result.session.status === 'running';
+      const session = runtimeRunning ? { ...result.session, status: 'running' as const } : result.session;
+      store.dispatch(setCurrentSession(session));
+      if (runtimeRunning) {
+        store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
+      }
+      store.dispatch(setStreaming(runtimeRunning));
 
       const imResult = await cowork.remoteManaged(sessionId);
       if (requestId === this.latestLoadSessionRequestId) {

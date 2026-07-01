@@ -30,6 +30,7 @@ interface CoworkState {
   unreadSessionIds: string[];
   isCoworkActive: boolean;
   isStreaming: boolean;
+  sessionRuntimeActivity: Record<string, boolean>;
   remoteManaged: boolean;
   pendingPermissions: CoworkPermissionRequest[];
   config: CoworkConfig;
@@ -50,6 +51,7 @@ const initialState: CoworkState = {
   unreadSessionIds: [],
   isCoworkActive: false,
   isStreaming: false,
+  sessionRuntimeActivity: {},
   remoteManaged: false,
   pendingPermissions: [],
   config: {
@@ -91,6 +93,45 @@ const coworkSlice = createSlice({
     setCurrentSessionId(state, action: PayloadAction<string | null>) {
       state.currentSessionId = action.payload;
       markSessionRead(state, action.payload);
+    },
+
+    setSessionRuntimeActivity(
+      state,
+      action: PayloadAction<{ sessionId: string; running: boolean }>,
+    ) {
+      const { sessionId, running } = action.payload;
+      if (running) {
+        state.sessionRuntimeActivity[sessionId] = true;
+        const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
+        if (sessionIndex !== -1) {
+          state.sessions[sessionIndex].status = 'running';
+        }
+        if (state.currentSession?.id === sessionId) {
+          state.currentSession.status = 'running';
+        }
+      } else {
+        delete state.sessionRuntimeActivity[sessionId];
+        const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
+        if (sessionIndex !== -1 && state.sessions[sessionIndex].status === 'running') {
+          state.sessions[sessionIndex].status = 'idle';
+        }
+        if (state.currentSession?.id === sessionId && state.currentSession.status === 'running') {
+          state.currentSession.status = 'idle';
+        }
+      }
+      if (state.currentSessionId === sessionId) {
+        state.isStreaming = running;
+      }
+    },
+
+    setSessionRuntimeActivities(state, action: PayloadAction<Record<string, boolean>>) {
+      state.sessionRuntimeActivity = action.payload;
+      if (state.currentSessionId?.startsWith('temp-')) {
+        return;
+      }
+      state.isStreaming = state.currentSessionId
+        ? action.payload[state.currentSessionId] === true
+        : false;
     },
 
     setCurrentSession(state, action: PayloadAction<CoworkSession | null>) {
@@ -495,6 +536,8 @@ export const {
   setSessions,
   setCurrentSessionId,
   setCurrentSession,
+  setSessionRuntimeActivity,
+  setSessionRuntimeActivities,
   setDraftPrompt,
   setDraftAttachments,
   addDraftAttachment,

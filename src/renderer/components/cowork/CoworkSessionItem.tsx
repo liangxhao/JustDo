@@ -14,6 +14,7 @@ interface CoworkSessionItemProps {
   session: CoworkSessionSummary;
   hasUnread: boolean;
   isActive: boolean;
+  isRuntimeRunning?: boolean;
   isBatchMode: boolean;
   isSelected: boolean;
   showBatchOption?: boolean;
@@ -73,6 +74,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   session,
   hasUnread,
   isActive,
+  isRuntimeRunning = false,
   isBatchMode,
   isSelected,
   showBatchOption = true,
@@ -260,7 +262,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const renameLabel = i18nService.t('renameConversation');
   const deleteLabel = i18nService.t('deleteSession');
   const relativeTime = formatRelativeTime(session.updatedAt);
-  const showRunningIndicator = session.status === 'running';
+  const showRunningIndicator = isRuntimeRunning;
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
   const batchLabel = i18nService.t('batchOperations');
@@ -364,11 +366,13 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
             {/* Status indicator */}
             {showStatusIndicator && (
               <span
-                className={`block w-2 h-2 rounded-full bg-primary flex-shrink-0 ${
-                  showRunningIndicator ? 'shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse' : ''
+                className={`block w-2 h-2 rounded-full flex-shrink-0 ${
+                  showRunningIndicator
+                    ? 'bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse'
+                    : 'bg-primary'
                 }`}
                 title={
-                  showRunningIndicator ? i18nService.t(statusLabels[session.status]) : undefined
+                  showRunningIndicator ? i18nService.t(statusLabels.running) : undefined
                 }
               />
             )}

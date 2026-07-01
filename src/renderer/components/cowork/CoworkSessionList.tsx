@@ -14,6 +14,7 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
+import type { RootState } from '../../store';
 import {
   selectExpandedGroupIds,
   selectGroups,
@@ -40,6 +41,7 @@ import SessionGroupPanel from './SessionGroupPanel';
 interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
   unreadSessionIdSet: Set<string>;
+  runtimeRunningSessionIds: Set<string>;
   currentSessionId: string | null;
   isBatchMode: boolean;
   selectedIds: Set<string>;
@@ -56,6 +58,7 @@ interface UngroupedDroppableZoneProps {
 const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   unGroupedSessions,
   unreadSessionIdSet,
+  runtimeRunningSessionIds,
   currentSessionId,
   isBatchMode,
   selectedIds,
@@ -81,6 +84,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
               key={session.id}
               session={session}
               hasUnread={unreadSessionIdSet.has(session.id)}
+              isRuntimeRunning={runtimeRunningSessionIds.has(session.id)}
               isActive={session.id === currentSessionId}
               isBatchMode={isBatchMode}
               isSelected={selectedIds.has(session.id)}
@@ -131,7 +135,19 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 }) => {
   const dispatch = useDispatch();
   const unreadSessionIds = useSelector(selectUnreadSessionIds);
+  const sessionRuntimeActivity = useSelector(
+    (state: RootState) => state.cowork.sessionRuntimeActivity,
+  );
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
+  const runtimeRunningSessionIds = useMemo(
+    () =>
+      new Set(
+        Object.entries(sessionRuntimeActivity)
+          .filter(([, running]) => running)
+          .map(([sessionId]) => sessionId),
+      ),
+    [sessionRuntimeActivity],
+  );
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
 
@@ -353,6 +369,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     isExpanded={isExpanded}
                     currentSessionId={currentSessionId}
                     unreadSessionIds={unreadSessionIds}
+                    runtimeRunningSessionIds={runtimeRunningSessionIds}
                     isBatchMode={isBatchMode}
                     selectedIds={selectedIds}
                     onSelectSession={onSelectSession}
@@ -375,6 +392,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         <UngroupedDroppableZone
           unGroupedSessions={unGroupedSessions}
           unreadSessionIdSet={unreadSessionIdSet}
+          runtimeRunningSessionIds={runtimeRunningSessionIds}
           currentSessionId={currentSessionId}
           isBatchMode={isBatchMode}
           selectedIds={selectedIds}

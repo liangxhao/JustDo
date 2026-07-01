@@ -37,6 +37,7 @@ import type {
 } from './gateway/types';
 import { HistoryReconciler } from './history/historyReconciler';
 import {
+  type GatewaySubagent,
   listGatewaySubagents,
   type SubagentStatus,
 } from './openclaw/subagentGateway';
@@ -2442,6 +2443,62 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         client: this.gatewayClient,
         parentKeys: this.getSessionKeysForSession(sessionId),
       }),
+    };
+  }
+
+  async getSessionRuntimeStatus(sessionId: string): Promise<{
+    mainRunning: boolean;
+    subagentRunning: boolean;
+    running: boolean;
+  }> {
+    if (!sessionId) {
+      return { mainRunning: false, subagentRunning: false, running: false };
+    }
+    if (this.isSessionActive(sessionId)) {
+      return { mainRunning: true, subagentRunning: false, running: true };
+    }
+    const client = this.gatewayClient;
+    if (!client) {
+      return { mainRunning: false, subagentRunning: false, running: false };
+    }
+
+    const sessionKeys = this.getSessionKeysForSession(sessionId);
+    const keySet = new Set(sessionKeys);
+    let mainRunning = false;
+    try {
+      const result = await client.request<{
+        sessions?: Array<Record<string, unknown>>;
+      }>('sessions.list', {
+        limit: 100,
+        includeDerivedTitles: true,
+      });
+      mainRunning = (result.sessions ?? []).some(row => {
+        const key = typeof row.key === 'string' ? row.key.trim() : '';
+        if (!keySet.has(key)) return false;
+        return row.hasActiveRun === true || row.status === 'running' || row.runState === 'active';
+      });
+    } catch (error) {
+      console.warn('[OpenClawRuntime] Failed to query main session runtime status', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const subagents = await listGatewaySubagents({
+      client,
+      parentKeys: sessionKeys,
+    }).catch((error): GatewaySubagent[] => {
+      console.warn('[OpenClawRuntime] Failed to query subagent runtime status', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    });
+    const subagentRunning = subagents.some(subagent => subagent.status === 'running');
+
+    return {
+      mainRunning,
+      subagentRunning,
+      running: mainRunning || subagentRunning,
     };
   }
 

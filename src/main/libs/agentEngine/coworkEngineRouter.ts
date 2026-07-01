@@ -106,6 +106,17 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     return { ok: false, error: 'patchSessionModel not supported by current runtime' };
   }
 
+  async getSessionRuntimeStatus(sessionId: string): Promise<{
+    mainRunning: boolean;
+    subagentRunning: boolean;
+    running: boolean;
+  }> {
+    if (this.runtime.getSessionRuntimeStatus) {
+      return this.runtime.getSessionRuntimeStatus(sessionId);
+    }
+    return { mainRunning: false, subagentRunning: false, running: false };
+  }
+
   /** No-op: only 'openclaw' engine exists, engine switching is not applicable. */
   handleEngineConfigChanged(_nextEngine: string): void {}
 

@@ -503,6 +503,13 @@ interface IElectronAPI {
     remoteManaged: (
       sessionId: string,
     ) => Promise<{ success: boolean; remoteManaged: boolean; error?: string }>;
+    getSessionRuntimeStatus: (sessionId: string) => Promise<{
+      success: boolean;
+      mainRunning: boolean;
+      subagentRunning: boolean;
+      running: boolean;
+      error?: string;
+    }>;
     patchSessionModel: (options: {
       sessionId: string;
       model: string;

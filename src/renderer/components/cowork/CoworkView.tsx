@@ -95,7 +95,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const pendingPromptRef = useRef<string | null>(null);
 
   const currentSession = useSelector(selectCurrentSession);
+  const currentSessionId = currentSession?.id ?? null;
   const isStreaming = useSelector(selectIsStreaming);
+  const sessionRuntimeActivity = useSelector(
+    (state: RootState) => state.cowork.sessionRuntimeActivity,
+  );
   const config = useSelector(selectCoworkConfig);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
   const agentState = useSelector((state: RootState) => state.agent);
@@ -106,6 +110,18 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const quickActions = useSelector((state: RootState) => state.quickAction.actions);
   const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
+  const currentSessionRuntimeRunning = currentSession
+    ? currentSession.id.startsWith('temp-')
+      ? currentSession.status === 'running'
+      : sessionRuntimeActivity[currentSession.id] === true
+    : isStreaming;
+  const previousRuntimeStateRef = useRef<{
+    sessionId: string | null;
+    running: boolean;
+  }>({
+    sessionId: currentSessionId,
+    running: currentSessionRuntimeRunning,
+  });
   const currentSessionAgent = currentSession
     ? agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null
     : null;
@@ -444,7 +460,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   useEffect(() => {
     if (!isOpenClawEngine) return;
-    if (!currentSession || currentSession.status !== 'running') return;
+    if (!currentSession || !currentSessionRuntimeRunning) return;
 
     const runningSessionId = currentSession.id;
     const handleWindowFocus = () => {
@@ -455,7 +471,32 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     return () => {
       window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [currentSession, isOpenClawEngine]);
+  }, [currentSession, currentSessionRuntimeRunning, isOpenClawEngine]);
+
+  useEffect(() => {
+    if (!currentSessionId || currentSessionId.startsWith('temp-')) return;
+    const previousRuntimeState = previousRuntimeStateRef.current;
+    const isSameRuntimeSession = previousRuntimeState.sessionId === currentSessionId;
+    const skippedBecauseJustStopped =
+      isSameRuntimeSession && previousRuntimeState.running && !currentSessionRuntimeRunning;
+    previousRuntimeStateRef.current = {
+      sessionId: currentSessionId,
+      running: currentSessionRuntimeRunning,
+    };
+    let isCancelled = false;
+    const refresh = () => {
+      if (isCancelled) return;
+      void coworkService.refreshSessionRuntimeActivity(currentSessionId);
+    };
+    if (!skippedBecauseJustStopped) {
+      refresh();
+    }
+    const intervalId = window.setInterval(refresh, currentSessionRuntimeRunning ? 2000 : 5000);
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [currentSessionId, currentSessionRuntimeRunning]);
 
   useEffect(() => {
     setSelectedSubagent(null);
@@ -785,7 +826,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                 <CoworkPromptInput
                   onSubmit={handleSendMessage}
                   onStop={handleStopSession}
-                  isStreaming={isStreaming}
+                  isStreaming={currentSessionRuntimeRunning}
                   disabled={!isEngineReady}
                   placeholder={i18nService.t('coworkContinuePlaceholder')}
                   size="large"
