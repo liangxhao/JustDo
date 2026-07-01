@@ -18,16 +18,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import {
-  migrateScheduledTaskRunsToOpenclaw,
-  migrateScheduledTasksToOpenclaw,
-} from '../scheduledTask/migrate';
 import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
-import { AgentManager } from './features/agentManager';
 import { APP_NAME } from './core/appConstants';
 import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './core/autoLaunchManager';
+import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
+import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import type { CoworkMessage } from './coworkStore';
 import { CoworkStore } from './coworkStore';
+import { SqliteStore } from './data/sqliteStore';
+import { AgentManager } from './features/agentManager';
 import { GroupStore } from './groupStore';
 import { setLanguage, t } from './i18n';
 import {
@@ -41,6 +40,9 @@ import {
   OpenClawRuntimeAdapter,
 } from './libs/agentEngine';
 import type { PermissionResult } from './libs/agentEngine/types';
+import { saveCoworkApiConfig } from './libs/cowork/coworkConfigStore';
+import { getCoworkLogPath } from './libs/cowork/coworkLogger';
+import { probeCoworkModelReadiness } from './libs/cowork/coworkUtil';
 import {
   getCurrentApiConfig,
   resolveAllEnabledProviderConfigs,
@@ -48,10 +50,14 @@ import {
   resolveRawApiConfig,
   setStoreGetter,
 } from './libs/cowork/providerApiConfig';
-import { saveCoworkApiConfig } from './libs/cowork/coworkConfigStore';
-import { getCoworkLogPath } from './libs/cowork/coworkLogger';
-import { probeCoworkModelReadiness } from './libs/cowork/coworkUtil';
 import { exportLogsZip } from './libs/infra/logExport';
+import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
+import {
+  applySystemProxyEnv,
+  resolveSystemProxyUrl,
+  restoreOriginalProxyEnv,
+  setSystemProxyEnabled,
+} from './libs/infra/systemProxy';
 import { McpBridgeServer } from './libs/mcp/mcpBridgeServer';
 import { McpServerManager } from './libs/mcp/mcpServerManager';
 import { resolveQualifiedAgentModelRef } from './libs/openclaw/openclawAgentModels';
@@ -64,19 +70,9 @@ import type { McpBridgeConfig } from './libs/openclaw/openclawConfigSync';
 import { buildProviderSelection, OpenClawConfigSync } from './libs/openclaw/openclawConfigSync';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclaw/openclawEngineManager';
 import { stopOpenClawTokenProxy } from './libs/openclaw/openclawTokenProxy';
-import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
-import {
-  applySystemProxyEnv,
-  resolveSystemProxyUrl,
-  restoreOriginalProxyEnv,
-  setSystemProxyEnabled,
-} from './libs/infra/systemProxy';
-import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
 import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';
 import { SkillManager } from './skillManager';
-import { SqliteStore } from './data/sqliteStore';
-import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 
 // 设置应用程序名称
 app.setName(APP_NAME);
@@ -4485,27 +4481,6 @@ if (!gotTheLock) {
         // CronJobService not available yet, will start when OpenClaw is ready.
       }
 
-      (async () => {
-        // One-time migration: move tasks from legacy SQLite tables to OpenClaw gateway.
-        migrateScheduledTasksToOpenclaw({
-          db: getStore().getDatabase(),
-          getKv: key => getStore().get(key),
-          setKv: (key, value) => getStore().set(key, value),
-          cronJobService: getCronJobService(),
-        }).catch(err => {
-          console.warn('[Main] Scheduled tasks migration failed:', err);
-        });
-
-        // One-time migration: copy legacy run history to OpenClaw cron/runs/ JSONL files.
-        migrateScheduledTaskRunsToOpenclaw({
-          db: getStore().getDatabase(),
-          getKv: key => getStore().get(key),
-          setKv: (key, value) => getStore().set(key, value),
-          openclawStateDir: getOpenClawEngineManager().getStateDir(),
-        }).catch(err => {
-          console.warn('[Main] Scheduled task run history migration failed:', err);
-        });
-      })();
     });
   };
 
