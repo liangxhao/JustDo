@@ -554,6 +554,185 @@ test('hydrates standalone tool result input from standalone tool use metadata', 
   expect(extractToolCards(attached[1])[0]?.args).toEqual({ file_path: 'README.md' });
 });
 
+test('hydrates standalone tool result input from an enveloped assistant tool call', () => {
+  const toolCallId = 'call_00_iIMN8XpMcvtg9VBlJxGo2769';
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        type: 'message',
+        id: 'assistant-envelope',
+        timestamp: '2026-07-01T03:37:32.824Z',
+        message: {
+          role: 'assistant',
+          timestamp: 1782877052824,
+          content: [
+            { type: 'thinking', thinking: 'The document is generated.' },
+            { type: 'text', text: '现在清理一下临时文件~' },
+            {
+              type: 'toolCall',
+              id: toolCallId,
+              name: 'exec',
+              arguments: {
+                command: 'Remove-Item "E:\\workspace\\examples\\1111\\create_doc.js" -Force 2>&1',
+                timeout: 5,
+              },
+              partialArgs:
+                '{"command":"Remove-Item \\"E:\\\\workspace\\\\examples\\\\1111\\\\create_doc.js\\" -Force 2>&1","timeout":5}',
+            },
+          ],
+        },
+      },
+      {
+        role: 'assistant',
+        timestamp: 1782877052825,
+        content: [{ type: 'text', text: 'visible message near the tool result' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId,
+        toolName: 'exec',
+        timestamp: 1782877057723,
+        content: [{ type: 'text', text: '(no output)' }],
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessage = firstAssistantMessages(items).find(message =>
+    JSON.stringify(message).includes('visible message near the tool result'),
+  );
+  const attached = attachedToolMessages(assistantMessage);
+  expect(attached).toHaveLength(1);
+  expect(extractToolCards(attached[0])[0]?.args).toEqual({
+    command: 'Remove-Item "E:\\workspace\\examples\\1111\\create_doc.js" -Force 2>&1',
+    timeout: 5,
+  });
+});
+
+test('attaches a tool result to the preceding assistant message that owns the tool call after text', () => {
+  const toolCallId = 'call_00_iIMN8XpMcvtg9VBlJxGo2769';
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        timestamp: 1782877052810,
+        content: [
+          { type: 'thinking', thinking: 'Previous thinking' },
+          {
+            type: 'toolCall',
+            id: 'previous-tool',
+            name: 'exec',
+            arguments: { command: 'previous' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'previous-tool',
+        toolName: 'exec',
+        timestamp: 1782877052818,
+        content: [{ type: 'text', text: 'previous output' }],
+      },
+      {
+        role: 'assistant',
+        timestamp: 1782877052824,
+        content: [
+          { type: 'thinking', thinking: 'The document is generated.' },
+          { type: 'text', text: '现在清理一下临时文件~' },
+          {
+            type: 'toolCall',
+            id: toolCallId,
+            name: 'exec',
+            arguments: {},
+            partialArgs:
+              '{"command":"Remove-Item \\"E:\\\\workspace\\\\examples\\\\1111\\\\create_doc.js\\" -Force 2>&1","timeout":5}',
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId,
+        toolName: 'exec',
+        timestamp: 1782877057723,
+        content: [{ type: 'text', text: '(no output)' }],
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+  const cleanupMessage = assistantMessages.find(message =>
+    JSON.stringify(message).includes('现在清理一下临时文件'),
+  );
+  expect(cleanupMessage).toBeDefined();
+  const attached = attachedToolMessages(cleanupMessage);
+  expect(attached).toHaveLength(1);
+  expect(extractToolCards(cleanupMessage)[0]?.args).toMatchObject({ timeout: 5 });
+  expect(extractToolCards(attached[0])[0]?.outputText).toBe('(no output)');
+});
+
+test('prefers the assistant message that owns the matching tool call over a nearby assistant', () => {
+  const toolCallId = 'tool-cleanup';
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        timestamp: 1000,
+        content: [
+          { type: 'text', text: 'content before cleanup' },
+          {
+            type: 'toolCall',
+            id: toolCallId,
+            name: 'exec',
+            arguments: { command: 'Remove-Item tmp.js' },
+          },
+        ],
+      },
+      {
+        role: 'assistant',
+        timestamp: 1001,
+        content: [{ type: 'text', text: 'final text after cleanup' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId,
+        toolName: 'exec',
+        timestamp: 1002,
+        content: [{ type: 'text', text: '(no output)' }],
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+  const ownerMessage = assistantMessages.find(message =>
+    JSON.stringify(message).includes('content before cleanup'),
+  );
+  const nearbyMessage = assistantMessages.find(message =>
+    JSON.stringify(message).includes('final text after cleanup'),
+  );
+  expect(attachedToolMessages(ownerMessage)).toHaveLength(1);
+  expect(attachedToolMessages(nearbyMessage)).toHaveLength(0);
+});
+
 test('preserves assistant model name on grouped messages', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',

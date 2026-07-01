@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
+import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
@@ -177,6 +178,10 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.on('openclaw:engine:onProgress', handler);
         return () => ipcRenderer.removeListener('openclaw:engine:onProgress', handler);
       },
+    },
+    history: {
+      getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) =>
+        ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
     },
   },
   agents: {

@@ -263,6 +263,43 @@ function findAssistantWithAttachedToolIndex(items: ChatItem[], toolMessage: unkn
   return null;
 }
 
+function findAssistantWithToolCallContentIndex(items: ChatItem[], toolMessage: unknown): number | null {
+  const toolCallId = extractToolCallId(toolMessage);
+  if (!toolCallId) {
+    return null;
+  }
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item?.kind !== 'message') {
+      continue;
+    }
+    const raw = asRecord(item.message);
+    if (!raw || typeof raw.role !== 'string' || raw.role.toLowerCase() !== 'assistant') {
+      continue;
+    }
+    const content = Array.isArray(raw.content) ? raw.content : [];
+    const hasMatchingToolCall = content.some(block => {
+      const itemRecord = asRecord(block);
+      if (!itemRecord) return false;
+      const type = typeof itemRecord.type === 'string' ? itemRecord.type.toLowerCase() : '';
+      if (!['toolcall', 'tool_call', 'tooluse', 'tool_use'].includes(type)) return false;
+      const nestedId = [
+        itemRecord.id,
+        itemRecord.toolCallId,
+        itemRecord.tool_call_id,
+        itemRecord.toolUseId,
+        itemRecord.tool_use_id,
+      ].find(value => typeof value === 'string' && value.trim()) as string | undefined;
+      return nestedId?.trim() === toolCallId;
+    });
+    if (hasMatchingToolCall) {
+      return index;
+    }
+  }
+  return null;
+}
+
 function hasActiveToolTimeline(toolMessages: unknown[]): boolean {
   const activeByToolId = new Map<string, boolean>();
   let anonymousActive = false;
@@ -391,6 +428,14 @@ function attachToolToNearestAssistant(items: ChatItem[], toolMessage: unknown): 
   if (
     existingToolIndex != null &&
     attachToolToAssistantAtIndex(items, existingToolIndex, toolMessage)
+  ) {
+    return;
+  }
+
+  const ownerToolIndex = findAssistantWithToolCallContentIndex(items, toolMessage);
+  if (
+    ownerToolIndex != null &&
+    attachToolToAssistantAtIndex(items, ownerToolIndex, toolMessage)
   ) {
     return;
   }
@@ -957,8 +1002,42 @@ function resolveHistoryStartIndex(
 function enrichToolResultsWithInputs(messages: unknown[]): unknown[] {
   const calls = new Map<string, { name?: string; input: unknown }>();
 
-  for (const message of messages) {
+  const hasMeaningfulToolInput = (value: unknown): boolean => {
+    if (value === undefined || value === null) return false;
+    if (typeof value === 'string') return value.trim().length > 0 && value.trim() !== '{}';
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+    return true;
+  };
+
+  const coerceToolInput = (value: unknown): unknown => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return value;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  };
+
+  const resolveToolInput = (source: Record<string, unknown>): unknown => {
+    for (const value of [source.toolInput, source.tool_input, source.arguments, source.args, source.input]) {
+      const coerced = coerceToolInput(value);
+      if (hasMeaningfulToolInput(coerced)) return coerced;
+    }
+    return coerceToolInput(source.partialArgs);
+  };
+
+  const unwrapHistoryEnvelope = (message: unknown): Record<string, unknown> | null => {
     const raw = asRecord(message);
+    if (!raw) return null;
+    const nested = asRecord(raw.message);
+    return nested ?? raw;
+  };
+
+  for (const message of messages) {
+    const raw = unwrapHistoryEnvelope(message);
     if (!raw) continue;
 
     const directToolUseId = [raw.toolCallId, raw.tool_call_id, raw.toolUseId, raw.tool_use_id].find(
@@ -972,7 +1051,10 @@ function enrichToolResultsWithInputs(messages: unknown[]): unknown[] {
       metadata?.tool_use_id,
     ].find(value => typeof value === 'string' && value.trim()) as string | undefined;
     const directId = directToolUseId ?? metadataToolUseId;
-    const directInput = raw.toolInput ?? raw.tool_input ?? metadata?.toolInput ?? metadata?.tool_input;
+    const directInput = resolveToolInput({
+      ...raw,
+      ...(metadata ?? {}),
+    });
     if (directId && directInput !== undefined) {
       calls.set(directId, {
         name:
@@ -1001,7 +1083,7 @@ function enrichToolResultsWithInputs(messages: unknown[]): unknown[] {
       if (!id) continue;
       calls.set(id, {
         name: typeof item.name === 'string' ? item.name : undefined,
-        input: item.arguments ?? item.args ?? item.input ?? {},
+        input: resolveToolInput(item),
       });
     }
   }
@@ -1009,11 +1091,23 @@ function enrichToolResultsWithInputs(messages: unknown[]): unknown[] {
   return messages.map(message => {
     const raw = asRecord(message);
     if (!raw) return message;
-    const id = [raw.toolCallId, raw.tool_call_id, raw.toolUseId, raw.tool_use_id].find(
+    const nested = asRecord(raw.message);
+    const target = nested ?? raw;
+    const id = [target.toolCallId, target.tool_call_id, target.toolUseId, target.tool_use_id].find(
       value => typeof value === 'string' && value.trim(),
     ) as string | undefined;
     const call = id ? calls.get(id) : undefined;
-    if (!call || raw.toolInput !== undefined || raw.tool_input !== undefined) return message;
+    if (!call || target.toolInput !== undefined || target.tool_input !== undefined) return message;
+    if (nested) {
+      return {
+        ...raw,
+        message: {
+          ...nested,
+          toolName: nested.toolName ?? nested.tool_name ?? call.name,
+          toolInput: call.input,
+        },
+      };
+    }
     return {
       ...raw,
       toolName: raw.toolName ?? raw.tool_name ?? call.name,

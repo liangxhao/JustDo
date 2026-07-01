@@ -102,11 +102,23 @@ function toolCardDedupeKey(card: ToolCard): string {
   return isGeneratedFallbackId ? `${card.id}:${card.name}` : normalizedId;
 }
 
+function hasMeaningfulToolInput(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0 && value.trim() !== '{}';
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
 function mergeToolCard(existing: ToolCard, incoming: ToolCard): ToolCard {
+  const shouldUseIncomingInput =
+    hasMeaningfulToolInput(incoming.args) && !hasMeaningfulToolInput(existing.args);
   return {
     ...existing,
-    args: incoming.args ?? existing.args,
-    inputText: incoming.inputText ?? existing.inputText,
+    args: shouldUseIncomingInput ? incoming.args : (existing.args ?? incoming.args),
+    inputText: shouldUseIncomingInput
+      ? incoming.inputText
+      : (existing.inputText ?? incoming.inputText),
     outputText: incoming.outputText ?? existing.outputText,
     isError: incoming.isError ?? existing.isError,
     messageId: incoming.messageId ?? existing.messageId,

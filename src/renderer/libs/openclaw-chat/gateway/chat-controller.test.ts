@@ -104,3 +104,41 @@ test('clears live overlays before the post-final history refresh', () => {
   expect(controller.state.chatToolMessages).toHaveLength(0);
   expect(controller.state.chatStreamSegments).toHaveLength(0);
 });
+
+test('merges later non-empty tool arguments over an earlier empty tool call', () => {
+  const controller = new ChatController();
+  const merged = (
+    controller as unknown as {
+      mergeToolMessageContent(existingContent: unknown, nextContent: unknown): unknown[];
+    }
+  ).mergeToolMessageContent(
+    [
+      {
+        type: 'toolcall',
+        toolCallId: 'tool-1',
+        name: 'exec',
+        arguments: {},
+      },
+    ],
+    [
+      {
+        type: 'toolcall',
+        toolCallId: 'tool-1',
+        name: 'exec',
+        arguments: { command: 'Remove-Item tmp.js', timeout: 5 },
+      },
+      {
+        type: 'toolresult',
+        toolCallId: 'tool-1',
+        name: 'exec',
+        text: '(no output)',
+      },
+    ],
+  );
+
+  expect((merged[0] as Record<string, unknown>).arguments).toEqual({
+    command: 'Remove-Item tmp.js',
+    timeout: 5,
+  });
+  expect((merged[1] as Record<string, unknown>).text).toBe('(no output)');
+});

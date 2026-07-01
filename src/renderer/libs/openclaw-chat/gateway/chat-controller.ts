@@ -70,6 +70,105 @@ function debugLog(...args: unknown[]): void {
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function getToolResultId(message: unknown): string | null {
+  const raw = asRecord(message);
+  if (!raw) return null;
+  const id = [raw.toolCallId, raw.tool_call_id, raw.toolUseId, raw.tool_use_id].find(
+    value => typeof value === 'string' && value.trim(),
+  );
+  return typeof id === 'string' ? id : null;
+}
+
+function hasMessageToolInput(message: unknown): boolean {
+  const raw = asRecord(message);
+  if (!raw) return false;
+  for (const value of [raw.toolInput, raw.tool_input, raw.arguments, raw.args, raw.input]) {
+    if (hasMeaningfulToolInput(value)) return true;
+  }
+  return false;
+}
+
+async function hydrateMissingToolInputsFromLocalState(
+  sessionKey: string,
+  messages: unknown[],
+): Promise<unknown[]> {
+  const missingIds = Array.from(
+    new Set(
+      messages
+        .filter(message => {
+          const raw = asRecord(message);
+          const role = typeof raw?.role === 'string' ? raw.role.toLowerCase() : '';
+          return ['toolresult', 'tool_result', 'tool', 'function'].includes(role);
+        })
+        .filter(message => !hasMessageToolInput(message))
+        .map(getToolResultId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  if (missingIds.length === 0) return messages;
+
+  const electronApi = (globalThis as {
+    electron?: {
+      openclaw?: {
+        history?: {
+          getToolInputs?: (params: {
+            sessionKey: string;
+            toolCallIds: string[];
+          }) => Promise<{ success?: boolean; inputs?: Record<string, { name?: string; input?: unknown }> }>;
+        };
+      };
+    };
+  }).electron;
+  const result = await electronApi?.openclaw?.history?.getToolInputs?.({
+    sessionKey,
+    toolCallIds: missingIds,
+  });
+  const inputs = result?.success && result.inputs ? result.inputs : {};
+  if (Object.keys(inputs).length === 0) return messages;
+
+  return messages.map(message => {
+    const raw = asRecord(message);
+    if (!raw || hasMessageToolInput(raw)) return message;
+    const id = getToolResultId(raw);
+    const hydrated = id ? inputs[id] : undefined;
+    if (!hydrated || !hasMeaningfulToolInput(hydrated.input)) return message;
+    return {
+      ...raw,
+      toolName: raw.toolName ?? raw.tool_name ?? hydrated.name,
+      toolInput: hydrated.input,
+    };
+  });
+}
+
+function toolInputFromBlock(block: unknown): unknown {
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return undefined;
+  const record = block as Record<string, unknown>;
+  return record.arguments ?? record.args ?? record.input;
+}
+
+function hasMeaningfulToolInput(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0 && value.trim() !== '{}';
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+function shouldPreferNextToolCall(existingToolCall: unknown, nextToolCall: unknown): boolean {
+  if (!nextToolCall) return false;
+  if (!existingToolCall) return true;
+  return (
+    !hasMeaningfulToolInput(toolInputFromBlock(existingToolCall)) &&
+    hasMeaningfulToolInput(toolInputFromBlock(nextToolCall))
+  );
+}
+
 // ─── ChatController ─────────────────────────────────────────────────────────
 
 export class ChatController {
@@ -284,7 +383,9 @@ export class ChatController {
     const nextResults = next.filter(
       item => (item as Record<string, unknown> | null)?.type === 'toolresult',
     );
-    const toolCall = existingToolCall ?? nextToolCall;
+    const toolCall = shouldPreferNextToolCall(existingToolCall, nextToolCall)
+      ? nextToolCall
+      : (existingToolCall ?? nextToolCall);
     return [
       ...(toolCall ? [toolCall] : []),
       ...(nextResults.length > 0 ? nextResults : existingResults),
@@ -507,9 +608,10 @@ export class ChatController {
       });
       // Remove stream-fallback messages — the real persisted message from the
       // gateway will replace them, preventing content duplication.
-      const messages = rawMessages
+      const projectedMessages = rawMessages
         .filter(m => !shouldHideMessage(m))
         .filter(m => !(m as Record<string, unknown>)?.__openclawStreamFallback);
+      const messages = await hydrateMissingToolInputsFromLocalState(sessionKey, projectedMessages);
 
       // Guard: if the gateway returned no messages but we already have
       // materialized content from lifecycle:finishing, don't overwrite it.

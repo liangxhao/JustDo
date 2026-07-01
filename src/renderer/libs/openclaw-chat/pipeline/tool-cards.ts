@@ -35,6 +35,24 @@ function coerceArgs(value: unknown): unknown {
   }
 }
 
+function hasMeaningfulToolInput(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0 && value.trim() !== '{}';
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+function resolveToolArgs(item: Record<string, unknown>): unknown {
+  for (const value of [item.arguments, item.args, item.input]) {
+    const coerced = coerceArgs(value);
+    if (hasMeaningfulToolInput(coerced)) {
+      return coerced;
+    }
+  }
+  return coerceArgs(item.partialArgs);
+}
+
 function extractToolText(item: Record<string, unknown>): string | undefined {
   if (typeof item.text === 'string') {
     return item.text;
@@ -228,9 +246,12 @@ export function extractToolCards(message: unknown, prefix = 'tool'): ToolCard[] 
     const isToolCall =
       ['toolcall', 'tool_call', 'tooluse', 'tool_use'].includes(kind) ||
       (typeof item.name === 'string' &&
-        (item.arguments != null || item.args != null || item.input != null));
+        (item.arguments != null ||
+          item.args != null ||
+          item.input != null ||
+          item.partialArgs != null));
     if (isToolCall) {
-      const args = coerceArgs(item.arguments ?? item.args ?? item.input);
+      const args = resolveToolArgs(item);
       cards.push({
         id: resolveToolCardId(item, m, index, prefix),
         name: typeof item.name === 'string' ? item.name : 'tool',

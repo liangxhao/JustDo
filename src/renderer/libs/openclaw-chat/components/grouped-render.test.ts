@@ -179,4 +179,65 @@ describe('renderMessageGroup', () => {
     expect(rendered).toContain('tool-timeline__item--completed');
     expect(rendered).not.toContain('tool-timeline__item--running');
   });
+
+  test('keeps input for a tool call after assistant text when result is attached', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-msg',
+            message: {
+              role: 'assistant',
+              timestamp: 1782877052824,
+              content: [
+                { type: 'thinking', thinking: 'The document is generated.' },
+                { type: 'text', text: '现在清理一下临时文件~' },
+                {
+                  type: 'toolCall',
+                  id: 'call_00_iIMN8XpMcvtg9VBlJxGo2769',
+                  name: 'exec',
+                  arguments: {},
+                  partialArgs:
+                    '{"command":"Remove-Item \\"E:\\\\workspace\\\\examples\\\\1111\\\\create_doc.js\\" -Force 2>&1","timeout":5}',
+                },
+              ],
+              __justdoAttachedToolMessages: [
+                {
+                  role: 'assistant',
+                  toolCallId: 'call_00_iIMN8XpMcvtg9VBlJxGo2769',
+                  toolName: 'exec',
+                  content: [
+                    {
+                      type: 'toolcall',
+                      toolCallId: 'call_00_iIMN8XpMcvtg9VBlJxGo2769',
+                      name: 'exec',
+                      arguments: {},
+                    },
+                    {
+                      type: 'toolresult',
+                      toolCallId: 'call_00_iIMN8XpMcvtg9VBlJxGo2769',
+                      name: 'exec',
+                      text: '(no output)',
+                    },
+                  ],
+                  isError: false,
+                },
+              ],
+            },
+          },
+        ],
+        timestamp: 1782877052824,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered.match(/tool-timeline__item /g)).toHaveLength(1);
+    expect(rendered).toContain('Remove-Item');
+    expect(rendered).toContain('create_doc.js');
+    expect(rendered).toContain('"timeout": 5');
+    expect(rendered).not.toContain('<pre><code>{}</code></pre>');
+  });
 });
