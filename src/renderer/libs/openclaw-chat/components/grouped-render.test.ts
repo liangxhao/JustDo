@@ -42,6 +42,41 @@ function stringifyTemplate(value: unknown): string {
   return Object.values(record).map(stringifyTemplate).join('');
 }
 
+function templateIncludesAttribute(
+  value: unknown,
+  className: string,
+  attributeName: string,
+): boolean {
+  if (value === null || value === undefined || typeof value === 'boolean') return false;
+  if (Array.isArray(value)) {
+    return value.some(item => templateIncludesAttribute(item, className, attributeName));
+  }
+  if (typeof value !== 'object') return false;
+
+  const record = value as Record<string, unknown>;
+  const strings = record.strings;
+  const values = record.values;
+  if (Array.isArray(strings) && Array.isArray(values)) {
+    for (let index = 0; index < strings.length; index += 1) {
+      const part = String(strings[index]);
+      if (
+        part.includes(`class="${className}"`) &&
+        part.includes(` ${attributeName}=`) &&
+        values[index] === true
+      ) {
+        return true;
+      }
+      if (templateIncludesAttribute(values[index], className, attributeName)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return Object.values(record).some(item =>
+    templateIncludesAttribute(item, className, attributeName),
+  );
+}
+
 describe('shouldRenderGroupFooter', () => {
   test('hides assistant footer when another assistant group follows', () => {
     expect(shouldRenderGroupFooterByNextItem(createGroup('assistant'), createGroup('assistant'))).toBe(
@@ -288,5 +323,81 @@ describe('renderMessageGroup', () => {
     expect(expanded).toContain('class="tool-timeline__summary"');
     expect(expanded).toContain('class="tool-timeline__body"');
     expect(expanded).toContain('tool-timeline__summary-input');
+  });
+
+  test('renders consecutive history tool blocks as one collapsed tools timeline', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-group-tools',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-msg-tools',
+            message: {
+              role: 'assistant',
+              timestamp: 1782877052824,
+              content: [
+                {
+                  type: 'toolCall',
+                  id: 'call_1',
+                  name: 'Read',
+                  arguments: { file_path: 'README.md' },
+                },
+                {
+                  type: 'toolCall',
+                  id: 'call_2',
+                  name: 'Write',
+                  arguments: { file_path: 'out.txt', content: 'ok' },
+                },
+                {
+                  type: 'toolCall',
+                  id: 'call_3',
+                  name: 'Bash',
+                  arguments: { command: 'npm test' },
+                },
+              ],
+            },
+          },
+        ],
+        timestamp: 1782877052824,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered.match(/class="tool-timeline"/g)).toHaveLength(1);
+    expect(rendered).toContain('3 tools: Read、Write、Bash');
+    expect(rendered.match(/tool-timeline__item /g)).toHaveLength(3);
+  });
+
+  test('keeps tool input and result details collapsed even when the tools timeline is open', () => {
+    const rendered = renderMessageGroup({
+      kind: 'group',
+      key: 'assistant-group-expanded',
+      role: 'assistant',
+      messages: [
+        {
+          key: 'assistant-msg-expanded',
+          message: {
+            role: 'assistant',
+            timestamp: 1782877052824,
+            __justdoToolTimelineOpen: true,
+            content: [
+              {
+                type: 'toolCall',
+                id: 'call_1',
+                name: 'Read',
+                arguments: { file_path: 'README.md' },
+              },
+            ],
+          },
+        },
+      ],
+      timestamp: 1782877052824,
+      isStreaming: false,
+    });
+
+    expect(stringifyTemplate(rendered)).toContain('class="tool-timeline"');
+    expect(templateIncludesAttribute(rendered, 'tool-timeline__body', 'open')).toBe(false);
   });
 });

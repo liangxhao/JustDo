@@ -228,6 +228,13 @@ function renderAssistantMessageInContentOrder(
 
   const ordered: Array<TemplateResult | typeof nothing> = [];
   const consumedAttached = new Set<unknown>();
+  let pendingToolCards: ToolCard[] = [];
+
+  const flushPendingToolCards = () => {
+    if (pendingToolCards.length === 0) return;
+    ordered.push(renderAssistantToolCards(pendingToolCards, rawMessage));
+    pendingToolCards = [];
+  };
 
   for (let index = 0; index < content.length; index += 1) {
     const block = asRecord(content[index]);
@@ -235,6 +242,7 @@ function renderAssistantMessageInContentOrder(
     const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
 
     if (type === 'thinking') {
+      flushPendingToolCards();
       const thinking = typeof block.thinking === 'string' ? block.thinking : '';
       if (thinking) {
         ordered.push(renderThinkingBlock(thinking));
@@ -243,6 +251,7 @@ function renderAssistantMessageInContentOrder(
     }
 
     if (type === 'text') {
+      flushPendingToolCards();
       ordered.push(renderAssistantTextBlock(typeof block.text === 'string' ? block.text : ''));
       continue;
     }
@@ -255,9 +264,10 @@ function renderAssistantMessageInContentOrder(
       for (const attachedMessage of attached) {
         consumedAttached.add(attachedMessage);
       }
-      ordered.push(renderAssistantToolCards([...cards, ...toolMessagesToCards(attached)], rawMessage));
+      pendingToolCards = [...pendingToolCards, ...cards, ...toolMessagesToCards(attached)];
     }
   }
+  flushPendingToolCards();
 
   const remainingAttached = getAttachedToolMessages(rawMessage).filter(
     attached => !consumedAttached.has(attached),
@@ -472,7 +482,7 @@ function renderToolTimeline(cards: ToolCard[], collapsed: boolean): TemplateResu
     <details class="tool-timeline" ?open=${!collapsed}>
       <summary class="tool-timeline__summary">${summary}</summary>
       <ol class="tool-timeline__list">
-        ${cards.map(card => renderToolTimelineItem(card, collapsed))}
+        ${cards.map(card => renderToolTimelineItem(card))}
       </ol>
     </details>
   `;
@@ -490,7 +500,7 @@ function formatToolTimelineSummaryInput(card: ToolCard): string {
   return input.trim().replace(/\s+/g, ' ');
 }
 
-function renderToolTimelineItem(card: ToolCard, collapsed: boolean): TemplateResult {
+function renderToolTimelineItem(card: ToolCard): TemplateResult {
   const display = resolveToolDisplay(card.name);
   const resultText = card.outputText ?? i18nService.t('coworkToolRunning');
   const summaryInput = formatToolTimelineSummaryInput(card);
@@ -502,7 +512,7 @@ function renderToolTimelineItem(card: ToolCard, collapsed: boolean): TemplateRes
   return html`
     <li class="tool-timeline__item ${statusClass}">
       <div class="tool-timeline__marker" aria-hidden="true"></div>
-      <details class="tool-timeline__body" ?open=${!collapsed}>
+      <details class="tool-timeline__body">
         <summary class="tool-timeline__title">
           <span class="tool-timeline__name">${display.title}</span>
           <span class="tool-timeline__summary-input">${summaryInput}</span>
