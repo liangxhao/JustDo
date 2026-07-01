@@ -401,65 +401,7 @@ class RateLimiter {
 
 ---
 
-## 7. Skills 安全审计
-
-### 7.1 SkillSecurityScanner
-
-**文件**: `src/main/libs/skillSecurity/skillSecurityScanner.ts`
-
-安装第三方 Skill（从 ClawHub 或本地文件）前进行安全扫描：
-
-```typescript
-export async function scanSkillSecurity(skillDir: string): Promise<SkillSecurityReport> {
-  // 1. 收集可扫描文件（最多 500 个，512KB 限制）
-  const files = collectScannableFiles(skillDir);
-
-  for (const file of files) {
-    // 2. SKILL.md → prompt injection 审计
-    if (isSkillMdFile(file)) {
-      findings.push(...scanPromptInjection(content, file.relativePath));
-      continue;
-    }
-
-    // 3. JS/TS → js-x-ray AST 分析 + 正则规则
-    if (isJsFile(file)) {
-      findings.push(...await scanFileWithJsxray(file, content));
-      findings.push(...scanFileWithRegex(file, content));
-      continue;
-    }
-
-    // 4. 其他文件 → 正则规则
-    findings.push(...scanFileWithRegex(file, content));
-  }
-
-  // 5. package.json install scripts 检查
-  findings.push(...auditPackageJson(skillDir));
-
-  return { riskLevel, riskScore, findings, dimensionSummary, ... };
-}
-```
-
-### 7.2 检测工具链
-
-| 工具 | 用途 | 文件 |
-|------|------|------|
-| js-x-ray (`@nodesecure/js-x-ray`) | AST 级 JS 安全分析 | `skillSecurityScanner.ts` |
-| 正则规则引擎 | 覆盖 Shell、Python、YAML 等 | `skillSecurityRules.ts` |
-| Prompt Injection 审计 | 检测 SKILL.md 中的提示注入 | `skillSecurityPromptAudit.ts` |
-
-### 7.3 检测维度
-
-| 维度 | 说明 | 严重级别 |
-|------|------|----------|
-| `dangerous_command` | 危险命令执行 (eval, child_process) | danger |
-| `network` | 网络请求、数据外泄 | warning / critical |
-| `process` | 可疑进程、原型污染 | info / critical |
-| `file_access` | 敏感文件访问 | info |
-| `prompt_injection` | 提示注入攻击 | critical |
-
----
-
-## 8. 日志安全
+## 7. 日志安全
 
 ### 8.1 敏感信息过滤
 
@@ -488,7 +430,7 @@ function sanitizeErrorMessage(error: Error): string {
 
 ---
 
-## 9. 安全清单
+## 8. 安全清单
 
 ### 9.1 提交前检查
 
@@ -511,16 +453,12 @@ function sanitizeErrorMessage(error: Error): string {
 
 ---
 
-## 10. 关键文件清单
+## 9. 关键文件清单
 
 | 文件 | 职责 |
 |------|------|
 | `src/main/main.ts` | BrowserWindow 安全配置 |
 | `src/main/preload.ts` | Preload 安全桥接 |
 | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | 权限请求处理 |
-| `src/main/libs/skillSecurity/skillSecurityScanner.ts` | Skill 安全扫描主入口 |
-| `src/main/libs/skillSecurity/skillSecurityRules.ts` | 安全规则定义 |
-| `src/main/libs/skillSecurity/skillSecurityTypes.ts` | 安全扫描类型定义 |
-| `src/main/libs/skillSecurity/skillSecurityPromptAudit.ts` | Prompt Injection 审计 |
 | `src/main/libs/commandSafety.ts` | 危险命令检测 |
 | `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求 UI |

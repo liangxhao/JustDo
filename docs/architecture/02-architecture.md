@@ -263,11 +263,6 @@ src/main/
 │   ├── logExport.ts                # 日志导出
 │   ├── pythonRuntime.ts            # Python 运行时
 │   ├── systemProxy.ts              # 系统代理
-│   └── skillSecurity/              # Skills 安全检查
-│       ├── skillSecurityPromptAudit.ts
-│       ├── skillSecurityRules.ts
-│       ├── skillSecurityScanner.ts
-│       └── skillSecurityTypes.ts
 ├── scheduledTask/                   # 定时任务
 ```
 

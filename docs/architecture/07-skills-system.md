@@ -345,86 +345,7 @@ interface ClawHubDetail {
 
 ---
 
-## 7. Skill 安全审计
-
-### 7.1 SkillSecurityScanner
-
-**文件**: `src/main/libs/skillSecurity/skillSecurityScanner.ts`
-
-安装第三方 Skill（从 ClawHub 或本地文件）前进行安全扫描。扫描使用多引擎检测：
-
-```typescript
-export async function scanSkillSecurity(skillDir: string): Promise<SkillSecurityReport> {
-  // 1. 收集可扫描文件（最大 500 个，每个最大 512KB）
-  const files = collectScannableFiles(skillDir);
-
-  for (const file of files) {
-    // 2. SKILL.md → prompt injection 审计
-    if (path.basename(file.absolutePath) === 'SKILL.md') {
-      findings.push(...scanPromptInjection(content, file.relativePath));
-      continue;
-    }
-
-    // 3. JS/TS 文件 → js-x-ray AST 分析 + 正则规则
-    if (JS_EXTENSIONS.has(file.extension)) {
-      findings.push(...await scanFileWithJsxray(file, content));
-      findings.push(...scanFileWithRegex(file, content));
-      continue;
-    }
-
-    // 4. 其他文件 → 正则规则引擎
-    findings.push(...scanFileWithRegex(file, content));
-  }
-
-  // 5. 检查 package.json install scripts
-  findings.push(...auditPackageJson(skillDir));
-
-  return { riskLevel, riskScore, findings, dimensionSummary, ... };
-}
-```
-
-### 7.2 检测维度
-
-| 维度 | 说明 | 严重级别 |
-|------|------|----------|
-| `dangerous_command` | 危险命令执行 | danger |
-| `network` | 网络请求和数据外泄 | warning / critical |
-| `process` | 可疑进程操作 | critical |
-| `file_access` | 文件系统访问 | info |
-
-### 7.3 工具链
-
-1. **js-x-ray** (`@nodesecure/js-x-ray`) — AST 级 JS 安全分析，检测混淆代码、原型污染、SQL 注入等
-2. **正则规则引擎** — 在 `skillSecurityRules.ts` 中定义，覆盖 SKILL.md、Shell、Python 等文件类型
-3. **Prompt Injection 审计** — 在 `skillSecurityPromptAudit.ts` 中定义，检测 SKILL.md 中的提示注入
-
-### 7.4 扫描结果类型
-
-```typescript
-interface SkillSecurityReport {
-  scannedAt: number;
-  skillName: string;
-  riskLevel: 'safe' | 'low' | 'medium' | 'high' | 'critical';
-  riskScore: number;           // 0-100
-  findings: SecurityFinding[]; // 最多 100 条
-  dimensionSummary: Record<string, { count: number; maxSeverity: string }>;
-  scanDurationMs: number;
-}
-
-interface SecurityFinding {
-  dimension: SecurityDimension;
-  severity: FindingSeverity;   // info / warning / danger / critical
-  ruleId: string;
-  file: string;
-  line?: number;
-  matchedPattern: string;
-  description: string;
-}
-```
-
----
-
-## 8. Skills UI
+## 7. Skills UI
 
 使用 React 组件进行 Skill 管理的 UI 展示和交互：
 
@@ -445,16 +366,12 @@ UI 交互流程：
 
 ---
 
-## 9. 关键文件清单
+## 8. 关键文件清单
 
 | 文件 | 职责 |
 |------|------|
 | `src/main/libs/agentEngine/rpc/skillRpc.ts` | Skill RPC 处理（Gateway 通信） |
 | `src/main/libs/agentEngine/types.ts` | Skill 相关类型定义 |
-| `src/main/libs/skillSecurity/skillSecurityScanner.ts` | 安全扫描主入口 |
-| `src/main/libs/skillSecurity/skillSecurityRules.ts` | 安全规则定义 |
-| `src/main/libs/skillSecurity/skillSecurityTypes.ts` | 安全扫描类型定义 |
-| `src/main/libs/skillSecurity/skillSecurityPromptAudit.ts` | Prompt Injection 审计 |
 | `resources/builtin-skills.json` | 构建时 Skills 配置清单 |
 | `resources/skills/*/SKILL.md` | Skill 定义文档 |
 | `scripts/install-openclaw-runtime.cjs` | 构建脚本（Skills 部署步骤） |
@@ -466,7 +383,7 @@ UI 交互流程：
 
 ---
 
-## 10. 运行时要点
+## 9. 运行时要点
 
 - **无本地 SkillManager 类**: 不再使用独立的 `SkillManager` 类管理 Skill 文件系统。所有操作通过 Gateway RPC
 - **无 skills.config.json**: 不再使用 `resources/skills/skills.config.json`。配置通过 Gateway 内置机制管理
