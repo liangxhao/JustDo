@@ -966,7 +966,7 @@ export class JustDoChatElement extends LitElement {
     /* ── Tool Timeline ──────────────────────────────────────────────── */
 
     .tool-timeline {
-      width: fit-content;
+      width: 100%;
       margin: 4px 0 6px;
       max-width: calc(100% - 44px);
       box-sizing: border-box;
@@ -1013,18 +1013,18 @@ export class JustDoChatElement extends LitElement {
     .tool-timeline__list {
       position: relative;
       display: grid;
-      gap: 8px;
+      gap: 2px;
       margin: 0;
-      padding: 4px 0 0 18px;
+      padding: 2px 0 2px 0;
       list-style: none;
     }
 
     .tool-timeline__list::before {
       content: '';
       position: absolute;
-      left: 6px;
-      top: 2px;
-      bottom: 2px;
+      left: 4px;
+      top: 9px;
+      bottom: 9px;
       width: 1px;
       background: var(--justdo-chat-border, rgba(0, 0, 0, 0.12));
     }
@@ -1042,10 +1042,10 @@ export class JustDoChatElement extends LitElement {
       z-index: 1;
       width: 9px;
       height: 9px;
-      margin-top: 5px;
+      margin-top: 9px;
       border-radius: 50%;
       background: var(--justdo-chat-text-secondary, #9ca3af);
-      box-shadow: 0 0 0 3px var(--justdo-chat-tool-bg, #f3f4f6);
+      box-shadow: 0 0 0 3px var(--justdo-chat-bg, #ffffff);
     }
 
     .tool-timeline__item--completed .tool-timeline__marker {
@@ -1064,9 +1064,16 @@ export class JustDoChatElement extends LitElement {
       background: var(--justdo-chat-tool-bg, #f3f4f6);
     }
 
+    .tool-timeline__body:not([open]) {
+      padding: 3px 0;
+      border-color: transparent;
+      background: transparent;
+    }
+
     .tool-timeline__title {
       display: flex;
       align-items: center;
+      gap: 6px;
       min-width: 0;
       font-size: 12px;
       cursor: pointer;
@@ -1075,11 +1082,23 @@ export class JustDoChatElement extends LitElement {
     }
 
     .tool-timeline__name {
+      flex: 0 0 auto;
+      font-weight: 600;
+    }
+
+    .tool-timeline__summary-input {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-weight: 600;
+      color: var(--justdo-chat-text-tertiary, #9ca3af);
+      font-family: var(--justdo-chat-code-font, 'SFMono-Regular', Consolas, monospace);
+      font-size: 11px;
+      font-weight: 400;
+    }
+
+    .tool-timeline__body[open] .tool-timeline__summary-input {
+      display: none;
     }
 
     .tool-timeline__body .tool-message__details {
@@ -1179,6 +1198,10 @@ export class JustDoChatElement extends LitElement {
     :host(.dark) .tool-detail-box {
       background: var(--justdo-chat-assistant-bg, #1f2937);
       border-color: rgba(255, 255, 255, 0.06);
+    }
+    :host(.dark) .tool-timeline__body:not([open]) {
+      background: transparent;
+      border-color: transparent;
     }
     :host(.dark) .tool-timeline__list::before {
       background: rgba(255, 255, 255, 0.14);

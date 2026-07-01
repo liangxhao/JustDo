@@ -240,4 +240,53 @@ describe('renderMessageGroup', () => {
     expect(rendered).toContain('"timeout": 5');
     expect(rendered).not.toContain('<pre><code>{}</code></pre>');
   });
+
+  test('keeps the outer tools summary collapsed by default', () => {
+    const message = {
+      role: 'assistant',
+      timestamp: 1782877052824,
+      content: [
+        {
+          type: 'toolCall',
+          id: 'call_1',
+          name: 'WebFetch',
+          arguments: { url: 'https://www.baidu.com/s?wd=最新新闻', maxChars: 5000 },
+        },
+      ],
+    };
+    const collapsed = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-group-collapsed',
+        role: 'assistant',
+        messages: [{ key: 'assistant-msg-collapsed', message }],
+        timestamp: 1782877052824,
+        isStreaming: false,
+      }),
+    );
+    const expanded = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-group-expanded',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-msg-expanded',
+            message: { ...message, __justdoToolTimelineOpen: true },
+          },
+        ],
+        timestamp: 1782877052824,
+        isStreaming: false,
+      }),
+    );
+
+    expect(collapsed).toContain('class="tool-timeline__summary"');
+    expect(collapsed).toContain('1 tools: WebFetch');
+    expect(collapsed).toContain('WebFetch');
+    expect(collapsed).toContain('{"url":"https://www.baidu.com/s?wd=最新新闻","maxChars":5000}');
+    expect(collapsed).toContain('class="tool-timeline__body"');
+    expect(expanded).toContain('class="tool-timeline__summary"');
+    expect(expanded).toContain('class="tool-timeline__body"');
+    expect(expanded).toContain('tool-timeline__summary-input');
+  });
 });

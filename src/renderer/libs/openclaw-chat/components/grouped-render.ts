@@ -472,15 +472,28 @@ function renderToolTimeline(cards: ToolCard[], collapsed: boolean): TemplateResu
     <details class="tool-timeline" ?open=${!collapsed}>
       <summary class="tool-timeline__summary">${summary}</summary>
       <ol class="tool-timeline__list">
-        ${cards.map(card => renderToolTimelineItem(card))}
+        ${cards.map(card => renderToolTimelineItem(card, collapsed))}
       </ol>
     </details>
   `;
 }
 
-function renderToolTimelineItem(card: ToolCard): TemplateResult {
+function formatToolTimelineSummaryInput(card: ToolCard): string {
+  if (card.args !== undefined && typeof card.args !== 'string') {
+    try {
+      return JSON.stringify(card.args);
+    } catch {
+      return formatToolValue(card.args).trim().replace(/\s+/g, ' ');
+    }
+  }
+  const input = card.inputText ?? formatToolValue(card.args);
+  return input.trim().replace(/\s+/g, ' ');
+}
+
+function renderToolTimelineItem(card: ToolCard, collapsed: boolean): TemplateResult {
   const display = resolveToolDisplay(card.name);
   const resultText = card.outputText ?? i18nService.t('coworkToolRunning');
+  const summaryInput = formatToolTimelineSummaryInput(card);
   const statusClass = card.isError
     ? 'tool-timeline__item--error'
     : card.outputText
@@ -489,9 +502,10 @@ function renderToolTimelineItem(card: ToolCard): TemplateResult {
   return html`
     <li class="tool-timeline__item ${statusClass}">
       <div class="tool-timeline__marker" aria-hidden="true"></div>
-      <details class="tool-timeline__body">
+      <details class="tool-timeline__body" ?open=${!collapsed}>
         <summary class="tool-timeline__title">
           <span class="tool-timeline__name">${display.title}</span>
+          <span class="tool-timeline__summary-input">${summaryInput}</span>
         </summary>
         <div class="tool-message__details">
           <section class="tool-detail-box">
