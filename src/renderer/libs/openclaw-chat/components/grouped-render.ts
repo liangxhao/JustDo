@@ -15,7 +15,7 @@ import {
 import { normalizeMessage } from '../pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '../pipeline/role-normalizer';
 import { detectTextDirection } from '../pipeline/text-direction';
-import { extractToolCardsCached } from '../pipeline/tool-cards';
+import { extractToolCards, extractToolCardsCached } from '../pipeline/tool-cards';
 import type { ChatItem, MessageGroup, NormalizedMessage, ToolCard } from '../types';
 import { renderChatAvatar } from './chat-avatar';
 import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from './markdown';
@@ -95,7 +95,7 @@ function escapeRegExp(value: string): string {
 }
 
 function toolCardDedupeKey(card: ToolCard): string {
-  const normalizedId = card.id.replace(/^(?:attached-tool:\d+|preview|tool):/, '');
+  const normalizedId = card.id.replace(/^(?:attached-tool:\d+|inline-tool:\d+|preview|tool):/, '');
   const isGeneratedFallbackId = new RegExp(`^(?:${escapeRegExp(card.name)}|tool):\\d+$`).test(
     normalizedId,
   );
@@ -134,6 +134,12 @@ function shouldOpenToolTimeline(rawMessage: unknown): boolean {
   return (rawMessage as Record<string, unknown> | null)?.__justdoToolTimelineOpen === true;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function extractToolCallId(message: unknown): string | null {
   const raw = message as Record<string, unknown> | null;
   if (!raw) return null;
@@ -170,6 +176,85 @@ function hasLiveToolMessage(messages: unknown[]): boolean {
   }
 
   return anonymousActive || [...activeByToolId.values()].some(Boolean);
+}
+
+function renderAssistantTextBlock(text: string): TemplateResult | typeof nothing {
+  if (!text) return nothing;
+  const dir = detectTextDirection(text);
+  return html`
+    <div class="chat-bubble chat-bubble--assistant">
+      ${renderCopyButton(text)}
+      <div class="chat-bubble__text markdown-content" dir=${dir}>
+        ${unsafeHTML(toSanitizedMarkdownHtml(text))}
+      </div>
+    </div>
+  `;
+}
+
+function renderAssistantToolCards(
+  cards: ToolCard[],
+  rawMessage: unknown,
+): TemplateResult | typeof nothing {
+  const deduped = dedupeToolCards(cards);
+  if (deduped.length === 0) return nothing;
+  return renderToolTimeline(deduped, !shouldOpenToolTimeline(rawMessage));
+}
+
+function renderAssistantMessageInContentOrder(
+  rawMessage: unknown,
+): Array<TemplateResult | typeof nothing> | null {
+  const raw = asRecord(rawMessage);
+  const content = Array.isArray(raw?.content) ? raw.content : null;
+  if (!content) return null;
+
+  const attachedByToolId = new Map<string, unknown[]>();
+  for (const attached of getAttachedToolMessages(rawMessage)) {
+    const id = extractToolCallId(attached);
+    if (!id) continue;
+    attachedByToolId.set(id, [...(attachedByToolId.get(id) ?? []), attached]);
+  }
+
+  const ordered: Array<TemplateResult | typeof nothing> = [];
+  const consumedAttached = new Set<unknown>();
+
+  for (let index = 0; index < content.length; index += 1) {
+    const block = asRecord(content[index]);
+    if (!block) continue;
+    const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
+
+    if (type === 'thinking') {
+      const thinking = typeof block.thinking === 'string' ? block.thinking : '';
+      if (thinking) {
+        ordered.push(renderThinkingBlock(thinking));
+      }
+      continue;
+    }
+
+    if (type === 'text') {
+      ordered.push(renderAssistantTextBlock(typeof block.text === 'string' ? block.text : ''));
+      continue;
+    }
+
+    if (['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(type)) {
+      const blockMessage = { ...raw, content: [block] };
+      const cards = extractToolCards(blockMessage, `inline-tool:${index}`);
+      const toolCallId = extractToolCallId(blockMessage);
+      const attached = toolCallId ? (attachedByToolId.get(toolCallId) ?? []) : [];
+      for (const attachedMessage of attached) {
+        consumedAttached.add(attachedMessage);
+      }
+      ordered.push(renderAssistantToolCards([...cards, ...toolMessagesToCards(attached)], rawMessage));
+    }
+  }
+
+  const remainingAttached = getAttachedToolMessages(rawMessage).filter(
+    attached => !consumedAttached.has(attached),
+  );
+  if (remainingAttached.length > 0) {
+    ordered.push(renderAssistantToolCards(toolMessagesToCards(remainingAttached), rawMessage));
+  }
+
+  return ordered.length > 0 ? ordered : null;
 }
 
 // ─── Message Group Rendering ────────────────────────────────────────────────
@@ -288,6 +373,11 @@ function renderUserMessage(msg: NormalizedMessage): TemplateResult {
 // ─── Assistant Message ──────────────────────────────────────────────────────
 
 function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): TemplateResult {
+  const orderedBlocks = renderAssistantMessageInContentOrder(rawMessage);
+  if (orderedBlocks) {
+    return html`${orderedBlocks}`;
+  }
+
   const thinking = extractThinkingCached(rawMessage);
   const toolCards = dedupeToolCards([
     ...(extractToolCardsCached(rawMessage) as ToolCard[]),
@@ -297,23 +387,13 @@ function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): Te
     (c): c is { type: 'text'; text?: string } => c.type === 'text',
   );
   const text = textContent.map(c => c.text ?? '').join('\n');
-  const dir = detectTextDirection(text);
 
   return html`
     ${thinking ? renderThinkingBlock(thinking) : nothing}
     ${toolCards.length > 0
       ? renderToolTimeline(toolCards, !shouldOpenToolTimeline(rawMessage))
       : nothing}
-    ${text
-      ? html`
-          <div class="chat-bubble chat-bubble--assistant">
-            ${renderCopyButton(text)}
-            <div class="chat-bubble__text markdown-content" dir=${dir}>
-              ${unsafeHTML(toSanitizedMarkdownHtml(text))}
-            </div>
-          </div>
-        `
-      : nothing}
+    ${renderAssistantTextBlock(text)}
   `;
 }
 

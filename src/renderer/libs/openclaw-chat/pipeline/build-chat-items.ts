@@ -959,7 +959,37 @@ function enrichToolResultsWithInputs(messages: unknown[]): unknown[] {
 
   for (const message of messages) {
     const raw = asRecord(message);
-    if (!raw || !Array.isArray(raw.content)) continue;
+    if (!raw) continue;
+
+    const directToolUseId = [raw.toolCallId, raw.tool_call_id, raw.toolUseId, raw.tool_use_id].find(
+      value => typeof value === 'string' && value.trim(),
+    ) as string | undefined;
+    const metadata = asRecord(raw.metadata);
+    const metadataToolUseId = [
+      metadata?.toolCallId,
+      metadata?.tool_call_id,
+      metadata?.toolUseId,
+      metadata?.tool_use_id,
+    ].find(value => typeof value === 'string' && value.trim()) as string | undefined;
+    const directId = directToolUseId ?? metadataToolUseId;
+    const directInput = raw.toolInput ?? raw.tool_input ?? metadata?.toolInput ?? metadata?.tool_input;
+    if (directId && directInput !== undefined) {
+      calls.set(directId, {
+        name:
+          typeof raw.toolName === 'string'
+            ? raw.toolName
+            : typeof raw.tool_name === 'string'
+              ? raw.tool_name
+              : typeof metadata?.toolName === 'string'
+                ? metadata.toolName
+                : typeof metadata?.tool_name === 'string'
+                  ? metadata.tool_name
+                  : undefined,
+        input: directInput,
+      });
+    }
+
+    if (!Array.isArray(raw.content)) continue;
     for (const block of raw.content) {
       const item = asRecord(block);
       if (!item) continue;

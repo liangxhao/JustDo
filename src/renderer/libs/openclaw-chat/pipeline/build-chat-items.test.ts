@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 
 import type { ChatItem, MessageGroup } from '../types';
 import { buildChatItems } from './build-chat-items';
+import { extractToolCards } from './tool-cards';
 
 function groups(items: ReturnType<typeof buildChatItems>): MessageGroup[] {
   return items.filter((item): item is MessageGroup => item.kind === 'group');
@@ -503,6 +504,54 @@ test('keeps split history tool start and result attached consistently after full
   expect(attachedToolMessages(firstMessage)).toHaveLength(2);
   expect(attachedToolMessages(secondMessage)).toHaveLength(0);
   expect(attachedToolMessages(contentMessage)).toHaveLength(0);
+});
+
+test('hydrates standalone tool result input from standalone tool use metadata', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'Thinking' }],
+        timestamp: 1000,
+        __openclawLiveThinking: true,
+      },
+      {
+        role: 'tool_use',
+        id: 'tool-use-1',
+        timestamp: 1100,
+        content: 'Read',
+        toolCallId: 'tool-1',
+        metadata: {
+          toolUseId: 'tool-1',
+          toolName: 'Read',
+          toolInput: { file_path: 'README.md' },
+        },
+      },
+      {
+        role: 'tool_result',
+        id: 'tool-result-1',
+        timestamp: 1200,
+        content: 'ok',
+        toolCallId: 'tool-1',
+        metadata: {
+          toolUseId: 'tool-1',
+          toolName: 'Read',
+        },
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessage = firstAssistantMessages(items)[0];
+  const attached = attachedToolMessages(assistantMessage);
+  expect(attached).toHaveLength(2);
+  expect(extractToolCards(attached[1])[0]?.args).toEqual({ file_path: 'README.md' });
 });
 
 test('preserves assistant model name on grouped messages', () => {

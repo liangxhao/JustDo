@@ -1,9 +1,15 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+
+vi.mock('./markdown', () => ({
+  toSanitizedMarkdownHtml: (text: string) => text,
+  toStreamingMarkdownHtml: (text: string) => text,
+}));
 
 import type { MessageGroup } from '../types';
 import {
   formatGroupTimestamp,
   getGroupFooterLabel,
+  renderMessageGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
 } from './grouped-render';
@@ -17,6 +23,23 @@ function createGroup(role: string): MessageGroup {
     timestamp: 1,
     isStreaming: false,
   };
+}
+
+function stringifyTemplate(value: unknown): string {
+  if (value === null || value === undefined || typeof value === 'boolean') return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (Array.isArray(value)) return value.map(stringifyTemplate).join('');
+  if (typeof value !== 'object') return '';
+
+  const record = value as Record<string, unknown>;
+  const strings = record.strings;
+  const values = record.values;
+  if (Array.isArray(strings) && Array.isArray(values)) {
+    return strings
+      .map((part, index) => `${String(part)}${stringifyTemplate(values[index])}`)
+      .join('');
+  }
+  return Object.values(record).map(stringifyTemplate).join('');
 }
 
 describe('shouldRenderGroupFooter', () => {
@@ -103,5 +126,57 @@ describe('group footer helpers', () => {
   test('formats timestamps as yyyy-mm-dd hh:mm', () => {
     const date = new Date(2026, 6, 1, 9, 5);
     expect(formatGroupTimestamp(date)).toBe('2026-07-01 09:05');
+  });
+});
+
+describe('renderMessageGroup', () => {
+  test('keeps assistant text before a later tool call in the same history message', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-msg',
+            message: {
+              role: 'assistant',
+              timestamp: 1,
+              content: [
+                { type: 'thinking', thinking: 'Need to clean up.' },
+                { type: 'text', text: 'Here is the file. Now cleaning up.' },
+                {
+                  type: 'toolCall',
+                  id: 'tool-1',
+                  name: 'exec',
+                  arguments: { command: 'Remove-Item tmp.js' },
+                },
+              ],
+              __justdoAttachedToolMessages: [
+                {
+                  role: 'toolResult',
+                  toolCallId: 'tool-1',
+                  toolName: 'exec',
+                  content: [{ type: 'text', text: '(no output)' }],
+                },
+              ],
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    const thinkingIndex = rendered.indexOf('Need to clean up.');
+    const textIndex = rendered.indexOf('Here is the file. Now cleaning up.');
+    const toolIndex = rendered.indexOf('Remove-Item tmp.js');
+
+    expect(thinkingIndex).toBeGreaterThanOrEqual(0);
+    expect(textIndex).toBeGreaterThan(thinkingIndex);
+    expect(toolIndex).toBeGreaterThan(textIndex);
+    expect(rendered.match(/tool-timeline__item /g)).toHaveLength(1);
+    expect(rendered).toContain('tool-timeline__item--completed');
+    expect(rendered).not.toContain('tool-timeline__item--running');
   });
 });

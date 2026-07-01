@@ -275,14 +275,23 @@ export function extractToolCards(message: unknown, prefix = 'tool'): ToolCard[] 
     typeof m.tool_name === 'string';
 
   if (isStandaloneToolMessage && cards.length === 0) {
+    const metadata =
+      m.metadata && typeof m.metadata === 'object' && !Array.isArray(m.metadata)
+        ? (m.metadata as Record<string, unknown>)
+        : null;
     const name =
       (typeof m.toolName === 'string' && m.toolName) ||
       (typeof m.tool_name === 'string' && m.tool_name) ||
+      (typeof metadata?.toolName === 'string' && metadata.toolName) ||
+      (typeof metadata?.tool_name === 'string' && metadata.tool_name) ||
       'tool';
+    const args = m.toolInput ?? m.tool_input ?? metadata?.toolInput ?? metadata?.tool_input;
     const text = extractTextCached(message) ?? undefined;
     cards.push({
       id: resolveToolCardId({}, m, 0, prefix),
       name,
+      args,
+      inputText: serializeToolInput(args),
       outputText: text,
       ...(messageIsError !== undefined ? { isError: messageIsError } : {}),
       preview: extractToolPreview(text, name),
