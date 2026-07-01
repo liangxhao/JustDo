@@ -77,9 +77,6 @@ export type SettingsOpenOptions = {
 
 interface SettingsProps extends SettingsOpenOptions {
   onClose: () => void;
-  enterpriseConfig?: {
-    ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
-  } | null;
 }
 
 const CUSTOM_PROVIDER_KEYS = [
@@ -580,7 +577,6 @@ const Settings: React.FC<SettingsProps> = ({
   notice,
   noticeI18nKey,
   noticeExtra,
-  enterpriseConfig,
 }) => {
   const dispatch = useDispatch();
   // 状态
@@ -2004,16 +2000,8 @@ const Settings: React.FC<SettingsProps> = ({
         ),
       },
     ];
-    // Filter out tabs hidden by enterprise config
-    // Filter out tabs with 'hide' action in enterprise config
-    // e.g., ui: { "settings.im": "hide" } → hide the 'im' tab
-    const enabledTabs = allTabs.filter(tab => isSettingsTabEnabled(tab.key));
-    const ui = enterpriseConfig?.ui;
-    if (ui) {
-      return enabledTabs.filter(tab => ui[`settings.${tab.key}`] !== 'hide');
-    }
-    return enabledTabs;
-  }, [language, enterpriseConfig]);
+    return allTabs.filter(tab => isSettingsTabEnabled(tab.key));
+  }, [language]);
 
   const activeTabLabel = useMemo(() => {
     return sidebarTabs.find(t => t.key === activeTab)?.label ?? '';
@@ -2963,7 +2951,7 @@ const Settings: React.FC<SettingsProps> = ({
       case 'skills':
         return (
           <div className="space-y-6">
-            <SkillsManager readOnly={enterpriseConfig?.ui?.skills === 'readonly'} />
+            <SkillsManager />
           </div>
         );
 

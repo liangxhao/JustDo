@@ -36,10 +36,6 @@ const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [enterpriseConfig, setEnterpriseConfig] = useState<{
-    ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
-    disableUpdate?: boolean;
-  } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const hasInitialized = useRef(false);
   const dispatch = useDispatch();
@@ -86,10 +82,6 @@ const App: React.FC = () => {
         // 初始化配置
         console.info('[App] initializeApp: configService.init');
         await waitWithTimeout(configService.init(), 5000, 'configService.init');
-
-        // Load enterprise config if present
-        const entConfig = await window.electron.enterprise.getConfig();
-        setEnterpriseConfig(entConfig);
 
         // 初始化主题
         console.info('[App] initializeApp: themeService.initialize');
@@ -482,7 +474,6 @@ const App: React.FC = () => {
               onClose={handleCloseSettings}
               initialTab={settingsOptions.initialTab}
               notice={settingsOptions.notice}
-              enterpriseConfig={enterpriseConfig}
             />
           )}
         </div>
@@ -530,7 +521,6 @@ const App: React.FC = () => {
           onClose={handleCloseSettings}
           initialTab={settingsOptions.initialTab}
           notice={settingsOptions.notice}
-          enterpriseConfig={enterpriseConfig}
         />
       )}
       {permissionModal}

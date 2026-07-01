@@ -63,11 +63,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 };
 
-const mapExecutionModeToSandboxMode = (
-  mode: CoworkExecutionMode,
-  isEnterprise: boolean,
-): 'off' | 'non-main' | 'all' => {
-  if (!isEnterprise) return 'off';
+const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-main' | 'all' => {
   switch (mode) {
     case 'sandbox':
       return 'all';
@@ -336,7 +332,6 @@ export type OpenClawConfigSyncResult = {
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
-  isEnterprise: () => boolean;
   getMcpBridgeConfig?: () => McpBridgeConfig | null;
   getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
   getAgents?: () => Agent[];
@@ -345,7 +340,6 @@ type OpenClawConfigSyncDeps = {
 export class OpenClawConfigSync {
   private readonly engineManager: OpenClawEngineManager;
   private readonly getCoworkConfig: () => CoworkConfig;
-  private readonly isEnterprise: () => boolean;
   private readonly getMcpBridgeConfig?: () => McpBridgeConfig | null;
   private readonly getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
   private readonly getAgents?: () => Agent[];
@@ -353,7 +347,6 @@ export class OpenClawConfigSync {
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
     this.getCoworkConfig = deps.getCoworkConfig;
-    this.isEnterprise = deps.isEnterprise;
     this.getMcpBridgeConfig = deps.getMcpBridgeConfig;
     this.getSkillsList = deps.getSkillsList;
     this.getAgents = deps.getAgents;
@@ -365,25 +358,15 @@ export class OpenClawConfigSync {
     const apiResolution = resolveRawApiConfig();
 
     if (!apiResolution.config) {
-      // Enterprise mode: proceed with full config generation even without a
-      // resolved API model. The enterprise openclaw.json merge (called after
-      // sync) will supply providers and the primary model. Writing only the
-      // minimal config would lose sandbox settings, plugins, AGENTS.md, etc.
-      if (this.isEnterprise()) {
-        console.log(
-          '[OpenClawConfigSync] enterprise mode: no API config resolved, generating full config with empty providers (enterprise merge will supply them)',
-        );
-      } else {
-        // No API/model configured yet (fresh install).
-        // Write a minimal config so the gateway can start — it just won't have
-        // any model provider until the user configures one.
-        const result = this.writeMinimalConfig(configPath, reason);
-        const workspaceDir = (coworkConfig.workingDirectory || '').trim();
-        const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
-        const resolvedWorkspaceDir = workspaceDir || defaultWorkspaceDir;
-        this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
-        return result;
-      }
+      // No API/model configured yet (fresh install). Write a minimal config so
+      // the gateway can start; it just won't have a model provider until the
+      // user configures one.
+      const result = this.writeMinimalConfig(configPath, reason);
+      const workspaceDir = (coworkConfig.workingDirectory || '').trim();
+      const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
+      const resolvedWorkspaceDir = workspaceDir || defaultWorkspaceDir;
+      this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
+      return result;
     }
 
     let allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> = {};
@@ -454,12 +437,9 @@ export class OpenClawConfigSync {
       }
     }
 
-    const sandboxMode = mapExecutionModeToSandboxMode(
-      coworkConfig.executionMode || 'local',
-      this.isEnterprise(),
-    );
+    const sandboxMode = mapExecutionModeToSandboxMode(coworkConfig.executionMode || 'local');
     console.log(
-      `[OpenClawConfigSync] sandbox mode: ${sandboxMode} (executionMode: ${coworkConfig.executionMode || 'local'}, enterprise: ${this.isEnterprise()})`,
+      `[OpenClawConfigSync] sandbox mode: ${sandboxMode} (executionMode: ${coworkConfig.executionMode || 'local'})`,
     );
 
     const workspaceDir = (coworkConfig.workingDirectory || '').trim();

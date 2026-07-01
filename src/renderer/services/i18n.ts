@@ -532,7 +532,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     copy: '复制',
 
-    'settings.enterprise.managed': '由企业统一管理',
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)
@@ -1231,7 +1230,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     copy: 'Copy',
 
-    'settings.enterprise.managed': 'Managed by enterprise',
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)

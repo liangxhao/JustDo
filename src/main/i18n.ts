@@ -67,8 +67,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authPlanStandard: '标准',
 
     // IM connectivity test messages will be added when integration is implemented
-
-    'enterprise.updateBlocked': '版本更新由企业统一管理',
   },
   en: {
     // Tray menu
@@ -124,8 +122,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authPlanStandard: 'Standard',
 
     // IM connectivity test messages will be added when integration is implemented
-
-    'enterprise.updateBlocked': 'Updates are managed by enterprise',
   },
 };
 

@@ -51,11 +51,6 @@ import {
 import { saveCoworkApiConfig } from './libs/cowork/coworkConfigStore';
 import { getCoworkLogPath } from './libs/cowork/coworkLogger';
 import { probeCoworkModelReadiness } from './libs/cowork/coworkUtil';
-import {
-  mergeEnterpriseOpenclawConfig,
-  resolveEnterpriseConfigPath,
-  syncEnterpriseConfig,
-} from './libs/infra/enterpriseConfigSync';
 import { exportLogsZip } from './libs/infra/logExport';
 import { McpBridgeServer } from './libs/mcp/mcpBridgeServer';
 import { McpServerManager } from './libs/mcp/mcpServerManager';
@@ -880,7 +875,6 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
     openClawConfigSync = new OpenClawConfigSync({
       engineManager: getOpenClawEngineManager(),
       getCoworkConfig: () => getCoworkStore().getConfig(),
-      isEnterprise: () => !!getStore().get('enterprise_config'),
       getSkillsList: () =>
         getSkillManager()
           .listSkills()
@@ -992,14 +986,6 @@ const syncOpenClawConfig = async (
       status,
       error: syncResult.error,
     };
-  }
-
-  // After every successful config sync, merge enterprise openclaw.json
-  // fields into the generated runtime config. Enterprise values win.
-  try {
-    mergeEnterpriseOpenclawConfig(getOpenClawEngineManager().getConfigPath());
-  } catch {
-    /* non-critical */
   }
 
   // Update secret env vars so the gateway process receives the latest
@@ -1691,14 +1677,6 @@ if (!gotTheLock) {
 
   ipcMain.handle('store:remove', (_event, key) => {
     getStore().delete(key);
-  });
-
-  ipcMain.handle('enterprise:getConfig', async () => {
-    try {
-      return getStore().get('enterprise_config') ?? null;
-    } catch {
-      return null;
-    }
   });
 
   // Network status change handler
@@ -4653,70 +4631,6 @@ if (!gotTheLock) {
     }
     // Inject store getter into providerApiConfig
     setStoreGetter(() => store);
-
-    // Enterprise config sync — must run before openclawConfigSync
-    // so enterprise data is in SQLite when the config is generated.
-    const enterpriseConfigPath = resolveEnterpriseConfigPath();
-    if (enterpriseConfigPath) {
-      try {
-        const mcpStoreInstance = getMcpStore();
-        syncEnterpriseConfig(
-          enterpriseConfigPath,
-          store,
-          server => {
-            const existing = mcpStoreInstance.listServers().find(s => s.name === server.name);
-            if (existing) {
-              mcpStoreInstance.updateServer(existing.id, {
-                name: server.name,
-                description: server.description,
-                transportType: server.transportType as 'stdio' | 'sse' | 'http',
-                command: server.command,
-                args: server.args,
-                env: server.env,
-              });
-            } else {
-              mcpStoreInstance.createServer({
-                name: server.name,
-                description: server.description,
-                transportType: server.transportType as 'stdio' | 'sse' | 'http',
-                command: server.command,
-                args: server.args,
-                env: server.env,
-              });
-            }
-          },
-          () => {
-            // Clear all MCP servers (for overwrite mode)
-            for (const s of mcpStoreInstance.listServers()) {
-              mcpStoreInstance.deleteServer(s.id);
-            }
-          },
-          config => {
-            const cs = getCoworkStore();
-            cs.setConfig(config);
-          },
-          () => {
-            const cs = getCoworkStore();
-            return cs.getConfig().workingDirectory;
-          },
-        );
-      } catch (error) {
-        console.error('[Enterprise] config sync failed:', error);
-      }
-    } else {
-      // No enterprise config package found — clear any previously stored config
-      // so the app exits enterprise mode after the package is removed.
-      const hadEnterprise = store.get('enterprise_config');
-      if (hadEnterprise) {
-        store.delete('enterprise_config');
-        // Reset executionMode to default so sandbox mode reverts to "off".
-        const cs = getCoworkStore();
-        cs.setConfig({ executionMode: 'local' });
-        console.log(
-          '[Enterprise] config package removed, cleared enterprise mode and reset executionMode',
-        );
-      }
-    }
 
     bindCoworkRuntimeForwarder();
     bindOpenClawStatusForwarder();

@@ -32,7 +32,7 @@ JustDo 采用 Electron 的严格进程隔离架构，所有跨进程通信通过
 |  - 通过 contextBridge 暴露 window.electron API                       |
 |  - 模块命名空间：cowork, store, skills, mcp, agents,                 |
 |    api, dialog, shell, autoLaunch, preventSleep, appInfo,            |
-|    log, scheduledTasks, openclaw.engine, permissions, enterprise     |
+|    log, scheduledTasks, openclaw.engine, permissions                 |
 |                                                                      |
 |  入口文件：src/main/preload.ts                                       |
 +--------------------------------------------------------------------+
@@ -147,11 +147,6 @@ contextBridge.exposeInMainWorld('electron', {
   permissions: {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
     requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),
-  },
-
-  // 企业配置
-  enterprise: {
-    getConfig: () => ipcRenderer.invoke('enterprise:getConfig'),
   },
 
   // API 请求（含流式）
@@ -535,10 +530,6 @@ interface ElectronAPI {
     requestCalendar: () => Promise<boolean>;
   };
 
-  enterprise: {
-    getConfig: () => Promise<EnterpriseConfig>;
-  };
-
   api: {
     fetch: (options: ApiFetchOptions) => Promise<ApiResponse>;
     stream: (options: ApiStreamOptions) => Promise<void>;
@@ -814,9 +805,6 @@ function registerIpcHandlers() {
   // Permissions
   ipcMain.handle('permissions:checkCalendar', handlePermissionsCheckCalendar);
   ipcMain.handle('permissions:requestCalendar', handlePermissionsRequestCalendar);
-
-  // Enterprise
-  ipcMain.handle('enterprise:getConfig', handleEnterpriseGetConfig);
 
   // Agents
   ipcMain.handle('agents:list', handleAgentsList);
@@ -1111,9 +1099,6 @@ export const IpcChannel = {
   // Permissions
   PermissionsCheckCalendar: 'permissions:checkCalendar',
   PermissionsRequestCalendar: 'permissions:requestCalendar',
-
-  // Enterprise
-  EnterpriseGetConfig: 'enterprise:getConfig',
 
   // Window
   WindowIsMaximized: 'window:isMaximized',

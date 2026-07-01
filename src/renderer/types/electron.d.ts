@@ -784,14 +784,6 @@ interface IElectronAPI {
       error?: string;
     }>;
   };
-  enterprise: {
-    getConfig: () => Promise<{
-      ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
-      disableUpdate?: boolean;
-      version: string;
-      name: string;
-    } | null>;
-  };
   networkStatus: {
     send: (status: 'online' | 'offline') => void;
   };

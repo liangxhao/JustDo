@@ -39,7 +39,7 @@ JustDo 是一个 **Thin Frontend** 客户端 —— 所有 Agent 执行逻辑、
 |                (contextBridge + window.electron)                     |
 |                                                                      |
 |  cowork.* | store.* | skills.* | mcp.* | permissions.* |           |
-|  enterprise.* | api.* | dialog.* | shell.* | autoLaunch.* |        |
+|  api.* | dialog.* | shell.* | autoLaunch.* | preventSleep.* |    |
 |  preventSleep.* | appInfo.* | log.* | scheduledTasks.* |            |
 |  agents.* | openclaw.engine.*                                       |
 +--------------------------------------------------------------------+
@@ -77,8 +77,7 @@ JustDo 是一个 **Thin Frontend** 客户端 —— 所有 Agent 执行逻辑、
 |  |  coworkConfigStore.ts | coworkFormatTransform.ts                |   |
 |  |  coworkLogger.ts |                                         |   |
 |  |  coworkUtil.ts | commandSafety.ts                               |   |
-|  |  enterpriseConfigSync.ts | logExport.ts                         |   |
-|  |  pythonRuntime.ts | systemProxy.ts                              |   |
+|  |  logExport.ts | pythonRuntime.ts | systemProxy.ts                 |   |
 |  +---------------------------------------------------------------+   |
 +--------------------------------------------------------------------+
                                |
@@ -259,7 +258,6 @@ src/main/
 │   ├── coworkLogger.ts             # 日志系统
 │   ├── coworkUtil.ts               # 工具函数
 │   ├── commandSafety.ts            # 命令安全检查
-│   ├── enterpriseConfigSync.ts     # 企业配置同步
 │   ├── logExport.ts                # 日志导出
 │   ├── pythonRuntime.ts            # Python 运行时
 │   ├── systemProxy.ts              # 系统代理
@@ -285,8 +283,6 @@ window.electron = {
       refreshBridge, onBridgeSyncStart, onBridgeSyncDone },
   permissions:                       // 系统权限
     { checkCalendar, requestCalendar },
-  enterprise:                        // 企业配置
-    { getConfig },
   api:                               // API 请求（含流式）
     { fetch, stream, cancelStream,
       onStreamData, onStreamDone, onStreamError, onStreamAbort },
