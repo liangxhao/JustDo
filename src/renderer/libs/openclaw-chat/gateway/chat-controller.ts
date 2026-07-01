@@ -61,6 +61,14 @@ type ToolContentBlock = {
 
 const HISTORY_LIMIT = 100;
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
+const DEBUG_CHAT_CONTROLLER =
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
+
+function debugLog(...args: unknown[]): void {
+  if (DEBUG_CHAT_CONTROLLER) {
+    console.debug(...args);
+  }
+}
 
 // ─── ChatController ─────────────────────────────────────────────────────────
 
@@ -119,7 +127,7 @@ export class ChatController {
   /** Set an optimistic user message shown until the next loadHistory.
    *  Also marks chatSending=true so session.message events are deferred. */
   setPendingUserMessage(text: string): void {
-    console.log('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
+    debugLog('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
     this.state.pendingUserMessage = { role: 'user', content: text, timestamp: Date.now() };
     this.state.chatSending = true;
     this.state.chatStreamStartedAt ??= Date.now();
@@ -150,12 +158,12 @@ export class ChatController {
   }
 
   private notify(): void {
-    console.log('[ChatCtrl] ▶ notify', this._snap());
+    debugLog('[ChatCtrl] ▶ notify', this._snap());
     for (const listener of this.listeners) listener(this.state);
   }
 
   private notifyStream(): void {
-    console.log('[ChatCtrl] ▶ notifyStream', this._snap());
+    debugLog('[ChatCtrl] ▶ notifyStream', this._snap());
     for (const listener of this.streamListeners) listener();
   }
 
@@ -361,7 +369,7 @@ export class ChatController {
   async switchSession(sessionKey: string): Promise<void> {
     const previousSessionKey = this.state.sessionKey;
     const isTempSessionPromotion = isTempJustDoSessionKey(previousSessionKey) && !isTempJustDoSessionKey(sessionKey);
-    console.log('[ChatCtrl] switchSession:', sessionKey, {
+    debugLog('[ChatCtrl] switchSession:', sessionKey, {
       hadPendingUserMsg: !!this.state.pendingUserMessage,
       chatSending: this.state.chatSending,
       msgCount: this.state.chatMessages.length,
@@ -406,7 +414,7 @@ export class ChatController {
   // ─── Gateway Callbacks ────────────────────────────────────────────────
 
   private handleHello(hello: GatewayHelloOk): void {
-    console.log('[ChatCtrl] handleHello — connected, sessionKey:', this.state.sessionKey);
+    debugLog('[ChatCtrl] handleHello — connected, sessionKey:', this.state.sessionKey);
     this.state.connected = true;
     this.state.hello = hello;
     this.state.lastError = null;
@@ -448,13 +456,13 @@ export class ChatController {
     // pending reload.  During an active run we always defer.
     if (event.event === 'session.message') {
       if (this.state.chatSending || this.pendingHistoryReload) {
-        console.log('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
+        debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
           chatSending: this.state.chatSending,
           pendingReload: this.pendingHistoryReload,
         });
         this.pendingHistoryReload = true;
       } else {
-        console.log('[ChatCtrl] session.message → loadHistory:', this.state.sessionKey);
+        debugLog('[ChatCtrl] session.message → loadHistory:', this.state.sessionKey);
         this.loadHistory();
       }
     }
@@ -469,7 +477,7 @@ export class ChatController {
     if (!client || !this.state.connected) return;
 
     const sessionKey = this.state.sessionKey;
-    console.log('[ChatCtrl] loadHistory START:', sessionKey, {
+    debugLog('[ChatCtrl] loadHistory START:', sessionKey, {
       chatSending: this.state.chatSending,
       pendingUserMsg: !!this.state.pendingUserMessage,
       chatRunId: this.state.chatRunId,
@@ -493,7 +501,7 @@ export class ChatController {
       if (this.state.sessionKey !== sessionKey) return; // Session changed during load
 
       const rawMessages = result?.messages ?? [];
-      console.log('[ChatCtrl] loadHistory AFTER-AWAIT:', sessionKey, {
+      debugLog('[ChatCtrl] loadHistory AFTER-AWAIT:', sessionKey, {
         rawMsgCount: rawMessages.length,
         ...this._snap(),
       });
@@ -511,7 +519,7 @@ export class ChatController {
         m => (m as Record<string, unknown>)?.__openclawStreamFallback,
       );
       if (messages.length === 0 && hasMaterializedContent) {
-        console.log('[ChatCtrl] loadHistory: gateway returned empty, preserving materialized content');
+        debugLog('[ChatCtrl] loadHistory: gateway returned empty, preserving materialized content');
         this.state.chatLoading = false;
         this.notify();
         return;
@@ -522,7 +530,7 @@ export class ChatController {
         // chatMessages, overlays, or trigger a re-render.  The active run
         // owns all display state; loadHistory data will be fetched again in
         // flushPendingHistoryReload after the run ends.
-        console.log('[ChatCtrl] loadHistory: skipped — new run active, preserving in-flight state');
+        debugLog('[ChatCtrl] loadHistory: skipped — new run active, preserving in-flight state');
         this.state.chatLoading = false;
         return;
       }
@@ -552,10 +560,10 @@ export class ChatController {
           return r.role === 'user' && messageText(r.content) === p.content && timestampClose;
         });
         if (found) {
-          console.log('[ChatCtrl] loadHistory OK — pendingUserMessage found in history, clearing');
+          debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage found in history, clearing');
           this.state.pendingUserMessage = null;
         } else {
-          console.log('[ChatCtrl] loadHistory OK — pendingUserMessage NOT in history, keeping', {
+          debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage NOT in history, keeping', {
             pendingLen: p.content.length,
             userCandidates: messages
               .filter(m => (m as Record<string, unknown>).role === 'user')
@@ -570,7 +578,7 @@ export class ChatController {
           });
         }
       } else {
-        console.log('[ChatCtrl] loadHistory OK:', messages.length, 'messages');
+        debugLog('[ChatCtrl] loadHistory OK:', messages.length, 'messages');
       }
 
       this.notify();
@@ -612,7 +620,7 @@ export class ChatController {
     ) {
       this.ignoredDeltaAfterAssistantSnapshotCount += 1;
       if (this.ignoredDeltaAfterAssistantSnapshotCount === 1) {
-        console.log('[ChatCtrl] ▶ delta ignored after assistant snapshot', {
+        debugLog('[ChatCtrl] ▶ delta ignored after assistant snapshot', {
           runId: payload.runId ?? null,
           assistantSnapshotRunId: this.assistantSnapshotRunId,
         });
@@ -633,7 +641,7 @@ export class ChatController {
         const prefixLength = snapshot.length - deltaText.length;
         const prefixMatches = prefixLength === previous.length && snapshot.slice(0, prefixLength) === previous;
         this.state.chatStream = prefixMatches ? `${previous}${deltaText}` : snapshot;
-        console.log('[ChatCtrl] ▶ delta merge', {
+        debugLog('[ChatCtrl] ▶ delta merge', {
           previousLen: previous.length,
           deltaLen: deltaText.length,
           snapshotLen: snapshot.length,
@@ -665,7 +673,7 @@ export class ChatController {
     const message = payload.message;
     const willAppend = message && !shouldHideMessage(message);
     const liveThinkingText = collectThinkingText(this.state.chatThinkingMessages);
-    console.log('[ChatCtrl] ▶ chat.final', {
+    debugLog('[ChatCtrl] ▶ chat.final', {
       hasMessage: !!message,
       willAppend,
       msgRole: (message as Record<string, unknown>)?.role,
@@ -690,14 +698,14 @@ export class ChatController {
     this.resetAssistantSnapshotSource();
     this.pendingHistoryReload = true;
     this.flushPendingHistoryReload();
-    console.log('[ChatCtrl] ▶ chat.final (done)', this._snap());
+    debugLog('[ChatCtrl] ▶ chat.final (done)', this._snap());
     this.notify();
   }
 
   private handleAborted(payload: ChatEventPayload): void {
     this.clearLifecycleEndFallback();
     const message = payload.message;
-    console.log('[ChatCtrl] ▶ chat.aborted', { hasMessage: !!message, ...this._snap() });
+    debugLog('[ChatCtrl] ▶ chat.aborted', { hasMessage: !!message, ...this._snap() });
     if (message && !shouldHideMessage(message)) {
       this.state.chatMessages = [...this.state.chatMessages, message];
     }
@@ -732,7 +740,7 @@ export class ChatController {
 
   private flushPendingHistoryReload(): void {
     if (this.pendingHistoryReload) {
-      console.log('[ChatCtrl] flushPendingHistoryReload → loadHistory:', this.state.sessionKey);
+      debugLog('[ChatCtrl] flushPendingHistoryReload → loadHistory:', this.state.sessionKey);
       this.pendingHistoryReload = false;
       this.loadHistory();
     }
@@ -770,7 +778,7 @@ export class ChatController {
       stringField(data, 'key') ??
       '';
     if (eventSession && eventSession !== this.state.sessionKey && !this.state.sessionKey.endsWith(eventSession)) {
-      console.log('[ChatCtrl] ▶ event ignored (session mismatch)', {
+      debugLog('[ChatCtrl] ▶ event ignored (session mismatch)', {
         sourceEvent,
         stream,
         runId,
@@ -780,7 +788,7 @@ export class ChatController {
       return;
     }
     if (runId && this.state.chatRunId && runId !== this.state.chatRunId) {
-      console.log('[ChatCtrl] ▶ event ignored (run mismatch)', {
+      debugLog('[ChatCtrl] ▶ event ignored (run mismatch)', {
         sourceEvent,
         stream,
         runId,
@@ -809,7 +817,7 @@ export class ChatController {
 
       const previousLen = this.state.chatThinkingStream?.length ?? 0;
       this.state.chatThinkingStream = text;
-      console.log('[ChatCtrl] ▶ thinking', {
+      debugLog('[ChatCtrl] ▶ thinking', {
         sourceEvent,
         runId,
         aseq,
@@ -845,11 +853,11 @@ export class ChatController {
 
       // Filter out NO_REPLY and heartbeat
       if (this.state.chatStream && isHiddenStreamText(this.state.chatStream)) {
-        console.log('[ChatCtrl] ▶ assistant (hidden)', { textLen: text.length });
+        debugLog('[ChatCtrl] ▶ assistant (hidden)', { textLen: text.length });
         return;
       }
 
-      console.log('[ChatCtrl] ▶ assistant', { sourceEvent, runId, aseq, wasSending, textLen: text.length, textTail: text.slice(-40), ...this._snap() });
+      debugLog('[ChatCtrl] ▶ assistant', { sourceEvent, runId, aseq, wasSending, textLen: text.length, textTail: text.slice(-40), ...this._snap() });
       this.notifyStream();
       return;
     }
@@ -857,7 +865,7 @@ export class ChatController {
     // ── Lifecycle events ─────────────────────────────────────────────────
     if (stream === 'lifecycle') {
       const phase = typeof data.phase === 'string' ? data.phase : '';
-      console.log('[ChatCtrl] lifecycle:', phase, this.state.sessionKey, {
+      debugLog('[ChatCtrl] lifecycle:', phase, this.state.sessionKey, {
         chatSending: this.state.chatSending,
         hasStream: !!this.state.chatStream,
         pendingReload: this.pendingHistoryReload,
@@ -896,7 +904,7 @@ export class ChatController {
           this.lifecycleEndFallbackTimer = setTimeout(() => {
             this.lifecycleEndFallbackTimer = null;
             if (!this.state.chatSending || this.state.chatRunId !== endingRunId) return;
-            console.log('[ChatCtrl] ▶ lifecycle:end fallback', this._snap());
+            debugLog('[ChatCtrl] ▶ lifecycle:end fallback', this._snap());
             this.state.chatSending = false;
             this.state.chatRunId = null;
             this.flushPendingHistoryReload();
@@ -917,11 +925,11 @@ export class ChatController {
     const args = data.args;
 
     if (!toolCallId || !name) {
-      console.log('[ChatCtrl] ▶ tool (ignored, missing toolCallId/name)', { stream, toolCallId, name });
+      debugLog('[ChatCtrl] ▶ tool (ignored, missing toolCallId/name)', { stream, toolCallId, name });
       return;
     }
 
-    console.log('[ChatCtrl] ▶ tool', {
+    debugLog('[ChatCtrl] ▶ tool', {
       sourceEvent,
       runId,
       aseq,
@@ -946,7 +954,7 @@ export class ChatController {
         isActive: true,
       });
       const upsert = this.upsertToolMessage(toolMessage);
-      console.log('[ChatCtrl] ▶ tool upsert(start)', { sourceEvent, toolCallId, existingIndex: upsert.existingIndex, nextCount: upsert.nextCount });
+      debugLog('[ChatCtrl] ▶ tool upsert(start)', { sourceEvent, toolCallId, existingIndex: upsert.existingIndex, nextCount: upsert.nextCount });
       this.notifyStream();
       return;
     }
@@ -978,7 +986,7 @@ export class ChatController {
       isActive: isNonTerminalToolEvent || (hasPartialResult && !isTerminalToolEvent),
     });
     const upsert = this.upsertToolMessage(toolMessage);
-    console.log('[ChatCtrl] ▶ tool upsert(result)', {
+    debugLog('[ChatCtrl] ▶ tool upsert(result)', {
       sourceEvent,
       toolCallId,
       phase,
@@ -1000,7 +1008,7 @@ export class ChatController {
     if (this.state.chatSending) return;
 
     const runId = `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    console.log('[ChatCtrl] sendMessage:', message.slice(0, 60), { sessionKey: this.state.sessionKey, runId });
+    debugLog('[ChatCtrl] sendMessage:', message.slice(0, 60), { sessionKey: this.state.sessionKey, runId });
 
     // Optimistic: append user message immediately
     const userMessage = { role: 'user', content: message, timestamp: Date.now() };

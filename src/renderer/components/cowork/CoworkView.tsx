@@ -33,11 +33,20 @@ import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
-import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import { resolveAgentModelSelection } from './agentModelSelection';
+import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
 import SubagentMenu, { type Subagent } from './SubagentMenu';
 import SubagentMessageDrawer from './SubagentMessageDrawer';
+
+const DEBUG_COWORK_VIEW =
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_COWORK_VIEW === 'true';
+
+function debugLog(...args: unknown[]): void {
+  if (DEBUG_COWORK_VIEW) {
+    console.debug(...args);
+  }
+}
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
@@ -305,7 +314,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       // Buffer in ref first (survives across renders), then try immediate apply.
       pendingPromptRef.current = prompt;
       const wrapperSet = chatWrapperRef.current;
-      console.log('[CoworkView] handleStartSession:', {
+      debugLog('[CoworkView] handleStartSession:', {
         prompt: prompt.slice(0, 60),
         wrapperRefExists: !!wrapperSet,
         tempSessionId: tempSessionId,
@@ -537,7 +546,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   // Apply pending prompt to ChatController once the wrapper is mounted
   useEffect(() => {
     if (!pendingPromptRef.current || !chatWrapperRef.current) return;
-    console.log('[CoworkView] useEffect applying pendingPrompt:', pendingPromptRef.current.slice(0, 60));
+    debugLog('[CoworkView] useEffect applying pendingPrompt:', pendingPromptRef.current.slice(0, 60));
     chatWrapperRef.current.setPendingUserMessage(pendingPromptRef.current);
     pendingPromptRef.current = null;
   });

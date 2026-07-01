@@ -30,6 +30,7 @@ export class SqliteStore {
 
     // WAL mode: persists across connections, never reverts. NORMAL sync is safe under WAL
     // (no data loss on OS crash; power-loss risk is the same as DELETE mode).
+    db.pragma('foreign_keys = ON');
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
     db.pragma('cache_size = -8000'); // 8 MB; negative value = kibibytes
@@ -79,6 +80,21 @@ export class SqliteStore {
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_id ON cowork_messages(session_id);
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_sequence
+      ON cowork_messages(session_id, sequence, created_at);
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_sessions_agent_order
+      ON cowork_sessions(agent_id, pinned DESC, updated_at DESC);
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_sessions_order
+      ON cowork_sessions(pinned DESC, updated_at DESC);
     `);
 
     this.db.exec(`
@@ -266,7 +282,32 @@ export class SqliteStore {
       console.warn('Failed to migrate cowork execution mode:', error);
     }
 
+    this.cleanupOrphanedCoworkMessages();
+    this.db.pragma('optimize');
+
     this.migrateFromElectronStore(basePath);
+  }
+
+  private cleanupOrphanedCoworkMessages(): void {
+    try {
+      const result = this.db
+        .prepare(
+          `
+          DELETE FROM cowork_messages
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM cowork_sessions
+            WHERE cowork_sessions.id = cowork_messages.session_id
+          )
+        `,
+        )
+        .run();
+      if (result.changes > 0) {
+        console.warn(`[SqliteStore] Removed ${result.changes} orphaned cowork message(s).`);
+      }
+    } catch (error) {
+      console.warn('[SqliteStore] Failed to clean orphaned cowork messages:', error);
+    }
   }
 
   onDidChange<T = unknown>(

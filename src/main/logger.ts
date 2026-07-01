@@ -19,6 +19,7 @@ import path from 'path';
 
 const LOG_RETENTION_DAYS = 7;
 const LOG_MAX_SIZE = 80 * 1024 * 1024; // 80 MB
+const MAIN_LOG_FILE_PATTERN = /^main-\d{4}-\d{2}-\d{2}(?:\.old)?\.log(?:\.old)?$/;
 
 /** Captured on first resolvePathFn call; used for pruning and export. */
 let _logDir: string | undefined;
@@ -103,7 +104,7 @@ function pruneOldLogs(): void {
   const cutoffMs = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
   for (const file of fs.readdirSync(dir)) {
-    if (!/^main-\d{4}-\d{2}-\d{2}(\.old)?\.log$/.test(file)) continue;
+    if (!MAIN_LOG_FILE_PATTERN.test(file)) continue;
     const filePath = path.join(dir, file);
     try {
       if (fs.statSync(filePath).mtimeMs < cutoffMs) {
@@ -134,7 +135,7 @@ export function getRecentMainLogEntries(): Array<{ archiveName: string; filePath
 
   return fs
     .readdirSync(dir)
-    .filter(f => /^main-\d{4}-\d{2}-\d{2}(\.old)?\.log$/.test(f))
+    .filter(f => MAIN_LOG_FILE_PATTERN.test(f))
     .map(f => ({ archiveName: f, filePath: path.join(dir, f) }))
     .filter(({ filePath }) => {
       try {

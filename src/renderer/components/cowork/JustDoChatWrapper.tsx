@@ -15,6 +15,15 @@ import { selectCurrentSession } from '../../store/selectors/coworkSelectors';
 import type { CoworkSession } from '../../types/cowork';
 import ChatMessageDisplay from './ChatMessageDisplay';
 
+const DEBUG_CHAT_WRAPPER =
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_WRAPPER === 'true';
+
+function debugLog(...args: unknown[]): void {
+  if (DEBUG_CHAT_WRAPPER) {
+    console.debug(...args);
+  }
+}
+
 interface JustDoChatWrapperProps {
   className?: string;
   assistantName?: string;
@@ -63,10 +72,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       // controller is destroyed and recreated.
       pendingUserMessageRef.current = text;
       if (controller) {
-        console.log('[JustDoChatWrapper] setPendingUserMessage (immediate):', text.slice(0, 60));
+        debugLog('[JustDoChatWrapper] setPendingUserMessage (immediate):', text.slice(0, 60));
         controller.setPendingUserMessage(text);
       } else {
-        console.log('[JustDoChatWrapper] setPendingUserMessage (buffered, no controller):', text.slice(0, 60));
+        debugLog('[JustDoChatWrapper] setPendingUserMessage (buffered, no controller):', text.slice(0, 60));
       }
     },
     clearSending: () => {
@@ -82,7 +91,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
     // Apply any buffered pending user message (set before controller existed)
     if (pendingUserMessageRef.current) {
-      console.log('[JustDoChatWrapper] applying buffered pendingUserMessage on mount');
+      debugLog('[JustDoChatWrapper] applying buffered pendingUserMessage on mount');
       controller.setPendingUserMessage(pendingUserMessageRef.current);
       pendingUserMessageRef.current = null;
     }
@@ -103,7 +112,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     connectToGateway(controller)
       .then(success => {
         if (cancelled) {
-          console.log('[JustDoChatWrapper] connectToGateway resolved after cleanup — disconnecting zombie');
+          debugLog('[JustDoChatWrapper] connectToGateway resolved after cleanup — disconnecting zombie');
           controller.disconnect();
           return;
         }
@@ -121,7 +130,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
     return () => {
       cancelled = true;
-      console.log('[JustDoChatWrapper] cleanup — disconnecting controller');
+      debugLog('[JustDoChatWrapper] cleanup — disconnecting controller');
       try {
         controller.disconnect();
       } catch {
