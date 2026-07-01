@@ -1,0 +1,2 @@
+export const DEFAULT_OPENCLAW_GATEWAY_PORT = 42871;
+

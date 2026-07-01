@@ -6,6 +6,7 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 
+import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from './coworkUtil';
 import { syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
@@ -14,7 +15,6 @@ import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
 type GatewayProcess = UtilityProcess | ChildProcess;
 
 const DEFAULT_OPENCLAW_VERSION = '2026.2.23';
-const DEFAULT_GATEWAY_PORT = 42871;
 const GATEWAY_PORT_SCAN_LIMIT = 80;
 const GATEWAY_BOOT_TIMEOUT_MS = 300 * 1000;
 const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
@@ -1098,7 +1098,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   getGatewayPort(): number {
-    return this.gatewayPort ?? this.readGatewayPort() ?? DEFAULT_GATEWAY_PORT;
+    return this.gatewayPort ?? this.readGatewayPort() ?? DEFAULT_OPENCLAW_GATEWAY_PORT;
   }
 
   setGatewayPort(port: number): { success: boolean; error?: string } {
@@ -1198,10 +1198,10 @@ export class OpenClawEngineManager extends EventEmitter {
   private async resolveGatewayPort(): Promise<number> {
     const candidates: number[] = [];
 
-    candidates.push(DEFAULT_GATEWAY_PORT);
     if (this.gatewayPort) candidates.push(this.gatewayPort);
     const persisted = this.readGatewayPort();
     if (persisted) candidates.push(persisted);
+    candidates.push(DEFAULT_OPENCLAW_GATEWAY_PORT);
 
     const uniqCandidates = Array.from(new Set(candidates));
     for (const candidate of uniqCandidates) {
@@ -1213,10 +1213,10 @@ export class OpenClawEngineManager extends EventEmitter {
     // Scan ports in parallel batches of 10 for faster resolution.
     const BATCH_SIZE = 10;
     for (let batch = 0; batch * BATCH_SIZE < GATEWAY_PORT_SCAN_LIMIT; batch += 1) {
-      const batchStart = DEFAULT_GATEWAY_PORT + batch * BATCH_SIZE + 1;
+      const batchStart = DEFAULT_OPENCLAW_GATEWAY_PORT + batch * BATCH_SIZE + 1;
       const batchEnd = Math.min(
         batchStart + BATCH_SIZE,
-        DEFAULT_GATEWAY_PORT + GATEWAY_PORT_SCAN_LIMIT + 1,
+        DEFAULT_OPENCLAW_GATEWAY_PORT + GATEWAY_PORT_SCAN_LIMIT + 1,
       );
       const portBatch = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i);
       const results = await Promise.all(

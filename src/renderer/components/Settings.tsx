@@ -13,6 +13,7 @@ import { PlusIcon,UserGroupIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
 import { ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import {
   type AppConfig,
@@ -782,9 +783,13 @@ const Settings: React.FC<SettingsProps> = ({
   const [openClawEngineStatus, setOpenClawEngineStatus] = useState<OpenClawEngineStatus | null>(
     null,
   );
-  const [openClawGatewayPort, setOpenClawGatewayPort] = useState<number>(42871);
+  const [openClawGatewayPort, setOpenClawGatewayPort] = useState<number>(
+    DEFAULT_OPENCLAW_GATEWAY_PORT,
+  );
   const [openClawGatewayPortEditing, setOpenClawGatewayPortEditing] = useState<boolean>(false);
-  const [openClawGatewayPortInput, setOpenClawGatewayPortInput] = useState<string>('42871');
+  const [openClawGatewayPortInput, setOpenClawGatewayPortInput] = useState<string>(
+    String(DEFAULT_OPENCLAW_GATEWAY_PORT),
+  );
   const [openClawGatewayPortSaving, setOpenClawGatewayPortSaving] = useState<boolean>(false);
 
   useEffect(() => {
