@@ -18,6 +18,8 @@ import {
   renderMessageGroupWithTrailingStream,
   renderStreamingGroup,
   renderStreamingThinkingGroup,
+  shouldRenderGroupAvatarByPrevItem,
+  shouldRenderGroupFooterByNextItem,
 } from './grouped-render';
 
 type ChatMinimapEntry = {
@@ -286,8 +288,13 @@ export class JustDoChatElement extends LitElement {
     .chat-group {
       display: flex;
       gap: 12px;
-      padding: 8px 0;
+      padding: 2px 0;
       align-items: flex-start;
+    }
+
+    .chat-group--continuation {
+      padding-top: 0;
+      padding-bottom: 0;
     }
 
     .chat-group--user {
@@ -301,6 +308,11 @@ export class JustDoChatElement extends LitElement {
       display: flex;
       align-items: center;
       justify-content: center;
+    }
+
+    .chat-group--continuation .chat-group__avatar {
+      height: 0;
+      overflow: hidden;
     }
 
     .chat-group__avatar .chat-avatar {
@@ -346,7 +358,7 @@ export class JustDoChatElement extends LitElement {
     .chat-group__footer {
       font-size: 11px;
       color: var(--justdo-chat-text-secondary, #9ca3af);
-      margin-top: 4px;
+      margin-top: 2px;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -481,7 +493,7 @@ export class JustDoChatElement extends LitElement {
     /* ── Markdown Content ───────────────────────────────────────────── */
 
     .markdown-content p {
-      margin: 0 0 8px 0;
+      margin: 0 0 4px 0;
     }
 
     .markdown-content p:last-child {
@@ -492,7 +504,7 @@ export class JustDoChatElement extends LitElement {
     .markdown-content h2,
     .markdown-content h3,
     .markdown-content h4 {
-      margin: 16px 0 8px 0;
+      margin: 10px 0 4px 0;
       font-weight: 600;
     }
 
@@ -509,23 +521,23 @@ export class JustDoChatElement extends LitElement {
     .markdown-content ul,
     .markdown-content ol {
       padding-left: 20px;
-      margin: 4px 0;
+      margin: 2px 0;
     }
 
     .markdown-content li {
-      margin: 2px 0;
+      margin: 1px 0;
     }
 
     .markdown-content blockquote {
       border-left: 3px solid var(--justdo-chat-border, #d1d5db);
-      margin: 8px 0;
-      padding: 4px 12px;
+      margin: 4px 0;
+      padding: 3px 12px;
       color: var(--justdo-chat-text-secondary, #6b7280);
     }
 
     .markdown-content table {
       border-collapse: collapse;
-      margin: 8px 0;
+      margin: 4px 0;
       max-width: 100%;
       width: 100%;
     }
@@ -554,7 +566,7 @@ export class JustDoChatElement extends LitElement {
     .markdown-content img.markdown-inline-image {
       max-width: 100%;
       border-radius: 8px;
-      margin: 4px 0;
+      margin: 2px 0;
     }
 
     .markdown-content .markdown-plain-text-fallback {
@@ -576,7 +588,7 @@ export class JustDoChatElement extends LitElement {
       overflow-x: auto;
       font-size: 13px;
       line-height: 1.5;
-      margin: 8px 0;
+      margin: 4px 0;
     }
 
     .markdown-content code {
@@ -592,7 +604,7 @@ export class JustDoChatElement extends LitElement {
 
     .code-block-wrapper {
       position: relative;
-      margin: 8px 0;
+      margin: 4px 0;
     }
 
     .code-block-header {
@@ -646,7 +658,7 @@ export class JustDoChatElement extends LitElement {
 
     /* JSON collapse */
     .json-collapse {
-      margin: 8px 0;
+      margin: 4px 0;
     }
 
     .json-collapse > summary {
@@ -794,7 +806,7 @@ export class JustDoChatElement extends LitElement {
     .chat-thinking {
       width: fit-content;
       max-width: calc(100% - 44px);
-      margin: 2px 0 6px;
+      margin: 1px 0 4px;
       box-sizing: border-box;
     }
 
@@ -802,17 +814,17 @@ export class JustDoChatElement extends LitElement {
       cursor: pointer;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #9ca3af);
-      padding: 2px 0 3px;
+      padding: 1px 0 2px;
       user-select: none;
     }
 
     .chat-thinking__content {
-      padding: 7px 10px;
+      padding: 6px 10px;
       background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.02));
       border-radius: 8px;
       font-size: 13px;
       color: var(--justdo-chat-text-secondary, #6b7280);
-      margin-top: 3px;
+      margin-top: 2px;
       border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.04));
     }
 
@@ -827,7 +839,7 @@ export class JustDoChatElement extends LitElement {
     .chat-thinking__content ul + p,
     .chat-thinking__content ol + p,
     .chat-thinking__content pre + p {
-      margin-top: 3px;
+      margin-top: 2px;
     }
 
     .chat-thinking--streaming .chat-thinking__content {
@@ -841,7 +853,7 @@ export class JustDoChatElement extends LitElement {
       gap: 6px;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #9ca3af);
-      padding: 2px 0 3px;
+      padding: 1px 0 2px;
     }
 
     .chat-thinking__indicator {
@@ -872,7 +884,7 @@ export class JustDoChatElement extends LitElement {
 
     .tool-message {
       width: fit-content;
-      margin: 4px 0;
+      margin: 2px 0;
       padding: 8px 12px;
       background: var(--justdo-chat-tool-bg, #f3f4f6);
       border-radius: 8px;
@@ -910,14 +922,14 @@ export class JustDoChatElement extends LitElement {
       font-size: 12px;
       max-height: 200px;
       overflow: auto;
-      margin: 4px 0 0 0;
+      margin: 2px 0 0 0;
     }
 
     .tool-message__details,
     .tool-card__details {
       display: grid;
       gap: 8px;
-      margin-top: 8px;
+      margin-top: 4px;
     }
 
     .tool-detail-box {
@@ -951,7 +963,7 @@ export class JustDoChatElement extends LitElement {
 
     .tool-timeline {
       width: fit-content;
-      margin: 6px 0 8px;
+      margin: 4px 0 6px;
       max-width: calc(100% - 44px);
       box-sizing: border-box;
     }
@@ -960,7 +972,7 @@ export class JustDoChatElement extends LitElement {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 0;
+      padding: 2px 0;
       cursor: pointer;
       font-size: 12px;
       color: var(--justdo-chat-text-secondary, #6b7280);
@@ -999,7 +1011,7 @@ export class JustDoChatElement extends LitElement {
       display: grid;
       gap: 8px;
       margin: 0;
-      padding: 6px 0 0 18px;
+      padding: 4px 0 0 18px;
       list-style: none;
     }
 
@@ -1026,7 +1038,7 @@ export class JustDoChatElement extends LitElement {
       z-index: 1;
       width: 9px;
       height: 9px;
-      margin-top: 7px;
+      margin-top: 5px;
       border-radius: 50%;
       background: var(--justdo-chat-text-secondary, #9ca3af);
       box-shadow: 0 0 0 3px var(--justdo-chat-tool-bg, #f3f4f6);
@@ -1067,7 +1079,7 @@ export class JustDoChatElement extends LitElement {
     }
 
     .tool-timeline__body .tool-message__details {
-      margin-top: 8px;
+      margin-top: 4px;
     }
 
     /* ── Reading Indicator ──────────────────────────────────────────── */
@@ -1076,7 +1088,7 @@ export class JustDoChatElement extends LitElement {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 10px 0;
+      padding: 6px 0;
     }
 
     .chat-reading-indicator span {
@@ -1237,7 +1249,10 @@ export class JustDoChatElement extends LitElement {
         <div class="chat-container">
           ${this.renderItems(items, thinkingForStreamingGroup)}
           ${thinkingStream && !hasLiveStreamItem
-            ? renderStreamingThinkingGroup(thinkingStream)
+            ? renderStreamingThinkingGroup(
+                thinkingStream,
+                { showAvatar: !items.some(item => item.kind === 'group' && item.role === 'assistant') },
+              )
             : nothing}
         </div>
       </div>
@@ -1429,12 +1444,16 @@ export class JustDoChatElement extends LitElement {
   private renderItem(
     item: ChatItem | MessageGroup,
     thinkingStream: string | null = null,
+    showAvatar = true,
   ): TemplateResult | typeof nothing {
     if (!item) return nothing;
 
     if ('kind' in item) {
       if (item.kind === 'group') {
-        return renderMessageGroup(item as MessageGroup, { searchQuery: this.searchQuery });
+        return renderMessageGroup(item as MessageGroup, {
+          searchQuery: this.searchQuery,
+          showAvatar,
+        });
       }
       if (item.kind === 'stream') {
         const streamItem = item as {
@@ -1449,6 +1468,7 @@ export class JustDoChatElement extends LitElement {
           streamItem.startedAt,
           streamItem.toolMessages ?? [],
           streamItem.isStreaming ? thinkingStream : null,
+          { showAvatar },
         );
       }
       if (item.kind === 'reading-indicator') {
@@ -1467,6 +1487,7 @@ export class JustDoChatElement extends LitElement {
 
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
+      const prev = items[index - 1];
       const next = items[index + 1];
       if (
         item?.kind === 'group' &&
@@ -1480,14 +1501,32 @@ export class JustDoChatElement extends LitElement {
             next.text,
             next.toolMessages ?? [],
             thinkingStream,
-            { searchQuery: this.searchQuery },
+            {
+              searchQuery: this.searchQuery,
+              showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
+            },
           ),
         );
         index += 1;
         continue;
       }
 
-      rendered.push(this.renderItem(item, thinkingStream));
+      if (item?.kind === 'group') {
+        rendered.push(
+          renderMessageGroup(item as MessageGroup, {
+            searchQuery: this.searchQuery,
+            showFooter: shouldRenderGroupFooterByNextItem(item as MessageGroup, next),
+            showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
+          }),
+        );
+        continue;
+      }
+
+      const showAvatar =
+        item?.kind === 'stream'
+          ? !(prev?.kind === 'group' && prev.role === 'assistant') && prev?.kind !== 'stream'
+          : true;
+      rendered.push(this.renderItem(item, thinkingStream, showAvatar));
     }
 
     return rendered;

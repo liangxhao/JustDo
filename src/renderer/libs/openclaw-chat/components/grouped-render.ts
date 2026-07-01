@@ -16,7 +16,7 @@ import { normalizeMessage } from '../pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '../pipeline/role-normalizer';
 import { detectTextDirection } from '../pipeline/text-direction';
 import { extractToolCardsCached } from '../pipeline/tool-cards';
-import type { MessageGroup, NormalizedMessage, ToolCard } from '../types';
+import type { ChatItem, MessageGroup, NormalizedMessage, ToolCard } from '../types';
 import { renderChatAvatar } from './chat-avatar';
 import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from './markdown';
 import { resolveToolDisplay } from './tool-display';
@@ -176,7 +176,7 @@ function hasLiveToolMessage(messages: unknown[]): boolean {
 
 export function renderMessageGroup(
   group: MessageGroup,
-  _opts?: { searchQuery?: string },
+  opts?: { searchQuery?: string; showFooter?: boolean; showAvatar?: boolean },
 ): TemplateResult | typeof nothing {
   if (!group.messages || group.messages.length === 0) return nothing;
 
@@ -187,13 +187,17 @@ export function renderMessageGroup(
   if (!msg) return nothing;
 
   const avatar = renderChatAvatar(role);
+  const isContinuation = opts?.showAvatar === false;
 
   return html`
-    <div class="chat-group chat-group--${role}" data-group-key=${group.key}>
-      <div class="chat-group__avatar">${avatar}</div>
+    <div
+      class=${`chat-group chat-group--${role}${isContinuation ? ' chat-group--continuation' : ''}`}
+      data-group-key=${group.key}
+    >
+      <div class="chat-group__avatar">${opts?.showAvatar ?? true ? avatar : nothing}</div>
       <div class="chat-group__content">
-        ${group.messages.map(m => renderSingleMessage(m.message, role, _opts))}
-        ${renderGroupFooter(group)}
+        ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
+        ${renderGroupFooter(group, opts?.showFooter ?? true)}
       </div>
     </div>
   `;
@@ -204,19 +208,27 @@ export function renderMessageGroupWithTrailingStream(
   streamText: string,
   toolMessages: unknown[] = [],
   thinkingText: string | null = null,
-  _opts?: { searchQuery?: string },
+  opts?: { searchQuery?: string; showAvatar?: boolean },
 ): TemplateResult | typeof nothing {
   if (!group.messages || group.messages.length === 0) return nothing;
 
   const role = normalizeRoleForGrouping(group.role);
   const toolCards = dedupeToolCards(toolMessagesToCards(toolMessages));
   const hasStreamText = streamText.trim().length > 0;
+  const isContinuation = opts?.showAvatar === false;
 
   return html`
-    <div class="chat-group chat-group--${role} chat-group--streaming" data-group-key=${group.key}>
-      <div class="chat-group__avatar">${renderChatAvatar(role)}</div>
+    <div
+      class=${`chat-group chat-group--${role} chat-group--streaming${
+        isContinuation ? ' chat-group--continuation' : ''
+      }`}
+      data-group-key=${group.key}
+    >
+      <div class="chat-group__avatar">
+        ${opts?.showAvatar ?? true ? renderChatAvatar(role) : nothing}
+      </div>
       <div class="chat-group__content">
-        ${group.messages.map(m => renderSingleMessage(m.message, role, _opts))}
+        ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
         ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
         ${hasStreamText
@@ -401,7 +413,8 @@ function renderToolTimelineItem(card: ToolCard): TemplateResult {
 
 // ─── Group Footer ───────────────────────────────────────────────────────────
 
-function renderGroupFooter(group: MessageGroup): TemplateResult | typeof nothing {
+function renderGroupFooter(group: MessageGroup, showFooter: boolean): TemplateResult | typeof nothing {
+  if (!showFooter) return nothing;
   const ts = group.timestamp;
   if (!ts) return nothing;
   const date = new Date(ts);
@@ -415,16 +428,60 @@ function renderGroupFooter(group: MessageGroup): TemplateResult | typeof nothing
   `;
 }
 
+export function shouldRenderGroupFooterByNextItem(
+  group: MessageGroup,
+  nextItem: ChatItem | MessageGroup | null | undefined,
+): boolean {
+  if (group.role === 'assistant') {
+    if (nextItem?.kind === 'stream' && nextItem.isStreaming) {
+      return false;
+    }
+    if (nextItem?.kind === 'group' && nextItem.role === 'assistant') {
+      return false;
+    }
+  }
+
+  if (group.role === 'user') {
+    return !(nextItem?.kind === 'group' && nextItem.role === 'user');
+  }
+
+  return true;
+}
+
+export function shouldRenderGroupAvatarByPrevItem(
+  group: MessageGroup,
+  prevItem: ChatItem | MessageGroup | null | undefined,
+): boolean {
+  if (!prevItem) return true;
+  if (prevItem.kind === 'group' && prevItem.role === group.role) {
+    return false;
+  }
+  if (prevItem.kind === 'stream' && group.role === 'assistant') {
+    return false;
+  }
+  return true;
+}
+
 // ─── Stream Rendering ───────────────────────────────────────────────────────
 
 /**
  * Render streaming thinking content as a separate collapsible block.
  * Shown above the assistant text stream when thinking is in progress.
  */
-export function renderStreamingThinkingGroup(text: string): TemplateResult {
+export function renderStreamingThinkingGroup(
+  text: string,
+  opts?: { showAvatar?: boolean },
+): TemplateResult {
+  const isContinuation = opts?.showAvatar === false;
   return html`
-    <div class="chat-group chat-group--assistant chat-group--streaming-thinking">
-      <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
+    <div
+      class=${`chat-group chat-group--assistant chat-group--streaming-thinking${
+        isContinuation ? ' chat-group--continuation' : ''
+      }`}
+    >
+      <div class="chat-group__avatar">
+        ${opts?.showAvatar ?? true ? renderChatAvatar('assistant') : nothing}
+      </div>
       <div class="chat-group__content">${renderStreamingThinkingBlock(text)}</div>
     </div>
   `;
@@ -435,12 +492,20 @@ export function renderStreamingGroup(
   _startedAt: number,
   toolMessages: unknown[] = [],
   thinkingText: string | null = null,
+  opts?: { showAvatar?: boolean },
 ): TemplateResult {
   const toolCards = dedupeToolCards(toolMessagesToCards(toolMessages));
   const hasText = text.trim().length > 0;
+  const isContinuation = opts?.showAvatar === false;
   return html`
-    <div class="chat-group chat-group--assistant chat-group--streaming">
-      <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
+    <div
+      class=${`chat-group chat-group--assistant chat-group--streaming${
+        isContinuation ? ' chat-group--continuation' : ''
+      }`}
+    >
+      <div class="chat-group__avatar">
+        ${opts?.showAvatar ?? true ? renderChatAvatar('assistant') : nothing}
+      </div>
       <div class="chat-group__content">
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
         ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
@@ -481,10 +546,17 @@ function renderStreamingThinkingBlock(text: string): TemplateResult {
   `;
 }
 
-export function renderReadingIndicatorGroup(): TemplateResult {
+export function renderReadingIndicatorGroup(opts?: { showAvatar?: boolean }): TemplateResult {
+  const isContinuation = opts?.showAvatar === false;
   return html`
-    <div class="chat-group chat-group--assistant chat-group--reading-indicator">
-      <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
+    <div
+      class=${`chat-group chat-group--assistant chat-group--reading-indicator${
+        isContinuation ? ' chat-group--continuation' : ''
+      }`}
+    >
+      <div class="chat-group__avatar">
+        ${opts?.showAvatar ?? true ? renderChatAvatar('assistant') : nothing}
+      </div>
       <div class="chat-group__content">
         <div class="chat-reading-indicator" aria-hidden="true">
           <span></span>
