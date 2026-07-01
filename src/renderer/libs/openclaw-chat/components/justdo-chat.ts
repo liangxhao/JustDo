@@ -15,7 +15,7 @@ import { extractTextCached } from '../pipeline/message-extract';
 import type { ChatItem, GatewayMessage, MessageGroup } from '../types';
 import {
   renderMessageGroup,
-  renderReadingIndicatorGroup,
+  renderMessageGroupWithTrailingStream,
   renderStreamingGroup,
   renderStreamingThinkingGroup,
 } from './grouped-render';
@@ -1207,10 +1207,11 @@ export class JustDoChatElement extends LitElement {
     }
 
     const hasAssistantStream = Boolean(stream && stream.trim().length > 0);
-    const thinkingMessagesForTimeline = hasAssistantStream
+    const shouldKeepThinkingInTimeline = hasAssistantStream && toolMessages.length > 0;
+    const thinkingMessagesForTimeline = hasAssistantStream && !shouldKeepThinkingInTimeline
       ? thinkingMessages.slice(0, -1)
       : thinkingMessages;
-    const committedThinkingForStream = hasAssistantStream
+    const committedThinkingForStream = hasAssistantStream && !shouldKeepThinkingInTimeline
       ? this.extractThinkingText(thinkingMessages[thinkingMessages.length - 1])
       : null;
     const thinkingForStreamingGroup = thinkingStream ?? committedThinkingForStream;
@@ -1218,16 +1219,15 @@ export class JustDoChatElement extends LitElement {
       thinkingMessagesForTimeline.length > 0
         ? [...messages, ...(thinkingMessagesForTimeline as GatewayMessage[])]
         : messages;
-    const items = this.buildItems(timelineMessages, toolMessages, streamSegments, stream);
-    const hasLiveStreamItem = items.some(item => item.kind === 'stream' && item.isStreaming);
-    const hasReadingIndicator = items.some(item => item.kind === 'reading-indicator');
-    const shouldShowWaitingIndicator =
+    const shouldRenderWaitingStream =
       isStreaming &&
-      !hasReadingIndicator &&
       !hasAssistantStream &&
       !thinkingStream &&
       toolMessages.length === 0 &&
       streamSegments.length === 0;
+    const displayStream = shouldRenderWaitingStream ? '' : stream;
+    const items = this.buildItems(timelineMessages, toolMessages, streamSegments, displayStream);
+    const hasLiveStreamItem = items.some(item => item.kind === 'stream' && item.isStreaming);
     const minimapEntries = this.buildMinimapEntries(messages, stream);
 
     // Always render the chat container — never show "No messages"
@@ -1235,11 +1235,10 @@ export class JustDoChatElement extends LitElement {
       <div class="chat-shell">
         ${this.renderMinimap(minimapEntries)}
         <div class="chat-container">
-          ${items.map(item => this.renderItem(item, thinkingForStreamingGroup))}
+          ${this.renderItems(items, thinkingForStreamingGroup)}
           ${thinkingStream && !hasLiveStreamItem
             ? renderStreamingThinkingGroup(thinkingStream)
             : nothing}
-          ${shouldShowWaitingIndicator ? renderReadingIndicatorGroup() : nothing}
         </div>
       </div>
     `;
@@ -1453,11 +1452,45 @@ export class JustDoChatElement extends LitElement {
         );
       }
       if (item.kind === 'reading-indicator') {
-        return renderReadingIndicatorGroup();
+        return nothing;
       }
     }
 
     return nothing;
+  }
+
+  private renderItems(
+    items: Array<ChatItem | MessageGroup>,
+    thinkingStream: string | null = null,
+  ): Array<TemplateResult | typeof nothing> {
+    const rendered: Array<TemplateResult | typeof nothing> = [];
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      const next = items[index + 1];
+      if (
+        item?.kind === 'group' &&
+        item.role === 'assistant' &&
+        next?.kind === 'stream' &&
+        next.isStreaming
+      ) {
+        rendered.push(
+          renderMessageGroupWithTrailingStream(
+            item,
+            next.text,
+            next.toolMessages ?? [],
+            thinkingStream,
+            { searchQuery: this.searchQuery },
+          ),
+        );
+        index += 1;
+        continue;
+      }
+
+      rendered.push(this.renderItem(item, thinkingStream));
+    }
+
+    return rendered;
   }
 
   private renderMinimap(entries: ChatMinimapEntry[]): TemplateResult | typeof nothing {

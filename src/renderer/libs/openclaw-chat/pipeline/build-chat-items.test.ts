@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 
-import type { MessageGroup } from '../types';
+import type { ChatItem, MessageGroup } from '../types';
 import { buildChatItems } from './build-chat-items';
 
 function groups(items: ReturnType<typeof buildChatItems>): MessageGroup[] {
@@ -14,6 +14,68 @@ function attachedToolMessages(message: unknown): unknown[] {
 
 function toolTimelineIsOpen(message: unknown): boolean {
   return (message as Record<string, unknown>).__justdoToolTimelineOpen === true;
+}
+
+function firstAssistantMessages(items: ReturnType<typeof buildChatItems>): unknown[] {
+  return groups(items)
+    .filter(group => group.role === 'assistant')
+    .flatMap(group => group.messages.map(entry => entry.message));
+}
+
+function streamItems(items: ReturnType<typeof buildChatItems>): Extract<ChatItem, { kind: 'stream' }>[] {
+  return items.filter((item): item is Extract<ChatItem, { kind: 'stream' }> => item.kind === 'stream');
+}
+
+function historyToolUse(timestamp = 1100): Record<string, unknown> {
+  return {
+    role: 'assistant',
+    id: `tool-use-${timestamp}`,
+    timestamp,
+    content: [
+      {
+        type: 'tool_use',
+        id: 'tool-1',
+        name: 'Read',
+        input: { file_path: 'README.md' },
+      },
+    ],
+  };
+}
+
+function historyToolResult(timestamp = 1200): Record<string, unknown> {
+  return {
+    role: 'toolresult',
+    id: `tool-result-${timestamp}`,
+    tool_call_id: 'tool-1',
+    tool_use_id: 'tool-1',
+    toolName: 'Read',
+    timestamp,
+    content: 'ok',
+  };
+}
+
+function liveToolMessage(timestamp = 1100): Record<string, unknown> {
+  return {
+    role: 'assistant',
+    toolCallId: 'tool-1',
+    toolName: 'Read',
+    timestamp,
+    __justdoToolActive: false,
+    content: [
+      {
+        type: 'toolcall',
+        toolCallId: 'tool-1',
+        name: 'Read',
+        arguments: { file_path: 'README.md' },
+      },
+      {
+        type: 'toolresult',
+        toolCallId: 'tool-1',
+        name: 'Read',
+        text: 'ok',
+      },
+    ],
+  };
 }
 
 test('keeps a live tool attached to the preceding thinking message during incremental updates', () => {
@@ -131,6 +193,137 @@ test('keeps split live tool start and result attached to the first tool location
   const secondMessage = assistantGroups[1]?.messages[0]?.message;
   expect(attachedToolMessages(firstMessage)).toHaveLength(2);
   expect(attachedToolMessages(secondMessage)).toHaveLength(0);
+});
+
+test('keeps Thinking Tool Content order during incremental updates', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'Thinking' }],
+        timestamp: 1000,
+        __openclawLiveThinking: true,
+      },
+    ],
+    toolMessages: [liveToolMessage(1100)],
+    streamSegments: [],
+    stream: 'Content',
+    streamStartedAt: 1200,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+  expect(assistantMessages).toHaveLength(1);
+  expect(attachedToolMessages(assistantMessages[0])).toHaveLength(1);
+  expect(items[items.length - 1]?.kind).toBe('stream');
+});
+
+test('keeps the waiting indicator and first content delta on the same stream item', () => {
+  const baseProps = {
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'user',
+        content: 'Hello',
+        timestamp: 1000,
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    streamStartedAt: 1100,
+    queue: [],
+    showToolCalls: true,
+  };
+
+  const waitingItems = buildChatItems({
+    ...baseProps,
+    stream: '',
+  });
+  const firstDeltaItems = buildChatItems({
+    ...baseProps,
+    stream: 'Content',
+  });
+
+  const waitingStream = streamItems(waitingItems)[0];
+  const firstDeltaStream = streamItems(firstDeltaItems)[0];
+
+  expect(waitingStream).toBeDefined();
+  expect(firstDeltaStream).toBeDefined();
+  expect(waitingStream?.key).toBe(firstDeltaStream?.key);
+  expect(waitingStream?.text).toBe('');
+  expect(firstDeltaStream?.text).toBe('Content');
+  expect(waitingItems.some(item => item.kind === 'reading-indicator')).toBe(false);
+});
+
+test('keeps Thinking Tool order after full refresh', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'Thinking' }],
+        timestamp: 1000,
+        __openclawLiveThinking: true,
+      },
+      historyToolUse(1100),
+      historyToolResult(1200),
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+  expect(assistantMessages).toHaveLength(1);
+  expect(attachedToolMessages(assistantMessages[0])).toHaveLength(2);
+});
+
+test('renders a Tool only history response as a synthetic assistant tool group', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [historyToolUse(1000), historyToolResult(1100)],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+  expect(assistantMessages).toHaveLength(1);
+  expect(attachedToolMessages(assistantMessages[0])).toHaveLength(2);
+});
+
+test('keeps Tool Content order after full refresh', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      historyToolUse(1000),
+      historyToolResult(1100),
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Content' }],
+        timestamp: 1200,
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+  expect(assistantMessages).toHaveLength(2);
+  expect(attachedToolMessages(assistantMessages[0])).toHaveLength(2);
+  expect(attachedToolMessages(assistantMessages[1])).toHaveLength(0);
 });
 
 test('collapses a live tool timeline as soon as that tool result arrives', () => {

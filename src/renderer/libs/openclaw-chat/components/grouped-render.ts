@@ -199,6 +199,41 @@ export function renderMessageGroup(
   `;
 }
 
+export function renderMessageGroupWithTrailingStream(
+  group: MessageGroup,
+  streamText: string,
+  toolMessages: unknown[] = [],
+  thinkingText: string | null = null,
+  _opts?: { searchQuery?: string },
+): TemplateResult | typeof nothing {
+  if (!group.messages || group.messages.length === 0) return nothing;
+
+  const role = normalizeRoleForGrouping(group.role);
+  const toolCards = dedupeToolCards(toolMessagesToCards(toolMessages));
+  const hasStreamText = streamText.trim().length > 0;
+
+  return html`
+    <div class="chat-group chat-group--${role} chat-group--streaming" data-group-key=${group.key}>
+      <div class="chat-group__avatar">${renderChatAvatar(role)}</div>
+      <div class="chat-group__content">
+        ${group.messages.map(m => renderSingleMessage(m.message, role, _opts))}
+        ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
+        ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
+        ${hasStreamText
+          ? html`
+              <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
+                ${renderCopyButton(streamText)}
+                <div class="chat-bubble__text markdown-content">
+                  ${unsafeHTML(toStreamingMarkdownHtml(streamText))}
+                </div>
+              </div>
+            `
+          : renderReadingIndicator()}
+      </div>
+    </div>
+  `;
+}
+
 function renderSingleMessage(
   message: unknown,
   role: string,
@@ -402,19 +437,34 @@ export function renderStreamingGroup(
   thinkingText: string | null = null,
 ): TemplateResult {
   const toolCards = dedupeToolCards(toolMessagesToCards(toolMessages));
+  const hasText = text.trim().length > 0;
   return html`
     <div class="chat-group chat-group--assistant chat-group--streaming">
       <div class="chat-group__avatar">${renderChatAvatar('assistant')}</div>
       <div class="chat-group__content">
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
         ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
-        <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
-          ${renderCopyButton(text)}
-          <div class="chat-bubble__text markdown-content">
-            ${unsafeHTML(toStreamingMarkdownHtml(text))}
-          </div>
-        </div>
+        ${hasText
+          ? html`
+              <div class="chat-bubble chat-bubble--assistant chat-bubble--streaming">
+                ${renderCopyButton(text)}
+                <div class="chat-bubble__text markdown-content">
+                  ${unsafeHTML(toStreamingMarkdownHtml(text))}
+                </div>
+              </div>
+            `
+          : renderReadingIndicator()}
       </div>
+    </div>
+  `;
+}
+
+function renderReadingIndicator(): TemplateResult {
+  return html`
+    <div class="chat-reading-indicator" aria-hidden="true">
+      <span></span>
+      <span></span>
+      <span></span>
     </div>
   `;
 }

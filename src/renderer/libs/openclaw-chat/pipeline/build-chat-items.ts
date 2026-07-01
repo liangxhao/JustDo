@@ -1160,7 +1160,13 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
         });
       }
     } else if (props.stream.trim().length === 0) {
-      items.push({ kind: 'reading-indicator', key });
+      items.push({
+        kind: 'stream',
+        key,
+        text: '',
+        startedAt,
+        isStreaming: true,
+      });
     }
   }
 
