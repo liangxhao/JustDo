@@ -94,6 +94,11 @@ type ProviderConnectionTestResult = {
   success: boolean;
   message: string;
   provider: ProviderType;
+  providerName: string;
+  baseUrl?: string;
+  modelLabel?: string;
+  modelId?: string;
+  log?: string;
 };
 
 interface ProviderExportEntry {
@@ -158,6 +163,17 @@ const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
   return getProviderDefaultBaseUrl(provider) || '';
 };
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
+
+const stringifyConnectivityLogValue = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+};
 
 const getDefaultProviders = (): ProvidersConfig => {
   const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
@@ -1174,12 +1190,16 @@ const Settings: React.FC<SettingsProps> = ({
   };
 
   const showTestResultModal = (
-    result: Omit<ProviderConnectionTestResult, 'provider'>,
+    result: Omit<ProviderConnectionTestResult, 'provider' | 'providerName'>,
     provider: ProviderType,
   ) => {
+    const providerConfig = providers[provider];
     setTestResult({
       ...result,
       provider,
+      providerName:
+        providerMeta[provider as BuiltinProviderType]?.label ??
+        getProviderDisplayName(provider, providerConfig),
     });
     setIsTestResultModalOpen(true);
   };
@@ -1214,6 +1234,7 @@ const Settings: React.FC<SettingsProps> = ({
     }
 
     const firstModel = { ...originalModel };
+    const modelLabel = firstModel.name?.trim() || firstModel.id;
 
     try {
       let response: Awaited<ReturnType<typeof window.electron.api.fetch>>;
@@ -1225,6 +1246,11 @@ const Settings: React.FC<SettingsProps> = ({
       const effectiveApiKey = providerConfig.apiKey;
 
       const openaiUrl = `${normalizedBaseUrl}/chat/completions`;
+      const testContext = {
+        baseUrl: normalizedBaseUrl,
+        modelLabel,
+        modelId: firstModel.id,
+      };
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
@@ -1246,7 +1272,11 @@ const Settings: React.FC<SettingsProps> = ({
       if (response.ok) {
         enableProvider(testingProvider);
         showTestResultModal(
-          { success: true, message: i18nService.t('connectionSuccess') },
+          {
+            success: true,
+            message: i18nService.t('connectionSuccess'),
+            ...testContext,
+          },
           testingProvider,
         );
       } else {
@@ -1262,18 +1292,49 @@ const Settings: React.FC<SettingsProps> = ({
         ) {
           enableProvider(testingProvider);
           showTestResultModal(
-            { success: true, message: i18nService.t('connectionSuccess') },
+            {
+              success: true,
+              message: i18nService.t('connectionSuccess'),
+              ...testContext,
+            },
             testingProvider,
           );
           return;
         }
-        showTestResultModal({ success: false, message: errorMessage }, testingProvider);
+        showTestResultModal(
+          {
+            success: false,
+            message: errorMessage,
+            ...testContext,
+            log: [
+              `${i18nService.t('testRequestUrl')}: ${openaiUrl}`,
+              `${i18nService.t('testModel')}: ${modelLabel} (${firstModel.id})`,
+              `${i18nService.t('testStatus')}: ${response.status}`,
+              `${i18nService.t('testResponse')}: ${stringifyConnectivityLogValue(data)}`,
+            ].join('\n'),
+          },
+          testingProvider,
+        );
       }
     } catch (err) {
+      const effectiveBaseUrl = resolveBaseUrl(
+        testingProvider,
+        providerConfig.baseUrl,
+      ).replace(/\/+$/, '');
       showTestResultModal(
         {
           success: false,
           message: err instanceof Error ? err.message : i18nService.t('connectionFailed'),
+          baseUrl: effectiveBaseUrl,
+          modelLabel,
+          modelId: firstModel.id,
+          log: [
+            `${i18nService.t('testRequestUrl')}: ${effectiveBaseUrl}/chat/completions`,
+            `${i18nService.t('testModel')}: ${modelLabel} (${firstModel.id})`,
+            `${i18nService.t('testError')}: ${
+              err instanceof Error ? err.stack || err.message : stringifyConnectivityLogValue(err)
+            }`,
+          ].join('\n'),
         },
         testingProvider,
       );
@@ -2853,29 +2914,51 @@ const Settings: React.FC<SettingsProps> = ({
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 text-xs text-secondary">
-                <span>
-                  {providerMeta[testResult.provider as BuiltinProviderType]?.label ??
-                    testResult.provider}
-                </span>
-                <span className="text-[11px]">•</span>
-                <span
-                  className={`inline-flex items-center gap-1 ${testResult.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}
-                >
-                  {testResult.success ? (
-                    <CheckCircleIcon className="h-4 w-4" />
-                  ) : (
-                    <XCircleIcon className="h-4 w-4" />
-                  )}
+              <div
+                className={`mb-3 inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${testResult.success ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300' : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'}`}
+              >
+                {testResult.success ? (
+                  <CheckCircleIcon className="h-4 w-4 flex-none" />
+                ) : (
+                  <XCircleIcon className="h-4 w-4 flex-none" />
+                )}
+                <span className="whitespace-nowrap">
                   {testResult.success
                     ? i18nService.t('connectionSuccess')
                     : i18nService.t('connectionFailed')}
                 </span>
               </div>
 
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-secondary">
+                <span className="font-medium text-foreground">{testResult.providerName}</span>
+                {testResult.baseUrl && (
+                  <span className="min-w-0 max-w-full truncate" title={testResult.baseUrl}>
+                    {testResult.baseUrl}
+                  </span>
+                )}
+                {testResult.modelLabel && (
+                  <span
+                    className="min-w-0 max-w-full truncate"
+                    title={
+                      testResult.modelId && testResult.modelId !== testResult.modelLabel
+                        ? `${testResult.modelLabel} (${testResult.modelId})`
+                        : testResult.modelLabel
+                    }
+                  >
+                    {testResult.modelLabel}
+                  </span>
+                )}
+              </div>
+
               <p className="mt-3 text-xs leading-5 text-foreground whitespace-pre-wrap break-words max-h-56 overflow-y-auto">
                 {testResult.message}
               </p>
+
+              {testResult.log && (
+                <pre className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-border bg-surface px-3 py-2 text-[11px] leading-5 text-secondary whitespace-pre-wrap break-words">
+                  {testResult.log}
+                </pre>
+              )}
 
               <div className="mt-4 flex justify-end">
                 <button
