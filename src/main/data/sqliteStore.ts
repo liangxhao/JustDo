@@ -4,7 +4,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
-import { DB_FILENAME } from './appConstants';
+import { DB_FILENAME } from '../core/appConstants';
 
 type ChangePayload<T = unknown> = {
   key: string;

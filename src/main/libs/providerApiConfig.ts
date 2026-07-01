@@ -1,5 +1,5 @@
 import { ProviderName, resolveCodingPlanBaseUrl } from '../../shared/providers';
-import type { SqliteStore } from '../sqliteStore';
+import type { SqliteStore } from '../data/sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
 

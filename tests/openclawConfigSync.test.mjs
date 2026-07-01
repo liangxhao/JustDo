@@ -28,7 +28,7 @@ Module._load = function patchedModuleLoad(request, parent, isMain) {
   return originalModuleLoad.call(this, request, parent, isMain);
 };
 
-const { setStoreGetter } = require('../dist-electron/main/libs/claudeSettings.js');
+const { setStoreGetter } = require('../dist-electron/main/libs/providerApiConfig.js');
 const { OpenClawConfigSync } = require('../dist-electron/main/libs/openclawConfigSync.js');
 
 const setElectronPaths = (homeDir) => {

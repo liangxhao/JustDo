@@ -8,7 +8,7 @@ import {
   getCurrentApiConfig,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
-} from './claudeSettings';
+} from './providerApiConfig';
 import { coworkLog } from './coworkLogger';
 import {
   buildAnthropicMessagesUrl,

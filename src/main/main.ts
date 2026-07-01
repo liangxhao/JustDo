@@ -23,9 +23,9 @@ import {
   migrateScheduledTasksToOpenclaw,
 } from '../scheduledTask/migrate';
 import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
-import { AgentManager } from './agentManager';
-import { APP_NAME } from './appConstants';
-import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
+import { AgentManager } from './features/agentManager';
+import { APP_NAME } from './core/appConstants';
+import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './core/autoLaunchManager';
 import type { CoworkMessage } from './coworkStore';
 import { CoworkStore } from './coworkStore';
 import { GroupStore } from './groupStore';
@@ -47,7 +47,7 @@ import {
   resolveCurrentApiConfig,
   resolveRawApiConfig,
   setStoreGetter,
-} from './libs/claudeSettings';
+} from './libs/providerApiConfig';
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import { probeCoworkModelReadiness } from './libs/coworkUtil';
@@ -76,12 +76,12 @@ import {
   restoreOriginalProxyEnv,
   setSystemProxyEnabled,
 } from './libs/systemProxy';
-import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
+import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
 import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';
 import { SkillManager } from './skillManager';
-import { SqliteStore } from './sqliteStore';
-import { createTray, destroyTray, updateTrayMenu } from './trayManager';
+import { SqliteStore } from './data/sqliteStore';
+import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 
 // 设置应用程序名称
 app.setName(APP_NAME);
@@ -4653,7 +4653,7 @@ if (!gotTheLock) {
     if (resetCount > 0) {
       console.log(`[Main] Reset ${resetCount} stuck cowork session(s) from running -> idle`);
     }
-    // Inject store getter into claudeSettings
+    // Inject store getter into providerApiConfig
     setStoreGetter(() => store);
 
     // Enterprise config sync — must run before openclawConfigSync

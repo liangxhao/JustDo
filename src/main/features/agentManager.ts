@@ -1,5 +1,5 @@
-import type { Agent, CoworkStore, CreateAgentRequest, UpdateAgentRequest } from './coworkStore';
-import { PRESET_AGENTS, type PresetAgent,presetToCreateRequest } from './presetAgents';
+import type { Agent, CoworkStore, CreateAgentRequest, UpdateAgentRequest } from '../coworkStore';
+import { PRESET_AGENTS, type PresetAgent, presetToCreateRequest } from './presetAgents';
 
 /**
  * AgentManager handles CRUD operations for agents and preset agent installation.

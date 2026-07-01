@@ -10,7 +10,7 @@ import type {
   CoworkStore,
 } from '../../coworkStore';
 import { t } from '../../i18n';
-import { resolveRawApiConfig } from '../claudeSettings';
+import { resolveRawApiConfig } from '../providerApiConfig';
 import { getCommandDangerLevel, isDeleteCommand } from '../commandSafety';
 import { coworkLog } from '../coworkLogger';
 import {

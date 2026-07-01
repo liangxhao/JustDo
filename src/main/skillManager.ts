@@ -4,10 +4,10 @@ import fs from 'fs';
 import yaml from 'js-yaml';
 import path from 'path';
 
-import { cpRecursiveSync } from './fsCompat';
+import { cpRecursiveSync } from './core/fsCompat';
 import { getElectronNodeRuntimePath } from './libs/coworkUtil';
 import { appendPythonRuntimeToEnv } from './libs/pythonRuntime';
-import { SqliteStore } from './sqliteStore';
+import { SqliteStore } from './data/sqliteStore';
 
 /**
  * Resolve the user's login shell PATH on macOS/Linux.

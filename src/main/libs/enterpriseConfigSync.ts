@@ -2,7 +2,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import type { SqliteStore } from '../sqliteStore';
+import type { SqliteStore } from '../data/sqliteStore';
 
 export type EnterpriseUIAction = 'hide' | 'disable' | 'readonly';
 

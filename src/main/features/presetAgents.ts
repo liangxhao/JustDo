@@ -1,5 +1,5 @@
-import type { CreateAgentRequest } from './coworkStore';
-import { getLanguage } from './i18n';
+import type { CreateAgentRequest } from '../coworkStore';
+import { getLanguage } from '../i18n';
 
 export interface PresetAgent {
   id: string;

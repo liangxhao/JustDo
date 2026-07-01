@@ -13,7 +13,7 @@ import {
   resolveAllEnabledProviderConfigs,
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
-} from './claudeSettings';
+} from './providerApiConfig';
 import type { McpToolManifestEntry } from './mcpServerManager';
 import {
   buildAgentEntry,
@@ -174,7 +174,7 @@ const MANAGED_TOOL_DENY = ['web_search'] as const;
 
 /**
  * Build the env var name for a provider's apiKey.
- * Must match the key format produced by resolveAllProviderApiKeys() in claudeSettings.ts.
+ * Must match the key format produced by resolveAllProviderApiKeys() in providerApiConfig.ts.
  */
 const providerApiKeyEnvVar = (providerName: string): string => {
   const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
