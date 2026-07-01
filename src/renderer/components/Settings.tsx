@@ -50,6 +50,10 @@ import PlusCircleIcon from './icons/PlusCircleIcon';
 import { CustomProviderIcon,OllamaIcon } from './icons/providers';
 import TrashIcon from './icons/TrashIcon';
 import McpManager from './mcp/McpManager';
+import ShortcutsSettings, {
+  shortcutLabelMap,
+  type ShortcutSettingsValue,
+} from './settings/ShortcutsSettings';
 import SkillsManager from './skills/SkillsManager';
 import ThemedSelect from './ui/ThemedSelect';
 
@@ -79,22 +83,10 @@ interface SettingsProps extends SettingsOpenOptions {
   onClose: () => void;
 }
 
-const CUSTOM_PROVIDER_KEYS = [
-  'custom_0',
-  'custom_1',
-  'custom_2',
-  'custom_3',
-  'custom_4',
-  'custom_5',
-  'custom_6',
-  'custom_7',
-  'custom_8',
-  'custom_9',
-] as const;
+const BUILTIN_PROVIDER_KEYS = ['ollama'] as const;
 
-const providerKeys = ['ollama', ...CUSTOM_PROVIDER_KEYS] as const;
-
-type ProviderType = (typeof providerKeys)[number];
+type BuiltinProviderType = (typeof BUILTIN_PROVIDER_KEYS)[number];
+type ProviderType = string;
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 type ProviderConfig = ProvidersConfig[string];
 type Model = NonNullable<ProviderConfig['models']>[number];
@@ -148,14 +140,8 @@ interface ProvidersImportPayload {
   providers?: Record<string, ProvidersImportEntry>;
 }
 
-const providerMeta: Record<ProviderType, { label: string; icon: React.ReactNode }> = {
+const providerMeta: Record<BuiltinProviderType, { label: string; icon: React.ReactNode }> = {
   ollama: { label: 'Ollama', icon: <OllamaIcon /> },
-  ...(Object.fromEntries(
-    CUSTOM_PROVIDER_KEYS.map(key => [
-      key,
-      { label: getCustomProviderDefaultName(key), icon: <CustomProviderIcon /> },
-    ]),
-  ) as Record<(typeof CUSTOM_PROVIDER_KEYS)[number], { label: string; icon: React.ReactNode }>),
 };
 
 const providerLinks: Partial<Record<ProviderType, { website: string; apiKey?: string }>> = {
@@ -171,35 +157,6 @@ const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
   }
   return getProviderDefaultBaseUrl(provider) || '';
 };
-const buildOpenAICompatibleChatCompletionsUrl = (baseUrl: string, _provider: string): string => {
-  const normalized = baseUrl.trim().replace(/\/+$/, '');
-  if (!normalized) {
-    return '/v1/chat/completions';
-  }
-  if (normalized.endsWith('/chat/completions')) {
-    return normalized;
-  }
-
-  const isGeminiLike = normalized.includes('generativelanguage.googleapis.com');
-  if (isGeminiLike) {
-    if (normalized.endsWith('/v1beta/openai') || normalized.endsWith('/v1/openai')) {
-      return `${normalized}/chat/completions`;
-    }
-    if (normalized.endsWith('/v1beta') || normalized.endsWith('/v1')) {
-      const betaBase = normalized.endsWith('/v1') ? `${normalized.slice(0, -3)}v1beta` : normalized;
-      return `${betaBase}/openai/chat/completions`;
-    }
-    return `${normalized}/v1beta/openai/chat/completions`;
-  }
-
-  // Handle /v1, /v4 etc. versioned paths
-  if (/\/v\d+$/.test(normalized)) {
-    return `${normalized}/chat/completions`;
-  }
-  return `${normalized}/v1/chat/completions`;
-};
-const shouldUseMaxCompletionTokensForOpenAI = (_provider: string, _modelId?: string): boolean =>
-  false;
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
 
 const getDefaultProviders = (): ProvidersConfig => {
@@ -223,178 +180,33 @@ const getDefaultProviders = (): ProvidersConfig => {
 
 const getDefaultActiveProvider = (): ProviderType => {
   const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
-  const firstEnabledProvider = providerKeys.find(providerKey => providers[providerKey]?.enabled);
-  return firstEnabledProvider ?? providerKeys[0];
-};
-
-// System shortcuts that should not be captured (clipboard, undo, select-all, quit, etc.)
-const isSystemShortcut = (e: KeyboardEvent): boolean => {
-  const key = e.key.toLowerCase();
-  if (e.metaKey && ['c', 'v', 'x', 'z', 'y', 'a', 'q', 'w'].includes(key)) return true;
-  if (e.metaKey && e.shiftKey && key === 'z') return true;
-  if (e.ctrlKey && ['c', 'v', 'x', 'z', 'y', 'a', 'w'].includes(key)) return true;
-  return false;
-};
-
-const formatShortcutFromEvent = (e: React.KeyboardEvent): string | null => {
-  // Skip standalone modifier keys
-  if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return null;
-  // Require at least one non-Shift modifier
-  if (!e.metaKey && !e.ctrlKey && !e.altKey) return null;
-  if (isSystemShortcut(e.nativeEvent)) return null;
-
-  const parts: string[] = [];
-  if (e.metaKey) parts.push('Cmd');
-  if (e.ctrlKey) parts.push('Ctrl');
-  if (e.altKey) parts.push('Alt');
-  if (e.shiftKey) parts.push('Shift');
-
-  const keyMap: Record<string, string> = {
-    ArrowUp: 'Up',
-    ArrowDown: 'Down',
-    ArrowLeft: 'Left',
-    ArrowRight: 'Right',
-    ' ': 'Space',
-    Escape: 'Esc',
-    Enter: 'Enter',
-    Backspace: 'Backspace',
-    Delete: 'Delete',
-    Tab: 'Tab',
-  };
-  const key = keyMap[e.key] ?? (e.key.length === 1 ? e.key.toUpperCase() : e.key);
-  parts.push(key);
-  return parts.join('+');
-};
-
-const SEND_SHORTCUT_OPTIONS = [
-  { value: 'Enter', label: 'Enter', labelMac: 'Enter' },
-  { value: 'Ctrl+Enter', label: 'Ctrl+Enter', labelMac: 'Cmd+Enter' },
-] as const;
-
-const isMacPlatform = navigator.platform.includes('Mac');
-
-const ShortcutRecorder: React.FC<{ value: string; onChange: (v: string) => void }> = ({
-  value,
-  onChange,
-}) => {
-  const [recording, setRecording] = useState(false);
-  const divRef = useRef<HTMLDivElement>(null);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!recording) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.key === 'Escape') {
-      setRecording(false);
-      return;
-    }
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-      onChange('');
-      setRecording(false);
-      return;
-    }
-    const shortcut = formatShortcutFromEvent(e);
-    if (shortcut) {
-      onChange(shortcut);
-      setRecording(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!recording) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (divRef.current && !divRef.current.contains(e.target as Node)) setRecording(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [recording]);
-
-  return (
-    <div
-      ref={divRef}
-      tabIndex={0}
-      data-shortcut-input="true"
-      onKeyDown={handleKeyDown}
-      onClick={() => setRecording(true)}
-      onBlur={() => setRecording(false)}
-      className={`w-36 rounded-xl border px-3 py-1.5 text-sm cursor-pointer select-none text-center outline-none transition-colors
-        dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset dark:text-claude-darkText text-claude-text
-        ${
-          recording
-            ? 'border-claude-accent ring-1 ring-claude-accent/30 dark:text-claude-darkTextSecondary text-claude-textSecondary'
-            : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50'
-        }`}
-    >
-      {value || i18nService.t('shortcutNotSet')}
-    </div>
+  const firstEnabledProvider = Object.keys(providers).find(
+    providerKey => providers[providerKey]?.enabled,
   );
+  return firstEnabledProvider ?? BUILTIN_PROVIDER_KEYS[0];
 };
 
-const SendShortcutSelect: React.FC<{ value: string; onChange: (v: string) => void }> = ({
-  value,
-  onChange,
-}) => {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+const getSortedCustomProviderKeys = (providers: ProvidersConfig): string[] =>
+  Object.keys(providers)
+    .filter(isCustomProvider)
+    .sort((a, b) => {
+      const aIndex = Number(a.replace('custom_', ''));
+      const bIndex = Number(b.replace('custom_', ''));
+      const aIsNumber = Number.isFinite(aIndex);
+      const bIsNumber = Number.isFinite(bIndex);
+      if (aIsNumber && bIsNumber) return aIndex - bIndex;
+      if (aIsNumber) return -1;
+      if (bIsNumber) return 1;
+      return a.localeCompare(b);
+    });
 
-  useEffect(() => {
-    if (!open) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
-
-  const currentLabel = (() => {
-    const opt = SEND_SHORTCUT_OPTIONS.find(o => o.value === value);
-    if (!opt) return value;
-    return isMacPlatform ? opt.labelMac : opt.label;
-  })();
-
-  return (
-    <div ref={containerRef} className="relative">
-      <div
-        onClick={() => setOpen(!open)}
-        className={`w-36 rounded-xl border px-3 py-1.5 text-sm cursor-pointer select-none text-center outline-none transition-colors
-          dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset dark:text-claude-darkText text-claude-text
-          ${
-            open
-              ? 'border-claude-accent ring-1 ring-claude-accent/30'
-              : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50'
-          }`}
-      >
-        {currentLabel}
-      </div>
-      {open && (
-        <div className="absolute right-0 mt-1 z-50 min-w-[160px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset shadow-elevated py-1">
-          {SEND_SHORTCUT_OPTIONS.map(option => {
-            const label = isMacPlatform ? option.labelMac : option.label;
-            const isActive = value === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-                className={`flex items-center justify-between w-full px-3 py-1.5 text-sm transition-colors
-                  ${
-                    isActive
-                      ? 'dark:text-claude-accent text-claude-accent font-medium'
-                      : 'dark:text-claude-darkText text-claude-text'
-                  } hover:bg-claude-accent/10`}
-              >
-                <span>{label}</span>
-                {isActive && <span className="text-claude-accent">✓</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
+const getNextCustomProviderKey = (providers: ProvidersConfig): string => {
+  const usedKeys = new Set(Object.keys(providers));
+  let index = 0;
+  while (usedKeys.has(`custom_${index}`)) {
+    index += 1;
+  }
+  return `custom_${index}`;
 };
 
 /* ── My Agents Settings Component ─────────────────────────── */
@@ -634,7 +446,7 @@ const Settings: React.FC<SettingsProps> = ({
   const importInputRef = useRef<HTMLInputElement>(null);
 
   // 快捷键设置
-  const [shortcuts, setShortcuts] = useState({
+  const [shortcuts, setShortcuts] = useState<ShortcutSettingsValue>({
     newChat: 'Ctrl+N',
     search: 'Ctrl+F',
     settings: 'Ctrl+,',
@@ -800,42 +612,6 @@ const Settings: React.FC<SettingsProps> = ({
           console.error('Failed to load prevent-sleep setting:', err);
         });
 
-      // Set up providers based on saved config
-      if (config.api) {
-        // For backward compatibility with older config
-        // Initialize active provider based on baseUrl
-        const normalizedApiBaseUrl = config.api.baseUrl.toLowerCase();
-        if (normalizedApiBaseUrl.includes('ollama') || normalizedApiBaseUrl.includes('11434')) {
-          setActiveProvider('ollama');
-          setProviders(prev => ({
-            ...prev,
-            ollama: {
-              ...prev.ollama,
-              enabled: true,
-              apiKey: config.api.key,
-              baseUrl: config.api.baseUrl,
-            },
-          }));
-        } else {
-          // For other URLs, check if it matches a custom provider
-          const customProvider = CUSTOM_PROVIDER_KEYS.find(key =>
-            normalizedApiBaseUrl.includes(key.toLowerCase()),
-          );
-          if (customProvider) {
-            setActiveProvider(customProvider);
-            setProviders(prev => ({
-              ...prev,
-              [customProvider]: {
-                ...prev[customProvider],
-                enabled: true,
-                apiKey: config.api.key,
-                baseUrl: config.api.baseUrl,
-              },
-            }));
-          }
-        }
-      }
-
       // Load provider-specific configurations if available
       // 合并已保存的配置和默认配置，确保新添加的 provider 能被显示
       if (config.providers) {
@@ -847,7 +623,7 @@ const Settings: React.FC<SettingsProps> = ({
 
           // After merging, find the first enabled provider to set as activeProvider
           // This ensures we don't use stale activeProvider from old config.api.baseUrl
-          const firstEnabledProvider = providerKeys.find(
+          const firstEnabledProvider = Object.keys(merged).find(
             providerKey => merged[providerKey]?.enabled,
           );
           if (firstEnabledProvider) {
@@ -936,8 +712,8 @@ const Settings: React.FC<SettingsProps> = ({
         filtered[key as keyof ProvidersConfig] = providers[key as keyof ProvidersConfig];
       }
     }
-    // Append custom_N providers that exist in state, sorted by numeric suffix
-    for (const key of CUSTOM_PROVIDER_KEYS) {
+    // Append custom providers that exist in state, sorted by numeric suffix
+    for (const key of getSortedCustomProviderKeys(providers)) {
       if (providers[key]) {
         filtered[key] = providers[key];
       }
@@ -957,10 +733,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   // Handle adding a new custom provider
   const handleAddCustomProvider = () => {
-    // Find the first unused custom slot
-    const usedKeys = new Set(Object.keys(providers));
-    const newKey = CUSTOM_PROVIDER_KEYS.find(k => !usedKeys.has(k));
-    if (!newKey) return; // All 10 slots used
+    const newKey = getNextCustomProviderKey(providers);
     setProviders(prev => ({
       ...prev,
       [newKey]: {
@@ -1006,7 +779,7 @@ const Settings: React.FC<SettingsProps> = ({
     if (activeProvider === key) {
       const visibleKeys = Object.keys(visibleProviders).filter(k => k !== key) as ProviderType[];
       const firstEnabled = visibleKeys.find(k => visibleProviders[k]?.enabled);
-      setActiveProvider(firstEnabled ?? visibleKeys[0] ?? providerKeys[0]);
+      setActiveProvider(firstEnabled ?? visibleKeys[0] ?? BUILTIN_PROVIDER_KEYS[0]);
     }
   };
 
@@ -1230,22 +1003,16 @@ const Settings: React.FC<SettingsProps> = ({
     setActiveTab(tab);
   };
 
-  // Mapping from shortcut key to i18n label key for conflict messages
-  const shortcutLabelMap: Record<string, string> = {
-    newChat: 'newChat',
-    search: 'search',
-    settings: 'openSettings',
-    sendMessage: 'sendMessageShortcut',
-  };
-
   // 快捷键更新处理
-  const handleShortcutChange = (key: keyof typeof shortcuts, value: string) => {
+  const handleShortcutChange = (key: keyof ShortcutSettingsValue, value: string) => {
     // Check for conflicts with other shortcuts
     const conflictKey = Object.keys(shortcuts).find(
       k => k !== key && shortcuts[k as keyof typeof shortcuts] === value,
     );
     if (conflictKey) {
-      const conflictLabel = i18nService.t(shortcutLabelMap[conflictKey] ?? conflictKey);
+      const conflictLabel = i18nService.t(
+        shortcutLabelMap[conflictKey as keyof ShortcutSettingsValue] ?? conflictKey,
+      );
       setNoticeMessage(
         i18nService.t('shortcutConflict').replace('{0}', value).replace('{1}', conflictLabel),
       );
@@ -1457,7 +1224,7 @@ const Settings: React.FC<SettingsProps> = ({
       const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
       const effectiveApiKey = providerConfig.apiKey;
 
-      const openaiUrl = buildOpenAICompatibleChatCompletionsUrl(normalizedBaseUrl, testingProvider);
+      const openaiUrl = `${normalizedBaseUrl}/chat/completions`;
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
@@ -1467,12 +1234,8 @@ const Settings: React.FC<SettingsProps> = ({
       const openAIRequestBody: Record<string, unknown> = {
         model: firstModel.id,
         messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
       };
-      if (shouldUseMaxCompletionTokensForOpenAI(testingProvider, firstModel.id)) {
-          openAIRequestBody.max_completion_tokens = CONNECTIVITY_TEST_TOKEN_BUDGET;
-      } else {
-        openAIRequestBody.max_tokens = CONNECTIVITY_TEST_TOKEN_BUDGET;
-      }
       response = await window.electron.api.fetch({
         url: openaiUrl,
         method: 'POST',
@@ -1527,7 +1290,7 @@ const Settings: React.FC<SettingsProps> = ({
         const displayName = isCustom
           ? (providerConfig as ProviderConfig).displayName ||
             getCustomProviderDefaultName(providerKey)
-          : (providerMeta[providerKey as ProviderType]?.label ??
+          : (providerMeta[providerKey as BuiltinProviderType]?.label ??
             getProviderDisplayName(providerKey));
         return [
           providerKey,
@@ -1652,14 +1415,6 @@ const Settings: React.FC<SettingsProps> = ({
           console.warn(`Skipping unknown built-in provider: ${providerKey}`);
           continue;
         }
-        if (
-          isCustom &&
-          !CUSTOM_PROVIDER_KEYS.includes(providerKey as (typeof CUSTOM_PROVIDER_KEYS)[number])
-        ) {
-          console.warn(`Skipping invalid custom provider key: ${providerKey}`);
-          continue;
-        }
-
         const providerData = payload.providers?.[providerKey];
         if (!providerData) {
           continue;
@@ -1772,14 +1527,6 @@ const Settings: React.FC<SettingsProps> = ({
           console.warn(`Skipping unknown built-in provider: ${providerKey}`);
           continue;
         }
-        if (
-          isCustom &&
-          !CUSTOM_PROVIDER_KEYS.includes(providerKey as (typeof CUSTOM_PROVIDER_KEYS)[number])
-        ) {
-          console.warn(`Skipping invalid custom provider key: ${providerKey}`);
-          continue;
-        }
-
         const providerData = payload.providers[providerKey];
         if (!providerData) {
           continue;
@@ -2508,7 +2255,11 @@ const Settings: React.FC<SettingsProps> = ({
               {Object.entries(visibleProviders).map(([provider, config]) => {
                 const providerKey = provider as ProviderType;
                 const isCustom = isCustomProvider(provider);
-                const providerInfo = providerMeta[providerKey];
+                const providerInfo =
+                  providerMeta[providerKey as BuiltinProviderType] ??
+                  (isCustom
+                    ? { label: getCustomProviderDefaultName(provider), icon: <CustomProviderIcon /> }
+                    : undefined);
                 const missingApiKey = providerRequiresApiKey(providerKey) && !config.apiKey.trim();
                 const canToggleProvider = config.enabled || !missingApiKey;
                 const displayLabel = isCustom
@@ -2592,15 +2343,13 @@ const Settings: React.FC<SettingsProps> = ({
                 );
               })}
               {/* Add Custom Provider Button */}
-              {CUSTOM_PROVIDER_KEYS.some(k => !providers[k]) && (
-                <button
-                  type="button"
-                  onClick={handleAddCustomProvider}
-                  className="w-full flex items-center justify-center p-2 rounded-xl border border-dashed border-claude-border dark:border-claude-darkBorder text-claude-secondaryText dark:text-claude-darkSecondaryText hover:border-claude-accent hover:text-claude-accent transition-colors text-sm"
-                >
-                  {i18nService.t('addCustomProvider')}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleAddCustomProvider}
+                className="w-full flex items-center justify-center p-2 rounded-xl border border-dashed border-claude-border dark:border-claude-darkBorder text-claude-secondaryText dark:text-claude-darkSecondaryText hover:border-claude-accent hover:text-claude-accent transition-colors text-sm"
+              >
+                {i18nService.t('addCustomProvider')}
+              </button>
             </div>
 
             {/* Provider Settings - Right Side */}
@@ -2611,7 +2360,7 @@ const Settings: React.FC<SettingsProps> = ({
                     {isCustomProvider(activeProvider)
                       ? (providers[activeProvider] as ProviderConfig)?.displayName ||
                         getCustomProviderDefaultName(activeProvider)
-                      : (providerMeta[activeProvider]?.label ??
+                      : (providerMeta[activeProvider as BuiltinProviderType]?.label ??
                         getProviderDisplayName(activeProvider))}{' '}
                     {i18nService.t('providerSettings')}
                   </h3>
@@ -2904,45 +2653,7 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'shortcuts':
         return (
-          <div className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-3">
-                {i18nService.t('keyboardShortcuts')}
-              </label>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground">{i18nService.t('newChat')}</span>
-                  <ShortcutRecorder
-                    value={shortcuts.newChat}
-                    onChange={v => handleShortcutChange('newChat', v)}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground">{i18nService.t('search')}</span>
-                  <ShortcutRecorder
-                    value={shortcuts.search}
-                    onChange={v => handleShortcutChange('search', v)}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground">{i18nService.t('openSettings')}</span>
-                  <ShortcutRecorder
-                    value={shortcuts.settings}
-                    onChange={v => handleShortcutChange('settings', v)}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground">
-                    {i18nService.t('sendMessageShortcut')}
-                  </span>
-                  <SendShortcutSelect
-                    value={shortcuts.sendMessage}
-                    onChange={v => handleShortcutChange('sendMessage', v)}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
+          <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />
         );
 
       case 'myAgents':
@@ -3143,7 +2854,10 @@ const Settings: React.FC<SettingsProps> = ({
               </div>
 
               <div className="flex items-center gap-2 text-xs text-secondary">
-                <span>{providerMeta[testResult.provider]?.label ?? testResult.provider}</span>
+                <span>
+                  {providerMeta[testResult.provider as BuiltinProviderType]?.label ??
+                    testResult.provider}
+                </span>
                 <span className="text-[11px]">•</span>
                 <span
                   className={`inline-flex items-center gap-1 ${testResult.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}
