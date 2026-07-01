@@ -8,8 +8,9 @@ import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
  * with predefined options (single/multi select). The tool pauses execution
  * and waits for the user's response via an HTTP callback to JustDo.
  *
- * This enables delete-confirmation modals on the JustDo desktop app
- * without relying on OpenClaw's exec.approval mechanism.
+ * This enables structured choice prompts and confirmation modals on
+ * the JustDo desktop app without relying on OpenClaw's exec.approval
+ * mechanism.
  */
 
 type PluginConfig = {
@@ -67,14 +68,14 @@ const QuestionOptionSchema = Type.Object({
 });
 
 const QuestionSchema = Type.Object({
-  question: Type.String({ description: 'The question to ask. Should be clear and end with a question mark.' }),
-  header: Type.Optional(Type.String({ description: 'Short label displayed as a tag (max 12 chars). Examples: "Auth method", "Confirm".' })),
+  question: Type.String({ description: 'The user-facing question. Use for any situation where the user needs to make a choice from predefined options.' }),
+  header: Type.Optional(Type.String({ description: 'Short label displayed as a tag (max 12 chars). Examples: "Mode", "Scope", "Confirm".' })),
   options: Type.Array(QuestionOptionSchema, {
     minItems: 2,
     maxItems: 4,
-    description: 'Available choices (2-4 options).',
+    description: 'Mutually exclusive choices for the user to pick from (2-4 options).',
   }),
-  multiSelect: Type.Optional(Type.Boolean({ description: 'Allow selecting multiple options.' })),
+  multiSelect: Type.Optional(Type.Boolean({ description: 'Allow selecting multiple options when more than one choice may apply.' })),
 });
 
 const AskUserQuestionSchema = Type.Object({
@@ -131,7 +132,7 @@ async function askUser(
 const plugin = {
   id: 'ask-user-question',
   name: 'AskUserQuestion',
-  description: 'Structured user confirmation tool for JustDo desktop.',
+  description: 'Structured choice and confirmation tool for JustDo desktop.',
   configSchema: {
     parse(value: unknown): PluginConfig {
       return parsePluginConfig(value);
@@ -159,10 +160,11 @@ const plugin = {
         name: 'AskUserQuestion',
         label: 'Ask User Question',
         description: [
-        'Ask the user a question with predefined options and wait for their response.',
-        'Use this tool BEFORE executing any delete operation (rm, trash, rmdir, unlink, git clean).',
-        'The user will see a confirmation dialog with the options you provide.',
-        'Do NOT use this tool for non-delete commands.',
+        'Ask the user to choose from predefined options and wait for their response.',
+        'Prefer this tool whenever the user needs to make any choice, decision, confirmation, or selection from predefined options.',
+        'Use it by default instead of asking a free-form chat question whenever you can present 2-4 clear options.',
+        'Also use this tool before high-risk destructive actions such as rm, trash, rmdir, unlink, or git clean.',
+        'Do not use it for purely informational updates or questions that have no clear predefined options.',
       ].join(' '),
       parameters: AskUserQuestionSchema,
       async execute(_id: string, params: unknown) {

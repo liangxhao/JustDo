@@ -1,7 +1,7 @@
 {
   "id": "ask-user-question",
   "name": "AskUserQuestion",
-  "description": "Structured user confirmation tool for JustDo desktop.",
+  "description": "Structured choice and confirmation tool for JustDo desktop.",
   "contracts": {
     "tools": [
       "AskUserQuestion"

@@ -34,6 +34,7 @@ export type McpBridgeConfig = {
 };
 
 const MCP_BRIDGE_PLUGIN_ID = 'mcp-bridge';
+const ASK_USER_QUESTION_PLUGIN_ID = 'ask-user-question';
 
 const sanitizeMcpBridgeToolSegment = (value: string): string => {
   const sanitized = value
@@ -551,7 +552,7 @@ export class OpenClawConfigSync {
       isBundledPluginAvailable(id),
     );
     const hasMcpBridgePlugin = isBundledPluginAvailable(MCP_BRIDGE_PLUGIN_ID);
-    const hasAskUserPlugin = isBundledPluginAvailable('ask-user-question');
+    const hasAskUserPlugin = isBundledPluginAvailable(ASK_USER_QUESTION_PLUGIN_ID);
 
     const managedConfig: Record<string, unknown> = {
       gateway: {
@@ -625,7 +626,7 @@ export class OpenClawConfigSync {
             }),
           ),
           ...(hasMcpBridgePlugin ? { [MCP_BRIDGE_PLUGIN_ID]: { enabled: true } } : {}),
-          ...(hasAskUserPlugin ? { 'ask-user-question': { enabled: true } } : {}),
+          ...(hasAskUserPlugin ? { [ASK_USER_QUESTION_PLUGIN_ID]: { enabled: true } } : {}),
           workboard: { enabled: true },
         };
 
@@ -664,7 +665,7 @@ export class OpenClawConfigSync {
     if (hasAskUserPlugin && mcpBridgeCfg && managedConfig.plugins) {
       const plugins = managedConfig.plugins as Record<string, unknown>;
       const entries = plugins.entries as Record<string, Record<string, unknown>>;
-      entries['ask-user-question'] = {
+      entries[ASK_USER_QUESTION_PLUGIN_ID] = {
         enabled: true,
         config: {
           callbackUrl: mcpBridgeCfg.askUserCallbackUrl,
