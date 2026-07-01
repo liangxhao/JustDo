@@ -19,8 +19,6 @@ import type { CoworkMessage } from '../../coworkStore';
 
 export type CoworkAgentEngine = 'openclaw';
 
-export const ENGINE_SWITCHED_CODE = 'ENGINE_SWITCHED';
-
 // ============================================================
 // Gateway Skill Types
 // ============================================================

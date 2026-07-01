@@ -673,10 +673,3 @@ export function convertToCoworkMessages(
 ): CoworkMessage[] {
   return messages.map((msg, idx) => convertToCoworkMessage(msg, idx));
 }
-
-export const isSameChannelHistoryEntry = (
-  left: { role: string; text: string },
-  right: { role: string; text: string },
-): boolean => {
-  return left.role === right.role && left.text === right.text;
-};

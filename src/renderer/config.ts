@@ -377,10 +377,6 @@ export const CONFIG_KEYS = {
   SKILLS: 'skills',
 };
 
-// Provider lists derived from ProviderRegistry — single source of truth
-export const CHINA_PROVIDERS = [...ProviderRegistry.idsByRegion('china')] as const;
-export const GLOBAL_PROVIDERS = ProviderRegistry.idsByRegion('global');
-
 export const getVisibleProviders = (_language: 'zh' | 'en'): readonly string[] => {
   // Only Ollama is visible as built-in provider
   // Custom providers (custom_0...custom_9) are handled separately
