@@ -1,10 +1,10 @@
-import { ArrowPathIcon,XMarkIcon } from '@heroicons/react/24/outline';
-import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useState } from 'react';
 
+import { ChatController } from '../../libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '../../services/i18n';
-import type { CoworkMessage,CoworkSession } from '../../types/cowork';
 import ChatMessageDisplay from '../cowork/ChatMessageDisplay';
-import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
+import { connectToGateway } from '../cowork/JustDoChatWrapper';
 
 interface RunSessionModalProps {
   sessionId?: string | null;
@@ -15,130 +15,65 @@ interface RunSessionModalProps {
 const MAX_RETRIES = 5;
 const RETRY_INTERVAL_MS = 3000;
 
-const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey, onClose }) => {
-  const [session, setSession] = useState<CoworkSession | null>(null);
+const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionKey, onClose }) => {
+  const [controller, setController] = useState<ChatController | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelledRef = useRef(false);
-
-  const loadSession = useCallback(async (isRetry = false): Promise<boolean> => {
-    if (!isRetry) {
-      setLoading(true);
-      setError(null);
-    }
-
-    try {
-      let loadedSession: CoworkSession | null = null;
-
-      // 1. Try loading by local session ID first
-      if (sessionId) {
-        const result = await window.electron?.cowork?.getSession(sessionId);
-        if (result?.success && result.session) {
-          loadedSession = result.session;
-        }
-      }
-
-      // 2. If not found locally, try resolving via OpenClaw sessionKey
-      if (!loadedSession && sessionKey) {
-        const result = await window.electron?.scheduledTasks?.resolveSession(sessionKey);
-        if (result?.success && result.session) {
-          loadedSession = result.session;
-        }
-      }
-
-      if (cancelledRef.current) return false;
-
-      if (loadedSession) {
-        setSession(loadedSession);
-        setLoading(false);
-        setError(null);
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }, [sessionId, sessionKey]);
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
 
   useEffect(() => {
-    cancelledRef.current = false;
+    if (!sessionKey) {
+      setLoading(false);
+      setError(i18nService.t('scheduledTasksSessionNotSynced'));
+      return;
+    }
 
-    const run = async () => {
-      const success = await loadSession();
-      if (cancelledRef.current) return;
+    const nextController = new ChatController();
+    nextController.state.sessionKey = sessionKey;
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-      if (!success) {
-        // Start polling retries
-        setRetryCount(1);
-      }
-    };
-
-    run();
-
-    return () => {
-      cancelledRef.current = true;
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-    };
-  }, [loadSession]);
-
-  // Polling retry effect
-  useEffect(() => {
-    if (retryCount === 0 || retryCount > MAX_RETRIES || session) return;
-
-    retryTimerRef.current = setTimeout(async () => {
-      if (cancelledRef.current) return;
-      const success = await loadSession(true);
-      if (cancelledRef.current) return;
-
-      if (!success) {
-        if (retryCount >= MAX_RETRIES) {
-          setLoading(false);
-          setError(i18nService.t('scheduledTasksSessionNotSynced'));
-        } else {
-          setRetryCount(prev => prev + 1);
-        }
-      }
-    }, RETRY_INTERVAL_MS);
-
-    return () => {
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-    };
-  }, [retryCount, session, loadSession]);
-
-  const handleManualRetry = async () => {
-    setError(null);
+    setController(nextController);
     setLoading(true);
+    setError(null);
     setRetryCount(0);
-    const success = await loadSession();
-    if (!success) {
-      setRetryCount(1);
-    }
-  };
 
-  const rawMessages = useMemo<CoworkMessage[]>(() => session?.messages ?? [], [session?.messages]);
-  const messages = useMemo(() => {
-    return rawMessages.flatMap(msg => {
-      if (msg.type === 'system') {
-        const displayText = msg.content ? getScheduledReminderDisplayText(msg.content) : null;
-        if (displayText) {
-          return [{ ...msg, content: displayText }];
+    const connect = async (attempt: number): Promise<void> => {
+      try {
+        const success = await connectToGateway(nextController);
+        if (cancelled) return;
+        if (success) {
+          setLoading(false);
+          setError(null);
+          return;
         }
-        // Filter out system messages with no visible content after transformation
-        if (!msg.content?.trim()) {
-          return [];
-        }
+      } catch {
+        // Retry below while the scheduled session is still being registered.
       }
-      return [msg];
-    });
-  }, [rawMessages]);
+      if (cancelled) return;
+      if (attempt >= MAX_RETRIES) {
+        setLoading(false);
+        setError(i18nService.t('scheduledTasksSessionNotSynced'));
+        return;
+      }
+      setRetryCount(attempt + 1);
+      retryTimer = setTimeout(() => void connect(attempt + 1), RETRY_INTERVAL_MS);
+    };
+
+    void connect(0);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      nextController.disconnect();
+      setController(current => (current === nextController ? null : current));
+    };
+  }, [connectionAttempt, sessionKey]);
+
+  const handleManualRetry = useCallback(() => {
+    setConnectionAttempt(attempt => attempt + 1);
+  }, []);
 
   return (
     <div
@@ -156,7 +91,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle bg-surface/50 shrink-0">
           <h3 className="text-sm font-semibold text-foreground truncate">
-            {session?.title || i18nService.t('scheduledTasksViewSession')}
+            {i18nService.t('scheduledTasksViewSession')}
           </h3>
           <button
             type="button"
@@ -197,16 +132,8 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
             </div>
           )}
 
-          {!loading && !error && messages.length === 0 && (
-            <div className="flex items-center justify-center py-16">
-              <span className="text-sm text-secondary">
-                {i18nService.t('scheduledTasksNoRuns')}
-              </span>
-            </div>
-          )}
-
-          {!loading && !error && messages.length > 0 && (
-            <ChatMessageDisplay messages={messages} isStreaming={false} />
+          {!loading && !error && (
+            <ChatMessageDisplay controller={controller} fullWidth />
           )}
         </div>
       </div>
