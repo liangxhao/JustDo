@@ -3,7 +3,6 @@ import {
   ArrowTopRightOnSquareIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
-  CpuChipIcon,
   CubeIcon,
   SignalIcon,
   XCircleIcon,
@@ -55,7 +54,7 @@ import ShortcutsSettings, {
 } from './settings/ShortcutsSettings';
 import ThemedSelect from './ui/ThemedSelect';
 
-type TabType = 'general' | 'coworkAgentEngine' | 'model' | 'myAgents' | 'im' | 'shortcuts' | 'help';
+type TabType = 'general' | 'model' | 'myAgents' | 'im' | 'shortcuts' | 'help';
 
 const isSettingsTabEnabled = (tab: TabType): boolean => tab !== 'myAgents';
 const getEnabledSettingsTab = (tab?: TabType): TabType =>
@@ -598,9 +597,6 @@ const Settings: React.FC<SettingsProps> = ({
       document.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isDragging]);
-  const [openClawEngineStatus, setOpenClawEngineStatus] = useState<OpenClawEngineStatus | null>(
-    null,
-  );
   const [openClawGatewayPort, setOpenClawGatewayPort] = useState<number>(
     DEFAULT_OPENCLAW_GATEWAY_PORT,
   );
@@ -609,26 +605,11 @@ const Settings: React.FC<SettingsProps> = ({
     String(DEFAULT_OPENCLAW_GATEWAY_PORT),
   );
   const [openClawGatewayPortSaving, setOpenClawGatewayPortSaving] = useState<boolean>(false);
+  const [openClawEngineStatus] = useState<OpenClawEngineStatus | null>(null);
 
   useEffect(() => {
     setCoworkAgentEngine(coworkConfig.agentEngine || 'openclaw');
   }, [coworkConfig.agentEngine]);
-
-  useEffect(() => {
-    let active = true;
-    void coworkService.getOpenClawEngineStatus().then(status => {
-      if (!active || !status) return;
-      setOpenClawEngineStatus(status);
-    });
-    const unsubscribe = coworkService.onOpenClawEngineStatus(status => {
-      if (!active) return;
-      setOpenClawEngineStatus(status);
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
 
   // Load OpenClaw gateway port
   useEffect(() => {
@@ -899,40 +880,9 @@ const Settings: React.FC<SettingsProps> = ({
 
   const hasCoworkConfigChanges = coworkAgentEngine !== coworkConfig.agentEngine;
   const isOpenClawAgentEngine = coworkAgentEngine === 'openclaw';
-
-  const openClawProgressPercent = useMemo(() => {
-    if (
-      typeof openClawEngineStatus?.progressPercent !== 'number' ||
-      !Number.isFinite(openClawEngineStatus.progressPercent)
-    ) {
-      return null;
-    }
-    return Math.max(0, Math.min(100, Math.round(openClawEngineStatus.progressPercent)));
-  }, [openClawEngineStatus]);
-
-  const resolveOpenClawStatusText = (status: OpenClawEngineStatus | null): string => {
-    if (!status) {
-      return i18nService.t('coworkOpenClawNotInstalledNotice');
-    }
-    if (status.message?.trim()) {
-      return status.message.trim();
-    }
-    switch (status.phase) {
-      case 'not_installed':
-        return i18nService.t('coworkOpenClawNotInstalledNotice');
-      case 'installing':
-        return i18nService.t('coworkOpenClawInstalling');
-      case 'ready':
-        return i18nService.t('coworkOpenClawReadyNotice');
-      case 'starting':
-        return i18nService.t('coworkOpenClawStarting');
-      case 'error':
-        return i18nService.t('coworkOpenClawError');
-      case 'running':
-      default:
-        return i18nService.t('coworkOpenClawRunning');
-    }
-  };
+  const openClawProgressPercent: number | null = null;
+  const resolveOpenClawStatusText = (_status: OpenClawEngineStatus | null): string =>
+    i18nService.t('coworkOpenClawRunning');
 
   /**
    * Return file content directly, showing the actual content to users.
@@ -1747,11 +1697,6 @@ const Settings: React.FC<SettingsProps> = ({
         icon: <Cog6ToothIcon className="h-5 w-5" />,
       },
       {
-        key: 'coworkAgentEngine' as TabType,
-        label: i18nService.t('coworkAgentEngine'),
-        icon: <CpuChipIcon className="h-5 w-5" />,
-      },
-      {
         key: 'model' as TabType,
         label: i18nService.t('model'),
         icon: <CubeIcon className="h-5 w-5" />,
@@ -1976,6 +1921,69 @@ const Settings: React.FC<SettingsProps> = ({
               </label>
             </div>
 
+            {/* Gateway Port Configuration */}
+            <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-foreground">
+                  {i18nService.t('openclawGatewayPortTitle')}
+                </div>
+                <div className="text-xs text-secondary">
+                  {i18nService.t('openclawGatewayPortHint')}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {openClawGatewayPortEditing ? (
+                  <>
+                    <input
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={openClawGatewayPortInput}
+                      onChange={e => setOpenClawGatewayPortInput(e.target.value)}
+                      className="w-32 rounded-lg border px-3 py-1.5 text-sm border-border bg-surface"
+                      disabled={openClawGatewayPortSaving}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveOpenClawGatewayPort()}
+                      disabled={
+                        openClawGatewayPortSaving ||
+                        isNaN(parseInt(openClawGatewayPortInput, 10)) ||
+                        parseInt(openClawGatewayPortInput, 10) < 1 ||
+                        parseInt(openClawGatewayPortInput, 10) > 65535
+                      }
+                      className="px-3 py-1.5 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {i18nService.t('save')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenClawGatewayPortEditing(false);
+                        setOpenClawGatewayPortInput(String(openClawGatewayPort));
+                      }}
+                      className="px-3 py-1.5 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                    >
+                      {i18nService.t('cancel')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="px-3 py-1.5 text-sm font-mono bg-surface-raised rounded-lg">
+                      {openClawGatewayPort}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setOpenClawGatewayPortEditing(true)}
+                      className="px-3 py-1.5 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                    >
+                      {i18nService.t('edit')}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* Appearance Section — mode selector + theme gallery */}
             <div>
               <h4
@@ -2174,7 +2182,7 @@ const Settings: React.FC<SettingsProps> = ({
           </div>
         );
 
-      case 'coworkAgentEngine':
+      case 'coworkAgentEngine' as TabType:
         return (
           <div className="space-y-6">
             <div className="space-y-3">

@@ -214,7 +214,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenClawError: 'OpenClaw 网关未能在规定时间内启动成功。',
     openclawGatewayPortTitle: '网关端口',
     openclawGatewayPortHint:
-      '内置 OpenClaw 的网关服务端口。如果与其他 OpenClaw 冲突，可修改此端口。',
+      'AI 助理的本地网关服务端口。如果端口冲突，可在此修改。修改后需重启本软件才能生效。',
     coworkConfigSaveFailed: '保存 JustDo 配置失败，请稍后重试。',
     coworkStatusIdle: '已停止',
     coworkStatusRunning: '运行中',
@@ -837,7 +837,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenClawError: 'OpenClaw gateway failed to become healthy in time.',
     openclawGatewayPortTitle: 'Gateway Port',
     openclawGatewayPortHint:
-      'Gateway service port for the built-in OpenClaw. Modify if it conflicts with other OpenClaw installations.',
+      'The local gateway service port used by the AI assistant. Change it if the port conflicts with another service. Restart the app for changes to take effect.',
     coworkConfigSaveFailed: 'Failed to save JustDo settings. Please try again.',
     coworkStatusIdle: 'Idle',
     coworkStatusRunning: 'Running',
