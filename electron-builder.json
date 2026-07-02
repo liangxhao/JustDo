@@ -46,9 +46,7 @@
     {
       "from": "resources/tray",
       "to": "tray",
-      "filter": [
-        "**/*"
-      ]
+      "filter": ["**/*"]
     }
   ],
   "protocols": [
@@ -58,9 +56,7 @@
     }
   ],
   "mac": {
-    "target": [
-      "dmg"
-    ],
+    "target": ["dmg"],
     "icon": "build/icons/mac/icon.icns",
     "category": "public.app-category.productivity",
     "hardenedRuntime": true,
@@ -143,9 +139,7 @@
   },
   "afterSign": "scripts/notarize.js",
   "win": {
-    "target": [
-      "nsis"
-    ],
+    "target": ["nsis"],
     "icon": "build/icons/win/icon.ico",
     "requestedExecutionLevel": "asInvoker",
     "extraResources": [
@@ -160,10 +154,7 @@
     ]
   },
   "linux": {
-    "target": [
-      "AppImage",
-      "deb"
-    ],
+    "target": ["AppImage", "deb"],
     "icon": "build/icons/png",
     "category": "Utility",
     "extraResources": [

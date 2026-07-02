@@ -122,22 +122,21 @@ function persistFailedRun(record: FailedRunRecord): void {
   }
 }
 
-function findFailedRunError(
-  message: Record<string, unknown>,
-  sessionKey: string,
-): string | null {
+function findFailedRunError(message: Record<string, unknown>, sessionKey: string): string | null {
   const runId = typeof message.runId === 'string' ? message.runId : null;
   const timestamp = typeof message.timestamp === 'number' ? message.timestamp : null;
   const candidates = readFailedRuns().filter(item => item.sessionKey === sessionKey);
   const exact = runId ? candidates.find(item => item.runId === runId) : null;
   if (exact) return exact.error;
-  if (timestamp === null) return candidates.at(-1)?.error ?? null;
-  return candidates
-    .filter(item => Math.abs(item.timestamp - timestamp) < 60_000)
-    .sort(
-      (left, right) =>
-        Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp),
-    )[0]?.error ?? null;
+  if (timestamp === null) return candidates[candidates.length - 1]?.error ?? null;
+  return (
+    candidates
+      .filter(item => Math.abs(item.timestamp - timestamp) < 60_000)
+      .sort(
+        (left, right) =>
+          Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp),
+      )[0]?.error ?? null
+  );
 }
 
 function normalizeFailedRunMessage(
@@ -157,9 +156,7 @@ function normalizeFailedRunMessage(
     ...raw,
     role: 'system',
     content:
-      errorMessage?.trim() ||
-      findFailedRunError(raw, sessionKey) ||
-      AGENT_RUN_FAILED_BEFORE_REPLY,
+      errorMessage?.trim() || findFailedRunError(raw, sessionKey) || AGENT_RUN_FAILED_BEFORE_REPLY,
     isError: true,
   };
 }
@@ -201,18 +198,23 @@ async function hydrateMissingToolInputsFromLocalState(
   );
   if (missingIds.length === 0) return messages;
 
-  const electronApi = (globalThis as {
-    electron?: {
-      openclaw?: {
-        history?: {
-          getToolInputs?: (params: {
-            sessionKey: string;
-            toolCallIds: string[];
-          }) => Promise<{ success?: boolean; inputs?: Record<string, { name?: string; input?: unknown }> }>;
+  const electronApi = (
+    globalThis as {
+      electron?: {
+        openclaw?: {
+          history?: {
+            getToolInputs?: (params: {
+              sessionKey: string;
+              toolCallIds: string[];
+            }) => Promise<{
+              success?: boolean;
+              inputs?: Record<string, { name?: string; input?: unknown }>;
+            }>;
+          };
         };
       };
-    };
-  }).electron;
+    }
+  ).electron;
   const result = await electronApi?.openclaw?.history?.getToolInputs?.({
     sessionKey,
     toolCallIds: missingIds,
@@ -292,7 +294,10 @@ export class ChatController {
       connected: this.state.connected,
       msgRoles: (this.state.chatMessages as Array<Record<string, unknown>>)
         .slice(-5)
-        .map(m => `${m.role ?? '?'}${(m as Record<string, unknown>).__openclawStreamFallback ? '(fallback)' : ''}`),
+        .map(
+          m =>
+            `${m.role ?? '?'}${(m as Record<string, unknown>).__openclawStreamFallback ? '(fallback)' : ''}`,
+        ),
     };
   }
 
@@ -434,7 +439,10 @@ export class ChatController {
     this.state.chatThinkingStream = null;
   }
 
-  private upsertToolMessage(toolMessage: Record<string, unknown>): { existingIndex: number; nextCount: number } {
+  private upsertToolMessage(toolMessage: Record<string, unknown>): {
+    existingIndex: number;
+    nextCount: number;
+  } {
     const toolCallId = this.extractToolCallId(toolMessage);
     const existingIndex = this.state.chatToolMessages.findIndex(
       m => this.extractToolCallId(m as Record<string, unknown>) === toolCallId,
@@ -574,8 +582,8 @@ export class ChatController {
     const client = new GatewayClient({
       url,
       token,
-      onHello: (hello) => this.handleHello(hello),
-      onEvent: (event) => this.handleEvent(event),
+      onHello: hello => this.handleHello(hello),
+      onEvent: event => this.handleEvent(event),
       onClose: () => this.handleClose(),
     });
 
@@ -586,7 +594,8 @@ export class ChatController {
   /** Switch to a different session */
   async switchSession(sessionKey: string): Promise<void> {
     const previousSessionKey = this.state.sessionKey;
-    const isTempSessionPromotion = isTempJustDoSessionKey(previousSessionKey) && !isTempJustDoSessionKey(sessionKey);
+    const isTempSessionPromotion =
+      isTempJustDoSessionKey(previousSessionKey) && !isTempJustDoSessionKey(sessionKey);
     debugLog('[ChatCtrl] switchSession:', sessionKey, {
       hadPendingUserMsg: !!this.state.pendingUserMessage,
       chatSending: this.state.chatSending,
@@ -641,7 +650,9 @@ export class ChatController {
     // Subscribe to session events (matches webchat: subscribeSessions + syncSelectedSessionMessageSubscription)
     this.state.client?.request('sessions.subscribe', {}).catch(() => {});
     if (this.state.sessionKey) {
-      this.state.client?.request('sessions.messages.subscribe', { key: this.state.sessionKey }).catch(() => {});
+      this.state.client
+        ?.request('sessions.messages.subscribe', { key: this.state.sessionKey })
+        .catch(() => {});
     }
 
     // Load history after connection
@@ -1013,7 +1024,8 @@ export class ChatController {
         this.state.chatStream = typeof snapshot === 'string' ? snapshot : deltaText;
       } else if (typeof snapshot === 'string') {
         const prefixLength = snapshot.length - deltaText.length;
-        const prefixMatches = prefixLength === previous.length && snapshot.slice(0, prefixLength) === previous;
+        const prefixMatches =
+          prefixLength === previous.length && snapshot.slice(0, prefixLength) === previous;
         this.state.chatStream = prefixMatches ? `${previous}${deltaText}` : snapshot;
         debugLog('[ChatCtrl] ▶ delta merge', {
           previousLen: previous.length,
@@ -1051,7 +1063,9 @@ export class ChatController {
       hasMessage: !!message,
       willAppend,
       msgRole: (message as Record<string, unknown>)?.role,
-      finalContentType: Array.isArray((message as Record<string, unknown>)?.content) ? 'array' : typeof (message as Record<string, unknown>)?.content,
+      finalContentType: Array.isArray((message as Record<string, unknown>)?.content)
+        ? 'array'
+        : typeof (message as Record<string, unknown>)?.content,
       ...this._snap(),
     });
     if (willAppend) {
@@ -1130,7 +1144,10 @@ export class ChatController {
    *   payload = { runId, stream, session, agentId, aseq, data: { text, delta, phase, name, ... } }
    * All content fields live inside `payload.data`, not directly on `payload`.
    */
-  private handleAgentEvent(payload: Record<string, unknown> | undefined, sourceEvent = 'agent'): void {
+  private handleAgentEvent(
+    payload: Record<string, unknown> | undefined,
+    sourceEvent = 'agent',
+  ): void {
     if (!payload) return;
 
     const stream = typeof payload.stream === 'string' ? payload.stream : '';
@@ -1138,7 +1155,9 @@ export class ChatController {
     const aseq = typeof payload.aseq === 'number' ? payload.aseq : null;
 
     // All content fields are nested inside payload.data
-    const data = (typeof payload.data === 'object' && payload.data !== null ? payload.data : {}) as Record<string, unknown>;
+    const data = (
+      typeof payload.data === 'object' && payload.data !== null ? payload.data : {}
+    ) as Record<string, unknown>;
 
     // Match session: gateway agent events may expose the session on either the
     // top-level payload or data. If it is absent, runId isolation below still
@@ -1151,7 +1170,11 @@ export class ChatController {
       stringField(data, 'sessionKey') ??
       stringField(data, 'key') ??
       '';
-    if (eventSession && eventSession !== this.state.sessionKey && !this.state.sessionKey.endsWith(eventSession)) {
+    if (
+      eventSession &&
+      eventSession !== this.state.sessionKey &&
+      !this.state.sessionKey.endsWith(eventSession)
+    ) {
       debugLog('[ChatCtrl] ▶ event ignored (session mismatch)', {
         sourceEvent,
         stream,
@@ -1231,7 +1254,15 @@ export class ChatController {
         return;
       }
 
-      debugLog('[ChatCtrl] ▶ assistant', { sourceEvent, runId, aseq, wasSending, textLen: text.length, textTail: text.slice(-40), ...this._snap() });
+      debugLog('[ChatCtrl] ▶ assistant', {
+        sourceEvent,
+        runId,
+        aseq,
+        wasSending,
+        textLen: text.length,
+        textTail: text.slice(-40),
+        ...this._snap(),
+      });
       this.notifyStream();
       return;
     }
@@ -1289,9 +1320,7 @@ export class ChatController {
       }
       if (phase === 'error') {
         const errorMessage =
-          typeof data.error === 'string' && data.error.trim()
-            ? data.error.trim()
-            : 'Unknown error';
+          typeof data.error === 'string' && data.error.trim() ? data.error.trim() : 'Unknown error';
         this.clearLifecycleEndFallback();
         this.state.lastError = errorMessage;
         persistFailedRun({
@@ -1325,7 +1354,11 @@ export class ChatController {
     const args = data.args;
 
     if (!toolCallId || !name) {
-      debugLog('[ChatCtrl] ▶ tool (ignored, missing toolCallId/name)', { stream, toolCallId, name });
+      debugLog('[ChatCtrl] ▶ tool (ignored, missing toolCallId/name)', {
+        stream,
+        toolCallId,
+        name,
+      });
       return;
     }
 
@@ -1354,7 +1387,12 @@ export class ChatController {
         isActive: true,
       });
       const upsert = this.upsertToolMessage(toolMessage);
-      debugLog('[ChatCtrl] ▶ tool upsert(start)', { sourceEvent, toolCallId, existingIndex: upsert.existingIndex, nextCount: upsert.nextCount });
+      debugLog('[ChatCtrl] ▶ tool upsert(start)', {
+        sourceEvent,
+        toolCallId,
+        existingIndex: upsert.existingIndex,
+        nextCount: upsert.nextCount,
+      });
       this.notifyStream();
       return;
     }
@@ -1372,9 +1410,12 @@ export class ChatController {
       error !== null;
     const isTerminalToolEvent =
       !isNonTerminalToolEvent && (isTerminalToolPhase(phase) || hasTerminalOutput);
-    const output = stringifyToolOutput(
-      data.result ?? data.partialResult ?? data.output ?? data.content ?? data.text,
-    ) ?? error ?? '';
+    const output =
+      stringifyToolOutput(
+        data.result ?? data.partialResult ?? data.output ?? data.content ?? data.text,
+      ) ??
+      error ??
+      '';
 
     const toolMessage = this.buildToolMessage({
       toolCallId,
@@ -1408,7 +1449,10 @@ export class ChatController {
     if (this.state.chatSending) return;
 
     const runId = `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    debugLog('[ChatCtrl] sendMessage:', message.slice(0, 60), { sessionKey: this.state.sessionKey, runId });
+    debugLog('[ChatCtrl] sendMessage:', message.slice(0, 60), {
+      sessionKey: this.state.sessionKey,
+      runId,
+    });
 
     // Optimistic: append user message immediately
     const userMessage = { role: 'user', content: message, timestamp: Date.now() };
@@ -1539,7 +1583,9 @@ function withThinkingContent(message: unknown, thinkingText: string): unknown {
   if (Array.isArray(content)) {
     const alreadyHasThinking = content.some(item => {
       const block = item as Record<string, unknown>;
-      return block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim();
+      return (
+        block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()
+      );
     });
     return alreadyHasThinking
       ? message
@@ -1638,7 +1684,10 @@ function isNonTerminalToolPhase(phase: string): boolean {
 
 function isUnknownMethodError(err: unknown): boolean {
   if (err instanceof Error) {
-    return err.message.includes('unknown method') || (err as { gatewayCode?: string }).gatewayCode === 'METHOD_NOT_FOUND';
+    return (
+      err.message.includes('unknown method') ||
+      (err as { gatewayCode?: string }).gatewayCode === 'METHOD_NOT_FOUND'
+    );
   }
   return false;
 }
@@ -1647,7 +1696,9 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.addEventListener('load', () => resolve(String(reader.result ?? '')));
-    reader.addEventListener('error', () => reject(reader.error ?? new Error('Failed to read image')));
+    reader.addEventListener('error', () =>
+      reject(reader.error ?? new Error('Failed to read image')),
+    );
     reader.readAsDataURL(blob);
   });
 }

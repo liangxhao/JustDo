@@ -1,5 +1,7 @@
 import { ProviderRegistry } from '@shared/providers';
 
+const BUILTIN_MODELS_PROVIDER_KEY = 'builtin_models';
+
 // 配置类型定义
 export interface AppConfig {
   // API 配置
@@ -40,6 +42,7 @@ export interface AppConfig {
       baseUrl: string;
       apiFormat?: 'openai';
       displayName?: string;
+      readonly?: boolean;
       models?: Array<{
         id: string;
         name: string;
@@ -143,10 +146,13 @@ export const CONFIG_KEYS = {
 };
 
 export const getVisibleProviders = (_language: 'zh' | 'en'): readonly string[] => {
-  // Only Ollama is visible as built-in provider
+  // Ollama is user-configurable; builtin_models is read-only and refreshed at startup.
   // Custom providers (custom_0...custom_9) are handled separately
-  return ['ollama'];
+  return [BUILTIN_MODELS_PROVIDER_KEY, 'ollama'];
 };
+
+export const isBuiltinModelsProvider = (key: string): boolean =>
+  key === BUILTIN_MODELS_PROVIDER_KEY;
 
 /**
  * 判断 provider key 是否为自定义提供商（custom_0, custom_1, ...）
@@ -176,13 +182,20 @@ export const getProviderDisplayName = (
         : '';
     return name || getCustomProviderDefaultName(providerKey);
   }
+  if (isBuiltinModelsProvider(providerKey)) {
+    const name =
+      providerConfig && typeof providerConfig.displayName === 'string'
+        ? providerConfig.displayName
+        : '';
+    return name || '内置模型';
+  }
   return providerKey.charAt(0).toUpperCase() + providerKey.slice(1);
 };
 
 /**
  * 内置 provider 名称列表（禁止作为 displayName 使用）
  */
-const BUILTIN_PROVIDER_NAMES = ['ollama'];
+const BUILTIN_PROVIDER_NAMES = ['ollama', BUILTIN_MODELS_PROVIDER_KEY, '内置模型'];
 
 /**
  * displayName 校验正则（允许字母、数字、下划线、中划线、空格）

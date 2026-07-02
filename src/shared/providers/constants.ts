@@ -1,11 +1,13 @@
 export const ProviderName = {
   Ollama: 'ollama',
+  BuiltinModels: 'builtin_models',
   Custom: 'custom',
 } as const;
 export type ProviderName = (typeof ProviderName)[keyof typeof ProviderName];
 
 export const OpenClawProviderId = {
   Ollama: 'ollama',
+  BuiltinModels: 'builtin_models',
   JustDo: 'justdo',
 } as const;
 export type OpenClawProviderId = (typeof OpenClawProviderId)[keyof typeof OpenClawProviderId];
@@ -49,6 +51,13 @@ const PROVIDER_DEFINITIONS = [
     defaultApiFormat: ApiFormat.OpenAI,
     defaultModels: [],
   },
+  {
+    id: ProviderName.BuiltinModels,
+    openClawProviderId: OpenClawProviderId.BuiltinModels,
+    defaultBaseUrl: '',
+    defaultApiFormat: ApiFormat.OpenAI,
+    defaultModels: [],
+  },
 ] as const satisfies readonly ProviderDef[];
 
 class ProviderRegistryImpl {
@@ -69,7 +78,11 @@ class ProviderRegistryImpl {
   }
 
   getOpenClawProviderId(providerName: string): string {
-    return this.idIndex.get(providerName)?.openClawProviderId ?? providerName ?? OpenClawProviderId.JustDo;
+    return (
+      this.idIndex.get(providerName)?.openClawProviderId ??
+      providerName ??
+      OpenClawProviderId.JustDo
+    );
   }
 }
 

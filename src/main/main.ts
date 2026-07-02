@@ -20,7 +20,11 @@ import path from 'path';
 
 import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
 import { APP_NAME } from './core/appConstants';
-import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './core/autoLaunchManager';
+import {
+  getAutoLaunchEnabled,
+  isAutoLaunched,
+  setAutoLaunchEnabled,
+} from './core/autoLaunchManager';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import type { CoworkMessage } from './coworkStore';
@@ -40,6 +44,7 @@ import {
   OpenClawRuntimeAdapter,
 } from './libs/agentEngine';
 import type { PermissionResult } from './libs/agentEngine/types';
+import { syncBuiltinModelProvider } from './libs/cowork/builtinModelProvider';
 import { saveCoworkApiConfig } from './libs/cowork/coworkConfigStore';
 import { getCoworkLogPath } from './libs/cowork/coworkLogger';
 import { probeCoworkModelReadiness } from './libs/cowork/coworkUtil';
@@ -68,7 +73,10 @@ import {
 } from './libs/openclaw/openclawChannelSessionSync';
 import type { McpBridgeConfig } from './libs/openclaw/openclawConfigSync';
 import { buildProviderSelection, OpenClawConfigSync } from './libs/openclaw/openclawConfigSync';
-import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclaw/openclawEngineManager';
+import {
+  OpenClawEngineManager,
+  type OpenClawEngineStatus,
+} from './libs/openclaw/openclawEngineManager';
 import { OpenClawSkillFiles } from './libs/openclaw/openclawSkillFiles';
 import { stopOpenClawTokenProxy } from './libs/openclaw/openclawTokenProxy';
 import { createSkillMarketplaceService } from './libs/skillMarketplace';
@@ -1950,14 +1958,20 @@ if (!gotTheLock) {
     }
 
     const record = value as Record<string, unknown>;
-    const id = [record.id, record.toolCallId, record.tool_call_id, record.toolUseId, record.tool_use_id].find(
-      item => typeof item === 'string' && targetIds.has(item),
-    ) as string | undefined;
+    const id = [
+      record.id,
+      record.toolCallId,
+      record.tool_call_id,
+      record.toolUseId,
+      record.tool_use_id,
+    ].find(item => typeof item === 'string' && targetIds.has(item)) as string | undefined;
     const type = typeof record.type === 'string' ? record.type.toLowerCase() : '';
     if (
       id &&
       !found[id] &&
-      ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'functioncall', 'function_call'].includes(type)
+      ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'functioncall', 'function_call'].includes(
+        type,
+      )
     ) {
       const input = resolveOpenClawToolInput(record);
       if (hasOpenClawToolInput(input)) {
@@ -2167,9 +2181,7 @@ if (!gotTheLock) {
           return {
             key,
             name,
-            aliases: aliases
-              .map(normalizeSlashAlias)
-              .filter(alias => alias && alias !== name),
+            aliases: aliases.map(normalizeSlashAlias).filter(alias => alias && alias !== name),
             description: typeof entry.description === 'string' ? entry.description : '',
             args: formatSlashArgs(args),
             category: mapSlashCategory(entry),
@@ -3461,7 +3473,7 @@ if (!gotTheLock) {
           const sessionId =
             typeof updatedInput?.sessionId === 'string'
               ? updatedInput.sessionId.trim()
-              : askUserSessionByRequestId.get(options.requestId) ?? '';
+              : (askUserSessionByRequestId.get(options.requestId) ?? '');
           if (sessionId && sessionId !== '__askuser__') {
             const content =
               result.behavior === 'allow' && answers && Object.keys(answers).length > 0
@@ -3471,7 +3483,9 @@ if (!gotTheLock) {
                         `${question}\n${t('askUserAnswerLabel')}：${formatAskUserAnswerValue(answer)}`,
                     )
                     .join('\n\n')
-                : t(result.behavior === 'allow' ? 'askUserApprovedMessage' : 'askUserDeniedMessage');
+                : t(
+                    result.behavior === 'allow' ? 'askUserApprovedMessage' : 'askUserDeniedMessage',
+                  );
             const message = getCoworkStore().addMessage(sessionId, {
               type: 'user',
               content,
@@ -4370,7 +4384,6 @@ if (!gotTheLock) {
       } catch {
         // CronJobService not available yet, will start when OpenClaw is ready.
       }
-
     });
   };
 
@@ -4494,6 +4507,8 @@ if (!gotTheLock) {
     }
     // Inject store getter into providerApiConfig
     setStoreGetter(() => store);
+
+    await syncBuiltinModelProvider(store);
 
     bindCoworkRuntimeForwarder();
     bindOpenClawStatusForwarder();

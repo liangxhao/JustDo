@@ -1,10 +1,18 @@
-import { AppConfig, CONFIG_KEYS, defaultConfig, isCustomProvider } from '../config';
+import {
+  AppConfig,
+  CONFIG_KEYS,
+  defaultConfig,
+  isBuiltinModelsProvider,
+  isCustomProvider,
+} from '../config';
 import { localStore } from './store';
 
-const SUPPORTED_BUILTIN_PROVIDERS = new Set(['ollama']);
+const SUPPORTED_BUILTIN_PROVIDERS = new Set(['ollama', 'builtin_models']);
 
 const isSupportedProvider = (providerKey: string): boolean =>
-  SUPPORTED_BUILTIN_PROVIDERS.has(providerKey) || isCustomProvider(providerKey);
+  SUPPORTED_BUILTIN_PROVIDERS.has(providerKey) ||
+  isBuiltinModelsProvider(providerKey) ||
+  isCustomProvider(providerKey);
 
 const normalizeProviderBaseUrl = (baseUrl: unknown): string => {
   if (typeof baseUrl !== 'string') {
@@ -29,7 +37,7 @@ const normalizeProvidersConfig = (providers: AppConfig['providers']): AppConfig[
           baseUrl: normalizeProviderBaseUrl(providerConfig.baseUrl),
           apiFormat: 'openai' as const,
         },
-      ])
+      ]),
   ) as AppConfig['providers'];
 };
 
@@ -84,7 +92,7 @@ class ConfigService {
                       apiFormat: 'openai' as const,
                     },
                   ];
-                })
+                }),
             )
           : defaultConfig.providers;
 
@@ -126,7 +134,9 @@ class ConfigService {
   }
 
   async updateConfig(newConfig: Partial<AppConfig>) {
-    const normalizedProviders = normalizeProvidersConfig(newConfig.providers as AppConfig['providers'] | undefined);
+    const normalizedProviders = normalizeProvidersConfig(
+      newConfig.providers as AppConfig['providers'] | undefined,
+    );
     this.config = {
       ...this.config,
       ...newConfig,
@@ -144,4 +154,4 @@ class ConfigService {
   }
 }
 
-export const configService = new ConfigService(); 
+export const configService = new ConfigService();
