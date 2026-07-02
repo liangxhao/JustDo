@@ -123,6 +123,7 @@ const MANAGED_OWNER_ALLOW_FROM = [
 ];
 
 const MANAGED_TOOL_DENY = ['web_search'] as const;
+const CONTROL_UI_ALLOWED_ORIGINS = ['*'] as const;
 
 /**
  * Build the env var name for a provider's apiKey.
@@ -459,6 +460,7 @@ export class OpenClawConfigSync {
         bind: 'loopback',
         controlUi: {
           dangerouslyDisableDeviceAuth: true,
+          allowedOrigins: [...CONTROL_UI_ALLOWED_ORIGINS],
         },
       },
       models: {
@@ -1019,6 +1021,7 @@ export class OpenClawConfigSync {
         mode: 'local',
         controlUi: {
           dangerouslyDisableDeviceAuth: true,
+          allowedOrigins: [...CONTROL_UI_ALLOWED_ORIGINS],
         },
       },
       // Don't enable plugins in minimal config — plugin loading via jiti happens
