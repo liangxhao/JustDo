@@ -500,6 +500,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     autoLaunchDescription: '系统启动时自动运行应用',
     useSystemProxy: '使用系统代理',
     useSystemProxyDescription: '开启后网络请求将跟随系统代理（保存后生效）',
+    developerMode: '开发者模式',
+    developerModeDescription: '开启后显示开发与调试相关功能',
     preventSleep: '防止休眠',
     preventSleepDescription: '防止系统在应用运行时进入睡眠模式',
 
@@ -1232,6 +1234,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     useSystemProxy: 'Use System Proxy',
     useSystemProxyDescription:
       'When enabled, network requests follow system proxy settings (applies after Save)',
+    developerMode: 'Developer Mode',
+    developerModeDescription: 'Show development and debugging features when enabled',
     preventSleep: 'Prevent Sleep',
     preventSleepDescription: 'Prevent the system from sleeping while the app is running',
 

@@ -2,6 +2,7 @@ import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
+import { configService } from '../services/config';
 import { coworkService } from '../services/cowork';
 import { i18nService } from '../services/i18n';
 import {
@@ -48,6 +49,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [developerMode, setDeveloperMode] = useState(
+    () => configService.getConfig().developerMode ?? false,
+  );
   const isMac = window.electron.platform === 'darwin';
 
   useEffect(() => {
@@ -68,6 +72,17 @@ const Sidebar: React.FC<SidebarProps> = ({
     setSelectedIds(new Set());
     setShowBatchDeleteConfirm(false);
   }, [isCollapsed]);
+
+  useEffect(() => {
+    const syncDeveloperMode = () => {
+      setDeveloperMode(configService.getConfig().developerMode ?? false);
+    };
+
+    window.addEventListener('config-updated', syncDeveloperMode);
+    return () => {
+      window.removeEventListener('config-updated', syncDeveloperMode);
+    };
+  }, []);
 
   const handleSelectSession = async (sessionId: string) => {
     onShowCowork();
@@ -192,7 +207,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
           <div className="flex items-center gap-1">
-            {isOpenClawEngine && (
+            {developerMode && isOpenClawEngine && (
               <button
                 type="button"
                 onClick={handleOpenChatWeb}
