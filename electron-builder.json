@@ -234,12 +234,8 @@
     "deleteAppDataOnUninstall": true,
     "include": "scripts/nsis-installer.nsh"
   },
-  "electronVersion": "40.2.1",
   "asarUnpack": [
-    "node_modules/@anthropic-ai/claude-agent-sdk/**",
-    "node_modules/@img/**",
     "node_modules/better-sqlite3/**",
-    "node_modules/node-nim/**",
     "node_modules/npm/**"
   ],
   "asar": true
