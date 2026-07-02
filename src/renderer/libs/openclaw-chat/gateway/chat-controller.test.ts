@@ -1,6 +1,10 @@
-import { expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from './chat-controller';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 test('clears active sending state when switching between existing sessions', async () => {
   const controller = new ChatController();
@@ -141,4 +145,77 @@ test('merges later non-empty tool arguments over an earlier empty tool call', ()
     timeout: 5,
   });
   expect((merged[1] as Record<string, unknown>).text).toBe('(no output)');
+});
+
+test('captures the gateway detail when a lifecycle run fails', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+
+  (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent({
+    runId: 'run-1',
+    stream: 'lifecycle',
+    session: 'agent:main:justdo:session-1',
+    data: {
+      phase: 'error',
+      error: 'LLM request failed: provider rejected the request schema or tool payload.',
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(controller.state.lastError).toBe(
+    'LLM request failed: provider rejected the request schema or tool payload.',
+  );
+});
+
+test('restores a persisted lifecycle failure after the controller restarts', async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  });
+  const sessionKey = 'agent:main:justdo:session-1';
+  const error = 'LLM request failed: provider rejected the request schema or tool payload.';
+  const firstController = new ChatController();
+  firstController.state.sessionKey = sessionKey;
+  firstController.state.chatSending = true;
+  firstController.state.chatRunId = 'run-1';
+  (
+    firstController as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent({
+    runId: 'run-1',
+    stream: 'lifecycle',
+    session: sessionKey,
+    data: { phase: 'error', error },
+  });
+
+  const restartedController = new ChatController();
+  restartedController.state.sessionKey = sessionKey;
+  restartedController.state.connected = true;
+  restartedController.state.client = {
+    request: vi.fn().mockResolvedValue({
+      messages: [
+        {
+          role: 'assistant',
+          runId: 'run-1',
+          content: 'The agent run failed before producing a reply.',
+          timestamp: Date.now(),
+        },
+      ],
+    }),
+  } as never;
+
+  await restartedController.loadHistory();
+
+  expect(restartedController.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'system', content: error, isError: true }),
+  ]);
 });

@@ -61,6 +61,9 @@ type ToolContentBlock = {
 
 const HISTORY_LIMIT = 100;
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
+const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
+const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
+const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const DEBUG_CHAT_CONTROLLER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
 
@@ -74,6 +77,86 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+type FailedRunRecord = {
+  sessionKey: string;
+  runId: string | null;
+  error: string;
+  timestamp: number;
+};
+
+function readFailedRuns(): FailedRunRecord[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const value = JSON.parse(localStorage.getItem(FAILED_RUN_STORAGE_KEY) ?? '[]');
+    if (!Array.isArray(value)) return [];
+    const cutoff = Date.now() - FAILED_RUN_RETENTION_MS;
+    return value.filter(
+      (item): item is FailedRunRecord =>
+        typeof item?.sessionKey === 'string' &&
+        (typeof item.runId === 'string' || item.runId === null) &&
+        typeof item.error === 'string' &&
+        typeof item.timestamp === 'number' &&
+        item.timestamp >= cutoff,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistFailedRun(record: FailedRunRecord): void {
+  if (typeof localStorage === 'undefined') return;
+  const records = readFailedRuns().filter(
+    item => !(record.runId && item.sessionKey === record.sessionKey && item.runId === record.runId),
+  );
+  try {
+    localStorage.setItem(FAILED_RUN_STORAGE_KEY, JSON.stringify([...records, record].slice(-100)));
+  } catch {
+    // A storage failure must not interfere with chat error handling.
+  }
+}
+
+function findFailedRunError(
+  message: Record<string, unknown>,
+  sessionKey: string,
+): string | null {
+  const runId = typeof message.runId === 'string' ? message.runId : null;
+  const timestamp = typeof message.timestamp === 'number' ? message.timestamp : null;
+  const candidates = readFailedRuns().filter(item => item.sessionKey === sessionKey);
+  const exact = runId ? candidates.find(item => item.runId === runId) : null;
+  if (exact) return exact.error;
+  if (timestamp === null) return candidates.at(-1)?.error ?? null;
+  return candidates
+    .filter(item => Math.abs(item.timestamp - timestamp) < 60_000)
+    .sort(
+      (left, right) =>
+        Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp),
+    )[0]?.error ?? null;
+}
+
+function normalizeFailedRunMessage(
+  message: unknown,
+  sessionKey: string,
+  errorMessage: string | null,
+): unknown {
+  const raw = asRecord(message);
+  if (
+    raw?.role !== 'assistant' ||
+    messageText(raw.content).trim() !== AGENT_RUN_FAILED_BEFORE_REPLY
+  ) {
+    return message;
+  }
+
+  return {
+    ...raw,
+    role: 'system',
+    content:
+      errorMessage?.trim() ||
+      findFailedRunError(raw, sessionKey) ||
+      AGENT_RUN_FAILED_BEFORE_REPLY,
+    isError: true,
+  };
 }
 
 function getToolResultId(message: unknown): string | null {
@@ -611,7 +694,13 @@ export class ChatController {
       const projectedMessages = rawMessages
         .filter(m => !shouldHideMessage(m))
         .filter(m => !(m as Record<string, unknown>)?.__openclawStreamFallback);
-      const messages = await hydrateMissingToolInputsFromLocalState(sessionKey, projectedMessages);
+      const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
+        sessionKey,
+        projectedMessages,
+      );
+      const messages = hydratedMessages.map(message =>
+        normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
+      );
 
       // Guard: if the gateway returned no messages but we already have
       // materialized content from lifecycle:finishing, don't overwrite it.
@@ -1014,6 +1103,32 @@ export class ChatController {
           }, 1500);
           this.notifyStream();
         }
+      }
+      if (phase === 'error') {
+        const errorMessage =
+          typeof data.error === 'string' && data.error.trim()
+            ? data.error.trim()
+            : 'Unknown error';
+        this.clearLifecycleEndFallback();
+        this.state.lastError = errorMessage;
+        persistFailedRun({
+          sessionKey: this.state.sessionKey,
+          runId,
+          error: errorMessage,
+          timestamp: Date.now(),
+        });
+        this.state.chatStream = null;
+        this.state.chatStreamStartedAt = null;
+        this.state.chatThinkingStream = null;
+        this.state.chatSending = false;
+        this.state.chatRunId = null;
+        this.resetAssistantSnapshotSource();
+        this.state.chatToolMessages = [];
+        this.state.chatThinkingMessages = [];
+        this.state.chatStreamSegments = [];
+        this.pendingHistoryReload = true;
+        this.flushPendingHistoryReload();
+        this.notify();
       }
       return;
     }
