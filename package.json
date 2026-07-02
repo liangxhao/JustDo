@@ -53,6 +53,7 @@
     "setup:python-runtime": "node scripts/setup-python-runtime.js",
     "openclaw:plugins": "node scripts/ensure-openclaw-plugins.cjs",
     "openclaw:extensions:local": "node scripts/sync-local-openclaw-extensions.cjs",
+    "openclaw:docs": "node scripts/sync-openclaw-doc-templates.cjs",
     "openclaw:bundle": "node scripts/bundle-openclaw-gateway.cjs",
     "openclaw:precompile": "node scripts/precompile-openclaw-extensions.cjs",
     "openclaw:prune": "node scripts/prune-openclaw-runtime.cjs",

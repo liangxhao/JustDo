@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { syncOpenClawDocTemplates } = require('./sync-openclaw-doc-templates.cjs');
 
 function fail(message) {
   console.error(`[sync-openclaw-runtime-current] ${message}`);
@@ -41,6 +42,7 @@ const linkType = process.platform === 'win32' ? 'junction' : 'dir';
 fs.symlinkSync(targetRuntimeDir, currentRuntimeDir, linkType);
 
 console.log(`[sync-openclaw-runtime-current] Synced ${targetId} -> vendor/openclaw-runtime/current`);
+syncOpenClawDocTemplates(currentRuntimeDir, { label: 'sync-openclaw-runtime-current' });
 
 // Extract entry files from gateway.asar if bare files are missing.
 // On Windows, Electron's utilityProcess.fork() cannot load ESM from inside .asar archives,

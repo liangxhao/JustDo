@@ -7,6 +7,7 @@ const asar = require('@electron/asar');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
 const { ensurePortableGit } = require('./setup-mingit.js');
 const { syncLocalOpenClawExtensions } = require('./sync-local-openclaw-extensions.cjs');
+const { syncOpenClawDocTemplates } = require('./sync-openclaw-doc-templates.cjs');
 const { packMultipleSources } = require('./pack-openclaw-tar.cjs');
 
 function isWindowsTarget(context) {
@@ -159,6 +160,8 @@ function verifyOpenClawReasoningStreamPatches(gatewayBundlePath, buildHint) {
 function ensureBundledOpenClawRuntime(context) {
   const { runtimeRoot, targetId } = syncCurrentOpenClawRuntimeForTarget(context);
   const buildHint = getOpenClawRuntimeBuildHint(targetId);
+
+  syncOpenClawDocTemplates(runtimeRoot, { label: 'electron-builder-hooks' });
 
   const localMcpBridgeDir = path.join(runtimeRoot, 'dist', 'extensions', 'mcp-bridge');
   if (!existsSync(localMcpBridgeDir)) {
