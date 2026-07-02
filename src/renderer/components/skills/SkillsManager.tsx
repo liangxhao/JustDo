@@ -493,7 +493,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                         </p>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 items-start gap-3">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(16rem,100%),1fr))] items-start gap-3">
                       {group.skills.map(skill => (
                         <div
                           key={skill.id}
