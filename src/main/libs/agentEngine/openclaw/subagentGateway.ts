@@ -25,6 +25,7 @@ export type GatewaySubagent = {
 };
 
 const SUBAGENT_RECENT_MINUTES = 24 * 60;
+const PERSISTED_SESSION_PAGE_SIZE = 500;
 
 const isSubagentStatus = (value: unknown): value is SubagentStatus =>
   Object.values(SUBAGENT_STATUSES).includes(value as SubagentStatus);
@@ -58,6 +59,15 @@ const optionalString = (value: unknown): string | undefined =>
 
 const optionalNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const rowBelongsToParent = (row: Record<string, unknown>, parentKeys: Set<string>): boolean => {
+  const spawnedBy = optionalString(row.spawnedBy);
+  const parentSessionKey = optionalString(row.parentSessionKey);
+  return (
+    (spawnedBy !== undefined && parentKeys.has(spawnedBy)) ||
+    (parentSessionKey !== undefined && parentKeys.has(parentSessionKey))
+  );
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -105,6 +115,29 @@ const addToolSubagents = (
       totalTokens: optionalNumber(value.totalTokens),
     });
   }
+};
+
+const listPersistedSessions = async (
+  client: GatewayClientLike,
+): Promise<Array<Record<string, unknown>>> => {
+  const sessions: Array<Record<string, unknown>> = [];
+  let offset = 0;
+
+  while (true) {
+    const result = await client.request<{
+      sessions?: Array<Record<string, unknown>>;
+    }>('sessions.list', {
+      limit: PERSISTED_SESSION_PAGE_SIZE,
+      offset,
+      includeDerivedTitles: true,
+    });
+    const page = result.sessions ?? [];
+    sessions.push(...page);
+    if (page.length < PERSISTED_SESSION_PAGE_SIZE) break;
+    offset += PERSISTED_SESSION_PAGE_SIZE;
+  }
+
+  return sessions;
 };
 
 /**
@@ -163,6 +196,36 @@ export const listGatewaySubagents = async (options: {
         totalTokens: optionalNumber(row.totalTokens),
       });
     }
+  }
+
+  // `sessions.list({ spawnedBy })` follows OpenClaw's live child-link policy,
+  // so completed children can age out of that projection. List persisted
+  // sessions broadly and filter locally to keep long-retained subagent history
+  // visible when archiveAfterMinutes is configured as 0.
+  const parentKeySet = new Set(options.parentKeys);
+  try {
+    for (const row of await listPersistedSessions(options.client)) {
+      const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
+      if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
+      if (!rowBelongsToParent(row, parentKeySet)) continue;
+      if (bySessionKey.has(sessionKey)) continue;
+      bySessionKey.set(sessionKey, {
+        id: sessionKey,
+        sessionKey,
+        label: resolveLabel(row, sessionKey),
+        status: resolveStatus(row),
+        task: optionalString(row.task),
+        model: optionalString(row.model),
+        startedAt: optionalNumber(row.startedAt),
+        endedAt: optionalNumber(row.endedAt),
+        runtimeMs: optionalNumber(row.runtimeMs),
+        totalTokens: optionalNumber(row.totalTokens),
+      });
+    }
+  } catch (error) {
+    console.warn('[SubagentGateway] Failed to list persisted subagent sessions', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   return [...bySessionKey.values()];

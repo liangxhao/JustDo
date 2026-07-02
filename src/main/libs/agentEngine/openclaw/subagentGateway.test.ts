@@ -60,6 +60,11 @@ test('lists subagents from the registry-backed sessions projection', async () =>
     limit: 100,
     includeDerivedTitles: true,
   });
+  expect(request).toHaveBeenCalledWith('sessions.list', {
+    limit: 500,
+    offset: 0,
+    includeDerivedTitles: true,
+  });
   expect(request).toHaveBeenCalledWith('tools.invoke', {
     name: 'subagents',
     args: {
@@ -92,6 +97,67 @@ test('lists subagents from the registry-backed sessions projection', async () =>
       totalTokens: 42,
     },
   ]);
+});
+
+test('keeps persisted subagents after OpenClaw child links age out', async () => {
+  const firstPage = Array.from({ length: 500 }, (_, index) => ({
+    key: `agent:main:cowork:filler-${index}`,
+  }));
+  const client = {
+    request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'tools.invoke') {
+        return {
+          ok: true,
+          output: {
+            details: {
+              status: 'ok',
+              active: [],
+              recent: [],
+            },
+          },
+        };
+      }
+      if (params?.spawnedBy) {
+        return { sessions: [] };
+      }
+      if (params?.offset === 0) {
+        return { sessions: firstPage };
+      }
+      return {
+        sessions: [
+          {
+            key: 'agent:main:subagent:old-worker',
+            spawnedBy: 'agent:main:cowork:parent',
+            task: 'Old retained task',
+            status: 'done',
+            endedAt: 100,
+          },
+          {
+            key: 'agent:main:subagent:other-parent',
+            spawnedBy: 'agent:main:cowork:other',
+            task: 'Must stay hidden',
+            status: 'done',
+          },
+        ],
+      };
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
+  ).resolves.toMatchObject([
+    {
+      sessionKey: 'agent:main:subagent:old-worker',
+      task: 'Old retained task',
+      status: 'done',
+      endedAt: 100,
+    },
+  ]);
+  expect(client.request).toHaveBeenCalledWith('sessions.list', {
+    limit: 500,
+    offset: 500,
+    includeDerivedTitles: true,
+  });
 });
 
 test('maps interrupted registry rows to failed', async () => {
