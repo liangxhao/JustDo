@@ -17,12 +17,10 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
 
   ipcMain.handle(ScheduledTaskIpc.List, async () => {
     try {
-      // If OpenClaw gateway is not connected yet, return empty list immediately
-      // to avoid blocking the renderer init. Tasks will be loaded later via the
-      // onRefresh listener when the gateway becomes available.
-      if (!getOpenClawRuntimeAdapter()?.getGatewayClient()) {
-        return { success: true, tasks: [] };
-      }
+      // listJobs() waits for the Gateway when it is not connected yet. Returning
+      // an empty successful result here creates a startup race: the one-shot
+      // refresh event can fire before the renderer subscribes, leaving persisted
+      // OpenClaw jobs hidden until another refresh happens.
       const tasks = await getCronJobService().listJobs();
       return { success: true, tasks };
     } catch (error) {
