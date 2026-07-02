@@ -24,6 +24,7 @@ import {
 } from './openclawAgentModels';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { hasBundledOpenClawExtension } from './openclawLocalExtensions';
+import { repairOpenClawWorkspaceState } from './workspaceStateRepair';
 
 export type McpBridgeConfig = {
   callbackUrl: string;
@@ -365,6 +366,7 @@ export class OpenClawConfigSync {
       const workspaceDir = (coworkConfig.workingDirectory || '').trim();
       const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
       const resolvedWorkspaceDir = workspaceDir || defaultWorkspaceDir;
+      this.repairWorkspaceState(resolvedWorkspaceDir);
       this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
       return result;
     }
@@ -446,6 +448,7 @@ export class OpenClawConfigSync {
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
     const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
     const resolvedWorkspaceDir = workspaceDir ? path.resolve(workspaceDir) : defaultWorkspaceDir;
+    this.repairWorkspaceState(resolvedWorkspaceDir);
 
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
       isBundledPluginAvailable(id),
@@ -973,6 +976,14 @@ export class OpenClawConfigSync {
    */
   private syncPerAgentWorkspaces(_mainWorkspaceDir: string, _coworkConfig: CoworkConfig): void {
     // 空实现：让 OpenClaw 自己管理 agent workspace
+  }
+
+  private repairWorkspaceState(workspaceDir: string): void {
+    if (repairOpenClawWorkspaceState(workspaceDir, this.engineManager.getStateDir())) {
+      console.warn(
+        `[OpenClawConfigSync] Repaired missing workspace state for intact workspace: ${workspaceDir}`,
+      );
+    }
   }
 
   /** Write a file only if its content has changed. */
