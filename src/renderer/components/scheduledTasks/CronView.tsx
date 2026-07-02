@@ -106,15 +106,24 @@ function parseScheduleToForm(schedule?: Schedule): ScheduleFormState {
   if (isNum(minute) && isNum(hour) && dom === '*') {
     const tod = `${pad2(Number(hour))}:${pad2(Number(minute))}`;
     if (dow === '*') return { ...base, mode: 'recurring', recurrence: 'daily', timeOfDay: tod };
-    if (dow === '1-5') return { ...base, mode: 'recurring', recurrence: 'weekdays', timeOfDay: tod };
+    if (dow === '1-5')
+      return { ...base, mode: 'recurring', recurrence: 'weekdays', timeOfDay: tod };
     if (isNum(dow) && Number(dow) >= 0 && Number(dow) <= 6) {
-      return { ...base, mode: 'recurring', recurrence: 'weekly', weekday: Number(dow), timeOfDay: tod };
+      return {
+        ...base,
+        mode: 'recurring',
+        recurrence: 'weekly',
+        weekday: Number(dow),
+        timeOfDay: tod,
+      };
     }
   }
   return { ...base, mode: 'recurring', recurrence: 'custom', customCron: expr };
 }
 
-function buildScheduleFromForm(form: ScheduleFormState): { kind: 'cron'; expr: string } | { kind: 'at'; at: string } {
+function buildScheduleFromForm(
+  form: ScheduleFormState,
+): { kind: 'cron'; expr: string } | { kind: 'at'; at: string } {
   if (form.mode === 'once') {
     const dateTime = new Date(`${form.onceDate}T${form.onceTime || '00:00'}`);
     return { kind: 'at', at: dateTime.toISOString() };
@@ -200,7 +209,7 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
   const t = i18nService.t.bind(i18nService);
   const [triggering, setTriggering] = useState(false);
   const agents = useSelector((s: RootState) => s.agent.agents);
-  const agentName = agents.find((a) => a.id === job.agentId)?.name ?? job.agentId ?? 'Main';
+  const agentName = agents.find(a => a.id === job.agentId)?.name ?? job.agentId ?? 'Main';
 
   const handleTrigger = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -209,7 +218,9 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
       await onTrigger();
       window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastTriggered') }));
     } catch {
-      window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastFailedTrigger') }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: t('cronToastFailedTrigger') }),
+      );
     } finally {
       setTriggering(false);
     }
@@ -240,9 +251,14 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
           </div>
           <div className="flex flex-col min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1 min-w-0">
-              <h3 className="text-base font-semibold text-foreground truncate min-w-0">{job.name}</h3>
+              <h3 className="text-base font-semibold text-foreground truncate min-w-0">
+                {job.name}
+              </h3>
               <div
-                className={'w-2 h-2 rounded-full shrink-0 ' + (isEnabled ? 'bg-green-500' : 'bg-muted-foreground')}
+                className={
+                  'w-2 h-2 rounded-full shrink-0 ' +
+                  (isEnabled ? 'bg-green-500' : 'bg-muted-foreground')
+                }
                 title={isEnabled ? t('cronStatsActive') : t('cronStatsPaused')}
               />
             </div>
@@ -256,11 +272,20 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
         <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
           <button
             type="button"
-            onClick={e => { e.stopPropagation(); onToggle(!job.enabled); }}
-            className={'relative shrink-0 w-9 h-5 rounded-full transition-colors ' + (isEnabled ? 'bg-primary' : 'bg-border')}
+            onClick={e => {
+              e.stopPropagation();
+              onToggle(!job.enabled);
+            }}
+            className={
+              'relative shrink-0 w-9 h-5 rounded-full transition-colors ' +
+              (isEnabled ? 'bg-primary' : 'bg-border')
+            }
           >
             <span
-              className={'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm ' + (isEnabled ? 'translate-x-4' : 'translate-x-0')}
+              className={
+                'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm ' +
+                (isEnabled ? 'translate-x-4' : 'translate-x-0')
+              }
             />
           </button>
         </div>
@@ -295,7 +320,9 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
           )}
 
           <span className="flex items-center gap-1.5">
-            <span className="h-3.5 w-3.5 rounded-full bg-primary/20 flex items-center justify-center text-[8px] font-bold text-primary">A</span>
+            <span className="h-3.5 w-3.5 rounded-full bg-primary/20 flex items-center justify-center text-[8px] font-bold text-primary">
+              A
+            </span>
             {agentName}
           </span>
         </div>
@@ -310,7 +337,10 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             type="button"
-            onClick={e => { e.stopPropagation(); void handleTrigger(e); }}
+            onClick={e => {
+              e.stopPropagation();
+              void handleTrigger(e);
+            }}
             disabled={triggering}
             className="h-8 px-3 text-foreground/70 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1.5"
           >
@@ -323,7 +353,10 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
           </button>
           <button
             type="button"
-            onClick={e => { e.stopPropagation(); onHistory(); }}
+            onClick={e => {
+              e.stopPropagation();
+              onHistory();
+            }}
             className="h-8 px-3 text-foreground/70 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1.5"
           >
             <ClockIcon className="h-3.5 w-3.5 mr-1.5" />
@@ -359,16 +392,16 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
 
   const [name, setName] = useState(job?.name ?? '');
   const [message, setMessage] = useState(
-    job ? (job.payload.kind === 'systemEvent' ? job.payload.text : job.payload.message) : ''
+    job ? (job.payload.kind === 'systemEvent' ? job.payload.text : job.payload.message) : '',
   );
   const [agentId, setAgentId] = useState(job?.agentId ?? '');
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(() =>
-    parseScheduleToForm(job?.schedule)
+    parseScheduleToForm(job?.schedule),
   );
   const [enabled, setEnabled] = useState(job ? job.enabled : true);
   const [deliveryChannel, setDeliveryChannel] = useState(job?.delivery.channel ?? '');
   const [deliveryMode, setDeliveryMode] = useState<'none' | 'announce'>(
-    ((job?.delivery.mode as string) === 'announce' ? 'announce' : 'none')
+    (job?.delivery.mode as string) === 'announce' ? 'announce' : 'none',
   );
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -381,14 +414,14 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
     setPrevOpen(open);
     if (open) {
       setName(job?.name ?? '');
-      setMessage(job ? (job.payload.kind === 'systemEvent' ? job.payload.text : job.payload.message) : '');
+      setMessage(
+        job ? (job.payload.kind === 'systemEvent' ? job.payload.text : job.payload.message) : '',
+      );
       setAgentId(job?.agentId ?? '');
       setScheduleForm(parseScheduleToForm(job?.schedule));
       setEnabled(job ? job.enabled : true);
       setDeliveryChannel(job?.delivery.channel ?? '');
-      setDeliveryMode(
-        ((job?.delivery.mode as string) === 'announce' ? 'announce' : 'none')
-      );
+      setDeliveryMode((job?.delivery.mode as string) === 'announce' ? 'announce' : 'none');
       setErrors({});
       setSaving(false);
     }
@@ -408,11 +441,13 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    void scheduledTaskService.listChannels().then((channels) => {
+    void scheduledTaskService.listChannels().then(channels => {
       if (cancelled) return;
       setChannelOptions(channels);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   const validate = (): boolean => {
@@ -476,7 +511,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
       <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
       <div
         className="relative w-full max-w-lg mx-4 max-h-[85vh] flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
@@ -501,7 +536,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
               ref={nameInputRef}
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={e => setName(e.target.value)}
               className={inputClass}
               placeholder={t('cronDialogTaskNamePlaceholder')}
             />
@@ -513,7 +548,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
             <label className={labelClass}>{t('cronDialogMessage')}</label>
             <textarea
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={e => setMessage(e.target.value)}
               className={inputClass + ' resize-none'}
               placeholder={t('cronDialogMessagePlaceholder')}
               rows={4}
@@ -527,11 +562,11 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
             <div className="relative">
               <select
                 value={agentId}
-                onChange={(e) => setAgentId(e.target.value)}
+                onChange={e => setAgentId(e.target.value)}
                 className={inputClass + ' appearance-none pr-10'}
               >
                 <option value="">Default</option>
-                {agents.map((a) => (
+                {agents.map(a => (
                   <option key={a.id} value={a.id}>
                     {a.name}
                   </option>
@@ -547,11 +582,11 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
 
             {/* Mode tabs */}
             <div className="flex rounded-xl bg-black/5 dark:bg-white/5 p-1 mb-3">
-              {(['recurring', 'once'] as ScheduleMode[]).map((mode) => (
+              {(['recurring', 'once'] as ScheduleMode[]).map(mode => (
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => setScheduleForm((s) => ({ ...s, mode }))}
+                  onClick={() => setScheduleForm(s => ({ ...s, mode }))}
                   className={
                     'flex-1 py-2 text-sm font-medium rounded-lg transition-all ' +
                     (scheduleForm.mode === mode
@@ -576,9 +611,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                   <input
                     type="date"
                     value={scheduleForm.onceDate}
-                    onChange={(e) =>
-                      setScheduleForm((s) => ({ ...s, onceDate: e.target.value }))
-                    }
+                    onChange={e => setScheduleForm(s => ({ ...s, onceDate: e.target.value }))}
                     className={inputClass}
                   />
                 </div>
@@ -589,9 +622,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                   <input
                     type="time"
                     value={scheduleForm.onceTime}
-                    onChange={(e) =>
-                      setScheduleForm((s) => ({ ...s, onceTime: e.target.value }))
-                    }
+                    onChange={e => setScheduleForm(s => ({ ...s, onceTime: e.target.value }))}
                     className={inputClass}
                   />
                 </div>
@@ -601,13 +632,11 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
               <>
                 {/* Recurrence kind selector */}
                 <div className="flex flex-wrap gap-1.5 mb-3">
-                  {RECURRENCE_KINDS.map((kind) => (
+                  {RECURRENCE_KINDS.map(kind => (
                     <button
                       key={kind}
                       type="button"
-                      onClick={() =>
-                        setScheduleForm((s) => ({ ...s, recurrence: kind }))
-                      }
+                      onClick={() => setScheduleForm(s => ({ ...s, recurrence: kind }))}
                       className={
                         'px-3 py-1.5 text-xs font-medium rounded-lg transition-all ' +
                         (scheduleForm.recurrence === kind
@@ -615,11 +644,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                           : 'bg-black/5 dark:bg-white/5 text-secondary hover:text-foreground')
                       }
                     >
-                      {t(
-                        'cronDialogRecurrence' +
-                          kind.charAt(0).toUpperCase() +
-                          kind.slice(1)
-                      )}
+                      {t('cronDialogRecurrence' + kind.charAt(0).toUpperCase() + kind.slice(1))}
                     </button>
                   ))}
                 </div>
@@ -628,21 +653,17 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                   <input
                     type="text"
                     value={scheduleForm.customCron}
-                    onChange={(e) =>
-                      setScheduleForm((s) => ({ ...s, customCron: e.target.value }))
-                    }
+                    onChange={e => setScheduleForm(s => ({ ...s, customCron: e.target.value }))}
                     className={inputClass}
                     placeholder={t('cronDialogCronPlaceholder')}
                   />
                 ) : scheduleForm.recurrence === 'hourly' ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-secondary">
-                      {t('cronDialogMinuteLabel')}
-                    </span>
+                    <span className="text-sm text-secondary">{t('cronDialogMinuteLabel')}</span>
                     <select
                       value={scheduleForm.hourlyMinute}
-                      onChange={(e) =>
-                        setScheduleForm((s) => ({
+                      onChange={e =>
+                        setScheduleForm(s => ({
                           ...s,
                           hourlyMinute: Number(e.target.value),
                         }))
@@ -660,11 +681,9 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                 ) : scheduleForm.recurrence === 'weekly' ? (
                   <>
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="text-sm text-secondary">
-                        {t('cronDialogWeekdayLabel')}
-                      </span>
+                      <span className="text-sm text-secondary">{t('cronDialogWeekdayLabel')}</span>
                       <div className="flex gap-1">
-                        {[0, 1, 2, 3, 4, 5, 6].map((d) => {
+                        {[0, 1, 2, 3, 4, 5, 6].map(d => {
                           const selected = scheduleForm.weekday === d;
                           const locale = i18nService.getLanguage();
                           const labels =
@@ -675,9 +694,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                             <button
                               key={d}
                               type="button"
-                              onClick={() =>
-                                setScheduleForm((s) => ({ ...s, weekday: d }))
-                              }
+                              onClick={() => setScheduleForm(s => ({ ...s, weekday: d }))}
                               className={
                                 'w-9 h-9 rounded-full text-xs font-medium transition-colors ' +
                                 (selected
@@ -692,15 +709,11 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm text-secondary">
-                        {t('cronDialogTimeLabel')}
-                      </span>
+                      <span className="text-sm text-secondary">{t('cronDialogTimeLabel')}</span>
                       <input
                         type="time"
                         value={scheduleForm.timeOfDay}
-                        onChange={(e) =>
-                          setScheduleForm((s) => ({ ...s, timeOfDay: e.target.value }))
-                        }
+                        onChange={e => setScheduleForm(s => ({ ...s, timeOfDay: e.target.value }))}
                         className={inputClass + ' w-32'}
                       />
                     </div>
@@ -708,15 +721,11 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                 ) : (
                   /* daily / weekdays: time picker */
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-secondary">
-                      {t('cronDialogTimeLabel')}
-                    </span>
+                    <span className="text-sm text-secondary">{t('cronDialogTimeLabel')}</span>
                     <input
                       type="time"
                       value={scheduleForm.timeOfDay}
-                      onChange={(e) =>
-                        setScheduleForm((s) => ({ ...s, timeOfDay: e.target.value }))
-                      }
+                      onChange={e => setScheduleForm(s => ({ ...s, timeOfDay: e.target.value }))}
                       className={inputClass + ' w-32'}
                     />
                   </div>
@@ -725,29 +734,23 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                 {/* Next run preview */}
                 {nextRunPreview && (
                   <div className="mt-3 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10 text-xs text-secondary">
-                    <span className="font-medium text-foreground/80">
-                      {t('cronCardNext')}:
-                    </span>{' '}
+                    <span className="font-medium text-foreground/80">{t('cronCardNext')}:</span>{' '}
                     {nextRunPreview}
                   </div>
                 )}
               </>
             )}
 
-            {errors.schedule && (
-              <p className="text-xs text-red-500 mt-1">{errors.schedule}</p>
-            )}
+            {errors.schedule && <p className="text-xs text-red-500 mt-1">{errors.schedule}</p>}
           </div>
 
           {/* Delivery */}
           <div>
             <label className={labelClass}>{t('cronDialogDeliveryTitle')}</label>
-            <p className="text-xs text-secondary mb-3">
-              {t('cronDialogDeliveryDescription')}
-            </p>
+            <p className="text-xs text-secondary mb-3">{t('cronDialogDeliveryDescription')}</p>
 
             <div className="flex gap-2 mb-3">
-              {(['none', 'announce'] as const).map((mode) => (
+              {(['none', 'announce'] as const).map(mode => (
                 <button
                   key={mode}
                   type="button"
@@ -777,11 +780,11 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
               <div className="relative">
                 <select
                   value={deliveryChannel}
-                  onChange={(e) => setDeliveryChannel(e.target.value)}
+                  onChange={e => setDeliveryChannel(e.target.value)}
                   className={inputClass + ' appearance-none pr-10'}
                 >
                   <option value="">{t('cronDialogSelectChannel')}</option>
-                  {channelOptions.map((c) => (
+                  {channelOptions.map(c => (
                     <option key={c.value} value={c.value} disabled={c.disabled}>
                       {c.label}
                     </option>
@@ -798,13 +801,11 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
               <label className={labelClass + ' cursor-pointer'}>
                 {t('cronDialogEnableImmediately')}
               </label>
-              <p className="text-xs text-secondary">
-                {t('cronDialogEnableImmediatelyDesc')}
-              </p>
+              <p className="text-xs text-secondary">{t('cronDialogEnableImmediatelyDesc')}</p>
             </div>
             <button
               type="button"
-              onClick={() => setEnabled((v) => !v)}
+              onClick={() => setEnabled(v => !v)}
               className={
                 'relative shrink-0 w-11 h-6 rounded-full transition-colors ' +
                 (enabled ? 'bg-primary' : 'bg-border')
@@ -875,10 +876,10 @@ export const CronView: React.FC<CronViewProps> = ({
   const [historyTaskId, setHistoryTaskId] = useState<string | null>(null);
 
   const historyRuns = useSelector((s: RootState) =>
-    historyTaskId ? (s.scheduledTask.runs[historyTaskId] ?? []) : []
+    historyTaskId ? (s.scheduledTask.runs[historyTaskId] ?? []) : [],
   );
   const historyJob = useSelector((s: RootState) =>
-    historyTaskId ? s.scheduledTask.tasks.find(t => t.id === historyTaskId) : undefined
+    historyTaskId ? s.scheduledTask.tasks.find(t => t.id === historyTaskId) : undefined,
   );
 
   useEffect(() => {
@@ -895,18 +896,14 @@ export const CronView: React.FC<CronViewProps> = ({
     async (input: ScheduledTaskInput) => {
       if (editingJob) {
         await scheduledTaskService.updateTaskById(editingJob.id, input);
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', { detail: t('cronToastUpdated') })
-        );
+        window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastUpdated') }));
       } else {
         await scheduledTaskService.createTask(input);
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', { detail: t('cronToastCreated') })
-        );
+        window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastCreated') }));
       }
       setEditingJob(undefined);
     },
-    [editingJob]
+    [editingJob],
   );
 
   const handleToggle = useCallback(async (id: string, enabled: boolean) => {
@@ -915,11 +912,11 @@ export const CronView: React.FC<CronViewProps> = ({
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
           detail: enabled ? t('cronToastEnabled') : t('cronToastPaused'),
-        })
+        }),
       );
     } catch {
       window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: t('cronToastFailedUpdate') })
+        new CustomEvent('app:showToast', { detail: t('cronToastFailedUpdate') }),
       );
     }
   }, []);
@@ -928,20 +925,18 @@ export const CronView: React.FC<CronViewProps> = ({
     if (!jobToDelete) return;
     try {
       await scheduledTaskService.deleteTask(jobToDelete.id);
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: t('cronToastDeleted') })
-      );
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastDeleted') }));
     } catch {
       window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: t('cronToastFailedDelete') })
+        new CustomEvent('app:showToast', { detail: t('cronToastFailedDelete') }),
       );
     }
     setJobToDelete(null);
   }, [jobToDelete]);
 
-  const activeJobs = tasks.filter((j) => j.enabled);
-  const pausedJobs = tasks.filter((j) => !j.enabled);
-  const failedJobs = tasks.filter((j) => j.state.lastStatus === 'error');
+  const activeJobs = tasks.filter(j => j.enabled);
+  const pausedJobs = tasks.filter(j => !j.enabled);
+  const failedJobs = tasks.filter(j => j.state.lastStatus === 'error');
 
   if (loading && tasks.length === 0) {
     return (
@@ -958,9 +953,7 @@ export const CronView: React.FC<CronViewProps> = ({
       <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
         <div className="flex items-center space-x-3 h-8">
           {isSidebarCollapsed && (
-            <div
-              className={'non-draggable flex items-center gap-1 ' + (isMac ? 'pl-[68px]' : '')}
-            >
+            <div className={'non-draggable flex items-center gap-1 ' + (isMac ? 'pl-[68px]' : '')}>
               <button
                 type="button"
                 onClick={onToggleSidebar}
@@ -983,22 +976,15 @@ export const CronView: React.FC<CronViewProps> = ({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="w-full max-w-5xl mx-auto flex flex-col p-6 md:p-10 md:pt-10">
+        <div className="w-full max-w-5xl mx-auto flex flex-col p-6 md:p-8">
           {/* Hero Header */}
-          <div className="flex flex-col md:flex-row md:items-start justify-between mb-10 shrink-0 gap-4">
-            <div>
-              <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-2 tracking-tight">
-                {t('cronTitle')}
-              </h1>
-              <p className="text-base text-foreground/70 font-medium">
-                {t('cronSubtitle')}
-              </p>
-            </div>
-            <div className="flex items-center gap-3 md:mt-1">
+          <div className="flex flex-col gap-4 mb-6 shrink-0 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-secondary">{t('cronSubtitle')}</p>
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => scheduledTaskService.loadTasks()}
-                className="h-9 text-sm font-medium rounded-full px-4 border border-black/10 dark:border-white/10 bg-transparent hover:bg-black/5 dark:hover:bg-white/5 text-foreground/80 hover:text-foreground transition-colors inline-flex items-center gap-2"
+                className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-secondary shadow-sm transition-colors hover:bg-surface-raised hover:text-foreground"
               >
                 <ArrowPathIcon className="h-3.5 w-3.5" />
                 {t('cronRefresh')}
@@ -1009,7 +995,7 @@ export const CronView: React.FC<CronViewProps> = ({
                   setEditingJob(undefined);
                   setShowDialog(true);
                 }}
-                className="h-9 text-sm font-medium rounded-full px-4 bg-primary text-white hover:bg-primary-hover transition-colors inline-flex items-center gap-2 shadow-sm"
+                className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-hover active:scale-[0.98]"
               >
                 <PlusIcon className="h-3.5 w-3.5" />
                 {t('cronNewTask')}
@@ -1021,14 +1007,12 @@ export const CronView: React.FC<CronViewProps> = ({
           {error && (
             <div className="mb-8 p-4 rounded-xl border border-red-500/50 bg-red-500/10 flex items-center gap-3">
               <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
-              <span className="text-red-600 dark:text-red-400 text-sm font-medium">
-                {error}
-              </span>
+              <span className="text-red-600 dark:text-red-400 text-sm font-medium">{error}</span>
             </div>
           )}
 
           {/* Statistics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-2 gap-3 mb-8 md:grid-cols-4">
             {[
               {
                 label: 'cronStatsTotal',
@@ -1054,19 +1038,23 @@ export const CronView: React.FC<CronViewProps> = ({
                 Icon: XCircleIcon,
                 color: 'bg-red-500/10 text-red-500',
               },
-            ].map((stat) => (
+            ].map(stat => (
               <div
                 key={stat.label}
-                className="p-5 rounded-[24px] bg-black/5 dark:bg-white/5 border border-transparent flex flex-col justify-between min-h-[130px] hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                className="flex min-h-[112px] flex-col items-center justify-between rounded-2xl border border-border-subtle bg-surface p-4 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-border hover:shadow-md"
               >
                 <div
                   className={'h-11 w-11 rounded-full flex items-center justify-center ' + stat.color}
                 >
-                  <stat.Icon className="h-5 w-5" />
+                  <stat.Icon
+                    className={stat.label === 'cronStatsTotal' ? 'h-10 w-10' : 'h-5 w-5'}
+                  />
                 </div>
-                <div className="mt-4 flex items-baseline gap-3">
-                  <p className="text-[32px] font-bold text-foreground">{stat.value}</p>
-                  <p className="text-sm font-medium text-secondary">{t(stat.label)}</p>
+                <div className="mt-3 flex items-baseline justify-center gap-2">
+                  <p className="text-2xl font-semibold tabular-nums text-foreground">
+                    {stat.value}
+                  </p>
+                  <p className="text-xs font-medium text-secondary">{t(stat.label)}</p>
                 </div>
               </div>
             ))}
@@ -1076,12 +1064,8 @@ export const CronView: React.FC<CronViewProps> = ({
           {tasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-secondary bg-black/5 dark:bg-white/5 rounded-3xl border border-dashed border-border">
               <ClockIcon className="h-12 w-12 mb-4 opacity-40" />
-              <h3 className="text-lg font-medium mb-2 text-foreground">
-                {t('cronEmptyTitle')}
-              </h3>
-              <p className="text-sm text-center mb-6 max-w-md">
-                {t('cronEmptyDescription')}
-              </p>
+              <h3 className="text-lg font-medium mb-2 text-foreground">{t('cronEmptyTitle')}</h3>
+              <p className="text-sm text-center mb-6 max-w-md">{t('cronEmptyDescription')}</p>
               <button
                 type="button"
                 onClick={() => {
@@ -1096,11 +1080,11 @@ export const CronView: React.FC<CronViewProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-              {tasks.map((job) => (
+              {tasks.map(job => (
                 <CronJobCard
                   key={job.id}
                   job={job}
-                  onToggle={(enabled) => handleToggle(job.id, enabled)}
+                  onToggle={enabled => handleToggle(job.id, enabled)}
                   onEdit={() => {
                     setEditingJob(job);
                     setShowDialog(true);
@@ -1136,11 +1120,9 @@ export const CronView: React.FC<CronViewProps> = ({
           <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
           <div
             className="relative w-full max-w-sm mx-4 rounded-2xl shadow-2xl bg-background border border-border p-6"
-            onClick={(e) => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold text-foreground mb-2">
-              {t('delete')}
-            </h3>
+            <h3 className="text-lg font-semibold text-foreground mb-2">{t('delete')}</h3>
             <p className="text-sm text-secondary mb-6">
               {t('scheduledTasksDeleteConfirm').replace('{name}', jobToDelete.name)}
             </p>
@@ -1173,7 +1155,7 @@ export const CronView: React.FC<CronViewProps> = ({
           <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
           <div
             className="relative w-full max-w-lg mx-4 max-h-[80vh] flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
@@ -1201,5 +1183,3 @@ export const CronView: React.FC<CronViewProps> = ({
 };
 
 export default CronView;
-
-

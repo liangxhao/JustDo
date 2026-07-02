@@ -9,8 +9,8 @@ import {
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { PlusIcon,UserGroupIcon } from '@heroicons/react/24/outline';
-import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
+import { PlusIcon, UserGroupIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
@@ -47,26 +47,15 @@ import Modal from './common/Modal';
 import ErrorMessage from './ErrorMessage';
 import PencilIcon from './icons/PencilIcon';
 import PlusCircleIcon from './icons/PlusCircleIcon';
-import { CustomProviderIcon,OllamaIcon } from './icons/providers';
+import { CustomProviderIcon, OllamaIcon } from './icons/providers';
 import TrashIcon from './icons/TrashIcon';
-import McpManager from './mcp/McpManager';
 import ShortcutsSettings, {
   shortcutLabelMap,
   type ShortcutSettingsValue,
 } from './settings/ShortcutsSettings';
-import SkillsManager from './skills/SkillsManager';
 import ThemedSelect from './ui/ThemedSelect';
 
-type TabType =
-  | 'general'
-  | 'coworkAgentEngine'
-  | 'model'
-  | 'myAgents'
-  | 'skills'
-  | 'mcp'
-  | 'im'
-  | 'shortcuts'
-  | 'help';
+type TabType = 'general' | 'coworkAgentEngine' | 'model' | 'myAgents' | 'im' | 'shortcuts' | 'help';
 
 const isSettingsTabEnabled = (tab: TabType): boolean => tab !== 'myAgents';
 const getEnabledSettingsTab = (tab?: TabType): TabType =>
@@ -1309,10 +1298,7 @@ const Settings: React.FC<SettingsProps> = ({
 
     try {
       let response: Awaited<ReturnType<typeof window.electron.api.fetch>>;
-      const effectiveBaseUrl = resolveBaseUrl(
-        testingProvider,
-        providerConfig.baseUrl,
-      );
+      const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl);
       const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
       const effectiveApiKey = providerConfig.apiKey;
 
@@ -1388,10 +1374,10 @@ const Settings: React.FC<SettingsProps> = ({
         );
       }
     } catch (err) {
-      const effectiveBaseUrl = resolveBaseUrl(
-        testingProvider,
-        providerConfig.baseUrl,
-      ).replace(/\/+$/, '');
+      const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl).replace(
+        /\/+$/,
+        '',
+      );
       showTestResultModal(
         {
           success: false,
@@ -1776,46 +1762,6 @@ const Settings: React.FC<SettingsProps> = ({
         icon: <UserGroupIcon className="h-5 w-5" />,
       },
       {
-        key: 'skills' as TabType,
-        label: i18nService.t('skills'),
-        icon: (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="h-5 w-5"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M14.25 6.087c0-.355.186-.676.401-.959.221-.29.349-.634.349-1.003 0-1.036-1.007-1.875-2.25-1.875s-2.25.84-2.25 1.875c0 .369.128.713.349 1.003.215.283.401.604.401.959v0a.64.64 0 01-.657.643 48.39 48.39 0 01-4.163-.3c.186 1.613.293 3.25.315 4.907a.656.656 0 01-.658.663v0c-.355 0-.676-.186-.959-.401a1.647 1.647 0 00-1.003-.349c-1.036 0-1.875 1.007-1.875 2.25s.84 2.25 1.875 2.25c.369 0 .713-.128 1.003-.349.283-.215.604-.401.959-.401v0c.31 0 .555.26.532.57a48.394 48.394 0 01-.3 4.163c1.613-.186 3.25-.293 4.907-.315a.656.656 0 01.663.658v0c0 .355-.186.676-.401.959a1.647 1.647 0 00-.349 1.003c0 1.035 1.007 1.875 2.25 1.875s2.25-.84 2.25-1.875c0-.369-.128-.713-.349-1.003-.215-.283-.401-.604-.401-.959v0c0-.31.26-.555.57-.532a48.394 48.394 0 014.163.3c-.186-1.613-.293-3.25-.315-4.907a.656.656 0 01.658-.663v0c.355 0 .676.186.959.401.29.221.634.349 1.003.349 1.035 0 1.875-1.007 1.875-2.25s-.84-2.25-1.875-2.25c-.369 0-.713.128-1.003.349-.283.215-.604.401-.959.401v0a.64.64 0 01-.643-.657 48.39 48.39 0 01.3-4.163c-1.613.186-3.25.293-4.907.315a.656.656 0 01-.663-.658v0z"
-            />
-          </svg>
-        ),
-      },
-      {
-        key: 'mcp' as TabType,
-        label: i18nService.t('mcpServers'),
-        icon: (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="h-5 w-5"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M13.19 16.568a4.5 4.5 0 01-6.38 0 4.5 4.5 0 010-6.38m6.38 0a4.5 4.5 0 01-6.38 0 4.5 4.5 0 010-6.38m6.38 0a4.5 4.5 0 010 6.38m-6.38 0a4.5 4.5 0 010 6.38M7.5 10.5L5.25 8.25m0 0L3 6m2.25 2.25L3 10.5m2.25-2.25L7.5 12m9-3l2.25-2.25m0 0L21 6m-2.25 2.25L21 10.5m-2.25-2.25L16.5 12M7.5 15l-2.25 2.25m0 0L3 19.5m2.25-2.25L3 15m2.25 2.25L7.5 13.5m9 3l2.25 2.25m0 0l2.25 2.25m-2.25-2.25l2.25-2.25m-2.25 2.25L16.5 15"
-            />
-          </svg>
-        ),
-      },
-      {
         key: 'im' as TabType,
         label: i18nService.t('imBot'),
         icon: (
@@ -2054,9 +2000,7 @@ const Settings: React.FC<SettingsProps> = ({
                       }}
                       className="flex flex-col items-center rounded-xl border-2 p-3 transition-colors cursor-pointer"
                       style={{
-                        borderColor: isSelected
-                          ? 'var(--justdo-primary)'
-                          : 'var(--justdo-border)',
+                        borderColor: isSelected ? 'var(--justdo-primary)' : 'var(--justdo-border)',
                         backgroundColor: isSelected ? 'var(--justdo-primary-muted)' : undefined,
                       }}
                     >
@@ -2189,9 +2133,7 @@ const Settings: React.FC<SettingsProps> = ({
                       }}
                       className="flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer"
                       style={{
-                        borderColor: isSelected
-                          ? 'var(--justdo-primary)'
-                          : 'var(--justdo-border)',
+                        borderColor: isSelected ? 'var(--justdo-primary)' : 'var(--justdo-border)',
                         backgroundColor: isSelected ? 'var(--justdo-primary-muted)' : undefined,
                       }}
                     >
@@ -2393,7 +2335,10 @@ const Settings: React.FC<SettingsProps> = ({
                 const providerInfo =
                   providerMeta[providerKey as BuiltinProviderType] ??
                   (isCustom
-                    ? { label: getCustomProviderDefaultName(provider), icon: <CustomProviderIcon /> }
+                    ? {
+                        label: getCustomProviderDefaultName(provider),
+                        icon: <CustomProviderIcon />,
+                      }
                     : undefined);
                 const missingApiKey = providerRequiresApiKey(providerKey) && !config.apiKey.trim();
                 const canToggleProvider = config.enabled || !missingApiKey;
@@ -2800,26 +2745,10 @@ const Settings: React.FC<SettingsProps> = ({
         );
 
       case 'shortcuts':
-        return (
-          <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />
-        );
+        return <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />;
 
       case 'myAgents':
         return <MyAgentsSettings />;
-
-      case 'skills':
-        return (
-          <div className="space-y-6">
-            <SkillsManager />
-          </div>
-        );
-
-      case 'mcp':
-        return (
-          <div className="space-y-6">
-            <McpManager />
-          </div>
-        );
 
       case 'im':
         return (
@@ -3134,9 +3063,7 @@ const Settings: React.FC<SettingsProps> = ({
         )}
 
         {(isAddingModel || isEditingModel) && (
-          <div
-            className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
-          >
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl">
             <div
               role="dialog"
               aria-modal="true"

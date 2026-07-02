@@ -1,11 +1,12 @@
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
-import { useDispatch,useSelector } from 'react-redux';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 
 import { CoworkView } from './components/cowork';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
+import PluginsView from './components/plugins/PluginsView';
 import { CronView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
@@ -30,7 +31,7 @@ import type { CoworkPermissionResult } from './types/cowork';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'scheduledTasks'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'scheduledTasks' | 'plugins'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -243,6 +244,10 @@ const App: React.FC = () => {
 
   const handleShowScheduledTasks = useCallback(() => {
     setMainView('scheduledTasks');
+  }, []);
+
+  const handleShowPlugins = useCallback(() => {
+    setMainView('plugins');
   }, []);
 
   const handleToggleSidebar = useCallback(() => {
@@ -490,6 +495,7 @@ const App: React.FC = () => {
           activeView={mainView}
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
+          onShowPlugins={handleShowPlugins}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
@@ -499,6 +505,12 @@ const App: React.FC = () => {
             <EngineStartupOverlay />
             {mainView === 'scheduledTasks' ? (
               <CronView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+              />
+            ) : mainView === 'plugins' ? (
+              <PluginsView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}

@@ -503,6 +503,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // 定时任务
     scheduledTasks: '定时任务',
+    plugins: '插件',
+    extensions: '扩展',
+    extensionsComingSoon: '扩展功能即将推出',
     scheduledTasksFormScheduleModeAt: '指定时间',
     scheduledTasksFormWeekSun: '周日',
     scheduledTasksFormWeekMon: '周一',
@@ -1230,6 +1233,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Scheduled Tasks
     scheduledTasks: 'Scheduled Tasks',
+    plugins: 'Plugins',
+    extensions: 'Extensions',
+    extensionsComingSoon: 'Extensions are coming soon',
     scheduledTasksFormScheduleModeAt: 'At',
     scheduledTasksFormWeekSun: 'Sunday',
     scheduledTasksFormWeekMon: 'Monday',

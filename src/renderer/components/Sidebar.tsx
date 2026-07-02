@@ -1,5 +1,5 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import React, { useCallback,useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import { coworkService } from '../services/cowork';
@@ -15,15 +15,17 @@ import CoworkSessionList from './cowork/CoworkSessionList';
 import ArrowUpRightIcon from './icons/ArrowUpRightIcon';
 import ClockIcon from './icons/ClockIcon';
 import ComposeIcon from './icons/ComposeIcon';
+import PuzzleIcon from './icons/PuzzleIcon';
 import SearchIcon from './icons/SearchIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import TrashIcon from './icons/TrashIcon';
 
 interface SidebarProps {
   onShowSettings: () => void;
-  activeView: 'cowork' | 'scheduledTasks';
+  activeView: 'cowork' | 'scheduledTasks' | 'plugins';
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
+  onShowPlugins: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -34,6 +36,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   activeView,
   onShowCowork,
   onShowScheduledTasks,
+  onShowPlugins,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
@@ -237,6 +240,21 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <ClockIcon className="h-4 w-4" />
             {i18nService.t('scheduledTasks')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchOpen(false);
+              onShowPlugins();
+            }}
+            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+              activeView === 'plugins'
+                ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+            }`}
+          >
+            <PuzzleIcon className="h-4 w-4" />
+            {i18nService.t('plugins')}
           </button>
         </div>
       </div>
