@@ -2483,6 +2483,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const subagents = await listGatewaySubagents({
       client,
       parentKeys: sessionKeys,
+      includePersistedHistory: false,
     }).catch((error): GatewaySubagent[] => {
       console.warn('[OpenClawRuntime] Failed to query subagent runtime status', {
         sessionId,

@@ -160,6 +160,60 @@ test('keeps persisted subagents after OpenClaw child links age out', async () =>
   });
 });
 
+test('can skip persisted history lookup for lightweight runtime polling', async () => {
+  const client = {
+    request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'tools.invoke') {
+        return {
+          ok: true,
+          output: {
+            details: {
+              status: 'ok',
+              active: [],
+              recent: [],
+            },
+          },
+        };
+      }
+      return {
+        sessions: params?.spawnedBy
+          ? [
+              {
+                key: 'agent:main:subagent:live-child',
+                spawnedBy: 'agent:main:cowork:parent',
+                status: 'running',
+              },
+            ]
+          : [
+              {
+                key: 'agent:main:subagent:persisted-only',
+                spawnedBy: 'agent:main:cowork:parent',
+                status: 'done',
+              },
+            ],
+      };
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({
+      client,
+      parentKeys: ['agent:main:cowork:parent'],
+      includePersistedHistory: false,
+    }),
+  ).resolves.toMatchObject([
+    {
+      sessionKey: 'agent:main:subagent:live-child',
+      status: 'running',
+    },
+  ]);
+  expect(client.request).not.toHaveBeenCalledWith('sessions.list', {
+    limit: 500,
+    offset: 0,
+    includeDerivedTitles: true,
+  });
+});
+
 test('maps interrupted registry rows to failed', async () => {
   const client = {
     request: vi.fn().mockResolvedValue({

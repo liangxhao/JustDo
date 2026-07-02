@@ -148,6 +148,7 @@ const listPersistedSessions = async (
 export const listGatewaySubagents = async (options: {
   client: GatewayClientLike;
   parentKeys: string[];
+  includePersistedHistory?: boolean;
 }): Promise<GatewaySubagent[]> => {
   const bySessionKey = new Map<string, GatewaySubagent>();
 
@@ -198,34 +199,36 @@ export const listGatewaySubagents = async (options: {
     }
   }
 
-  // `sessions.list({ spawnedBy })` follows OpenClaw's live child-link policy,
-  // so completed children can age out of that projection. List persisted
-  // sessions broadly and filter locally to keep long-retained subagent history
-  // visible when archiveAfterMinutes is configured as 0.
-  const parentKeySet = new Set(options.parentKeys);
-  try {
-    for (const row of await listPersistedSessions(options.client)) {
-      const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
-      if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
-      if (!rowBelongsToParent(row, parentKeySet)) continue;
-      if (bySessionKey.has(sessionKey)) continue;
-      bySessionKey.set(sessionKey, {
-        id: sessionKey,
-        sessionKey,
-        label: resolveLabel(row, sessionKey),
-        status: resolveStatus(row),
-        task: optionalString(row.task),
-        model: optionalString(row.model),
-        startedAt: optionalNumber(row.startedAt),
-        endedAt: optionalNumber(row.endedAt),
-        runtimeMs: optionalNumber(row.runtimeMs),
-        totalTokens: optionalNumber(row.totalTokens),
+  if (options.includePersistedHistory !== false) {
+    // `sessions.list({ spawnedBy })` follows OpenClaw's live child-link policy,
+    // so completed children can age out of that projection. List persisted
+    // sessions broadly and filter locally to keep long-retained subagent history
+    // visible when archiveAfterMinutes is configured as 0.
+    const parentKeySet = new Set(options.parentKeys);
+    try {
+      for (const row of await listPersistedSessions(options.client)) {
+        const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
+        if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
+        if (!rowBelongsToParent(row, parentKeySet)) continue;
+        if (bySessionKey.has(sessionKey)) continue;
+        bySessionKey.set(sessionKey, {
+          id: sessionKey,
+          sessionKey,
+          label: resolveLabel(row, sessionKey),
+          status: resolveStatus(row),
+          task: optionalString(row.task),
+          model: optionalString(row.model),
+          startedAt: optionalNumber(row.startedAt),
+          endedAt: optionalNumber(row.endedAt),
+          runtimeMs: optionalNumber(row.runtimeMs),
+          totalTokens: optionalNumber(row.totalTokens),
+        });
+      }
+    } catch (error) {
+      console.warn('[SubagentGateway] Failed to list persisted subagent sessions', {
+        error: error instanceof Error ? error.message : String(error),
       });
     }
-  } catch (error) {
-    console.warn('[SubagentGateway] Failed to list persisted subagent sessions', {
-      error: error instanceof Error ? error.message : String(error),
-    });
   }
 
   return [...bySessionKey.values()];
