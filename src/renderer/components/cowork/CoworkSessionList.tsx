@@ -280,39 +280,29 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   }, [sessions, groups]);
 
 
-  if (unGroupedSessions.length === 0 && sessions.length === 0) {
-    if (isLoading) {
-      return (
-        <div className="flex items-center justify-center py-10">
-          <svg
-            className="animate-spin h-6 w-6 dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-        </div>
-      );
-    }
+  if (sessions.length === 0 && isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center py-10 px-4">
-        <ChatBubbleLeftRightIcon className="h-10 w-10 dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40 mb-3" />
-        <p className="text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-          {i18nService.t('coworkNoSessions')}
-        </p>
+      <div className="flex items-center justify-center py-10">
+        <svg
+          className="animate-spin h-6 w-6 dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+          />
+          <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
       </div>
     );
   }
@@ -388,26 +378,34 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           </>
         )}
 
-        {/* 最近对话 section */}
-        <UngroupedDroppableZone
-          unGroupedSessions={unGroupedSessions}
-          unreadSessionIdSet={unreadSessionIdSet}
-          runtimeRunningSessionIds={runtimeRunningSessionIds}
-          currentSessionId={currentSessionId}
-          isBatchMode={isBatchMode}
-          selectedIds={selectedIds}
-          showBatchOption={showBatchOption}
-          groups={groups}
-          onSelectSession={onSelectSession}
-          onDeleteSession={onDeleteSession}
-          onRenameSession={onRenameSession}
-          onToggleSelection={onToggleSelection}
-          onEnterBatchMode={onEnterBatchMode}
-          onMoveToGroup={async (sessionId, groupId) => {
-            await coworkService.moveSessionToGroup(sessionId, groupId);
-            dispatch(moveSessionToGroup({ sessionId, groupId }));
-          }}
-        />
+        {sessions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 px-4">
+            <ChatBubbleLeftRightIcon className="h-10 w-10 dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40 mb-3" />
+            <p className="text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+              {i18nService.t('coworkNoSessions')}
+            </p>
+          </div>
+        ) : (
+          <UngroupedDroppableZone
+            unGroupedSessions={unGroupedSessions}
+            unreadSessionIdSet={unreadSessionIdSet}
+            runtimeRunningSessionIds={runtimeRunningSessionIds}
+            currentSessionId={currentSessionId}
+            isBatchMode={isBatchMode}
+            selectedIds={selectedIds}
+            showBatchOption={showBatchOption}
+            groups={groups}
+            onSelectSession={onSelectSession}
+            onDeleteSession={onDeleteSession}
+            onRenameSession={onRenameSession}
+            onToggleSelection={onToggleSelection}
+            onEnterBatchMode={onEnterBatchMode}
+            onMoveToGroup={async (sessionId, groupId) => {
+              await coworkService.moveSessionToGroup(sessionId, groupId);
+              dispatch(moveSessionToGroup({ sessionId, groupId }));
+            }}
+          />
+        )}
       </div>
 
       {/* Drag overlay */}
