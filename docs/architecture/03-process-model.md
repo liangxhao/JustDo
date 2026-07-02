@@ -108,18 +108,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('skills:search', options || {}),
     detail: (options: { slug: string }) => ipcRenderer.invoke('skills:detail', options),
     delete: (id: string) => ipcRenderer.invoke('skills:delete', id),
-    getRoot: () => ipcRenderer.invoke('skills:getRoot'),
-    autoRoutingPrompt: () => ipcRenderer.invoke('skills:autoRoutingPrompt'),
-    getConfig: (skillId: string) => ipcRenderer.invoke('skills:getConfig', skillId),
-    setConfig: (skillId: string, config: Record<string, string>) =>
-      ipcRenderer.invoke('skills:setConfig', skillId, config),
-    testEmailConnectivity: (skillId: string, config: Record<string, string>) =>
-      ipcRenderer.invoke('skills:testEmailConnectivity', skillId, config),
-    onChanged: (callback: () => void) => {
-      const handler = () => callback();
-      ipcRenderer.on('skills:changed', handler);
-      return () => ipcRenderer.removeListener('skills:changed', handler);
-    },
   },
 
   // MCP 服务器管理
@@ -704,10 +692,6 @@ function registerIpcHandlers() {
   ipcMain.handle('skills:import', handleSkillsImport);
   ipcMain.handle('skills:importFolder', handleSkillsImportFolder);
   ipcMain.handle('skills:delete', handleSkillsDelete);
-  ipcMain.handle('skills:getRoot', handleSkillsGetRoot);
-  ipcMain.handle('skills:autoRoutingPrompt', handleSkillsAutoRoutingPrompt);
-  ipcMain.handle('skills:getConfig', handleSkillsGetConfig);
-  ipcMain.handle('skills:setConfig', handleSkillsSetConfig);
 
   // MCP
   ipcMain.handle('mcp:list', handleMcpList);
@@ -1044,10 +1028,6 @@ export const IpcChannel = {
   SkillsImport: 'skills:import',
   SkillsImportFolder: 'skills:importFolder',
   SkillsDelete: 'skills:delete',
-  SkillsGetRoot: 'skills:getRoot',
-  SkillsAutoRoutingPrompt: 'skills:autoRoutingPrompt',
-  SkillsGetConfig: 'skills:getConfig',
-  SkillsSetConfig: 'skills:setConfig',
 
   // MCP
   McpList: 'mcp:list',

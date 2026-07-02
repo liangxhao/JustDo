@@ -372,6 +372,7 @@ UI 交互流程：
 |------|------|
 | `src/main/libs/agentEngine/rpc/skillRpc.ts` | Skill RPC 处理（Gateway 通信） |
 | `src/main/libs/agentEngine/types.ts` | Skill 相关类型定义 |
+| `src/main/libs/openclaw/openclawSkillFiles.ts` | 仅处理本地 Skill 文件导入与删除 |
 | `resources/builtin-skills.json` | 构建时 Skills 配置清单 |
 | `resources/skills/*/SKILL.md` | Skill 定义文档 |
 | `scripts/install-openclaw-runtime.cjs` | 构建脚本（Skills 部署步骤） |
@@ -385,7 +386,7 @@ UI 交互流程：
 
 ## 9. 运行时要点
 
-- **无本地 SkillManager 类**: 不再使用独立的 `SkillManager` 类管理 Skill 文件系统。所有操作通过 Gateway RPC
+- **无本地 SkillManager 类**: Skill 信息与状态全部通过 Gateway RPC；本地代码仅负责用户触发的文件导入与删除
 - **无 skills.config.json**: 不再使用 `resources/skills/skills.config.json`。配置通过 Gateway 内置机制管理
 - **无独立构建脚本**: Skill 代码在 OpenClaw Runtime 中已预构建，无需 JustDo 单独构建
 - **Gateway 权威**: Skill 启用状态由 Gateway 维护，JustDo UI 仅做展示和交互

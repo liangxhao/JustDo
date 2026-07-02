@@ -49,16 +49,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     };
     loadSkills();
 
-    const unsubscribe = skillService.onSkillsChanged(async () => {
-      const loadedSkills = await skillService.loadSkills();
-      if (!isActive) return;
-      dispatch(setSkills(loadedSkills));
-      setGatewayOffline(skillService.isGatewayOffline());
-    });
-
     return () => {
       isActive = false;
-      unsubscribe();
     };
   }, [dispatch]);
 

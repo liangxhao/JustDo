@@ -1,37 +1,4 @@
-import { ClawHubSkill, ClawHubSkillDetail,LocalizedText, Skill } from '../types/skill';
-import { i18nService } from './i18n';
-
-export function resolveLocalizedText(text: string | LocalizedText): string {
-  if (!text) return '';
-  if (typeof text === 'string') return text;
-  const lang = i18nService.getLanguage();
-  return text[lang] || text.en || '';
-}
-
-export function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(s => parseInt(s, 10) || 0);
-  const pb = b.split('.').map(s => parseInt(s, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = pa[i] || 0;
-    const nb = pb[i] || 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
-  }
-  return 0;
-}
-
-type EmailConnectivityCheck = {
-  code: 'imap_connection' | 'smtp_connection';
-  level: 'pass' | 'fail';
-  message: string;
-  durationMs: number;
-};
-
-type EmailConnectivityTestResult = {
-  testedAt: number;
-  verdict: 'pass' | 'fail';
-  checks: EmailConnectivityCheck[];
-};
+import { ClawHubSkill, ClawHubSkillDetail, Skill } from '../types/skill';
 
 type SkillListResult = {
   success: boolean;
@@ -43,12 +10,8 @@ type SkillListResult = {
 class SkillService {
   private skills: Skill[] = [];
   private initialized = false;
-  private localSkillDescriptions: Map<string, string | LocalizedText> = new Map();
-  private marketplaceSkillDescriptions: Map<string, string | LocalizedText> = new Map();
   private gatewayOffline = false;
   private loadPromise: Promise<Skill[]> | null = null;
-  private lastLoadedAt = 0;
-  private static readonly CACHE_TTL_MS = 30_000;
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -57,11 +20,7 @@ class SkillService {
   }
 
   async loadSkills(): Promise<Skill[]> {
-    const now = Date.now();
     if (this.loadPromise) return this.loadPromise;
-    if (this.skills.length > 0 && now - this.lastLoadedAt < SkillService.CACHE_TTL_MS) {
-      return this.skills;
-    }
 
     this.loadPromise = this.fetchSkills().finally(() => {
       this.loadPromise = null;
@@ -75,7 +34,6 @@ class SkillService {
       if (result.success && result.skills) {
         this.skills = result.skills;
         this.gatewayOffline = false;
-        this.lastLoadedAt = Date.now();
       } else {
         this.skills = [];
         this.gatewayOffline = result.gatewayOffline || false;
@@ -124,15 +82,6 @@ class SkillService {
     }
   }
 
-  async getSkillsRoot(): Promise<string | null> {
-    // No longer needed - Gateway manages skill locations
-    return null;
-  }
-
-  onSkillsChanged(callback: () => void): () => void {
-    return window.electron.skills.onChanged(callback);
-  }
-
   getSkills(): Skill[] {
     return this.skills;
   }
@@ -143,29 +92,6 @@ class SkillService {
 
   getSkillById(id: string): Skill | undefined {
     return this.skills.find(s => s.id === id);
-  }
-
-  async getSkillConfig(_skillId: string): Promise<Record<string, string>> {
-    // No longer supported - use Gateway skills.update
-    return {};
-  }
-
-  async setSkillConfig(_skillId: string, _config: Record<string, string>): Promise<boolean> {
-    // No longer supported - use Gateway skills.update
-    return false;
-  }
-
-  async testEmailConnectivity(
-    _skillId: string,
-    _config: Record<string, string>,
-  ): Promise<EmailConnectivityTestResult | null> {
-    // No longer supported - Gateway manages skill connectivity
-    return null;
-  }
-
-  async getAutoRoutingPrompt(): Promise<string | null> {
-    // No longer needed - Gateway handles skill routing
-    return null;
   }
 
   // ============================================================
@@ -247,11 +173,7 @@ class SkillService {
     }
   }
 
-  getLocalizedSkillDescription(skillId: string, skillName: string, fallback: string): string {
-    const localDesc = this.localSkillDescriptions.get(skillName);
-    if (localDesc != null) return resolveLocalizedText(localDesc);
-    const marketDesc = this.marketplaceSkillDescriptions.get(skillId);
-    if (marketDesc != null) return resolveLocalizedText(marketDesc);
+  getLocalizedSkillDescription(_skillId: string, _skillName: string, fallback: string): string {
     return fallback;
   }
 }

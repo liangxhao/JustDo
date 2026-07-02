@@ -186,23 +186,6 @@ interface ClawHubSkillDetail extends ClawHubSkill {
   };
 }
 
-type EmailConnectivityCheckCode = 'imap_connection' | 'smtp_connection';
-type EmailConnectivityCheckLevel = 'pass' | 'fail';
-type EmailConnectivityVerdict = 'pass' | 'fail';
-
-interface EmailConnectivityCheck {
-  code: EmailConnectivityCheckCode;
-  level: EmailConnectivityCheckLevel;
-  message: string;
-  durationMs: number;
-}
-
-interface EmailConnectivityTestResult {
-  testedAt: number;
-  verdict: EmailConnectivityVerdict;
-  checks: EmailConnectivityCheck[];
-}
-
 type CoworkPermissionResult =
   | {
       behavior: 'allow';
@@ -313,22 +296,7 @@ interface IElectronAPI {
       error?: string;
       gatewayOffline?: boolean;
     }>;
-    // Deprecated: no longer functional
     delete: (id: string) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
-    getRoot: () => Promise<{ success: boolean; path?: string; error?: string }>;
-    autoRoutingPrompt: () => Promise<{ success: boolean; prompt?: string | null; error?: string }>;
-    getConfig: (
-      skillId: string,
-    ) => Promise<{ success: boolean; config?: Record<string, string>; error?: string }>;
-    setConfig: (
-      skillId: string,
-      config: Record<string, string>,
-    ) => Promise<{ success: boolean; error?: string }>;
-    testEmailConnectivity: (
-      skillId: string,
-      config: Record<string, string>,
-    ) => Promise<{ success: boolean; result?: EmailConnectivityTestResult; error?: string }>;
-    onChanged: (callback: () => void) => () => void;
   };
   slashCommands: {
     list: (options?: { agentId?: string | null }) => Promise<{

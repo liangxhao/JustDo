@@ -79,7 +79,7 @@ Strict process isolation: **Main** (IPC, SQLite, engine) ↔ **Preload** (contex
 | `ipcHandlers/` | IPC handler modules (scheduled task handlers) |
 | `libs/` | Domain-organized business logic (see below) |
 
-Top-level files: `main.ts` (entry), `preload.ts` (contextBridge), `coworkStore.ts` (session CRUD), `skillManager.ts` (skill import/sync), `groupStore.ts` (session groups), `mcpStore.ts` (MCP config), `i18n.ts` (main-process translations).
+Top-level files: `main.ts` (entry), `preload.ts` (contextBridge), `coworkStore.ts` (session CRUD), `groupStore.ts` (session groups), `mcpStore.ts` (MCP config), `i18n.ts` (main-process translations).
 
 ### Libs Directory (by Domain)
 
@@ -126,7 +126,7 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 
 **Cowork System** (`src/main/libs/agentEngine/`): AI chat orchestration. Routes through `coworkEngineRouter.ts` → `openclawRuntimeAdapter.ts`. Supports streaming, thinking content, subagents (`openclaw/subagentGateway.ts`), and history reconciliation (`history/historyReconciler.ts`).
 
-**Skills** (`src/main/skillManager.ts`): 17 bundled skills in `resources/skills/`, Gateway-managed via RPC (`agentEngine/rpc/skillRpc.ts`). User-imported skills go to `userData/openclaw/state/skills/`. Bundled skills take priority on ID conflict.
+**Skills**: OpenClaw is the authoritative source via RPC (`agentEngine/rpc/skillRpc.ts`). `openclaw/openclawSkillFiles.ts` only copies or removes user-imported files under `userData/openclaw/state/skills/`; it does not discover skills or maintain metadata/state.
 
 **IM (Remote Control)**: In development. Types at `src/renderer/types/im.ts`.
 
@@ -153,7 +153,7 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 | MCP server manager | `src/main/libs/mcp/mcpServerManager.ts` |
 | Command safety | `src/main/libs/infra/commandSafety.ts` |
 | Scheduled task engine | `src/scheduledTask/cronJobService.ts`, `src/scheduledTask/policies/` |
-| Skill manager | `src/main/skillManager.ts` |
+| Local Skill file operations | `src/main/libs/openclaw/openclawSkillFiles.ts` |
 | Session groups | `src/main/groupStore.ts` |
 | MCP store | `src/main/mcpStore.ts` |
 

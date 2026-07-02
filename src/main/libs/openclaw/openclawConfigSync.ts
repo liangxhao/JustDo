@@ -334,7 +334,6 @@ type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
   getMcpBridgeConfig?: () => McpBridgeConfig | null;
-  getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
   getAgents?: () => Agent[];
 };
 
@@ -342,14 +341,12 @@ export class OpenClawConfigSync {
   private readonly engineManager: OpenClawEngineManager;
   private readonly getCoworkConfig: () => CoworkConfig;
   private readonly getMcpBridgeConfig?: () => McpBridgeConfig | null;
-  private readonly getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
   private readonly getAgents?: () => Agent[];
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
     this.getCoworkConfig = deps.getCoworkConfig;
     this.getMcpBridgeConfig = deps.getMcpBridgeConfig;
-    this.getSkillsList = deps.getSkillsList;
     this.getAgents = deps.getAgents;
   }
 

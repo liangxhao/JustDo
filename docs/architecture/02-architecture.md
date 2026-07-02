@@ -223,7 +223,6 @@ src/main/
 ├── main.ts                          # 主入口
 ├── preload.ts                       # contextBridge API 暴露
 ├── coworkStore.ts                   # Cowork 数据存储
-├── skillManager.ts                  # Skill 导入与同步
 ├── groupStore.ts                    # 会话分组管理
 ├── mcpStore.ts                      # MCP 服务器配置
 ├── i18n.ts                          # 主进程国际化
@@ -417,10 +416,6 @@ export const IpcChannel = {
   SkillsImport: 'skills:import',
   SkillsImportFolder: 'skills:importFolder',
   SkillsDelete: 'skills:delete',
-  SkillsGetRoot: 'skills:getRoot',
-  SkillsAutoRoutingPrompt: 'skills:autoRoutingPrompt',
-  SkillsGetConfig: 'skills:getConfig',
-  SkillsSetConfig: 'skills:setConfig',
 
   // MCP
   McpList: 'mcp:list',

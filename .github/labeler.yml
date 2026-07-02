@@ -50,7 +50,7 @@
   - changed-files:
       - any-glob-to-any-file:
           - "resources/skills/**"
-          - "src/main/skillManager.ts"
+          - "src/main/libs/openclaw/openclawSkillFiles.ts"
 
 "area: cowork":
   - changed-files:

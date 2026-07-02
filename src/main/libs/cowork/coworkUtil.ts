@@ -1446,39 +1446,6 @@ function verifyNodeEnvironment(env: Record<string, string | undefined>): void {
 }
 
 /**
- * Get user skills directory path.
- * In production, user-imported skills are stored in userData/openclaw/state/skills.
- * In development, check project resources/skills directory.
- */
-export function getSkillsRoot(): string {
-  if (app.isPackaged) {
-    // In production, user-imported skills are in userData/openclaw/state/skills
-    return join(app.getPath('userData'), 'openclaw', 'state', 'skills');
-  }
-
-  // In development, __dirname can vary with bundling output (e.g. dist-electron/ or dist-electron/libs/).
-  // Resolve from several stable anchors and pick the first existing skills directory.
-  const envRoots = [process.env.JUSTDO_SKILLS_ROOT, process.env.SKILLS_ROOT]
-    .map(value => value?.trim())
-    .filter((value): value is string => Boolean(value));
-  const candidates = [
-    ...envRoots,
-    join(app.getAppPath(), 'resources', 'skills'),
-    join(process.cwd(), 'resources', 'skills'),
-    join(__dirname, '..', '..', 'resources', 'skills'),
-  ];
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  // Final fallback for first-run dev environments where skills may not exist yet.
-  return join(app.getAppPath(), 'resources', 'skills');
-}
-
-/**
  * Get enhanced environment variables (including proxy configuration)
  * Async function to fetch system proxy and inject into environment variables
  */
@@ -1489,13 +1456,6 @@ export async function getEnhancedEnv(
 
   applyPackagedEnvOverrides(env);
 
-  // Inject skills directory path for skill scripts.
-  // On Windows, normalise backslashes to forward slashes so the value is usable
-  // in both Node.js (which accepts forward slashes) and bash (which treats
-  // backslashes as escape characters).
-  const skillsRoot = getSkillsRoot().replace(/\\/g, '/');
-  env.SKILLS_ROOT = skillsRoot;
-  env.JUSTDO_SKILLS_ROOT = skillsRoot; // Alternative name for clarity
   if (process.platform === 'win32' || env.JUSTDO_NODE_SHIM_ACTIVE === '1') {
     env.JUSTDO_ELECTRON_PATH = getElectronNodeRuntimePath().replace(/\\/g, '/');
   } else {

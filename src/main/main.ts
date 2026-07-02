@@ -69,10 +69,10 @@ import {
 import type { McpBridgeConfig } from './libs/openclaw/openclawConfigSync';
 import { buildProviderSelection, OpenClawConfigSync } from './libs/openclaw/openclawConfigSync';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclaw/openclawEngineManager';
+import { OpenClawSkillFiles } from './libs/openclaw/openclawSkillFiles';
 import { stopOpenClawTokenProxy } from './libs/openclaw/openclawTokenProxy';
 import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';
-import { SkillManager } from './skillManager';
 
 // 设置应用程序名称
 app.setName(APP_NAME);
@@ -668,7 +668,7 @@ let coworkStore: CoworkStore | null = null;
 let groupStore: GroupStore | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
 let coworkEngineRouter: CoworkEngineRouter | null = null;
-let skillManager: SkillManager | null = null;
+let openClawSkillFiles: OpenClawSkillFiles | null = null;
 let mcpStore: McpStore | null = null;
 let mcpServerManager: McpServerManager | null = null;
 let mcpBridgeServer: McpBridgeServer | null = null;
@@ -871,10 +871,6 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
     openClawConfigSync = new OpenClawConfigSync({
       engineManager: getOpenClawEngineManager(),
       getCoworkConfig: () => getCoworkStore().getConfig(),
-      getSkillsList: () =>
-        getSkillManager()
-          .listSkills()
-          .map(s => ({ id: s.id, enabled: s.enabled })),
       getMcpBridgeConfig: (): McpBridgeConfig | null => {
         if (
           !mcpBridgeServer?.callbackUrl ||
@@ -1280,11 +1276,12 @@ const getCoworkEngineRouter = () => {
   return coworkEngineRouter;
 };
 
-const getSkillManager = () => {
-  if (!skillManager) {
-    skillManager = new SkillManager(getStore);
+const getOpenClawSkillFiles = () => {
+  if (!openClawSkillFiles) {
+    const managedSkillsDir = path.join(getOpenClawEngineManager().getStateDir(), 'skills');
+    openClawSkillFiles = new OpenClawSkillFiles(managedSkillsDir);
   }
-  return skillManager;
+  return openClawSkillFiles;
 };
 
 const getMcpStore = () => {
@@ -1839,49 +1836,24 @@ if (!gotTheLock) {
   // All skill operations go through OpenClaw Gateway.
   // Gateway offline = skills unavailable, UI locked.
 
-  // Helper to resolve skill path from Gateway's potentially invalid filePath
-  // Gateway may return paths like ~/skills/{id}/SKILL.md which don't exist on disk
-  const createSkillPathResolver = () => {
-    const engineManager = getOpenClawEngineManager();
-    const stateDir = engineManager.getStateDir();
-    const userSkillsDir = path.join(stateDir, 'skills');
-    // Bundled skills are in resources/cfmind/skills when packaged
-    const bundledSkillsDir = app.isPackaged
-      ? path.join(process.resourcesPath, 'cfmind', 'skills')
-      : path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'skills');
-
-    return (entry: import('./libs/agentEngine/types').GatewaySkillEntry): string => {
-      // First check if filePath from Gateway is valid
-      if (entry.filePath && fs.existsSync(entry.filePath)) {
-        return entry.filePath;
-      }
-
-      // Gateway returns relative path like ~/skills/{id}/SKILL.md
-      // Try to resolve from known locations
-      const skillKey = entry.skillKey;
-      const skillMdFileName = 'SKILL.md';
-
-      // Try user imported skills directory (stateDir/skills/{skillKey})
-      const userSkillPath = path.join(userSkillsDir, skillKey, skillMdFileName);
-      if (fs.existsSync(userSkillPath)) {
-        console.log(`[Skills] Skill ${skillKey}: resolved from user dir: ${userSkillPath}`);
-        return userSkillPath;
-      }
-
-      // Try bundled skills directory (resources/cfmind/skills/{skillKey})
-      const bundledSkillPath = path.join(bundledSkillsDir, skillKey, skillMdFileName);
-      if (fs.existsSync(bundledSkillPath)) {
-        console.log(`[Skills] Skill ${skillKey}: resolved from bundled dir: ${bundledSkillPath}`);
-        return bundledSkillPath;
-      }
-
-      // Fallback: return original filePath (may be invalid but preserves Gateway's intent)
-      console.warn(
-        `[Skills] Skill ${skillKey}: could not resolve, using Gateway value: ${entry.filePath}, userPath=${userSkillPath} (exists=${fs.existsSync(userSkillPath)}), bundledPath=${bundledSkillPath} (exists=${fs.existsSync(bundledSkillPath)})`,
-      );
-      return entry.filePath || path.join(userSkillsDir, skillKey, skillMdFileName);
-    };
-  };
+  const mapGatewaySkill = (entry: import('./libs/agentEngine/types').GatewaySkillEntry) => ({
+    id: entry.skillKey,
+    name: entry.name,
+    description: entry.description,
+    enabled: !entry.disabled,
+    isOfficial: entry.bundled,
+    isBuiltIn: entry.bundled,
+    updatedAt: 0,
+    prompt: '',
+    skillPath: entry.filePath,
+    version: undefined as string | undefined,
+    source: entry.source,
+    eligible: entry.eligible,
+    missing: entry.missing,
+    install: entry.install,
+    emoji: entry.emoji,
+    homepage: entry.homepage,
+  });
 
   ipcMain.handle('skills:list', async () => {
     try {
@@ -1894,26 +1866,7 @@ if (!gotTheLock) {
         };
       }
       const status = await adapter.getSkillsStatus();
-      const resolveSkillPath = createSkillPathResolver();
-      const skills = status.skills.map(entry => ({
-        id: entry.skillKey,
-        name: entry.name,
-        description: entry.description,
-        enabled: !entry.disabled,
-        isOfficial: entry.bundled,
-        isBuiltIn: entry.bundled,
-        updatedAt: Date.now(),
-        prompt: '',
-        skillPath: resolveSkillPath(entry),
-        version: undefined as string | undefined,
-        // Gateway extended fields
-        source: entry.source,
-        eligible: entry.eligible,
-        missing: entry.missing,
-        install: entry.install,
-        emoji: entry.emoji,
-        homepage: entry.homepage,
-      }));
+      const skills = status.skills.map(mapGatewaySkill);
       return { success: true, skills, workspaceDir: status.workspaceDir };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to load skills';
@@ -2256,25 +2209,7 @@ if (!gotTheLock) {
       }
       // Refetch skill list after update
       const status = await adapter.getSkillsStatus();
-      const resolveSkillPath = createSkillPathResolver();
-      const skills = status.skills.map(entry => ({
-        id: entry.skillKey,
-        name: entry.name,
-        description: entry.description,
-        enabled: !entry.disabled,
-        isOfficial: entry.bundled,
-        isBuiltIn: entry.bundled,
-        updatedAt: Date.now(),
-        prompt: '',
-        skillPath: resolveSkillPath(entry),
-        version: undefined as string | undefined,
-        source: entry.source,
-        eligible: entry.eligible,
-        missing: entry.missing,
-        install: entry.install,
-        emoji: entry.emoji,
-        homepage: entry.homepage,
-      }));
+      const skills = status.skills.map(mapGatewaySkill);
       return { success: true, skills };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to update skill';
@@ -2358,7 +2293,7 @@ if (!gotTheLock) {
   // Offline skill import - extract local archive to user skills directory
   ipcMain.handle('skills:import', async (_event, archivePath: string) => {
     try {
-      const result = skillManager.importSkill(archivePath);
+      const result = getOpenClawSkillFiles().importArchive(archivePath);
       return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to import skill';
@@ -2370,7 +2305,7 @@ if (!gotTheLock) {
   // Offline skill import from folder - copy folder to user skills directory
   ipcMain.handle('skills:importFolder', async (_event, folderPath: string) => {
     try {
-      const result = skillManager.importSkillFromFolder(folderPath);
+      const result = getOpenClawSkillFiles().importDirectory(folderPath);
       return result;
     } catch (error) {
       const errorMsg =
@@ -2383,41 +2318,23 @@ if (!gotTheLock) {
   // skills:delete - Delete skill from Gateway managed directory
   ipcMain.handle('skills:delete', async (_event, id: string) => {
     try {
-      const manager = getSkillManager();
-      const skills = manager.deleteSkill(id);
+      getOpenClawSkillFiles().delete(id);
+      const adapter = openClawRuntimeAdapter;
+      if (!adapter) {
+        return {
+          success: false,
+          error: 'Gateway not connected',
+          gatewayOffline: true,
+        };
+      }
+      const status = await adapter.getSkillsStatus();
+      const skills = status.skills.map(mapGatewaySkill);
       return { success: true, skills };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';
       return { success: false, error: errorMsg };
     }
   });
-
-  // skills:getRoot - No longer needed, Gateway manages skill locations
-  ipcMain.handle('skills:getRoot', () => {
-    return { success: false, error: 'Local skill root no longer used. Gateway manages skills.' };
-  });
-
-  // skills:autoRoutingPrompt - No longer needed, Gateway handles skill routing
-  ipcMain.handle('skills:autoRoutingPrompt', () => {
-    return { success: false, prompt: '' };
-  });
-
-  // skills:getConfig / skills:setConfig - No longer needed, use Gateway skills.update
-  ipcMain.handle('skills:getConfig', (_event, skillId: string) => {
-    return null;
-  });
-
-  ipcMain.handle('skills:setConfig', (_event, skillId: string, config: Record<string, string>) => {
-    return null;
-  });
-
-  ipcMain.handle(
-    'skills:testEmailConnectivity',
-    async (_event, skillId: string, config: Record<string, string>) => {
-      // No longer supported - Gateway manages skill connectivity
-      return null;
-    },
-  );
 
   ipcMain.handle('openclaw:engine:getStatus', async () => {
     try {
@@ -3644,13 +3561,6 @@ if (!gotTheLock) {
         const previousConfig = getCoworkStore().getConfig();
         const previousWorkingDir = previousConfig.workingDirectory;
         getCoworkStore().setConfig(normalizedConfig);
-        if (
-          normalizedConfig.workingDirectory !== undefined &&
-          normalizedConfig.workingDirectory !== previousWorkingDir
-        ) {
-          getSkillManager().handleWorkingDirectoryChange();
-        }
-
         const nextConfig = getCoworkStore().getConfig();
         if (
           normalizedAgentEngine !== undefined &&
@@ -4490,8 +4400,6 @@ if (!gotTheLock) {
   const runAppCleanup = async (): Promise<void> => {
     console.log('[Main] App is quitting, starting cleanup...');
     destroyTray();
-    skillManager?.stopWatching();
-
     // Stop Cowork sessions without blocking shutdown.
     if (coworkEngineRouter) {
       console.log('[Main] Stopping cowork sessions...');
@@ -4641,15 +4549,6 @@ if (!gotTheLock) {
     }
 
     console.log('[Main] initApp: setStoreGetter done');
-    const manager = getSkillManager();
-    console.log('[Main] initApp: getSkillManager done');
-
-    // When skills change (install/enable/disable/delete), re-sync OpenClaw config
-    manager.onSkillsChanged(() => {
-      syncOpenClawConfig({ reason: 'skills-changed' }).catch(error => {
-        console.warn('[Main] Failed to sync OpenClaw config after skills change:', error);
-      });
-    });
 
     try {
       const runtimeResult = await ensurePythonRuntimeReady();
@@ -4660,13 +4559,6 @@ if (!gotTheLock) {
       }
     } catch (error) {
       console.error('[Main] initApp: ensurePythonRuntimeReady threw:', error);
-    }
-
-    try {
-      manager.startWatching();
-      console.log('[Main] initApp: startWatching done');
-    } catch (error) {
-      console.error('[Main] initApp: startWatching failed:', error);
     }
 
     const appConfig = getStore().get<AppConfigSettings>('app_config');

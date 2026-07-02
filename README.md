@@ -218,7 +218,6 @@ src/
 │   ├── main.ts            # Entry point
 │   ├── preload.ts         # contextBridge security layer
 │   ├── coworkStore.ts     # Cowork session & message CRUD
-│   ├── skillManager.ts    # Skill import & sync to Gateway
 │   ├── groupStore.ts      # Session group management
 │   ├── mcpStore.ts        # MCP server configuration
 │   ├── core/              # Core app utilities
