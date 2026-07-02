@@ -6,22 +6,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* KaTeX styles */
-.katex-display {
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 1em 0;
-  margin: 1em 0;
-}
-
-.katex {
-  color: inherit;
-}
-
-.dark .katex {
-  color: var(--justdo-text-primary);
-}
-
 /* Improve code block styles */
 pre {
   background-color: var(--justdo-surface-raised);

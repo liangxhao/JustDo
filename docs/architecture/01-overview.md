@@ -134,7 +134,7 @@ Agent 使用 Gateway 管理的内存文件系统实现持久化记忆：
 | 状态 | Redux Toolkit（8 slices） |
 | Agent 引擎 | OpenClaw Gateway（唯一引擎，预构建 npm 包） |
 | 本地存储 | better-sqlite3（UI 缓存） |
-| Markdown | react-markdown + remark-gfm |
+| Markdown | markdown-it + highlight.js |
 | 运行时 | Node.js >=24 <25 |
 
 ### 4.3 数据存储

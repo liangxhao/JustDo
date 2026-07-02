@@ -142,6 +142,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // 聊天窗口
     sendMessage: '发送消息',
     copyToClipboard: '复制到剪贴板',
+    showCode: '显示 Mermaid 源码',
+    renderDiagram: '渲染 Mermaid 图表',
+    mermaidRenderFailed: 'Mermaid 图表渲染失败',
     copied: '已复制',
     yesterday: '昨天',
     daysAgo: '天前',
@@ -736,6 +739,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Chat Window
     sendMessage: 'Send Message',
     copyToClipboard: 'Copy to Clipboard',
+    showCode: 'Show Mermaid source',
+    renderDiagram: 'Render Mermaid diagram',
+    mermaidRenderFailed: 'Failed to render Mermaid diagram',
     copied: 'Copied',
     yesterday: 'Yesterday',
     daysAgo: 'days ago',

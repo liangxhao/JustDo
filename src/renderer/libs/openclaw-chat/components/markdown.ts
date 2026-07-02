@@ -22,6 +22,8 @@ import yaml from 'highlight.js/lib/languages/yaml';
 import MarkdownIt from 'markdown-it';
 import markdownItTaskLists from 'markdown-it-task-lists';
 
+import { i18nService } from '../../../services/i18n';
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const MARKDOWN_CHAR_LIMIT = 140_000;
@@ -41,7 +43,7 @@ const allowedTags = [
 
 const allowedAttrs = [
   'checked', 'class', 'disabled', 'href', 'rel', 'target', 'title', 'start',
-  'src', 'alt', 'data-code', 'type', 'aria-label',
+  'src', 'alt', 'data-code', 'hidden', 'type', 'aria-label',
 ];
 
 const sanitizeOptions = {
@@ -73,9 +75,39 @@ for (const [language, definition, aliases] of [
   }
 }
 
+hljs.registerLanguage('mermaid', () => ({
+  name: 'Mermaid',
+  case_insensitive: true,
+  keywords: {
+    keyword:
+      'graph flowchart sequenceDiagram classDiagram stateDiagram stateDiagram-v2 erDiagram ' +
+      'journey gantt pie gitGraph mindmap timeline quadrantChart requirementDiagram C4Context ' +
+      'subgraph end participant actor as activate deactivate note over loop alt else opt par and ' +
+      'rect critical break direction click linkStyle classDef class style state title section dateFormat ' +
+      'axisFormat excludes includes todayMarker accTitle accDescr',
+    literal: 'true false null',
+    built_in: 'TB TD BT RL LR',
+  },
+  contains: [
+    hljs.COMMENT('%%', '$'),
+    hljs.QUOTE_STRING_MODE,
+    hljs.APOS_STRING_MODE,
+    hljs.C_NUMBER_MODE,
+    {
+      className: 'symbol',
+      begin: /-->|---|-.->|==>|~~~|--|->|<--|<->/,
+    },
+    {
+      className: 'meta',
+      begin: /%%\{/,
+      end: /\}%%/,
+    },
+  ],
+}));
+
 const autoHighlightLanguages = [
   'bash', 'css', 'diff', 'go', 'java', 'javascript', 'json',
-  'markdown', 'python', 'rust', 'typescript', 'xml', 'yaml',
+  'markdown', 'mermaid', 'python', 'rust', 'typescript', 'xml', 'yaml',
 ];
 
 const HIGHLIGHT_ALIASES: Record<string, string> = {
@@ -272,6 +304,13 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
 
   const envChrome = (env as { codeBlockChrome?: string })?.codeBlockChrome;
   if (envChrome === 'none') return codeBlock;
+
+  if (lang.toLowerCase() === 'mermaid') {
+    const showCodeLabel = escapeHtml(i18nService.t('showCode'));
+    const toggleBtn = `<button type="button" class="mermaid-toggle" aria-label="${showCodeLabel}" title="${showCodeLabel}"><span aria-hidden="true">▶</span></button>`;
+    const header = `<div class="code-block-header"><span class="code-block-lang">mermaid (rendered)</span>${toggleBtn}</div>`;
+    return `<div class="code-block-wrapper mermaid-block">${header}<div class="mermaid-preview" aria-live="polite"></div><div class="mermaid-source" hidden>${codeBlock}</div></div>`;
+  }
 
   const langLabel = lang ? `<span class="code-block-lang">${escapeHtml(lang)}</span>` : '';
   const attrSafe = escapeHtml(text);

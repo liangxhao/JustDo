@@ -8,7 +8,9 @@
  */
 import { css, html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import mermaid from 'mermaid';
 
+import { i18nService } from '../../../services/i18n';
 import type { ChatController } from '../gateway/chat-controller';
 import { buildChatItems } from '../pipeline/build-chat-items';
 import { extractTextCached } from '../pipeline/message-extract';
@@ -31,6 +33,9 @@ type ChatMinimapEntry = {
 
 const MINIMAP_VISIBLE_ENTRY_THRESHOLD = 4;
 const MINIMAP_NAV_LOCK_DURATION = 800;
+const MERMAID_BUBBLE_MIN_WIDTH = 500;
+const MERMAID_BUBBLE_MAX_WIDTH = 820;
+const MERMAID_BUBBLE_HORIZONTAL_PADDING = 64;
 
 @customElement('justdo-chat')
 export class JustDoChatElement extends LitElement {
@@ -648,6 +653,108 @@ export class JustDoChatElement extends LitElement {
       color: #fff;
     }
 
+    .mermaid-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      padding: 2px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      cursor: pointer;
+    }
+
+    .mermaid-toggle:hover {
+      color: var(--justdo-chat-text, #1f2937);
+      background: rgba(0, 0, 0, 0.06);
+    }
+
+    .mermaid-block.is-source .mermaid-toggle span {
+      color: var(--justdo-chat-accent, #3b82f6);
+    }
+
+    .mermaid-block {
+      overflow: hidden;
+      border: 1px solid var(--justdo-chat-border, #e5e7eb);
+      border-radius: 4px;
+      background: var(--justdo-chat-code-light-bg, #f0f2f5);
+    }
+
+    .mermaid-block .code-block-header {
+      min-height: 20px;
+      padding: 2px 8px;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      background: var(--justdo-chat-code-light-bg, #f0f2f5);
+      border-radius: 0;
+      line-height: 1.25;
+    }
+
+    .mermaid-block .code-block-lang {
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: none;
+    }
+
+    .mermaid-preview {
+      overflow-x: auto;
+      padding: 16px;
+      text-align: center;
+      background: var(--justdo-chat-code-light-bg, #f0f2f5);
+      border-top: 1px solid var(--justdo-chat-border, #e5e7eb);
+      border-radius: 0;
+    }
+
+    .mermaid-preview svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .mermaid-source pre,
+    .mermaid-source pre code {
+      background: var(--justdo-chat-code-light-bg, #f0f2f5);
+    }
+
+    .mermaid-source pre {
+      padding: 4px 8px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .mermaid-source code {
+      color: #383a42;
+    }
+
+    .mermaid-source .hljs-keyword {
+      color: #a626a4;
+    }
+
+    .mermaid-source .hljs-built_in,
+    .mermaid-source .hljs-number {
+      color: #986801;
+    }
+
+    .mermaid-source .hljs-string {
+      color: #50a14f;
+    }
+
+    .mermaid-source .hljs-comment {
+      color: #a0a1a7;
+    }
+
+    .mermaid-source .hljs-symbol {
+      color: #0184bc;
+    }
+
+    .mermaid-error {
+      color: var(--justdo-chat-error, #dc2626);
+      white-space: pre-wrap;
+      text-align: left;
+      font-size: 12px;
+    }
+
     .code-block-copy__done {
       display: none;
     }
@@ -800,6 +907,45 @@ export class JustDoChatElement extends LitElement {
     }
     :host(.dark) .code-block-header {
       background: #161b22;
+    }
+    :host(.dark) .mermaid-block {
+      border-color: rgba(255, 255, 255, 0.1);
+      background: #282c34;
+    }
+    :host(.dark) .mermaid-block .code-block-header {
+      color: #9ca3af;
+      background: #282c34;
+    }
+    :host(.dark) .mermaid-preview {
+      background: #282c34;
+      border-top-color: rgba(255, 255, 255, 0.1);
+    }
+    :host(.dark) .mermaid-source pre,
+    :host(.dark) .mermaid-source pre code {
+      background: #282c34;
+    }
+    :host(.dark) .mermaid-source code {
+      color: #abb2bf;
+    }
+    :host(.dark) .mermaid-source .hljs-keyword {
+      color: #c678dd;
+    }
+    :host(.dark) .mermaid-source .hljs-built_in,
+    :host(.dark) .mermaid-source .hljs-number {
+      color: #d19a66;
+    }
+    :host(.dark) .mermaid-source .hljs-string {
+      color: #98c379;
+    }
+    :host(.dark) .mermaid-source .hljs-comment {
+      color: #5c6370;
+    }
+    :host(.dark) .mermaid-source .hljs-symbol {
+      color: #56b6c2;
+    }
+    :host(.dark) .mermaid-toggle:hover {
+      color: #f3f4f6;
+      background: rgba(255, 255, 255, 0.1);
     }
     :host(.dark) .markdown-content pre {
       background: #161b22;
@@ -1289,11 +1435,13 @@ export class JustDoChatElement extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener('scroll', this.handleScroll);
+    this.renderRoot?.addEventListener('click', this.handleMarkdownClick);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.removeEventListener('scroll', this.handleScroll);
+    this.renderRoot?.removeEventListener('click', this.handleMarkdownClick);
     if (this.minimapNavigatingTimer) {
       clearTimeout(this.minimapNavigatingTimer);
       this.minimapNavigatingTimer = null;
@@ -1303,6 +1451,7 @@ export class JustDoChatElement extends LitElement {
 
   protected firstUpdated(): void {
     this.updateCurrentMinimapIndex();
+    requestAnimationFrame(() => void this.renderMermaidDiagrams());
   }
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
@@ -1315,6 +1464,69 @@ export class JustDoChatElement extends LitElement {
       this.clearSearchMarks();
     }
     requestAnimationFrame(() => this.emitSearchMatchCount());
+    requestAnimationFrame(() => void this.renderMermaidDiagrams());
+  }
+
+  private readonly handleMarkdownClick = (event: Event): void => {
+    const target = event.composedPath().find(
+      node => node instanceof HTMLElement && node.classList.contains('mermaid-toggle'),
+    ) as HTMLButtonElement | undefined;
+    if (!target) return;
+
+    const block = target.closest<HTMLElement>('.mermaid-block');
+    if (!block) return;
+    const showSource = !block.classList.contains('is-source');
+    block.classList.toggle('is-source', showSource);
+    const preview = block.querySelector<HTMLElement>('.mermaid-preview');
+    const source = block.querySelector<HTMLElement>('.mermaid-source');
+    const label = block.querySelector<HTMLElement>('.code-block-lang');
+    if (preview) preview.hidden = showSource;
+    if (source) source.hidden = !showSource;
+    if (label) label.textContent = showSource ? 'mermaid' : 'mermaid (rendered)';
+    const buttonLabel = i18nService.t(showSource ? 'renderDiagram' : 'showCode');
+    target.setAttribute('aria-label', buttonLabel);
+    target.title = buttonLabel;
+  };
+
+  private async renderMermaidDiagrams(): Promise<void> {
+    const blocks = this.renderRoot.querySelectorAll<HTMLElement>(
+      '.mermaid-block:not([data-mermaid-rendered])',
+    );
+    for (const block of blocks) {
+      block.dataset.mermaidRendered = 'true';
+      const preview = block.querySelector<HTMLElement>('.mermaid-preview');
+      const code = block.querySelector<HTMLElement>('.mermaid-source code')?.textContent;
+      if (!preview || !code) continue;
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
+        });
+        const id = `justdo-mermaid-${crypto.randomUUID()}`;
+        const { svg } = await mermaid.render(id, code.trim());
+        preview.innerHTML = svg;
+        this.resizeMermaidBubble(block, preview);
+      } catch (error) {
+        preview.classList.add('mermaid-error');
+        preview.textContent =
+          error instanceof Error ? error.message : i18nService.t('mermaidRenderFailed');
+      }
+    }
+  }
+
+  private resizeMermaidBubble(block: HTMLElement, preview: HTMLElement): void {
+    const svg = preview.querySelector<SVGSVGElement>('svg');
+    const bubble = block.closest<HTMLElement>('.chat-bubble--assistant');
+    if (!svg || !bubble) return;
+
+    const diagramWidth = svg.viewBox.baseVal.width || svg.getBoundingClientRect().width;
+    const preferredWidth = Math.min(
+      MERMAID_BUBBLE_MAX_WIDTH,
+      Math.max(MERMAID_BUBBLE_MIN_WIDTH, diagramWidth + MERMAID_BUBBLE_HORIZONTAL_PADDING),
+    );
+    const currentWidth = Number.parseFloat(bubble.style.width) || 0;
+    bubble.style.width = `${Math.max(currentWidth, preferredWidth)}px`;
   }
 
   private subscribeController(ctrl: ChatController): void {

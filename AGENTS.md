@@ -144,7 +144,7 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 | SQLite wrapper | `src/main/data/sqliteStore.ts` |
 | Config sync | `src/main/libs/openclaw/openclawConfigSync.ts` |
 | Chat rendering | `src/renderer/libs/openclaw-chat/` (pipeline architecture) |
-| Markdown renderer | `src/renderer/components/MarkdownContent.tsx` |
+| Markdown renderer | `src/renderer/libs/openclaw-chat/components/markdown.ts` |
 | Settings UI | `src/renderer/components/Settings.tsx` |
 | Permission UI | `src/renderer/components/cowork/CoworkPermissionModal.tsx` |
 | Cowork model API | `src/main/libs/cowork/coworkModelApi.ts` |

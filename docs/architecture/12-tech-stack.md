@@ -41,16 +41,10 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 | **@heroicons/react** | ^2.1.1 | SVG 图标库 |
 | **@monaco-editor/react** | ^4.7.0 | Monaco 代码编辑器 |
 | **highlight.js** | ^11.11.1 | 代码语法高亮 |
-| **katex** | ^0.16.21 | LaTeX 数学公式渲染 |
 | **lit** | ^3.3.3 | Lit 自定义元素（`<justdo-chat>` 消息渲染） |
 | **markdown-it** | ^14.2.0 | Markdown 解析 |
 | **markdown-it-task-lists** | ^2.1.1 | 任务列表扩展 |
 | **mermaid** | ^10.9.5 | 流程图渲染 |
-| **react-markdown** | ^10.0.0 | React Markdown 渲染 |
-| **react-syntax-highlighter** | ^15.6.1 | 代码块语法高亮 |
-| **rehype-katex** | ^7.0.1 | KaTeX React 集成 |
-| **remark-gfm** | ^4.0.1 | GitHub Flavored Markdown |
-| **remark-math** | ^6.0.0 | 数学公式支持 |
 | **dompurify** | ^3.3.1 | HTML/SVG 净化 |
 
 ### 2.5 聊天渲染层
@@ -452,7 +446,7 @@ const db = new Database('justdo.sqlite');
 db.pragma('journal_mode = WAL'); // WAL 模式
 ```
 
-### 11.3 markdown-it + highlight.js + katex
+### 11.3 markdown-it + highlight.js
 
 Lit 聊天组件中的 Markdown 渲染链：
 
