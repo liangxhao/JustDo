@@ -16,7 +16,12 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import type { Schedule,ScheduledTask, ScheduledTaskInput } from '../../../scheduledTask/types';
+import type {
+  Schedule,
+  ScheduledTask,
+  ScheduledTaskChannelOption,
+  ScheduledTaskInput,
+} from '../../../scheduledTask/types';
 import { i18nService } from '../../services/i18n';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { RootState } from '../../store';
@@ -367,7 +372,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
   );
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [channelOptions, setChannelOptions] = useState<{ value: string; label: string }[]>([]);
+  const [channelOptions, setChannelOptions] = useState<ScheduledTaskChannelOption[]>([]);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   const [prevOpen, setPrevOpen] = useState(open);
@@ -777,7 +782,7 @@ function CreateEditDialog({ open, job, agents, onClose, onSave }: DialogProps) {
                 >
                   <option value="">{t('cronDialogSelectChannel')}</option>
                   {channelOptions.map((c) => (
-                    <option key={c.value} value={c.value}>
+                    <option key={c.value} value={c.value} disabled={c.disabled}>
                       {c.label}
                     </option>
                   ))}

@@ -117,6 +117,8 @@ export interface ScheduledTaskRunEvent {
 export interface ScheduledTaskChannelOption {
   value: string;
   label: string;
+  /** Whether the channel is displayed as unavailable and cannot be selected. */
+  disabled?: boolean;
   /** For multi-instance platforms, the account ID that
    *  identifies a specific bot instance.  Passed as `delivery.accountId` so the
    *  channel plugin can use the correct account instead of
