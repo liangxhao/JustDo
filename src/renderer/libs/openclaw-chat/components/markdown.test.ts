@@ -2,6 +2,28 @@ import { describe, expect, test } from 'vitest';
 
 import { md } from './markdown';
 
+describe('LaTeX Markdown formulas', () => {
+  test('renders inline formulas with KaTeX', () => {
+    const html = md.render('Euler: $e^{i\\pi}+1=0$');
+
+    expect(html).toContain('class="katex"');
+    expect(html).toContain('Euler:');
+  });
+
+  test('renders block formulas with KaTeX', () => {
+    const html = md.render('$$\n\\frac{a}{b}\n$$');
+
+    expect(html).toContain('class="katex-display"');
+    expect(html).toContain('class="katex"');
+  });
+
+  test('supports bracket delimiters', () => {
+    const html = md.render('\\[x^2+y^2=z^2\\]');
+
+    expect(html).toContain('class="katex-display"');
+  });
+});
+
 describe('Mermaid Markdown fences', () => {
   test('renders a diagram preview by default and retains the source for toggling', () => {
     const html = md.render('```mermaid\ngraph TD\n  A --> B\n```');

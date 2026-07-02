@@ -19,8 +19,10 @@ import rust from 'highlight.js/lib/languages/rust';
 import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
+import katex from 'katex';
 import MarkdownIt from 'markdown-it';
 import markdownItTaskLists from 'markdown-it-task-lists';
+import markdownItTexMath from 'markdown-it-texmath';
 
 import { i18nService } from '../../../services/i18n';
 
@@ -43,7 +45,7 @@ const allowedTags = [
 
 const allowedAttrs = [
   'checked', 'class', 'disabled', 'href', 'rel', 'target', 'title', 'start',
-  'src', 'alt', 'data-code', 'hidden', 'type', 'aria-label',
+  'src', 'alt', 'data-code', 'hidden', 'type', 'style', 'aria-hidden', 'aria-label',
 ];
 
 const sanitizeOptions = {
@@ -275,6 +277,15 @@ export const md = new MarkdownIt({
 md.enable('strikethrough');
 md.linkify.set({ fuzzyLink: false });
 md.validateLink = () => true;
+md.use(markdownItTexMath, {
+  engine: katex,
+  delimiters: ['dollars', 'brackets'],
+  katexOptions: {
+    output: 'html',
+    throwOnError: false,
+    strict: false,
+  },
+});
 
 // Override html_block/html_inline to escape raw HTML
 md.renderer.rules.html_block = (tokens, idx) => escapeHtml(tokens[idx].content) + '\n';

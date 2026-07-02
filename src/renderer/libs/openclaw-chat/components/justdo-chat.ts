@@ -6,7 +6,8 @@
  * 1. Directly via properties (messages, stream, etc.)
  * 2. Via a ChatController reference (controller property)
  */
-import { css, html, LitElement, nothing, type TemplateResult } from 'lit';
+import katexStyles from 'katex/dist/katex.min.css?inline';
+import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import mermaid from 'mermaid';
 
@@ -112,7 +113,9 @@ export class JustDoChatElement extends LitElement {
 
   // ─── Styles ─────────────────────────────────────────────────────────────
 
-  static styles = css`
+  static styles = [
+    unsafeCSS(katexStyles),
+    css`
     :host {
       display: block;
       font-family:
@@ -607,8 +610,8 @@ export class JustDoChatElement extends LitElement {
     /* ── Code Blocks ────────────────────────────────────────────────── */
 
     .markdown-content pre {
-      background: var(--justdo-chat-code-bg, #1e1e1e);
-      color: var(--justdo-chat-code-text, #d4d4d4);
+      background: var(--justdo-chat-code-light-bg, #f0f2f5);
+      color: var(--justdo-chat-code-text, #24292e);
       padding: 12px;
       border-radius: 8px;
       max-width: 100%;
@@ -640,7 +643,7 @@ export class JustDoChatElement extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 6px 12px;
-      background: var(--justdo-chat-code-header-bg, #2d2d2d);
+      background: var(--justdo-chat-code-light-bg, #f0f2f5);
       border-radius: 8px 8px 0 0;
       font-size: 12px;
     }
@@ -1038,6 +1041,7 @@ export class JustDoChatElement extends LitElement {
     }
     :host(.dark) .markdown-content pre {
       background: #161b22;
+      color: #d4d4d4;
     }
 
     /* ── Thinking Block ─────────────────────────────────────────────── */
@@ -1451,7 +1455,8 @@ export class JustDoChatElement extends LitElement {
       color: #422006;
       box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.45);
     }
-  `;
+    `,
+  ];
 
   // ─── Rendering ──────────────────────────────────────────────────────────
 
