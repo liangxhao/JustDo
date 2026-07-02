@@ -14,6 +14,7 @@ import PuzzleIcon from '../icons/PuzzleIcon';
 import SearchIcon from '../icons/SearchIcon';
 import TrashIcon from '../icons/TrashIcon';
 import Tooltip from '../ui/Tooltip';
+import { groupSkillsBySource, SkillGroupId } from './skillGroups';
 
 type SkillTab = 'installed' | 'marketplace';
 
@@ -67,11 +68,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     });
   }, [skills, skillSearchQuery]);
 
-  const formatSkillDate = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
-    return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(date);
-  };
+  const groupedSkills = useMemo(() => groupSkillsBySource(filteredSkills), [filteredSkills]);
+
+  const getGroupLabel = (groupId: SkillGroupId) => i18nService.t(`skillGroup.${groupId}.label`);
+
+  const getGroupDescription = (groupId: SkillGroupId) =>
+    i18nService.t(`skillGroup.${groupId}.description`);
 
   const handleToggleSkill = async (skillId: string) => {
     if (gatewayOffline) {
@@ -459,97 +461,117 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       <div>
         {activeTab === 'installed' && (
           <>
-            <div className="grid grid-cols-2 gap-3">
-              {filteredSkills.length === 0 ? (
-                <div className="col-span-2 text-center py-8 text-sm text-secondary">
-                  {gatewayOffline
-                    ? i18nService.t('gatewayOffline')
-                    : i18nService.t('noSkillsAvailable')}
-                </div>
-              ) : (
-                filteredSkills.map(skill => (
-                  <div
-                    key={skill.id}
-                    className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary cursor-pointer"
-                    onClick={() => setSelectedSkill(skill)}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-7 h-7 rounded-lg bg-surface flex items-center justify-center flex-shrink-0">
-                          <PuzzleIcon className="h-4 w-4 text-secondary" />
+            {filteredSkills.length === 0 ? (
+              <div className="text-center py-8 text-sm text-secondary">
+                {gatewayOffline
+                  ? i18nService.t('gatewayOffline')
+                  : i18nService.t('noSkillsAvailable')}
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {groupedSkills.map(group => (
+                  <section key={group.id}>
+                    <div className="mb-2.5 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-semibold text-foreground">
+                            {getGroupLabel(group.id)}
+                          </h3>
+                          <span className="rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
+                            {group.skills.length}
+                          </span>
+                          {group.priority && (
+                            <span className="text-[10px] text-secondary">
+                              {i18nService
+                                .t('skillGroupPriority')
+                                .replace('{priority}', String(group.priority))}
+                            </span>
+                          )}
                         </div>
-                        <span className="text-sm font-medium text-foreground truncate">
-                          {skill.name}
-                        </span>
+                        <p className="mt-0.5 text-xs text-secondary">
+                          {getGroupDescription(group.id)}
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {/* Status badge */}
-                        {renderSkillStatus(skill)}
-                        {/* Toggle */}
+                    </div>
+                    <div className="grid grid-cols-2 items-start gap-3">
+                      {group.skills.map(skill => (
                         <div
-                          className={`w-9 h-5 rounded-full flex items-center transition-colors flex-shrink-0 ${
-                            readOnly || gatewayOffline
-                              ? 'opacity-50 cursor-not-allowed'
-                              : 'cursor-pointer'
-                          } ${skill.enabled ? 'bg-primary' : 'bg-border'}`}
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (!readOnly && !gatewayOffline) handleToggleSkill(skill.id);
-                          }}
+                          key={skill.id}
+                          className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary cursor-pointer"
+                          onClick={() => setSelectedSkill(skill)}
                         >
-                          <div
-                            className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
-                              skill.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-                            }`}
-                          />
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-7 h-7 rounded-lg bg-surface flex items-center justify-center flex-shrink-0">
+                                <PuzzleIcon className="h-4 w-4 text-secondary" />
+                              </div>
+                              <span className="text-sm font-medium text-foreground truncate">
+                                {skill.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {/* Status badge */}
+                              {renderSkillStatus(skill)}
+                              {/* Toggle */}
+                              <div
+                                className={`w-9 h-5 rounded-full flex items-center transition-colors flex-shrink-0 ${
+                                  readOnly || gatewayOffline
+                                    ? 'opacity-50 cursor-not-allowed'
+                                    : 'cursor-pointer'
+                                } ${skill.enabled ? 'bg-primary' : 'bg-border'}`}
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  if (!readOnly && !gatewayOffline) handleToggleSkill(skill.id);
+                                }}
+                              >
+                                <div
+                                  className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+                                    skill.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                                  }`}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <Tooltip
+                            content={skillService.getLocalizedSkillDescription(
+                              skill.id,
+                              skill.name,
+                              skill.description,
+                            )}
+                            position="bottom"
+                            maxWidth="360px"
+                            className="block w-full"
+                          >
+                            <p
+                              className={`text-xs text-secondary line-clamp-2 ${
+                                skill.version ? 'mb-2' : ''
+                              }`}
+                            >
+                              {skillService.getLocalizedSkillDescription(
+                                skill.id,
+                                skill.name,
+                                skill.description,
+                              )}
+                            </p>
+                          </Tooltip>
+
+                          {skill.version && (
+                            <div className="flex items-center text-[10px] text-secondary">
+                              <div className="flex items-center gap-2">
+                                <span className="px-1.5 py-0.5 rounded bg-surface-raised font-medium">
+                                  v{skill.version}
+                                </span>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
+                      ))}
                     </div>
-
-                    <Tooltip
-                      content={skillService.getLocalizedSkillDescription(
-                        skill.id,
-                        skill.name,
-                        skill.description,
-                      )}
-                      position="bottom"
-                      maxWidth="360px"
-                      className="block w-full"
-                    >
-                      <p className="text-xs text-secondary line-clamp-2 mb-2">
-                        {skillService.getLocalizedSkillDescription(
-                          skill.id,
-                          skill.name,
-                          skill.description,
-                        )}
-                      </p>
-                    </Tooltip>
-
-                    <div className="flex items-center justify-between text-[10px] text-secondary">
-                      <div className="flex items-center gap-2">
-                        {skill.isOfficial && (
-                          <>
-                            <span className="px-1.5 py-0.5 rounded bg-primary-muted text-primary font-medium">
-                              {i18nService.t('official')}
-                            </span>
-                            <span>·</span>
-                          </>
-                        )}
-                        {skill.version && (
-                          <>
-                            <span className="px-1.5 py-0.5 rounded bg-surface-raised font-medium">
-                              v{skill.version}
-                            </span>
-                            <span>·</span>
-                          </>
-                        )}
-                        <span>{formatSkillDate(skill.updatedAt)}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+                  </section>
+                ))}
+              </div>
+            )}
           </>
         )}
 
@@ -624,16 +646,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
             )}
 
             <div className="space-y-2 mb-5">
-              {selectedSkill.isOfficial && (
-                <div className="flex items-center text-xs">
-                  <span className="w-16 flex-shrink-0 text-secondary">
-                    {i18nService.t('skillDetailSource')}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-primary-muted text-primary font-medium">
-                    {i18nService.t('official')}
-                  </span>
-                </div>
-              )}
               {selectedSkill.version && (
                 <div className="flex items-center text-xs">
                   <span className="w-16 flex-shrink-0 text-secondary">

@@ -21,11 +21,16 @@ export interface Skill {
 
 export type SkillSource =
   | 'workspace'
+  | 'openclaw-workspace'
   | 'agents-project'
+  | 'agents-skills-project'
   | 'agents-personal'
+  | 'agents-skills-personal'
   | 'managed'
+  | 'openclaw-managed'
   | 'openclaw-bundled'
   | 'extra-dir'
+  | 'openclaw-extra'
   | 'unknown';
 
 export interface SkillMissing {

@@ -1,5 +1,5 @@
 import { CheckIcon } from '@heroicons/react/24/outline';
-import React, { useEffect, useRef,useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { i18nService } from '../../services/i18n';
@@ -37,9 +37,13 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
   // Filter enabled skills based on search query
   const filteredSkills = skills
     .filter(s => s.enabled)
-    .filter(s =>
-      s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      skillService.getLocalizedSkillDescription(s.id, s.name, s.description).toLowerCase().includes(searchQuery.toLowerCase())
+    .filter(
+      s =>
+        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        skillService
+          .getLocalizedSkillDescription(s.id, s.name, s.description)
+          .toLowerCase()
+          .includes(searchQuery.toLowerCase()),
     );
 
   // Calculate available height and focus search input when popover opens
@@ -123,7 +127,7 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
             type="text"
             placeholder={i18nService.t('searchSkills')}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={e => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
           />
         </div>
@@ -136,23 +140,21 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
             {i18nService.t('noSkillsAvailable')}
           </div>
         ) : (
-          filteredSkills.map((skill) => {
+          filteredSkills.map(skill => {
             const isActive = activeSkillIds.includes(skill.id);
             return (
               <button
                 key={skill.id}
                 onClick={() => handleSelectSkill(skill)}
                 className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors ${
-                  isActive
-                    ? 'dark:bg-primary/10 bg-primary/10'
-                    : 'hover:bg-surface-raised'
+                  isActive ? 'dark:bg-primary/10 bg-primary/10' : 'hover:bg-surface-raised'
                 }`}
               >
-                <div className={`mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                  isActive
-                    ? 'bg-primary text-white'
-                    : 'bg-surface-raised'
-                }`}>
+                <div
+                  className={`mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                    isActive ? 'bg-primary text-white' : 'bg-surface-raised'
+                  }`}
+                >
                   {isActive ? (
                     <CheckIcon className="h-4 w-4" />
                   ) : (
@@ -161,21 +163,20 @@ const SkillsPopover: React.FC<SkillsPopoverProps> = ({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className={`text-sm font-medium truncate ${
-                      isActive
-                        ? 'text-primary'
-                        : 'text-foreground'
-                    }`}>
+                    <span
+                      className={`text-sm font-medium truncate ${
+                        isActive ? 'text-primary' : 'text-foreground'
+                      }`}
+                    >
                       {skill.name}
                     </span>
-                    {skill.isOfficial && (
-                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-primary/10 text-primary flex-shrink-0">
-                        {i18nService.t('official')}
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-secondary truncate mt-0.5">
-                    {skillService.getLocalizedSkillDescription(skill.id, skill.name, skill.description)}
+                    {skillService.getLocalizedSkillDescription(
+                      skill.id,
+                      skill.name,
+                      skill.description,
+                    )}
                   </p>
                 </div>
               </button>

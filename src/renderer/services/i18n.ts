@@ -355,11 +355,25 @@ const translations: Record<LanguageType, Record<string, string>> = {
     searchSkills: '搜索技能',
     manageSkills: '管理技能',
     addSkill: '添加',
-    official: '官方',
     noSkillsAvailable: '暂无可用技能',
     skillsDescription: '为您的智能体提供预封装且可重复的最佳实践与工具',
-    skillsDescriptionGateway: '从 OpenClaw Gateway 管理的技能，为您的智能体提供工具和能力',
+    skillsDescriptionGateway: '管理智能体可使用的技能与工具',
     skillInstalled: '已安装',
+    skillGroupPriority: '优先级 {priority}',
+    'skillGroup.workspace.label': '工作区技能',
+    'skillGroup.workspace.description': '仅用于当前任务目录，可覆盖其他位置的同名技能',
+    'skillGroup.agents-project.label': '项目 Agent 技能',
+    'skillGroup.agents-project.description': '用于当前项目，可供项目中的智能体共同使用',
+    'skillGroup.agents-personal.label': '个人 Agent 技能',
+    'skillGroup.agents-personal.description': '属于当前用户，可在不同项目中使用',
+    'skillGroup.managed.label': '托管技能',
+    'skillGroup.managed.description': '由您安装或导入，可在所有任务中使用',
+    'skillGroup.openclaw-bundled.label': '内置技能',
+    'skillGroup.openclaw-bundled.description': '应用预装的通用技能，无需额外安装',
+    'skillGroup.extra-dir.label': '扩展目录技能',
+    'skillGroup.extra-dir.description': '由扩展或第三方组件提供的技能',
+    'skillGroup.unknown.label': '其他技能',
+    'skillGroup.unknown.description': '来源层级暂未识别的技能',
     skillMarketplace: '技能市场',
     skillMarketplaceComingSoon: '即将上线，敬请期待',
     skillMarketplaceComingSoonDesc: '技能市场功能正在开发中，您将能够从 ClawHub 搜索和安装更多技能',
@@ -387,7 +401,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Security scan
     securityIssuesFound: '{name} 技能的以下行为请悉知：',
     skillDetailVersion: '版本',
-    skillDetailSource: '来源',
     deleteSkill: '删除技能',
     skillDeleteConfirm: '确定删除技能”{name}”吗？',
     skillDeleteFailed: '删除技能失败',
@@ -540,7 +553,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '定时任务「{name}」存在异常数据，已自动修正显示，建议重新编辑该任务',
 
     copy: '复制',
-
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)
@@ -963,12 +975,28 @@ const translations: Record<LanguageType, Record<string, string>> = {
     searchSkills: 'Search skills',
     manageSkills: 'Manage Skills',
     addSkill: 'Add',
-    official: 'Official',
     noSkillsAvailable: 'No skills available',
     skillsDescription: 'Pre-packaged best practices and tools for your AI agent',
-    skillsDescriptionGateway:
-      'Skills managed by OpenClaw Gateway, providing tools and capabilities for your AI agent',
+    skillsDescriptionGateway: 'Manage the skills and tools available to your agents',
     skillInstalled: 'Installed',
+    skillGroupPriority: 'Priority {priority}',
+    'skillGroup.workspace.label': 'Workspace skills',
+    'skillGroup.workspace.description':
+      'Used only in the current task folder and can override skills with the same name',
+    'skillGroup.agents-project.label': 'Project agent skills',
+    'skillGroup.agents-project.description': 'Shared by agents working within the current project',
+    'skillGroup.agents-personal.label': 'Personal agent skills',
+    'skillGroup.agents-personal.description':
+      'Available to the current user across different projects',
+    'skillGroup.managed.label': 'Managed skills',
+    'skillGroup.managed.description': 'Installed or imported by you and available in every task',
+    'skillGroup.openclaw-bundled.label': 'Bundled skills',
+    'skillGroup.openclaw-bundled.description':
+      'General-purpose skills included with the app; no installation required',
+    'skillGroup.extra-dir.label': 'Extra directory skills',
+    'skillGroup.extra-dir.description': 'Provided by extensions or third-party components',
+    'skillGroup.unknown.label': 'Other skills',
+    'skillGroup.unknown.description': 'Skills whose source layer is not recognized',
     skillMarketplace: 'Marketplace',
     skillMarketplaceComingSoon: 'Coming Soon',
     skillMarketplaceComingSoonDesc:
@@ -997,7 +1025,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Security scan
     securityIssuesFound: 'Please be aware of the following behaviors in {name}:',
     skillDetailVersion: 'Version',
-    skillDetailSource: 'Source',
     deleteSkill: 'Delete Skill',
     skillDeleteConfirm: 'Delete skill "{name}"?',
     skillDeleteFailed: 'Failed to delete skill',
@@ -1247,7 +1274,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Scheduled task "{name}" has abnormal data. Display has been auto-corrected. Consider re-editing this task',
 
     copy: 'Copy',
-
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)
