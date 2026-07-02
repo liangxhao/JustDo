@@ -20,6 +20,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // 设置
     settings: '设置',
+    resizePanels: '拖动调整左右区域大小',
+    resizeSettingsWindow: '拖动调整设置窗口宽度',
     general: '通用',
     model: '模型',
     shortcuts: '快捷键',
@@ -626,6 +628,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Settings
     settings: 'Settings',
+    resizePanels: 'Drag to resize panels',
+    resizeSettingsWindow: 'Drag to resize the settings window',
     general: 'General',
     model: 'Model',
     shortcuts: 'Shortcuts',

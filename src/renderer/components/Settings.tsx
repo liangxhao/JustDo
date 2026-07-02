@@ -434,6 +434,8 @@ const Settings: React.FC<SettingsProps> = ({
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
   const [isImportingProviders, setIsImportingProviders] = useState(false);
   const [isExportingProviders, setIsExportingProviders] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(220);
+  const [providerListWidth, setProviderListWidth] = useState(260);
   const [appVersion, setAppVersion] = useState<string>('unknown');
   const [openclawVersion, setOpenclawVersion] = useState<string>('unknown');
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
@@ -460,6 +462,35 @@ const Settings: React.FC<SettingsProps> = ({
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+
+  const startHorizontalResize = useCallback(
+    (
+      event: React.MouseEvent<HTMLDivElement>,
+      currentWidth: number,
+      setWidth: React.Dispatch<React.SetStateAction<number>>,
+      minWidth: number,
+      maxWidth: number,
+    ) => {
+      const startX = event.clientX;
+      event.preventDefault();
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        setWidth(Math.min(maxWidth, Math.max(minWidth, currentWidth + moveEvent.clientX - startX)));
+      };
+      const handleMouseUp = () => {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    },
+    [],
+  );
 
   // 快捷键设置
   const [shortcuts, setShortcuts] = useState<ShortcutSettingsValue>({
@@ -495,8 +526,48 @@ const Settings: React.FC<SettingsProps> = ({
 
   // Drag to reposition state
   const [modalPosition, setModalPosition] = useState({ x: 0, y: 0 });
+  const [modalWidth, setModalWidth] = useState(() => Math.min(1100, window.innerWidth - 48));
   const [isDragging, setIsDragging] = useState(false);
+  const [isResizingModal, setIsResizingModal] = useState(false);
   const dragStartRef = useRef({ mouseX: 0, mouseY: 0, modalX: 0, modalY: 0 });
+
+  const handleModalResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>, edge: 'left' | 'right') => {
+      const startX = event.clientX;
+      const startWidth = modalWidth;
+      const startPositionX = modalPosition.x;
+      const maxWidth = Math.max(720, window.innerWidth - 32);
+      event.preventDefault();
+      event.stopPropagation();
+      setIsResizingModal(true);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const deltaX = moveEvent.clientX - startX;
+        const requestedWidth = edge === 'right' ? startWidth + deltaX : startWidth - deltaX;
+        const nextWidth = Math.min(maxWidth, Math.max(720, requestedWidth));
+        const widthDelta = nextWidth - startWidth;
+
+        setModalWidth(nextWidth);
+        setModalPosition(position => ({
+          ...position,
+          x: startPositionX + (edge === 'right' ? widthDelta / 2 : -widthDelta / 2),
+        }));
+      };
+      const handleMouseUp = () => {
+        setIsResizingModal(false);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    },
+    [modalPosition.x, modalWidth],
+  );
 
   // Handle drag start on header
   const handleDragStart = useCallback(
@@ -2282,7 +2353,10 @@ const Settings: React.FC<SettingsProps> = ({
         return (
           <div className="flex h-full">
             {/* Provider List - Left Side */}
-            <div className="w-2/5 border-r border-border pr-3 space-y-1.5 overflow-y-auto">
+            <div
+              className="shrink-0 pr-3 space-y-1.5 overflow-y-auto"
+              style={{ width: providerListWidth }}
+            >
               <div className="flex items-center justify-between mb-2 px-1">
                 <h3 className="text-sm font-medium text-foreground">
                   {i18nService.t('modelProviders')}
@@ -2413,8 +2487,21 @@ const Settings: React.FC<SettingsProps> = ({
               </button>
             </div>
 
+            <div
+              className="group relative w-3 shrink-0 cursor-col-resize"
+              onMouseDown={event =>
+                startHorizontalResize(event, providerListWidth, setProviderListWidth, 210, 420)
+              }
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={i18nService.t('resizePanels')}
+              title={i18nService.t('resizePanels')}
+            >
+              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary" />
+            </div>
+
             {/* Provider Settings - Right Side */}
-            <div className="w-3/5 pl-4 pr-2 space-y-4 overflow-y-auto [scrollbar-gutter:stable]">
+            <div className="min-w-0 flex-1 pl-2 pr-2 space-y-4 overflow-y-auto [scrollbar-gutter:stable]">
               <div className="flex items-center justify-between pb-2 border-b border-border">
                 <div className="flex items-center gap-1.5">
                   <h3 className="text-base font-medium text-foreground">
@@ -2799,15 +2886,36 @@ const Settings: React.FC<SettingsProps> = ({
       overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center"
     >
       <div
-        className="relative flex w-[900px] h-[80vh] rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
+        className="relative flex h-[80vh] rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
         style={{
+          width: modalWidth,
           transform: `translate(${modalPosition.x}px, ${modalPosition.y}px)`,
-          transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+          transition: isDragging || isResizingModal ? 'none' : 'transform 0.1s ease-out',
         }}
         onClick={handleSettingsClick}
       >
+        <div
+          className="absolute inset-y-0 left-0 z-40 w-2 cursor-col-resize transition-colors hover:bg-primary/20"
+          onMouseDown={event => handleModalResizeStart(event, 'left')}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={i18nService.t('resizeSettingsWindow')}
+          title={i18nService.t('resizeSettingsWindow')}
+        />
+        <div
+          className="absolute inset-y-0 right-0 z-40 w-2 cursor-col-resize transition-colors hover:bg-primary/20"
+          onMouseDown={event => handleModalResizeStart(event, 'right')}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={i18nService.t('resizeSettingsWindow')}
+          title={i18nService.t('resizeSettingsWindow')}
+        />
+
         {/* Left sidebar */}
-        <div className="w-[220px] shrink-0 flex flex-col bg-surface-raised border-r border-border rounded-l-2xl overflow-y-auto">
+        <div
+          className="shrink-0 flex flex-col bg-surface-raised rounded-l-2xl overflow-y-auto"
+          style={{ width: sidebarWidth }}
+        >
           <div className="px-5 pt-5 pb-3 cursor-grab select-none" onMouseDown={handleDragStart}>
             <h2 className="text-lg font-semibold text-foreground">{i18nService.t('settings')}</h2>
           </div>
@@ -2827,6 +2935,19 @@ const Settings: React.FC<SettingsProps> = ({
               </button>
             ))}
           </nav>
+        </div>
+
+        <div
+          className="group relative z-10 w-2 shrink-0 cursor-col-resize bg-surface-raised"
+          onMouseDown={event =>
+            startHorizontalResize(event, sidebarWidth, setSidebarWidth, 180, 340)
+          }
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={i18nService.t('resizePanels')}
+          title={i18nService.t('resizePanels')}
+        >
+          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary" />
         </div>
 
         {/* Right content */}
