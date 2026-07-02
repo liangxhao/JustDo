@@ -71,6 +71,7 @@ import { buildProviderSelection, OpenClawConfigSync } from './libs/openclaw/open
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclaw/openclawEngineManager';
 import { OpenClawSkillFiles } from './libs/openclaw/openclawSkillFiles';
 import { stopOpenClawTokenProxy } from './libs/openclaw/openclawTokenProxy';
+import { createSkillMarketplaceService } from './libs/skillMarketplace';
 import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';
 
@@ -667,6 +668,7 @@ let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let groupStore: GroupStore | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
+const skillMarketplaceService = createSkillMarketplaceService(() => openClawRuntimeAdapter);
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let openClawSkillFiles: OpenClawSkillFiles | null = null;
 let mcpStore: McpStore | null = null;
@@ -2225,16 +2227,10 @@ if (!gotTheLock) {
     'skills:install',
     async (_event, params: import('./libs/agentEngine/types').SkillInstallParams) => {
       try {
-        const adapter = openClawRuntimeAdapter;
-        if (!adapter) {
-          return {
-            success: false,
-            error: 'Gateway not connected',
-            gatewayOffline: true,
-          };
+        if (!('source' in params) || params.source !== 'clawhub') {
+          return { success: false, error: 'Unsupported marketplace install request' };
         }
-        const result = await adapter.installSkill(params);
-        return { success: result.ok, error: result.error };
+        return await skillMarketplaceService.install(params);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Failed to install skill';
         return {
@@ -2248,15 +2244,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('skills:search', async (_event, options: { query?: string; limit?: number }) => {
     try {
-      const adapter = openClawRuntimeAdapter;
-      if (!adapter) {
-        return {
-          success: false,
-          error: 'Gateway not connected',
-          gatewayOffline: true,
-        };
-      }
-      const results = await adapter.searchClawHubSkills(options.query, options.limit);
+      const results = await skillMarketplaceService.search(options);
       return { success: true, results };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to search skills';
@@ -2270,15 +2258,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('skills:detail', async (_event, options: { slug: string }) => {
     try {
-      const adapter = openClawRuntimeAdapter;
-      if (!adapter) {
-        return {
-          success: false,
-          error: 'Gateway not connected',
-          gatewayOffline: true,
-        };
-      }
-      const detail = await adapter.getClawHubSkillDetail(options.slug);
+      const detail = await skillMarketplaceService.getDetail(options.slug);
       return { success: true, detail };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to get skill detail';
