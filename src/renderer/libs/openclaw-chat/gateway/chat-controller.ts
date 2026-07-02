@@ -32,7 +32,12 @@ export interface ChatState {
   lastError: string | null;
   hello: GatewayHelloOk | null;
   /** Optimistic user message shown until gateway history loads */
-  pendingUserMessage: { role: string; content: string; timestamp: number } | null;
+  pendingUserMessage: {
+    role: string;
+    content: string | unknown[];
+    text: string;
+    timestamp: number;
+  } | null;
 }
 
 export interface ChatEventPayload {
@@ -255,6 +260,12 @@ function shouldPreferNextToolCall(existingToolCall: unknown, nextToolCall: unkno
 // ─── ChatController ─────────────────────────────────────────────────────────
 
 export class ChatController {
+  private gatewayHttpBase = '';
+  private gatewayToken = '';
+  private chatMessagesBySession = new Map<string, unknown[]>();
+  private transcriptImageCache = new Map<string, Promise<string | null>>();
+  private transcriptImageReadsActive = 0;
+  private transcriptImageReadWaiters: Array<() => void> = [];
   readonly state: ChatState;
   private listeners: Set<ChatStateListener> = new Set();
   private streamListeners: Set<() => void> = new Set();
@@ -308,9 +319,30 @@ export class ChatController {
 
   /** Set an optimistic user message shown until the next loadHistory.
    *  Also marks chatSending=true so session.message events are deferred. */
-  setPendingUserMessage(text: string): void {
+  setPendingUserMessage(
+    text: string,
+    imageAttachments: Array<{ name: string; mimeType: string; base64Data: string }> = [],
+  ): void {
     debugLog('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
-    this.state.pendingUserMessage = { role: 'user', content: text, timestamp: Date.now() };
+    const imageBlocks = imageAttachments
+      .filter(image => image.mimeType.startsWith('image/') && image.base64Data)
+      .map(image => ({
+        type: 'attachment',
+        attachment: {
+          url: image.base64Data.startsWith('data:')
+            ? image.base64Data
+            : `data:${image.mimeType};base64,${image.base64Data}`,
+          kind: 'image',
+          label: image.name,
+          mimeType: image.mimeType,
+        },
+      }));
+    this.state.pendingUserMessage = {
+      role: 'user',
+      content: imageBlocks.length > 0 ? [{ type: 'text', text }, ...imageBlocks] : text,
+      text,
+      timestamp: Date.now(),
+    };
     this.state.chatSending = true;
     this.state.chatStreamStartedAt ??= Date.now();
     this.notify();
@@ -520,12 +552,14 @@ export class ChatController {
    * This replicates the webchat's connectGateway + loadChatHistory flow.
    */
   async connect(url: string, token: string, sessionKey: string): Promise<void> {
+    this.gatewayHttpBase = url.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
+    this.gatewayToken = token;
     // Stop existing client
     this.state.client?.stop();
 
     this.state.sessionKey = sessionKey;
     this.state.chatLoading = true;
-    this.state.chatMessages = [];
+    this.state.chatMessages = this.chatMessagesBySession.get(sessionKey) ?? [];
     this.state.chatThinkingMessages = [];
     this.state.chatToolMessages = [];
     this.state.chatStreamSegments = [];
@@ -569,7 +603,7 @@ export class ChatController {
       this.state.chatSending = false;
       this.state.pendingUserMessage = null;
     }
-    this.state.chatMessages = [];
+    this.state.chatMessages = this.chatMessagesBySession.get(sessionKey) ?? [];
     this.state.chatThinkingMessages = [];
     this.state.chatToolMessages = [];
     this.state.chatStreamSegments = [];
@@ -647,20 +681,147 @@ export class ChatController {
         this.pendingHistoryReload = true;
       } else {
         debugLog('[ChatCtrl] session.message → loadHistory:', this.state.sessionKey);
-        this.loadHistory();
+        this.loadHistory(true);
       }
     }
   }
 
   private pendingHistoryReload = false;
+  private historyLoadsInFlight = new Set<string>();
+  private historyReloadRequested = new Set<string>();
+
+  private async readTranscriptImageDataUrl(mediaPath: string): Promise<string | null> {
+    const cached = this.transcriptImageCache.get(mediaPath);
+    if (cached) return cached;
+
+    const pending = (async () => {
+      if (this.transcriptImageReadsActive >= 4) {
+        await new Promise<void>(resolve => this.transcriptImageReadWaiters.push(resolve));
+      }
+      this.transcriptImageReadsActive += 1;
+      try {
+        const dialog = (
+          window as unknown as {
+            electron?: {
+              dialog?: {
+                readFileAsDataUrl?: (
+                  path: string,
+                ) => Promise<{ success: boolean; dataUrl?: string }>;
+              };
+            };
+          }
+        ).electron?.dialog;
+        const result = await dialog?.readFileAsDataUrl?.(mediaPath);
+        return result?.success && result.dataUrl ? result.dataUrl : null;
+      } catch (error) {
+        console.warn('[ChatCtrl] Failed to load transcript image', error);
+        return null;
+      } finally {
+        this.transcriptImageReadsActive -= 1;
+        this.transcriptImageReadWaiters.shift()?.();
+      }
+    })();
+
+    this.transcriptImageCache.set(mediaPath, pending);
+    void pending.then(value => {
+      if (value === null && this.transcriptImageCache.get(mediaPath) === pending) {
+        this.transcriptImageCache.delete(mediaPath);
+      }
+    });
+    if (this.transcriptImageCache.size > 64) {
+      const oldestPath = this.transcriptImageCache.keys().next().value;
+      if (typeof oldestPath === 'string') this.transcriptImageCache.delete(oldestPath);
+    }
+    return pending;
+  }
+
+  private async resolveManagedHistoryImages(messages: unknown[]): Promise<unknown[]> {
+    return Promise.all(
+      messages.map(async message => {
+        const record = message as Record<string, unknown>;
+        const originalContent = Array.isArray(record.content)
+          ? record.content
+          : typeof record.content === 'string'
+            ? [{ type: 'text', text: record.content }]
+            : [];
+        const content = await Promise.all(
+          originalContent.map(async value => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+            const block = value as Record<string, unknown>;
+            const source = typeof block.url === 'string' ? block.url : '';
+            if (block.type !== 'image' || !source.startsWith('/api/chat/media/outgoing/')) {
+              return value;
+            }
+            try {
+              const parts = source.split('/');
+              const requesterSessionKey = parts[5] ? decodeURIComponent(parts[5]) : '';
+              const headers = new Headers({ Accept: 'image/*' });
+              if (this.gatewayToken) headers.set('Authorization', `Bearer ${this.gatewayToken}`);
+              if (requesterSessionKey) {
+                headers.set('x-openclaw-requester-session-key', requesterSessionKey);
+              }
+              const response = await fetch(`${this.gatewayHttpBase}${source}`, { headers });
+              if (!response.ok) return value;
+              const blob = await response.blob();
+              if (!blob.type.startsWith('image/')) return value;
+              const dataUrl = await blobToDataUrl(blob);
+              return { ...block, url: dataUrl };
+            } catch (error) {
+              console.warn('[ChatCtrl] Failed to load managed outgoing image', error);
+              return value;
+            }
+          }),
+        );
+        const mediaPaths = Array.isArray(record.MediaPaths)
+          ? record.MediaPaths.filter((value): value is string => typeof value === 'string')
+          : typeof record.MediaPath === 'string'
+            ? [record.MediaPath]
+            : [];
+        const mediaTypes = Array.isArray(record.MediaTypes)
+          ? record.MediaTypes
+          : typeof record.MediaType === 'string'
+            ? [record.MediaType]
+            : [];
+        const transcriptImages = await Promise.all(
+          mediaPaths.map(async (mediaPath, index) => {
+            const mediaType = mediaTypes[index];
+            if (typeof mediaType !== 'string' || !mediaType.startsWith('image/')) return null;
+            try {
+              const dataUrl = await this.readTranscriptImageDataUrl(mediaPath);
+              if (!dataUrl) return null;
+              return {
+                type: 'image',
+                url: dataUrl,
+                alt: mediaPath.split(/[\\/]/).pop() || 'Image',
+                mimeType: mediaType,
+              };
+            } catch (error) {
+              console.warn('[ChatCtrl] Failed to load transcript image', error);
+              return null;
+            }
+          }),
+        );
+        const imageBlocks = transcriptImages.filter(
+          (value): value is NonNullable<typeof value> => value !== null,
+        );
+        if (imageBlocks.length === 0 && !Array.isArray(record.content)) return message;
+        return { ...record, content: [...content, ...imageBlocks] };
+      }),
+    );
+  }
 
   // ─── History Loading ──────────────────────────────────────────────────
 
-  async loadHistory(): Promise<void> {
+  async loadHistory(queueIfBusy = false): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) return;
 
     const sessionKey = this.state.sessionKey;
+    if (this.historyLoadsInFlight.has(sessionKey)) {
+      if (queueIfBusy) this.historyReloadRequested.add(sessionKey);
+      return;
+    }
+    this.historyLoadsInFlight.add(sessionKey);
     debugLog('[ChatCtrl] loadHistory START:', sessionKey, {
       chatSending: this.state.chatSending,
       pendingUserMsg: !!this.state.pendingUserMessage,
@@ -731,16 +892,27 @@ export class ChatController {
       this.state.chatThinkingMessages = [];
       this.state.chatStreamSegments = [];
       this.state.chatMessages = messages;
+      this.chatMessagesBySession.delete(sessionKey);
+      this.chatMessagesBySession.set(sessionKey, messages);
+      if (this.chatMessagesBySession.size > 20) {
+        const oldestKey = this.chatMessagesBySession.keys().next().value;
+        if (typeof oldestKey === 'string') this.chatMessagesBySession.delete(oldestKey);
+      }
       this.state.chatLoading = false;
       this.state.chatStream = null;
       this.state.chatThinkingStream = null;
+      void this.resolveManagedHistoryImages(messages).then(resolvedMessages => {
+        if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
+        this.state.chatMessages = resolvedMessages;
+        this.notify();
+      });
 
       // Only clear pendingUserMessage if the user message is actually in the
       // loaded history.  For brand-new sessions the gateway may not have
       // persisted it yet — keep showing the optimistic bubble.
       if (this.state.pendingUserMessage) {
         const p = this.state.pendingUserMessage;
-        const found = messages.some((m: unknown) => {
+        const foundIndex = messages.findIndex((m: unknown) => {
           const r = m as Record<string, unknown>;
           const timestamp = typeof r.timestamp === 'number' ? r.timestamp : null;
           const pendingTimestamp = typeof p.timestamp === 'number' ? p.timestamp : null;
@@ -748,14 +920,20 @@ export class ChatController {
             timestamp == null ||
             pendingTimestamp == null ||
             Math.abs(timestamp - pendingTimestamp) < 60_000;
-          return r.role === 'user' && messageText(r.content) === p.content && timestampClose;
+          return r.role === 'user' && messageText(r.content) === p.text && timestampClose;
         });
-        if (found) {
+        if (foundIndex >= 0) {
+          if (Array.isArray(p.content)) {
+            messages[foundIndex] = {
+              ...(messages[foundIndex] as Record<string, unknown>),
+              content: p.content,
+            };
+          }
           debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage found in history, clearing');
           this.state.pendingUserMessage = null;
         } else {
           debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage NOT in history, keeping', {
-            pendingLen: p.content.length,
+            pendingLen: p.text.length,
             userCandidates: messages
               .filter(m => (m as Record<string, unknown>).role === 'user')
               .slice(-3)
@@ -779,6 +957,11 @@ export class ChatController {
       this.state.lastError = (err as Error).message;
       console.error('[ChatCtrl] loadHistory FAILED:', (err as Error).message);
       this.notify();
+    } finally {
+      this.historyLoadsInFlight.delete(sessionKey);
+      if (this.historyReloadRequested.delete(sessionKey) && this.state.sessionKey === sessionKey) {
+        void this.loadHistory();
+      }
     }
   }
 
@@ -1458,4 +1641,13 @@ function isUnknownMethodError(err: unknown): boolean {
     return err.message.includes('unknown method') || (err as { gatewayCode?: string }).gatewayCode === 'METHOD_NOT_FOUND';
   }
   return false;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')));
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('Failed to read image')));
+    reader.readAsDataURL(blob);
+  });
 }

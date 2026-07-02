@@ -93,6 +93,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const chatWrapperRef = useRef<JustDoChatWrapperRef>(null);
   // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
   const pendingPromptRef = useRef<string | null>(null);
+  const pendingImageAttachmentsRef = useRef<CoworkImageAttachment[]>([]);
 
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
@@ -329,13 +330,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       // immediately in the Lit chat element, surviving session transitions.
       // Buffer in ref first (survives across renders), then try immediate apply.
       pendingPromptRef.current = prompt;
+      pendingImageAttachmentsRef.current = imageAttachments ?? [];
       const wrapperSet = chatWrapperRef.current;
       debugLog('[CoworkView] handleStartSession:', {
         prompt: prompt.slice(0, 60),
         wrapperRefExists: !!wrapperSet,
         tempSessionId: tempSessionId,
       });
-      wrapperSet?.setPendingUserMessage(prompt);
+      wrapperSet?.setPendingUserMessage(prompt, imageAttachments);
 
       // Clear active skills and quick action selection after starting session
       // so they don't persist to next session
@@ -588,8 +590,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   useEffect(() => {
     if (!pendingPromptRef.current || !chatWrapperRef.current) return;
     debugLog('[CoworkView] useEffect applying pendingPrompt:', pendingPromptRef.current.slice(0, 60));
-    chatWrapperRef.current.setPendingUserMessage(pendingPromptRef.current);
+    chatWrapperRef.current.setPendingUserMessage(
+      pendingPromptRef.current,
+      pendingImageAttachmentsRef.current,
+    );
     pendingPromptRef.current = null;
+    pendingImageAttachmentsRef.current = [];
   });
 
   if (!isInitialized) {

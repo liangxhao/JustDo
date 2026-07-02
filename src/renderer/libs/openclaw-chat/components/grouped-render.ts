@@ -454,14 +454,43 @@ function renderUserMessage(msg: NormalizedMessage): TemplateResult {
   const textContent = msg.content.filter(
     (c): c is { type: 'text'; text?: string } => c.type === 'text',
   );
-  const text = textContent.map(c => c.text ?? '').join('\n');
+  const rawText = textContent.map(c => c.text ?? '').join('\n');
+  const text =
+    rawText.trim() === '[User sent media without caption]' &&
+    msg.content.some(
+      item => item.type === 'attachment' && item.attachment.kind === 'image',
+    )
+      ? ''
+      : rawText;
   const dir = detectTextDirection(text);
   const htmlContent = toSanitizedMarkdownHtml(text);
+  const images = msg.content
+    .filter(
+      (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
+        item.type === 'attachment' && item.attachment.kind === 'image',
+    )
+    .map(item => item.attachment);
 
   return html`
     <div class="chat-bubble chat-bubble--user" dir=${dir}>
       ${renderCopyButton(text)}
-      <div class="chat-bubble__text">${unsafeHTML(htmlContent)}</div>
+      ${images.length > 0
+        ? html`
+            <div class="chat-bubble__images">
+              ${images.map(
+                image => html`
+                  <img
+                    class="chat-bubble__image"
+                    src=${image.url}
+                    alt=${image.label}
+                    title=${image.label}
+                  />
+                `,
+              )}
+            </div>
+          `
+        : nothing}
+      ${text ? html`<div class="chat-bubble__text">${unsafeHTML(htmlContent)}</div>` : nothing}
     </div>
   `;
 }

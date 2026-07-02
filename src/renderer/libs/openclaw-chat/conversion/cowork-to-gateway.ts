@@ -8,8 +8,8 @@
  *   { role: 'user'|'assistant'|'toolresult', content: string | ContentBlock[], timestamp }
  */
 
-import type { GatewayContentBlock, GatewayMessage } from '../types';
 import type { CoworkMessage } from '../../../types/cowork';
+import type { GatewayContentBlock, GatewayMessage } from '../types';
 
 /**
  * Convert a single CoworkMessage to a GatewayMessage.
@@ -26,7 +26,7 @@ export function coworkMessageToGateway(msg: CoworkMessage): GatewayMessage {
       return {
         ...base,
         role: 'user',
-        content: msg.content,
+        content: buildUserContent(msg),
       };
 
     case 'assistant':
@@ -109,6 +109,46 @@ function mapRole(type: CoworkMessage['type']): string {
     default:
       return 'user';
   }
+}
+
+function buildUserContent(msg: CoworkMessage): string | GatewayContentBlock[] {
+  const rawAttachments = msg.metadata?.imageAttachments;
+  if (!Array.isArray(rawAttachments) || rawAttachments.length === 0) {
+    return msg.content;
+  }
+
+  const blocks: GatewayContentBlock[] = msg.content
+    ? [{ type: 'text', text: msg.content }]
+    : [];
+
+  for (const value of rawAttachments) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const attachment = value as Record<string, unknown>;
+    const base64Data =
+      typeof attachment.base64Data === 'string' ? attachment.base64Data.trim() : '';
+    const mimeType =
+      typeof attachment.mimeType === 'string' && attachment.mimeType.startsWith('image/')
+        ? attachment.mimeType
+        : '';
+    if (!base64Data || !mimeType) continue;
+
+    blocks.push({
+      type: 'attachment',
+      attachment: {
+        url: base64Data.startsWith('data:')
+          ? base64Data
+          : `data:${mimeType};base64,${base64Data}`,
+        kind: 'image',
+        label:
+          typeof attachment.name === 'string' && attachment.name.trim()
+            ? attachment.name.trim()
+            : 'Image',
+        mimeType,
+      },
+    });
+  }
+
+  return blocks.length > 0 ? blocks : msg.content;
 }
 
 function buildAssistantContent(msg: CoworkMessage): string | GatewayContentBlock[] {

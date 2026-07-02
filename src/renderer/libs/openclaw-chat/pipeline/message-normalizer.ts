@@ -202,6 +202,77 @@ function coerceAudioContentBlock(
   return null;
 }
 
+function coerceImageContentBlock(
+  item: Record<string, unknown>,
+): Extract<MessageContentItem, { type: 'attachment' }> | null {
+  if (item.type !== 'image' && item.type !== 'image_url' && item.type !== 'input_image') return null;
+
+  const source =
+    item.source && typeof item.source === 'object' && !Array.isArray(item.source)
+      ? (item.source as Record<string, unknown>)
+      : null;
+  const imageUrl =
+    item.image_url && typeof item.image_url === 'object' && !Array.isArray(item.image_url)
+      ? (item.image_url as Record<string, unknown>)
+      : null;
+  const directUrl =
+    typeof item.url === 'string'
+      ? item.url.trim()
+      : typeof imageUrl?.url === 'string'
+        ? imageUrl.url.trim()
+        : typeof item.image_url === 'string'
+          ? item.image_url.trim()
+          : typeof source?.url === 'string'
+            ? source.url.trim()
+            : '';
+  if (directUrl) {
+    return {
+      type: 'attachment',
+      attachment: {
+        url: directUrl,
+        kind: 'image',
+        label:
+          typeof item.alt === 'string' && item.alt.trim()
+            ? item.alt.trim()
+            : typeof item.label === 'string' && item.label.trim()
+              ? item.label.trim()
+              : 'Image',
+        ...(typeof item.mimeType === 'string' ? { mimeType: item.mimeType } : {}),
+      },
+    };
+  }
+  const data =
+    source && typeof source.data === 'string'
+      ? source.data.trim()
+      : typeof item.content === 'string'
+        ? item.content.trim()
+        : '';
+  const mimeTypeValue =
+    source && typeof source.media_type === 'string'
+      ? source.media_type
+      : typeof item.mimeType === 'string'
+        ? item.mimeType
+        : '';
+  const mimeType = mimeTypeValue.trim().toLowerCase();
+  if (!data || !mimeType.startsWith('image/')) {
+    return null;
+  }
+
+  const url =
+    data.startsWith('data:image/') ? data : `data:${mimeType};base64,${data}`;
+  const label =
+    typeof item.label === 'string' && item.label.trim() ? item.label.trim() : 'Image';
+  return {
+    type: 'attachment',
+    attachment: {
+      url,
+      kind: 'image',
+      label,
+      mimeType,
+    },
+  };
+}
+
 function mergeAdjacentTextItems(items: MessageContentItem[]): MessageContentItem[] {
   const merged: MessageContentItem[] = [];
   for (const item of items) {
@@ -348,6 +419,10 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
     }
   } else if (Array.isArray(m.content)) {
     content = m.content.flatMap((item: Record<string, unknown>) => {
+      const imageAttachment = coerceImageContentBlock(item);
+      if (imageAttachment) {
+        return [imageAttachment];
+      }
       if (isAssistantMessage) {
         const audioAttachment = coerceAudioContentBlock(item);
         if (audioAttachment) {

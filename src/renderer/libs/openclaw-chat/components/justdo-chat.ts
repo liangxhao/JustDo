@@ -474,6 +474,25 @@ export class JustDoChatElement extends LitElement {
       text-decoration: underline;
     }
 
+    .chat-bubble__images {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .chat-bubble__images:last-child {
+      margin-bottom: 0;
+    }
+
+    .chat-bubble__image {
+      display: block;
+      max-width: min(360px, 100%);
+      max-height: 360px;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+
     .chat-bubble--assistant {
       background: var(--justdo-chat-assistant-bg, #ffffff);
       color: var(--justdo-chat-assistant-text, inherit);

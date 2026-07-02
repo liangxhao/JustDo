@@ -10,9 +10,9 @@ import type {
   CoworkStore,
 } from '../../coworkStore';
 import { t } from '../../i18n';
+import { coworkLog } from '../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../cowork/providerApiConfig';
 import { getCommandDangerLevel, isDeleteCommand } from '../infra/commandSafety';
-import { coworkLog } from '../cowork/coworkLogger';
 import {
   buildManagedSessionKey,
   type OpenClawChannelSessionSync,

@@ -32,6 +32,59 @@ test('preserves optimistic prompt when promoting a temp session to a persisted s
   expect(controller.state.chatLoading).toBe(true);
 });
 
+test('hydrates OpenClaw transcript MediaPaths as image blocks', async () => {
+  const readFileAsDataUrl = vi.fn().mockResolvedValue({
+    success: true,
+    dataUrl: 'data:image/png;base64,YWJj',
+  });
+  vi.stubGlobal('window', {
+    electron: {
+      dialog: {
+        readFileAsDataUrl,
+      },
+    },
+  });
+  const controller = new ChatController();
+  const resolved = await (
+    controller as unknown as {
+      resolveManagedHistoryImages(messages: unknown[]): Promise<unknown[]>;
+    }
+  ).resolveManagedHistoryImages([
+    {
+      role: 'user',
+      content: '[User sent media without caption]',
+      MediaPaths: ['C:\\media\\saved.png'],
+      MediaTypes: ['image/png'],
+    },
+  ]);
+
+  expect(resolved[0]).toMatchObject({
+    content: [
+      { type: 'text', text: '[User sent media without caption]' },
+      {
+        type: 'image',
+        url: 'data:image/png;base64,YWJj',
+        alt: 'saved.png',
+        mimeType: 'image/png',
+      },
+    ],
+  });
+
+  await (
+    controller as unknown as {
+      resolveManagedHistoryImages(messages: unknown[]): Promise<unknown[]>;
+    }
+  ).resolveManagedHistoryImages([
+    {
+      role: 'user',
+      content: 'same image',
+      MediaPaths: ['C:\\media\\saved.png'],
+      MediaTypes: ['image/png'],
+    },
+  ]);
+  expect(readFileAsDataUrl).toHaveBeenCalledTimes(1);
+});
+
 test('clears live overlays before the post-final history refresh', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:session-1';
