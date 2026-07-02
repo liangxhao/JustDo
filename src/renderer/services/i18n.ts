@@ -301,6 +301,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     slashCommandOptionsCount: '{count} options',
     coworkDropFileHint: '拖拽文件到此处，或直接粘贴文件',
     coworkAttachmentRemove: '移除',
+    coworkOpenAttachment: '打开附件',
     // Context menu
     contextMenuCut: '剪切',
     contextMenuCopy: '复制',
@@ -906,6 +907,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     slashCommandOptionsCount: '{count} options',
     coworkDropFileHint: 'Drop files here, or paste files directly',
     coworkAttachmentRemove: 'Remove',
+    coworkOpenAttachment: 'Open attachment',
     // Context menu
     contextMenuCut: 'Cut',
     contextMenuCopy: 'Copy',

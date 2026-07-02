@@ -653,6 +653,76 @@ export class JustDoChatElement extends LitElement {
       color: #fff;
     }
 
+    .message-attachments {
+      display: flex;
+      flex-flow: row wrap;
+      gap: 6px;
+      max-width: 100%;
+      margin-top: 8px;
+    }
+
+    .message-attachment {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      max-width: min(240px, 100%);
+      padding: 6px 9px 6px 6px;
+      color: var(--text-primary);
+      text-align: left;
+      background: var(--surface-raised, rgba(127, 127, 127, 0.08));
+      border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.2));
+      border-radius: 10px;
+      cursor: pointer;
+      transition:
+        border-color 120ms ease,
+        background 120ms ease;
+    }
+
+    .message-attachment:hover {
+      background: var(--surface-hover, rgba(127, 127, 127, 0.13));
+      border-color: var(--border-default, rgba(127, 127, 127, 0.36));
+    }
+
+    .message-attachment:focus-visible {
+      outline: 2px solid var(--accent, #4f7cff);
+      outline-offset: 2px;
+    }
+
+    .message-attachment__icon {
+      display: grid;
+      flex: 0 0 26px;
+      width: 26px;
+      height: 26px;
+      color: var(--accent, #4f7cff);
+      background: color-mix(in srgb, currentColor 12%, transparent);
+      border-radius: 8px;
+      place-items: center;
+    }
+
+    .message-attachment__icon svg {
+      width: 15px;
+      height: 15px;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .message-attachment__name {
+      overflow: hidden;
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 500;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .message-attachment__open {
+      flex: 0 0 auto;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+
     .mermaid-toggle {
       display: inline-flex;
       align-items: center;

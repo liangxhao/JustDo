@@ -16,7 +16,14 @@ import { normalizeMessage } from '../pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '../pipeline/role-normalizer';
 import { detectTextDirection } from '../pipeline/text-direction';
 import { extractToolCards, extractToolCardsCached } from '../pipeline/tool-cards';
-import type { ChatItem, MessageGroup, NormalizedMessage, ToolCard } from '../types';
+import { splitMediaFromOutput } from '../shims/backend-helpers';
+import type {
+  ChatItem,
+  MessageContentItem,
+  MessageGroup,
+  NormalizedMessage,
+  ToolCard,
+} from '../types';
 import { renderChatAvatar } from './chat-avatar';
 import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from './markdown';
 import { resolveToolDisplay } from './tool-display';
@@ -203,6 +210,72 @@ function renderAssistantTextBlock(text: string): TemplateResult | typeof nothing
   `;
 }
 
+function stripDeliveredAttachmentLines(text: string): string {
+  const parsed = splitMediaFromOutput(text);
+  return (parsed.segments ?? [])
+    .filter((segment): segment is { type: 'text'; text: string } => segment.type === 'text')
+    .map(segment => segment.text)
+    .join('\n')
+    .trim();
+}
+
+const ATTACHMENT_ICON = html`
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+    <path d="M14 2v6h6"></path>
+  </svg>
+`;
+
+function localPathFromAttachmentUrl(url: string): string {
+  if (!url.startsWith('file://')) return url;
+  try {
+    const parsed = new URL(url);
+    const pathname = decodeURIComponent(parsed.pathname);
+    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
+  } catch {
+    return url.replace(/^file:\/\/\/?/i, '');
+  }
+}
+
+async function openAttachment(event: Event, url: string): Promise<void> {
+  event.stopPropagation();
+  try {
+    const result = /^https?:\/\//i.test(url)
+      ? await window.electron.shell.openExternal(url)
+      : await window.electron.shell.openPath(localPathFromAttachmentUrl(url));
+    if (!result.success) {
+      console.error('[GroupedRender] Failed to open attachment', result.error);
+    }
+  } catch (error) {
+    console.error('[GroupedRender] Failed to open attachment', error);
+  }
+}
+
+function renderAssistantAttachments(
+  attachments: Array<Extract<MessageContentItem, { type: 'attachment' }>['attachment']>,
+): TemplateResult | typeof nothing {
+  if (attachments.length === 0) return nothing;
+  return html`
+    <div class="message-attachments">
+      ${attachments.map(
+        attachment => html`
+          <button
+            type="button"
+            class="message-attachment"
+            title=${attachment.url}
+            aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
+            @click=${(event: Event) => void openAttachment(event, attachment.url)}
+          >
+            <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
+            <span class="message-attachment__name">${attachment.label}</span>
+            <span class="message-attachment__open" aria-hidden="true">↗</span>
+          </button>
+        `,
+      )}
+    </div>
+  `;
+}
+
 function renderAssistantToolCards(
   cards: ToolCard[],
   rawMessage: unknown,
@@ -252,7 +325,8 @@ function renderAssistantMessageInContentOrder(
 
     if (type === 'text') {
       flushPendingToolCards();
-      ordered.push(renderAssistantTextBlock(typeof block.text === 'string' ? block.text : ''));
+      const text = typeof block.text === 'string' ? stripDeliveredAttachmentLines(block.text) : '';
+      ordered.push(renderAssistantTextBlock(text));
       continue;
     }
 
@@ -396,8 +470,14 @@ function renderUserMessage(msg: NormalizedMessage): TemplateResult {
 
 function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): TemplateResult {
   const orderedBlocks = renderAssistantMessageInContentOrder(rawMessage);
+  const attachments = msg.content
+    .filter(
+      (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
+        item.type === 'attachment',
+    )
+    .map(item => item.attachment);
   if (orderedBlocks) {
-    return html`${orderedBlocks}`;
+    return html`${orderedBlocks}${renderAssistantAttachments(attachments)}`;
   }
 
   const thinking = extractThinkingCached(rawMessage);
@@ -416,6 +496,7 @@ function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): Te
       ? renderToolTimeline(toolCards, !shouldOpenToolTimeline(rawMessage))
       : nothing}
     ${renderAssistantTextBlock(text)}
+    ${renderAssistantAttachments(attachments)}
   `;
 }
 

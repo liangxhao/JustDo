@@ -113,7 +113,7 @@ export function splitMediaFromOutput(text: string): {
   const mediaUrls: string[] = [];
 
   // Split on MEDIA: lines and media URL patterns
-  const mediaLineRe = /^MEDIA:(\S+)$/gm;
+  const mediaLineRe = /^MEDIA\s*:\s*(.+?)\s*$/gim;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
