@@ -3,7 +3,6 @@ import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/sol
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
@@ -16,7 +15,7 @@ import {
   setDraftAttachments,
   setDraftPrompt,
 } from '../../store/slices/coworkSlice';
-import { setSelectedModel } from '../../store/slices/modelSlice';
+import { setSelectedModel, type Model } from '../../store/slices/modelSlice';
 import { CoworkImageAttachment } from '../../types/cowork';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
@@ -167,6 +166,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         fallbackModel: globalSelectedModel,
         engine: coworkAgentEngine,
       });
+    const [optimisticSessionModel, setOptimisticSessionModel] = useState<Model | null>(null);
     const [value, setValue] = useState(draftPrompt);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
     const [showFolderRequiredWarning, setShowFolderRequiredWarning] = useState(false);
@@ -196,6 +196,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const slashCommandRefreshPendingRef = useRef(false);
     const slashCommandRefreshSeqRef = useRef(0);
     const latestValueRef = useRef(value);
+
+    useEffect(() => {
+      setOptimisticSessionModel(null);
+    }, [sessionId, currentAgentId]);
 
     const resetSlashMenuState = useCallback(() => {
       setSlashMenuOpen(false);
@@ -667,7 +671,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const effectiveSelectedModel =
-      coworkAgentEngine === 'openclaw' ? agentSelectedModel : globalSelectedModel;
+      coworkAgentEngine === 'openclaw'
+        ? (optimisticSessionModel ?? agentSelectedModel)
+        : globalSelectedModel;
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const contextUsageText = useMemo(() => {
       if (!contextUsage) return null;
@@ -1365,39 +1371,41 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     <div className="flex flex-col items-start gap-1">
                       <ModelSelector
                         dropdownDirection="up"
-                        value={
-                          coworkAgentEngine === 'openclaw'
-                            ? agentSelectedModel
-                            : globalSelectedModel
-                        }
+                        value={effectiveSelectedModel}
                         onChange={async nextModel => {
                           if (!nextModel) return;
+                          const previousOptimisticModel = optimisticSessionModel;
                           if (coworkAgentEngine === 'openclaw') {
-                            // Update agent model if we have a currentAgent
-                            if (currentAgent) {
-                              await agentService.updateAgent(currentAgent.id, {
-                                model: toOpenClawModelRef(nextModel),
-                              });
-                            } else {
-                              // No currentAgent - update default model in app_config
-                              await coworkService.setDefaultModel({
-                                modelId: nextModel.id,
-                                providerKey: nextModel.providerKey,
-                              });
-                            }
-                            // Patch session model in real-time via sessions.patch API
-                            if (sessionId) {
-                              const modelRef = toOpenClawModelRef(nextModel);
-                              if (modelRef) {
-                                await coworkService.patchSessionModel({
-                                  sessionId,
-                                  model: modelRef,
+                            setOptimisticSessionModel(nextModel);
+                            try {
+                              if (!sessionId) {
+                                await coworkService.setDefaultModel({
+                                  modelId: nextModel.id,
+                                  providerKey: nextModel.providerKey,
                                 });
+                              } else {
+                                const modelRef = toOpenClawModelRef(nextModel);
+                                if (modelRef) {
+                                  const result = await coworkService.patchSessionModel({
+                                    sessionId,
+                                    model: modelRef,
+                                  });
+                                  if (!result.success) {
+                                    throw new Error(result.error || 'patchSessionModel failed');
+                                  }
+                                }
                               }
+                              dispatch(setSelectedModel(nextModel));
+                            } catch (error) {
+                              setOptimisticSessionModel(previousOptimisticModel);
+                              console.warn('[CoworkPromptInput] Failed to update session model', {
+                                sessionId,
+                                error,
+                              });
                             }
+                          } else {
+                            dispatch(setSelectedModel(nextModel));
                           }
-                          // Always update global state so the selection is persisted
-                          dispatch(setSelectedModel(nextModel));
                         }}
                       />
                       {coworkAgentEngine === 'openclaw' && agentModelIsInvalid && (

@@ -15,6 +15,48 @@ import { mediaKindFromMime } from '../shims/media-core';
 import type { MessageContentItem, NormalizedMessage } from '../types';
 export { isToolResultMessage, normalizeRoleForGrouping } from './role-normalizer';
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pickTrimmedString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function resolveMessageModelName(message: Record<string, unknown>): string | null {
+  const metadata = asRecord(message.metadata);
+  const nestedMessage = asRecord(message.message);
+  const nestedMetadata = nestedMessage ? asRecord(nestedMessage.metadata) : null;
+
+  const explicitModelName = pickTrimmedString(
+    message.modelName,
+    metadata?.modelName,
+    nestedMessage?.modelName,
+    nestedMetadata?.modelName,
+  );
+  if (explicitModelName) return explicitModelName;
+
+  const provider = pickTrimmedString(message.provider, metadata?.provider, nestedMessage?.provider);
+  const model = pickTrimmedString(
+    message.model,
+    message.modelId,
+    metadata?.model,
+    metadata?.modelId,
+    nestedMessage?.model,
+    nestedMessage?.modelId,
+  );
+
+  if (provider && model) return `${provider}/${model}`;
+  return model;
+}
+
 function coerceCanvasPreview(
   value: unknown,
 ):
@@ -523,16 +565,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
   const id = typeof m.id === 'string' ? m.id : undefined;
   const senderLabel =
     typeof m.senderLabel === 'string' && m.senderLabel.trim() ? m.senderLabel.trim() : null;
-  const modelName =
-    typeof m.modelName === 'string' && m.modelName.trim()
-      ? m.modelName.trim()
-      : typeof m.metadata === 'object' &&
-          m.metadata !== null &&
-          !Array.isArray(m.metadata) &&
-          typeof (m.metadata as Record<string, unknown>).modelName === 'string' &&
-          ((m.metadata as Record<string, unknown>).modelName as string).trim()
-        ? ((m.metadata as Record<string, unknown>).modelName as string).trim()
-        : null;
+  const modelName = isAssistantMessage ? resolveMessageModelName(m) : null;
 
   content = stripMessageDisplayMetadata(content);
 

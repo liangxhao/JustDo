@@ -78,3 +78,28 @@ describe('normalizeMessage image content', () => {
     });
   });
 });
+
+describe('normalizeMessage assistant model label', () => {
+  test('uses OpenClaw provider and model fields for assistant messages', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'hello',
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+    });
+
+    expect(message.modelName).toBe('deepseek/deepseek-v4-flash');
+  });
+
+  test('prefers explicit modelName over provider and model fields', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'hello',
+      modelName: 'gpt-4.1',
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+    });
+
+    expect(message.modelName).toBe('gpt-4.1');
+  });
+});

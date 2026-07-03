@@ -383,7 +383,7 @@ export function renderMessageGroup(
       <div class="chat-group__avatar">${opts?.showAvatar ?? true ? avatar : nothing}</div>
       <div class="chat-group__content">
         ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
-        ${renderGroupFooter(group, opts?.showFooter ?? true, opts?.assistantName)}
+        ${renderGroupFooter(group, opts?.showFooter ?? true)}
       </div>
     </div>
   `;
@@ -647,14 +647,13 @@ function renderToolTimelineItem(card: ToolCard): TemplateResult {
 function renderGroupFooter(
   group: MessageGroup,
   showFooter: boolean,
-  assistantName?: string,
 ): TemplateResult | typeof nothing {
   if (!showFooter) return nothing;
   const ts = group.timestamp;
   if (!ts) return nothing;
   const date = new Date(ts);
   const time = formatGroupTimestamp(date);
-  const roleName = getGroupFooterLabel(group, assistantName);
+  const roleName = getGroupFooterLabel(group);
   return html`
     <div class="chat-group__footer">
       ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
@@ -663,11 +662,11 @@ function renderGroupFooter(
   `;
 }
 
-export function getGroupFooterLabel(group: MessageGroup, assistantName?: string): string {
+export function getGroupFooterLabel(group: MessageGroup): string {
   if (group.role === 'assistant') {
     const modelName = group.modelName?.trim() ?? '';
     const senderLabel = group.senderLabel?.trim() ?? '';
-    return modelName || senderLabel || assistantName?.trim() || 'Assistant';
+    return modelName || senderLabel || 'Assistant';
   }
   if (group.role === 'user') {
     return 'You';
