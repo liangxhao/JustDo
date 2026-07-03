@@ -149,26 +149,29 @@ export const listGatewaySubagents = async (options: {
   client: GatewayClientLike;
   parentKeys: string[];
   includePersistedHistory?: boolean;
+  includeStructuredTool?: boolean;
 }): Promise<GatewaySubagent[]> => {
   const bySessionKey = new Map<string, GatewaySubagent>();
 
   for (const parentKey of options.parentKeys) {
-    try {
-      const toolResult = await options.client.request<unknown>('tools.invoke', {
-        name: 'subagents',
-        args: {
-          action: 'list',
-          recentMinutes: SUBAGENT_RECENT_MINUTES,
-        },
-        sessionKey: parentKey,
-      });
-      const details = extractToolDetails(toolResult);
-      if (details) addToolSubagents(bySessionKey, details);
-    } catch (error) {
-      console.warn('[SubagentGateway] Failed to invoke structured subagent list', {
-        parentKey,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    if (options.includeStructuredTool !== false) {
+      try {
+        const toolResult = await options.client.request<unknown>('tools.invoke', {
+          name: 'subagents',
+          args: {
+            action: 'list',
+            recentMinutes: SUBAGENT_RECENT_MINUTES,
+          },
+          sessionKey: parentKey,
+        });
+        const details = extractToolDetails(toolResult);
+        if (details) addToolSubagents(bySessionKey, details);
+      } catch (error) {
+        console.warn('[SubagentGateway] Failed to invoke structured subagent list', {
+          parentKey,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     // The tool intentionally caps completed runs at 24 hours. Keep the

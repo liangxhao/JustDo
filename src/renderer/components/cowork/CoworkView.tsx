@@ -493,7 +493,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     if (!skippedBecauseJustStopped) {
       refresh();
     }
-    const intervalId = window.setInterval(refresh, currentSessionRuntimeRunning ? 2000 : 5000);
+    const intervalId = window.setInterval(refresh, currentSessionRuntimeRunning ? 2000 : 30000);
     return () => {
       isCancelled = true;
       window.clearInterval(intervalId);
@@ -750,7 +750,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
               sessionId={currentSession.id}
               onOpenSubagent={setSelectedSubagent}
               onSubagentsChange={handleSubagentsChange}
-              shouldRefresh={selectedSubagent !== null}
             />
             <WindowTitleBar inline />
           </div>
@@ -846,6 +845,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             </div>
           </div>
           <SubagentMessageDrawer
+            parentSessionId={currentSession.id}
             subagent={selectedSubagent}
             onClose={() => setSelectedSubagent(null)}
           />

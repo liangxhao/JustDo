@@ -39,14 +39,12 @@ interface SubagentMenuProps {
   sessionId: string;
   onOpenSubagent?: (subagent: Subagent) => void;
   onSubagentsChange?: (subagents: Subagent[]) => void;
-  shouldRefresh?: boolean;
 }
 
 const SubagentMenu: React.FC<SubagentMenuProps> = ({
   sessionId,
   onOpenSubagent,
   onSubagentsChange,
-  shouldRefresh = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -100,11 +98,11 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   }, [onSubagentsChange, sessionId]);
 
   useEffect(() => {
-    if (!isOpen && !shouldRefresh) return;
+    if (!isOpen) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(timer);
-  }, [isOpen, refresh, shouldRefresh]);
+  }, [isOpen, refresh]);
 
   useEffect(() => {
     if (!isOpen) return;

@@ -1,6 +1,6 @@
 import { type ChildProcess,spawn } from 'child_process';
 import crypto from 'crypto';
-import { app, type UtilityProcess,utilityProcess } from 'electron';
+import { app, type UtilityProcess, utilityProcess } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import net from 'net';
@@ -8,11 +8,12 @@ import path from 'path';
 
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../cowork/coworkUtil';
-import { syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
 import { appendPythonRuntimeToEnv } from '../infra/pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from '../infra/systemProxy';
+import { syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
+type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;
 
 const DEFAULT_OPENCLAW_VERSION = '2026.2.23';
 const GATEWAY_PORT_SCAN_LIMIT = 80;
@@ -1245,22 +1246,21 @@ export class OpenClawEngineManager extends EventEmitter {
     const httpProbes = probeUrls.map(async (url, i) => {
       try {
         const response = await fetchWithTimeout(url, 1500);
-        if (verbose) httpResults[i] = `${url} → ${response.status}`;
+        if (verbose) httpResults[i] = `${url} -> ${response.status}`;
         if (response.status < 500) return true;
       } catch (err) {
-        if (verbose) httpResults[i] = `${url} → ${(err as Error).message || err}`;
+        if (verbose) httpResults[i] = `${url} -> ${(err as Error).message || err}`;
       }
       return false;
     });
 
-    // Also probe TCP reachability in parallel as fallback.
-    const tcpProbe = isPortReachable('127.0.0.1', port, 1500);
-
-    const results = await Promise.all([...httpProbes, tcpProbe]);
+    const results = await Promise.all(httpProbes);
     const healthy = results.some(Boolean);
     if (verbose && !healthy) {
-      const tcpResult = results[results.length - 1] ? 'reachable' : 'unreachable';
-      console.log(`[OpenClaw] health probe details: tcp=${tcpResult}, ${httpResults.join(', ')}`);
+      const tcpResult = (await isPortReachable('127.0.0.1', port, 1500))
+        ? 'reachable'
+        : 'unreachable';
+      console.log(`[OpenClaw] health probe details: http=not-ready, tcp=${tcpResult}, ${httpResults.join(', ')}`);
     }
     return healthy;
   }
@@ -1436,8 +1436,8 @@ export class OpenClawEngineManager extends EventEmitter {
       });
     });
 
-    child.once('exit', code => {
-      console.log(`[OpenClaw] gateway process exited with code=${code}`);
+    const onExit: GatewayExitListener = (code, signal) => {
+      console.log(`[OpenClaw] gateway process exited with code=${code}, signal=${signal ?? 'null'}`);
       if (this.gatewayProcess === child) {
         this.gatewayProcess = null;
       }
@@ -1454,7 +1454,8 @@ export class OpenClawEngineManager extends EventEmitter {
         canRetry: true,
       });
       this.scheduleGatewayRestart();
-    });
+    };
+    (child as ChildProcess).once('exit', onExit);
   }
 
   private scheduleGatewayRestart(): void {

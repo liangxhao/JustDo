@@ -58,6 +58,7 @@ export interface GatewayRequestError extends Error {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const CHALLENGE_TIMEOUT_MS = 750;
+const REQUEST_TIMEOUT_MS = 90_000;
 const RECONNECT_BASE_MS = 800;
 const RECONNECT_MAX_MS = 15_000;
 const RECONNECT_FACTOR = 1.7;
@@ -109,13 +110,19 @@ export class GatewayClient {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(new Error(`request timeout: ${method}`));
-      }, 30_000);
+      }, REQUEST_TIMEOUT_MS);
       this.pendingRequests.set(id, {
         resolve: resolve as (v: unknown) => void,
         reject,
         timer,
       });
-      this.ws!.send(frame);
+      try {
+        this.ws!.send(frame);
+      } catch (error) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -242,7 +249,13 @@ export class GatewayClient {
       timer,
     });
 
-    ws.send(frame);
+    try {
+      ws.send(frame);
+    } catch {
+      clearTimeout(timer);
+      this.pendingRequests.delete(id);
+      this.scheduleReconnect();
+    }
   }
 
   private scheduleReconnect(): void {

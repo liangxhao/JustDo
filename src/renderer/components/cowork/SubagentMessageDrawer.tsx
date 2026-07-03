@@ -14,6 +14,7 @@ const DRAWER_MAX_WIDTH = 960;
 const DRAWER_WINDOW_MARGIN = 16;
 
 interface SubagentMessageDrawerProps {
+  parentSessionId: string;
   subagent: Subagent | null;
   onClose: () => void;
 }
@@ -23,14 +24,23 @@ const clampDrawerWidth = (width: number): number => {
   return Math.min(Math.max(width, DRAWER_MIN_WIDTH), Math.min(DRAWER_MAX_WIDTH, viewportMax));
 };
 
-const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent, onClose }) => {
+const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
+  parentSessionId,
+  subagent,
+  onClose,
+}) => {
   const [controller, setController] = useState<ChatController | null>(null);
+  const [displaySubagent, setDisplaySubagent] = useState<Subagent | null>(subagent);
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const drawerRef = useRef<HTMLElement>(null);
   const subagentSessionKey = subagent?.sessionKey;
+
+  useEffect(() => {
+    setDisplaySubagent(subagent);
+  }, [subagent]);
 
   useEffect(() => {
     if (!subagentSessionKey) {
@@ -72,6 +82,34 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
   }, [subagentSessionKey]);
 
   useEffect(() => {
+    if (!parentSessionId || !subagent?.sessionKey) return;
+    let cancelled = false;
+
+    const refreshStatus = async () => {
+      try {
+        const result = await window.electron.cowork.getSubTaskStatus(parentSessionId);
+        if (cancelled || !result.success) return;
+        const latest = result.subagents?.find(item => item.sessionKey === subagent.sessionKey);
+        if (latest) {
+          setDisplaySubagent(current => ({
+            ...(current ?? subagent),
+            ...latest,
+          }));
+        }
+      } catch {
+        // Preserve the last known drawer status and retry on the next interval.
+      }
+    };
+
+    void refreshStatus();
+    const timer = window.setInterval(() => void refreshStatus(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [parentSessionId, subagent]);
+
+  useEffect(() => {
     const handleResize = () => {
       setDrawerWidth(width => clampDrawerWidth(width));
     };
@@ -100,7 +138,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
     window.addEventListener('mouseup', handleMouseUp);
   }, []);
 
-  if (!subagent) return null;
+  if (!displaySubagent) return null;
 
   const formatDateTime = (value?: number): string =>
     value ? new Date(value).toLocaleString() : i18nService.t('subagentInfoUnavailable');
@@ -116,16 +154,16 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
       .join(' ');
   };
 
-  const subagentStatus = subagent.status;
+  const subagentStatus = displaySubagent.status;
   const detailRows = [
     [i18nService.t('subagentInfoStatus'), subagentStatus],
-    [i18nService.t('subagentInfoTask'), subagent.task],
-    [i18nService.t('subagentInfoModel'), subagent.model],
-    [i18nService.t('subagentInfoRuntime'), formatRuntime(subagent.runtimeMs)],
-    [i18nService.t('subagentInfoStarted'), formatDateTime(subagent.startedAt)],
-    [i18nService.t('subagentInfoEnded'), formatDateTime(subagent.endedAt)],
-    [i18nService.t('subagentInfoTokens'), subagent.totalTokens?.toLocaleString()],
-    [i18nService.t('subagentInfoSession'), subagent.sessionKey],
+    [i18nService.t('subagentInfoTask'), displaySubagent.task],
+    [i18nService.t('subagentInfoModel'), displaySubagent.model],
+    [i18nService.t('subagentInfoRuntime'), formatRuntime(displaySubagent.runtimeMs)],
+    [i18nService.t('subagentInfoStarted'), formatDateTime(displaySubagent.startedAt)],
+    [i18nService.t('subagentInfoEnded'), formatDateTime(displaySubagent.endedAt)],
+    [i18nService.t('subagentInfoTokens'), displaySubagent.totalTokens?.toLocaleString()],
+    [i18nService.t('subagentInfoSession'), displaySubagent.sessionKey],
   ];
 
   const emptyText = hasError
@@ -155,7 +193,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
               className={`h-2.5 w-2.5 shrink-0 rounded-full ${subagentStatusStyles[subagentStatus]}`}
             />
             <h2 className="min-w-0 truncate text-sm font-semibold text-foreground">
-              {i18nService.t('subagentDrawerTitle').replace('{title}', subagent.label)}
+              {i18nService.t('subagentDrawerTitle').replace('{title}', displaySubagent.label)}
             </h2>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -201,7 +239,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({ subagent,
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="min-w-0 truncate text-base font-semibold text-foreground">
-            {subagent.label}
+            {displaySubagent.label}
           </h2>
           <button
             type="button"

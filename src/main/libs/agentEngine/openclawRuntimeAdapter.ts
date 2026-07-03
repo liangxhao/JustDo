@@ -76,6 +76,7 @@ const CLIENT_TIMEOUT_GRACE_MS = 30_000;
 const GATEWAY_RECONNECT_MAX_ATTEMPTS = 10;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
+const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -178,6 +179,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly gatewayHistoryCountBySession = new Map<string, number>();
   private readonly latestTurnTokenBySession = new Map<string, number>();
   private readonly pendingSessionMessageReloadSessionIds = new Set<string>();
+  private readonly subagentStatusCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      subagents: GatewaySubagent[];
+    }
+  >();
 
   // Collaborators
   private historyReconciler!: HistoryReconciler;
@@ -2433,13 +2441,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }>;
   }> {
     if (!sessionId) return { subagents: [] };
+    const cached = this.subagentStatusCache.get(sessionId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return { subagents: cached.subagents };
+    }
+
     await this.ensureGatewayClientReady();
     if (!this.gatewayClient) return { subagents: [] };
+    const subagents = await listGatewaySubagents({
+      client: this.gatewayClient,
+      parentKeys: this.getSessionKeysForSession(sessionId),
+    });
+    this.subagentStatusCache.set(sessionId, {
+      expiresAt: Date.now() + SUBAGENT_STATUS_CACHE_TTL_MS,
+      subagents,
+    });
     return {
-      subagents: await listGatewaySubagents({
-        client: this.gatewayClient,
-        parentKeys: this.getSessionKeysForSession(sessionId),
-      }),
+      subagents,
     };
   }
 
@@ -2480,17 +2498,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    const subagents = await listGatewaySubagents({
-      client,
-      parentKeys: sessionKeys,
-      includePersistedHistory: false,
-    }).catch((error): GatewaySubagent[] => {
-      console.warn('[OpenClawRuntime] Failed to query subagent runtime status', {
-        sessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    });
+    const cachedSubagents = this.subagentStatusCache.get(sessionId);
+    const subagents =
+      cachedSubagents && cachedSubagents.expiresAt > Date.now()
+        ? cachedSubagents.subagents
+        : await listGatewaySubagents({
+            client,
+            parentKeys: sessionKeys,
+            includePersistedHistory: false,
+            includeStructuredTool: false,
+          }).catch((error): GatewaySubagent[] => {
+            console.warn('[OpenClawRuntime] Failed to query subagent runtime status', {
+              sessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return [];
+          });
     const subagentRunning = subagents.some(subagent => subagent.status === 'running');
 
     return {
