@@ -36,6 +36,8 @@ import {
   type SlashCommandDef,
 } from './slashCommands';
 
+const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s.*)?$/i;
+
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
 type CoworkAttachment = DraftAttachment;
@@ -444,12 +446,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           base64Lengths: imageAtts.map(a => a.base64Data.length),
         });
       }
+      const clearSubmittedInput = () => {
+        setValue('');
+        dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+        dispatch(clearDraftAttachments(draftKey));
+        setImageVisionHint(false);
+      };
+      const clearBeforeSubmit = COMPACT_COMMAND_PATTERN.test(trimmedValue);
+      if (clearBeforeSubmit) {
+        clearSubmittedInput();
+      }
       const result = await onSubmit(finalPrompt, imageAtts.length > 0 ? imageAtts : undefined);
       if (result === false) return;
-      setValue('');
-      dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
-      dispatch(clearDraftAttachments(draftKey));
-      setImageVisionHint(false);
+      if (!clearBeforeSubmit) {
+        clearSubmittedInput();
+      }
     }, [
       value,
       isStreaming,

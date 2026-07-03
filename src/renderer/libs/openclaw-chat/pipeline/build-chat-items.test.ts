@@ -756,6 +756,143 @@ test('preserves assistant model name on grouped messages', () => {
   expect(assistantGroup?.modelName).toBe('gpt-4.1');
 });
 
+test('builds an expandable compaction divider with token counts and summary', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'system',
+        timestamp: 2000,
+        __openclaw: {
+          kind: 'compaction',
+          id: 'checkpoint-1',
+          tokensBefore: 25_329,
+          tokensAfter: 1_069,
+          summary: 'The compacted conversation summary.',
+        },
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  expect(items).toEqual([
+    expect.objectContaining({
+      kind: 'divider',
+      key: 'divider:compaction:checkpoint-1',
+      label: '25,329 → 1,069 tokens',
+      summary: 'The compacted conversation summary.',
+    }),
+  ]);
+});
+
+test('renders an incomplete compaction marker as not needing compaction', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'system',
+        timestamp: 2000,
+        __openclaw: {
+          kind: 'compaction',
+          id: 'checkpoint-1',
+        },
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  expect(items).toEqual([
+    expect.objectContaining({
+      kind: 'divider',
+      key: 'divider:compaction:checkpoint-1',
+      label: 'No context compaction needed',
+      expandable: false,
+    }),
+  ]);
+});
+
+test('builds a non-expandable divider when compaction is not needed', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'system',
+        timestamp: 2000,
+        __openclaw: {
+          kind: 'compaction-skipped',
+          reason: 'not enough history',
+        },
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  expect(items).toEqual([
+    expect.objectContaining({
+      kind: 'divider',
+      label: 'No context compaction needed',
+      description: 'not enough history',
+      expandable: false,
+    }),
+  ]);
+});
+
+test('treats OpenClaw empty-conversation summaries as not needing compaction', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'system',
+        timestamp: 2000,
+        __openclaw: {
+          kind: 'compaction',
+          id: 'checkpoint-1',
+          tokensBefore: 1200,
+          tokensAfter: 200,
+          summary: `## Goal
+No conversation provided. Unable to determine user goal.
+
+## Progress
+### Done
+- (none)
+
+### Blocked
+- No conversation to summarize.`,
+        },
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  expect(items).toEqual([
+    expect.objectContaining({
+      kind: 'divider',
+      label: 'No context compaction needed',
+      expandable: false,
+    }),
+  ]);
+});
+
 test('treats cowork tool_use history messages as attachable tools after full refresh', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',

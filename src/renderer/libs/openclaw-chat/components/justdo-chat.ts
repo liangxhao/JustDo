@@ -313,6 +313,48 @@ export class JustDoChatElement extends LitElement {
       flex-direction: row-reverse;
     }
 
+    .chat-divider {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin: 10px 0;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+    }
+
+    .chat-divider::before,
+    .chat-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      margin-top: 9px;
+      background: var(--justdo-chat-border, rgba(0, 0, 0, 0.12));
+    }
+
+    .chat-divider__details {
+      min-width: 0;
+      max-width: min(720px, 80%);
+    }
+
+    .chat-divider__summary {
+      cursor: pointer;
+      font-size: 12px;
+      text-align: center;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .chat-divider__content {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
+      border-radius: 8px;
+      background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.02));
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
     .chat-group__avatar {
       flex-shrink: 0;
       width: 32px;
@@ -1804,6 +1846,31 @@ export class JustDoChatElement extends LitElement {
           streamItem.isStreaming ? thinkingStream : null,
           { showAvatar },
         );
+      }
+      if (item.kind === 'divider') {
+        if (item.expandable === false) {
+          return html`
+            <div class="chat-divider">
+              <span class="chat-divider__summary" title=${item.description ?? item.label}>
+                ${item.label}
+              </span>
+            </div>
+          `;
+        }
+        const summary = item.summary?.trim() || i18nService.t('coworkCompactSummaryUnavailable');
+        return html`
+          <div class="chat-divider">
+            <details class="chat-divider__details">
+              <summary
+                class="chat-divider__summary"
+                title=${i18nService.t('coworkCompactDetails')}
+              >
+                ${item.label}
+              </summary>
+              <div class="chat-divider__content">${summary}</div>
+            </details>
+          </div>
+        `;
       }
       if (item.kind === 'reading-indicator') {
         return nothing;

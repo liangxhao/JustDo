@@ -13,6 +13,8 @@ export type ChatItem =
       key: string;
       label: string;
       description?: string;
+      summary?: string;
+      expandable?: boolean;
       action?: { kind: 'session-checkpoints'; label: string };
       timestamp: number;
     }

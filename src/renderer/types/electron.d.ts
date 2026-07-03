@@ -660,6 +660,7 @@ interface IElectronAPI {
       missingEntries?: string[];
       error?: string;
     }>;
+    debug: (message: string, details?: Record<string, unknown>) => void;
   };
   scheduledTasks: {
     list: () => Promise<{

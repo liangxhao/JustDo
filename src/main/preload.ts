@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
+import { LogIpc } from '../shared/logIpc';
 import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
 
 // 暴露安全的 API 到渲染进程
@@ -430,6 +431,8 @@ contextBridge.exposeInMainWorld('electron', {
     getPath: () => ipcRenderer.invoke('log:getPath'),
     openFolder: () => ipcRenderer.invoke('log:openFolder'),
     exportZip: () => ipcRenderer.invoke('log:exportZip'),
+    debug: (message: string, details?: Record<string, unknown>) =>
+      ipcRenderer.send(LogIpc.WriteDebug, message, details),
   },
   scheduledTasks: {
     // Task CRUD

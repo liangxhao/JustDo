@@ -11,6 +11,7 @@
  * No JustDo adapter, no Redux, no IPC — direct gateway connection.
  */
 
+import { i18nService } from '../../../services/i18n';
 import type { GatewayClient, GatewayEventFrame, GatewayHelloOk } from './client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ type ToolContentBlock = {
 const HISTORY_LIMIT = 100;
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
+const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s.*)?$/i;
 const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
 const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const DEBUG_CHAT_CONTROLLER =
@@ -866,9 +868,11 @@ export class ChatController {
       const projectedMessages = rawMessages
         .filter(m => !shouldHideMessage(m))
         .filter(m => !(m as Record<string, unknown>)?.__openclawStreamFallback);
+      const messagesWithCompactionDetails =
+        await this.enrichCompactionMarkers(projectedMessages);
       const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
         sessionKey,
-        projectedMessages,
+        messagesWithCompactionDetails,
       );
       const messages = hydratedMessages.map(message =>
         normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
@@ -1448,6 +1452,11 @@ export class ChatController {
     if (!client || !this.state.connected) throw new Error('not connected');
     if (this.state.chatSending) return;
 
+    if (COMPACT_COMMAND_PATTERN.test(message.trim())) {
+      await this.compactSession();
+      return;
+    }
+
     const runId = `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     debugLog('[ChatCtrl] sendMessage:', message.slice(0, 60), {
       sessionKey: this.state.sessionKey,
@@ -1503,6 +1512,184 @@ export class ChatController {
     }
   }
 
+  private async compactSession(): Promise<void> {
+    const client = this.state.client;
+    if (!client || !this.state.connected) throw new Error('not connected');
+
+    this.state.chatSending = true;
+    this.state.lastError = null;
+    this.notify();
+
+    try {
+      const result = await client.request<{
+        compacted?: boolean;
+        reason?: string;
+        result?: { tokensBefore?: number; tokensAfter?: number };
+      }>('sessions.compact', { key: this.state.sessionKey });
+      this.state.chatSending = false;
+      const before = result?.result?.tokensBefore;
+      const after = result?.result?.tokensAfter;
+      if (result?.compacted) {
+        await this.loadHistory();
+        const checkpoint = await this.loadLatestCompactionCheckpoint();
+        const marker = {
+          kind: 'compaction',
+          id: checkpoint?.checkpointId,
+          summary: checkpoint?.summary,
+          tokensBefore: checkpoint?.tokensBefore ?? before,
+          tokensAfter: checkpoint?.tokensAfter ?? after,
+        };
+        const existingMarkerIndex = checkpoint?.checkpointId
+          ? this.state.chatMessages.findIndex(message => {
+              if (!isCompactionMarker(message)) return false;
+              const metadata = (message as Record<string, unknown>).__openclaw as Record<
+                string,
+                unknown
+              >;
+              return metadata.id === checkpoint.checkpointId;
+            })
+          : -1;
+        this.state.chatMessages =
+          existingMarkerIndex >= 0
+            ? this.state.chatMessages.map((message, index) =>
+                index === existingMarkerIndex
+                  ? {
+                      ...(message as Record<string, unknown>),
+                      __openclaw: marker,
+                    }
+                  : message,
+              )
+            : [
+                ...this.state.chatMessages,
+                {
+                  role: 'system',
+                  timestamp: Date.now(),
+                  __openclaw: marker,
+                },
+              ];
+        this.notify();
+        return;
+      }
+      this.state.chatMessages = [
+        ...this.state.chatMessages,
+        {
+          role: 'system',
+          timestamp: Date.now(),
+          __openclaw: {
+            kind: 'compaction-skipped',
+            reason: result?.reason,
+          },
+        },
+      ];
+      this.notify();
+    } catch (err) {
+      this.state.chatSending = false;
+      this.state.lastError = (err as Error).message;
+      this.state.chatMessages = [
+        ...this.state.chatMessages,
+        {
+          role: 'system',
+          content: formatI18n('coworkCompactFailed', { error: (err as Error).message }),
+          timestamp: Date.now(),
+        },
+      ];
+      this.notify();
+    }
+  }
+
+  private async loadLatestCompactionCheckpoint(): Promise<{
+    checkpointId?: string;
+    summary?: string;
+    tokensBefore?: number;
+    tokensAfter?: number;
+    createdAt?: number;
+  } | null> {
+    const checkpoints = await this.loadCompactionCheckpoints();
+    return (
+      [...checkpoints].sort(
+        (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0),
+      )[0] ?? null
+    );
+  }
+
+  private async loadCompactionCheckpoints(): Promise<
+    Array<{
+      checkpointId?: string;
+      summary?: string;
+      tokensBefore?: number;
+      tokensAfter?: number;
+      createdAt?: number;
+    }>
+  > {
+    const client = this.state.client;
+    if (!client) return [];
+    try {
+      const response = await client.request<{
+        checkpoints?: Array<{
+          checkpointId?: string;
+          summary?: string;
+          tokensBefore?: number;
+          tokensAfter?: number;
+          createdAt?: number;
+        }>;
+      }>('sessions.compaction.list', { key: this.state.sessionKey });
+      writeRuntimeDebug('[ChatController] Loaded compaction checkpoints', {
+        sessionKey: this.state.sessionKey,
+        count: response?.checkpoints?.length ?? 0,
+        checkpoints: response?.checkpoints?.map(checkpoint => ({
+          checkpointId: checkpoint.checkpointId,
+          hasSummary: Boolean(checkpoint.summary),
+          tokensBefore: checkpoint.tokensBefore,
+          tokensAfter: checkpoint.tokensAfter,
+        })),
+      });
+      return response?.checkpoints ?? [];
+    } catch (err) {
+      console.warn(
+        '[ChatController] Failed to load the latest compaction checkpoint',
+        (err as Error).message,
+      );
+      return [];
+    }
+  }
+
+  private async enrichCompactionMarkers(messages: unknown[]): Promise<unknown[]> {
+    const markers = messages.filter(message => isCompactionMarker(message));
+    if (markers.length === 0) return messages;
+
+    const checkpoints = await this.loadCompactionCheckpoints();
+    if (checkpoints.length === 0) return messages;
+    const checkpointsById = new Map(
+      checkpoints
+        .filter(checkpoint => checkpoint.checkpointId)
+        .map(checkpoint => [checkpoint.checkpointId as string, checkpoint]),
+    );
+    const checkpointsNewestFirst = [...checkpoints].sort(
+      (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0),
+    );
+
+    return messages.map(message => {
+      if (!isCompactionMarker(message)) return message;
+      const record = message as Record<string, unknown>;
+      const marker = record.__openclaw as Record<string, unknown>;
+      const markerId = typeof marker.id === 'string' ? marker.id : undefined;
+      const checkpoint =
+        (markerId ? checkpointsById.get(markerId) : undefined) ??
+        checkpointsNewestFirst[0];
+      if (!checkpoint) return message;
+      return {
+        ...record,
+        __openclaw: {
+          ...marker,
+          id: checkpoint.checkpointId ?? marker.id,
+          summary: checkpoint.summary,
+          tokensBefore: checkpoint.tokensBefore,
+          tokensAfter: checkpoint.tokensAfter,
+        },
+      };
+    });
+  }
+
   /** Abort the current run */
   async abort(): Promise<void> {
     const client = this.state.client;
@@ -1523,6 +1710,18 @@ export class ChatController {
 function stringField(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function formatI18n(key: string, params: Record<string, string>): string {
+  return Object.entries(params).reduce(
+    (text, [name, value]) => text.replace(`{${name}}`, value),
+    i18nService.t(key),
+  );
+}
+
+function writeRuntimeDebug(message: string, details: Record<string, unknown>): void {
+  if (typeof window === 'undefined') return;
+  window.electron.log.debug(message, details);
 }
 
 function isTempJustDoSessionKey(sessionKey: string): boolean {
@@ -1633,6 +1832,16 @@ function shouldHideMessage(message: unknown): boolean {
   }
 
   return false;
+}
+
+function isCompactionMarker(message: unknown): boolean {
+  if (!message || typeof message !== 'object') return false;
+  const marker = (message as Record<string, unknown>).__openclaw;
+  return (
+    Boolean(marker) &&
+    typeof marker === 'object' &&
+    (marker as Record<string, unknown>).kind === 'compaction'
+  );
 }
 
 function isHiddenStreamText(text: string): boolean {

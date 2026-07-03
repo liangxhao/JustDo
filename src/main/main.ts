@@ -18,6 +18,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { LogIpc } from '../shared/logIpc';
 import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
 import { APP_NAME } from './core/appConstants';
 import {
@@ -1703,6 +1704,14 @@ if (!gotTheLock) {
   });
 
   // Log IPC handlers
+  ipcMain.removeAllListeners(LogIpc.WriteDebug);
+  ipcMain.on(
+    LogIpc.WriteDebug,
+    (_event, message: string, details?: Record<string, unknown>) => {
+      console.debug(`[Renderer] ${message}`, details ?? {});
+    },
+  );
+
   ipcMain.handle('log:getPath', () => {
     return getLogFilePath();
   });

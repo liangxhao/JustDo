@@ -352,6 +352,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Cowork 错误消息
     coworkErrorSessionStartFailed: '会话启动失败：{error}',
+    coworkCompactFailed: '上下文压缩失败：{error}',
+    coworkCompactDetails: '查看压缩摘要',
+    coworkCompactSummaryUnavailable: '暂无压缩摘要。',
+    coworkCompactNotNeeded: 'No context compaction needed',
     coworkErrorSessionContinueFailed: '发送消息失败：{error}',
     coworkErrorEngineNotReady: 'AI 引擎正在启动中，请稍等几秒后重试。',
 
@@ -987,6 +991,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Cowork error messages
     coworkErrorSessionStartFailed: 'Failed to start session: {error}',
+    coworkCompactFailed: 'Compaction failed: {error}',
+    coworkCompactDetails: 'View compaction summary',
+    coworkCompactSummaryUnavailable: 'No compaction summary is available.',
+    coworkCompactNotNeeded: 'No context compaction needed',
     coworkErrorSessionContinueFailed: 'Failed to send message: {error}',
     coworkErrorEngineNotReady: 'AI engine is starting up. Please wait a few seconds and try again.',
 

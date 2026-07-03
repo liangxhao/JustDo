@@ -32,6 +32,194 @@ test('preserves optimistic prompt when promoting a temp session to a persisted s
   expect(controller.state.chatLoading).toBe(true);
 });
 
+test('compacts the current session instead of sending /compact as chat', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      compacted: true,
+      result: { tokensBefore: 25_329, tokensAfter: 1_069 },
+    })
+    .mockResolvedValueOnce({ messages: [] })
+    .mockResolvedValueOnce({
+      checkpoints: [
+        {
+          checkpointId: 'checkpoint-1',
+          summary: 'The compacted conversation summary.',
+          tokensBefore: 25_329,
+          tokensAfter: 1_069,
+          createdAt: 2000,
+        },
+      ],
+    });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('/compact');
+
+  expect(request).toHaveBeenNthCalledWith(1, 'sessions.compact', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(request).toHaveBeenNthCalledWith(2, 'chat.startup', {
+    sessionKey: 'agent:main:justdo:session-1',
+    limit: 100,
+  });
+  expect(request).toHaveBeenNthCalledWith(3, 'sessions.compaction.list', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(request).not.toHaveBeenCalledWith('chat.send', expect.anything());
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'system',
+      __openclaw: {
+        kind: 'compaction',
+        id: 'checkpoint-1',
+        summary: 'The compacted conversation summary.',
+        tokensBefore: 25_329,
+        tokensAfter: 1_069,
+      },
+    }),
+  ]);
+});
+
+test('renders an error result and does not refresh history when session compaction fails', async () => {
+  const request = vi.fn().mockRejectedValue(new Error('compact unavailable'));
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('/compact keep recent decisions');
+
+  expect(request).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledWith('sessions.compact', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.lastError).toBe('compact unavailable');
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'system',
+      content: '上下文压缩失败：compact unavailable',
+    }),
+  ]);
+});
+
+test('renders the reason when session compaction is skipped', async () => {
+  const request = vi.fn().mockResolvedValueOnce({
+    compacted: false,
+    reason: 'not enough history',
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('/compact');
+
+  expect(request).toHaveBeenCalledOnce();
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'system',
+      __openclaw: {
+        kind: 'compaction-skipped',
+        reason: 'not enough history',
+      },
+    }),
+  ]);
+});
+
+test('enriches compaction markers again after history refreshes', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      messages: [
+        {
+          role: 'system',
+          timestamp: 2000,
+          __openclaw: { kind: 'compaction', id: 'checkpoint-1' },
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      checkpoints: [
+        {
+          checkpointId: 'checkpoint-1',
+          summary: 'Persisted compact summary.',
+          tokensBefore: 25_329,
+          tokensAfter: 1_069,
+          createdAt: 2000,
+        },
+      ],
+    });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+
+  expect(request).toHaveBeenNthCalledWith(2, 'sessions.compaction.list', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: {
+        kind: 'compaction',
+        id: 'checkpoint-1',
+        summary: 'Persisted compact summary.',
+        tokensBefore: 25_329,
+        tokensAfter: 1_069,
+      },
+    }),
+  ]);
+});
+
+test('uses the latest checkpoint when the history marker id differs', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      messages: [
+        {
+          role: 'system',
+          timestamp: 2000,
+          __openclaw: { kind: 'compaction', id: 'history-marker-id' },
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      checkpoints: [
+        {
+          checkpointId: 'checkpoint-1',
+          summary: 'Persisted compact summary.',
+          tokensBefore: 25_329,
+          tokensAfter: 1_069,
+          createdAt: 2000,
+        },
+      ],
+    });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: {
+        kind: 'compaction',
+        id: 'checkpoint-1',
+        summary: 'Persisted compact summary.',
+        tokensBefore: 25_329,
+        tokensAfter: 1_069,
+      },
+    }),
+  ]);
+});
+
 test('hydrates OpenClaw transcript MediaPaths as image blocks', async () => {
   const readFileAsDataUrl = vi.fn().mockResolvedValue({
     success: true,

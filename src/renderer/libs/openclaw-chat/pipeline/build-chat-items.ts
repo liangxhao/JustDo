@@ -1,4 +1,5 @@
 // Control UI chat module implements build chat items behavior.
+import { i18nService } from '../../../services/i18n';
 import type { ChatItem, MessageGroup, NormalizedMessage, ToolCard } from '../types';
 import type { ChatQueueItem } from '../types';
 import {
@@ -1162,14 +1163,49 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     }
     const raw = asRecord(msg) ?? {};
     const marker = raw['__openclaw'] as Record<string, unknown> | undefined;
+    if (marker && marker.kind === 'compaction-skipped') {
+      items.push({
+        kind: 'divider',
+        key: `divider:compaction-skipped:${normalized.timestamp}:${i}`,
+        label: i18nService.t('coworkCompactNotNeeded'),
+        description: typeof marker.reason === 'string' ? marker.reason : undefined,
+        expandable: false,
+        timestamp: normalized.timestamp ?? Date.now(),
+      });
+      continue;
+    }
     if (marker && marker.kind === 'compaction') {
+      const tokensBefore =
+        typeof marker.tokensBefore === 'number' ? marker.tokensBefore : undefined;
+      const tokensAfter =
+        typeof marker.tokensAfter === 'number' ? marker.tokensAfter : undefined;
+      const summary = typeof marker.summary === 'string' ? marker.summary : undefined;
+      if (
+        tokensBefore === undefined ||
+        tokensAfter === undefined ||
+        isEmptyCompactionSummary(summary)
+      ) {
+        items.push({
+          kind: 'divider',
+          key:
+            typeof marker.id === 'string'
+              ? `divider:compaction:${marker.id}`
+              : `divider:compaction:${normalized.timestamp}:${i}`,
+          label: i18nService.t('coworkCompactNotNeeded'),
+          expandable: false,
+          timestamp: normalized.timestamp ?? Date.now(),
+        });
+        continue;
+      }
       items.push({
         kind: 'divider',
         key:
           typeof marker.id === 'string'
             ? `divider:compaction:${marker.id}`
             : `divider:compaction:${normalized.timestamp}:${i}`,
-        label: 'Compacted history',
+        label: `${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens`,
+        summary,
+        expandable: true,
         description:
           'The compacted transcript is preserved as a checkpoint. Open session checkpoints to branch or restore from that compacted view.',
         action: {
@@ -1302,6 +1338,16 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
   const result = groupMessages(collapsed);
 
   return result;
+}
+
+function isEmptyCompactionSummary(summary: string | undefined): boolean {
+  if (!summary) return false;
+  const normalized = summary.replace(/\r\n/g, '\n').trim().toLowerCase();
+  return (
+    normalized.includes('no conversation provided') &&
+    normalized.includes('unable to determine user goal') &&
+    normalized.includes('no conversation to summarize')
+  );
 }
 
 function resolveAssistantGroupingBlockKind(
