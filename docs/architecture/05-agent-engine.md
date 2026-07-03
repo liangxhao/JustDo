@@ -458,9 +458,9 @@ npm run openclaw:runtime:win-x64
   │          scripts/ensure-openclaw-plugins.cjs
   │          安装必需插件
   │
-  ├── [5/7]  npm run openclaw:extensions:local
-  │          scripts/sync-local-openclaw-extensions.cjs
-  │          同步本地扩展
+  ├── [5/7]  npm run openclaw:resources
+  │          scripts/sync-openclaw-runtime-resources.cjs
+  │          同步 docs、本地扩展并按白名单裁剪内置扩展
   │
   ├── [6/7]  npm run openclaw:precompile
   │          scripts/precompile-openclaw-extensions.cjs
@@ -576,7 +576,7 @@ npm run electron:dev:openclaw
 | `scripts/patch-openclaw-runtime.cjs` | 打补丁（JustDo 集成） |
 | `scripts/bundle-openclaw-gateway.cjs` | 打包 Gateway 配置 |
 | `scripts/ensure-openclaw-plugins.cjs` | 安装必需插件 |
-| `scripts/sync-local-openclaw-extensions.cjs` | 同步本地扩展 |
+| `scripts/sync-openclaw-runtime-resources.cjs` | 同步 docs、本地扩展并裁剪内置扩展 |
 | `scripts/precompile-openclaw-extensions.cjs` | 预编译扩展 |
 | `scripts/prune-openclaw-runtime.cjs` | 清理 runtime |
 | `scripts/pack-openclaw-tar.cjs` | 打包 tar 存档 |

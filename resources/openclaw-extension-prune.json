@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "runtimeExtensionsPath": "vendor/openclaw-runtime/{platform}/dist/extensions",
+  "description": "OpenClaw-managed bundled extension pruning policy for JustDo. JustDo-owned custom extensions are outside this policy. Build/startup cleanup scripts should remove only entries listed in remove.",
+  "keep": [
+    "active-memory",
+    "admin-http-rpc",
+    "browser",
+    "document-extract",
+    "file-transfer",
+    "llm-task",
+    "memory-core",
+    "memory-wiki",
+    "oc-path",
+    "open-prose",
+    "openai",
+    "policy",
+    "web-readability",
+    "workboard"
+  ],
+  "remove": [
+    {
+      "category": "unused-remote-channels",
+      "reason": "External IM/channel integrations. Remove when JustDo does not use remote-control messaging channels.",
+      "extensions": [
+        "bonjour",
+        "canvas",
+        "clickclack",
+        "device-pair",
+        "imessage",
+        "irc",
+        "mattermost",
+        "phone-control",
+        "signal",
+        "sms",
+        "telegram",
+        "thread-ownership",
+        "webhooks"
+      ]
+    },
+    {
+      "category": "migration-tools",
+      "reason": "One-time import/migration helpers; not required for normal JustDo startup.",
+      "extensions": [
+        "migrate-claude",
+        "migrate-hermes"
+      ]
+    },
+    {
+      "category": "optional-speech-and-media",
+      "reason": "Speech, media understanding, image generation, and video generation providers. Remove when voice/media generation features are not enabled.",
+      "extensions": [
+        "alibaba",
+        "azure-speech",
+        "comfy",
+        "deepgram",
+        "elevenlabs",
+        "fal",
+        "image-generation-core",
+        "media-understanding-core",
+        "microsoft",
+        "runway",
+        "senseaudio",
+        "talk-voice",
+        "tts-local-cli",
+        "video-generation-core",
+        "vydra"
+      ]
+    },
+    {
+      "category": "optional-search-providers",
+      "reason": "Standalone web-search providers. Remove when search is handled by MCP or another retained provider.",
+      "extensions": [
+        "duckduckgo",
+        "searxng",
+        "tavily"
+      ]
+    },
+    {
+      "category": "unused-model-providers",
+      "reason": "Model providers not kept in the default slim runtime. Move an extension from here to keep if the app is configured to use it.",
+      "extensions": [
+        "anthropic",
+        "byteplus",
+        "cohere",
+        "copilot-proxy",
+        "fireworks",
+        "github-copilot",
+        "google",
+        "huggingface",
+        "litellm",
+        "lmstudio",
+        "microsoft-foundry",
+        "minimax",
+        "mistral",
+        "moonshot",
+        "novita",
+        "nvidia",
+        "ollama",
+        "opencode",
+        "opencode-go",
+        "openrouter",
+        "sglang",
+        "synthetic",
+        "tencent",
+        "together",
+        "venice",
+        "vercel-ai-gateway",
+        "vllm",
+        "volcengine",
+        "voyage",
+        "xai",
+        "xiaomi",
+        "zai"
+      ]
+    }
+  ]
+}

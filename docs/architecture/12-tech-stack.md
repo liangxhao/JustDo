@@ -291,7 +291,7 @@ npm run openclaw:runtime:linux-arm64
 
 # 运行时辅助
 npm run openclaw:plugins                # 安装 plugins
-npm run openclaw:extensions:local       # 同步本地扩展
+npm run openclaw:resources              # 同步 docs、本地扩展并裁剪内置扩展
 npm run openclaw:bundle                 # 打包 gateway
 npm run openclaw:precompile             # 预编译扩展
 npm run openclaw:prune                  # 清理运行时

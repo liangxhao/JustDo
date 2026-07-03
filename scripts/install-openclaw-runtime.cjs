@@ -16,7 +16,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
-const { syncOpenClawDocTemplates } = require('./sync-openclaw-doc-templates.cjs');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,7 +107,6 @@ console.log(`[install-openclaw-runtime] Package: ${npmSpec}`);
 if (process.env.OPENCLAW_FORCE_INSTALL !== '1') {
   const buildInfo = readJsonFile(path.join(outDir, 'runtime-build-info.json'));
   if (buildInfo && buildInfo.openclawVersion === openclawVersion) {
-    syncOpenClawDocTemplates(outDir, { label: 'install-openclaw-runtime' });
     console.log(`[install-openclaw-runtime] Already installed ${openclawVersion} (target=${targetId}), skipping.`);
     console.log(`[install-openclaw-runtime] Use OPENCLAW_FORCE_INSTALL=1 to force reinstall.`);
     process.exit(0);
@@ -170,8 +168,6 @@ fs.mkdirSync(extractDir, { recursive: true });
     // ---------------------------------------------------------------------------
     console.log(`[install-openclaw-runtime] [5/8] Patching OpenClaw integration...`);
     patchOpenClawRuntime(outDir, { label: 'install-openclaw-runtime' });
-
-    syncOpenClawDocTemplates(outDir, { label: 'install-openclaw-runtime' });
 
     // ---------------------------------------------------------------------------
     // 8. Process skills

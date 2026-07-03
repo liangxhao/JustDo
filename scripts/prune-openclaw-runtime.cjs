@@ -12,6 +12,10 @@
 const fs = require('fs');
 const path = require('path');
 
+function resolveRepoRoot() {
+  return path.resolve(__dirname, '..');
+}
+
 // ─── Strategy 1: File cleanup patterns ───
 
 const PATTERNS_TO_DELETE = [
@@ -173,6 +177,126 @@ function cleanDir(dirPath, stats) {
   }
 }
 
+// ─── Extension pruning policy ───
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function listLocalExtensionIds(repoRoot) {
+  const sourceDir = path.join(repoRoot, 'openclaw-extensions');
+  if (!fs.existsSync(sourceDir)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(sourceDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+}
+
+function loadExtensionPrunePolicy(repoRoot) {
+  const policyPath = path.join(repoRoot, 'resources', 'openclaw-extension-prune.json');
+  if (!fs.existsSync(policyPath)) {
+    return { policyPath, keep: [], protected: [] };
+  }
+
+  const policy = readJson(policyPath);
+  if (!Array.isArray(policy.keep)) {
+    throw new Error(`Invalid extension prune policy, "keep" must be an array: ${policyPath}`);
+  }
+
+  return {
+    policyPath,
+    keep: policy.keep,
+    protected: listLocalExtensionIds(repoRoot),
+  };
+}
+
+function pruneRuntimeExtensions(runtimeRoot, stats, options = {}) {
+  const repoRoot = options.repoRoot || resolveRepoRoot();
+  const label = options.label || 'prune-openclaw-runtime';
+  const extensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
+  if (!fs.existsSync(extensionsDir)) {
+    return;
+  }
+
+  const policy = loadExtensionPrunePolicy(repoRoot);
+  if (policy.keep.length === 0) {
+    console.log(`[${label}] No extension keep policy found, skipping extension directory pruning.`);
+    return { kept: [], protected: [], removed: [] };
+  }
+
+  const keep = new Set([...policy.keep, ...policy.protected]);
+  const removed = [];
+  const protectedKept = [];
+
+  for (const entry of fs.readdirSync(extensionsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    if (keep.has(entry.name)) {
+      if (policy.protected.includes(entry.name) && !policy.keep.includes(entry.name)) {
+        protectedKept.push(entry.name);
+      }
+      continue;
+    }
+
+    const fullPath = path.join(extensionsDir, entry.name);
+    const size = getDirectorySize(fullPath);
+    fs.rmSync(fullPath, { recursive: true, force: true });
+    removed.push(entry.name);
+    stats.extensionDirsRemoved++;
+    stats.bytesFreed += size;
+  }
+
+  console.log(
+    `[${label}] Extension keep policy: kept ${policy.keep.length} OpenClaw-managed extensions`
+      + (protectedKept.length > 0 ? `, protected local extensions: ${protectedKept.join(', ')}` : ''),
+  );
+  console.log(
+    `[${label}] Removed ${removed.length} extension dirs`
+      + (removed.length > 0 ? `: ${removed.join(', ')}` : ''),
+  );
+
+  return { kept: policy.keep, protected: protectedKept, removed };
+}
+
+function getDirectorySize(dirPath) {
+  let total = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    try {
+      if (entry.isDirectory()) {
+        total += getDirectorySize(fullPath);
+      } else if (entry.isFile()) {
+        total += fs.statSync(fullPath).size;
+      }
+    } catch { /* ignore */ }
+  }
+
+  return total;
+}
+
+function logSummary(stats) {
+  const mbFreed = (stats.bytesFreed / 1024 / 1024).toFixed(1);
+  console.log(
+    `[prune-openclaw-runtime] Stubbed: ${stats.stubbed.length > 0 ? stats.stubbed.join(', ') : 'none'}`
+  );
+  console.log(
+    `[prune-openclaw-runtime] Removed ${stats.filesRemoved} files, ${stats.dirsRemoved} dirs, `
+      + `${stats.extensionDirsRemoved} extension dirs, freed ${mbFreed} MB`
+  );
+}
+
 // ─── Main ───
 
 function main() {
@@ -184,15 +308,16 @@ function main() {
     process.exit(1);
   }
 
-  const nodeModulesDir = path.join(runtimeRoot, 'node_modules');
-  if (!fs.existsSync(nodeModulesDir)) {
-    console.log('[prune-openclaw-runtime] No node_modules found, skipping.');
-    return;
-  }
-
   console.log(`[prune-openclaw-runtime] Cleaning ${runtimeRoot} ...`);
 
-  const stats = { filesRemoved: 0, dirsRemoved: 0, bytesFreed: 0, stubbed: [] };
+  const stats = { filesRemoved: 0, dirsRemoved: 0, extensionDirsRemoved: 0, bytesFreed: 0, stubbed: [] };
+
+  const nodeModulesDir = path.join(runtimeRoot, 'node_modules');
+  if (!fs.existsSync(nodeModulesDir)) {
+    console.log('[prune-openclaw-runtime] No node_modules found, skipping node_modules cleanup.');
+    logSummary(stats);
+    return;
+  }
 
   // Step 1: Replace large unnecessary packages with stubs
   for (const pkgName of PACKAGES_TO_STUB) {
@@ -232,13 +357,13 @@ function main() {
     } catch { /* ignore */ }
   }
 
-  const mbFreed = (stats.bytesFreed / 1024 / 1024).toFixed(1);
-  console.log(
-    `[prune-openclaw-runtime] Stubbed: ${stats.stubbed.length > 0 ? stats.stubbed.join(', ') : 'none'}`
-  );
-  console.log(
-    `[prune-openclaw-runtime] Removed ${stats.filesRemoved} files, ${stats.dirsRemoved} dirs, freed ${mbFreed} MB`
-  );
+  logSummary(stats);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  pruneRuntimeExtensions,
+};
