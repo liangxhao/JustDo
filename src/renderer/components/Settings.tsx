@@ -1,10 +1,7 @@
-import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
 import {
-  ArrowTopRightOnSquareIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
   CubeIcon,
-  SignalIcon,
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -16,24 +13,13 @@ import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
 import {
   type AppConfig,
   defaultConfig,
-  getCustomProviderDefaultName,
   getProviderDisplayName,
   getVisibleProviders,
-  isBuiltinModelsProvider,
   isCustomProvider,
-  validateDisplayName,
 } from '../config';
-import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import { agentService } from '../services/agent';
 import { configService } from '../services/config';
 import { coworkService } from '../services/cowork';
-import {
-  decryptSecret,
-  decryptWithPassword,
-  EncryptedPayload,
-  encryptWithPassword,
-  PasswordEncryptedPayload,
-} from '../services/encryption';
 import { i18nService, LanguageType } from '../services/i18n';
 import { themeService } from '../services/theme';
 import { RootState } from '../store';
@@ -45,14 +31,11 @@ import AgentCreateModal from './agent/AgentCreateModal';
 import AgentSettingsPanel from './agent/AgentSettingsPanel';
 import Modal from './common/Modal';
 import ErrorMessage from './ErrorMessage';
-import PencilIcon from './icons/PencilIcon';
-import PlusCircleIcon from './icons/PlusCircleIcon';
-import { CustomProviderIcon, OllamaIcon } from './icons/providers';
-import TrashIcon from './icons/TrashIcon';
 import ShortcutsSettings, {
   shortcutLabelMap,
   type ShortcutSettingsValue,
 } from './settings/ShortcutsSettings';
+import ModelSettingsTab from './settings/ModelSettingsTab';
 import ThemedSelect from './ui/ThemedSelect';
 
 type TabType = 'general' | 'model' | 'myAgents' | 'im' | 'shortcuts' | 'help';
@@ -78,7 +61,6 @@ type BuiltinProviderType = (typeof BUILTIN_PROVIDER_KEYS)[number];
 type ProviderType = string;
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 type ProviderConfig = ProvidersConfig[string];
-type Model = NonNullable<ProviderConfig['models']>[number];
 type ProviderConnectionTestResult = {
   success: boolean;
   message: string;
@@ -90,61 +72,20 @@ type ProviderConnectionTestResult = {
   log?: string;
 };
 
-interface ProviderExportEntry {
-  enabled: boolean;
-  apiKey: PasswordEncryptedPayload;
-  baseUrl: string;
-  apiFormat?: 'openai';
-  models?: Model[];
-  /** Display name shown in UI (for custom providers: displayName, for built-in: label) */
-  displayName?: string;
-}
-
-interface ProvidersExportPayload {
-  type: typeof EXPORT_FORMAT_TYPE;
-  version: 2;
-  exportedAt: string;
-  encryption: {
-    algorithm: 'AES-GCM';
-    keySource: 'password';
-    keyDerivation: 'PBKDF2';
-  };
-  providers: Record<string, ProviderExportEntry>;
-}
-
-interface ProvidersImportEntry {
-  enabled?: boolean;
-  apiKey?: EncryptedPayload | PasswordEncryptedPayload | string;
-  apiKeyEncrypted?: string;
-  apiKeyIv?: string;
-  baseUrl?: string;
-  apiFormat?: 'openai';
-  models?: Model[];
-  displayName?: string;
-}
-
-interface ProvidersImportPayload {
-  type?: string;
-  version?: number;
-  encryption?: {
-    algorithm?: string;
-    keySource?: string;
-    keyDerivation?: string;
-  };
-  providers?: Record<string, ProvidersImportEntry>;
-}
-
-const providerMeta: Record<BuiltinProviderType, { label: string; icon: React.ReactNode }> = {
-  ollama: { label: 'Ollama', icon: <OllamaIcon /> },
-};
-
-const providerLinks: Partial<Record<ProviderType, { website: string; apiKey?: string }>> = {
-  ollama: { website: 'https://ollama.com' },
+type ModelConnectionTestResult = {
+  success: boolean;
+  modelLabel: string;
+  modelId: string;
+  detail: string;
+  log?: string;
 };
 
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'ollama';
+const providerMeta: Record<BuiltinProviderType, { label: string; icon: React.ReactNode }> = {
+  ollama: { label: 'Ollama', icon: <></> },
+};
 const isProviderReadOnly = (provider: ProviderType, config?: ProviderConfig): boolean =>
-  isBuiltinModelsProvider(provider) || config?.readonly === true;
+  provider === 'builtin_models' || config?.readonly === true;
 const getProviderDefaultBaseUrl = (provider: ProviderType): string | null =>
   defaultConfig.providers?.[provider]?.baseUrl ?? null;
 const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
@@ -154,18 +95,6 @@ const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
   return getProviderDefaultBaseUrl(provider) || '';
 };
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
-
-const getProviderLabel = (provider: ProviderType, config?: ProviderConfig): string => {
-  if (isBuiltinModelsProvider(provider)) {
-    return i18nService.t('builtinModelsProvider');
-  }
-  if (isCustomProvider(provider)) {
-    return config?.displayName || getCustomProviderDefaultName(provider);
-  }
-  return (
-    providerMeta[provider as BuiltinProviderType]?.label ?? getProviderDisplayName(provider, config)
-  );
-};
 
 const stringifyConnectivityLogValue = (value: unknown): string => {
   if (typeof value === 'string') {
@@ -394,14 +323,6 @@ const UninstalledPresetCard: React.FC<{
   </div>
 );
 
-/** Format context length number to a human-readable string like "200k" */
-const formatContextLength = (tokens: number): string => {
-  if (tokens >= 1_000_000)
-    return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
-  if (tokens >= 1_000) return `${tokens / 1_000}k`;
-  return `${tokens}`;
-};
-
 const Settings: React.FC<SettingsProps> = ({
   onClose,
   initialTab,
@@ -436,10 +357,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [isTestResultModalOpen, setIsTestResultModalOpen] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
-  const [isImportingProviders, setIsImportingProviders] = useState(false);
-  const [isExportingProviders, setIsExportingProviders] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(220);
-  const [providerListWidth, setProviderListWidth] = useState(260);
   const [appVersion, setAppVersion] = useState<string>('unknown');
   const [openclawVersion, setOpenclawVersion] = useState<string>('unknown');
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
@@ -456,17 +374,12 @@ const Settings: React.FC<SettingsProps> = ({
 
   // Add state for active provider
   const [activeProvider, setActiveProvider] = useState<ProviderType>(getDefaultActiveProvider());
-  const [showApiKey, setShowApiKey] = useState(false);
-
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
-
-  const isBaseUrlLocked = false;
+  const [isRefreshingBuiltinModels, setIsRefreshingBuiltinModels] = useState(false);
 
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
-
   const startHorizontalResize = useCallback(
     (
       event: React.MouseEvent<HTMLDivElement>,
@@ -517,10 +430,6 @@ const Settings: React.FC<SettingsProps> = ({
 
   // State for displayName validation
   const [displayNameError, setDisplayNameError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setShowApiKey(false);
-  }, [activeProvider]);
 
   const coworkConfig = useSelector(selectCoworkConfig);
 
@@ -820,7 +729,6 @@ const Settings: React.FC<SettingsProps> = ({
       },
     }));
     setActiveProvider(newKey);
-    setShowApiKey(false);
     setIsAddingModel(false);
     setIsEditingModel(false);
     setEditingModelId(null);
@@ -830,11 +738,28 @@ const Settings: React.FC<SettingsProps> = ({
     setModelFormError(null);
   };
 
-  // Handle deleting a custom provider
-  const handleDeleteCustomProvider = (key: ProviderType) => {
-    setPendingDeleteProvider(key);
+  const handleRefreshBuiltinModels = async () => {
+    setError(null);
+    setIsRefreshingBuiltinModels(true);
+    try {
+      const result = await window.electron.builtinModels.refresh();
+      if (!result.success) {
+        setError(result.error || i18nService.t('connectionFailed'));
+      } else {
+        const freshConfig = await window.electron.store.get('app_config');
+        if (freshConfig && typeof freshConfig === 'object') {
+          await configService.updateConfig(freshConfig as Partial<AppConfig>);
+        }
+      }
+    } catch (error) {
+      console.error('[Settings] Failed to refresh builtin models:', error);
+      setError(error instanceof Error ? error.message : i18nService.t('connectionFailed'));
+    } finally {
+      setIsRefreshingBuiltinModels(false);
+    }
   };
 
+  // Handle deleting a custom provider
   const confirmDeleteCustomProvider = () => {
     const key = pendingDeleteProvider;
     if (!key) return;
@@ -1269,9 +1194,8 @@ const Settings: React.FC<SettingsProps> = ({
       return;
     }
 
-    // 获取第一个可用模型 - use a shallow copy to avoid mutating state
-    const originalModel = providerConfig.models?.[0];
-    if (!originalModel) {
+    const originalModels = providerConfig.models ?? [];
+    if (originalModels.length === 0) {
       showTestResultModal(
         { success: false, message: i18nService.t('noModelsConfigured') },
         testingProvider,
@@ -1280,86 +1204,111 @@ const Settings: React.FC<SettingsProps> = ({
       return;
     }
 
-    const firstModel = { ...originalModel };
-    const modelLabel = firstModel.name?.trim() || firstModel.id;
+    const modelsToTest = originalModels.map(model => ({ ...model }));
 
     try {
-      let response: Awaited<ReturnType<typeof window.electron.api.fetch>>;
       const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl);
       const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
       const effectiveApiKey = providerConfig.apiKey;
-
       const openaiUrl = `${normalizedBaseUrl}/chat/completions`;
-      const testContext = {
-        baseUrl: normalizedBaseUrl,
-        modelLabel,
-        modelId: firstModel.id,
-      };
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
       if (effectiveApiKey) {
         headers.Authorization = `Bearer ${effectiveApiKey}`;
       }
-      const openAIRequestBody: Record<string, unknown> = {
-        model: firstModel.id,
-        messages: [{ role: 'user', content: 'Hi' }],
-        max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
-      };
-      response = await window.electron.api.fetch({
-        url: openaiUrl,
-        method: 'POST',
-        headers,
-        body: JSON.stringify(openAIRequestBody),
-      });
 
-      if (response.ok) {
-        enableProvider(testingProvider);
-        showTestResultModal(
-          {
-            success: true,
-            message: i18nService.t('connectionSuccess'),
-            ...testContext,
-          },
-          testingProvider,
-        );
-      } else {
-        const data = response.data || {};
-        // 提取错误信息
-        const errorMessage =
-          data.error?.message ||
-          data.message ||
-          `${i18nService.t('connectionFailed')}: ${response.status}`;
-        if (
-          typeof errorMessage === 'string' &&
-          errorMessage.toLowerCase().includes('model output limit was reached')
-        ) {
-          enableProvider(testingProvider);
-          showTestResultModal(
-            {
+      const results: ModelConnectionTestResult[] = [];
+      for (const model of modelsToTest) {
+        const modelLabel = model.name?.trim() || model.id;
+        const requestBody: Record<string, unknown> = {
+          model: model.id,
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
+        };
+
+        try {
+          const response = await window.electron.api.fetch({
+            url: openaiUrl,
+            method: 'POST',
+            headers,
+            body: JSON.stringify(requestBody),
+          });
+          if (response.ok) {
+            results.push({
               success: true,
-              message: i18nService.t('connectionSuccess'),
-              ...testContext,
-            },
-            testingProvider,
-          );
-          return;
-        }
-        showTestResultModal(
-          {
-            success: false,
-            message: errorMessage,
-            ...testContext,
+              modelLabel,
+              modelId: model.id,
+              detail: i18nService.t('connectionSuccess'),
+            });
+            continue;
+          }
+
+          const data = response.data || {};
+          const errorMessage =
+            data.error?.message ||
+            data.message ||
+            `${i18nService.t('connectionFailed')}: ${response.status}`;
+          const recovered =
+            typeof errorMessage === 'string' &&
+            errorMessage.toLowerCase().includes('model output limit was reached');
+
+          results.push({
+            success: recovered,
+            modelLabel,
+            modelId: model.id,
+            detail: recovered ? i18nService.t('connectionSuccess') : errorMessage,
             log: [
               `${i18nService.t('testRequestUrl')}: ${openaiUrl}`,
-              `${i18nService.t('testModel')}: ${modelLabel} (${firstModel.id})`,
+              `${i18nService.t('testModel')}: ${modelLabel} (${model.id})`,
               `${i18nService.t('testStatus')}: ${response.status}`,
               `${i18nService.t('testResponse')}: ${stringifyConnectivityLogValue(data)}`,
             ].join('\n'),
-          },
-          testingProvider,
-        );
+          });
+        } catch (err) {
+          results.push({
+            success: false,
+            modelLabel,
+            modelId: model.id,
+            detail: err instanceof Error ? err.message : i18nService.t('connectionFailed'),
+            log: [
+              `${i18nService.t('testRequestUrl')}: ${openaiUrl}`,
+              `${i18nService.t('testModel')}: ${modelLabel} (${model.id})`,
+              `${i18nService.t('testError')}: ${
+                err instanceof Error ? err.stack || err.message : stringifyConnectivityLogValue(err)
+              }`,
+            ].join('\n'),
+          });
+        }
       }
+
+      const passedCount = results.filter(result => result.success).length;
+      const allPassed = passedCount === results.length;
+      if (allPassed) {
+        enableProvider(testingProvider);
+      }
+
+      showTestResultModal(
+        {
+          success: allPassed,
+          message: `${i18nService.t('connectionTestSummary')
+            .replace('{passed}', String(passedCount))
+            .replace('{total}', String(results.length))}${allPassed ? `\n${i18nService.t('connectionSuccess')}` : ''}`,
+          baseUrl: normalizedBaseUrl,
+          log: results
+            .map(result =>
+              [
+                `${result.success ? 'PASS' : 'FAIL'} ${result.modelLabel} (${result.modelId})`,
+                result.detail,
+                result.log ? result.log : null,
+              ]
+                .filter(Boolean)
+                .join('\n'),
+            )
+            .join('\n\n'),
+        },
+        testingProvider,
+      );
     } catch (err) {
       const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl).replace(
         /\/+$/,
@@ -1370,11 +1319,11 @@ const Settings: React.FC<SettingsProps> = ({
           success: false,
           message: err instanceof Error ? err.message : i18nService.t('connectionFailed'),
           baseUrl: effectiveBaseUrl,
-          modelLabel,
-          modelId: firstModel.id,
+          modelLabel: modelsToTest[0]?.name?.trim() || modelsToTest[0]?.id,
+          modelId: modelsToTest[0]?.id,
           log: [
             `${i18nService.t('testRequestUrl')}: ${effectiveBaseUrl}/chat/completions`,
-            `${i18nService.t('testModel')}: ${modelLabel} (${firstModel.id})`,
+            `${i18nService.t('testModel')}: ${modelsToTest[0]?.name?.trim() || modelsToTest[0]?.id} (${modelsToTest[0]?.id})`,
             `${i18nService.t('testError')}: ${
               err instanceof Error ? err.stack || err.message : stringifyConnectivityLogValue(err)
             }`,
@@ -1384,352 +1333,6 @@ const Settings: React.FC<SettingsProps> = ({
       );
     } finally {
       setIsTesting(false);
-    }
-  };
-
-  const buildProvidersExport = async (password: string): Promise<ProvidersExportPayload> => {
-    const entries = await Promise.all(
-      Object.entries(providers)
-        .filter(([providerKey, providerConfig]) => !isProviderReadOnly(providerKey, providerConfig))
-        .map(async ([providerKey, providerConfig]) => {
-          const apiKey = await encryptWithPassword(providerConfig.apiKey, password);
-          const isCustom = isCustomProvider(providerKey);
-          const displayName = isCustom
-            ? (providerConfig as ProviderConfig).displayName ||
-              getCustomProviderDefaultName(providerKey)
-            : (providerMeta[providerKey as BuiltinProviderType]?.label ??
-              getProviderDisplayName(providerKey));
-          return [
-            providerKey,
-            {
-              enabled: providerConfig.enabled,
-              apiKey,
-              baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl),
-              apiFormat: 'openai' as const,
-              models: providerConfig.models,
-              displayName,
-            },
-          ] as const;
-        }),
-    );
-
-    return {
-      type: EXPORT_FORMAT_TYPE,
-      version: 2,
-      exportedAt: new Date().toISOString(),
-      encryption: {
-        algorithm: 'AES-GCM',
-        keySource: 'password',
-        keyDerivation: 'PBKDF2',
-      },
-      providers: Object.fromEntries(entries),
-    };
-  };
-
-  const normalizeModels = (models?: Model[]) =>
-    models?.map(model => ({
-      ...model,
-      supportsImage: model.supportsImage ?? false,
-    }));
-
-  const DEFAULT_EXPORT_PASSWORD = EXPORT_PASSWORD;
-
-  const handleExportProviders = async () => {
-    setError(null);
-    setIsExportingProviders(true);
-
-    try {
-      const payload = await buildProvidersExport(DEFAULT_EXPORT_PASSWORD);
-      const json = JSON.stringify(payload, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const date = new Date().toISOString().slice(0, 10);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${APP_ID}-providers-${date}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch (err) {
-      console.error('Failed to export providers:', err);
-      setError(i18nService.t('exportProvidersFailed'));
-    } finally {
-      setIsExportingProviders(false);
-    }
-  };
-
-  const handleImportProvidersClick = () => {
-    importInputRef.current?.click();
-  };
-
-  const handleImportProviders = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) {
-      return;
-    }
-
-    setError(null);
-
-    try {
-      const raw = await file.text();
-      let payload: ProvidersImportPayload;
-      try {
-        payload = JSON.parse(raw) as ProvidersImportPayload;
-      } catch (parseError) {
-        setError(i18nService.t('invalidProvidersFile'));
-        return;
-      }
-
-      if (!payload || payload.type !== EXPORT_FORMAT_TYPE || !payload.providers) {
-        setError(i18nService.t('invalidProvidersFile'));
-        return;
-      }
-
-      // Check if it's version 2 (password-based encryption)
-      if (payload.version === 2 && payload.encryption?.keySource === 'password') {
-        await processImportPayloadWithPassword(payload);
-        return;
-      }
-
-      // Version 1 (legacy local-store key) - try to decrypt with local key
-      if (payload.version === 1) {
-        await processImportPayloadWithLocalKey(payload);
-        return;
-      }
-
-      setError(i18nService.t('invalidProvidersFile'));
-    } catch (err) {
-      console.error('Failed to import providers:', err);
-      setError(i18nService.t('importProvidersFailed'));
-    }
-  };
-
-  const processImportPayloadWithLocalKey = async (payload: ProvidersImportPayload) => {
-    setIsImportingProviders(true);
-    try {
-      const providerUpdates: Partial<ProvidersConfig> = {};
-      let hadDecryptFailure = false;
-
-      // Iterate over all provider keys in the import payload
-      const payloadProviderKeys = Object.keys(payload.providers || {});
-      for (const providerKey of payloadProviderKeys) {
-        if (isProviderReadOnly(providerKey, providers[providerKey])) {
-          continue;
-        }
-        // For built-in providers, check if they exist in current config
-        // For custom providers (custom_N), create new entry if not exists
-        const isCustom = isCustomProvider(providerKey);
-        if (!isCustom && !providers[providerKey]) {
-          console.warn(`Skipping unknown built-in provider: ${providerKey}`);
-          continue;
-        }
-        const providerData = payload.providers?.[providerKey];
-        if (!providerData) {
-          continue;
-        }
-
-        // For custom providers not yet in config, use empty defaults
-        const currentConfig = providers[providerKey] || {
-          enabled: false,
-          apiKey: '',
-          baseUrl: '',
-          apiFormat: 'openai' as const,
-          models: [],
-        };
-
-        let apiKey: string | undefined;
-        if (typeof providerData.apiKey === 'string') {
-          apiKey = providerData.apiKey;
-        } else if (providerData.apiKey && typeof providerData.apiKey === 'object') {
-          try {
-            apiKey = await decryptSecret(providerData.apiKey as EncryptedPayload);
-          } catch (error) {
-            hadDecryptFailure = true;
-            console.warn(`Failed to decrypt provider key for ${providerKey}`, error);
-          }
-        } else if (
-          typeof providerData.apiKeyEncrypted === 'string' &&
-          typeof providerData.apiKeyIv === 'string'
-        ) {
-          try {
-            apiKey = await decryptSecret({
-              encrypted: providerData.apiKeyEncrypted,
-              iv: providerData.apiKeyIv,
-            });
-          } catch (error) {
-            hadDecryptFailure = true;
-            console.warn(`Failed to decrypt provider key for ${providerKey}`, error);
-          }
-        }
-
-        const models = normalizeModels(providerData.models);
-
-        providerUpdates[providerKey] = {
-          enabled:
-            typeof providerData.enabled === 'boolean'
-              ? providerData.enabled
-              : currentConfig.enabled,
-          apiKey: apiKey ?? currentConfig.apiKey,
-          baseUrl:
-            typeof providerData.baseUrl === 'string' ? providerData.baseUrl : currentConfig.baseUrl,
-          apiFormat: 'openai',
-          models: models ?? currentConfig.models,
-          ...(isCustom && providerData.displayName
-            ? { displayName: providerData.displayName }
-            : {}),
-        };
-      }
-
-      if (Object.keys(providerUpdates).length === 0) {
-        setError(i18nService.t('invalidProvidersFile'));
-        return;
-      }
-
-      setProviders(prev => {
-        const next = { ...prev };
-        Object.entries(providerUpdates).forEach(([providerKey, update]) => {
-          next[providerKey] = {
-            ...prev[providerKey],
-            ...update,
-          };
-        });
-        return next;
-      });
-      setIsTestResultModalOpen(false);
-      setTestResult(null);
-      if (hadDecryptFailure) {
-        setNoticeMessage(i18nService.t('decryptProvidersPartial'));
-      }
-    } catch (err) {
-      console.error('Failed to import providers:', err);
-      const isDecryptError =
-        err instanceof Error &&
-        (err.message === 'Invalid encrypted payload' || err.name === 'OperationError');
-      const message = isDecryptError
-        ? i18nService.t('decryptProvidersFailed')
-        : i18nService.t('importProvidersFailed');
-      setError(message);
-    } finally {
-      setIsImportingProviders(false);
-    }
-  };
-
-  const processImportPayloadWithPassword = async (payload: ProvidersImportPayload) => {
-    if (!payload.providers) {
-      return;
-    }
-
-    setIsImportingProviders(true);
-
-    try {
-      const providerUpdates: Partial<ProvidersConfig> = {};
-      let hadDecryptFailure = false;
-
-      // Iterate over all provider keys in the import payload
-      const payloadProviderKeys = Object.keys(payload.providers);
-      for (const providerKey of payloadProviderKeys) {
-        if (isProviderReadOnly(providerKey, providers[providerKey])) {
-          continue;
-        }
-        // For built-in providers, check if they exist in current config
-        // For custom providers (custom_N), create new entry if not exists
-        const isCustom = isCustomProvider(providerKey);
-        if (!isCustom && !providers[providerKey]) {
-          console.warn(`Skipping unknown built-in provider: ${providerKey}`);
-          continue;
-        }
-        const providerData = payload.providers[providerKey];
-        if (!providerData) {
-          continue;
-        }
-
-        // For custom providers not yet in config, use empty defaults
-        const currentConfig = providers[providerKey] || {
-          enabled: false,
-          apiKey: '',
-          baseUrl: '',
-          apiFormat: 'openai' as const,
-          models: [],
-        };
-
-        let apiKey: string | undefined;
-        if (typeof providerData.apiKey === 'string') {
-          apiKey = providerData.apiKey;
-        } else if (providerData.apiKey && typeof providerData.apiKey === 'object') {
-          const apiKeyObj = providerData.apiKey as PasswordEncryptedPayload;
-          if (apiKeyObj.salt) {
-            // Version 2 password-based encryption
-            try {
-              apiKey = await decryptWithPassword(apiKeyObj, DEFAULT_EXPORT_PASSWORD);
-            } catch (error) {
-              hadDecryptFailure = true;
-              console.warn(`Failed to decrypt provider key for ${providerKey}`, error);
-            }
-          }
-        }
-
-        const models = normalizeModels(providerData.models);
-
-        providerUpdates[providerKey] = {
-          enabled:
-            typeof providerData.enabled === 'boolean'
-              ? providerData.enabled
-              : currentConfig.enabled,
-          apiKey: apiKey ?? currentConfig.apiKey,
-          baseUrl:
-            typeof providerData.baseUrl === 'string' ? providerData.baseUrl : currentConfig.baseUrl,
-          apiFormat: 'openai',
-          models: models ?? currentConfig.models,
-          ...(isCustom && providerData.displayName
-            ? { displayName: providerData.displayName }
-            : {}),
-        };
-      }
-
-      if (Object.keys(providerUpdates).length === 0) {
-        setError(i18nService.t('invalidProvidersFile'));
-        return;
-      }
-
-      // Check if any key was successfully decrypted
-      const anyKeyDecrypted = Object.entries(providerUpdates).some(
-        ([key, update]) => update?.apiKey && update.apiKey !== providers[key]?.apiKey,
-      );
-
-      if (!anyKeyDecrypted && hadDecryptFailure) {
-        // All decryptions failed - likely wrong password
-        setError(i18nService.t('decryptProvidersFailed'));
-        return;
-      }
-
-      setProviders(prev => {
-        const next = { ...prev };
-        Object.entries(providerUpdates).forEach(([providerKey, update]) => {
-          next[providerKey] = {
-            ...prev[providerKey],
-            ...update,
-          };
-        });
-        return next;
-      });
-      setIsTestResultModalOpen(false);
-      setTestResult(null);
-      if (hadDecryptFailure) {
-        setNoticeMessage(i18nService.t('decryptProvidersPartial'));
-      }
-    } catch (err) {
-      console.error('Failed to import providers:', err);
-      const isDecryptError =
-        err instanceof Error &&
-        (err.message === 'Invalid encrypted payload' || err.name === 'OperationError');
-      const message = isDecryptError
-        ? i18nService.t('decryptProvidersFailed')
-        : i18nService.t('importProvidersFailed');
-      setError(message);
-    } finally {
-      setIsImportingProviders(false);
     }
   };
 
@@ -2375,474 +1978,26 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'model':
         return (
-          <div className="flex h-full">
-            {/* Provider List - Left Side */}
-            <div
-              className="shrink-0 pr-3 space-y-1.5 overflow-y-auto"
-              style={{ width: providerListWidth }}
-            >
-              <div className="flex items-center justify-between mb-2 px-1">
-                <h3 className="text-sm font-medium text-foreground">
-                  {i18nService.t('modelProviders')}
-                </h3>
-                <div className="flex items-center space-x-1">
-                  <button
-                    type="button"
-                    onClick={handleImportProvidersClick}
-                    disabled={isImportingProviders || isExportingProviders}
-                    className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
-                  >
-                    {i18nService.t('import')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleExportProviders}
-                    disabled={isImportingProviders || isExportingProviders}
-                    className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
-                  >
-                    {i18nService.t('export')}
-                  </button>
-                </div>
-              </div>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept="application/json"
-                className="hidden"
-                onChange={handleImportProviders}
-              />
-              {Object.entries(visibleProviders).map(([provider, config]) => {
-                const providerKey = provider as ProviderType;
-                const isCustom = isCustomProvider(provider);
-                const providerInfo =
-                  providerMeta[providerKey as BuiltinProviderType] ??
-                  (isCustom
-                    ? {
-                        label: getCustomProviderDefaultName(provider),
-                        icon: <CustomProviderIcon />,
-                      }
-                    : undefined);
-                const readOnlyProvider = isProviderReadOnly(providerKey, config);
-                const missingApiKey = providerRequiresApiKey(providerKey) && !config.apiKey.trim();
-                const canToggleProvider = !readOnlyProvider && (config.enabled || !missingApiKey);
-                const displayLabel = getProviderLabel(providerKey, config);
-                return (
-                  <div
-                    key={provider}
-                    onClick={() => handleProviderChange(providerKey)}
-                    className={`group flex items-center p-2 rounded-xl cursor-pointer transition-colors ${
-                      activeProvider === provider
-                        ? 'bg-primary-muted border border-primary shadow-subtle'
-                        : 'bg-surface hover:bg-surface-raised border border-transparent'
-                    }`}
-                  >
-                    <div className="flex flex-1 items-center min-w-0">
-                      <div className="mr-2 flex h-7 w-7 items-center justify-center shrink-0">
-                        <span className="text-foreground">
-                          {isCustom ? <CustomProviderIcon /> : providerInfo?.icon}
-                        </span>
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <span
-                          className={`text-sm font-medium truncate ${
-                            activeProvider === provider ? 'text-primary' : 'text-foreground'
-                          }`}
-                        >
-                          {displayLabel}
-                        </span>
-                        {isCustom && (
-                          <span className="text-[9px] leading-tight mt-0.5 text-primary">
-                            {i18nService.t('customBadge')}
-                          </span>
-                        )}
-                        {readOnlyProvider && (
-                          <span className="text-[9px] leading-tight mt-0.5 text-primary">
-                            {i18nService.t('builtinModelsProvider')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center ml-2 gap-1">
-                      {isCustom && (
-                        <button
-                          type="button"
-                          className="opacity-0 group-hover:opacity-100 transition-opacity text-claude-secondaryText hover:text-red-500 dark:text-claude-darkSecondaryText dark:hover:text-red-400 p-0.5"
-                          onClick={e => {
-                            e.stopPropagation();
-                            handleDeleteCustomProvider(providerKey);
-                          }}
-                          title={i18nService.t('deleteCustomProvider')}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
-                            className="w-3.5 h-3.5"
-                          >
-                            <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                          </svg>
-                        </button>
-                      )}
-                      <div
-                        title={!canToggleProvider ? i18nService.t('configureApiKey') : undefined}
-                        className={`w-7 h-4 rounded-full flex items-center transition-colors ${
-                          config.enabled ? 'bg-primary' : 'bg-gray-400 dark:bg-gray-600'
-                        } ${
-                          canToggleProvider ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
-                        }`}
-                        onClick={e => {
-                          e.stopPropagation();
-                          if (!canToggleProvider) {
-                            return;
-                          }
-                          toggleProviderEnabled(providerKey);
-                        }}
-                      >
-                        <div
-                          className={`w-3 h-3 rounded-full bg-white shadow-md transform transition-transform ${
-                            config.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
-                          }`}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              {/* Add Custom Provider Button */}
-              <button
-                type="button"
-                onClick={handleAddCustomProvider}
-                className="w-full flex items-center justify-center p-2 rounded-xl border border-dashed border-claude-border dark:border-claude-darkBorder text-claude-secondaryText dark:text-claude-darkSecondaryText hover:border-claude-accent hover:text-claude-accent transition-colors text-sm"
-              >
-                {i18nService.t('addCustomProvider')}
-              </button>
-            </div>
-
-            <div
-              className="group relative w-3 shrink-0 cursor-col-resize"
-              onMouseDown={event =>
-                startHorizontalResize(event, providerListWidth, setProviderListWidth, 210, 420)
-              }
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={i18nService.t('resizePanels')}
-              title={i18nService.t('resizePanels')}
-            >
-              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary" />
-            </div>
-
-            {/* Provider Settings - Right Side */}
-            <div className="min-w-0 flex-1 pl-2 pr-2 space-y-4 overflow-y-auto [scrollbar-gutter:stable]">
-              <div className="flex items-center justify-between pb-2 border-b border-border">
-                <div className="flex items-center gap-1.5">
-                  <h3 className="text-base font-medium text-foreground">
-                    {getProviderLabel(activeProvider, providers[activeProvider])}{' '}
-                    {i18nService.t('providerSettings')}
-                  </h3>
-                  {providerLinks[activeProvider]?.website && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void window.electron.shell.openExternal(
-                          providerLinks[activeProvider]!.website,
-                        )
-                      }
-                      className="p-0.5 rounded text-secondary hover:text-primary transition-colors"
-                      title={i18nService.t('visitOfficialSite')}
-                      aria-label={i18nService.t('visitOfficialSite')}
-                    >
-                      <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-                <div
-                  className={`px-2 py-0.5 rounded-lg text-xs font-medium ${
-                    providers[activeProvider].enabled
-                      ? 'bg-green-500/20 text-green-600 dark:text-green-400'
-                      : 'bg-red-500/20 text-red-600 dark:text-red-400'
-                  }`}
-                >
-                  {providers[activeProvider].enabled
-                    ? i18nService.t('providerStatusOn')
-                    : i18nService.t('providerStatusOff')}
-                </div>
-              </div>
-
-              {isProviderReadOnly(activeProvider, providers[activeProvider]) && (
-                <div className="rounded-xl border border-border bg-surface p-3 text-xs text-secondary">
-                  {i18nService.t('builtinModelsReadOnlyHint')}
-                </div>
-              )}
-
-              {/* Standard API key section */}
-              {providerRequiresApiKey(activeProvider) &&
-                !isProviderReadOnly(activeProvider, providers[activeProvider]) && (
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label
-                        htmlFor={`${activeProvider}-apiKey`}
-                        className="block text-xs font-medium dark:text-claude-darkText text-claude-text"
-                      >
-                        {i18nService.t('apiKey')}
-                      </label>
-                      {providerLinks[activeProvider]?.apiKey && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void window.electron.shell.openExternal(
-                              providerLinks[activeProvider]!.apiKey!,
-                            )
-                          }
-                          className="text-[11px] text-claude-accent hover:underline transition-colors"
-                        >
-                          {i18nService.t('getApiKey')} →
-                        </button>
-                      )}
-                    </div>
-                    <div className="relative">
-                      <input
-                        type={showApiKey ? 'text' : 'password'}
-                        id={`${activeProvider}-apiKey`}
-                        value={providers[activeProvider].apiKey}
-                        onChange={e =>
-                          handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)
-                        }
-                        className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-16 text-xs"
-                        placeholder={i18nService.t('apiKeyPlaceholder')}
-                      />
-                      <div className="absolute right-2 inset-y-0 flex items-center gap-1">
-                        {providers[activeProvider].apiKey && (
-                          <button
-                            type="button"
-                            onClick={() => handleProviderConfigChange(activeProvider, 'apiKey', '')}
-                            className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
-                            title={i18nService.t('clear') || 'Clear'}
-                          >
-                            <XCircleIconSolid className="h-4 w-4" />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setShowApiKey(!showApiKey)}
-                          className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
-                          title={
-                            showApiKey
-                              ? i18nService.t('hide') || 'Hide'
-                              : i18nService.t('show') || 'Show'
-                          }
-                        >
-                          {showApiKey ? (
-                            <EyeIcon className="h-4 w-4" />
-                          ) : (
-                            <EyeSlashIcon className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-              {isCustomProvider(activeProvider) && (
-                <div>
-                  <label
-                    htmlFor={`${activeProvider}-displayName`}
-                    className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1"
-                  >
-                    {i18nService.t('customDisplayName')}
-                  </label>
-                  <input
-                    type="text"
-                    id={`${activeProvider}-displayName`}
-                    value={(providers[activeProvider] as ProviderConfig)?.displayName ?? ''}
-                    onChange={e => {
-                      const value = e.target.value;
-                      const validation = validateDisplayName(value);
-                      setDisplayNameError(validation.valid ? null : (validation.error ?? null));
-                      if (validation.valid) {
-                        handleProviderConfigChange(activeProvider, 'displayName', value);
-                      }
-                    }}
-                    className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
-                    placeholder={i18nService.t('customDisplayNamePlaceholder')}
-                  />
-                  {displayNameError && (
-                    <p className="mt-1 text-xs text-red-500">{displayNameError}</p>
-                  )}
-                </div>
-              )}
-
-              {!isProviderReadOnly(activeProvider, providers[activeProvider]) && (
-                <div>
-                  <label
-                    htmlFor={`${activeProvider}-baseUrl`}
-                    className="block text-xs font-medium text-foreground mb-1"
-                  >
-                    {i18nService.t('baseUrl')}
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      id={`${activeProvider}-baseUrl`}
-                      value={providers[activeProvider].baseUrl}
-                      onChange={e =>
-                        handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)
-                      }
-                      disabled={isBaseUrlLocked}
-                      className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      placeholder={
-                        getProviderDefaultBaseUrl(activeProvider) ||
-                        defaultConfig.providers?.[activeProvider]?.baseUrl ||
-                        i18nService.t('baseUrlPlaceholder')
-                      }
-                    />
-                    {providers[activeProvider].baseUrl && !isBaseUrlLocked && (
-                      <div className="absolute right-2 inset-y-0 flex items-center">
-                        <button
-                          type="button"
-                          onClick={() => handleProviderConfigChange(activeProvider, 'baseUrl', '')}
-                          className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
-                          title={i18nService.t('clear') || 'Clear'}
-                        >
-                          <XCircleIconSolid className="h-4 w-4" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {isCustomProvider(activeProvider) && (
-                    <div className="mt-1.5 space-y-0.5 text-[11px] text-secondary">
-                      <p>
-                        <span className="text-sm text-muted mr-1">•</span>
-                        {i18nService.t('baseUrlHint2')}
-                        <code className="ml-1 text-primary break-all">
-                          {i18nService.t('baseUrlHintExample2')}
-                        </code>
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* 测试连接按钮 */}
-              {!isProviderReadOnly(activeProvider, providers[activeProvider]) && (
-                <div className="flex items-center space-x-3">
-                  <button
-                    type="button"
-                    onClick={handleTestConnection}
-                    disabled={
-                      isTesting ||
-                      (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey)
-                    }
-                    className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
-                  >
-                    <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
-                    {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}
-                  </button>
-                </div>
-              )}
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <h3 className="text-xs font-medium text-foreground">
-                    {i18nService.t('availableModels')}
-                  </h3>
-                  {!isProviderReadOnly(activeProvider, providers[activeProvider]) && (
-                    <button
-                      type="button"
-                      onClick={handleAddModel}
-                      className="inline-flex items-center text-xs text-primary hover:text-primary-hover"
-                    >
-                      <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
-                      {i18nService.t('addModel')}
-                    </button>
-                  )}
-                </div>
-
-                {/* Models List */}
-                <div className="space-y-1.5 max-h-60 overflow-y-auto">
-                  {(providers[activeProvider].models ?? []).map(model => (
-                    <div
-                      key={model.id}
-                      className="bg-surface p-2 rounded-xl border-border border transition-colors hover:border-primary group"
-                    >
-                      <div className="flex items-center justify-between gap-2 min-w-0">
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <div className="w-1.5 h-1.5 shrink-0 rounded-full bg-green-400"></div>
-                          <div className="min-w-0">
-                            <div className="text-foreground font-medium text-[11px] truncate">
-                              {model.name}
-                            </div>
-                            <div className="text-[10px] text-secondary truncate">{model.id}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-center shrink-0 space-x-1">
-                          {model.supportsImage && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-primary-muted text-primary">
-                              {i18nService.t('imageInput')}
-                            </span>
-                          )}
-                          {model.contextLength && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-raised text-secondary">
-                              {formatContextLength(model.contextLength)}
-                            </span>
-                          )}
-                          {model.maxTokens && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-raised text-secondary">
-                              {formatContextLength(model.maxTokens)}
-                            </span>
-                          )}
-                          {!isProviderReadOnly(activeProvider, providers[activeProvider]) && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleEditModel(
-                                    model.id,
-                                    model.name,
-                                    model.supportsImage,
-                                    model.contextLength,
-                                    model.maxTokens,
-                                  )
-                                }
-                                className="p-0.5 text-secondary hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                <PencilIcon className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteModel(model.id)}
-                                className="p-0.5 text-secondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                <TrashIcon className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-
-                  {(!providers[activeProvider].models ||
-                    providers[activeProvider].models.length === 0) && (
-                    <div className="bg-surface p-2.5 rounded-xl border border-border-subtle text-center">
-                      <p className="text-[11px] text-secondary">
-                        {i18nService.t('noModelsAvailable')}
-                      </p>
-                      {!isProviderReadOnly(activeProvider, providers[activeProvider]) && (
-                        <button
-                          type="button"
-                          onClick={handleAddModel}
-                          className="mt-1.5 inline-flex items-center text-[11px] font-medium text-primary hover:text-primary-hover"
-                        >
-                          <PlusCircleIcon className="h-3 w-3 mr-1" />
-                          {i18nService.t('addFirstModel')}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          <ModelSettingsTab
+            activeProvider={activeProvider}
+            providers={providers}
+            isTesting={isTesting}
+            displayNameError={displayNameError}
+            providerRequiresApiKey={providerRequiresApiKey}
+            isProviderReadOnly={isProviderReadOnly}
+            getProviderDefaultBaseUrl={getProviderDefaultBaseUrl}
+            handleProviderChange={handleProviderChange}
+            handleProviderConfigChange={handleProviderConfigChange}
+            toggleProviderEnabled={toggleProviderEnabled}
+            handleAddCustomProvider={handleAddCustomProvider}
+            handleAddModel={handleAddModel}
+            handleEditModel={handleEditModel}
+            handleDeleteModel={handleDeleteModel}
+            handleTestConnection={handleTestConnection}
+            handleRefreshBuiltinModels={handleRefreshBuiltinModels}
+            isRefreshingBuiltinModels={isRefreshingBuiltinModels}
+            setDisplayNameError={setDisplayNameError}
+          />
         );
 
       case 'shortcuts':

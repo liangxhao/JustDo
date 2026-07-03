@@ -423,6 +423,9 @@ contextBridge.exposeInMainWorld('electron', {
     getOpenclawVersion: () => ipcRenderer.invoke('app:getOpenclawVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
   },
+  builtinModels: {
+    refresh: () => ipcRenderer.invoke('builtinModels:refresh'),
+  },
   log: {
     getPath: () => ipcRenderer.invoke('log:getPath'),
     openFolder: () => ipcRenderer.invoke('log:openFolder'),

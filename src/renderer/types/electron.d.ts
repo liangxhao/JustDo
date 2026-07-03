@@ -647,6 +647,9 @@ interface IElectronAPI {
     getOpenclawVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
   };
+  builtinModels: {
+    refresh: () => Promise<{ success: boolean; error?: string }>;
+  };
   log: {
     getPath: () => Promise<string>;
     openFolder: () => Promise<void>;

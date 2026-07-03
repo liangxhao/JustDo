@@ -1682,6 +1682,19 @@ if (!gotTheLock) {
     getStore().delete(key);
   });
 
+  ipcMain.handle('builtinModels:refresh', async () => {
+    try {
+      await syncBuiltinModelProvider(getStore());
+      return { success: true };
+    } catch (error) {
+      console.error('[BuiltinModelProvider] Manual refresh failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to refresh builtin models',
+      };
+    }
+  });
+
   // Network status change handler
   // Remove any existing listener first to avoid duplicate registrations
   ipcMain.removeAllListeners('network:status-change');
