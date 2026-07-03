@@ -4334,8 +4334,8 @@ if (!gotTheLock) {
 
       tryLoadURL();
 
-      // 打开开发者工具
-      mainWindow.webContents.openDevTools();
+      // 打开开发者工具并强制停靠到右侧，避免 Electron 记住上次的浮动/底部布局
+      mainWindow.webContents.openDevTools({ mode: 'right' });
     } else {
       // 生产环境
       mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
