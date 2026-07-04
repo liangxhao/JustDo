@@ -8,6 +8,7 @@ import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
 import { selectDraftAttachments, selectDraftPrompts } from '../../store/selectors/coworkSelectors';
+import { updateAgent } from '../../store/slices/agentSlice';
 import {
   addDraftAttachment,
   clearDraftAttachments,
@@ -15,7 +16,7 @@ import {
   setDraftAttachments,
   setDraftPrompt,
 } from '../../store/slices/coworkSlice';
-import { setSelectedModel, type Model } from '../../store/slices/modelSlice';
+import { type Model, setSelectedModel } from '../../store/slices/modelSlice';
 import { CoworkImageAttachment } from '../../types/cowork';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
@@ -1390,10 +1391,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                             setOptimisticSessionModel(nextModel);
                             try {
                               if (!sessionId) {
-                                await coworkService.setDefaultModel({
+                                const result = await coworkService.setDefaultModel({
                                   modelId: nextModel.id,
                                   providerKey: nextModel.providerKey,
+                                  agentId: currentAgentId,
                                 });
+                                if (!result.success) {
+                                  throw new Error(result.error || 'setDefaultModel failed');
+                                }
+                                const modelRef = toOpenClawModelRef(nextModel);
+                                if (modelRef) {
+                                  dispatch(
+                                    updateAgent({
+                                      id: currentAgentId,
+                                      updates: { model: modelRef },
+                                    }),
+                                  );
+                                }
                               } else {
                                 const modelRef = toOpenClawModelRef(nextModel);
                                 if (modelRef) {

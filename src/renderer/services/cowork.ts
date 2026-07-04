@@ -773,6 +773,7 @@ class CoworkService {
   async setDefaultModel(options: {
     modelId: string;
     providerKey?: string;
+    agentId?: string;
   }): Promise<{ success: boolean; error?: string }> {
     if (!window.electron?.cowork?.setDefaultModel) {
       return { success: false, error: 'setDefaultModel API not available' };

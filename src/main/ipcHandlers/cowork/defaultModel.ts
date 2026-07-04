@@ -31,7 +31,7 @@ export const registerDefaultModelHandlers = ({
   // Set default model in app_config (used when no agent/session exists)
   ipcMain.handle(
     'config:setDefaultModel',
-    async (_event, options: { modelId: string; providerKey?: string }) => {
+    async (_event, options: { modelId: string; providerKey?: string; agentId?: string }) => {
       try {
         const currentConfig = getStore().get<AppConfigWithModel>('app_config') || {};
         const updatedConfig = {
@@ -44,14 +44,16 @@ export const registerDefaultModelHandlers = ({
         };
         getStore().set('app_config', updatedConfig);
 
-        // Also update main agent's model in the database so agents.list reflects the new model
+        // Keep the selected agent in sync so the newly-created session resolves
+        // to the same model after the prompt input remounts.
         const modelRef = options.providerKey
           ? `${options.providerKey}/${options.modelId}`
           : options.modelId;
         try {
-          const mainAgent = getCoworkStore().getAgent('main');
-          if (mainAgent && mainAgent.model !== modelRef) {
-            getCoworkStore().updateAgent('main', { model: modelRef });
+          const agentId = options.agentId || 'main';
+          const selectedAgent = getCoworkStore().getAgent(agentId);
+          if (selectedAgent && selectedAgent.model !== modelRef) {
+            getCoworkStore().updateAgent(agentId, { model: modelRef });
           }
         } catch {
           // Non-fatal: agent update failed, config sync will still proceed

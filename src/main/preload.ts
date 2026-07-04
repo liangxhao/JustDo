@@ -273,7 +273,7 @@ contextBridge.exposeInMainWorld('electron', {
       executionMode?: 'auto' | 'local' | 'sandbox';
       agentEngine?: 'openclaw';
     }) => ipcRenderer.invoke('cowork:config:set', config),
-    setDefaultModel: (options: { modelId: string; providerKey?: string }) =>
+    setDefaultModel: (options: { modelId: string; providerKey?: string; agentId?: string }) =>
       ipcRenderer.invoke('config:setDefaultModel', options),
     // Stream event listeners
     onStreamMessage: (callback: (data: { sessionId: string; message: any }) => void) => {

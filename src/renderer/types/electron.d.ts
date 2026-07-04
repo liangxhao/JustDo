@@ -498,6 +498,7 @@ interface IElectronAPI {
     setDefaultModel: (options: {
       modelId: string;
       providerKey?: string;
+      agentId?: string;
     }) => Promise<{ success: boolean; error?: string }>;
     onStreamMessage: (
       callback: (data: { sessionId: string; message: CoworkMessage }) => void,
