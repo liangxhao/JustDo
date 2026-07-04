@@ -156,6 +156,7 @@ test('sync writes native moonshot provider config and migrates matching managed 
   const config = JSON.parse(fs.readFileSync(path.join(tmpDir, 'state', 'openclaw.json'), 'utf8'));
   assert.equal(config.models.providers.moonshot.baseUrl, 'https://api.moonshot.cn/v1');
   assert.equal(config.models.providers.moonshot.api, 'openai-completions');
+  assert.equal(config.models.pricing.enabled, false);
   assert.equal(config.agents.defaults.model.primary, 'moonshot/kimi-k2.5');
   assert.deepEqual(config.commands.ownerAllowFrom, ['gateway-client', '*']);
   assert.deepEqual(config.tools.deny, ['web_search']);

@@ -1137,7 +1137,7 @@ const applyProxyPreference = async (useSystemProxy: boolean): Promise<void> => {
     return;
   }
 
-  const proxyUrl = await resolveSystemProxyUrl('https://openrouter.ai');
+  const proxyUrl = await resolveSystemProxyUrl('https://proxy-check.invalid');
   applySystemProxyEnv(proxyUrl);
   outboundHeaderProxy.reapplyProcessEnvironment();
 

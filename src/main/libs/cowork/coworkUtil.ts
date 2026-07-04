@@ -1473,7 +1473,7 @@ export async function getEnhancedEnv(
   }
 
   // Resolve proxy from system settings
-  const proxyUrl = await resolveSystemProxyUrl('https://openrouter.ai');
+  const proxyUrl = await resolveSystemProxyUrl('https://proxy-check.invalid');
   if (proxyUrl) {
     env.http_proxy = proxyUrl;
     env.https_proxy = proxyUrl;

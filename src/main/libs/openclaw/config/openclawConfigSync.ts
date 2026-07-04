@@ -445,6 +445,9 @@ export class OpenClawConfigSync {
       },
       models: {
         mode: 'replace',
+        pricing: {
+          enabled: false,
+        },
         providers: allProvidersMap,
       },
       agents: {
@@ -970,6 +973,11 @@ export class OpenClawConfigSync {
         controlUi: {
           dangerouslyDisableDeviceAuth: true,
           allowedOrigins: [...CONTROL_UI_ALLOWED_ORIGINS],
+        },
+      },
+      models: {
+        pricing: {
+          enabled: false,
         },
       },
       // Don't enable plugins in minimal config — plugin loading via jiti happens
