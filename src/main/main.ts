@@ -2,7 +2,6 @@ import type { WebContents } from 'electron';
 import {
   app,
   BrowserWindow,
-  dialog,
   ipcMain,
   Menu,
   nativeImage,
@@ -23,6 +22,7 @@ import { isAutoLaunched } from './core/autoLaunchManager';
 import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
+import { resolveTaskWorkingDirectory } from './core/taskWorkspace';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import type { CoworkMessage } from './coworkStore';
 import { CoworkStore } from './coworkStore';
@@ -111,14 +111,8 @@ const outboundHeaderProxy = new OutboundHeaderProxy();
 // 设置应用程序名称
 app.setName(APP_NAME);
 
-const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const IPC_UPDATE_CONTENT_MAX_CHARS = 120_000;
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
-
-const sanitizeExportFileName = (value: string): string => {
-  const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
-  return sanitized || 'cowork-session';
-};
 
 const resolveDefaultAgentModelRef = (): string => {
   const apiResolution = resolveRawApiConfig();
@@ -204,10 +198,6 @@ const migrateAgentModelRefs = (): number => {
   return changed;
 };
 
-const ensurePngFileName = (value: string): string => {
-  return value.toLowerCase().endsWith('.png') ? value : `${value}.png`;
-};
-
 const formatAskUserAnswerValue = (value: string): string => {
   return value
     .split('|||')
@@ -216,69 +206,6 @@ const formatAskUserAnswerValue = (value: string): string => {
     .join(', ');
 };
 
-type CaptureRect = { x: number; y: number; width: number; height: number };
-
-const normalizeCaptureRect = (rect?: Partial<CaptureRect> | null): CaptureRect | null => {
-  if (!rect) return null;
-  const normalized = {
-    x: Math.max(0, Math.round(typeof rect.x === 'number' ? rect.x : 0)),
-    y: Math.max(0, Math.round(typeof rect.y === 'number' ? rect.y : 0)),
-    width: Math.max(0, Math.round(typeof rect.width === 'number' ? rect.width : 0)),
-    height: Math.max(0, Math.round(typeof rect.height === 'number' ? rect.height : 0)),
-  };
-  return normalized.width > 0 && normalized.height > 0 ? normalized : null;
-};
-
-const resolveTaskWorkingDirectory = (workspaceRoot: string): string => {
-  const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
-  // Reject bare Windows drive roots (e.g. "D:\") — mkdir on drive roots causes EPERM,
-  // and some agent engines (OpenClaw) also fail when given a drive root as workspace.
-  if (process.platform === 'win32' && /^[a-zA-Z]:\\?$/.test(resolvedWorkspaceRoot)) {
-    throw new Error(
-      `Cannot use a drive root as the working directory (${resolvedWorkspaceRoot}). Please select a subfolder instead, for example: ${resolvedWorkspaceRoot}Projects`,
-    );
-  }
-  if (!fs.existsSync(resolvedWorkspaceRoot)) {
-    fs.mkdirSync(resolvedWorkspaceRoot, { recursive: true });
-  }
-  if (!fs.statSync(resolvedWorkspaceRoot).isDirectory()) {
-    throw new Error(`Selected workspace is not a directory: ${resolvedWorkspaceRoot}`);
-  }
-  return resolvedWorkspaceRoot;
-};
-
-const getDefaultExportImageName = (defaultFileName?: string): string => {
-  const normalized =
-    typeof defaultFileName === 'string' && defaultFileName.trim()
-      ? defaultFileName.trim()
-      : `cowork-session-${Date.now()}`;
-  return ensurePngFileName(sanitizeExportFileName(normalized));
-};
-
-const savePngWithDialog = async (
-  webContents: WebContents,
-  pngData: Buffer,
-  defaultFileName?: string,
-): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> => {
-  const defaultName = getDefaultExportImageName(defaultFileName);
-  const ownerWindow = BrowserWindow.fromWebContents(webContents);
-  const saveOptions = {
-    title: 'Export Session Image',
-    defaultPath: path.join(app.getPath('downloads'), defaultName),
-    filters: [{ name: 'PNG Image', extensions: ['png'] }],
-  };
-  const saveResult = ownerWindow
-    ? await dialog.showSaveDialog(ownerWindow, saveOptions)
-    : await dialog.showSaveDialog(saveOptions);
-
-  if (saveResult.canceled || !saveResult.filePath) {
-    return { success: true, canceled: true };
-  }
-
-  const outputPath = ensurePngFileName(saveResult.filePath);
-  await fs.promises.writeFile(outputPath, pngData);
-  return { success: true, canceled: false, path: outputPath };
-};
 
 const configureUserDataPath = (): void => {
   const appDataPath = app.getPath('appData');
@@ -1390,10 +1317,6 @@ if (!gotTheLock) {
           metadata: Object.keys(messageMetadata).length > 0 ? messageMetadata : undefined,
         });
 
-        // Update session status to 'running' before starting async task
-        // This ensures the frontend receives the correct status immediately
-        coworkStoreInstance.updateSession(session.id, { status: 'running' });
-
         // Start the session asynchronously (skip initial user message since we already added it)
         const runtime = getCoworkEngineRouter();
         runtime
@@ -1856,139 +1779,6 @@ if (!gotTheLock) {
     resolveDefaultModelRef: resolveDefaultAgentModelRef,
     syncConfig: reason => syncOpenClawConfig({ reason }),
   });
-
-  ipcMain.handle(
-    'cowork:session:exportResultImage',
-    async (
-      event,
-      options: {
-        rect: { x: number; y: number; width: number; height: number };
-        defaultFileName?: string;
-      },
-    ) => {
-      try {
-        const { rect, defaultFileName } = options || {};
-        const captureRect = normalizeCaptureRect(rect);
-        if (!captureRect) {
-          return { success: false, error: 'Capture rect is required' };
-        }
-
-        const image = await event.sender.capturePage(captureRect);
-        return savePngWithDialog(event.sender, image.toPNG(), defaultFileName);
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to export session image',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'cowork:session:captureImageChunk',
-    async (
-      event,
-      options: {
-        rect: { x: number; y: number; width: number; height: number };
-      },
-    ) => {
-      try {
-        const captureRect = normalizeCaptureRect(options?.rect);
-        if (!captureRect) {
-          return { success: false, error: 'Capture rect is required' };
-        }
-
-        const image = await event.sender.capturePage(captureRect);
-        const pngBuffer = image.toPNG();
-
-        return {
-          success: true,
-          width: captureRect.width,
-          height: captureRect.height,
-          pngBase64: pngBuffer.toString('base64'),
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to capture session image chunk',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'cowork:session:saveResultImage',
-    async (
-      event,
-      options: {
-        pngBase64: string;
-        defaultFileName?: string;
-      },
-    ) => {
-      try {
-        const base64 = typeof options?.pngBase64 === 'string' ? options.pngBase64.trim() : '';
-        if (!base64) {
-          return { success: false, error: 'Image data is required' };
-        }
-
-        const pngBuffer = Buffer.from(base64, 'base64');
-        if (pngBuffer.length <= 0) {
-          return { success: false, error: 'Invalid image data' };
-        }
-
-        return savePngWithDialog(event.sender, pngBuffer, options?.defaultFileName);
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to save session image',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'cowork:session:exportText',
-    async (
-      event,
-      options: {
-        content: string;
-        defaultFileName?: string;
-        fileExtension?: string;
-      },
-    ) => {
-      try {
-        const content = typeof options?.content === 'string' ? options.content : '';
-        if (!content) {
-          return { success: false, error: 'Export content is empty' };
-        }
-
-        const ext = options?.fileExtension || 'md';
-        const filterName = ext === 'json' ? 'JSON' : 'Markdown';
-        const defaultName = options?.defaultFileName || `session-export.${ext}`;
-        const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-        const saveOptions = {
-          title: 'Export Session',
-          defaultPath: path.join(app.getPath('downloads'), defaultName),
-          filters: [{ name: filterName, extensions: [ext] }],
-        };
-        const saveResult = ownerWindow
-          ? await dialog.showSaveDialog(ownerWindow, saveOptions)
-          : await dialog.showSaveDialog(saveOptions);
-
-        if (saveResult.canceled || !saveResult.filePath) {
-          return { success: true, canceled: true };
-        }
-
-        await fs.promises.writeFile(saveResult.filePath, content, 'utf-8');
-        return { success: true, canceled: false, path: saveResult.filePath };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to export session',
-        };
-      }
-    },
-  );
 
   ipcMain.handle(
     'cowork:permission:respond',

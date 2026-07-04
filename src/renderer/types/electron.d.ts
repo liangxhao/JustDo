@@ -489,28 +489,6 @@ interface IElectronAPI {
       sessionId: string,
       messageId: string,
     ) => Promise<{ success: boolean; error?: string }>;
-    exportResultImage: (options: {
-      rect: { x: number; y: number; width: number; height: number };
-      defaultFileName?: string;
-    }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
-    captureImageChunk: (options: {
-      rect: { x: number; y: number; width: number; height: number };
-    }) => Promise<{
-      success: boolean;
-      width?: number;
-      height?: number;
-      pngBase64?: string;
-      error?: string;
-    }>;
-    saveResultImage: (options: {
-      pngBase64: string;
-      defaultFileName?: string;
-    }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
-    exportSessionText: (options: {
-      content: string;
-      defaultFileName?: string;
-      fileExtension?: string;
-    }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
     respondToPermission: (options: {
       requestId: string;
       result: CoworkPermissionResult;
