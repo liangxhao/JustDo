@@ -5,9 +5,10 @@ import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 import monacoEditorPlugin from 'vite-plugin-monaco-editor';
+import devServerConfig from './config/dev-server.json';
 
 // https://vitejs.dev/config/
-const devPort = 5175;
+const devPort = devServerConfig.port;
 
 export default defineConfig({
   plugins: [

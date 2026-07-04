@@ -2,6 +2,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+import { OpenClawExtensionId } from '../../../shared/openclawExtensions';
 import {
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
@@ -33,8 +34,8 @@ export type McpBridgeConfig = {
   tools: McpToolManifestEntry[];
 };
 
-const MCP_BRIDGE_PLUGIN_ID = 'mcp-bridge';
-const ASK_USER_QUESTION_PLUGIN_ID = 'ask-user-question';
+const MCP_BRIDGE_PLUGIN_ID = OpenClawExtensionId.MCP_BRIDGE;
+const ASK_USER_QUESTION_PLUGIN_ID = OpenClawExtensionId.ASK_USER_QUESTION;
 
 const sanitizeMcpBridgeToolSegment = (value: string): string => {
   const sanitized = value

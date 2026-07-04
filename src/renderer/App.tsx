@@ -2,6 +2,7 @@ import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { CoworkInteractionKind } from '../shared/openclawExtensions';
 import { CoworkView } from './components/cowork';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
@@ -409,8 +410,8 @@ const App: React.FC = () => {
   const permissionModal = useMemo(() => {
     if (!pendingPermission) return null;
 
-    // 检查是否为 AskUserQuestion 且有多个问题 -> 使用向导式组件
-    const isQuestionTool = pendingPermission.toolName === 'AskUserQuestion';
+    const isQuestionTool =
+      pendingPermission.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION;
     if (isQuestionTool && pendingPermission.toolInput) {
       const rawQuestions = (pendingPermission.toolInput as Record<string, unknown>).questions;
       const hasMultipleQuestions = Array.isArray(rawQuestions) && rawQuestions.length > 1;

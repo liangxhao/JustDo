@@ -5,11 +5,18 @@
  * OpenClaw's ask-user-question plugin calls /askuser for user confirmation dialogs.
  * Binds to 127.0.0.1 only (local traffic).
  */
-import crypto from 'crypto';
 import http from 'http';
 import net from 'net';
 
+import type {
+  AskUserQuestion,
+  AskUserRequest,
+  AskUserResponse,
+} from '../../../shared/openclawExtensions';
+import { AskUserRequestBroker } from './askUserRequestBroker';
 import type { McpServerManager } from './mcpServerManager';
+
+export type { AskUserRequest, AskUserResponse } from '../../../shared/openclawExtensions';
 
 const log = (level: string, msg: string) => {
   const formatted = `[McpBridge][${level}] ${msg}`;
@@ -22,36 +29,12 @@ const log = (level: string, msg: string) => {
   }
 };
 
-export type AskUserRequest = {
-  requestId: string;
-  sessionKey?: string;
-  questions: Array<{
-    question: string;
-    header?: string;
-    options: Array<{ label: string; description?: string }>;
-    multiSelect?: boolean;
-  }>;
-};
-
-export type AskUserResponse = {
-  behavior: 'allow' | 'deny';
-  answers?: Record<string, string>;
-};
-
-type PendingAskUser = {
-  requestId: string;
-  resolve: (response: AskUserResponse) => void;
-  timer: ReturnType<typeof setTimeout>;
-};
-
 export class McpBridgeServer {
   private server: http.Server | null = null;
   private _port: number | null = null;
   private readonly mcpManager: McpServerManager;
   private readonly secret: string;
-  private readonly pendingAskUser = new Map<string, PendingAskUser>();
-  private onAskUserCallback: ((request: AskUserRequest) => void) | null = null;
-  private onAskUserDismissCallback: ((requestId: string) => void) | null = null;
+  private readonly askUserBroker = new AskUserRequestBroker();
 
   constructor(mcpManager: McpServerManager, secret: string) {
     this.mcpManager = mcpManager;
@@ -75,7 +58,7 @@ export class McpBridgeServer {
    * The callback should show a modal and eventually call resolveAskUser().
    */
   onAskUser(callback: (request: AskUserRequest) => void): void {
-    this.onAskUserCallback = callback;
+    this.askUserBroker.onRequest(callback);
   }
 
   /**
@@ -83,18 +66,14 @@ export class McpBridgeServer {
    * The callback should close the modal in the renderer.
    */
   onAskUserDismiss(callback: (requestId: string) => void): void {
-    this.onAskUserDismissCallback = callback;
+    this.askUserBroker.onDismiss(callback);
   }
 
   /**
    * Resolve a pending AskUserQuestion request (called when user clicks in the modal).
    */
   resolveAskUser(requestId: string, response: AskUserResponse): void {
-    const pending = this.pendingAskUser.get(requestId);
-    if (!pending) return;
-    clearTimeout(pending.timer);
-    this.pendingAskUser.delete(requestId);
-    pending.resolve(response);
+    this.askUserBroker.resolve(requestId, response);
   }
 
   /**
@@ -176,8 +155,6 @@ export class McpBridgeServer {
   }
 
   private async handleAskUser(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const ASKUSER_TIMEOUT_MS = 120_000;
-
     try {
       const body = await this.readBody(req);
       const input = JSON.parse(body) as { questions?: unknown[]; sessionKey?: unknown };
@@ -192,36 +169,11 @@ export class McpBridgeServer {
         return;
       }
 
-      const requestId = crypto.randomUUID();
-      log('INFO', `AskUser waiting for user response, requestId=${requestId}`);
-
-      // Create a Promise that resolves when the user responds or timeout
-      const userResponse = await new Promise<AskUserResponse>(resolve => {
-        const timer = setTimeout(() => {
-          log('INFO', `AskUser timeout, requestId=${requestId}`);
-          this.pendingAskUser.delete(requestId);
-          this.onAskUserDismissCallback?.(requestId);
-          resolve({ behavior: 'deny' });
-        }, ASKUSER_TIMEOUT_MS);
-
-        this.pendingAskUser.set(requestId, { requestId, resolve, timer });
-
-        // Notify JustDo to show the modal
-        if (this.onAskUserCallback) {
-          this.onAskUserCallback({
-            requestId,
-            sessionKey: typeof input.sessionKey === 'string' ? input.sessionKey : undefined,
-            questions: input.questions as AskUserRequest['questions'],
-          });
-        } else {
-          log('WARN', 'AskUser callback not registered, denying');
-          clearTimeout(timer);
-          this.pendingAskUser.delete(requestId);
-          resolve({ behavior: 'deny' });
-        }
-      });
-
-      log('INFO', `AskUser resolved, requestId=${requestId} behavior=${userResponse.behavior}`);
+      const userResponse = await this.askUserBroker.request(
+        input.questions as AskUserQuestion[],
+        typeof input.sessionKey === 'string' ? input.sessionKey : undefined,
+      );
+      log('INFO', `AskUser resolved, behavior=${userResponse.behavior}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(userResponse));
     } catch (error) {

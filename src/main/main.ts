@@ -17,8 +17,13 @@ import {
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import devServerConfig from '../../config/dev-server.json';
 
 import { LogIpc } from '../shared/logIpc';
+import {
+  CoworkInteractionKind,
+  OpenClawToolName,
+} from '../shared/openclawExtensions';
 import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
 import { APP_NAME } from './core/appConstants';
 import {
@@ -445,7 +450,8 @@ const isDev = process.env.NODE_ENV === 'development';
 const isLinux = process.platform === 'linux';
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
-const DEV_SERVER_URL = process.env.ELECTRON_START_URL || 'http://localhost:5175';
+const DEV_SERVER_URL =
+  process.env.ELECTRON_START_URL || `http://localhost:${devServerConfig.port}`;
 const enableVerboseLogging =
   process.env.ELECTRON_ENABLE_LOGGING === '1' || process.env.ELECTRON_ENABLE_LOGGING === 'true';
 const disableGpu =
@@ -1368,7 +1374,8 @@ const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
               sessionId: requestSessionId,
               request: {
                 requestId: request.requestId,
-                toolName: 'AskUserQuestion',
+                toolName: OpenClawToolName.ASK_USER_QUESTION,
+                interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
                 toolInput: {
                   questions: request.questions,
                   sessionKey: request.sessionKey,
@@ -4200,7 +4207,8 @@ if (!gotTheLock) {
   // 设置 Content Security Policy
   const setContentSecurityPolicy = () => {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-      const devPort = process.env.ELECTRON_START_URL?.match(/:(\d+)/)?.[1] || '5175';
+      const devPort =
+        process.env.ELECTRON_START_URL?.match(/:(\d+)/)?.[1] || String(devServerConfig.port);
       const cspDirectives = [
         "default-src 'self'",
         isDev

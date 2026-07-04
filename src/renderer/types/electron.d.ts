@@ -96,6 +96,7 @@ interface CoworkPermissionRequest {
   toolInput: Record<string, unknown>;
   requestId: string;
   toolUseId?: string | null;
+  interactionKind?: import('../../shared/openclawExtensions').CoworkInteractionKind;
 }
 
 interface CoworkApiConfig {

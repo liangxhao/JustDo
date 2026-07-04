@@ -1,3 +1,5 @@
+import type { CoworkInteractionKind } from '../../shared/openclawExtensions';
+
 // Cowork image attachment for vision-capable models
 export interface CoworkImageAttachment {
   name: string;
@@ -153,6 +155,7 @@ export interface CoworkPermissionRequest {
   toolInput: Record<string, unknown>;
   requestId: string;
   toolUseId?: string | null;
+  interactionKind?: CoworkInteractionKind;
 }
 
 export type CoworkPermissionResult =

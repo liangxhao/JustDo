@@ -8,6 +8,7 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const { port: devServerPort } = require('../config/dev-server.json');
 
 // Get electron executable path
 const electronPath = require('electron');
@@ -19,7 +20,8 @@ delete env.ELECTRON_RUN_AS_NODE;
 
 // Set development environment
 env.NODE_ENV = process.env.NODE_ENV || 'development';
-env.ELECTRON_START_URL = process.env.ELECTRON_START_URL || 'http://localhost:5175';
+env.ELECTRON_START_URL =
+  process.env.ELECTRON_START_URL || `http://localhost:${devServerPort}`;
 
 console.log('[Electron Launcher] Starting Electron...');
 console.log('[Electron Launcher] Electron path:', electronPath);

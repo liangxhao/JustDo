@@ -219,6 +219,7 @@ class CoworkService {
           toolInput: request.toolInput,
           requestId: request.requestId,
           toolUseId: request.toolUseId ?? null,
+          interactionKind: request.interactionKind,
         }),
       );
     });

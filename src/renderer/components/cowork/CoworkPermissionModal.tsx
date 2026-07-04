@@ -1,6 +1,7 @@
 import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { CoworkInteractionKind } from '../../../shared/openclawExtensions';
 import { i18nService } from '../../services/i18n';
 import type { CoworkPermissionRequest, CoworkPermissionResult } from '../../types/cowork';
 
@@ -118,10 +119,10 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
   permission,
   onRespond,
 }) => {
-  const toolInput = permission.toolInput ?? {};
+  const toolInput = useMemo(() => permission.toolInput ?? {}, [permission.toolInput]);
 
   const questions = useMemo<QuestionItem[]>(() => {
-    if (permission.toolName !== 'AskUserQuestion') return [];
+    if (permission.interactionKind !== CoworkInteractionKind.STRUCTURED_QUESTION) return [];
     if (!toolInput || typeof toolInput !== 'object') return [];
     const rawQuestions = (toolInput as Record<string, unknown>).questions;
     if (!Array.isArray(rawQuestions)) return [];
@@ -158,7 +159,7 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
         } as QuestionItem;
       })
       .filter(Boolean) as QuestionItem[];
-  }, [permission.toolName, toolInput]);
+  }, [permission.interactionKind, toolInput]);
 
   const isQuestionTool = questions.length > 0;
 
@@ -241,7 +242,10 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
       ? detectDangerLevelFromCommand(requestedCommand) !== 'safe'
       : /\b(delete|remove|rm|unlink|rmdir|erase|del)\b/i.test(questionText) || /删除|移除/.test(questionText);
 
-    if (permission.toolName === 'AskUserQuestion' && looksLikeDeleteQuestion) {
+    if (
+      permission.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION
+      && looksLikeDeleteQuestion
+    ) {
       return { dangerLevel: 'caution' as DangerLevel, dangerReasonText: i18nService.t('dangerReasonFileDelete') };
     }
     if (permission.toolName !== 'Bash') {
@@ -260,7 +264,14 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
     const reasonText = i18nKey ? i18nService.t(i18nKey) : '';
 
     return { dangerLevel: level, dangerReasonText: reasonText };
-  }, [isConfirmMode, permission.toolName, permission.toolInput, questions, requestedCommand]);
+  }, [
+    isConfirmMode,
+    permission.interactionKind,
+    permission.toolName,
+    permission.toolInput,
+    questions,
+    requestedCommand,
+  ]);
 
   const getSelectedValues = (question: QuestionItem): string[] => {
     const rawValue = answers[question.question] ?? '';

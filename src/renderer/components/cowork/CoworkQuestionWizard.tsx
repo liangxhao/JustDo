@@ -1,6 +1,7 @@
 import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { CoworkInteractionKind } from '../../../shared/openclawExtensions';
 import { i18nService } from '../../services/i18n';
 import type { CoworkPermissionRequest, CoworkPermissionResult } from '../../types/cowork';
 
@@ -25,10 +26,10 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   permission,
   onRespond,
 }) => {
-  const toolInput = permission.toolInput ?? {};
+  const toolInput = useMemo(() => permission.toolInput ?? {}, [permission.toolInput]);
 
   const questions = useMemo<QuestionItem[]>(() => {
-    if (permission.toolName !== 'AskUserQuestion') return [];
+    if (permission.interactionKind !== CoworkInteractionKind.STRUCTURED_QUESTION) return [];
     if (!toolInput || typeof toolInput !== 'object') return [];
     const rawQuestions = (toolInput as Record<string, unknown>).questions;
     if (!Array.isArray(rawQuestions)) return [];
@@ -65,7 +66,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         } as QuestionItem;
       })
       .filter(Boolean) as QuestionItem[];
-  }, [permission.toolName, toolInput]);
+  }, [permission.interactionKind, toolInput]);
 
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
