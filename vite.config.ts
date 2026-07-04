@@ -46,9 +46,12 @@ export default defineConfig({
                   return true;
                 return false;
               },
+              checks: {
+                pluginTimings: false,
+              },
               output: {
                 // Keep CJS format (default), but load via ESM loader.mjs
-                inlineDynamicImports: true,
+                codeSplitting: false,
               },
             },
           },
@@ -66,6 +69,11 @@ export default defineConfig({
             sourcemap: true,
             outDir: 'dist-electron',
             minify: false,
+            rollupOptions: {
+              checks: {
+                pluginTimings: false,
+              },
+            },
           },
         },
         onstart() {},
@@ -87,6 +95,11 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
     minify: false,
+    rollupOptions: {
+      checks: {
+        pluginTimings: false,
+      },
+    },
   },
   server: {
     port: devPort,

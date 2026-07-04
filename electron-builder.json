@@ -222,9 +222,11 @@
       }
     ],
     "desktop": {
-      "Name": "JustDo",
-      "Comment": "AI-assisted coding and productivity tool",
-      "Terminal": "false"
+      "entry": {
+        "Name": "JustDo",
+        "Comment": "AI-assisted coding and productivity tool",
+        "Terminal": "false"
+      }
     }
   },
   "nsis": {

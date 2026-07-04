@@ -10,6 +10,7 @@ import {
 import { clearCurrentSession } from '../store/slices/coworkSlice';
 import { clearActiveSkills,setActiveSkillIds } from '../store/slices/skillSlice';
 import type { Agent, PresetAgent } from '../types/agent';
+import { coworkService } from './cowork';
 
 class AgentService {
   async loadAgents(): Promise<void> {
@@ -109,7 +110,6 @@ class AgentService {
       store.dispatch(removeAgent(id));
       if (wasCurrentAgent) {
         this.switchAgent('main');
-        const { coworkService } = await import('./cowork');
         coworkService.loadSessions('main');
       }
       return true;

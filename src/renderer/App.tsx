@@ -14,6 +14,7 @@ import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
 import WindowTitleBar from './components/window/WindowTitleBar';
 import { defaultConfig, getProviderDisplayName } from './config';
+import { agentService } from './services/agent';
 import { configService } from './services/config';
 import { coworkService } from './services/cowork';
 import { i18nService } from './services/i18n';
@@ -171,7 +172,6 @@ const App: React.FC = () => {
         );
 
         // 加载 agents 列表，不阻塞首屏
-        const { agentService } = await import('./services/agent');
         void agentService.loadAgents();
       } catch (error) {
         console.error('Failed to initialize app:', error);
