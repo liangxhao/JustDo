@@ -3,8 +3,8 @@ import { stripInternalRuntimeContext } from '../shims/backend-helpers';
 import { stripInboundMetadata } from '../shims/backend-helpers';
 import { stripEnvelope } from '../shims/backend-helpers';
 import { extractAssistantVisibleText as extractSharedAssistantVisibleText } from '../shims/backend-helpers';
-import { normalizeLowercaseStringOrEmpty, normalizeStringEntries } from '../shims/normalization-core';
 import { stripAssistantInternalScaffolding } from '../shims/backend-helpers';
+import { normalizeLowercaseStringOrEmpty, normalizeStringEntries } from '../shims/normalization-core';
 
 const textCache = new WeakMap<object, string | null>();
 const thinkingCache = new WeakMap<object, string | null>();

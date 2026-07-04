@@ -3,6 +3,7 @@
  * Uses SVG icons as fallbacks instead of broken image URLs.
  */
 import { html, type TemplateResult } from 'lit';
+
 import { normalizeRoleForGrouping } from '../pipeline/role-normalizer';
 
 const USER_SVG = html`

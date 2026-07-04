@@ -1,8 +1,8 @@
 import { app, BrowserWindow,Menu, nativeImage, Tray } from 'electron';
 import path from 'path';
 
-import { APP_NAME } from './appConstants';
 import { t } from '../i18n';
+import { APP_NAME } from './appConstants';
 
 let tray: Tray | null = null;
 let contextMenu: Menu | null = null;
