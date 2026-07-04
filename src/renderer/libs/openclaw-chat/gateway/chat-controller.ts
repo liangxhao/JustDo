@@ -1447,7 +1447,10 @@ export class ChatController {
 
   // ─── Send Message ─────────────────────────────────────────────────────
 
-  async sendMessage(message: string): Promise<void> {
+  async sendMessage(
+    message: string,
+    imageAttachments: Array<{ name: string; mimeType: string; base64Data: string }> = [],
+  ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
     if (this.state.chatSending) return;
@@ -1464,7 +1467,24 @@ export class ChatController {
     });
 
     // Optimistic: append user message immediately
-    const userMessage = { role: 'user', content: message, timestamp: Date.now() };
+    const imageBlocks = imageAttachments
+      .filter(image => image.mimeType.startsWith('image/') && image.base64Data)
+      .map(image => ({
+        type: 'attachment',
+        attachment: {
+          url: image.base64Data.startsWith('data:')
+            ? image.base64Data
+            : `data:${image.mimeType};base64,${image.base64Data}`,
+          kind: 'image',
+          label: image.name,
+          mimeType: image.mimeType,
+        },
+      }));
+    const userMessage = {
+      role: 'user',
+      content: imageBlocks.length > 0 ? [{ type: 'text', text: message }, ...imageBlocks] : message,
+      timestamp: Date.now(),
+    };
     this.state.chatMessages = [...this.state.chatMessages, userMessage];
     this.state.chatThinkingMessages = [];
     this.state.chatToolMessages = [];
@@ -1478,11 +1498,19 @@ export class ChatController {
     this.notify();
 
     try {
+      const attachments = imageAttachments
+        .filter(image => image.mimeType.startsWith('image/') && image.base64Data)
+        .map(image => ({
+          type: 'image',
+          mimeType: image.mimeType,
+          content: image.base64Data,
+        }));
       const ack = await client.request<{ runId?: string; status?: string }>('chat.send', {
         sessionKey: this.state.sessionKey,
         message,
         deliver: false,
         idempotencyKey: runId,
+        ...(attachments.length > 0 ? { attachments } : {}),
       });
 
       if (ack?.runId) {

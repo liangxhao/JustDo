@@ -678,9 +678,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   // When there's a current session, show the session detail view
   if (currentSession) {
-    const handleSendMessage = async (prompt: string) => {
+    const handleSendMessage = async (
+      prompt: string,
+      imageAttachments?: CoworkImageAttachment[],
+    ) => {
       try {
-        await chatWrapperRef.current?.sendMessage(prompt);
+        await chatWrapperRef.current?.sendMessage(prompt, imageAttachments);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         window.dispatchEvent(

@@ -84,6 +84,53 @@ test('compacts the current session instead of sending /compact as chat', async (
   ]);
 });
 
+test('sends and optimistically renders image attachments in an existing session', async () => {
+  const request = vi.fn().mockResolvedValue({ runId: 'run-1' });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('second image', [
+    {
+      name: 'second.png',
+      mimeType: 'image/png',
+      base64Data: 'YWJj',
+    },
+  ]);
+
+  expect(request).toHaveBeenCalledWith('chat.send', {
+    sessionKey: 'agent:main:justdo:session-1',
+    message: 'second image',
+    deliver: false,
+    idempotencyKey: expect.stringMatching(/^justdo-/),
+    attachments: [
+      {
+        type: 'image',
+        mimeType: 'image/png',
+        content: 'YWJj',
+      },
+    ],
+  });
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'second image' },
+        {
+          type: 'attachment',
+          attachment: {
+            url: 'data:image/png;base64,YWJj',
+            kind: 'image',
+            label: 'second.png',
+            mimeType: 'image/png',
+          },
+        },
+      ],
+    }),
+  ]);
+});
+
 test('renders an error result and does not refresh history when session compaction fails', async () => {
   const request = vi.fn().mockRejectedValue(new Error('compact unavailable'));
   const controller = new ChatController();
