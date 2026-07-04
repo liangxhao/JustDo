@@ -20,6 +20,3 @@ read_when:
 
 保持这里的内容简短、明确、可执行。
 
-## 相关内容
-
-- [智能体工作区](/concepts/agent-workspace)

@@ -4,9 +4,9 @@ Guidance for AI coding agents working with this repository — a README for agen
 
 ## Project Overview
 
-JustDo is a **24/7 personal AI assistant** desktop application. It's an Electron + React app where AI agents actually execute tasks (not just suggest them). Core capabilities: real task execution, local-first SQLite storage, 17 bundled skills, scheduled tasks via OpenClaw cron engine, and IM remote control.
+JustDo is a **24/7 personal AI assistant** desktop application. It's an Electron + React app where AI agents actually execute tasks (not just suggest them). Core capabilities: real task execution, local-first SQLite storage, 15 bundled skills, scheduled tasks via OpenClaw cron engine, and IM remote control.
 
-- **Version**: 2026.7.1 | **Electron**: 41.2.0 | **OpenClaw**: v2026.6.9
+- **Version**: 2026.7.3 | **Electron**: 41.2.0 | **OpenClaw**: v2026.6.9
 - **Engine**: Node.js >=24 <25 (see `.nvmrc`)
 - **Package manager**: npm
 - **License**: MIT
@@ -56,7 +56,7 @@ Run `npm run lint && npm run build && npm test` locally before pushing to catch 
 
 ## Architecture
 
-Strict process isolation: **Main** (IPC, SQLite, engine) ↔ **Preload** (contextBridge) ↔ **Renderer** (React + Redux).
+Strict process isolation: **Main** (IPC, SQLite, engine) ↔ **Preload** (contextBridge) ↔ **Renderer** (React + Redux + Lit).
 
 | Layer | Path | Purpose |
 |-------|------|---------|
@@ -131,7 +131,7 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 
 **Cowork System** (`src/main/libs/agentEngine/`): AI chat orchestration. Routes through `coworkEngineRouter.ts` → `openclawRuntimeAdapter.ts`. Supports streaming, thinking content, subagents (`openclaw/subagentGateway.ts`), and history reconciliation (`history/historyReconciler.ts`).
 
-**Skills**: OpenClaw is the authoritative source via RPC (`agentEngine/rpc/skillRpc.ts`). `openclaw/skills/openclawSkillFiles.ts` only copies or removes user-imported files under `userData/openclaw/state/skills/`; it does not discover skills or maintain metadata/state.
+**Skills**: OpenClaw is the authoritative source via RPC (`agentEngine/rpc/skillRpc.ts`). `openclaw/skills/openclawSkillFiles.ts` only copies or removes user-imported files under `userData/openclaw/state/skills/`; it does not discover skills or maintain metadata/state. The bundled skill set is defined in `resources/builtin-skills.json`.
 
 **IM (Remote Control)**: In development. Types at `src/renderer/types/im.ts`.
 
@@ -154,10 +154,9 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 | Permission UI | `src/renderer/components/cowork/CoworkPermissionModal.tsx` |
 | Cowork model API | `src/main/libs/cowork/coworkModelApi.ts` |
 | Provider API config | `src/main/libs/cowork/providerApiConfig.ts` |
-| MCP bridge | `src/main/libs/mcp/mcpBridgeServer.ts` |
 | MCP server manager | `src/main/libs/mcp/mcpServerManager.ts` |
 | Command safety | `src/main/libs/infra/commandSafety.ts` |
-| Scheduled task engine | `src/scheduledTask/cronJobService.ts`, `src/scheduledTask/policies/` |
+| Scheduled task engine | `src/scheduledTask/cronJobService.ts`, `src/scheduledTask/policies/`, `src/main/ipcHandlers/scheduledTask/cronJobServiceManager.ts` |
 | Local Skill file operations | `src/main/libs/openclaw/skills/openclawSkillFiles.ts` |
 | Session groups | `src/main/groupStore.ts` |
 | MCP store | `src/main/mcpStore.ts` |
@@ -334,7 +333,7 @@ Both export `t(key, params?)`, `setLanguage(lang)`, `getLanguage()`. Languages: 
 
 ```
 resources/
-├── skills/          # 17 bundled skills (each has SKILL.md + assets)
+├── skills/          # 15 bundled skills (each has SKILL.md + assets)
 ├── tray/            # System tray icons (png, ico, mac@2x)
 ├── mingit/          # Portable Git for Windows (MinGit 2.47.1)
 ├── node-runtime/    # Node.js runtime files
@@ -362,7 +361,7 @@ Skills are Gateway-managed. To modify bundled skills, update `resources/skills/<
 
 ### Adding a New Database Table
 
-1. Add migration logic (check existing patterns in `src/main/data/sqliteStore.ts`)
+1. Add migration or compatibility logic (check existing patterns in `src/main/data/sqliteStore.ts` and `src/main/libs/openclaw/config/workspaceStateRepair.ts`)
 2. Add CRUD operations following existing naming: `getX`, `createX`, `updateX`, `deleteX`
 3. Document the schema in the architecture docs (`docs/architecture/`)
 4. Add tests

@@ -34,6 +34,3 @@ read_when:
 - 可验证性
 - 面向工程结果
 
-## 相关内容
-
-- [IDENTITY 模板](/reference/templates/IDENTITY)

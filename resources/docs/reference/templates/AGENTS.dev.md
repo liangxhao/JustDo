@@ -59,8 +59,3 @@ git commit -m "添加智能体工作区"
 
 - 在这里持续沉淀对当前开发环境真正有帮助的规则
 - 把稳定流程写清楚，把个性化细节留在 `SOUL.md` 和 `IDENTITY.md`
-
-## 相关内容
-
-- [AGENTS.md 模板](/reference/templates/AGENTS)
-- [默认 AGENTS.md](/reference/AGENTS.default)

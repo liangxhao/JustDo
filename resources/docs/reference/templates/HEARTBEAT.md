@@ -39,6 +39,3 @@ read_when:
 - 避免写入会反复触发噪声通知的内容
 - 如果需要记录检查状态，可使用如 `memory/heartbeat-state.json` 之类的轻量文件
 
-## 相关内容
-
-- [心跳配置](/gateway/config-agents)

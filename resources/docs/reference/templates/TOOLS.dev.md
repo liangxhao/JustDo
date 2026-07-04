@@ -40,6 +40,3 @@ read_when:
 
 把这里写成真正能帮你少走弯路的本地速查表。
 
-## 相关内容
-
-- [TOOLS.md 模板](/reference/templates/TOOLS)
