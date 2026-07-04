@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 
-import { collectToolInputsFromValue } from './openclawHistory';
+import { collectToolInputsFromValue } from './history';
 
 test('collects and parses nested OpenClaw tool inputs', () => {
   const found: Record<string, { name?: string; input: unknown }> = {};

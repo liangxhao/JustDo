@@ -30,30 +30,35 @@ import { SqliteStore } from './data/sqliteStore';
 import { AgentManager } from './features/agentManager';
 import { GroupStore } from './groupStore';
 import { setLanguage, t } from './i18n';
-import { registerAgentHandlers } from './ipcHandlers/agents';
-import { registerApiProxyHandlers } from './ipcHandlers/apiProxy';
-import { registerAppHandlers } from './ipcHandlers/app';
-import { registerCalendarPermissionHandlers } from './ipcHandlers/calendarPermissions';
-import { registerCoworkUtilityHandlers } from './ipcHandlers/coworkUtilities';
-import { registerDefaultModelHandlers } from './ipcHandlers/defaultModel';
-import { registerDialogHandlers } from './ipcHandlers/dialog';
-import { registerLocalFileHandlers } from './ipcHandlers/localFiles';
-import { registerLogHandlers } from './ipcHandlers/log';
-import { registerMcpHandlers } from './ipcHandlers/mcp';
-import { registerNetworkHandlers } from './ipcHandlers/network';
-import { registerOpenClawEngineHandlers } from './ipcHandlers/openclawEngine';
-import { registerOpenClawHistoryHandlers } from './ipcHandlers/openclawHistory';
+import {
+  registerAppHandlers,
+  registerCalendarPermissionHandlers,
+  registerDialogHandlers,
+  registerLocalFileHandlers,
+  registerLogHandlers,
+  registerNetworkHandlers,
+  registerShellHandlers,
+  registerStoreHandlers,
+  registerWindowHandlers,
+} from './ipcHandlers/app';
+import {
+  registerAgentHandlers,
+  registerCoworkUtilityHandlers,
+  registerDefaultModelHandlers,
+  registerSessionGroupHandlers,
+} from './ipcHandlers/cowork';
+import { registerApiProxyHandlers, registerMcpHandlers } from './ipcHandlers/integrations';
+import {
+  registerOpenClawEngineHandlers,
+  registerOpenClawHistoryHandlers,
+  registerSkillHandlers,
+  registerSlashCommandHandlers,
+} from './ipcHandlers/openclaw';
 import {
   getCronJobService,
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
-import { registerSessionGroupHandlers } from './ipcHandlers/sessionGroups';
-import { registerShellHandlers } from './ipcHandlers/shell';
-import { registerSkillHandlers } from './ipcHandlers/skills';
-import { registerSlashCommandHandlers } from './ipcHandlers/slashCommands';
-import { registerStoreHandlers } from './ipcHandlers/store';
-import { registerWindowHandlers } from './ipcHandlers/window';
 import {
   sanitizeCoworkMessageForIpc,
   sanitizePermissionRequestForIpc,

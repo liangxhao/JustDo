@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import type { SqliteStore } from '../data/sqliteStore';
+import type { SqliteStore } from '../../data/sqliteStore';
 
 interface StoreHandlerDependencies {
   getStore: () => SqliteStore;

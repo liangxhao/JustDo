@@ -4,11 +4,11 @@ import {
   type ListSlashCommandsOptions,
   type ListSlashCommandsResult,
   SlashCommandIpc,
-} from '../../shared/slashCommands';
+} from '../../../shared/slashCommands';
 import {
   SlashCommandService,
   type SlashCommandServiceOptions,
-} from '../libs/slashCommands/slashCommandService';
+} from '../../libs/slashCommands/slashCommandService';
 
 export const registerSlashCommandHandlers = (options: SlashCommandServiceOptions): void => {
   const service = new SlashCommandService(options);

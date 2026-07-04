@@ -3,7 +3,7 @@ import { ipcMain } from 'electron';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
-} from '../libs/openclaw/runtime/openclawEngineManager';
+} from '../../libs/openclaw/runtime/openclawEngineManager';
 
 interface OpenClawEngineHandlerDependencies {
   getManager: () => OpenClawEngineManager;

@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron';
 
-import { saveCoworkApiConfig } from '../libs/cowork/coworkConfigStore';
-import { probeCoworkModelReadiness } from '../libs/cowork/coworkUtil';
-import { getCurrentApiConfig, resolveCurrentApiConfig } from '../libs/cowork/providerApiConfig';
+import { saveCoworkApiConfig } from '../../libs/cowork/coworkConfigStore';
+import { probeCoworkModelReadiness } from '../../libs/cowork/coworkUtil';
+import { getCurrentApiConfig, resolveCurrentApiConfig } from '../../libs/cowork/providerApiConfig';
 
 interface TitleGenerator {
   generateTitle?: (userInput: string | null) => Promise<string>;

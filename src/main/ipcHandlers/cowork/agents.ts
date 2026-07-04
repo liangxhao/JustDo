@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
-import type { CreateAgentRequest, UpdateAgentRequest } from '../coworkStore';
-import type { AgentManager } from '../features/agentManager';
+import type { CreateAgentRequest, UpdateAgentRequest } from '../../coworkStore';
+import type { AgentManager } from '../../features/agentManager';
 
 interface AgentHandlerDependencies {
   getManager: () => AgentManager;

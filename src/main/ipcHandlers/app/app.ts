@@ -2,8 +2,8 @@ import { app, ipcMain, powerSaveBlocker } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import { getAutoLaunchEnabled, setAutoLaunchEnabled } from '../core/autoLaunchManager';
-import type { SqliteStore } from '../data/sqliteStore';
+import { getAutoLaunchEnabled, setAutoLaunchEnabled } from '../../core/autoLaunchManager';
+import type { SqliteStore } from '../../data/sqliteStore';
 
 interface AppHandlerDependencies {
   getStore: () => SqliteStore;

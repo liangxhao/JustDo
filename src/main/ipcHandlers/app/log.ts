@@ -1,10 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 
-import { LogIpc } from '../../shared/logIpc';
-import { getLogFilePath, getRecentMainLogEntries } from '../core/logger';
-import { getCoworkLogPath } from '../libs/cowork/coworkLogger';
-import { exportLogsZip } from '../libs/infra/logExport';
+import { LogIpc } from '../../../shared/logIpc';
+import { getLogFilePath, getRecentMainLogEntries } from '../../core/logger';
+import { getCoworkLogPath } from '../../libs/cowork/coworkLogger';
+import { exportLogsZip } from '../../libs/infra/logExport';
 
 const padTwoDigits = (value: number): string => value.toString().padStart(2, '0');
 

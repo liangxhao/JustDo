@@ -1,9 +1,9 @@
 import { ipcMain } from 'electron';
 
-import type { OpenClawRuntimeAdapter } from '../libs/agentEngine';
-import type { GatewaySkillEntry, SkillInstallParams } from '../libs/agentEngine/types';
-import type { OpenClawSkillFiles } from '../libs/openclaw/skills/openclawSkillFiles';
-import { createSkillMarketplaceService } from '../libs/skillMarketplace';
+import type { OpenClawRuntimeAdapter } from '../../libs/agentEngine';
+import type { GatewaySkillEntry, SkillInstallParams } from '../../libs/agentEngine/types';
+import type { OpenClawSkillFiles } from '../../libs/openclaw/skills/openclawSkillFiles';
+import { createSkillMarketplaceService } from '../../libs/skillMarketplace';
 
 type SkillMarketplaceService = ReturnType<typeof createSkillMarketplaceService>;
 

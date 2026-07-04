@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import type { GroupStore } from '../groupStore';
+import type { GroupStore } from '../../groupStore';
 
 export const registerSessionGroupHandlers = (getStore: () => GroupStore): void => {
   ipcMain.handle('sessionGroup:list', async () => {
