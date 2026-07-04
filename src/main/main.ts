@@ -2,7 +2,6 @@ import type { WebContents } from 'electron';
 import {
   app,
   BrowserWindow,
-  ipcMain,
   Menu,
   nativeTheme,
   powerMonitor,
@@ -25,13 +24,12 @@ import {
   applySystemProxyPreference,
   isSystemProxyEnabled,
 } from './core/systemProxyPreference';
-import { resolveTaskWorkingDirectory } from './core/taskWorkspace';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { CoworkStore } from './coworkStore';
 import { SqliteStore } from './data/sqliteStore';
 import { AgentManager } from './features/agentManager';
 import { GroupStore } from './groupStore';
-import { setLanguage, t } from './i18n';
+import { setLanguage } from './i18n';
 import {
   registerAppHandlers,
   registerCalendarPermissionHandlers,
@@ -45,7 +43,12 @@ import {
 } from './ipcHandlers/app';
 import {
   registerAgentHandlers,
+  registerCoworkConfigHandlers,
+  registerCoworkPermissionHandlers,
+  registerCoworkSessionExecutionHandlers,
   registerCoworkSessionHandlers,
+  registerCoworkSessionRuntimeHandlers,
+  registerCoworkSubtaskHandlers,
   registerCoworkUtilityHandlers,
   registerDefaultModelHandlers,
   registerSessionGroupHandlers,
@@ -62,14 +65,8 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
-import { sanitizeCoworkMessageForIpc } from './ipcPayloadSanitizer';
-import {
-  type CoworkAgentEngine,
-  CoworkEngineRouter,
-  OpenClawRuntimeAdapter,
-} from './libs/agentEngine';
+import { CoworkEngineRouter, OpenClawRuntimeAdapter } from './libs/agentEngine';
 import { bindCoworkRuntimeForwarder } from './libs/agentEngine/coworkRuntimeForwarder';
-import type { PermissionResult } from './libs/agentEngine/types';
 import { syncBuiltinModelProvider } from './libs/cowork/builtinModelProvider';
 import {
   resolveAllEnabledProviderConfigs,
@@ -91,8 +88,6 @@ import {
 } from './libs/openclaw/runtime/openclawEngineManager';
 import { stopOpenClawTokenProxy } from './libs/openclaw/runtime/openclawTokenProxy';
 import {
-  buildManagedSessionKey,
-  DEFAULT_MANAGED_AGENT_ID,
   parseManagedSessionKey,
 } from './libs/openclaw/sessions/openclawChannelSessionSync';
 import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
@@ -188,14 +183,6 @@ const migrateAgentModelRefs = (): number => {
   }
 
   return changed;
-};
-
-const formatAskUserAnswerValue = (value: string): string => {
-  return value
-    .split('|||')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .join(', ');
 };
 
 
@@ -991,336 +978,27 @@ if (!gotTheLock) {
     refreshBridge: refreshMcpBridge,
   });
 
-  // Cowork IPC handlers
-  ipcMain.handle(
-    'cowork:session:start',
-    async (
-      _event,
-      options: {
-        prompt: string;
-        cwd?: string;
-        title?: string;
-        activeSkillIds?: string[];
-        imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
-        agentId?: string;
-      },
-    ) => {
-      try {
-        const engineStatus = await ensureOpenClawRunningForCowork();
-        if (engineStatus.phase !== 'running') {
-          return getEngineNotReadyResponse(engineStatus);
-        }
-
-        const coworkStoreInstance = getCoworkStore();
-        const config = coworkStoreInstance.getConfig();
-        const selectedWorkspaceRoot = (options.cwd || config.workingDirectory || '').trim();
-
-        if (!selectedWorkspaceRoot) {
-          return {
-            success: false,
-            error: 'Please select a task folder before submitting.',
-          };
-        }
-
-        // Generate title from first line of prompt
-        const fallbackTitle = options.prompt.split('\n')[0].slice(0, 50) || 'New Session';
-        const title = options.title?.trim() || fallbackTitle;
-        const taskWorkingDirectory = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
-
-        const session = coworkStoreInstance.createSession(
-          title,
-          taskWorkingDirectory,
-          config.executionMode || 'local',
-          options.activeSkillIds || [],
-          options.agentId || 'main',
-        );
-
-        // Update session status to 'running' before starting async task
-        // This ensures the frontend receives the correct status immediately
-        coworkStoreInstance.updateSession(session.id, { status: 'running' });
-
-        // Build metadata, include imageAttachments if present
-        const messageMetadata: Record<string, unknown> = {};
-        if (options.activeSkillIds?.length) {
-          messageMetadata.skillIds = options.activeSkillIds;
-        }
-        if (options.imageAttachments?.length) {
-          messageMetadata.imageAttachments = options.imageAttachments;
-        }
-        coworkStoreInstance.addMessage(session.id, {
-          type: 'user',
-          content: options.prompt,
-          metadata: Object.keys(messageMetadata).length > 0 ? messageMetadata : undefined,
-        });
-
-        // Start the session asynchronously (skip initial user message since we already added it)
-        const runtime = getCoworkEngineRouter();
-        runtime
-          .startSession(session.id, options.prompt, {
-            skipInitialUserMessage: true,
-            skillIds: options.activeSkillIds,
-            workspaceRoot: selectedWorkspaceRoot,
-            confirmationMode: 'modal',
-            imageAttachments: options.imageAttachments,
-            agentId: options.agentId,
-          })
-          .catch(error => {
-            console.error('[Cowork] session error:', error);
-            try {
-              // The engine router already emits an 'error' event (handled at line ~990)
-              // which sends cowork:stream:error to the renderer. Only send here if the
-              // session hasn't been marked as error yet, to avoid duplicate messages.
-              const existing = coworkStoreInstance.getSession(session.id);
-              if (existing?.status === 'error') return;
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              const windows = BrowserWindow.getAllWindows();
-              windows.forEach(win => {
-                if (win.isDestroyed()) return;
-                win.webContents.send('cowork:stream:error', {
-                  sessionId: session.id,
-                  error: errorMessage,
-                });
-              });
-            } catch (handlerError) {
-              console.error(
-                '[Cowork] failed to send error notification to renderer:',
-                handlerError,
-              );
-            }
-          });
-
-        const sessionWithMessages = coworkStoreInstance.getSession(session.id) || {
-          ...session,
-          status: 'running' as const,
-        };
-        return { success: true, session: sessionWithMessages };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to start session',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'cowork:session:continue',
-    async (
-      _event,
-      options: {
-        sessionId: string;
-        prompt: string;
-        activeSkillIds?: string[];
-        imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
-      },
-    ) => {
-      try {
-        const engineStatus = await ensureOpenClawRunningForCowork();
-        if (engineStatus.phase !== 'running') {
-          return getEngineNotReadyResponse(engineStatus);
-        }
-
-        const runtime = getCoworkEngineRouter();
-        runtime
-          .continueSession(options.sessionId, options.prompt, {
-            skillIds: options.activeSkillIds,
-            imageAttachments: options.imageAttachments,
-          })
-          .catch(error => {
-            console.error('[Cowork] continue error:', error);
-            try {
-              // The engine router already emits an 'error' event (handled at line ~990)
-              // which sends cowork:stream:error to the renderer. Only send here if the
-              // session hasn't been marked as error yet, to avoid duplicate messages.
-              const existing = getCoworkStore().getSession(options.sessionId);
-              if (existing?.status === 'error') return;
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              const windows = BrowserWindow.getAllWindows();
-              windows.forEach(win => {
-                if (win.isDestroyed()) return;
-                win.webContents.send('cowork:stream:error', {
-                  sessionId: options.sessionId,
-                  error: errorMessage,
-                });
-              });
-            } catch (handlerError) {
-              console.error(
-                '[Cowork] failed to send error notification to renderer:',
-                handlerError,
-              );
-            }
-          });
-
-        const session = getCoworkStore().getSession(options.sessionId);
-        return { success: true, session };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to continue session',
-        };
-      }
-    },
-  );
+  registerCoworkSessionExecutionHandlers({
+    ensureEngineRunning: ensureOpenClawRunningForCowork,
+    getCoworkStore,
+    getCoworkEngineRouter,
+    getEngineNotReadyResponse,
+  });
 
   registerCoworkSessionHandlers({
     getCoworkStore,
     getCoworkEngineRouter,
   });
 
-  ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
-    try {
-      if (!openClawRuntimeAdapter) {
-        return { success: false, error: 'OpenClaw runtime adapter not available' };
-      }
-      if (openClawRuntimeAdapter.isSessionActive(sessionId)) {
-        return { success: false, error: 'Context usage is unavailable while a session is running' };
-      }
-      const gatewayClient = openClawRuntimeAdapter.getGatewayClient();
-      if (!gatewayClient) {
-        return { success: false, error: 'Gateway client not connected' };
-      }
-      const localSession = getCoworkStore().getSession(sessionId);
-      const effectiveAgentId = localSession?.agentId || DEFAULT_MANAGED_AGENT_ID;
-      const sessionKeys = new Set<string>([
-        ...openClawRuntimeAdapter.getSessionKeysForSession(sessionId),
-        buildManagedSessionKey(sessionId, effectiveAgentId),
-        buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
-      ]);
-      const readNumber = (value: unknown): number | undefined =>
-        typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-      const readSessionTokens = (session: Record<string, unknown>) => {
-        const budgetStatus =
-          session.contextBudgetStatus && typeof session.contextBudgetStatus === 'object'
-            ? (session.contextBudgetStatus as Record<string, unknown>)
-            : undefined;
-        const totalTokens =
-          readNumber(session.totalTokens) ??
-          readNumber(session.usedTokens) ??
-          readNumber(session.contextUsedTokens) ??
-          readNumber(session.currentTokens) ??
-          readNumber(budgetStatus?.estimatedPromptTokens) ??
-          0;
-        const contextTokens =
-          readNumber(session.contextTokens) ??
-          readNumber(session.contextWindow) ??
-          readNumber(session.contextLength) ??
-          readNumber(session.maxContextTokens) ??
-          readNumber(session.totalContextTokens) ??
-          readNumber(budgetStatus?.contextTokenBudget) ??
-          0;
-
-        return {
-          totalTokens,
-          contextTokens,
-          totalTokensFresh:
-            typeof session.totalTokensFresh === 'boolean'
-              ? session.totalTokensFresh ||
-                readNumber(budgetStatus?.estimatedPromptTokens) !== undefined
-              : true,
-        };
-      };
-      const result = await gatewayClient.request<{
-        sessions?: Array<
-          {
-            key: string;
-            totalTokens?: number;
-            contextTokens?: number;
-            totalTokensFresh?: boolean;
-          } & Record<string, unknown>
-        >;
-      }>('sessions.list', { agentId: effectiveAgentId, limit: 100 });
-      let session = result.sessions?.find(s => sessionKeys.has(s.key));
-      if (!session && effectiveAgentId !== DEFAULT_MANAGED_AGENT_ID) {
-        const fallbackResult = await gatewayClient.request<{
-          sessions?: Array<{ key: string } & Record<string, unknown>>;
-        }>('sessions.list', { limit: 100 });
-        session = fallbackResult.sessions?.find(s => sessionKeys.has(s.key));
-      }
-      if (!session) {
-        console.warn('[CoworkContextUsage] session not found in gateway', {
-          sessionId,
-          effectiveAgentId,
-          sessionKeys: Array.from(sessionKeys),
-          returnedKeys: result.sessions?.map(s => s.key).slice(0, 10) ?? [],
-        });
-        return { success: false, error: 'Session not found in gateway' };
-      }
-      const usage = readSessionTokens(session);
-      if (usage.totalTokens <= 0 || usage.contextTokens <= 0) {
-        return {
-          success: false,
-          error: 'Context usage is not available from OpenClaw session state',
-        };
-      }
-      return {
-        success: true,
-        ...usage,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get context usage',
-      };
-    }
+  registerCoworkSessionRuntimeHandlers({
+    getCoworkStore,
+    getCoworkEngineRouter,
+    getRuntime: () => openClawRuntimeAdapter,
   });
 
   registerSessionGroupHandlers(getGroupStore);
 
-  ipcMain.handle(
-    'cowork:session:patchModel',
-    async (_event, options: { sessionId: string; model: string; agentId?: string }) => {
-      try {
-        const runtime = getCoworkEngineRouter();
-        const result = await runtime.patchSessionModel(
-          options.sessionId,
-          options.model,
-          options.agentId,
-        );
-        return { success: result.ok, error: result.error };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to patch session model',
-        };
-      }
-    },
-  );
-
-  // ========== Sub-task IPC Handlers ==========
-
-  ipcMain.handle('cowork:subTask:status', async (_event, sessionId?: string) => {
-    try {
-      if (!openClawRuntimeAdapter) {
-        return { success: true, subagents: [] };
-      }
-      const result = await openClawRuntimeAdapter.getSubagentStatuses(sessionId);
-      return {
-        success: true,
-        subagents: result.subagents || [],
-      };
-    } catch {
-      return { success: false, subagents: [] };
-    }
-  });
-
-  ipcMain.handle('cowork:subTask:session', async (_event, sessionKey: string) => {
-    try {
-      if (!openClawRuntimeAdapter) {
-        return { success: false, session: null, error: 'OpenClaw runtime is not ready' };
-      }
-      if (!sessionKey || typeof sessionKey !== 'string') {
-        return { success: false, session: null, error: 'Session key is required' };
-      }
-      const session = await openClawRuntimeAdapter.fetchSessionByKey(sessionKey);
-      return { success: true, session };
-    } catch (error) {
-      return {
-        success: false,
-        session: null,
-        error: error instanceof Error ? error.message : 'Failed to get subagent session',
-      };
-    }
-  });
+  registerCoworkSubtaskHandlers(() => openClawRuntimeAdapter);
 
   registerAgentHandlers({
     getManager: getAgentManager,
@@ -1328,176 +1006,21 @@ if (!gotTheLock) {
     syncConfig: reason => syncOpenClawConfig({ reason }),
   });
 
-  ipcMain.handle(
-    'cowork:permission:respond',
-    async (
-      _event,
-      options: {
-        requestId: string;
-        result: PermissionResult;
-      },
-    ) => {
-      try {
-        // Dual-dispatch pattern: permission responses arrive through one IPC channel
-        // but may target either of two independent subsystems.
-        //
-        // - resolveAskUser() handles AskUserQuestion plugin requests routed through
-        //   the McpBridgeServer HTTP callback. It is a no-op when the requestId does
-        //   not match a pending bridge request (i.e. for normal SDK permission requests).
-        //
-        // - respondToPermission() handles standard Claude Agent SDK permission requests
-        //   managed by the CoworkEngineRouter. It is a no-op when the requestId does
-        //   not match a pending SDK permission (i.e. for bridge plugin requests).
-        //
-        // Both calls are safe to invoke unconditionally; exactly one will match.
-
-        // AskUserQuestion plugin responses go to the bridge server, not the runtime
-        if (extensionHostController && options.requestId) {
-          const result = options.result;
-          const updatedInput =
-            result.behavior === 'allow' &&
-            result.updatedInput &&
-            typeof result.updatedInput === 'object'
-              ? (result.updatedInput as Record<string, unknown>)
-              : undefined;
-          const extensionResponse = extensionHostController.respondToInteraction(
-            options.requestId,
-            {
-              behavior: result.behavior === 'allow' ? 'allow' : 'deny',
-              updatedInput,
-            },
-          );
-          const answers = extensionResponse.answers;
-
-          const sessionId = extensionResponse.handled
-            ? typeof updatedInput?.sessionId === 'string'
-              ? updatedInput.sessionId.trim()
-              : (askUserSessionByRequestId.get(options.requestId) ?? '')
-            : '';
-          if (sessionId && sessionId !== '__askuser__') {
-            const content =
-              result.behavior === 'allow' && answers && Object.keys(answers).length > 0
-                ? Object.entries(answers)
-                    .map(
-                      ([question, answer]) =>
-                        `${question}\n${t('askUserAnswerLabel')}：${formatAskUserAnswerValue(answer)}`,
-                    )
-                    .join('\n\n')
-                : t(
-                    result.behavior === 'allow' ? 'askUserApprovedMessage' : 'askUserDeniedMessage',
-                  );
-            const message = getCoworkStore().addMessage(sessionId, {
-              type: 'user',
-              content,
-              metadata: {
-                source: 'AskUserQuestion',
-                requestId: options.requestId,
-                answers: answers ?? null,
-              },
-            });
-            const safeMessage = sanitizeCoworkMessageForIpc(message);
-            BrowserWindow.getAllWindows().forEach(win => {
-              if (win.isDestroyed()) return;
-              win.webContents.send('cowork:stream:message', {
-                sessionId,
-                message: safeMessage,
-              });
-            });
-          }
-          askUserSessionByRequestId.delete(options.requestId);
-        }
-
-        const runtime = getCoworkEngineRouter();
-        runtime.respondToPermission(options.requestId, options.result);
-        return { success: true };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to respond to permission',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('cowork:config:get', async () => {
-    try {
-      const config = getCoworkStore().getConfig();
-      return { success: true, config };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get config',
-      };
-    }
+  registerCoworkPermissionHandlers({
+    getCoworkStore,
+    getCoworkEngineRouter,
+    getExtensionHostController: () => extensionHostController,
+    askUserSessionByRequestId,
   });
 
-  ipcMain.handle(
-    'cowork:config:set',
-    async (
-      _event,
-      config: {
-        workingDirectory?: string;
-        executionMode?: 'auto' | 'local' | 'sandbox';
-        agentEngine?: CoworkAgentEngine;
-      },
-    ) => {
-      try {
-        const normalizedExecutionMode =
-          config.executionMode && String(config.executionMode) === 'container'
-            ? 'local'
-            : config.executionMode;
-        const normalizedAgentEngine = config.agentEngine === 'openclaw' ? 'openclaw' : undefined;
-        const normalizedConfig: Parameters<CoworkStore['setConfig']>[0] = {
-          workingDirectory: config.workingDirectory,
-          executionMode: normalizedExecutionMode,
-          agentEngine: normalizedAgentEngine,
-        };
-        const previousConfig = getCoworkStore().getConfig();
-        const previousWorkingDir = previousConfig.workingDirectory;
-        getCoworkStore().setConfig(normalizedConfig);
-        const nextConfig = getCoworkStore().getConfig();
-        if (
-          normalizedAgentEngine !== undefined &&
-          normalizedAgentEngine !== previousConfig.agentEngine
-        ) {
-          getCoworkEngineRouter().handleEngineConfigChanged(normalizedAgentEngine);
-        }
-        const switchedToOpenClaw =
-          normalizedAgentEngine === 'openclaw' && previousConfig.agentEngine !== 'openclaw';
-
-        const shouldSyncOpenClawConfig =
-          normalizedExecutionMode !== undefined ||
-          normalizedAgentEngine !== undefined ||
-          (normalizedConfig.workingDirectory !== undefined &&
-            normalizedConfig.workingDirectory !== previousWorkingDir);
-        if (shouldSyncOpenClawConfig) {
-          const syncResult = await syncOpenClawConfig({
-            reason: 'cowork-config-change',
-          });
-          if (!syncResult.success && nextConfig.agentEngine === 'openclaw') {
-            return {
-              success: false,
-              code: ENGINE_NOT_READY_CODE,
-              error: syncResult.error || 'OpenClaw config sync failed.',
-              engineStatus: syncResult.status || getOpenClawEngineManager().getStatus(),
-            };
-          }
-        }
-
-        if (switchedToOpenClaw) {
-          void ensureOpenClawRunningForCowork().catch(error => {
-            console.error('[OpenClaw] Failed to auto-start gateway after engine switch:', error);
-          });
-        }
-        return { success: true };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to set config',
-        };
-      }
-    },
-  );
+  registerCoworkConfigHandlers({
+    getCoworkStore,
+    getCoworkEngineRouter,
+    getEngineManager: getOpenClawEngineManager,
+    syncOpenClawConfig,
+    ensureEngineRunning: ensureOpenClawRunningForCowork,
+    engineNotReadyCode: ENGINE_NOT_READY_CODE,
+  });
 
   registerDefaultModelHandlers({
     getStore,
