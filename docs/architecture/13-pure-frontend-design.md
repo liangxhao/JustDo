@@ -1,6 +1,6 @@
 # JustDo 纯前端架构设计
 
-> **状态**: 本设计在 v2026.6 已全面落实。JustDo 不再注入自定义 system prompt / AGENTS.md policy / per-agent workspace。所有会话、消息历史、Subagent 管理由 OpenClaw Gateway 全权负责。当前架构边界参见 [openclaw-gateway-capability-matrix.md](openclaw-gateway-capability-matrix.md)。
+> **状态**: JustDo 采用薄前端边界。OpenClaw Gateway 负责会话、历史和 Subagent，JustDo 负责 UI、配置与权限。
 
 
 ## 1. 设计目标
@@ -53,58 +53,7 @@ JustDo 作为 **OpenClaw Gateway 的纯前端**，不注入任何自己的上下
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 3. 移除的注入点 (历史参考)
-
-以下注入点已在 v2026.6 移除，此处保留作为历史记录。
-
-### 3.1 消息级注入
-
-**移除前**: `buildOutboundPrompt` 会注入：
-- `[JustDo system instructions]` 包装
-- `## Local Time Context` 时间上下文
-- `[Context bridge from previous JustDo conversation]` 历史迁移
-
-**移除后**: 纯透传用户原始消息
-
-```typescript
-// openclawRuntimeAdapter.ts
-private async buildOutboundPrompt(
-  _sessionId: string,
-  prompt: string,
-  _systemPrompt?: string,
-  _agentId?: string,
-): Promise<string> {
-  return prompt.trim();  // 纯透传，不注入任何 JustDo 上下文
-}
-```
-
-### 3.2 AGENTS.md 注入
-
-**移除前**: `syncAgentsMd` 会注入 Web Search 禁用 policy、Exec 确认 policy、Memory 强制 write tool 的 policy 等
-
-**移除后**: 只移除已存在的 JustDo managed section，不写入任何内容
-
-```typescript
-// openclawConfigSync.ts
-private syncAgentsMd(workspaceDir: string, _coworkConfig: CoworkConfig): string | undefined {
-  const MARKER = '<!-- JustDo managed: do not edit below this line -->';
-  // 只移除已存在的 managed section，不注入任何内容
-}
-```
-
-### 3.3 Per-Agent Workspace 注入
-
-**移除前**: `syncPerAgentWorkspaces` 会为每个 agent 写入 SOUL.md、IDENTITY.md、AGENTS.md、MEMORY.md
-
-**移除后**: 空实现，让 OpenClaw 自己管理 agent workspace
-
-### 3.4 Skills 配置注入
-
-**移除前**: `openclaw.json` 中的 `skills.entries` 和 `skills.load.extraDirs` 指向 JustDo userData/resources/skills
-
-**移除后**: Skills 在构建时直接写入 OpenClaw Runtime 内置目录
-
-## 4. 保留的配置同步
+## 3. 保留的配置同步
 
 以下配置仍然同步到 OpenClaw（无 prompt 注入）：
 
@@ -117,7 +66,7 @@ private syncAgentsMd(workspaceDir: string, _coworkConfig: CoworkConfig): string 
 | Browser enabled | browser 工具配置 |
 | Plugins entries | MCP bridge 等插件 |
 
-## 5. Chat 渲染架构
+## 4. Chat 渲染架构
 
 ### 5.1 Lit-based `<justdo-chat>` 自定义元素
 
@@ -168,13 +117,13 @@ React 组件将 Lit 元素封装，管理 `ChatController`（直连 Gateway）�
 - 不再经过 Redux → CoworkMessage → Gateway 的转换链路
 - 身份验证、消息发送、流式接收均由 `ChatController` 处理
 
-## 6. 历史管理
+## 6. 当前历史管理
 
 JustDo 不存储历史，历史完全由 OpenClaw Gateway 管理：
 
 - Session 历史通过 Gateway API (`chat.history`) 实时获取
 - UI 显示的历史来自 Gateway，而非本地存储
-- Context Bridge 功能已移除（不再迁移 JustDo 本地历史到 Gateway）
+- Context Bridge 功能已移除（不再写入 JustDo 本地历史到 Gateway）
 - SQLite `cowork_messages` 降级为 UI 缓存
 
 ## 7. Subagent 管理

@@ -1,6 +1,6 @@
 # JustDo 定时任务系统设计文档
 
-**版本**: v2026.7.1
+**版本**: v2026.7.3
 
 ## 1. 概述
 
@@ -96,7 +96,7 @@ export const WakeMode = {
 
 // 任务来源类型
 export const OriginKind = {
-  Legacy: 'legacy',    // 旧版任务
+  Legacy: 'legacy',
   IM: 'im',            // IM 创建
   Cowork: 'cowork',    // Cowork 会话创建
   Cron: 'cron',        // Cron 系统创建
@@ -665,13 +665,13 @@ Gateway → User: 投递提醒消息
 | `src/scheduledTask/cronJobService.ts` | Gateway 适配器 (RPC 封装 + 轮询) |
 | `src/scheduledTask/enginePrompt.ts` | Agent 行为提示词 |
 | `src/scheduledTask/metaStore.ts` | 元数据存储（配置持久化） |
-| `src/scheduledTask/migrate.ts` | 旧任务格式迁移 |
+| `src/scheduledTask/migrate.ts` | 任务兼容处理 |
 | `src/scheduledTask/reminderText.ts` | 提醒消息文本格式化 |
 | `src/scheduledTask/policies/types.ts` | TaskPolicy 接口定义 |
 | `src/scheduledTask/policies/manualPolicy.ts` | UI 手动创建策略 |
 | `src/scheduledTask/policies/imPolicy.ts` | IM 创建策略（IM 集成开发中） |
 | `src/scheduledTask/policies/coworkPolicy.ts` | Cowork 创建策略 |
-| `src/scheduledTask/policies/legacyPolicy.ts` | 旧版任务兼容策略 |
+| `src/scheduledTask/policies/legacyPolicy.ts` | 任务兼容策略 |
 | `src/scheduledTask/policies/registry.ts` | 策略注册表 |
 | `src/main/ipcHandlers/scheduledTask/handlers.ts` | IPC Handler 实现 |
 | `src/main/ipcHandlers/scheduledTask/helpers.ts` | 辅助函数 (通道列表) |

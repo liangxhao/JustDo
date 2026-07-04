@@ -583,5 +583,3 @@ npm run electron:dev:openclaw
 | `scripts/openclaw-runtime-host.cjs` | 开发模式 runtime host |
 
 ---
-
-> **注意**：此文档反映 JustDo v2026.7.1 架构。当前 OpenClaw 版本为 v2026.6.9。Runtime 从 npm registry 下载预构建包，不再从 git 源码构建。

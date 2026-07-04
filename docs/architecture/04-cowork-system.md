@@ -575,5 +575,3 @@ sequenceDiagram
 | `src/renderer/components/cowork/RunSessionModal.tsx` | 运行会话模态框 |
 
 ---
-
-> **注意**：此文档反映 JustDo v2026.7.1 架构。当前 OpenClaw 版本为 v2026.6.9。

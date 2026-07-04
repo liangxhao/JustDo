@@ -1,6 +1,6 @@
 # JustDo 系统架构设计
 
-**Last Updated:** 2026-06-30
+**Last Updated:** 2026-07-04
 
 ## 1. 架构概述
 
@@ -471,7 +471,7 @@ JustDoChatWrapper (React)
           -> <justdo-chat> Lit 元素渲染
 ```
 
-此管道替代了旧版 CoworkSessionDetail.tsx（3800+ 行）的所有功能。Redux 中的 `coworkSlice` 仍然维护会话元数据，但消息内容的渲染完全交由 Lit 管道处理。
+此管道提供当前消息渲染能力。Redux 仅维护会话元数据，消息内容渲染交由 Lit 管道处理。
 
 ### 3.4 请求-响应模式
 
@@ -638,7 +638,7 @@ const translations = {
 - 运行时作为预构建 npm 包分发，无需从 git 克隆和构建
 - Subagent 逻辑完全收缩至 Gateway，JustDo 不再维护本地子 Agent 状态
 
-**历史**：旧版曾包含 `yd_cowork` 引擎和 Claude Agent SDK 适配器，v2026.5 起已全部移除。
+当前架构仅保留 OpenClaw Gateway 作为唯一引擎。
 
 ### 7.2 SQLite 本地存储（UI 缓存）
 

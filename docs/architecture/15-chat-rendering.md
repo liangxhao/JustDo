@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-v2026.6.25 中，JustDo 的消息显示系统已完成彻底重写。原有的 `CoworkSessionDetail.tsx`（3800+ 行）已被 OpenClaw webchat 的 Lit 渲染管线完全替代。
+JustDo 的消息显示系统使用 `<justdo-chat>` Lit 渲染管线。
 
 ### 1.1 设计动机
 
@@ -359,6 +359,6 @@ ChatController.handleEvent()
 
 ## 10. 版本信息
 
-- **Last Updated**: 2026-07-01
-- **JustDo Version**: v2026.7.1
+- **Last Updated**: 2026-07-04
+- **JustDo Version**: v2026.7.3
 - **OpenClaw Gateway**: v2026.6.9

@@ -1,7 +1,7 @@
 # JustDo 项目概述
 
-**Last Updated:** 2026-07-01
-**Current Version:** 2026.7.1
+**Last Updated:** 2026-07-04
+**Current Version:** 2026.7.3
 **OpenClaw Gateway:** v2026.6.9
 
 ## 1. 产品定位
@@ -64,14 +64,14 @@ Cowork 是 JustDo 的核心功能 —— 一个 AI 工作会话系统，支持�
 
 ### 3.2 Skills 技能系统
 
-内置 17 个 Skills 技能，由 OpenClaw Gateway 管理，覆盖文档生成、网络搜索、系统工具等场景：
+内置 15 个 Skills 技能，由 OpenClaw Gateway 管理，覆盖文档生成、网络搜索、系统工具等场景：
 
 | 类别 | 技能 |
 |------|------|
 | 文档生成 | `docx`（Word）、`xlsx`（Excel）、`pptx`（PPT）、`pdf` |
 | 网络工具 | `multi-search-engine`、`playwright`、`agent-browser` |
 | 数据处理 | `data-analysis`、`diagram-generator` |
-| 系统工具 | `healthcheck`、`taskflow` |
+| 系统工具 | `taskflow` |
 | 扩展 | `skill-creator`、`self-improvement`、`mcp-builder` |
 | 创意 | `algorithmic-art`、`theme-factory`、`ontology` |
 
@@ -197,11 +197,10 @@ Agent 使用 Gateway 管理的内存文件系统实现持久化记忆：
 - **v2026.5**：薄前端架构重构，OpenClaw Gateway 深度集成
 - **v2026.7**：主进程领域重组，移除企业模式，精简为 OpenAI 兼容 providers only
 
-### 版本历史
+### 当前版本
 
-| 版本 | 日期 | 主要变更 |
-|------|------|----------|
-| 2026.7.1 | 2026-07 | 当前版本。主进程按领域重构（core/data/features/libs/cowork/infra/mcp/openclaw）。移除企业模式、Skill Security Scanner、OpenAI Compat Proxy。精简为 OpenAI 兼容 providers only。 |
-| 2026.6.25 | 2026-06 | Lit `<justdo-chat>` 渲染管道替换 Redux 驱动渲染。Gateway WebSocket 直连。Subagent 逻辑完全移交 Gateway。运行时作为预构建 npm 包分发。 |
-| 2026.5.x | 2026-05 | Thin Frontend 架构重构，Gateway 深度集成。移除 `yd_cowork` 和 Claude Agent SDK 引擎。 |
-| 2026.4.x | 2026-04 | 品牌重塑为 JustDo，基础架构稳定。 |
+JustDo 当前版本为 `v2026.7.3`，核心边界如下：
+
+- OpenClaw Gateway 是会话、历史、子智能体和定时任务的权威来源
+- JustDo 是桌面前端、配置壳和权限壳
+- SQLite 是 UI 缓存，不是运行时权威

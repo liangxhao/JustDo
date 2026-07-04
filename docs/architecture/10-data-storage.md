@@ -28,7 +28,7 @@ JustDo 使用本地 SQLite 数据库作为 **UI 缓存层**，文件名为 `just
 
 ### 1.3 数据库特性
 
-- **单文件存储**：便于备份和迁移
+- **单文件存储**：便于备份和恢复
 - **同步操作**：better-sqlite3 提供高性能同步 API
 - **WAL 模式**：启用 Write-Ahead Logging 提高并发性能
 - **完整 UTF-8**：支持中文等 Unicode 字符
@@ -230,7 +230,7 @@ class SqliteStore {
     db.pragma('cache_size = -8000'); // 8 MB
     db.pragma('wal_autocheckpoint = 1000');
     
-    // 创建表和迁移
+    // 创建表
     store.initializeTables(basePath);
     return store;
   }
@@ -291,51 +291,17 @@ class CoworkStore {
 }
 ```
 
-## 5. 数据迁移
-
-### 5.1 迁移策略
-
-迁移在 `sqliteStore.ts` 的 `initializeTables` 中处理：
-
-```typescript
-// 检查列是否存在后添加
-const columns = this.db.pragma('table_info(cowork_sessions)');
-const colNames = columns.map(c => c.name);
-
-if (!colNames.includes('execution_mode')) {
-  this.db.exec('ALTER TABLE cowork_sessions ADD COLUMN execution_mode TEXT;');
-}
-// ... 其他迁移
-```
-
-迁移版本（历史变更，当前均为幂等操作）：
-
-| 变更 | 说明 |
-|------|------|
-| execution_mode 列 | 从 'container' 迁移到 'local' |
-| pinned 列 | 会话置顶功能 |
-| sequence 列 | 消息顺序号 |
-| thinking_content 列 | 思考内容存储 |
-| model_name 列 | 消息对应的 AI 模型 |
-| usage 列 | token 用量统计 |
-| agent_id 列 | 会话绑定的 Agent |
-| group_id 列 | 会话分组外键 |
-
-### 5.2 旧数据迁移
-
-首次启动时，如果 `kv` 表为空，尝试从 legacy `config.json`（electron-store 格式）导入数据。
-
-## 6. 关键文件清单
+## 5. 关键文件清单
 
 | 文件 | 职责 |
 |------|------|
-| `src/main/sqliteStore.ts` | SQLite 数据库管理（建表、迁移、KV 操作） |
+| `src/main/sqliteStore.ts` | SQLite 数据库管理（建表、KV 操作） |
 | `src/main/coworkStore.ts` | Cowork 会话和消息 CRUD |
 | `src/scheduledTask/metaStore.ts` | 定时任务元数据持久化 |
-| `src/main/scheduledTask/migrate.ts` | 定时任务迁移 |
+| `src/main/scheduledTask/migrate.ts` | 定时任务兼容处理 |
 
-## 7. 版本信息
+## 6. 版本信息
 
-- **Last Updated**: 2026-07-01
-- **JustDo Version**: v2026.7.1
+- **Last Updated**: 2026-07-04
+- **JustDo Version**: v2026.7.3
 - **OpenClaw Gateway**: v2026.6.9

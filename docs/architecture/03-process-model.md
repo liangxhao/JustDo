@@ -1,7 +1,7 @@
 # JustDo 进程模型与 IPC 通信
 
-**Last Updated:** 2026-07-01
-**Version:** 2026.7.1
+**Last Updated:** 2026-07-04
+**Version:** 2026.7.3
 
 ## 1. Electron 进程模型
 

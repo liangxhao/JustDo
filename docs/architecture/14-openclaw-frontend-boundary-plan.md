@@ -2,22 +2,9 @@
 
 ## 1. 背景
 
-> **当前状态 (v2026.6.25)**: 本规划的目标已全部达成。JustDo 已从厚重编排层收缩为 OpenClaw Gateway 的纯前端。本文档保留作为历史记录和架构边界参考。
+> **当前状态**: JustDo 已收敛为 OpenClaw Gateway 的纯前端。本文档仅描述现行边界。
 
 JustDo 当前定位是 OpenClaw 的桌面前端：负责 Electron 桌面体验、配置管理、权限交互、本地 UI 数据和 Artifact 预览，不再实现 OpenClaw Runtime 的会话调度、Subagent 状态机或消息历史权威层。
-
-本规划来自一次 Subagent 回收问题排查：
-
-- 用户在一个会话中开启 2 个 Subagent。
-- 两个 Subagent 都已完成，OpenClaw child lane 显示 `active=0 queued=0`。
-- Parent session 收到两个 Subagent 的 announce/handoff，但两次都表现为"已收到第 1 个祝福语，等待第 2 个"，最终主 Agent 没有继续聚合结果。
-- 日志显示问题发生在 OpenClaw Subagent completion announce/handoff 语义附近，但 JustDo 的二次封装层放大了定位和修复成本。
-
-关键判断：
-
-1. 不应简单归因于 OpenClaw 不成熟。
-2. 更可能是 JustDo 在 OpenClaw Gateway 外包了一层过厚的状态机，导致前端、缓存、Runtime 事件、Subagent 关系之间出现"双主数据源"。
-3. 长期方向应是让 OpenClaw 作为唯一 Runtime 权威，JustDo 回归薄前端。
 
 ## 2. 总目标
 

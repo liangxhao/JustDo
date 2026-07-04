@@ -10,10 +10,10 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Version-2026.6.25-green.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2026.7.3-green.svg?style=for-the-badge" alt="Version">
   <br>
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen?style=for-the-badge" alt="Platform">
-  <img src="https://img.shields.io/badge/Electron-41-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/Electron-42-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
 </p>
 
@@ -206,7 +206,7 @@ Electron 严格进程隔离，通过 IPC 通信。
 
 | 进程 | 职责 |
 |------|------|
-| **Main** (`src/main/`) | 窗口生命周期、SQLite、OpenClaw Gateway 进程管理、40+ IPC 处理 |
+| **Main** (`src/main/`) | 窗口生命周期、SQLite、OpenClaw Gateway 进程管理、IPC 处理 |
 | **Preload** (`src/main/preload.ts`) | `contextBridge` API、`cowork` 命名空间 |
 | **Renderer** (`src/renderer/`) | React 18 + Redux + Tailwind，所有 UI 逻辑，Lit 聊天渲染 |
 
@@ -272,9 +272,9 @@ Cowork 会话使用基于 Gateway 的生命周期（`idle → downloading → in
 
 | 层 | 技术 |
 |----|----|
-| 框架 | Electron 41 |
+| 框架 | Electron 42 |
 | 前端 | React 18 + TypeScript + Lit（聊天渲染） |
-| 构建 | Vite 5 |
+| 构建 | Vite 8 |
 | 样式 | Tailwind CSS 3 |
 | 状态 | Redux Toolkit |
 | AI 引擎 | OpenClaw Gateway（预构建 npm 包） |
@@ -294,7 +294,6 @@ Cowork 会话使用基于 Gateway 的生命周期（`idle → downloading → in
 ### 应用与 Cowork
 
 - **工作目录** — Agent 操作的根目录
-- **系统提示词** — 自定义 Agent 行为
 - **执行模式** — `auto` / `local`
 - **模型 Provider 与模型** — AI 模型选择
 - **Agent 引擎** — 始终为 `openclaw`（单一引擎）
@@ -306,7 +305,7 @@ Cowork 会话使用基于 Gateway 的生命周期（`idle → downloading → in
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.9",
+    "version": "v2026.7.3",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   }
@@ -336,7 +335,7 @@ npm test -- logger    # 指定模块
 ## 贡献
 
 1. Fork → 创建特性分支 → 提交 → 推送 → 发起 PR
-2. 遵循约定式提交：`type: 简短说明`
+2. 遵循约定式提交：`type(scope): imperative summary`
 
 ## 许可证
 

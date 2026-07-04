@@ -315,7 +315,7 @@ npm run openclaw:prune                  # 清理运行时
 
 ```json
 {
-  "version": "2026.7.1"
+  "version": "2026.7.3"
 }
 ```
 
@@ -477,7 +477,7 @@ import log from 'electron-log';
 
 ## 12. 版本信息
 
-- **Last Updated**: 2026-07-01
-- **JustDo Version**: v2026.7.1
+- **Last Updated**: 2026-07-04
+- **JustDo Version**: v2026.7.3
 - **OpenClaw Gateway**: v2026.6.9
 - **Node.js**: >= 24 < 25

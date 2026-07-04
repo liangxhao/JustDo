@@ -10,10 +10,10 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Version-2026.7.1-green.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2026.7.3-green.svg?style=for-the-badge" alt="Version">
   <br>
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen?style=for-the-badge" alt="Platform">
-  <img src="https://img.shields.io/badge/Electron-41-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/Electron-42-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
 </p>
 
@@ -206,7 +206,7 @@ Electron strict process isolation with IPC communication.
 
 | Process | Responsibilities |
 |---------|------------------|
-| **Main** (`src/main/`) | Window lifecycle, SQLite, OpenClaw Gateway process management, 40+ IPC handlers |
+| **Main** (`src/main/`) | Window lifecycle, SQLite, OpenClaw Gateway process management, IPC handlers |
 | **Preload** (`src/main/preload.ts`) | `contextBridge` API, `cowork` namespace |
 | **Renderer** (`src/renderer/`) | React 18 + Redux + Tailwind, all UI logic, Lit chat rendering |
 
@@ -288,9 +288,9 @@ Local SQLite (`justdo.sqlite`) serves as a **UI cache**, NOT the authoritative d
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Electron 41 |
+| Framework | Electron 42 |
 | Frontend | React 18 + TypeScript + Lit (chat rendering) |
-| Build | Vite 5 |
+| Build | Vite 8 |
 | Styling | Tailwind CSS 3 |
 | State | Redux Toolkit |
 | AI Engine | OpenClaw Gateway (pre-built npm package) |
@@ -309,7 +309,6 @@ Local SQLite (`justdo.sqlite`) serves as a **UI cache**, NOT the authoritative d
 ### App & Cowork
 
 - **Working Directory** — Root for Agent operations
-- **System Prompt** — Customize Agent behavior
 - **Execution Mode** — `auto` / `local`
 - **Model Provider & Model** — AI model selection (OpenAI-compatible providers)
 - **Agent Engine** — Always `openclaw` (single engine)
@@ -321,7 +320,7 @@ Version pinned in `package.json`:
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.9",
+    "version": "v2026.7.3",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   }
@@ -351,7 +350,7 @@ npm test -- logger    # Specific module
 ## Contributing
 
 1. Fork → Create feature branch → Commit → Push → Open PR
-2. Follow conventional commits: `type: short summary`
+2. Follow conventional commits: `type(scope): imperative summary`
 
 ## License
 

@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-Skills 是 JustDo 的扩展机制，每个 Skill 定义了一组特定场景下的工具和能力。JustDo 内置 17 个 Skill（由 OpenClaw Gateway 管理），覆盖文档生成、数据分析、网络自动化、图表生成等场景。
+Skills 是 JustDo 的扩展机制，每个 Skill 定义了一组特定场景下的工具和能力。JustDo 内置 15 个 Skill（由 OpenClaw Gateway 管理），覆盖文档生成、数据分析、网络自动化、图表生成等场景。
 
 ### 1.1 核心设计原则
 
@@ -11,9 +11,9 @@ Skills 是 JustDo 的扩展机制，每个 Skill 定义了一组特定场景下�
 | **Gateway 管理** | Skills 完全由 OpenClaw Gateway 管理，JustDo 不维护本地 Skill 运行时状态 |
 | **构建时部署** | Skills 在 JustDo 构建时复制到 OpenClaw Runtime 内置目录，非运行时加载 |
 | **RPC 操作** | UI 通过 Gateway RPC (`skills.*`) 进行安装、搜索、配置等操作 |
-| **17 个内置 Skill** | 固定在构建时部署，不额外增加 |
+| **15 个内置 Skill** | 固定在构建时部署，不额外增加 |
 
-### 1.2 17 个内置 Skill 列表
+### 1.2 15 个内置 Skill 列表
 
 | Skill ID | 说明 | 默认启用 |
 |----------|------|----------|
@@ -22,10 +22,8 @@ Skills 是 JustDo 的扩展机制，每个 Skill 定义了一组特定场景下�
 | `data-analysis` | 数据分析 | true |
 | `diagram-generator` | 图表生成（Mermaid / PlantUML） | true |
 | `docx` | Word 文档生成 | true |
-| `healthcheck` | 系统健康检查 | true |
 | `mcp-builder` | MCP Server 构建 | true |
 | `multi-search-engine` | 多引擎网络搜索 | true |
-| `node-connect` | Node.js 连接工具 | true |
 | `ontology` | 知识本体管理 | true |
 | `pdf` | PDF 处理与生成 | true |
 | `playwright` | 浏览器自动化（Playwright） | true |
@@ -37,7 +35,7 @@ Skills 是 JustDo 的扩展机制，每个 Skill 定义了一组特定场景下�
 | `weather` | 天气查询 | true |
 | `xlsx` | Excel 表格生成 | true |
 
-> 共 19 个 Skill 被配置，其中 18 个默认启用，`agent-browser` 默认禁用。
+> 共 15 个 Skill 被配置，其中 14 个默认启用，`agent-browser` 默认禁用。
 
 ---
 
@@ -139,11 +137,10 @@ author: JustDo
 | **图表可视化** | 图表和可视化生成 | diagram-generator, algorithmic-art |
 | **网络工具** | 网络搜索和自动化 | multi-search-engine, playwright, agent-browser |
 | **数据分析** | 数据处理和分析 | data-analysis |
-| **系统工具** | 本地系统操作 | healthcheck |
 | **知识管理** | 知识组织和本體 | ontology |
 | **扩展管理** | Skill 和 MCP 扩展 | skill-creator, mcp-builder |
 | **工作流** | 任务和工作流管理 | taskflow |
-| **实用工具** | 其他实用功能 | weather, node-connect, theme-factory, self-improvement |
+| **实用工具** | 其他实用功能 | weather, theme-factory, self-improvement |
 
 ---
 
@@ -165,10 +162,8 @@ Skills 在 JustDo 构建时处理，直接写入 OpenClaw Runtime 内置目录�
     { "id": "data-analysis", "enabled": true },
     { "id": "diagram-generator", "enabled": true },
     { "id": "docx", "enabled": true },
-    { "id": "healthcheck", "enabled": true },
     { "id": "mcp-builder", "enabled": true },
     { "id": "multi-search-engine", "enabled": true },
-    { "id": "node-connect", "enabled": true },
     { "id": "ontology", "enabled": true },
     { "id": "pdf", "enabled": true },
     { "id": "playwright", "enabled": true },
