@@ -77,6 +77,7 @@ import {
   resolveRawApiConfig,
   setStoreGetter,
 } from './libs/cowork/providerApiConfig';
+import { OutboundHeaderProxy } from './libs/infra/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
 import {
   applySystemProxyEnv,
@@ -104,6 +105,8 @@ import {
 import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
 import { createSkillMarketplaceService } from './libs/skillMarketplace';
 import { McpStore } from './mcpStore';
+
+const outboundHeaderProxy = new OutboundHeaderProxy();
 
 // 设置应用程序名称
 app.setName(APP_NAME);
@@ -1202,12 +1205,14 @@ const applyProxyPreference = async (useSystemProxy: boolean): Promise<void> => {
 
   if (!useSystemProxy) {
     restoreOriginalProxyEnv();
+    outboundHeaderProxy.reapplyProcessEnvironment();
     console.log('[Main] System proxy disabled (direct mode).');
     return;
   }
 
   const proxyUrl = await resolveSystemProxyUrl('https://openrouter.ai');
   applySystemProxyEnv(proxyUrl);
+  outboundHeaderProxy.reapplyProcessEnvironment();
 
   if (proxyUrl) {
     console.log('[Main] System proxy enabled for process env:', proxyUrl);
@@ -2378,6 +2383,7 @@ if (!gotTheLock) {
   let isCleanupInProgress = false;
 
   const runAppCleanup = async (): Promise<void> => {
+    outboundHeaderProxy.stop();
     console.log('[Main] App is quitting, starting cleanup...');
     destroyTray();
     // Stop Cowork sessions without blocking shutdown.
@@ -2457,6 +2463,8 @@ if (!gotTheLock) {
     console.log('[Main] initApp: waiting for app.whenReady()');
     await app.whenReady();
     console.log('[Main] initApp: app is ready');
+
+    await outboundHeaderProxy.start();
 
     // Note: Calendar permission is checked on-demand when calendar operations are requested
     // We don't trigger permission dialogs at startup to avoid annoying users
