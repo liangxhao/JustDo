@@ -153,6 +153,8 @@ const ModelSettingsTab: React.FC<Props> = ({
                 {!readOnlyProviderRow && (
                   <button
                     type="button"
+                    role="switch"
+                    aria-checked={config.enabled}
                     onClick={e => {
                       e.stopPropagation();
                       toggleProviderEnabled(providerKey);
@@ -163,7 +165,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                   >
                     <span
                       className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        config.enabled ? 'translate-x-4.5' : 'translate-x-1'
+                        config.enabled ? 'translate-x-[18px]' : 'translate-x-1'
                       }`}
                     />
                   </button>
