@@ -72,8 +72,8 @@ export class McpBridgeServer {
   /**
    * Resolve a pending AskUserQuestion request (called when user clicks in the modal).
    */
-  resolveAskUser(requestId: string, response: AskUserResponse): void {
-    this.askUserBroker.resolve(requestId, response);
+  resolveAskUser(requestId: string, response: AskUserResponse): boolean {
+    return this.askUserBroker.resolve(requestId, response);
   }
 
   /**

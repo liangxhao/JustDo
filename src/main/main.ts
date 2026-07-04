@@ -17,8 +17,8 @@ import {
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import devServerConfig from '../../config/dev-server.json';
 
+import devServerConfig from '../../config/dev-server.json';
 import { LogIpc } from '../shared/logIpc';
 import {
   CoworkInteractionKind,
@@ -69,8 +69,6 @@ import {
   restoreOriginalProxyEnv,
   setSystemProxyEnabled,
 } from './libs/infra/systemProxy';
-import { McpBridgeServer } from './libs/mcp/mcpBridgeServer';
-import { McpServerManager } from './libs/mcp/mcpServerManager';
 import { resolveQualifiedAgentModelRef } from './libs/openclaw/openclawAgentModels';
 import {
   buildManagedSessionKey,
@@ -83,6 +81,7 @@ import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
 } from './libs/openclaw/openclawEngineManager';
+import { OpenClawExtensionHostController } from './libs/openclaw/openclawExtensionHostController';
 import { OpenClawSkillFiles } from './libs/openclaw/openclawSkillFiles';
 import { stopOpenClawTokenProxy } from './libs/openclaw/openclawTokenProxy';
 import { createSkillMarketplaceService } from './libs/skillMarketplace';
@@ -687,11 +686,8 @@ const skillMarketplaceService = createSkillMarketplaceService(() => openClawRunt
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let openClawSkillFiles: OpenClawSkillFiles | null = null;
 let mcpStore: McpStore | null = null;
-let mcpServerManager: McpServerManager | null = null;
-let mcpBridgeServer: McpBridgeServer | null = null;
-let mcpBridgeSecret: string | null = null;
+let extensionHostController: OpenClawExtensionHostController | null = null;
 const askUserSessionByRequestId = new Map<string, string>();
-let mcpBridgeStartPromise: Promise<McpBridgeConfig | null> | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawConfigSync: OpenClawConfigSync | null = null;
@@ -790,7 +786,7 @@ const bootstrapOpenClawEngine = async (
         `[OpenClaw] bootstrap: MCP bridge setup done (${elapsed()}), result=${bridgeResult ? `${bridgeResult.tools.length} tools` : 'null'}`,
       );
       console.log(
-        `[OpenClaw] bootstrap: mcpBridgeServer=${mcpBridgeServer?.callbackUrl || 'null'}, mcpServerManager.tools=${mcpServerManager?.toolManifest?.length ?? 'null'}, secret=${mcpBridgeSecret ? 'set' : 'null'}`,
+        `[OpenClaw] bootstrap: extensionHost=${extensionHostController?.config ? 'ready' : 'not-ready'}, tools=${extensionHostController?.config?.tools.length ?? 0}`,
       );
 
       const syncResult = await syncOpenClawConfig({
@@ -889,19 +885,7 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       engineManager: getOpenClawEngineManager(),
       getCoworkConfig: () => getCoworkStore().getConfig(),
       getMcpBridgeConfig: (): McpBridgeConfig | null => {
-        if (
-          !mcpBridgeServer?.callbackUrl ||
-          !mcpBridgeServer?.askUserCallbackUrl ||
-          !mcpBridgeSecret
-        ) {
-          return null;
-        }
-        return {
-          callbackUrl: mcpBridgeServer.callbackUrl,
-          askUserCallbackUrl: mcpBridgeServer.askUserCallbackUrl,
-          secret: mcpBridgeSecret,
-          tools: mcpServerManager?.toolManifest ?? [],
-        };
+        return extensionHostController?.config ?? null;
       },
       getAgents: () => getCoworkStore().listAgents(),
     });
@@ -1309,121 +1293,46 @@ const getMcpStore = () => {
   return mcpStore;
 };
 
-/**
- * Start the MCP Bridge: server manager + HTTP callback.
- * Called during OpenClaw bootstrap before config sync.
- * Returns the bridge config to be written into openclaw.json.
- *
- * The HTTP callback server is always started (even without MCP servers)
- * because the AskUserQuestion plugin also uses it for user confirmation dialogs.
- */
-const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
-  // Deduplicate concurrent calls — only one initialization at a time
-  if (mcpBridgeStartPromise) {
-    return mcpBridgeStartPromise;
-  }
-  mcpBridgeStartPromise = (async (): Promise<McpBridgeConfig | null> => {
-    try {
-      console.log('[McpBridge] startMcpBridge called');
-
-      // Generate a per-session secret for bridge auth
-      if (!mcpBridgeSecret) {
-        const crypto = await import('crypto');
-        mcpBridgeSecret = crypto.randomUUID();
-      }
-
-      // Discover MCP tools (may be empty if no servers configured)
-      const enabledServers = getMcpStore().getEnabledServers();
-      console.log(
-        `[McpBridge] enabledServers: ${enabledServers.length} (${enabledServers.map(s => s.name).join(', ')})`,
-      );
-
-      let tools: Awaited<ReturnType<McpServerManager['startServers']>> = [];
-      if (enabledServers.length > 0) {
-        if (!mcpServerManager) {
-          mcpServerManager = new McpServerManager();
-        }
-        console.log('[McpBridge] starting MCP servers...');
-        tools = await mcpServerManager.startServers(enabledServers);
-        console.log(`[McpBridge] tools discovered: ${tools.length}`);
-      }
-
-      // Always start HTTP callback server (serves both MCP Bridge and AskUserQuestion)
-      if (!mcpServerManager) {
-        mcpServerManager = new McpServerManager();
-      }
-      if (!mcpBridgeServer) {
-        mcpBridgeServer = new McpBridgeServer(mcpServerManager, mcpBridgeSecret);
-      }
-      if (!mcpBridgeServer.port) {
-        console.log('[McpBridge] starting HTTP callback server...');
-        await mcpBridgeServer.start();
-      }
-
-      // Register AskUserQuestion callback — shows a permission modal when the
-      // ask-user-question OpenClaw plugin sends a request via HTTP.
-      mcpBridgeServer.onAskUser(request => {
+const getExtensionHostController = (): OpenClawExtensionHostController => {
+  if (!extensionHostController) {
+    extensionHostController = new OpenClawExtensionHostController({
+      getEnabledMcpServers: () => getMcpStore().getEnabledServers(),
+      onAskUser: request => {
         const managedSession = parseManagedSessionKey(request.sessionKey);
         const requestSessionId = managedSession?.sessionId ?? '__askuser__';
         askUserSessionByRequestId.set(request.requestId, requestSessionId);
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach(win => {
+        BrowserWindow.getAllWindows().forEach(win => {
           if (win.isDestroyed()) return;
-          try {
-            win.webContents.send('cowork:stream:permission', {
-              sessionId: requestSessionId,
-              request: {
-                requestId: request.requestId,
-                toolName: OpenClawToolName.ASK_USER_QUESTION,
-                interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
-                toolInput: {
-                  questions: request.questions,
-                  sessionKey: request.sessionKey,
-                  sessionId: requestSessionId,
-                },
+          win.webContents.send('cowork:stream:permission', {
+            sessionId: requestSessionId,
+            request: {
+              requestId: request.requestId,
+              toolName: OpenClawToolName.ASK_USER_QUESTION,
+              interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
+              toolInput: {
+                questions: request.questions,
+                sessionKey: request.sessionKey,
+                sessionId: requestSessionId,
               },
-            });
-          } catch (error) {
-            console.error('[AskUser] failed to send permission request to window:', error);
-          }
+            },
+          });
         });
-      });
-
-      // Dismiss the AskUser modal when timeout or resolved from server side.
-      // Simulate a deny response to remove it from the renderer's pending queue.
-      mcpBridgeServer.onAskUserDismiss(requestId => {
+      },
+      onAskUserDismiss: requestId => {
         askUserSessionByRequestId.delete(requestId);
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach(win => {
-          if (win.isDestroyed()) return;
-          try {
+        BrowserWindow.getAllWindows().forEach(win => {
+          if (!win.isDestroyed()) {
             win.webContents.send('cowork:stream:permissionDismiss', { requestId });
-          } catch {
-            // ignore
           }
         });
-      });
+      },
+    });
+  }
+  return extensionHostController;
+};
 
-      const callbackUrl = mcpBridgeServer.callbackUrl;
-      const askUserCallbackUrl = mcpBridgeServer.askUserCallbackUrl;
-      if (!callbackUrl || !askUserCallbackUrl) {
-        console.error('[McpBridge] failed to get callback URL');
-        return null;
-      }
-
-      console.log(`[McpBridge] started: ${tools.length} MCP tools, callback=${callbackUrl}`);
-      return { callbackUrl, askUserCallbackUrl, secret: mcpBridgeSecret, tools };
-    } catch (error) {
-      console.error(
-        '[McpBridge] startup error:',
-        error instanceof Error ? error.stack || error.message : String(error),
-      );
-      return null;
-    }
-  })().finally(() => {
-    mcpBridgeStartPromise = null;
-  });
-  return mcpBridgeStartPromise;
+const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
+  return getExtensionHostController().start();
 };
 
 /**
@@ -1431,12 +1340,7 @@ const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
  */
 const _stopMcpBridge = async (): Promise<void> => {
   try {
-    if (mcpServerManager) {
-      await mcpServerManager.stopServers();
-    }
-    if (mcpBridgeServer) {
-      await mcpBridgeServer.stop();
-    }
+    await extensionHostController?.stop();
   } catch (error) {
     console.error(
       '[McpBridge] shutdown error:',
@@ -1473,13 +1377,8 @@ const refreshMcpBridge = (): Promise<{ tools: number; error?: string }> => {
       console.log('[McpBridge] refreshing after config change...');
       broadcastMcpBridgeSync('mcp:bridge:syncStart');
 
-      // 1. Stop existing MCP servers (but keep HTTP callback server alive — port stays the same)
-      if (mcpServerManager) {
-        await mcpServerManager.stopServers();
-      }
-
-      // 2. Re-discover tools from the new set of enabled servers
-      const bridgeConfig = await startMcpBridge();
+      // Restart MCP processes while keeping the callback endpoint stable.
+      const bridgeConfig = await getExtensionHostController().restartMcpServers();
       const toolCount = bridgeConfig?.tools.length ?? 0;
       console.log(`[McpBridge] refresh: ${toolCount} tools discovered`);
 
@@ -3484,7 +3383,7 @@ if (!gotTheLock) {
         // Both calls are safe to invoke unconditionally; exactly one will match.
 
         // AskUserQuestion plugin responses go to the bridge server, not the runtime
-        if (mcpBridgeServer && options.requestId) {
+        if (extensionHostController && options.requestId) {
           const result = options.result;
           const updatedInput =
             result.behavior === 'allow' &&
@@ -3492,17 +3391,22 @@ if (!gotTheLock) {
             typeof result.updatedInput === 'object'
               ? (result.updatedInput as Record<string, unknown>)
               : undefined;
-          const answers = updatedInput?.answers as Record<string, string> | undefined;
-          const askUserResponse: import('./libs/mcp/mcpBridgeServer').AskUserResponse = {
-            behavior: result.behavior === 'allow' ? 'allow' : 'deny',
-            answers,
-          };
-          mcpBridgeServer.resolveAskUser(options.requestId, askUserResponse);
+          const extensionResponse = extensionHostController.respondToInteraction(
+            options.requestId,
+            {
+              behavior: result.behavior === 'allow' ? 'allow' : 'deny',
+              updatedInput,
+            },
+          );
+          const answers = extensionResponse.answers;
 
-          const sessionId =
+          const sessionId = extensionResponse.handled
+            ? (
             typeof updatedInput?.sessionId === 'string'
               ? updatedInput.sessionId.trim()
-              : (askUserSessionByRequestId.get(options.requestId) ?? '');
+              : (askUserSessionByRequestId.get(options.requestId) ?? '')
+              )
+            : '';
           if (sessionId && sessionId !== '__askuser__') {
             const content =
               result.behavior === 'allow' && answers && Object.keys(answers).length > 0

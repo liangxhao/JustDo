@@ -26,13 +26,14 @@ export class AskUserRequestBroker {
     this.dismissCallback = callback;
   }
 
-  resolve(requestId: string, response: AskUserResponse): void {
+  resolve(requestId: string, response: AskUserResponse): boolean {
     const pending = this.pendingRequests.get(requestId);
-    if (!pending) return;
+    if (!pending) return false;
 
     clearTimeout(pending.timer);
     this.pendingRequests.delete(requestId);
     pending.resolve(response);
+    return true;
   }
 
   request(questions: AskUserQuestion[], sessionKey?: string): Promise<AskUserResponse> {
