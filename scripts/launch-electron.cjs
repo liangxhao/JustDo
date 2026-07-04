@@ -8,7 +8,9 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
-const { port: devServerPort } = require('../config/dev-server.json');
+const {
+  devServer: { port: devServerPort },
+} = require('../package.json');
 
 // Get electron executable path
 const electronPath = require('electron');

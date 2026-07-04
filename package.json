@@ -13,6 +13,9 @@
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   },
+  "devServer": {
+    "port": 4175
+  },
   "main": "dist-electron/main.js",
   "engines": {
     "node": ">=24 <25"

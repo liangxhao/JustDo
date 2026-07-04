@@ -18,7 +18,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import devServerConfig from '../../config/dev-server.json';
+import packageJson from '../../package.json';
 import { LogIpc } from '../shared/logIpc';
 import {
   CoworkInteractionKind,
@@ -450,7 +450,7 @@ const isLinux = process.platform === 'linux';
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
 const DEV_SERVER_URL =
-  process.env.ELECTRON_START_URL || `http://localhost:${devServerConfig.port}`;
+  process.env.ELECTRON_START_URL || `http://localhost:${packageJson.devServer.port}`;
 const enableVerboseLogging =
   process.env.ELECTRON_ENABLE_LOGGING === '1' || process.env.ELECTRON_ENABLE_LOGGING === 'true';
 const disableGpu =
@@ -4112,7 +4112,8 @@ if (!gotTheLock) {
   const setContentSecurityPolicy = () => {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       const devPort =
-        process.env.ELECTRON_START_URL?.match(/:(\d+)/)?.[1] || String(devServerConfig.port);
+        process.env.ELECTRON_START_URL?.match(/:(\d+)/)?.[1] ||
+        String(packageJson.devServer.port);
       const cspDirectives = [
         "default-src 'self'",
         isDev
@@ -4268,8 +4269,12 @@ if (!gotTheLock) {
 
       tryLoadURL();
 
-      // 打开开发者工具并强制停靠到右侧，避免 Electron 记住上次的浮动/底部布局
-      mainWindow.webContents.openDevTools({ mode: 'right' });
+      // 页面导航可能关闭过早打开的 DevTools，因此在每次加载完成后恢复右侧停靠。
+      mainWindow.webContents.on('did-finish-load', () => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDevToolsOpened()) {
+          mainWindow.webContents.openDevTools({ mode: 'right' });
+        }
+      });
     } else {
       // 生产环境
       mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));

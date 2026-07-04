@@ -1,6 +1,8 @@
 const { spawn } = require('child_process');
 const path = require('path');
-const { port } = require('../config/dev-server.json');
+const {
+  devServer: { port },
+} = require('../package.json');
 
 const commands = [
   `vite --port ${port}`,
