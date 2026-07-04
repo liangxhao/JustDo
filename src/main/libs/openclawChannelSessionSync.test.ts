@@ -1,4 +1,4 @@
-import { expect,test } from 'vitest';
+import { expect, test } from 'vitest';
 
 import {
   buildManagedSessionKey,
@@ -7,7 +7,7 @@ import {
   isManagedSessionKey,
   OpenClawChannelSessionSync,
   parseManagedSessionKey,
-} from './openclawChannelSessionSync';
+} from './openclaw/sessions/openclawChannelSessionSync';
 
 function createSync() {
   return new OpenClawChannelSessionSync({
