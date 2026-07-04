@@ -95,8 +95,13 @@ Top-level files: `main.ts` (entry), `preload.ts` (contextBridge), `coworkStore.t
 | `agentEngine/utils/` | Gateway helpers | `gatewayHelpers.ts` |
 | `cowork/` | Cowork config, logging, model API | `coworkConfigStore.ts`, `coworkLogger.ts`, `coworkModelApi.ts`, `coworkUtil.ts`, `providerApiConfig.ts` |
 | `infra/` | Infrastructure & safety utilities | `commandSafety.ts`, `logExport.ts`, `pythonRuntime.ts`, `systemProxy.ts` |
-| `mcp/` | MCP bridge & server management | `mcpBridgeServer.ts`, `mcpServerManager.ts` |
-| `openclaw/` | Gateway engine & config sync | `openclawEngineManager.ts`, `openclawConfigSync.ts`, `openclawHistory.ts`, `openclawTokenProxy.ts`, `openclawAgentModels.ts`, `openclawAssistantText.ts`, `openclawChannelSessionSync.ts`, `openclawLocalExtensions.ts` |
+| `mcp/` | MCP client process lifecycle and tool discovery | `mcpServerManager.ts` |
+| `openclaw/config/` | Managed Gateway configuration and workspace repair | `openclawConfigSync.ts`, `workspaceStateRepair.ts` |
+| `openclaw/extensions/` | Extension registry, host lifecycle, callbacks, and interactions | `openclawExtensionRegistry.ts`, `openclawExtensionHostController.ts`, `openclawExtensionCallbackServer.ts` |
+| `openclaw/models/` | Agent model resolution | `openclawAgentModels.ts` |
+| `openclaw/runtime/` | Gateway runtime and proxy lifecycle | `openclawEngineManager.ts`, `openclawTokenProxy.ts` |
+| `openclaw/sessions/` | Session keys, history, and assistant text | `openclawChannelSessionSync.ts`, `openclawHistory.ts`, `openclawAssistantText.ts` |
+| `openclaw/skills/` | Local skill file operations | `openclawSkillFiles.ts` |
 
 ### Process Isolation Rules (CRITICAL)
 
@@ -122,11 +127,11 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 
 ### Key Subsystems
 
-**OpenClaw Engine** (`src/main/libs/openclaw/openclawEngineManager.ts`): Runtime download, install, version caching, and Gateway process lifecycle (idle → downloading → installing → ready → running).
+**OpenClaw Engine** (`src/main/libs/openclaw/runtime/openclawEngineManager.ts`): Runtime download, install, version caching, and Gateway process lifecycle (idle → downloading → installing → ready → running).
 
 **Cowork System** (`src/main/libs/agentEngine/`): AI chat orchestration. Routes through `coworkEngineRouter.ts` → `openclawRuntimeAdapter.ts`. Supports streaming, thinking content, subagents (`openclaw/subagentGateway.ts`), and history reconciliation (`history/historyReconciler.ts`).
 
-**Skills**: OpenClaw is the authoritative source via RPC (`agentEngine/rpc/skillRpc.ts`). `openclaw/openclawSkillFiles.ts` only copies or removes user-imported files under `userData/openclaw/state/skills/`; it does not discover skills or maintain metadata/state.
+**Skills**: OpenClaw is the authoritative source via RPC (`agentEngine/rpc/skillRpc.ts`). `openclaw/skills/openclawSkillFiles.ts` only copies or removes user-imported files under `userData/openclaw/state/skills/`; it does not discover skills or maintain metadata/state.
 
 **IM (Remote Control)**: In development. Types at `src/renderer/types/im.ts`.
 
@@ -137,12 +142,12 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 | Area | Path |
 |------|------|
 | App entry | `src/main/main.ts`, `src/main/preload.ts` |
-| Engine lifecycle | `src/main/libs/openclaw/openclawEngineManager.ts` |
+| Engine lifecycle | `src/main/libs/openclaw/runtime/openclawEngineManager.ts` |
 | Engine adapter | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` |
 | Cowork engine router | `src/main/libs/agentEngine/coworkEngineRouter.ts` |
 | Cowork CRUD | `src/main/coworkStore.ts` |
 | SQLite wrapper | `src/main/data/sqliteStore.ts` |
-| Config sync | `src/main/libs/openclaw/openclawConfigSync.ts` |
+| Config sync | `src/main/libs/openclaw/config/openclawConfigSync.ts` |
 | Chat rendering | `src/renderer/libs/openclaw-chat/` (pipeline architecture) |
 | Markdown renderer | `src/renderer/libs/openclaw-chat/components/markdown.ts` |
 | Settings UI | `src/renderer/components/Settings.tsx` |
@@ -153,7 +158,7 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 | MCP server manager | `src/main/libs/mcp/mcpServerManager.ts` |
 | Command safety | `src/main/libs/infra/commandSafety.ts` |
 | Scheduled task engine | `src/scheduledTask/cronJobService.ts`, `src/scheduledTask/policies/` |
-| Local Skill file operations | `src/main/libs/openclaw/openclawSkillFiles.ts` |
+| Local Skill file operations | `src/main/libs/openclaw/skills/openclawSkillFiles.ts` |
 | Session groups | `src/main/groupStore.ts` |
 | MCP store | `src/main/mcpStore.ts` |
 

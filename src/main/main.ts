@@ -69,21 +69,21 @@ import {
   restoreOriginalProxyEnv,
   setSystemProxyEnabled,
 } from './libs/infra/systemProxy';
-import { resolveQualifiedAgentModelRef } from './libs/openclaw/openclawAgentModels';
+import type { McpBridgeConfig } from './libs/openclaw/config/openclawConfigSync';
+import { buildProviderSelection, OpenClawConfigSync } from './libs/openclaw/config/openclawConfigSync';
+import { OpenClawExtensionHostController } from './libs/openclaw/extensions/openclawExtensionHostController';
+import { resolveQualifiedAgentModelRef } from './libs/openclaw/models/openclawAgentModels';
+import {
+  OpenClawEngineManager,
+  type OpenClawEngineStatus,
+} from './libs/openclaw/runtime/openclawEngineManager';
+import { stopOpenClawTokenProxy } from './libs/openclaw/runtime/openclawTokenProxy';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
   parseManagedSessionKey,
-} from './libs/openclaw/openclawChannelSessionSync';
-import type { McpBridgeConfig } from './libs/openclaw/openclawConfigSync';
-import { buildProviderSelection, OpenClawConfigSync } from './libs/openclaw/openclawConfigSync';
-import {
-  OpenClawEngineManager,
-  type OpenClawEngineStatus,
-} from './libs/openclaw/openclawEngineManager';
-import { OpenClawExtensionHostController } from './libs/openclaw/openclawExtensionHostController';
-import { OpenClawSkillFiles } from './libs/openclaw/openclawSkillFiles';
-import { stopOpenClawTokenProxy } from './libs/openclaw/openclawTokenProxy';
+} from './libs/openclaw/sessions/openclawChannelSessionSync';
+import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
 import { createSkillMarketplaceService } from './libs/skillMarketplace';
 import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';

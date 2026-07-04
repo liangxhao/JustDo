@@ -6,28 +6,28 @@ import {
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
   ProviderName,
-} from '../../../shared/providers';
-import type { Agent, CoworkConfig, CoworkExecutionMode } from '../../coworkStore';
+} from '../../../../shared/providers';
+import type { Agent, CoworkConfig, CoworkExecutionMode } from '../../../coworkStore';
 import {
   getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
-} from '../cowork/providerApiConfig';
-import type { McpToolManifestEntry } from '../mcp/mcpServerManager';
+} from '../../cowork/providerApiConfig';
+import type { McpToolManifestEntry } from '../../mcp/mcpServerManager';
+import {
+  buildBundledExtensionEntries,
+  buildBundledExtensionToolContracts,
+} from '../extensions/openclawExtensionRegistry';
+import { hasBundledOpenClawExtension } from '../extensions/openclawLocalExtensions';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
   parsePrimaryModelRef,
   resolveManagedSessionModelTarget,
   resolveQualifiedAgentModelRef,
-} from './openclawAgentModels';
-import type { OpenClawEngineManager } from './openclawEngineManager';
-import {
-  buildBundledExtensionEntries,
-  buildBundledExtensionToolContracts,
-} from './openclawExtensionRegistry';
-import { hasBundledOpenClawExtension } from './openclawLocalExtensions';
+} from '../models/openclawAgentModels';
+import type { OpenClawEngineManager } from '../runtime/openclawEngineManager';
 import { repairOpenClawWorkspaceState } from './workspaceStateRepair';
 
 export type McpBridgeConfig = {

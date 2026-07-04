@@ -81,7 +81,7 @@ Runtime 是预构建的 npm 包，直接从 npm registry 下载（非从 git clo
 
 ### 2.1 状态机
 
-**文件**：`src/main/libs/openclaw/openclawEngineManager.ts`
+**文件**：`src/main/libs/openclaw/runtime/openclawEngineManager.ts`
 
 ```typescript
 type OpenClawEnginePhase = 
@@ -379,7 +379,7 @@ class HistoryReconciler {
 
 ### 5.1 OpenClawConfigSync
 
-**文件**：`src/main/libs/openclaw/openclawConfigSync.ts`
+**文件**：`src/main/libs/openclaw/config/openclawConfigSync.ts`
 
 将 JustDo 配置同步到 OpenClaw 的 `managed.yaml`：
 
@@ -543,7 +543,7 @@ npm run electron:dev:openclaw
 
 | 文件 | 职责 |
 |------|------|
-| `src/main/libs/openclaw/openclawEngineManager.ts` | Gateway 进程生命周期管理 |
+| `src/main/libs/openclaw/runtime/openclawEngineManager.ts` | Gateway 进程生命周期管理 |
 | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | Gateway 客户端 + 事件映射 |
 | `src/main/libs/agentEngine/coworkEngineRouter.ts` | 引擎路由层（透传委托） |
 | `src/main/libs/agentEngine/gateway/types.ts` | Gateway 类型定义 |
@@ -556,16 +556,16 @@ npm run electron:dev:openclaw
 | `src/main/libs/agentEngine/history/historyReconciler.ts` | 历史对账（Gateway 权威 → UI 缓存） |
 | `src/main/libs/agentEngine/openclaw/subagentGateway.ts` | 子代理状态查询 |
 | `src/main/libs/agentEngine/openclaw/webchatToolStream.ts` | Webchat 工具流同步 |
-| `src/main/libs/openclaw/openclawHistory.ts` | Gateway 历史条目提取 |
+| `src/main/libs/openclaw/sessions/openclawHistory.ts` | Gateway 历史条目提取 |
 
 ### 配置
 
 | 文件 | 职责 |
 |------|------|
-| `src/main/libs/openclaw/openclawConfigSync.ts` | 配置同步到 managed.yaml |
-| `src/main/libs/openclaw/openclawChannelSessionSync.ts` | Channel 会话同步 |
-| `src/main/libs/openclaw/openclawAgentModels.ts` | Agent 模型配置解析 |
-| `src/main/libs/openclaw/openclawLocalExtensions.ts` | 本地扩展同步 |
+| `src/main/libs/openclaw/config/openclawConfigSync.ts` | 配置同步到 managed.yaml |
+| `src/main/libs/openclaw/sessions/openclawChannelSessionSync.ts` | Channel 会话同步 |
+| `src/main/libs/openclaw/models/openclawAgentModels.ts` | Agent 模型配置解析 |
+| `src/main/libs/openclaw/extensions/openclawLocalExtensions.ts` | 本地扩展同步 |
 
 ### 打包脚本
 

@@ -4,7 +4,7 @@ import yaml from 'js-yaml';
 import os from 'os';
 import path from 'path';
 
-import { cpRecursiveSync } from '../../core/fsCompat';
+import { cpRecursiveSync } from '../../../core/fsCompat';
 
 const SKILL_FILE_NAME = 'SKILL.md';
 

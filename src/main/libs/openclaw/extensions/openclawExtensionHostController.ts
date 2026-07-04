@@ -1,15 +1,15 @@
 import crypto from 'crypto';
 
-import type { AskUserRequest, AskUserResponse } from '../../../shared/openclawExtensions';
-import type { McpServerRecord } from '../../mcpStore';
-import { McpBridgeServer } from '../mcp/mcpBridgeServer';
-import { McpServerManager } from '../mcp/mcpServerManager';
+import type { AskUserRequest, AskUserResponse } from '../../../../shared/openclawExtensions';
+import type { McpServerRecord } from '../../../mcpStore';
+import { McpServerManager } from '../../mcp/mcpServerManager';
+import type { McpBridgeConfig } from '../config/openclawConfigSync';
 import {
   type ExtensionInteractionResponse,
   type ExtensionInteractionResult,
   ExtensionInteractionRouter,
 } from './extensionInteractionRouter';
-import type { McpBridgeConfig } from './openclawConfigSync';
+import { OpenClawExtensionCallbackServer } from './openclawExtensionCallbackServer';
 
 type OpenClawExtensionHostControllerDeps = {
   getEnabledMcpServers: () => McpServerRecord[];
@@ -20,7 +20,7 @@ type OpenClawExtensionHostControllerDeps = {
 export class OpenClawExtensionHostController {
   private readonly deps: OpenClawExtensionHostControllerDeps;
   private readonly mcpManager = new McpServerManager();
-  private bridgeServer: McpBridgeServer | null = null;
+  private bridgeServer: OpenClawExtensionCallbackServer | null = null;
   private secret: string | null = null;
   private startPromise: Promise<McpBridgeConfig | null> | null = null;
   private readonly interactionRouter = new ExtensionInteractionRouter();
@@ -92,7 +92,7 @@ export class OpenClawExtensionHostController {
       }
 
       if (!this.bridgeServer) {
-        this.bridgeServer = new McpBridgeServer(this.mcpManager, this.secret);
+        this.bridgeServer = new OpenClawExtensionCallbackServer(this.mcpManager, this.secret);
         this.bridgeServer.onAskUser(this.deps.onAskUser);
         this.bridgeServer.onAskUserDismiss(this.deps.onAskUserDismiss);
       }

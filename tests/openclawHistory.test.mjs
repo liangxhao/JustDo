@@ -8,7 +8,7 @@ const {
   extractGatewayHistoryEntry,
   extractGatewayHistoryEntries,
   buildScheduledReminderSystemMessage,
-} = require('../dist-electron/main/libs/openclaw/openclawHistory.js');
+} = require('../dist-electron/main/libs/openclaw/sessions/openclawHistory.js');
 
 test('extractGatewayMessageText joins text content blocks', () => {
   const text = extractGatewayMessageText({

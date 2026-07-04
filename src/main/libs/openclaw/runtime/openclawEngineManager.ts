@@ -6,11 +6,11 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 
-import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
-import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../cowork/coworkUtil';
-import { appendPythonRuntimeToEnv } from '../infra/pythonRuntime';
-import { isSystemProxyEnabled, resolveSystemProxyUrl } from '../infra/systemProxy';
-import { syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
+import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../../shared/openclaw/constants';
+import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../../cowork/coworkUtil';
+import { appendPythonRuntimeToEnv } from '../../infra/pythonRuntime';
+import { isSystemProxyEnabled, resolveSystemProxyUrl } from '../../infra/systemProxy';
+import { syncLocalOpenClawExtensionsIntoRuntime } from '../extensions/openclawLocalExtensions';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
 type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;

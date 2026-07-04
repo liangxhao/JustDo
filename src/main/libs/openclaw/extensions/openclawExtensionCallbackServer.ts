@@ -1,5 +1,5 @@
 /**
- * McpBridgeServer — lightweight HTTP callback endpoint for the OpenClaw MCP Bridge.
+ * Callback server for locally hosted OpenClaw extensions.
  *
  * OpenClaw's mcp-bridge plugin calls this endpoint to execute MCP tools.
  * OpenClaw's ask-user-question plugin calls /askuser for user confirmation dialogs.
@@ -12,11 +12,11 @@ import type {
   AskUserQuestion,
   AskUserRequest,
   AskUserResponse,
-} from '../../../shared/openclawExtensions';
+} from '../../../../shared/openclawExtensions';
+import type { McpServerManager } from '../../mcp/mcpServerManager';
 import { AskUserRequestBroker } from './askUserRequestBroker';
-import type { McpServerManager } from './mcpServerManager';
 
-export type { AskUserRequest, AskUserResponse } from '../../../shared/openclawExtensions';
+export type { AskUserRequest, AskUserResponse } from '../../../../shared/openclawExtensions';
 
 const log = (level: string, msg: string) => {
   const formatted = `[McpBridge][${level}] ${msg}`;
@@ -29,7 +29,7 @@ const log = (level: string, msg: string) => {
   }
 };
 
-export class McpBridgeServer {
+export class OpenClawExtensionCallbackServer {
   private server: http.Server | null = null;
   private _port: number | null = null;
   private readonly mcpManager: McpServerManager;
@@ -81,7 +81,7 @@ export class McpBridgeServer {
    */
   async start(): Promise<number> {
     if (this.server) {
-      throw new Error('McpBridgeServer is already running');
+      throw new Error('OpenClawExtensionCallbackServer is already running');
     }
 
     const port = await this.findFreePort();
@@ -99,7 +99,7 @@ export class McpBridgeServer {
       srv.listen(port, '127.0.0.1', () => {
         this._port = port;
         this.server = srv;
-        log('INFO', `McpBridgeServer listening on http://127.0.0.1:${port}`);
+        log('INFO', `Extension callback server listening on http://127.0.0.1:${port}`);
         resolve(port);
       });
     });
@@ -113,7 +113,7 @@ export class McpBridgeServer {
 
     return new Promise(resolve => {
       this.server!.close(() => {
-        log('INFO', 'McpBridgeServer stopped');
+        log('INFO', 'Extension callback server stopped');
         this.server = null;
         this._port = null;
         resolve();

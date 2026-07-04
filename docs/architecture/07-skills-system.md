@@ -372,7 +372,7 @@ UI 交互流程：
 |------|------|
 | `src/main/libs/agentEngine/rpc/skillRpc.ts` | Skill RPC 处理（Gateway 通信） |
 | `src/main/libs/agentEngine/types.ts` | Skill 相关类型定义 |
-| `src/main/libs/openclaw/openclawSkillFiles.ts` | 仅处理本地 Skill 文件导入与删除 |
+| `src/main/libs/openclaw/skills/openclawSkillFiles.ts` | 仅处理本地 Skill 文件导入与删除 |
 | `resources/builtin-skills.json` | 构建时 Skills 配置清单 |
 | `resources/skills/*/SKILL.md` | Skill 定义文档 |
 | `scripts/install-openclaw-runtime.cjs` | 构建脚本（Skills 部署步骤） |

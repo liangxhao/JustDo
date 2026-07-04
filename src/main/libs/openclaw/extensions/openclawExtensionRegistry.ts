@@ -1,5 +1,5 @@
-import { OpenClawExtensionId } from '../../../shared/openclawExtensions';
-import type { McpBridgeConfig } from './openclawConfigSync';
+import { OpenClawExtensionId } from '../../../../shared/openclawExtensions';
+import type { McpBridgeConfig } from '../config/openclawConfigSync';
 
 export type OpenClawExtensionContext = {
   mcpBridge: McpBridgeConfig | null;

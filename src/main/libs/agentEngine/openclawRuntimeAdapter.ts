@@ -13,16 +13,16 @@ import { t } from '../../i18n';
 import { coworkLog } from '../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../cowork/providerApiConfig';
 import { getCommandDangerLevel, isDeleteCommand } from '../infra/commandSafety';
-import {
-  buildManagedSessionKey,
-  type OpenClawChannelSessionSync,
-} from '../openclaw/openclawChannelSessionSync';
-import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclaw/openclawConfigSync';
+import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclaw/config/openclawConfigSync';
 import {
   OpenClawEngineManager,
   type OpenClawGatewayConnectionInfo,
-} from '../openclaw/openclawEngineManager';
-import { extractGatewayHistoryEntries } from '../openclaw/openclawHistory';
+} from '../openclaw/runtime/openclawEngineManager';
+import {
+  buildManagedSessionKey,
+  type OpenClawChannelSessionSync,
+} from '../openclaw/sessions/openclawChannelSessionSync';
+import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
 import type {
   AgentEventPayload,
   ChatEventPayload,
