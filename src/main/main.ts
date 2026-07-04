@@ -27,7 +27,6 @@ import {
 } from './core/systemProxyPreference';
 import { resolveTaskWorkingDirectory } from './core/taskWorkspace';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
-import type { CoworkMessage } from './coworkStore';
 import { CoworkStore } from './coworkStore';
 import { SqliteStore } from './data/sqliteStore';
 import { AgentManager } from './features/agentManager';
@@ -62,21 +61,17 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
-import {
-  sanitizeCoworkMessageForIpc,
-  sanitizePermissionRequestForIpc,
-  truncateIpcString,
-} from './ipcPayloadSanitizer';
+import { sanitizeCoworkMessageForIpc } from './ipcPayloadSanitizer';
 import {
   type CoworkAgentEngine,
   CoworkEngineRouter,
   OpenClawRuntimeAdapter,
 } from './libs/agentEngine';
+import { bindCoworkRuntimeForwarder } from './libs/agentEngine/coworkRuntimeForwarder';
 import type { PermissionResult } from './libs/agentEngine/types';
 import { syncBuiltinModelProvider } from './libs/cowork/builtinModelProvider';
 import {
   resolveAllEnabledProviderConfigs,
-  resolveCurrentApiConfig,
   resolveRawApiConfig,
   setStoreGetter,
 } from './libs/cowork/providerApiConfig';
@@ -108,7 +103,6 @@ const outboundHeaderProxy = new OutboundHeaderProxy();
 // 设置应用程序名称
 app.setName(APP_NAME);
 
-const IPC_UPDATE_CONTENT_MAX_CHARS = 120_000;
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
 
 const resolveDefaultAgentModelRef = (): string => {
@@ -325,7 +319,6 @@ let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawConfigSync: OpenClawConfigSync | null = null;
 let openClawBootstrapPromise: Promise<OpenClawEngineStatus> | null = null;
 let openClawStatusForwarderBound = false;
-let coworkRuntimeForwarderBound = false;
 let preventSleepBlockerId: number | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
@@ -333,15 +326,7 @@ const initStore = async (): Promise<SqliteStore> => {
     if (!app.isReady()) {
       throw new Error('Store accessed before app is ready.');
     }
-    // better-sqlite3 opens the database synchronously, so Promise.resolve() resolves
-    // immediately. The timeout acts as a safety net for future async changes or
-    // unexpected OS-level blocking (e.g., file lock on startup).
-    storeInitPromise = Promise.race([
-      Promise.resolve(SqliteStore.create(app.getPath('userData'))),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Store initialization timed out after 15s')), 15_000),
-      ),
-    ]);
+    storeInitPromise = Promise.resolve(SqliteStore.create(app.getPath('userData')));
   }
   return storeInitPromise;
 };
@@ -505,10 +490,6 @@ const getAgentManager = () => {
     agentManager = new AgentManager(getCoworkStore());
   }
   return agentManager;
-};
-
-const resolveCoworkAgentEngine = (): CoworkAgentEngine => {
-  return 'openclaw';
 };
 
 const getOpenClawConfigSync = (): OpenClawConfigSync => {
@@ -685,213 +666,6 @@ const syncOpenClawConfig = async (
     changed: true,
     status: restarted,
   };
-};
-
-const bindCoworkRuntimeForwarder = (): void => {
-  if (coworkRuntimeForwarderBound) return;
-  const runtime = getCoworkEngineRouter();
-
-  runtime.on('message', (sessionId: string, message: unknown) => {
-    const safeMessage = sanitizeCoworkMessageForIpc(message);
-    const windows = BrowserWindow.getAllWindows();
-    const messageType =
-      typeof message === 'object' && message && 'type' in message
-        ? (message as { type?: unknown }).type
-        : undefined;
-    const messageId = (message as CoworkMessage)?.id;
-    console.log(
-      '[CoworkForwarder] forwarding message: sessionId=',
-      sessionId,
-      'type=',
-      messageType,
-      'id=',
-      messageId,
-      'windowCount=',
-      windows.length,
-    );
-
-    // Add modelName to assistant messages (look up from session's agent)
-    const isRecord = (value: unknown): value is Record<string, unknown> =>
-      value !== null && typeof value === 'object' && !Array.isArray(value);
-    const enrichedMessage =
-      messageType === 'assistant' && isRecord(message)
-        ? (() => {
-            const session = getCoworkStore().getSession(sessionId);
-            const agentId = session?.agentId || 'main';
-            const agent = getCoworkStore().getAgent(agentId);
-            const rawModel = agent?.model || '';
-            const modelName = rawModel.includes('/')
-              ? rawModel.slice(rawModel.indexOf('/') + 1)
-              : rawModel;
-            return {
-              ...(message as Record<string, unknown>),
-              ...(modelName ? { modelName } : {}),
-            } as CoworkMessage;
-          })()
-        : (message as CoworkMessage);
-
-    // Persist message to CoworkStore so it survives session reloads
-    // Only persist certain message types (not streaming intermediate messages)
-    if (
-      messageType === 'subagent_completion' ||
-      messageType === 'assistant' ||
-      messageType === 'system' ||
-      messageType === 'user'
-    ) {
-      try {
-        getCoworkStore().insertMessageWithId(sessionId, enrichedMessage);
-      } catch (err) {
-        console.error('[CoworkForwarder] failed to persist message:', err);
-      }
-    }
-
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      try {
-        win.webContents.send('cowork:stream:message', {
-          sessionId,
-          message: {
-            ...(safeMessage as Record<string, unknown>),
-            ...(enrichedMessage.modelName ? { modelName: enrichedMessage.modelName } : {}),
-          },
-        });
-      } catch (error) {
-        console.error('Failed to forward cowork message:', error);
-      }
-    });
-  });
-
-  runtime.on('messageUpdate', (sessionId: string, messageId: string, content: string) => {
-    const safeContent = truncateIpcString(content, IPC_UPDATE_CONTENT_MAX_CHARS);
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      try {
-        win.webContents.send('cowork:stream:messageUpdate', {
-          sessionId,
-          messageId,
-          content: safeContent,
-        });
-      } catch (error) {
-        console.error('Failed to forward cowork message update:', error);
-      }
-    });
-  });
-
-  runtime.on('thinkingUpdate', (sessionId: string, messageId: string, thinkingDelta: string) => {
-    const safeDelta = truncateIpcString(thinkingDelta, IPC_UPDATE_CONTENT_MAX_CHARS);
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      try {
-        win.webContents.send('cowork:stream:thinkingUpdate', {
-          sessionId,
-          messageId,
-          thinkingDelta: safeDelta,
-        });
-      } catch (error) {
-        console.error('Failed to forward cowork thinking update:', error);
-      }
-    });
-  });
-
-  runtime.on(
-    'messageMetadataUpdate',
-    (
-      sessionId: string,
-      messageId: string,
-      metadata: Record<string, unknown>,
-      extra?: {
-        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
-      },
-    ) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(win => {
-        if (win.isDestroyed()) return;
-        try {
-          win.webContents.send('cowork:stream:messageMetadataUpdate', {
-            sessionId,
-            messageId,
-            metadata,
-            ...extra,
-          });
-        } catch (error) {
-          console.error('Failed to forward cowork message metadata update:', error);
-        }
-      });
-    },
-  );
-
-  runtime.on('messageDelete', (sessionId: string, messageId: string) => {
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      try {
-        win.webContents.send('cowork:stream:messageDelete', {
-          sessionId,
-          messageId,
-        });
-      } catch (error) {
-        console.error('Failed to forward cowork message delete:', error);
-      }
-    });
-  });
-
-  runtime.on('permissionRequest', (sessionId: string, request: unknown) => {
-    if (runtime.getSessionConfirmationMode(sessionId) === 'text') {
-      return;
-    }
-    const safeRequest = sanitizePermissionRequestForIpc(request);
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      try {
-        win.webContents.send('cowork:stream:permission', { sessionId, request: safeRequest });
-      } catch (error) {
-        console.error('Failed to forward cowork permission request:', error);
-      }
-    });
-  });
-
-  runtime.on(
-    'complete',
-    (sessionId: string, claudeSessionId: string | null, finalStatus?: string) => {
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach(win => {
-        if (win.isDestroyed()) return;
-        win.webContents.send('cowork:stream:complete', { sessionId, claudeSessionId, finalStatus });
-      });
-      // If session used a server model, notify renderer to refresh quota
-      try {
-        const apiConfig = resolveCurrentApiConfig();
-        if (apiConfig.providerMetadata?.providerName === 'justdo-server') {
-          const windows = BrowserWindow.getAllWindows();
-          windows.forEach(win => {
-            if (win.isDestroyed()) return;
-            win.webContents.send('auth:quotaChanged');
-          });
-        }
-      } catch {
-        // ignore
-      }
-    },
-  );
-
-  runtime.on('error', (sessionId: string, error: string) => {
-    // Mark session as error in store so the .catch() fallback can detect duplicates.
-    try {
-      getCoworkStore().updateSession(sessionId, { status: 'error' });
-    } catch {
-      /* ignore */
-    }
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      win.webContents.send('cowork:stream:error', { sessionId, error });
-    });
-  });
-
-  coworkRuntimeForwarderBound = true;
 };
 
 const getCoworkEngineRouter = () => {
@@ -1231,12 +1005,9 @@ if (!gotTheLock) {
       },
     ) => {
       try {
-        const activeEngine = resolveCoworkAgentEngine();
-        if (activeEngine === 'openclaw') {
-          const engineStatus = await ensureOpenClawRunningForCowork();
-          if (engineStatus.phase !== 'running') {
-            return getEngineNotReadyResponse(engineStatus);
-          }
+        const engineStatus = await ensureOpenClawRunningForCowork();
+        if (engineStatus.phase !== 'running') {
+          return getEngineNotReadyResponse(engineStatus);
         }
 
         const coworkStoreInstance = getCoworkStore();
@@ -1343,12 +1114,9 @@ if (!gotTheLock) {
       },
     ) => {
       try {
-        const activeEngine = resolveCoworkAgentEngine();
-        if (activeEngine === 'openclaw') {
-          const engineStatus = await ensureOpenClawRunningForCowork();
-          if (engineStatus.phase !== 'running') {
-            return getEngineNotReadyResponse(engineStatus);
-          }
+        const engineStatus = await ensureOpenClawRunningForCowork();
+        if (engineStatus.phase !== 'running') {
+          return getEngineNotReadyResponse(engineStatus);
         }
 
         const runtime = getCoworkEngineRouter();
@@ -2076,7 +1844,7 @@ if (!gotTheLock) {
 
     await syncBuiltinModelProvider(store);
 
-    bindCoworkRuntimeForwarder();
+    bindCoworkRuntimeForwarder(getCoworkEngineRouter(), getCoworkStore);
     bindOpenClawStatusForwarder();
 
     const defaultAgentModelRef = resolveDefaultAgentModelRef();
@@ -2095,19 +1863,17 @@ if (!gotTheLock) {
     if (!startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
-    if (resolveCoworkAgentEngine() === 'openclaw') {
-      void ensureOpenClawRunningForCowork()
-        .then(() => {
-          try {
-            getCronJobService().startPolling();
-          } catch {
-            // CronJobService not available after OpenClaw startup.
-          }
-        })
-        .catch(error => {
-          console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
-        });
-    }
+    void ensureOpenClawRunningForCowork()
+      .then(() => {
+        try {
+          getCronJobService().startPolling();
+        } catch {
+          // CronJobService not available after OpenClaw startup.
+        }
+      })
+      .catch(error => {
+        console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
+      });
 
     console.log('[Main] initApp: setStoreGetter done');
 
