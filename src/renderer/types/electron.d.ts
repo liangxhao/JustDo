@@ -300,22 +300,9 @@ interface IElectronAPI {
     delete: (id: string) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
   };
   slashCommands: {
-    list: (options?: { agentId?: string | null }) => Promise<{
-      success: boolean;
-      commands?: Array<{
-        key: string;
-        name: string;
-        aliases?: string[];
-        description: string;
-        args?: string;
-        category?: 'session' | 'model' | 'agents' | 'tools';
-        executeLocal?: boolean;
-        argOptions?: string[];
-        tier?: 'essential' | 'standard' | 'power';
-      }>;
-      error?: string;
-      gatewayOffline?: boolean;
-    }>;
+    list: (
+      options?: import('@shared/slashCommands').ListSlashCommandsOptions,
+    ) => Promise<import('@shared/slashCommands').ListSlashCommandsResult>;
   };
   mcp: {
     list: () => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;

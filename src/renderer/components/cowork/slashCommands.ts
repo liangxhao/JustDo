@@ -1,18 +1,10 @@
-export type SlashCommandCategory = 'session' | 'model' | 'agents' | 'tools';
+import type {
+  SlashCommandCategory,
+  SlashCommandTier,
+} from '@shared/slashCommands';
 
-export type SlashCommandTier = 'essential' | 'standard' | 'power';
-
-export interface SlashCommandDef {
-  key: string;
-  name: string;
-  aliases?: string[];
-  description: string;
-  args?: string;
-  category?: SlashCommandCategory;
-  executeLocal?: boolean;
-  argOptions?: string[];
-  tier?: SlashCommandTier;
-}
+export type { SlashCommandCategory, SlashCommandTier };
+export type SlashCommandDef = import('@shared/slashCommands').SlashCommand;
 
 export const SlashCommandCategoryLabels: Record<SlashCommandCategory, string> = {
   session: 'Session',

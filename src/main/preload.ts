@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import { LogIpc } from '../shared/logIpc';
 import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
+import { SlashCommandIpc } from '../shared/slashCommands';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
@@ -31,7 +32,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   slashCommands: {
     list: (options?: { agentId?: string | null }) =>
-      ipcRenderer.invoke('slashCommands:list', options || {}),
+      ipcRenderer.invoke(SlashCommandIpc.List, options || {}),
   },
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),
