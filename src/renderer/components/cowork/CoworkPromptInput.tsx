@@ -393,7 +393,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
       const promptValue = promptOverride ?? value;
       const trimmedValue = promptValue.trim();
-      if ((!trimmedValue && attachments.length === 0) || isStreaming || disabled) return;
+      if (!trimmedValue || isStreaming || disabled) return;
       setShowFolderRequiredWarning(false);
 
       // Extract image attachments (with base64 data) for vision-capable models
@@ -1160,8 +1160,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ];
     }, [disabled, isStreaming, value, contextMenuPos]);
 
-    const canSubmit =
-      !disabled && !agentModelIsInvalid && (!!value.trim() || attachments.length > 0);
+    const canSubmit = !disabled && !agentModelIsInvalid && !!value.trim();
     const enhancedContainerClass = isDraggingFiles
       ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
       : containerClass;

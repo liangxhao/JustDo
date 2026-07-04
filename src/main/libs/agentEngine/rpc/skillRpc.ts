@@ -282,14 +282,13 @@ export class SkillRpcHandler {
     );
 
     try {
-      const result = await client.request<{ ok?: boolean; key?: string; entry?: unknown }>(
+      await client.request<{ ok?: boolean; key?: string; entry?: unknown }>(
         'sessions.patch',
         {
           key: sessionKey,
           model: normalizedModel,
         },
       );
-      console.log('[OpenClawRuntime] patchSessionModel: success, result=', result);
       return { ok: true };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
