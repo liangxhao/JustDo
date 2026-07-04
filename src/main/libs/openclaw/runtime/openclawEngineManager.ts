@@ -446,8 +446,9 @@ export class OpenClawEngineManager extends EventEmitter {
       OPENCLAW_NO_RESPAWN: '1',
       OPENCLAW_ENGINE_VERSION: runtime.version,
       OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'extensions'),
-      // Enable debug-level logging so gateway emits phase-level detail during startup.
-      OPENCLAW_LOG_LEVEL: 'debug',
+      // Preserve full diagnostics during development, while keeping installed
+      // builds concise (debug logs every agent stream delta).
+      OPENCLAW_LOG_LEVEL: app.isPackaged ? 'info' : 'debug',
       // Enable V8 compile cache for both CJS and ESM modules.
       // This env var works for import() (ESM), unlike enableCompileCache() which is CJS-only.
       NODE_COMPILE_CACHE: compileCacheDir,
@@ -1424,6 +1425,11 @@ export class OpenClawEngineManager extends EventEmitter {
     child.stdout?.on('data', chunk => {
       appendLog(chunk, 'stdout');
       const text = typeof chunk === 'string' ? chunk : chunk.toString();
+      // OpenClaw's config.get schema walk logs one debug line for every path
+      // whose name looks sensitive. These are schema classifications, not
+      // leaked values or actionable warnings, and can produce hundreds of
+      // lines whenever the Control UI connects.
+      if (text.includes('possibly sensitive key found:')) return;
       console.log(`[OpenClaw stdout] ${OpenClawEngineManager.rewriteUtcTimestamps(text)}`);
     });
     child.stderr?.on('data', chunk => {
