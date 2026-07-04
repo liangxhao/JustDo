@@ -31,11 +31,11 @@ import AgentCreateModal from './agent/AgentCreateModal';
 import AgentSettingsPanel from './agent/AgentSettingsPanel';
 import Modal from './common/Modal';
 import ErrorMessage from './ErrorMessage';
+import ModelSettingsTab from './settings/ModelSettingsTab';
 import ShortcutsSettings, {
   shortcutLabelMap,
   type ShortcutSettingsValue,
 } from './settings/ShortcutsSettings';
-import ModelSettingsTab from './settings/ModelSettingsTab';
 import ThemedSelect from './ui/ThemedSelect';
 
 type TabType = 'general' | 'model' | 'myAgents' | 'im' | 'shortcuts' | 'help';
@@ -80,7 +80,7 @@ type ModelConnectionTestResult = {
   log?: string;
 };
 
-const providerRequiresApiKey = (provider: ProviderType) => provider !== 'ollama';
+const providerRequiresApiKey = (provider: ProviderType) => provider !== 'builtin_models';
 const providerMeta: Record<BuiltinProviderType, { label: string; icon: React.ReactNode }> = {
   ollama: { label: 'Ollama', icon: <></> },
 };
@@ -846,7 +846,6 @@ const Settings: React.FC<SettingsProps> = ({
     const missingApiKey = providerRequiresApiKey(provider) && !providerConfig.apiKey.trim();
 
     if (isEnabling && missingApiKey) {
-      setError(i18nService.t('apiKeyRequired'));
       return;
     }
 
@@ -1186,10 +1185,6 @@ const Settings: React.FC<SettingsProps> = ({
 
     // Check if provider has valid authentication
     if (providerRequiresApiKey(testingProvider) && !providerConfig.apiKey) {
-      showTestResultModal(
-        { success: false, message: i18nService.t('apiKeyRequired') },
-        testingProvider,
-      );
       setIsTesting(false);
       return;
     }

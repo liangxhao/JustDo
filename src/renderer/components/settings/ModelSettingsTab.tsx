@@ -114,8 +114,6 @@ const ModelSettingsTab: React.FC<Props> = ({
               ? { label: getCustomProviderDefaultName(provider), icon: <CustomProviderIcon /> }
               : undefined);
           const readOnlyProviderRow = isProviderReadOnly(providerKey, config);
-          const missingApiKey = providerRequiresApiKey(providerKey) && !config.apiKey.trim();
-          const canToggleProvider = !readOnlyProviderRow && (config.enabled || !missingApiKey);
           const displayLabel =
             providerKey === 'builtin_models'
               ? i18nService.t('builtinModelsProvider')
@@ -147,11 +145,6 @@ const ModelSettingsTab: React.FC<Props> = ({
                   {readOnlyProviderRow && (
                     <span className="text-[9px] leading-tight mt-0.5 text-primary">
                       {i18nService.t('builtinModelsProvider')}
-                    </span>
-                  )}
-                  {!canToggleProvider && !readOnlyProviderRow && (
-                    <span className="text-[9px] leading-tight mt-0.5 text-amber-500">
-                      {i18nService.t('apiKeyRequired')}
                     </span>
                   )}
                 </div>
@@ -208,19 +201,37 @@ const ModelSettingsTab: React.FC<Props> = ({
           )}
 
           {!isReadOnly && (
-            <div>
-              <label htmlFor={`${activeProvider}-baseUrl`} className="block text-xs font-medium text-foreground mb-1">
-                {i18nService.t('baseUrl')}
-              </label>
-              <input
-                type="text"
-                id={`${activeProvider}-baseUrl`}
-                value={activeConfig.baseUrl}
-                onChange={e => handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)}
-                disabled={isBaseUrlLocked}
-                className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
-                placeholder={getProviderDefaultBaseUrl(activeProvider) || defaultConfig.providers?.[activeProvider]?.baseUrl || i18nService.t('baseUrlPlaceholder')}
-              />
+            <div className="space-y-4">
+              <div>
+                <label htmlFor={`${activeProvider}-baseUrl`} className="block text-xs font-medium text-foreground mb-1">
+                  {i18nService.t('baseUrl')}
+                </label>
+                <input
+                  type="text"
+                  id={`${activeProvider}-baseUrl`}
+                  value={activeConfig.baseUrl}
+                  onChange={e => handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)}
+                  disabled={isBaseUrlLocked}
+                  className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  placeholder={getProviderDefaultBaseUrl(activeProvider) || defaultConfig.providers?.[activeProvider]?.baseUrl || i18nService.t('baseUrlPlaceholder')}
+                />
+              </div>
+
+              {!isBuiltinModelsProvider(activeProvider) && (
+                <div>
+                  <label htmlFor={`${activeProvider}-apiKey`} className="block text-xs font-medium text-foreground mb-1">
+                    {i18nService.t('apiKey')}
+                  </label>
+                  <input
+                    type="password"
+                    id={`${activeProvider}-apiKey`}
+                    value={activeConfig.apiKey}
+                    onChange={e => handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)}
+                    className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                    placeholder={i18nService.t('apiKeyPlaceholder')}
+                  />
+                </div>
+              )}
             </div>
           )}
 
