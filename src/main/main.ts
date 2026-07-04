@@ -4,12 +4,9 @@ import {
   BrowserWindow,
   ipcMain,
   Menu,
-  nativeImage,
   nativeTheme,
   powerMonitor,
   powerSaveBlocker,
-  session,
-  shell,
 } from 'electron';
 import fs from 'fs';
 import os from 'os';
@@ -18,10 +15,16 @@ import path from 'path';
 import packageJson from '../../package.json';
 import { CoworkInteractionKind, OpenClawToolName } from '../shared/openclawExtensions';
 import { APP_NAME } from './core/appConstants';
+import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
 import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
+import { createMainWindow } from './core/mainWindowFactory';
+import {
+  applySystemProxyPreference,
+  isSystemProxyEnabled,
+} from './core/systemProxyPreference';
 import { resolveTaskWorkingDirectory } from './core/taskWorkspace';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import type { CoworkMessage } from './coworkStore';
@@ -79,12 +82,6 @@ import {
 } from './libs/cowork/providerApiConfig';
 import { OutboundHeaderProxy } from './libs/infra/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
-import {
-  applySystemProxyEnv,
-  resolveSystemProxyUrl,
-  restoreOriginalProxyEnv,
-  setSystemProxyEnabled,
-} from './libs/infra/systemProxy';
 import type { McpBridgeConfig } from './libs/openclaw/config/openclawConfigSync';
 import {
   buildProviderSelection,
@@ -973,7 +970,7 @@ const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
 /**
  * Stop the MCP Bridge: server manager + HTTP callback.
  */
-const _stopMcpBridge = async (): Promise<void> => {
+const stopMcpBridge = async (): Promise<void> => {
   try {
     await extensionHostController?.stop();
   } catch (error) {
@@ -1071,18 +1068,12 @@ const getAppIconPath = (): string | undefined => {
 // 保存对主窗口的引用
 let mainWindow: BrowserWindow | null = null;
 
-let isQuitting = false;
-
 let lastReloadAt = 0;
 const MIN_RELOAD_INTERVAL_MS = 5000;
 type AppConfigSettings = {
   theme?: string;
   language?: string;
   useSystemProxy?: boolean;
-};
-
-const getUseSystemProxyFromConfig = (config?: { useSystemProxy?: boolean }): boolean => {
-  return config?.useSystemProxy === true;
 };
 
 const resolveThemeFromConfig = (config?: AppConfigSettings): 'light' | 'dark' => {
@@ -1121,40 +1112,13 @@ const updateTitleBarOverlay = () => {
   mainWindow.setBackgroundColor(theme === 'dark' ? '#0F1117' : '#F8F9FB');
 };
 
-const applyProxyPreference = async (useSystemProxy: boolean): Promise<void> => {
-  try {
-    await session.defaultSession.setProxy({ mode: useSystemProxy ? 'system' : 'direct' });
-  } catch (error) {
-    console.error('[Main] Failed to apply session proxy mode:', error);
-  }
-
-  setSystemProxyEnabled(useSystemProxy);
-
-  if (!useSystemProxy) {
-    restoreOriginalProxyEnv();
-    outboundHeaderProxy.reapplyProcessEnvironment();
-    console.log('[Main] System proxy disabled (direct mode).');
-    return;
-  }
-
-  const proxyUrl = await resolveSystemProxyUrl('https://proxy-check.invalid');
-  applySystemProxyEnv(proxyUrl);
-  outboundHeaderProxy.reapplyProcessEnvironment();
-
-  if (proxyUrl) {
-    console.log('[Main] System proxy enabled for process env:', proxyUrl);
-  } else {
-    console.warn('[Main] System proxy mode enabled, but no proxy endpoint was resolved (DIRECT).');
-  }
-};
-
-const emitWindowState = () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.webContents.isDestroyed()) return;
-  mainWindow.webContents.send('window:state-changed', {
-    isMaximized: mainWindow.isMaximized(),
-    isFullscreen: mainWindow.isFullScreen(),
-    isFocused: mainWindow.isFocused(),
+const emitWindowState = (window = mainWindow) => {
+  if (!window || window.isDestroyed()) return;
+  if (window.webContents.isDestroyed()) return;
+  window.webContents.send('window:state-changed', {
+    isMaximized: window.isMaximized(),
+    isFullscreen: window.isFullScreen(),
+    isFocused: window.isFocused(),
   });
 };
 
@@ -1983,7 +1947,6 @@ if (!gotTheLock) {
 
   // 创建主窗口
   const createWindow = () => {
-    // 如果窗口已经存在，就不再创建新窗口
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       if (!mainWindow.isVisible()) mainWindow.show();
@@ -1991,186 +1954,49 @@ if (!gotTheLock) {
       return;
     }
 
-    mainWindow = new BrowserWindow({
-      width: 1200,
-      height: 800,
-      title: APP_NAME,
-      icon: getAppIconPath(),
-      ...(isMac
-        ? {
-            titleBarStyle: 'hiddenInset' as const,
-            trafficLightPosition: { x: 12, y: 20 },
-          }
-        : isWindows
-          ? {
-              frame: false,
-              titleBarStyle: 'hidden' as const,
-            }
-          : {
-              titleBarStyle: 'hidden' as const,
-              titleBarOverlay: getTitleBarOverlayOptions(),
-            }),
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        webSecurity: true,
-        preload: PRELOAD_PATH,
-        backgroundThrottling: false,
-        devTools: isDev,
-        spellcheck: false,
-        enableWebSQL: false,
-        autoplayPolicy: 'document-user-activation-required',
-        disableDialogs: true,
-        navigateOnDragDrop: false,
-      },
-      backgroundColor: getInitialTheme() === 'dark' ? '#0F1117' : '#F8F9FB',
-      show: false,
-      autoHideMenuBar: true,
-      enableLargerThanScreen: false,
-    });
-
-    // 设置 macOS Dock 图标（开发模式下 Electron 默认图标不是应用 Logo）
-    if (isMac && isDev) {
-      const iconPath = path.join(__dirname, '../build/icons/png/512x512.png');
-      if (fs.existsSync(iconPath)) {
-        app.dock.setIcon(nativeImage.createFromPath(iconPath));
-      }
-    }
-
-    // 禁用窗口菜单
-    mainWindow.setMenu(null);
-
-    // 处理 window.open 请求 - 打开外部链接
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      shell.openExternal(url);
-      return { action: 'deny' };
-    });
-
-    // 设置窗口的最小尺寸
-    mainWindow.setMinimumSize(800, 600);
-
-    // 设置窗口加载超时
-    const loadTimeout = setTimeout(() => {
-      if (mainWindow && mainWindow.webContents.isLoadingMainFrame()) {
-        console.log('Window load timed out, attempting to reload...');
-        scheduleReload('load-timeout');
-      }
-    }, 30000);
-
-    // 清除超时
-    mainWindow.webContents.once('did-finish-load', () => {
-      clearTimeout(loadTimeout);
-    });
-    mainWindow.webContents.on('did-finish-load', () => {
-      emitWindowState();
-      if (openClawEngineManager && !mainWindow?.isDestroyed()) {
-        mainWindow.webContents.send(
-          'openclaw:engine:onProgress',
-          openClawEngineManager.getStatus(),
-        );
-      }
-    });
-
-    // 处理窗口关闭
-    mainWindow.on('close', e => {
-      // In development, close should actually quit so `npm run electron:dev`
-      // restarts from a clean process. In production we keep tray behavior.
-      if (mainWindow && !isQuitting && !isDev) {
-        e.preventDefault();
-        mainWindow.hide();
-      }
-    });
-
-    // 处理渲染进程崩溃或退出
-    mainWindow.webContents.on('render-process-gone', (_event, details) => {
-      console.error('Window render process gone:', details);
-      scheduleReload('webContents-crashed');
-    });
-
-    if (isDev) {
-      // 开发环境
-      const maxRetries = 3;
-      let retryCount = 0;
-
-      const tryLoadURL = () => {
-        mainWindow?.loadURL(DEV_SERVER_URL).catch(err => {
-          console.error('Failed to load URL:', err);
-          retryCount++;
-
-          if (retryCount < maxRetries) {
-            console.log(`Retrying to load URL (${retryCount}/${maxRetries})...`);
-            setTimeout(tryLoadURL, 3000);
-          } else {
-            console.error('Failed to load URL after maximum retries');
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.loadFile(path.join(__dirname, '../resources/error.html'));
-            }
-          }
-        });
-      };
-
-      tryLoadURL();
-
-      // 页面导航可能关闭过早打开的 DevTools，因此在每次加载完成后恢复右侧停靠。
-      mainWindow.webContents.on('did-finish-load', () => {
-        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDevToolsOpened()) {
-          mainWindow.webContents.openDevTools({ mode: 'right' });
+    mainWindow = createMainWindow({
+      appName: APP_NAME,
+      devServerUrl: DEV_SERVER_URL,
+      getBackgroundColor: () =>
+        getInitialTheme() === 'dark' ? TITLEBAR_COLORS.dark.color : '#F8F9FB',
+      getIconPath: getAppIconPath,
+      getTitleBarOverlay: getTitleBarOverlayOptions,
+      isDev,
+      isMac,
+      isQuitting: appShutdown.isQuitting,
+      isWindows,
+      onDidFinishLoad: window => {
+        emitWindowState(window);
+        if (openClawEngineManager && !window.isDestroyed()) {
+          window.webContents.send(
+            'openclaw:engine:onProgress',
+            openClawEngineManager.getStatus(),
+          );
         }
-      });
-    } else {
-      // 生产环境
-      mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-    }
-
-    // 添加错误处理
-    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-      console.error('Page failed to load:', errorCode, errorDescription);
-      // 如果加载失败，尝试重新加载
-      if (isDev) {
-        setTimeout(() => {
-          scheduleReload('did-fail-load');
-        }, 3000);
-      }
+      },
+      onReadyToShow: window => {
+        emitWindowState(window);
+        if (!isAutoLaunched()) {
+          window.show();
+        }
+        const initLang = getStore().get<{ language?: string }>('app_config')?.language;
+        setLanguage(initLang === 'en' ? 'en' : 'zh');
+        createTray(() => mainWindow);
+        try {
+          getCronJobService().startPolling();
+        } catch {
+          // CronJobService not available yet, will start when OpenClaw is ready.
+        }
+      },
+      onWindowStateChanged: emitWindowState,
+      preloadPath: PRELOAD_PATH,
+      scheduleReload,
     });
 
-    // 当窗口关闭时，清除引用
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
-
-    const forwardWindowState = () => emitWindowState();
-    mainWindow.on('maximize', forwardWindowState);
-    mainWindow.on('unmaximize', forwardWindowState);
-    mainWindow.on('enter-full-screen', forwardWindowState);
-    mainWindow.on('leave-full-screen', forwardWindowState);
-    mainWindow.on('focus', forwardWindowState);
-    mainWindow.on('blur', forwardWindowState);
-
-    // 等待内容加载完成后再显示窗口
-    mainWindow.once('ready-to-show', () => {
-      emitWindowState();
-      // 开机自启时不显示窗口，仅显示托盘图标
-      if (!isAutoLaunched()) {
-        mainWindow?.show();
-      }
-      // Initialize main-process i18n from stored language before creating UI elements.
-      const initLang = getStore().get<{ language?: string }>('app_config')?.language;
-      setLanguage(initLang === 'en' ? 'en' : 'zh');
-      // 窗口就绪后创建系统托盘
-      createTray(() => mainWindow);
-
-      // Start cron polling after the window is ready.
-      try {
-        getCronJobService().startPolling();
-      } catch {
-        // CronJobService not available yet, will start when OpenClaw is ready.
-      }
-    });
   };
-
-  let isCleanupFinished = false;
-  let isCleanupInProgress = false;
 
   const runAppCleanup = async (): Promise<void> => {
     outboundHeaderProxy.stop();
@@ -2190,6 +2016,11 @@ if (!gotTheLock) {
       });
     }
 
+    // The extension host owns MCP client transports/stdio child processes and
+    // the local callback server. Stop it after the Gateway can no longer issue
+    // tool calls, and before closing application storage.
+    await stopMcpBridge();
+
     // Stop the cron job polling
     try {
       getCronJobService().stopPolling();
@@ -2205,48 +2036,7 @@ if (!gotTheLock) {
     }
   };
 
-  app.on('before-quit', e => {
-    if (isCleanupFinished) return;
-
-    e.preventDefault();
-    if (isCleanupInProgress) {
-      return;
-    }
-
-    isCleanupInProgress = true;
-    isQuitting = true;
-
-    void runAppCleanup()
-      .catch(error => {
-        console.error('[Main] Cleanup error:', error);
-      })
-      .finally(() => {
-        isCleanupFinished = true;
-        isCleanupInProgress = false;
-        app.exit(0);
-      });
-  });
-
-  const handleTerminationSignal = (signal: NodeJS.Signals) => {
-    if (isCleanupFinished || isCleanupInProgress) {
-      return;
-    }
-    console.log(`[Main] Received ${signal}, running cleanup before exit...`);
-    isCleanupInProgress = true;
-    isQuitting = true;
-    void runAppCleanup()
-      .catch(error => {
-        console.error(`[Main] Cleanup error during ${signal}:`, error);
-      })
-      .finally(() => {
-        isCleanupFinished = true;
-        isCleanupInProgress = false;
-        app.exit(0);
-      });
-  };
-
-  process.once('SIGINT', () => handleTerminationSignal('SIGINT'));
-  process.once('SIGTERM', () => handleTerminationSignal('SIGTERM'));
+  const appShutdown = registerAppShutdown({ cleanup: runAppCleanup });
 
   // 初始化应用
   const initApp = async () => {
@@ -2333,7 +2123,7 @@ if (!gotTheLock) {
     }
 
     const appConfig = getStore().get<AppConfigSettings>('app_config');
-    await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
+    await applySystemProxyPreference(isSystemProxyEnabled(appConfig), outboundHeaderProxy);
 
     // 设置安全策略
     registerContentSecurityPolicy({
@@ -2371,7 +2161,7 @@ if (!gotTheLock) {
     }
 
     let lastLanguage = getStore().get<AppConfigSettings>('app_config')?.language;
-    let lastUseSystemProxy = getUseSystemProxyFromConfig(
+    let lastUseSystemProxy = isSystemProxyEnabled(
       getStore().get<AppConfigSettings>('app_config'),
     );
     getStore().onDidChange<AppConfigSettings>('app_config', (newConfig, oldConfig) => {
@@ -2385,11 +2175,11 @@ if (!gotTheLock) {
       }
 
       const previousUseSystemProxy = oldConfig
-        ? getUseSystemProxyFromConfig(oldConfig)
+        ? isSystemProxyEnabled(oldConfig)
         : lastUseSystemProxy;
-      const currentUseSystemProxy = getUseSystemProxyFromConfig(newConfig);
+      const currentUseSystemProxy = isSystemProxyEnabled(newConfig);
       if (currentUseSystemProxy !== previousUseSystemProxy) {
-        void applyProxyPreference(currentUseSystemProxy).then(() => {
+        void applySystemProxyPreference(currentUseSystemProxy, outboundHeaderProxy).then(() => {
           if (getOpenClawEngineManager().getStatus().phase === 'running') {
             void getOpenClawEngineManager().restartGateway();
           }

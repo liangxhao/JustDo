@@ -79,6 +79,9 @@ export class OpenClawExtensionHostController {
   }
 
   async stop(): Promise<void> {
+    // A shutdown may race with the initial bridge startup. Wait for startup to
+    // settle first so it cannot create resources after cleanup has completed.
+    await this.startPromise;
     await this.mcpManager.stopServers();
     await this.bridgeServer?.stop();
   }
