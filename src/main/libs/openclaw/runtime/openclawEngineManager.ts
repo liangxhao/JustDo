@@ -15,7 +15,6 @@ import { syncLocalOpenClawExtensionsIntoRuntime } from '../extensions/openclawLo
 type GatewayProcess = UtilityProcess | ChildProcess;
 type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;
 
-const DEFAULT_OPENCLAW_VERSION = '2026.2.23';
 const GATEWAY_PORT_SCAN_LIMIT = 80;
 const GATEWAY_BOOT_TIMEOUT_MS = 300 * 1000;
 const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
@@ -148,7 +147,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private readonly gatewayLogPath: string;
   private readonly configPath: string;
 
-  private desiredVersion: string;
+  private desiredVersion: string | null;
   private status: OpenClawEngineStatus;
   private gatewayProcess: GatewayProcess | null = null;
   private readonly expectedGatewayExits = new WeakSet<object>();
@@ -177,16 +176,23 @@ export class OpenClawEngineManager extends EventEmitter {
     ensureDir(this.stateDir);
 
     const runtime = this.resolveRuntimeMetadata();
-    this.desiredVersion = runtime.version || DEFAULT_OPENCLAW_VERSION;
+    this.desiredVersion = runtime.version;
 
-    this.status = runtime.root
+    this.status = runtime.root && runtime.version
       ? {
           phase: 'ready',
           version: this.desiredVersion,
           message: 'OpenClaw runtime is ready.',
           canRetry: false,
         }
-      : {
+      : runtime.root
+        ? {
+            phase: 'error',
+            version: null,
+            message: `OpenClaw runtime version metadata is missing or invalid: ${runtime.root}`,
+            canRetry: true,
+          }
+        : {
           phase: 'not_installed',
           version: null,
           message: `Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`,
@@ -236,7 +242,7 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.getStatus();
   }
 
-  getDesiredVersion(): string {
+  getDesiredVersion(): string | null {
     return this.desiredVersion;
   }
 
@@ -269,13 +275,23 @@ export class OpenClawEngineManager extends EventEmitter {
 
   async ensureReady(_options: { forceReinstall?: boolean } = {}): Promise<OpenClawEngineStatus> {
     const runtime = this.resolveRuntimeMetadata();
-    this.desiredVersion = runtime.version || DEFAULT_OPENCLAW_VERSION;
+    this.desiredVersion = runtime.version;
 
     if (!runtime.root) {
       this.setStatus({
         phase: 'not_installed',
         version: null,
         message: `Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`,
+        canRetry: true,
+      });
+      return this.getStatus();
+    }
+
+    if (!runtime.version) {
+      this.setStatus({
+        phase: 'error',
+        version: null,
+        message: `OpenClaw runtime version metadata is missing or invalid: ${runtime.root}`,
         canRetry: true,
       });
       return this.getStatus();
@@ -359,6 +375,16 @@ export class OpenClawEngineManager extends EventEmitter {
       return this.getStatus();
     }
 
+    if (!runtime.version) {
+      this.setStatus({
+        phase: 'error',
+        version: null,
+        message: `OpenClaw runtime version metadata is missing or invalid: ${runtime.root}`,
+        canRetry: true,
+      });
+      return this.getStatus();
+    }
+
     this.ensureBareEntryFiles(runtime.root);
     console.log(`[OpenClaw] startGateway: ensureBareEntryFiles done (${elapsed()})`);
     const openclawEntry = this.resolveOpenClawEntry(runtime.root);
@@ -419,7 +445,7 @@ export class OpenClawEngineManager extends EventEmitter {
       OPENCLAW_GATEWAY_TOKEN: token,
       OPENCLAW_GATEWAY_PORT: String(port),
       OPENCLAW_NO_RESPAWN: '1',
-      OPENCLAW_ENGINE_VERSION: runtime.version || DEFAULT_OPENCLAW_VERSION,
+      OPENCLAW_ENGINE_VERSION: runtime.version,
       OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'extensions'),
       // Enable debug-level logging so gateway emits phase-level detail during startup.
       OPENCLAW_LOG_LEVEL: 'debug',
@@ -580,12 +606,15 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const runtime = this.resolveRuntimeMetadata();
     this.setStatus({
-      phase: runtime.root ? 'ready' : 'not_installed',
+      phase: runtime.root && !runtime.version ? 'error' : runtime.root ? 'ready' : 'not_installed',
       version: runtime.version,
-      message: runtime.root
+      message:
+        runtime.root && !runtime.version
+          ? `OpenClaw runtime version metadata is missing or invalid: ${runtime.root}`
+          : runtime.root
         ? 'OpenClaw runtime is ready. Gateway is stopped.'
         : `Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`,
-      canRetry: !runtime.root,
+      canRetry: !runtime.root || !runtime.version,
     });
   }
 
@@ -621,7 +650,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     return {
       root: runtimeRoot,
-      version: this.readRuntimeVersion(runtimeRoot) || DEFAULT_OPENCLAW_VERSION,
+      version: this.readRuntimeVersion(runtimeRoot),
       expectedPathHint,
     };
   }
