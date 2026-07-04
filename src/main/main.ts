@@ -7,10 +7,8 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
-  net,
   powerMonitor,
   powerSaveBlocker,
-  protocol,
   session,
   shell,
 } from 'electron';
@@ -19,19 +17,12 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
-import { LogIpc } from '../shared/logIpc';
-import {
-  CoworkInteractionKind,
-  OpenClawToolName,
-} from '../shared/openclawExtensions';
-import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
+import { CoworkInteractionKind, OpenClawToolName } from '../shared/openclawExtensions';
 import { APP_NAME } from './core/appConstants';
-import {
-  getAutoLaunchEnabled,
-  isAutoLaunched,
-  setAutoLaunchEnabled,
-} from './core/autoLaunchManager';
-import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
+import { isAutoLaunched } from './core/autoLaunchManager';
+import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
+import { registerLocalFileProtocol } from './core/localFileProtocol';
+import { initLogger } from './core/logger';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import type { CoworkMessage } from './coworkStore';
 import { CoworkStore } from './coworkStore';
@@ -39,12 +30,35 @@ import { SqliteStore } from './data/sqliteStore';
 import { AgentManager } from './features/agentManager';
 import { GroupStore } from './groupStore';
 import { setLanguage, t } from './i18n';
+import { registerAgentHandlers } from './ipcHandlers/agents';
+import { registerApiProxyHandlers } from './ipcHandlers/apiProxy';
+import { registerAppHandlers } from './ipcHandlers/app';
+import { registerCalendarPermissionHandlers } from './ipcHandlers/calendarPermissions';
+import { registerCoworkUtilityHandlers } from './ipcHandlers/coworkUtilities';
+import { registerDefaultModelHandlers } from './ipcHandlers/defaultModel';
+import { registerDialogHandlers } from './ipcHandlers/dialog';
+import { registerLocalFileHandlers } from './ipcHandlers/localFiles';
+import { registerLogHandlers } from './ipcHandlers/log';
+import { registerMcpHandlers } from './ipcHandlers/mcp';
+import { registerNetworkHandlers } from './ipcHandlers/network';
+import { registerOpenClawEngineHandlers } from './ipcHandlers/openclawEngine';
+import { registerOpenClawHistoryHandlers } from './ipcHandlers/openclawHistory';
 import {
   getCronJobService,
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
+import { registerSessionGroupHandlers } from './ipcHandlers/sessionGroups';
+import { registerShellHandlers } from './ipcHandlers/shell';
+import { registerSkillHandlers } from './ipcHandlers/skills';
 import { registerSlashCommandHandlers } from './ipcHandlers/slashCommands';
+import { registerStoreHandlers } from './ipcHandlers/store';
+import { registerWindowHandlers } from './ipcHandlers/window';
+import {
+  sanitizeCoworkMessageForIpc,
+  sanitizePermissionRequestForIpc,
+  truncateIpcString,
+} from './ipcPayloadSanitizer';
 import {
   type CoworkAgentEngine,
   CoworkEngineRouter,
@@ -52,17 +66,12 @@ import {
 } from './libs/agentEngine';
 import type { PermissionResult } from './libs/agentEngine/types';
 import { syncBuiltinModelProvider } from './libs/cowork/builtinModelProvider';
-import { saveCoworkApiConfig } from './libs/cowork/coworkConfigStore';
-import { getCoworkLogPath } from './libs/cowork/coworkLogger';
-import { probeCoworkModelReadiness } from './libs/cowork/coworkUtil';
 import {
-  getCurrentApiConfig,
   resolveAllEnabledProviderConfigs,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
   setStoreGetter,
 } from './libs/cowork/providerApiConfig';
-import { exportLogsZip } from './libs/infra/logExport';
 import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
 import {
   applySystemProxyEnv,
@@ -71,7 +80,10 @@ import {
   setSystemProxyEnabled,
 } from './libs/infra/systemProxy';
 import type { McpBridgeConfig } from './libs/openclaw/config/openclawConfigSync';
-import { buildProviderSelection, OpenClawConfigSync } from './libs/openclaw/config/openclawConfigSync';
+import {
+  buildProviderSelection,
+  OpenClawConfigSync,
+} from './libs/openclaw/config/openclawConfigSync';
 import { OpenClawExtensionHostController } from './libs/openclaw/extensions/openclawExtensionHostController';
 import { resolveQualifiedAgentModelRef } from './libs/openclaw/models/openclawAgentModels';
 import {
@@ -86,34 +98,14 @@ import {
 } from './libs/openclaw/sessions/openclawChannelSessionSync';
 import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
 import { createSkillMarketplaceService } from './libs/skillMarketplace';
-import type { McpServerFormData } from './mcpStore';
 import { McpStore } from './mcpStore';
 
 // 设置应用程序名称
 app.setName(APP_NAME);
 
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
-const IPC_MESSAGE_CONTENT_MAX_CHARS = 120_000;
 const IPC_UPDATE_CONTENT_MAX_CHARS = 120_000;
-const IPC_STRING_MAX_CHARS = 4_000;
-const IPC_MAX_DEPTH = 8;
-const IPC_MAX_KEYS = 80;
-const IPC_MAX_ITEMS = 40;
-const MAX_INLINE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const ENGINE_NOT_READY_CODE = 'ENGINE_NOT_READY';
-const MIME_EXTENSION_MAP: Record<string, string> = {
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/jpg': '.jpg',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-  'image/bmp': '.bmp',
-  'application/pdf': '.pdf',
-  'text/plain': '.txt',
-  'text/markdown': '.md',
-  'application/json': '.json',
-  'text/csv': '.csv',
-};
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -204,46 +196,9 @@ const migrateAgentModelRefs = (): number => {
   return changed;
 };
 
-const sanitizeAttachmentFileName = (value?: string): string => {
-  const raw = typeof value === 'string' ? value.trim() : '';
-  if (!raw) return 'attachment';
-  const fileName = path.basename(raw);
-  const sanitized = fileName.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
-  return sanitized || 'attachment';
-};
-
-const inferAttachmentExtension = (fileName: string, mimeType?: string): string => {
-  const fromName = path.extname(fileName).toLowerCase();
-  if (fromName) {
-    return fromName;
-  }
-  if (typeof mimeType === 'string') {
-    const normalized = mimeType.toLowerCase().split(';')[0].trim();
-    return MIME_EXTENSION_MAP[normalized] ?? '';
-  }
-  return '';
-};
-
-const resolveInlineAttachmentDir = (cwd?: string): string => {
-  const trimmed = typeof cwd === 'string' ? cwd.trim() : '';
-  if (trimmed) {
-    const resolved = path.resolve(trimmed);
-    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
-      return path.join(resolved, '.cowork-temp', 'attachments', 'manual');
-    }
-  }
-  return path.join(app.getPath('temp'), 'justdo', 'attachments');
-};
-
 const ensurePngFileName = (value: string): string => {
   return value.toLowerCase().endsWith('.png') ? value : `${value}.png`;
 };
-
-const ensureZipFileName = (value: string): string => {
-  return value.toLowerCase().endsWith('.zip') ? value : `${value}.zip`;
-};
-
-const padTwoDigits = (value: number): string => value.toString().padStart(2, '0');
 
 const formatAskUserAnswerValue = (value: string): string => {
   return value
@@ -251,121 +206,6 @@ const formatAskUserAnswerValue = (value: string): string => {
     .map(item => item.trim())
     .filter(Boolean)
     .join(', ');
-};
-
-const buildLogExportFileName = (): string => {
-  const now = new Date();
-  const datePart = `${now.getFullYear()}${padTwoDigits(now.getMonth() + 1)}${padTwoDigits(now.getDate())}`;
-  const timePart = `${padTwoDigits(now.getHours())}${padTwoDigits(now.getMinutes())}${padTwoDigits(now.getSeconds())}`;
-  return `justdo-logs-${datePart}-${timePart}.zip`;
-};
-
-const truncateIpcString = (value: string, maxChars: number): string => {
-  if (value.length <= maxChars) return value;
-  return `${value.slice(0, maxChars)}\n...[truncated in main IPC forwarding]`;
-};
-
-const sanitizeIpcPayload = (value: unknown, depth = 0, seen?: WeakSet<object>): unknown => {
-  const localSeen = seen ?? new WeakSet<object>();
-  if (
-    value === null ||
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    typeof value === 'undefined'
-  ) {
-    return value;
-  }
-  if (typeof value === 'string') {
-    return truncateIpcString(value, IPC_STRING_MAX_CHARS);
-  }
-  if (typeof value === 'bigint') {
-    return value.toString();
-  }
-  if (typeof value === 'function') {
-    return '[function]';
-  }
-  if (depth >= IPC_MAX_DEPTH) {
-    return '[truncated-depth]';
-  }
-  if (Array.isArray(value)) {
-    const result = value
-      .slice(0, IPC_MAX_ITEMS)
-      .map(entry => sanitizeIpcPayload(entry, depth + 1, localSeen));
-    if (value.length > IPC_MAX_ITEMS) {
-      result.push(`[truncated-items:${value.length - IPC_MAX_ITEMS}]`);
-    }
-    return result;
-  }
-  if (typeof value === 'object') {
-    if (localSeen.has(value as object)) {
-      return '[circular]';
-    }
-    localSeen.add(value as object);
-    const entries = Object.entries(value as Record<string, unknown>);
-    const result: Record<string, unknown> = {};
-    for (const [key, entry] of entries.slice(0, IPC_MAX_KEYS)) {
-      result[key] = sanitizeIpcPayload(entry, depth + 1, localSeen);
-    }
-    if (entries.length > IPC_MAX_KEYS) {
-      result.__truncated_keys__ = entries.length - IPC_MAX_KEYS;
-    }
-    return result;
-  }
-  return String(value);
-};
-
-const sanitizeCoworkMessageForIpc = (message: unknown): unknown => {
-  if (!message || typeof message !== 'object') {
-    return message;
-  }
-  const messageRecord = message as {
-    metadata?: unknown;
-    content?: unknown;
-    thinkingContent?: unknown;
-  };
-
-  // Preserve imageAttachments in metadata as-is (base64 data can be very large
-  // and must not be truncated by the generic sanitizer).
-  let sanitizedMetadata: unknown;
-  if (messageRecord.metadata && typeof messageRecord.metadata === 'object') {
-    const { imageAttachments, ...rest } = messageRecord.metadata as Record<string, unknown>;
-    const sanitizedRest = sanitizeIpcPayload(rest) as Record<string, unknown> | undefined;
-    sanitizedMetadata = {
-      ...(sanitizedRest && typeof sanitizedRest === 'object' ? sanitizedRest : {}),
-      ...(Array.isArray(imageAttachments) && imageAttachments.length > 0
-        ? { imageAttachments }
-        : {}),
-    };
-  } else {
-    sanitizedMetadata = undefined;
-  }
-
-  // Preserve thinkingContent (truncate if needed for IPC safety)
-  const sanitizedThinkingContent =
-    typeof messageRecord.thinkingContent === 'string'
-      ? truncateIpcString(messageRecord.thinkingContent, IPC_MESSAGE_CONTENT_MAX_CHARS)
-      : undefined;
-
-  return {
-    ...message,
-    content:
-      typeof messageRecord.content === 'string'
-        ? truncateIpcString(messageRecord.content, IPC_MESSAGE_CONTENT_MAX_CHARS)
-        : '',
-    metadata: sanitizedMetadata,
-    ...(sanitizedThinkingContent ? { thinkingContent: sanitizedThinkingContent } : {}),
-  };
-};
-
-const sanitizePermissionRequestForIpc = (request: unknown): unknown => {
-  if (!request || typeof request !== 'object') {
-    return request;
-  }
-  const requestRecord = request as { toolInput?: unknown };
-  return {
-    ...request,
-    toolInput: sanitizeIpcPayload(requestRecord.toolInput ?? {}),
-  };
 };
 
 type CaptureRect = { x: number; y: number; width: number; height: number };
@@ -474,147 +314,6 @@ const TITLEBAR_COLORS = {
   // Align light title bar with app light surface-muted tone to reduce visual contrast.
   light: { color: '#F3F4F6', symbolColor: '#1A1D23' },
 } as const;
-
-const safeDecodeURIComponent = (value: string): string => {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-};
-
-const normalizeWindowsShellPath = (inputPath: string): string => {
-  if (!isWindows) return inputPath;
-
-  const trimmed = inputPath.trim();
-  if (!trimmed) return inputPath;
-
-  let normalized = trimmed;
-  if (/^file:\/\//i.test(normalized)) {
-    normalized = safeDecodeURIComponent(normalized.replace(/^file:\/\//i, ''));
-  }
-
-  if (/^\/[A-Za-z]:/.test(normalized)) {
-    normalized = normalized.slice(1);
-  }
-
-  const unixDriveMatch = normalized.match(/^[/\\]([A-Za-z])[/\\](.+)$/);
-  if (unixDriveMatch) {
-    const drive = unixDriveMatch[1].toUpperCase();
-    const rest = unixDriveMatch[2].replace(/[/\\]+/g, '\\');
-    return `${drive}:\\${rest}`;
-  }
-
-  if (/^[A-Za-z]:[/\\]/.test(normalized)) {
-    const drive = normalized[0].toUpperCase();
-    const rest = normalized.slice(1).replace(/\//g, '\\');
-    return `${drive}${rest}`;
-  }
-
-  return normalized;
-};
-
-// ==================== macOS Permissions ====================
-
-/**
- * Check calendar permission on macOS by attempting to access Calendar app
- * Returns: 'authorized' | 'denied' | 'restricted' | 'not-determined'
- * On Windows, checks if Outlook is available
- * On Linux, returns 'not-supported'
- */
-const checkCalendarPermission = async (): Promise<string> => {
-  if (process.platform === 'darwin') {
-    try {
-      // Try to access Calendar to check permission
-      const { exec } = require('child_process');
-      const util = require('util');
-      const execAsync = util.promisify(exec);
-
-      // Quick test to see if we can access Calendar
-      await execAsync('osascript -l JavaScript -e \'Application("Calendar").name()\'', {
-        timeout: 5000,
-      });
-      console.log('[Permissions] macOS Calendar access: authorized');
-      return 'authorized';
-    } catch (error: unknown) {
-      const stderr =
-        typeof error === 'object' && error && 'stderr' in error
-          ? String((error as { stderr?: unknown }).stderr ?? '')
-          : '';
-      // Check if it's a permission error
-      if (
-        stderr.includes('不能获取对象') ||
-        stderr.includes('not authorized') ||
-        stderr.includes('Permission denied')
-      ) {
-        console.log('[Permissions] macOS Calendar access: not-determined (needs permission)');
-        return 'not-determined';
-      }
-      console.warn('[Permissions] Failed to check macOS calendar permission:', error);
-      return 'not-determined';
-    }
-  }
-
-  if (process.platform === 'win32') {
-    // Windows doesn't have a system-level calendar permission like macOS
-    // Instead, we check if Outlook is available
-    try {
-      const { exec } = require('child_process');
-      const util = require('util');
-      const execAsync = util.promisify(exec);
-
-      // Check if Outlook COM object is accessible
-      const checkScript = `
-        try {
-          $Outlook = New-Object -ComObject Outlook.Application
-          $Outlook.Version
-        } catch { exit 1 }
-      `;
-      await execAsync('powershell -Command "' + checkScript + '"', { timeout: 10000 });
-      console.log('[Permissions] Windows Outlook is available');
-      return 'authorized';
-    } catch {
-      console.log('[Permissions] Windows Outlook not available or not accessible');
-      return 'not-determined';
-    }
-  }
-
-  return 'not-supported';
-};
-
-/**
- * Request calendar permission on macOS
- * On Windows, attempts to initialize Outlook COM object
- */
-const requestCalendarPermission = async (): Promise<boolean> => {
-  if (process.platform === 'darwin') {
-    try {
-      // On macOS, we trigger permission by trying to access Calendar
-      // The system will show permission dialog if needed
-      const { exec } = require('child_process');
-      const util = require('util');
-      const execAsync = util.promisify(exec);
-
-      await execAsync(
-        'osascript -l JavaScript -e \'Application("Calendar").calendars()[0].name()\'',
-        { timeout: 10000 },
-      );
-      return true;
-    } catch (error) {
-      console.warn('[Permissions] Failed to request macOS calendar permission:', error);
-      return false;
-    }
-  }
-
-  if (process.platform === 'win32') {
-    // Windows doesn't have a permission dialog for COM objects
-    // We just check if Outlook is available
-    const status = await checkCalendarPermission();
-    return status === 'authorized';
-  }
-
-  return false;
-};
 
 // 配置应用
 // Linux/Windows 禁用 Chromium 沙箱：桌面应用渲染自有代码，风险可控；
@@ -1117,7 +816,7 @@ const bindCoworkRuntimeForwarder = (): void => {
     windows.forEach(win => {
       if (win.isDestroyed()) return;
       try {
-        const sentResult = win.webContents.send('cowork:stream:message', {
+        win.webContents.send('cowork:stream:message', {
           sessionId,
           message: {
             ...(safeMessage as Record<string, unknown>),
@@ -1439,8 +1138,6 @@ let mainWindow: BrowserWindow | null = null;
 
 let isQuitting = false;
 
-// 存储活跃的流式请求控制器
-const activeStreamControllers = new Map<string, AbortController>();
 let lastReloadAt = 0;
 const MIN_RELOAD_INTERVAL_MS = 5000;
 type AppConfigSettings = {
@@ -1565,14 +1262,9 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
-  // IPC 处理程序
-  ipcMain.handle('store:get', (_event, key) => {
-    return getStore().get(key);
-  });
-
-  ipcMain.handle('store:set', async (_event, key, value) => {
-    getStore().set(key, value);
-    if (key === 'app_config') {
+  registerStoreHandlers({
+    getStore,
+    onAppConfigChanged: async () => {
       const syncResult = await syncOpenClawConfig({
         reason: 'app-config-change',
         restartGatewayIfRunning: false,
@@ -1583,780 +1275,44 @@ if (!gotTheLock) {
           syncResult.error,
         );
       }
-    }
-  });
-
-  ipcMain.handle('store:remove', (_event, key) => {
-    getStore().delete(key);
-  });
-
-  ipcMain.handle('builtinModels:refresh', async () => {
-    try {
-      await syncBuiltinModelProvider(getStore());
-      return { success: true };
-    } catch (error) {
-      console.error('[BuiltinModelProvider] Manual refresh failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to refresh builtin models',
-      };
-    }
-  });
-
-  // Network status change handler
-  // Remove any existing listener first to avoid duplicate registrations
-  ipcMain.removeAllListeners('network:status-change');
-  ipcMain.on('network:status-change', (_event, status: 'online' | 'offline') => {
-    console.log(`[Main] Network status changed: ${status}`);
-  });
-
-  // Log IPC handlers
-  ipcMain.removeAllListeners(LogIpc.WriteDebug);
-  ipcMain.on(
-    LogIpc.WriteDebug,
-    (_event, message: string, details?: Record<string, unknown>) => {
-      console.debug(`[Renderer] ${message}`, details ?? {});
     },
-  );
-
-  ipcMain.handle('log:getPath', () => {
-    return getLogFilePath();
+    refreshBuiltinModels: () => syncBuiltinModelProvider(getStore()),
   });
 
-  ipcMain.handle('log:openFolder', () => {
-    const logPath = getLogFilePath();
-    if (logPath) {
-      shell.showItemInFolder(logPath);
-    }
-  });
+  registerNetworkHandlers();
+  registerLogHandlers();
 
-  ipcMain.handle('log:exportZip', async event => {
-    try {
-      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-      if (!ownerWindow || ownerWindow.isDestroyed()) {
-        return { success: false, error: 'Window is not available' };
-      }
-
-      const saveOptions = {
-        title: 'Export Logs',
-        defaultPath: path.join(app.getPath('downloads'), buildLogExportFileName()),
-        filters: [{ name: 'Zip Archive', extensions: ['zip'] }],
-      };
-
-      const saveResult = await dialog.showSaveDialog(ownerWindow, saveOptions);
-
-      if (saveResult.canceled || !saveResult.filePath) {
-        return { success: true, canceled: true };
-      }
-
-      const outputPath = ensureZipFileName(saveResult.filePath);
-      const archiveResult = await exportLogsZip({
-        outputPath,
-        entries: [
-          ...getRecentMainLogEntries(),
-          { archiveName: 'cowork.log', filePath: getCoworkLogPath() },
-        ],
-      });
-
-      return {
-        success: true,
-        canceled: false,
-        path: outputPath,
-        missingEntries: archiveResult.missingEntries,
-      };
-    } catch (error) {
-      console.error('[LogExport] export failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to export logs',
-      };
-    }
-  });
-
-  // Auto-launch IPC handlers
-  // Use SQLite store as the source of truth for UI state, because
-  // app.getLoginItemSettings() returns unreliable values on macOS and
-  // requires matching args on Windows.
-  ipcMain.handle('app:getAutoLaunch', () => {
-    const stored = getStore().get<boolean>('auto_launch_enabled');
-    // Fall back to OS API if SQLite has no record yet (e.g. upgraded from older version)
-    const enabled = stored ?? getAutoLaunchEnabled();
-    return { enabled };
-  });
-
-  ipcMain.handle('app:setAutoLaunch', (_event, enabled: unknown) => {
-    if (typeof enabled !== 'boolean') {
-      return { success: false, error: 'Invalid parameter: enabled must be boolean' };
-    }
-    try {
-      setAutoLaunchEnabled(enabled);
-      getStore().set('auto_launch_enabled', enabled);
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to set auto-launch',
-      };
-    }
-  });
-
-  ipcMain.handle('app:getPreventSleep', () => {
-    const enabled = getStore().get<boolean>('prevent_sleep_enabled') ?? false;
-    return { enabled };
-  });
-
-  ipcMain.handle('app:setPreventSleep', (_event, enabled: unknown) => {
-    if (typeof enabled !== 'boolean') {
-      return { success: false, error: 'Invalid parameter: enabled must be boolean' };
-    }
-    try {
-      if (enabled) {
-        if (preventSleepBlockerId === null || !powerSaveBlocker.isStarted(preventSleepBlockerId)) {
-          preventSleepBlockerId = powerSaveBlocker.start('prevent-app-suspension');
-        }
-      } else {
-        if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
-          powerSaveBlocker.stop(preventSleepBlockerId);
-          preventSleepBlockerId = null;
-        }
-      }
-      getStore().set('prevent_sleep_enabled', enabled);
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to set prevent-sleep',
-      };
-    }
-  });
-
-  // Window control IPC handlers
-  ipcMain.on('window-minimize', () => {
-    mainWindow?.minimize();
-  });
-
-  ipcMain.on('window-maximize', () => {
-    if (mainWindow?.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow?.maximize();
-    }
-  });
-
-  ipcMain.on('window-close', () => {
-    mainWindow?.close();
-  });
-
-  ipcMain.handle('window:isMaximized', () => {
-    return mainWindow?.isMaximized() ?? false;
-  });
-
-  ipcMain.on(
-    'window:showSystemMenu',
-    (_event, position: { x?: number; y?: number } | undefined) => {
-      showSystemMenu(position);
+  registerAppHandlers({
+    getStore,
+    getPreventSleepBlockerId: () => preventSleepBlockerId,
+    setPreventSleepBlockerId: blockerId => {
+      preventSleepBlockerId = blockerId;
     },
-  );
-
-  ipcMain.handle('app:getVersion', () => app.getVersion());
-  ipcMain.handle('app:getOpenclawVersion', () => {
-    try {
-      const pkg = JSON.parse(
-        require('fs').readFileSync(require('path').join(app.getAppPath(), 'package.json'), 'utf-8'),
-      );
-      return pkg.openclaw?.version ?? 'unknown';
-    } catch {
-      return 'unknown';
-    }
   });
-  ipcMain.handle('app:getSystemLocale', () => app.getLocale());
-
-  // Skills IPC handlers - Gateway RPC based
-  // All skill operations go through OpenClaw Gateway.
-  // Gateway offline = skills unavailable, UI locked.
-
-  const mapGatewaySkill = (entry: import('./libs/agentEngine/types').GatewaySkillEntry) => ({
-    id: entry.skillKey,
-    name: entry.name,
-    description: entry.description,
-    enabled: !entry.disabled,
-    isOfficial: entry.bundled,
-    isBuiltIn: entry.bundled,
-    updatedAt: 0,
-    prompt: '',
-    skillPath: entry.filePath,
-    version: undefined as string | undefined,
-    source: entry.source,
-    eligible: entry.eligible,
-    missing: entry.missing,
-    install: entry.install,
-    emoji: entry.emoji,
-    homepage: entry.homepage,
+  registerWindowHandlers({
+    getMainWindow: () => mainWindow,
+    showSystemMenu,
   });
 
-  ipcMain.handle('skills:list', async () => {
-    try {
-      const adapter = openClawRuntimeAdapter;
-      if (!adapter) {
-        return {
-          success: false,
-          error: 'Gateway not connected',
-          gatewayOffline: true,
-        };
-      }
-      const status = await adapter.getSkillsStatus();
-      const skills = status.skills.map(mapGatewaySkill);
-      return { success: true, skills, workspaceDir: status.workspaceDir };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to load skills';
-      console.error('[Skills] skills:list error:', errorMsg);
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: errorMsg.includes('not connected'),
-      };
-    }
-  });
-
-  type OpenClawToolInputLookup = Record<string, { name?: string; input: unknown }>;
-
-  const coerceOpenClawToolInput = (value: unknown): unknown => {
-    if (typeof value !== 'string') return value;
-    const trimmed = value.trim();
-    if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return value;
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      return value;
-    }
-  };
-
-  const hasOpenClawToolInput = (value: unknown): boolean => {
-    if (value === undefined || value === null) return false;
-    if (typeof value === 'string') return value.trim().length > 0 && value.trim() !== '{}';
-    if (Array.isArray(value)) return value.length > 0;
-    if (typeof value === 'object') return Object.keys(value).length > 0;
-    return true;
-  };
-
-  const resolveOpenClawToolInput = (record: Record<string, unknown>): unknown => {
-    for (const value of [record.arguments, record.args, record.input, record.toolInput]) {
-      const coerced = coerceOpenClawToolInput(value);
-      if (hasOpenClawToolInput(coerced)) return coerced;
-    }
-    return coerceOpenClawToolInput(record.partialArgs);
-  };
-
-  const collectOpenClawSessionJsonlFiles = (rootDir: string): string[] => {
-    const files: string[] = [];
-    const stack = [rootDir];
-    while (stack.length > 0) {
-      const dir = stack.pop();
-      if (!dir) continue;
-      let entries: fs.Dirent[];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          stack.push(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-          files.push(fullPath);
-        }
-      }
-    }
-    return files;
-  };
-
-  const collectToolInputsFromValue = (
-    value: unknown,
-    targetIds: Set<string>,
-    found: OpenClawToolInputLookup,
-    depth = 0,
-  ): void => {
-    if (depth > 8 || targetIds.size === Object.keys(found).length) return;
-    if (!value || typeof value !== 'object') return;
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        collectToolInputsFromValue(item, targetIds, found, depth + 1);
-      }
-      return;
-    }
-
-    const record = value as Record<string, unknown>;
-    const id = [
-      record.id,
-      record.toolCallId,
-      record.tool_call_id,
-      record.toolUseId,
-      record.tool_use_id,
-    ].find(item => typeof item === 'string' && targetIds.has(item)) as string | undefined;
-    const type = typeof record.type === 'string' ? record.type.toLowerCase() : '';
-    if (
-      id &&
-      !found[id] &&
-      ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'functioncall', 'function_call'].includes(
-        type,
-      )
-    ) {
-      const input = resolveOpenClawToolInput(record);
-      if (hasOpenClawToolInput(input)) {
-        found[id] = {
-          name: typeof record.name === 'string' ? record.name : undefined,
-          input,
-        };
-      }
-    }
-
-    for (const key of ['message', 'data', 'messages', 'content']) {
-      collectToolInputsFromValue(record[key], targetIds, found, depth + 1);
-    }
-  };
-
-  ipcMain.handle(
-    OpenClawHistoryIpc.GetToolInputs,
-    async (
-      _event,
-      params: { sessionKey?: unknown; toolCallIds?: unknown },
-    ): Promise<{ success: boolean; inputs?: OpenClawToolInputLookup; error?: string }> => {
-      try {
-        const toolCallIds = Array.isArray(params?.toolCallIds)
-          ? params.toolCallIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
-          : [];
-        if (toolCallIds.length === 0) {
-          return { success: true, inputs: {} };
-        }
-
-        const targetIds = new Set(toolCallIds);
-        const found: OpenClawToolInputLookup = {};
-        const stateDir = getOpenClawEngineManager().getStateDir();
-        const sessionFiles = collectOpenClawSessionJsonlFiles(path.join(stateDir, 'agents'));
-
-        for (const filePath of sessionFiles) {
-          if (Object.keys(found).length >= targetIds.size) break;
-          let text: string;
-          try {
-            text = fs.readFileSync(filePath, 'utf-8');
-          } catch {
-            continue;
-          }
-          if (!toolCallIds.some(id => text.includes(id))) continue;
-          for (const line of text.split(/\r?\n/)) {
-            if (!line.trim() || !toolCallIds.some(id => line.includes(id))) continue;
-            try {
-              collectToolInputsFromValue(JSON.parse(line), targetIds, found);
-            } catch {
-              continue;
-            }
-          }
-        }
-
-        return { success: true, inputs: found };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn('[OpenClawHistory] failed to hydrate tool inputs:', message);
-        return { success: false, error: message };
-      }
-    },
-  );
+  registerOpenClawHistoryHandlers(() => getOpenClawEngineManager().getStateDir());
 
   registerSlashCommandHandlers({
     getGatewayClient: () => openClawRuntimeAdapter?.getGatewayClient() ?? null,
   });
-
-  ipcMain.handle('skills:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
-    try {
-      const adapter = openClawRuntimeAdapter;
-      if (!adapter) {
-        return {
-          success: false,
-          error: 'Gateway not connected',
-          gatewayOffline: true,
-        };
-      }
-      const result = await adapter.updateSkillConfig({
-        skillKey: options.id,
-        enabled: options.enabled,
-      });
-      if (!result.ok) {
-        return { success: false, error: result.error || 'Failed to update skill' };
-      }
-      // Refetch skill list after update
-      const status = await adapter.getSkillsStatus();
-      const skills = status.skills.map(mapGatewaySkill);
-      return { success: true, skills };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to update skill';
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: errorMsg.includes('not connected'),
-      };
-    }
+  registerSkillHandlers({
+    getRuntimeAdapter: () => openClawRuntimeAdapter,
+    getSkillFiles: getOpenClawSkillFiles,
+    marketplaceService: skillMarketplaceService,
   });
 
-  ipcMain.handle(
-    'skills:install',
-    async (_event, params: import('./libs/agentEngine/types').SkillInstallParams) => {
-      try {
-        if (!('source' in params) || params.source !== 'clawhub') {
-          return { success: false, error: 'Unsupported marketplace install request' };
-        }
-        return await skillMarketplaceService.install(params);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Failed to install skill';
-        return {
-          success: false,
-          error: errorMsg,
-          gatewayOffline: errorMsg.includes('not connected'),
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('skills:search', async (_event, options: { query?: string; limit?: number }) => {
-    try {
-      const results = await skillMarketplaceService.search(options);
-      return { success: true, results };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to search skills';
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: errorMsg.includes('not connected'),
-      };
-    }
+  registerOpenClawEngineHandlers({
+    getManager: getOpenClawEngineManager,
+    bootstrap: bootstrapOpenClawEngine,
   });
 
-  ipcMain.handle('skills:detail', async (_event, options: { slug: string }) => {
-    try {
-      const detail = await skillMarketplaceService.getDetail(options.slug);
-      return { success: true, detail };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to get skill detail';
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: errorMsg.includes('not connected'),
-      };
-    }
-  });
-
-  // Offline skill import - extract local archive to user skills directory
-  ipcMain.handle('skills:import', async (_event, archivePath: string) => {
-    try {
-      const result = getOpenClawSkillFiles().importArchive(archivePath);
-      return result;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to import skill';
-      console.error('[Skills] skills:import error:', errorMsg);
-      return { success: false, error: errorMsg };
-    }
-  });
-
-  // Offline skill import from folder - copy folder to user skills directory
-  ipcMain.handle('skills:importFolder', async (_event, folderPath: string) => {
-    try {
-      const result = getOpenClawSkillFiles().importDirectory(folderPath);
-      return result;
-    } catch (error) {
-      const errorMsg =
-        error instanceof Error ? error.message : 'Failed to import skill from folder';
-      console.error('[Skills] skills:importFolder error:', errorMsg);
-      return { success: false, error: errorMsg };
-    }
-  });
-
-  // skills:delete - Delete skill from Gateway managed directory
-  ipcMain.handle('skills:delete', async (_event, id: string) => {
-    try {
-      getOpenClawSkillFiles().delete(id);
-      const adapter = openClawRuntimeAdapter;
-      if (!adapter) {
-        return {
-          success: false,
-          error: 'Gateway not connected',
-          gatewayOffline: true,
-        };
-      }
-      const status = await adapter.getSkillsStatus();
-      const skills = status.skills.map(mapGatewaySkill);
-      return { success: true, skills };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';
-      return { success: false, error: errorMsg };
-    }
-  });
-
-  ipcMain.handle('openclaw:engine:getStatus', async () => {
-    try {
-      const manager = getOpenClawEngineManager();
-      return {
-        success: true,
-        status: manager.getStatus(),
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get OpenClaw engine status',
-      };
-    }
-  });
-
-  ipcMain.handle('openclaw:engine:install', async () => {
-    try {
-      const status = await bootstrapOpenClawEngine({
-        forceReinstall: false,
-        reason: 'manual-install',
-      });
-      return {
-        success: status.phase === 'running' || status.phase === 'ready',
-        status,
-      };
-    } catch (error) {
-      const manager = getOpenClawEngineManager();
-      return {
-        success: false,
-        status: manager.getStatus(),
-        error: error instanceof Error ? error.message : 'Failed to install OpenClaw engine',
-      };
-    }
-  });
-
-  ipcMain.handle('openclaw:engine:retryInstall', async () => {
-    try {
-      const status = await bootstrapOpenClawEngine({
-        forceReinstall: true,
-        reason: 'manual-retry',
-      });
-      return {
-        success: status.phase === 'running' || status.phase === 'ready',
-        status,
-      };
-    } catch (error) {
-      const manager = getOpenClawEngineManager();
-      return {
-        success: false,
-        status: manager.getStatus(),
-        error: error instanceof Error ? error.message : 'Failed to retry OpenClaw engine install',
-      };
-    }
-  });
-
-  let restartGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
-  ipcMain.handle('openclaw:engine:restartGateway', async () => {
-    if (restartGatewayPromise) {
-      const status = await restartGatewayPromise;
-      return { success: status.phase === 'running' || status.phase === 'ready', status };
-    }
-    try {
-      const manager = getOpenClawEngineManager();
-      restartGatewayPromise = manager.restartGateway();
-      const status = await restartGatewayPromise;
-      return {
-        success: status.phase === 'running' || status.phase === 'ready',
-        status,
-      };
-    } catch (error) {
-      const manager = getOpenClawEngineManager();
-      return {
-        success: false,
-        status: manager.getStatus(),
-        error: error instanceof Error ? error.message : 'Failed to restart OpenClaw gateway',
-      };
-    } finally {
-      restartGatewayPromise = null;
-    }
-  });
-
-  ipcMain.handle('openclaw:engine:getPort', () => {
-    try {
-      const port = getOpenClawEngineManager().getGatewayPort();
-      return { success: true, port };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get OpenClaw gateway port',
-      };
-    }
-  });
-
-  ipcMain.handle('openclaw:engine:getToken', () => {
-    try {
-      const manager = getOpenClawEngineManager();
-      let token = manager.getGatewayToken();
-      const status = manager.getStatus();
-
-      // If gateway is running but token is null, try to ensure it exists
-      if (token === null && status.phase === 'running') {
-        console.log('[Main] Gateway running but token is null, checking token file...');
-        // Gateway should have created the token during startup
-        // If missing, the gateway process might have failed to write it
-        // Try one more time to read it (could be a timing issue)
-        const connectionInfo = manager.getGatewayConnectionInfo();
-        if (connectionInfo.token) {
-          token = connectionInfo.token;
-          console.log('[Main] Got token from connection info');
-        }
-      }
-
-      if (token === null) {
-        if (status.phase !== 'running') {
-          return {
-            success: false,
-            error: 'Gateway not running',
-          };
-        }
-        // Gateway is running but token is unavailable - unusual state
-        console.warn('[Main] Gateway is running but token is unavailable');
-        return {
-          success: false,
-          error: 'Gateway token not available. Try restarting the gateway.',
-        };
-      }
-
-      return { success: true, token };
-    } catch (error) {
-      console.error('[Main] Error getting gateway token:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get OpenClaw gateway token',
-      };
-    }
-  });
-
-  ipcMain.handle('openclaw:engine:setPort', (_event, port: number) => {
-    try {
-      const result = getOpenClawEngineManager().setGatewayPort(port);
-      return result;
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to set OpenClaw gateway port',
-      };
-    }
-  });
-
-  // MCP Server IPC handlers
-  ipcMain.handle('mcp:list', () => {
-    try {
-      const servers = getMcpStore().listServers();
-      return { success: true, servers };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list MCP servers',
-      };
-    }
-  });
-
-  ipcMain.handle(
-    'mcp:create',
-    async (
-      _event,
-      data: {
-        name: string;
-        description: string;
-        transportType: string;
-        command?: string;
-        args?: string[];
-        env?: Record<string, string>;
-        url?: string;
-        headers?: Record<string, string>;
-      },
-    ) => {
-      try {
-        getMcpStore().createServer(data as McpServerFormData);
-        const servers = getMcpStore().listServers();
-        // Trigger async MCP bridge refresh (don't await — let UI show DB result immediately)
-        refreshMcpBridge().catch(err =>
-          console.error('[McpBridge] background refresh error:', err),
-        );
-        return { success: true, servers };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to create MCP server',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'mcp:update',
-    async (
-      _event,
-      id: string,
-      data: {
-        name?: string;
-        description?: string;
-        transportType?: string;
-        command?: string;
-        args?: string[];
-        env?: Record<string, string>;
-        url?: string;
-        headers?: Record<string, string>;
-      },
-    ) => {
-      try {
-        getMcpStore().updateServer(id, data as Partial<McpServerFormData>);
-        const servers = getMcpStore().listServers();
-        refreshMcpBridge().catch(err =>
-          console.error('[McpBridge] background refresh error:', err),
-        );
-        return { success: true, servers };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to update MCP server',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('mcp:delete', async (_event, id: string) => {
-    try {
-      getMcpStore().deleteServer(id);
-      const servers = getMcpStore().listServers();
-      refreshMcpBridge().catch(err => console.error('[McpBridge] background refresh error:', err));
-      return { success: true, servers };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete MCP server',
-      };
-    }
-  });
-
-  ipcMain.handle('mcp:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
-    try {
-      getMcpStore().setEnabled(options.id, options.enabled);
-      const servers = getMcpStore().listServers();
-      refreshMcpBridge().catch(err => console.error('[McpBridge] background refresh error:', err));
-      return { success: true, servers };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update MCP server',
-      };
-    }
-  });
-
-  // Explicit bridge refresh — renderer can await this for loading state
-  ipcMain.handle('mcp:refreshBridge', async () => {
-    try {
-      const result = await refreshMcpBridge();
-      return { success: true, tools: result.tools, error: result.error };
-    } catch (error) {
-      return {
-        success: false,
-        tools: 0,
-        error: error instanceof Error ? error.message : 'Failed to refresh MCP bridge',
-      };
-    }
+  registerMcpHandlers({
+    getStore: getMcpStore,
+    refreshBridge: refreshMcpBridge,
   });
 
   // Cowork IPC handlers
@@ -2827,84 +1783,7 @@ if (!gotTheLock) {
     }
   });
 
-  // Session Group IPC handlers
-  ipcMain.handle('sessionGroup:list', async () => {
-    try {
-      const groups = getGroupStore().listGroups();
-      return { success: true, groups };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list groups',
-      };
-    }
-  });
-
-  ipcMain.handle('sessionGroup:create', async (_event, input: { name: string; color?: string }) => {
-    try {
-      const group = getGroupStore().createGroup(input);
-      return { success: true, group };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to create group',
-      };
-    }
-  });
-
-  ipcMain.handle(
-    'sessionGroup:update',
-    async (_event, id: string, input: { name?: string; color?: string; sortOrder?: number }) => {
-      try {
-        const group = getGroupStore().updateGroup(id, input);
-        return { success: true, group };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to update group',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('sessionGroup:delete', async (_event, id: string) => {
-    try {
-      const deleted = getGroupStore().deleteGroup(id);
-      return { success: deleted };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete group',
-      };
-    }
-  });
-
-  ipcMain.handle(
-    'sessionGroup:moveSession',
-    async (_event, sessionId: string, groupId: string | null) => {
-      try {
-        const moved = getGroupStore().moveSessionToGroup(sessionId, groupId);
-        return { success: moved };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to move session',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('sessionGroup:reorder', async (_event, groupIds: string[]) => {
-    try {
-      getGroupStore().reorderGroups(groupIds);
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to reorder groups',
-      };
-    }
-  });
+  registerSessionGroupHandlers(getGroupStore);
 
   ipcMain.handle(
     'cowork:session:patchModel',
@@ -2962,103 +1841,10 @@ if (!gotTheLock) {
     }
   });
 
-  // ========== Agent IPC Handlers ==========
-
-  ipcMain.handle('agents:list', async () => {
-    try {
-      const agents = getAgentManager().listAgents();
-      return { success: true, agents };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list agents',
-      };
-    }
-  });
-
-  ipcMain.handle('agents:get', async (_event, id: string) => {
-    try {
-      const agent = getAgentManager().getAgent(id);
-      return { success: true, agent };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get agent',
-      };
-    }
-  });
-
-  ipcMain.handle(
-    'agents:create',
-    async (_event, request: import('./coworkStore').CreateAgentRequest) => {
-      try {
-        const agent = getAgentManager().createAgent(request, resolveDefaultAgentModelRef());
-        // Sync config so workspace files (SOUL.md, IDENTITY.md) are written
-        // before OpenClaw scaffolds default templates for the new agent.
-        syncOpenClawConfig({ reason: 'agent-created' }).catch(() => {});
-        return { success: true, agent };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to create agent',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'agents:update',
-    async (_event, id: string, updates: import('./coworkStore').UpdateAgentRequest) => {
-      try {
-        const agent = getAgentManager().updateAgent(id, updates);
-        syncOpenClawConfig({ reason: 'agent-updated' }).catch(() => {});
-        return { success: true, agent };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to update agent',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('agents:delete', async (_event, id: string) => {
-    try {
-      const result = getAgentManager().deleteAgent(id);
-
-      syncOpenClawConfig({ reason: 'agent-deleted' }).catch(() => {});
-      return { success: true, deleted: result };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete agent',
-      };
-    }
-  });
-
-  ipcMain.handle('agents:presets', async () => {
-    try {
-      const presets = getAgentManager().getPresetAgents();
-      return { success: true, presets };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get presets',
-      };
-    }
-  });
-
-  ipcMain.handle('agents:addPreset', async (_event, presetId: string) => {
-    try {
-      const agent = getAgentManager().addPresetAgent(presetId, resolveDefaultAgentModelRef());
-      syncOpenClawConfig({ reason: 'agent-preset-added' }).catch(() => {});
-      return { success: true, agent };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to add preset agent',
-      };
-    }
+  registerAgentHandlers({
+    getManager: getAgentManager,
+    resolveDefaultModelRef: resolveDefaultAgentModelRef,
+    syncConfig: reason => syncOpenClawConfig({ reason }),
   });
 
   ipcMain.handle(
@@ -3236,11 +2022,9 @@ if (!gotTheLock) {
           const answers = extensionResponse.answers;
 
           const sessionId = extensionResponse.handled
-            ? (
-            typeof updatedInput?.sessionId === 'string'
+            ? typeof updatedInput?.sessionId === 'string'
               ? updatedInput.sessionId.trim()
               : (askUserSessionByRequestId.get(options.requestId) ?? '')
-              )
             : '';
           if (sessionId && sessionId !== '__askuser__') {
             const content =
@@ -3367,65 +2151,11 @@ if (!gotTheLock) {
     },
   );
 
-  // Set default model in app_config (used when no agent/session exists)
-  ipcMain.handle(
-    'config:setDefaultModel',
-    async (_event, options: { modelId: string; providerKey?: string }) => {
-      try {
-        type AppConfigWithModel = {
-          model?: {
-            defaultModel?: string;
-            defaultModelProvider?: string;
-          };
-          providers?: Record<string, unknown>;
-          theme?: string;
-          language?: string;
-          useSystemProxy?: boolean;
-        };
-        const currentConfig = getStore().get<AppConfigWithModel>('app_config') || {};
-        const updatedConfig = {
-          ...currentConfig,
-          model: {
-            ...currentConfig.model,
-            defaultModel: options.modelId,
-            defaultModelProvider: options.providerKey || currentConfig.model?.defaultModelProvider,
-          },
-        };
-        getStore().set('app_config', updatedConfig);
-
-        // Also update main agent's model in the database so agents.list reflects the new model
-        const modelRef = options.providerKey
-          ? `${options.providerKey}/${options.modelId}`
-          : options.modelId;
-        try {
-          const mainAgent = getCoworkStore().getAgent('main');
-          if (mainAgent && mainAgent.model !== modelRef) {
-            getCoworkStore().updateAgent('main', { model: modelRef });
-          }
-        } catch {
-          // Non-fatal: agent update failed, config sync will still proceed
-        }
-
-        // syncOpenClawConfig will pick up the updated agent model
-        const syncResult = await syncOpenClawConfig({
-          reason: 'default-model-change',
-          restartGatewayIfRunning: false,
-        });
-        if (!syncResult.success) {
-          console.error(
-            '[Main] Failed to sync OpenClaw config after default model update:',
-            syncResult.error,
-          );
-        }
-        return { success: true };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to set default model',
-        };
-      }
-    },
-  );
+  registerDefaultModelHandlers({
+    getStore,
+    getCoworkStore,
+    syncOpenClawConfig,
+  });
 
   // ==================== Scheduled Task IPC Handlers (OpenClaw) ====================
 
@@ -3437,541 +2167,19 @@ if (!gotTheLock) {
     getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
   });
 
-  // ==================== Permissions IPC Handlers ====================
+  registerCalendarPermissionHandlers(isDev);
 
-  ipcMain.handle('permissions:checkCalendar', async () => {
-    try {
-      const status = await checkCalendarPermission();
-
-      // Development mode: Auto-request permission if not determined
-      // This provides a better dev experience without affecting production
-      if (isDev && status === 'not-determined' && process.platform === 'darwin') {
-        console.log('[Permissions] Development mode: Auto-requesting calendar permission...');
-        try {
-          await requestCalendarPermission();
-          const newStatus = await checkCalendarPermission();
-          console.log(
-            '[Permissions] Development mode: Permission status after request:',
-            newStatus,
-          );
-          return { success: true, status: newStatus, autoRequested: true };
-        } catch (requestError) {
-          console.warn('[Permissions] Development mode: Auto-request failed:', requestError);
-        }
-      }
-
-      return { success: true, status };
-    } catch (error) {
-      console.error('[Main] Error checking calendar permission:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to check permission',
-      };
-    }
+  registerCoworkUtilityHandlers({
+    getTitleGenerator: getCoworkEngineRouter,
+    listRecentCwds: limit => getCoworkStore().listRecentCwds(limit),
   });
 
-  ipcMain.handle('permissions:requestCalendar', async () => {
-    try {
-      // Request permission and check status
-      const granted = await requestCalendarPermission();
-      const status = await checkCalendarPermission();
-      return { success: true, granted, status };
-    } catch (error) {
-      console.error('[Main] Error requesting calendar permission:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to request permission',
-      };
-    }
-  });
+  registerDialogHandlers();
+  registerLocalFileHandlers();
 
-  ipcMain.handle('generate-session-title', async (_event, userInput: string | null) => {
-    // Use Gateway-based title generation (reuses session authentication)
-    console.log('[main] generate-session-title: attempting Gateway-based generation...');
-    try {
-      const router = getCoworkEngineRouter();
-      console.log(
-        '[main] generate-session-title: router exists, hasGenerateTitle=',
-        !!router.generateTitle,
-      );
-      if (router.generateTitle) {
-        console.log('[main] generate-session-title: calling router.generateTitle...');
-        const title = await router.generateTitle(userInput);
-        console.log('[main] generate-session-title: Gateway result=', title);
-        return title;
-      }
-      console.warn(
-        '[main] generate-session-title: router.generateTitle not available, using simple fallback',
-      );
-    } catch (error) {
-      console.warn('[main] Gateway-based title generation failed:', error);
-    }
-    // Simple fallback when Gateway is completely unavailable (no HTTP method)
-    const fallback = 'New Session';
-    const normalizedInput = typeof userInput === 'string' ? userInput.trim() : '';
-    if (!normalizedInput) return fallback;
-    const firstLine =
-      normalizedInput
-        .split(/\r?\n/)
-        .map(l => l.trim())
-        .find(Boolean) || '';
-    return firstLine.slice(0, 50).trim() || fallback;
-  });
+  registerShellHandlers();
 
-  ipcMain.handle('get-recent-cwds', async (_event, limit?: number) => {
-    const boundedLimit = limit ? Math.min(Math.max(limit, 1), 20) : 8;
-    return getCoworkStore().listRecentCwds(boundedLimit);
-  });
-
-  ipcMain.handle('get-api-config', async () => {
-    return getCurrentApiConfig();
-  });
-
-  ipcMain.handle('check-api-config', async (_event, options?: { probeModel?: boolean }) => {
-    const { config, error } = resolveCurrentApiConfig();
-    if (config && options?.probeModel) {
-      const probe = await probeCoworkModelReadiness();
-      if (probe.ok === false) {
-        return { hasConfig: false, config: null, error: probe.error };
-      }
-    }
-    return { hasConfig: config !== null, config, error };
-  });
-
-  ipcMain.handle(
-    'save-api-config',
-    async (
-      _event,
-      config: {
-        apiKey: string;
-        baseURL: string;
-        model: string;
-        apiType?: 'openai';
-      },
-    ) => {
-      try {
-        saveCoworkApiConfig(config);
-        return { success: true };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to save API config',
-        };
-      }
-    },
-  );
-
-  // Dialog handlers
-  ipcMain.handle('dialog:selectDirectory', async event => {
-    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-    const dialogOptions = {
-      properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[],
-    };
-    const result = ownerWindow
-      ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions);
-    if (result.canceled || result.filePaths.length === 0) {
-      return { success: true, path: null };
-    }
-    return { success: true, path: result.filePaths[0] };
-  });
-
-  ipcMain.handle(
-    'dialog:selectFile',
-    async (
-      event,
-      options?: { title?: string; filters?: { name: string; extensions: string[] }[] },
-    ) => {
-      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-      const dialogOptions = {
-        properties: ['openFile'] as 'openFile'[],
-        title: options?.title,
-        filters: options?.filters,
-      };
-      const result = ownerWindow
-        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
-        : await dialog.showOpenDialog(dialogOptions);
-      if (result.canceled || result.filePaths.length === 0) {
-        return { success: true, path: null };
-      }
-      return { success: true, path: result.filePaths[0] };
-    },
-  );
-
-  ipcMain.handle(
-    'dialog:selectFiles',
-    async (
-      event,
-      options?: { title?: string; filters?: { name: string; extensions: string[] }[] },
-    ) => {
-      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-      const dialogOptions = {
-        properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
-        title: options?.title,
-        filters: options?.filters,
-      };
-      const result = ownerWindow
-        ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
-        : await dialog.showOpenDialog(dialogOptions);
-      if (result.canceled || result.filePaths.length === 0) {
-        return { success: true, paths: [] };
-      }
-      return { success: true, paths: result.filePaths };
-    },
-  );
-
-  ipcMain.handle('dialog:selectFolders', async (event, options?: { title?: string }) => {
-    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-    const dialogOptions = {
-      properties: ['openDirectory', 'multiSelections', 'createDirectory'] as (
-        | 'openDirectory'
-        | 'multiSelections'
-        | 'createDirectory'
-      )[],
-      title: options?.title,
-    };
-    const result = ownerWindow
-      ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions);
-    if (result.canceled || result.filePaths.length === 0) {
-      return { success: true, paths: [] };
-    }
-    return { success: true, paths: result.filePaths };
-  });
-
-  ipcMain.handle(
-    'dialog:saveInlineFile',
-    async (
-      _event,
-      options?: { dataBase64?: string; fileName?: string; mimeType?: string; cwd?: string },
-    ) => {
-      try {
-        const dataBase64 = typeof options?.dataBase64 === 'string' ? options.dataBase64.trim() : '';
-        if (!dataBase64) {
-          return { success: false, path: null, error: 'Missing file data' };
-        }
-
-        const buffer = Buffer.from(dataBase64, 'base64');
-        if (!buffer.length) {
-          return { success: false, path: null, error: 'Invalid file data' };
-        }
-        if (buffer.length > MAX_INLINE_ATTACHMENT_BYTES) {
-          return {
-            success: false,
-            path: null,
-            error: `File too large (max ${Math.floor(MAX_INLINE_ATTACHMENT_BYTES / (1024 * 1024))}MB)`,
-          };
-        }
-
-        const dir = resolveInlineAttachmentDir(options?.cwd);
-        await fs.promises.mkdir(dir, { recursive: true });
-
-        const safeFileName = sanitizeAttachmentFileName(options?.fileName);
-        const extension = inferAttachmentExtension(safeFileName, options?.mimeType);
-        const baseName = extension ? safeFileName.slice(0, -extension.length) : safeFileName;
-        const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const finalName = `${baseName || 'attachment'}-${uniqueSuffix}${extension}`;
-        const outputPath = path.join(dir, finalName);
-
-        await fs.promises.writeFile(outputPath, buffer);
-        return { success: true, path: outputPath };
-      } catch (error) {
-        return {
-          success: false,
-          path: null,
-          error: error instanceof Error ? error.message : 'Failed to save inline file',
-        };
-      }
-    },
-  );
-
-  // Read a local file as a data URL (data:<mime>;base64,...)
-  const MAX_READ_AS_DATA_URL_BYTES = 20 * 1024 * 1024;
-  const MIME_BY_EXT: Record<string, string> = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.bmp': 'image/bmp',
-    '.svg': 'image/svg+xml',
-    '.tiff': 'image/tiff',
-    '.tif': 'image/tiff',
-    '.ico': 'image/x-icon',
-    '.avif': 'image/avif',
-  };
-  ipcMain.handle(
-    'dialog:readFileAsDataUrl',
-    async (
-      _event,
-      filePath?: string,
-    ): Promise<{ success: boolean; dataUrl?: string; error?: string }> => {
-      try {
-        if (typeof filePath !== 'string' || !filePath.trim()) {
-          return { success: false, error: 'Missing file path' };
-        }
-        const resolvedPath = path.resolve(filePath.trim());
-        const stat = await fs.promises.stat(resolvedPath);
-        if (!stat.isFile()) {
-          return { success: false, error: 'Not a file' };
-        }
-        if (stat.size > MAX_READ_AS_DATA_URL_BYTES) {
-          return {
-            success: false,
-            error: `File too large (max ${Math.floor(MAX_READ_AS_DATA_URL_BYTES / (1024 * 1024))}MB)`,
-          };
-        }
-        const buffer = await fs.promises.readFile(resolvedPath);
-        const ext = path.extname(resolvedPath).toLowerCase();
-        const mimeType = MIME_BY_EXT[ext] || 'application/octet-stream';
-        const base64 = buffer.toString('base64');
-        return { success: true, dataUrl: `data:${mimeType};base64,${base64}` };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to read file',
-        };
-      }
-    },
-  );
-
-  // Shell handlers - 打开文件/文件夹
-  ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
-    try {
-      const normalizedPath = normalizeWindowsShellPath(filePath);
-      const result = await shell.openPath(normalizedPath);
-      if (result) {
-        // 如果返回非空字符串，表示打开失败
-        return { success: false, error: result };
-      }
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  });
-
-  ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
-    try {
-      const normalizedPath = normalizeWindowsShellPath(filePath);
-      shell.showItemInFolder(normalizedPath);
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  });
-
-  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
-    try {
-      await shell.openExternal(url);
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  });
-
-  // API 代理处理程序 - 解决 CORS 问题
-  ipcMain.handle(
-    'api:fetch',
-    async (
-      _event,
-      options: {
-        url: string;
-        method: string;
-        headers: Record<string, string>;
-        body?: string;
-      },
-    ) => {
-      console.log(
-        `[api:fetch] ${options.method} ${options.url}, headers: ${JSON.stringify(options.headers)}, body: ${options.body}`,
-      );
-
-      const doFetch = async (headers: Record<string, string>) => {
-        const response = await session.defaultSession.fetch(options.url, {
-          method: options.method,
-          headers,
-          body: options.body,
-        });
-
-        const contentType = response.headers.get('content-type') || '';
-        let data: string | object;
-
-        if (contentType.includes('text/event-stream')) {
-          data = await response.text();
-        } else if (contentType.includes('application/json')) {
-          data = await response.json();
-        } else {
-          data = await response.text();
-        }
-
-        return {
-          ok: response.ok,
-          status: response.status,
-          statusText: response.statusText,
-          headers: Object.fromEntries(response.headers.entries()),
-          data,
-        };
-      };
-
-      try {
-        let result = await doFetch(options.headers);
-        console.log(
-          `[api:fetch] ${options.method} ${options.url} -> ${result.status} ${result.statusText}`,
-          typeof result.data === 'object' ? JSON.stringify(result.data) : result.data,
-        );
-
-        return result;
-      } catch (error) {
-        console.error(
-          `[api:fetch] ${options.method} ${options.url} -> ERROR:`,
-          error instanceof Error ? error.message : error,
-        );
-        return {
-          ok: false,
-          status: 0,
-          statusText: error instanceof Error ? error.message : 'Network error',
-          headers: {},
-          data: null,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        };
-      }
-    },
-  );
-
-  // SSE 流式 API 代理
-  ipcMain.handle(
-    'api:stream',
-    async (
-      event,
-      options: {
-        url: string;
-        method: string;
-        headers: Record<string, string>;
-        body?: string;
-        requestId: string;
-      },
-    ) => {
-      const controller = new AbortController();
-
-      // 存储 controller 以便后续取消
-      activeStreamControllers.set(options.requestId, controller);
-
-      try {
-        let response = await session.defaultSession.fetch(options.url, {
-          method: options.method,
-          headers: options.headers,
-          body: options.body,
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          const errorData = await response.text();
-          activeStreamControllers.delete(options.requestId);
-          return {
-            ok: false,
-            status: response.status,
-            statusText: response.statusText,
-            error: errorData,
-          };
-        }
-
-        if (!response.body) {
-          activeStreamControllers.delete(options.requestId);
-          return {
-            ok: false,
-            status: response.status,
-            statusText: 'No response body',
-          };
-        }
-
-        // 读取流式响应并通过 IPC 发送
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        const readStream = async () => {
-          try {
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) {
-                event.sender.send(`api:stream:${options.requestId}:done`);
-                break;
-              }
-              const chunk = decoder.decode(value);
-              event.sender.send(`api:stream:${options.requestId}:data`, chunk);
-            }
-          } catch (error) {
-            if (error instanceof Error && error.name === 'AbortError') {
-              event.sender.send(`api:stream:${options.requestId}:abort`);
-            } else {
-              event.sender.send(
-                `api:stream:${options.requestId}:error`,
-                error instanceof Error ? error.message : 'Stream error',
-              );
-            }
-          } finally {
-            activeStreamControllers.delete(options.requestId);
-          }
-        };
-
-        // 异步读取流，立即返回成功状态
-        readStream();
-
-        return {
-          ok: true,
-          status: response.status,
-          statusText: response.statusText,
-        };
-      } catch (error) {
-        activeStreamControllers.delete(options.requestId);
-        return {
-          ok: false,
-          status: 0,
-          statusText: error instanceof Error ? error.message : 'Network error',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        };
-      }
-    },
-  );
-
-  // 取消流式请求
-  ipcMain.handle('api:stream:cancel', (_event, requestId: string) => {
-    const controller = activeStreamControllers.get(requestId);
-    if (controller) {
-      controller.abort();
-      activeStreamControllers.delete(requestId);
-      return true;
-    }
-    return false;
-  });
-
-  // 设置 Content Security Policy
-  const setContentSecurityPolicy = () => {
-    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-      const devPort =
-        process.env.ELECTRON_START_URL?.match(/:(\d+)/)?.[1] ||
-        String(packageJson.devServer.port);
-      const cspDirectives = [
-        "default-src 'self'",
-        isDev
-          ? `script-src 'self' 'unsafe-inline' http://localhost:${devPort} ws://localhost:${devPort}`
-          : "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: https: http: localfile:",
-        // 允许连接到所有域名，不做限制
-        'connect-src *',
-        "font-src 'self' data:",
-        "media-src 'self'",
-        "worker-src 'self' blob:",
-        "frame-src 'self'",
-      ];
-
-      callback({
-        responseHeaders: {
-          ...details.responseHeaders,
-          'Content-Security-Policy': cspDirectives.join('; '),
-        },
-      });
-    });
-  };
+  registerApiProxyHandlers();
 
   // 创建主窗口
   const createWindow = () => {
@@ -4257,16 +2465,7 @@ if (!gotTheLock) {
     console.log('[Main] initApp: default project dir ensured');
 
     // 注册 localfile:// 自定义协议，用于安全加载本地文件（图片等）
-    // Three slashes needed: localfile:///C:/Users/... gives pathname /C:/Users/...
-    protocol.handle('localfile', request => {
-      const url = new URL(request.url);
-      let filePath = decodeURIComponent(url.pathname);
-      // Strip leading slash for Windows paths (e.g., /C:/Users/... -> C:/Users/...)
-      if (filePath.startsWith('/') && filePath.match(/^\/[A-Za-z]:\//)) {
-        filePath = filePath.slice(1);
-      }
-      return net.fetch(`file://${filePath}`);
-    });
+    registerLocalFileProtocol();
 
     console.log('[Main] initApp: starting initStore()');
     store = await initStore();
@@ -4334,7 +2533,10 @@ if (!gotTheLock) {
     await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
 
     // 设置安全策略
-    setContentSecurityPolicy();
+    registerContentSecurityPolicy({
+      isDev,
+      devServerPort: packageJson.devServer.port,
+    });
 
     // 创建窗口
     console.log('[Main] initApp: creating window');
