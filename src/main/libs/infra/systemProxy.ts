@@ -19,6 +19,8 @@ const originalProxyEnv: ProxyEnvSnapshot = PROXY_ENV_KEYS.reduce((acc, key) => {
 
 let systemProxyEnabled = false;
 
+const LOOPBACK_PROXY_BYPASSES = ['localhost', '127.0.0.1', '::1'] as const;
+
 function setEnvValue(key: ProxyEnvKey, value: string | undefined): void {
   if (typeof value === 'string' && value.length > 0) {
     process.env[key] = value;
@@ -60,6 +62,19 @@ function parseProxyRule(rule: string): string | null {
   return `http://${hostPort}`;
 }
 
+export function addLoopbackProxyBypass(env: NodeJS.ProcessEnv): void {
+  const existingEntries = (env.NO_PROXY || env.no_proxy || '')
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean);
+  const bypassEntries = Array.from(
+    new Set([...existingEntries, ...LOOPBACK_PROXY_BYPASSES]),
+  ).join(',');
+
+  env.no_proxy = bypassEntries;
+  env.NO_PROXY = bypassEntries;
+}
+
 export function isSystemProxyEnabled(): boolean {
   return systemProxyEnabled;
 }
@@ -85,6 +100,7 @@ export function applySystemProxyEnv(proxyUrl: string | null): void {
   setEnvValue('https_proxy', proxyUrl);
   setEnvValue('HTTP_PROXY', proxyUrl);
   setEnvValue('HTTPS_PROXY', proxyUrl);
+  addLoopbackProxyBypass(process.env);
 }
 
 export async function resolveSystemProxyUrl(targetUrl: string): Promise<string | null> {

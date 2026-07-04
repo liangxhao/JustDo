@@ -10,7 +10,11 @@ import {
   resolveCurrentApiConfig,
 } from '../cowork/providerApiConfig';
 import { appendPythonRuntimeToEnv } from '../infra/pythonRuntime';
-import { isSystemProxyEnabled, resolveSystemProxyUrl } from '../infra/systemProxy';
+import {
+  addLoopbackProxyBypass,
+  isSystemProxyEnabled,
+  resolveSystemProxyUrl,
+} from '../infra/systemProxy';
 import {
   buildOpenAIChatCompletionsUrl,
   extractApiErrorSnippet,
@@ -1479,6 +1483,7 @@ export async function getEnhancedEnv(
     env.https_proxy = proxyUrl;
     env.HTTP_PROXY = proxyUrl;
     env.HTTPS_PROXY = proxyUrl;
+    addLoopbackProxyBypass(env);
     console.log('Injected system proxy for subprocess:', proxyUrl);
   }
 
