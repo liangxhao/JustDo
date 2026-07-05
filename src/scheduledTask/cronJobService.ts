@@ -405,14 +405,6 @@ export function mapGatewayRun(entry: GatewayRunLogEntry): ScheduledTaskRun {
   };
 }
 
-/** Extract a short title from a run's summary (first line, trimmed to 30 chars). */
-function extractRunTitle(summary?: string): string | undefined {
-  if (!summary) return undefined;
-  const firstLine = summary.split('\n')[0].trim();
-  if (!firstLine) return undefined;
-  return firstLine.length > 30 ? firstLine.slice(0, 30) + '…' : firstLine;
-}
-
 export class CronJobService {
   private readonly getGatewayClient: () => GatewayClientLike | null;
   private readonly ensureGatewayReady: () => Promise<void>;
@@ -700,51 +692,6 @@ export class CronJobService {
       sortDir: 'desc',
     });
     return Array.isArray(result.entries) ? result.entries.map(mapGatewayRun) : [];
-  }
-
-  async countRuns(jobId: string): Promise<number> {
-    const client = await this.client();
-    const result = await client.request<{ total?: number }>('cron.runs', {
-      scope: 'job',
-      id: jobId,
-      limit: 0,
-    });
-    return typeof result.total === 'number' ? result.total : 0;
-  }
-
-  async listAllRuns(limit = 20, offset = 0): Promise<ScheduledTaskRunWithName[]> {
-    const client = await this.client();
-    const result = await client.request<{ entries?: GatewayRunLogEntry[] }>('cron.runs', {
-      scope: 'all',
-      limit,
-      offset,
-      sortDir: 'desc',
-    });
-    if (!Array.isArray(result.entries) || result.entries.length === 0) return [];
-
-    // Build a jobId→name map for entries missing jobName
-    const missingIds = new Set(
-      result.entries.filter(e => !e.jobName && !e.summary).map(e => e.jobId),
-    );
-    const nameMap = new Map<string, string>();
-    if (missingIds.size > 0) {
-      try {
-        const jobs = await this.listJobs();
-        for (const job of jobs) {
-          if (missingIds.has(job.id)) {
-            nameMap.set(job.id, job.name);
-          }
-        }
-      } catch {
-        // fall through
-      }
-    }
-
-    return result.entries.map(entry => ({
-      ...mapGatewayRun(entry),
-      taskName:
-        entry.jobName || nameMap.get(entry.jobId) || extractRunTitle(entry.summary) || entry.jobId,
-    }));
   }
 
 }

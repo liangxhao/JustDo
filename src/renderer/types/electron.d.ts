@@ -666,7 +666,6 @@ interface IElectronAPI {
       error?: string;
     }>;
     runManually: (id: string) => Promise<{ success: boolean; error?: string }>;
-    stop: (id: string) => Promise<{ success: boolean; error?: string }>;
     listRuns: (
       taskId: string,
       limit?: number,
@@ -674,15 +673,6 @@ interface IElectronAPI {
     ) => Promise<{
       success: boolean;
       runs?: import('../../scheduledTask/types').ScheduledTaskRun[];
-      error?: string;
-    }>;
-    countRuns: (taskId: string) => Promise<{ success: boolean; count?: number; error?: string }>;
-    listAllRuns: (
-      limit?: number,
-      offset?: number,
-    ) => Promise<{
-      success: boolean;
-      runs?: import('../../scheduledTask/types').ScheduledTaskRunWithName[];
       error?: string;
     }>;
     resolveSession: (sessionKey: string) => Promise<{

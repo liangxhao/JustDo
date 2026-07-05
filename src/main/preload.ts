@@ -433,14 +433,10 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Execution
     runManually: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.RunManually, id),
-    stop: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.Stop, id),
 
     // Run history
     listRuns: (taskId: string, limit?: number, offset?: number) =>
       ipcRenderer.invoke(ScheduledTaskIpc.ListRuns, taskId, limit, offset),
-    countRuns: (taskId: string) => ipcRenderer.invoke(ScheduledTaskIpc.CountRuns, taskId),
-    listAllRuns: (limit?: number, offset?: number) =>
-      ipcRenderer.invoke(ScheduledTaskIpc.ListAllRuns, limit, offset),
     resolveSession: (sessionKey: string) =>
       ipcRenderer.invoke(ScheduledTaskIpc.ResolveSession, sessionKey),
 

@@ -570,7 +570,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)
-    cronTitle: '定时任务',
     cronSubtitle: '通过定时任务自动化 AI 工作流',
     cronNewTask: '新建任务',
     cronRefresh: '刷新',
@@ -1311,7 +1310,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)
-    cronTitle: 'Scheduled Tasks',
     cronSubtitle: 'Automate AI workflows with scheduled tasks',
     cronNewTask: 'New Task',
     cronRefresh: 'Refresh',

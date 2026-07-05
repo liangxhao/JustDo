@@ -10,10 +10,8 @@ import { store } from '../store';
 import {
   addOrUpdateRun,
   addTask,
-  appendAllRuns,
   appendRuns,
   removeTask,
-  setAllRuns,
   setError,
   setLoading,
   setRuns,
@@ -204,18 +202,6 @@ class ScheduledTaskService {
     }
   }
 
-  async stopTask(id: string): Promise<void> {
-    const api = window.electron?.scheduledTasks;
-    if (!api) return;
-
-    try {
-      await api.stop(id);
-    } catch (err: unknown) {
-      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
-      throw err;
-    }
-  }
-
   async loadRuns(taskId: string, limit = 20, offset?: number): Promise<void> {
     const api = window.electron?.scheduledTasks;
     if (!api) return;
@@ -228,24 +214,6 @@ class ScheduledTaskService {
           store.dispatch(appendRuns({ taskId, runs: result.runs, hasMore }));
         } else {
           store.dispatch(setRuns({ taskId, runs: result.runs, hasMore }));
-        }
-      }
-    } catch (err: unknown) {
-      store.dispatch(setError(err instanceof Error ? err.message : String(err)));
-    }
-  }
-
-  async loadAllRuns(limit?: number, offset?: number): Promise<void> {
-    const api = window.electron?.scheduledTasks;
-    if (!api) return;
-
-    try {
-      const result = await api.listAllRuns(limit, offset);
-      if (result.success && result.runs) {
-        if (offset && offset > 0) {
-          store.dispatch(appendAllRuns(result.runs));
-        } else {
-          store.dispatch(setAllRuns(result.runs));
         }
       }
     } catch (err: unknown) {

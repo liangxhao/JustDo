@@ -3,29 +3,21 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type {
   ScheduledTask,
   ScheduledTaskRun,
-  ScheduledTaskRunWithName,
-  ScheduledTaskViewMode,
   TaskState,
 } from '../../../scheduledTask/types';
 
 interface ScheduledTaskState {
   tasks: ScheduledTask[];
-  selectedTaskId: string | null;
-  viewMode: ScheduledTaskViewMode;
   runs: Record<string, ScheduledTaskRun[]>;
   runsHasMore: Record<string, boolean>;
-  allRuns: ScheduledTaskRunWithName[];
   loading: boolean;
   error: string | null;
 }
 
 const initialState: ScheduledTaskState = {
   tasks: [],
-  selectedTaskId: null,
-  viewMode: 'list',
   runs: {},
   runsHasMore: {},
-  allRuns: [],
   loading: false,
   error: null,
 };
@@ -55,13 +47,8 @@ const scheduledTaskSlice = createSlice({
     },
     removeTask(state, action: PayloadAction<string>) {
       state.tasks = state.tasks.filter((t) => t.id !== action.payload);
-      if (state.selectedTaskId === action.payload) {
-        state.selectedTaskId = null;
-        state.viewMode = 'list';
-      }
       delete state.runs[action.payload];
       delete state.runsHasMore[action.payload];
-      state.allRuns = state.allRuns.filter((r) => r.taskId !== action.payload);
     },
     updateTaskState(
       state,
@@ -71,13 +58,6 @@ const scheduledTaskSlice = createSlice({
       if (task) {
         task.state = action.payload.taskState;
       }
-    },
-    selectTask(state, action: PayloadAction<string | null>) {
-      state.selectedTaskId = action.payload;
-      state.viewMode = action.payload ? 'detail' : 'list';
-    },
-    setViewMode(state, action: PayloadAction<ScheduledTaskViewMode>) {
-      state.viewMode = action.payload;
     },
     setRuns(
       state,
@@ -114,12 +94,6 @@ const scheduledTaskSlice = createSlice({
         state.runs[taskId].unshift(action.payload);
       }
     },
-    setAllRuns(state, action: PayloadAction<ScheduledTaskRunWithName[]>) {
-      state.allRuns = action.payload;
-    },
-    appendAllRuns(state, action: PayloadAction<ScheduledTaskRunWithName[]>) {
-      state.allRuns = [...state.allRuns, ...action.payload];
-    },
   },
 });
 
@@ -131,13 +105,9 @@ export const {
   updateTask,
   removeTask,
   updateTaskState,
-  selectTask,
-  setViewMode,
   setRuns,
   appendRuns,
   addOrUpdateRun,
-  setAllRuns,
-  appendAllRuns,
 } = scheduledTaskSlice.actions;
 
 export default scheduledTaskSlice.reducer;

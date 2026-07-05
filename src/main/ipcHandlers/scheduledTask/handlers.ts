@@ -114,12 +114,6 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     }
   });
 
-  ipcMain.handle(ScheduledTaskIpc.Stop, async (_event, _id: string) => {
-    // OpenClaw doesn't expose a direct stop API for running cron jobs
-    // The job will complete or timeout on its own
-    return { success: true, result: false };
-  });
-
   ipcMain.handle(
     ScheduledTaskIpc.ListRuns,
     async (_event, taskId: string, limit?: number, offset?: number) => {
@@ -134,30 +128,6 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
       }
     },
   );
-
-  ipcMain.handle(ScheduledTaskIpc.CountRuns, async (_event, taskId: string) => {
-    try {
-      const count = await getCronJobService().countRuns(taskId);
-      return { success: true, count };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to count runs',
-      };
-    }
-  });
-
-  ipcMain.handle(ScheduledTaskIpc.ListAllRuns, async (_event, limit?: number, offset?: number) => {
-    try {
-      const runs = await getCronJobService().listAllRuns(limit, offset);
-      return { success: true, runs };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list all runs',
-      };
-    }
-  });
 
   ipcMain.handle(ScheduledTaskIpc.ResolveSession, async (_event, sessionKey: string) => {
     try {

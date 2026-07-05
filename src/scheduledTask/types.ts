@@ -132,5 +132,3 @@ export interface ScheduledTaskConversationOption {
   coworkSessionId: string;
   lastActiveAt: number;
 }
-
-export type ScheduledTaskViewMode = 'list' | 'create' | 'edit' | 'detail';
