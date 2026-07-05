@@ -11,7 +11,14 @@
  * No JustDo adapter, no Redux, no IPC — direct gateway connection.
  */
 
+import {
+  type CoworkAttachmentPayload,
+  isImageMimeType,
+  toGatewayAttachment,
+} from '@shared/coworkAttachment';
+
 import { i18nService } from '../../../services/i18n';
+import { getTranscriptMedia, toAttachmentContentBlocks } from '../attachments';
 import type { GatewayClient, GatewayEventFrame, GatewayHelloOk } from './client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -325,25 +332,13 @@ export class ChatController {
    *  Also marks chatSending=true so session.message events are deferred. */
   setPendingUserMessage(
     text: string,
-    imageAttachments: Array<{ name: string; mimeType: string; base64Data: string }> = [],
+    attachments: CoworkAttachmentPayload[] = [],
   ): void {
     debugLog('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
-    const imageBlocks = imageAttachments
-      .filter(attachment => attachment.base64Data)
-      .map(attachment => ({
-        type: 'attachment',
-        attachment: {
-          url: attachment.base64Data.startsWith('data:')
-            ? attachment.base64Data
-            : `data:${attachment.mimeType};base64,${attachment.base64Data}`,
-          kind: attachment.mimeType.startsWith('image/') ? 'image' : 'document',
-          label: attachment.name,
-          mimeType: attachment.mimeType,
-        },
-      }));
+    const attachmentBlocks = toAttachmentContentBlocks(attachments);
     this.state.pendingUserMessage = {
       role: 'user',
-      content: imageBlocks.length > 0 ? [{ type: 'text', text }, ...imageBlocks] : text,
+      content: attachmentBlocks.length > 0 ? [{ type: 'text', text }, ...attachmentBlocks] : text,
       text,
       timestamp: Date.now(),
     };
@@ -782,28 +777,17 @@ export class ChatController {
             }
           }),
         );
-        const mediaPaths = Array.isArray(record.MediaPaths)
-          ? record.MediaPaths.filter((value): value is string => typeof value === 'string')
-          : typeof record.MediaPath === 'string'
-            ? [record.MediaPath]
-            : [];
-        const mediaTypes = Array.isArray(record.MediaTypes)
-          ? record.MediaTypes
-          : typeof record.MediaType === 'string'
-            ? [record.MediaType]
-            : [];
         const transcriptImages = await Promise.all(
-          mediaPaths.map(async (mediaPath, index) => {
-            const mediaType = mediaTypes[index];
-            if (typeof mediaType !== 'string' || !mediaType.startsWith('image/')) return null;
+          getTranscriptMedia(record).map(async media => {
+            if (!media.mimeType || !isImageMimeType(media.mimeType)) return null;
             try {
-              const dataUrl = await this.readTranscriptImageDataUrl(mediaPath);
+              const dataUrl = await this.readTranscriptImageDataUrl(media.path);
               if (!dataUrl) return null;
               return {
                 type: 'image',
                 url: dataUrl,
-                alt: mediaPath.split(/[\\/]/).pop() || 'Image',
-                mimeType: mediaType,
+                alt: media.path.split(/[\\/]/).pop() || 'Image',
+                mimeType: media.mimeType,
               };
             } catch (error) {
               console.warn('[ChatCtrl] Failed to load transcript image', error);
@@ -1445,7 +1429,7 @@ export class ChatController {
 
   async sendMessage(
     message: string,
-    imageAttachments: Array<{ name: string; mimeType: string; base64Data: string }> = [],
+    attachments: CoworkAttachmentPayload[] = [],
   ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
@@ -1463,22 +1447,13 @@ export class ChatController {
     });
 
     // Optimistic: append user message immediately
-    const imageBlocks = imageAttachments
-      .filter(attachment => attachment.base64Data)
-      .map(attachment => ({
-        type: 'attachment',
-        attachment: {
-          url: attachment.base64Data.startsWith('data:')
-            ? attachment.base64Data
-            : `data:${attachment.mimeType};base64,${attachment.base64Data}`,
-          kind: attachment.mimeType.startsWith('image/') ? 'image' : 'document',
-          label: attachment.name,
-          mimeType: attachment.mimeType,
-        },
-      }));
+    const attachmentBlocks = toAttachmentContentBlocks(attachments);
     const userMessage = {
       role: 'user',
-      content: imageBlocks.length > 0 ? [{ type: 'text', text: message }, ...imageBlocks] : message,
+      content:
+        attachmentBlocks.length > 0
+          ? [{ type: 'text', text: message }, ...attachmentBlocks]
+          : message,
       timestamp: Date.now(),
     };
     this.state.chatMessages = [...this.state.chatMessages, userMessage];
@@ -1494,20 +1469,15 @@ export class ChatController {
     this.notify();
 
     try {
-      const attachments = imageAttachments
+      const gatewayAttachments = attachments
         .filter(attachment => attachment.base64Data)
-        .map(attachment => ({
-          type: attachment.mimeType.startsWith('image/') ? 'image' : 'file',
-          mimeType: attachment.mimeType,
-          content: attachment.base64Data,
-          ...(attachment.mimeType.startsWith('image/') ? {} : { fileName: attachment.name }),
-        }));
+        .map(toGatewayAttachment);
       const ack = await client.request<{ runId?: string; status?: string }>('chat.send', {
         sessionKey: this.state.sessionKey,
         message,
         deliver: false,
         idempotencyKey: runId,
-        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
       });
 
       if (ack?.runId) {

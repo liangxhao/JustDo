@@ -21,17 +21,17 @@ describe('sanitizeIpcPayload', () => {
   });
 
   test('preserves image attachments while sanitizing message metadata', () => {
-    const imageAttachments = [{ data: 'x'.repeat(5_000) }];
+    const attachments = [{ data: 'x'.repeat(5_000) }];
 
     const result = sanitizeCoworkMessageForIpc({
       content: 'hello',
       metadata: {
-        imageAttachments,
+        attachments,
         label: 'x'.repeat(5_000),
       },
-    }) as { metadata: { imageAttachments: unknown; label: string } };
+    }) as { metadata: { attachments: unknown; label: string } };
 
-    expect(result.metadata.imageAttachments).toBe(imageAttachments);
+    expect(result.metadata.attachments).toBe(attachments);
     expect(result.metadata.label.length).toBeLessThan(5_000);
   });
 

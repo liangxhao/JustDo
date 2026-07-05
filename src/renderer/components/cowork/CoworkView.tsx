@@ -21,7 +21,7 @@ import {
 import { clearSelection, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills } from '../../store/slices/skillSlice';
 import type {
-  CoworkImageAttachment,
+  CoworkAttachmentPayload,
   CoworkSession,
   OpenClawEngineStatus,
 } from '../../types/cowork';
@@ -93,7 +93,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const chatWrapperRef = useRef<JustDoChatWrapperRef>(null);
   // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
   const pendingPromptRef = useRef<string | null>(null);
-  const pendingImageAttachmentsRef = useRef<CoworkImageAttachment[]>([]);
+  const pendingAttachmentsRef = useRef<CoworkAttachmentPayload[]>([]);
 
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
@@ -243,7 +243,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   const handleStartSession = async (
     prompt: string,
-    imageAttachments?: CoworkImageAttachment[],
+    attachments?: CoworkAttachmentPayload[],
   ): Promise<boolean | void> => {
     if (isOpenClawEngine && openClawStatus && !isOpenClawReadyForSession(openClawStatus)) {
       window.dispatchEvent(
@@ -310,11 +310,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             content: prompt,
             timestamp: now,
             metadata:
-              sessionSkillIds.length > 0 || (imageAttachments && imageAttachments.length > 0)
+              sessionSkillIds.length > 0 || (attachments && attachments.length > 0)
                 ? {
                     ...(sessionSkillIds.length > 0 ? { skillIds: sessionSkillIds } : {}),
-                    ...(imageAttachments && imageAttachments.length > 0
-                      ? { imageAttachments }
+                    ...(attachments && attachments.length > 0
+                      ? { attachments }
                       : {}),
                   }
                 : undefined,
@@ -330,14 +330,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       // immediately in the Lit chat element, surviving session transitions.
       // Buffer in ref first (survives across renders), then try immediate apply.
       pendingPromptRef.current = prompt;
-      pendingImageAttachmentsRef.current = imageAttachments ?? [];
+      pendingAttachmentsRef.current = attachments ?? [];
       const wrapperSet = chatWrapperRef.current;
       debugLog('[CoworkView] handleStartSession:', {
         prompt: prompt.slice(0, 60),
         wrapperRefExists: !!wrapperSet,
         tempSessionId: tempSessionId,
       });
-      wrapperSet?.setPendingUserMessage(prompt, imageAttachments);
+      wrapperSet?.setPendingUserMessage(prompt, attachments);
 
       // Clear active skills and quick action selection after starting session
       // so they don't persist to next session
@@ -351,7 +351,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         cwd: config.workingDirectory || undefined,
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
-        imageAttachments,
+        attachments,
       });
 
       if (!startedSession && startError) {
@@ -592,10 +592,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     debugLog('[CoworkView] useEffect applying pendingPrompt:', pendingPromptRef.current.slice(0, 60));
     chatWrapperRef.current.setPendingUserMessage(
       pendingPromptRef.current,
-      pendingImageAttachmentsRef.current,
+      pendingAttachmentsRef.current,
     );
     pendingPromptRef.current = null;
-    pendingImageAttachmentsRef.current = [];
+    pendingAttachmentsRef.current = [];
   });
 
   if (!isInitialized) {
@@ -680,10 +680,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   if (currentSession) {
     const handleSendMessage = async (
       prompt: string,
-      imageAttachments?: CoworkImageAttachment[],
+      attachments?: CoworkAttachmentPayload[],
     ) => {
       try {
-        await chatWrapperRef.current?.sendMessage(prompt, imageAttachments);
+        await chatWrapperRef.current?.sendMessage(prompt, attachments);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         window.dispatchEvent(

@@ -2,6 +2,10 @@ import { randomUUID } from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 
+import {
+  type CoworkAttachmentPayload,
+  toGatewayAttachment,
+} from '../../../shared/coworkAttachment';
 import type {
   CoworkExecutionMode,
   CoworkMessage,
@@ -272,7 +276,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skipInitialUserMessage: options.skipInitialUserMessage,
       skillIds: options.skillIds,
       confirmationMode: options.confirmationMode,
-      imageAttachments: options.imageAttachments,
+      attachments: options.attachments,
       agentId: options.agentId,
     });
   }
@@ -285,7 +289,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: false,
       skillIds: options.skillIds,
-      imageAttachments: options.imageAttachments,
+      attachments: options.attachments,
     });
   }
 
@@ -383,11 +387,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skipInitialUserMessage?: boolean;
       skillIds?: string[];
       confirmationMode?: 'modal' | 'text';
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      attachments?: CoworkAttachmentPayload[];
       agentId?: string;
     },
   ): Promise<void> {
-    if (!prompt.trim() && (!options.imageAttachments || options.imageAttachments.length === 0)) {
+    if (!prompt.trim()) {
       throw new Error('Prompt is required.');
     }
 
@@ -407,11 +411,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (!options.skipInitialUserMessage) {
       const metadata =
-        options.skillIds?.length || options.imageAttachments?.length
+        options.skillIds?.length || options.attachments?.length
           ? {
               ...(options.skillIds?.length ? { skillIds: options.skillIds } : {}),
-              ...(options.imageAttachments?.length
-                ? { imageAttachments: options.imageAttachments }
+              ...(options.attachments?.length
+                ? { attachments: options.attachments }
                 : {}),
             }
           : undefined;
@@ -471,13 +475,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const client = this.requireGatewayClient();
     try {
-      const attachments = options.imageAttachments?.length
-        ? options.imageAttachments.map(attachment => ({
-            type: attachment.mimeType.startsWith('image/') ? 'image' : 'file',
-            mimeType: attachment.mimeType,
-            content: attachment.base64Data,
-            ...(attachment.mimeType.startsWith('image/') ? {} : { fileName: attachment.name }),
-          }))
+      const attachments = options.attachments?.length
+        ? options.attachments.map(toGatewayAttachment)
         : undefined;
       await client.request('chat.send', {
         sessionKey,

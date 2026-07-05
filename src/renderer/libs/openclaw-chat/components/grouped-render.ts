@@ -3,10 +3,12 @@
  * Renders MessageGroups as Lit html templates with proper CSS classes,
  * markdown rendering, avatar support, and streaming boundary detection.
  */
+import { isImageMimeType } from '@shared/coworkAttachment';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { i18nService } from '../../../services/i18n';
+import { getTranscriptMedia, type RenderableAttachment } from '../attachments';
 import {
   extractTextCached,
   extractThinkingCached,
@@ -255,30 +257,15 @@ function labelForMediaPath(mediaPath: string): string {
   return trimmed.split(/[\\/]/).pop()?.trim() || trimmed;
 }
 
-function extractTranscriptAttachments(
-  message: unknown,
-): Array<Extract<MessageContentItem, { type: 'attachment' }>['attachment']> {
-  const record = message as Record<string, unknown>;
-  const mediaPaths = Array.isArray(record.MediaPaths)
-    ? record.MediaPaths.filter((value): value is string => typeof value === 'string')
-    : typeof record.MediaPath === 'string'
-      ? [record.MediaPath]
-      : [];
-  const mediaTypes = Array.isArray(record.MediaTypes)
-    ? record.MediaTypes
-    : typeof record.MediaType === 'string'
-      ? [record.MediaType]
-      : [];
-
-  return mediaPaths
-    .map((mediaPath, index) => {
-      const mimeType = typeof mediaTypes[index] === 'string' ? mediaTypes[index] : undefined;
-      if (mimeType?.startsWith('image/')) return null;
+function extractTranscriptAttachments(message: unknown): RenderableAttachment[] {
+  return getTranscriptMedia(message)
+    .map(media => {
+      if (media.mimeType && isImageMimeType(media.mimeType)) return null;
       return {
-        url: mediaPath,
-        kind: mimeType?.startsWith('audio/') ? ('audio' as const) : ('document' as const),
-        label: labelForMediaPath(mediaPath),
-        ...(mimeType ? { mimeType } : {}),
+        url: media.path,
+        kind: media.mimeType?.startsWith('audio/') ? ('audio' as const) : ('document' as const),
+        label: labelForMediaPath(media.path),
+        ...(media.mimeType ? { mimeType: media.mimeType } : {}),
       };
     })
     .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
@@ -299,7 +286,7 @@ async function openAttachment(event: Event, url: string): Promise<void> {
 }
 
 function renderAssistantAttachments(
-  attachments: Array<Extract<MessageContentItem, { type: 'attachment' }>['attachment']>,
+  attachments: RenderableAttachment[],
 ): TemplateResult | typeof nothing {
   if (attachments.length === 0) return nothing;
   return html`

@@ -186,11 +186,7 @@ export interface CoworkRuntimeEvents {
   sessionStopped: (sessionId: string) => void;
 }
 
-export type CoworkImageAttachment = {
-  name: string;
-  mimeType: string;
-  base64Data: string;
-};
+import type { CoworkAttachmentPayload } from '../../../shared/coworkAttachment';
 
 export type CoworkStartOptions = {
   skipInitialUserMessage?: boolean;
@@ -198,13 +194,13 @@ export type CoworkStartOptions = {
   autoApprove?: boolean;
   workspaceRoot?: string;
   confirmationMode?: 'modal' | 'text';
-  imageAttachments?: CoworkImageAttachment[];
+  attachments?: CoworkAttachmentPayload[];
   agentId?: string;
 };
 
 export type CoworkContinueOptions = {
   skillIds?: string[];
-  imageAttachments?: CoworkImageAttachment[];
+  attachments?: CoworkAttachmentPayload[];
 };
 
 export interface CoworkRuntime {

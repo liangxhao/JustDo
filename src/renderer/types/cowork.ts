@@ -1,11 +1,7 @@
+import type { CoworkAttachmentPayload } from '../../shared/coworkAttachment';
 import type { CoworkInteractionKind } from '../../shared/openclawExtensions';
 
-// Cowork image attachment for vision-capable models
-export interface CoworkImageAttachment {
-  name: string;
-  mimeType: string;
-  base64Data: string;
-}
+export type { CoworkAttachmentPayload } from '../../shared/coworkAttachment';
 
 // Cowork session status
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
@@ -197,7 +193,7 @@ export interface CoworkStartOptions {
   title?: string;
   activeSkillIds?: string[];
   agentId?: string;
-  imageAttachments?: CoworkImageAttachment[];
+  attachments?: CoworkAttachmentPayload[];
 }
 
 // Continue session options
@@ -205,7 +201,7 @@ export interface CoworkContinueOptions {
   sessionId: string;
   prompt: string;
   activeSkillIds?: string[];
-  imageAttachments?: CoworkImageAttachment[];
+  attachments?: CoworkAttachmentPayload[];
 }
 
 // IPC result types

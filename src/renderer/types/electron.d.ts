@@ -1,3 +1,5 @@
+type CoworkAttachmentPayload = import('../../shared/coworkAttachment').CoworkAttachmentPayload;
+
 interface ApiResponse {
   ok: boolean;
   status: number;
@@ -422,7 +424,7 @@ interface IElectronAPI {
       title?: string;
       activeSkillIds?: string[];
       agentId?: string;
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      attachments?: CoworkAttachmentPayload[];
     }) => Promise<{
       success: boolean;
       session?: CoworkSession;
@@ -434,7 +436,7 @@ interface IElectronAPI {
       sessionId: string;
       prompt: string;
       activeSkillIds?: string[];
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      attachments?: CoworkAttachmentPayload[];
     }) => Promise<{
       success: boolean;
       session?: CoworkSession;

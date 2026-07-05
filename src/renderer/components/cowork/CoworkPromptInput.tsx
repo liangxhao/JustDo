@@ -17,7 +17,7 @@ import {
   setDraftPrompt,
 } from '../../store/slices/coworkSlice';
 import { type Model, setSelectedModel } from '../../store/slices/modelSlice';
-import { CoworkImageAttachment } from '../../types/cowork';
+import { CoworkAttachmentPayload } from '../../types/cowork';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
 import PaperClipIcon from '../icons/PaperClipIcon';
@@ -98,7 +98,7 @@ export interface CoworkPromptInputRef {
   /** 设置输入框值 */
   setValue: (value: string) => void;
   /** 设置图片附件（用于重新编辑消息时还原图片） */
-  setImageAttachments: (images: CoworkImageAttachment[]) => void;
+  setAttachments: (attachments: CoworkAttachmentPayload[]) => void;
   /** 聚焦输入框 */
   focus: () => void;
 }
@@ -106,7 +106,7 @@ export interface CoworkPromptInputRef {
 interface CoworkPromptInputProps {
   onSubmit: (
     prompt: string,
-    imageAttachments?: CoworkImageAttachment[],
+    attachments?: CoworkAttachmentPayload[],
   ) => boolean | void | Promise<boolean | void>;
   onStop?: () => void;
   isStreaming?: boolean;
@@ -313,12 +313,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
         });
       },
-      setImageAttachments: (images: CoworkImageAttachment[]) => {
-        const newAttachments: CoworkAttachment[] = images.map((img, idx) => ({
-          path: `inline:${img.name}:reedit-${Date.now()}-${idx}`,
-          name: img.name,
-          isImage: true,
-          dataUrl: `data:${img.mimeType};base64,${img.base64Data}`,
+      setAttachments: (payloads: CoworkAttachmentPayload[]) => {
+        const newAttachments: CoworkAttachment[] = payloads.map((attachment, idx) => ({
+          path: `inline:${attachment.name}:reedit-${Date.now()}-${idx}`,
+          name: attachment.name,
+          isImage: attachment.mimeType.startsWith('image/'),
+          dataUrl: `data:${attachment.mimeType};base64,${attachment.base64Data}`,
         }));
         dispatch(setDraftAttachments({ draftKey, attachments: newAttachments }));
       },
@@ -397,17 +397,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         if (!trimmedValue || isStreaming || disabled) return;
         setShowFolderRequiredWarning(false);
 
-        // Extract image attachments (with base64 data) for vision-capable models
-        console.log('[CoworkPromptInput] handleSubmit: attachments:', {
-          count: attachments.length,
-          details: attachments.map(a => ({
-            path: a.path,
-            isImage: a.isImage,
-            hasDataUrl: !!a.dataUrl,
-            dataUrlLength: a.dataUrl?.length ?? 0,
-          })),
-        });
-        const imageAtts: CoworkImageAttachment[] = [];
+        const attachmentPayloads: CoworkAttachmentPayload[] = [];
         for (const attachment of attachments) {
           let dataUrl = attachment.dataUrl;
           if (!dataUrl && !attachment.path.startsWith('inline:')) {
@@ -426,17 +416,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
           if (dataUrl) {
             const extracted = extractBase64FromDataUrl(dataUrl);
-            console.log(
-              '[CoworkPromptInput] handleSubmit: extracting base64 from',
-              attachment.name,
-              {
-                extracted: !!extracted,
-                mimeType: extracted?.mimeType,
-                base64Length: extracted?.base64Data.length ?? 0,
-              },
-            );
             if (extracted) {
-              imageAtts.push({
+              attachmentPayloads.push({
                 name: attachment.name,
                 mimeType: extracted.mimeType,
                 base64Data: extracted.base64Data,
@@ -447,13 +428,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
         const finalPrompt = trimmedValue;
 
-        if (imageAtts.length > 0) {
-          console.log('[CoworkPromptInput] handleSubmit: passing imageAtts to onSubmit', {
-            count: imageAtts.length,
-            names: imageAtts.map(a => a.name),
-            base64Lengths: imageAtts.map(a => a.base64Data.length),
-          });
-        }
         const clearSubmittedInput = () => {
           setValue('');
           dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
@@ -464,7 +438,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         if (clearBeforeSubmit) {
           clearSubmittedInput();
         }
-        const result = await onSubmit(finalPrompt, imageAtts.length > 0 ? imageAtts : undefined);
+        const result = await onSubmit(
+          finalPrompt,
+          attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
+        );
         if (result === false) return;
         if (!clearBeforeSubmit) {
           clearSubmittedInput();

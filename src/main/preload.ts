@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
+import type { CoworkAttachmentPayload } from '../shared/coworkAttachment';
 import { LogIpc } from '../shared/logIpc';
 import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
 import { SlashCommandIpc } from '../shared/slashCommands';
@@ -231,14 +232,14 @@ contextBridge.exposeInMainWorld('electron', {
       systemPrompt?: string;
       activeSkillIds?: string[];
       agentId?: string;
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      attachments?: CoworkAttachmentPayload[];
     }) => ipcRenderer.invoke('cowork:session:start', options),
     continueSession: (options: {
       sessionId: string;
       prompt: string;
       systemPrompt?: string;
       activeSkillIds?: string[];
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      attachments?: CoworkAttachmentPayload[];
     }) => ipcRenderer.invoke('cowork:session:continue', options),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),

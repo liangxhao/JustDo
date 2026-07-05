@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
+import type { CoworkAttachmentPayload } from '../../../shared/coworkAttachment';
 import { resolveTaskWorkingDirectory } from '../../core/taskWorkspace';
 import type { CoworkStore } from '../../coworkStore';
 import type { CoworkEngineRouter } from '../../libs/agentEngine';
@@ -22,7 +23,7 @@ interface StartSessionOptions {
   cwd?: string;
   title?: string;
   activeSkillIds?: string[];
-  imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+  attachments?: CoworkAttachmentPayload[];
   agentId?: string;
 }
 
@@ -30,7 +31,7 @@ interface ContinueSessionOptions {
   sessionId: string;
   prompt: string;
   activeSkillIds?: string[];
-  imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+  attachments?: CoworkAttachmentPayload[];
 }
 
 const broadcastSessionError = (sessionId: string, error: unknown): void => {
@@ -73,8 +74,8 @@ export const registerCoworkSessionExecutionHandlers = ({
 
       const messageMetadata: Record<string, unknown> = {};
       if (options.activeSkillIds?.length) messageMetadata.skillIds = options.activeSkillIds;
-      if (options.imageAttachments?.length) {
-        messageMetadata.imageAttachments = options.imageAttachments;
+      if (options.attachments?.length) {
+        messageMetadata.attachments = options.attachments;
       }
       store.addMessage(session.id, {
         type: 'user',
@@ -88,7 +89,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           skillIds: options.activeSkillIds,
           workspaceRoot: selectedWorkspaceRoot,
           confirmationMode: 'modal',
-          imageAttachments: options.imageAttachments,
+          attachments: options.attachments,
           agentId: options.agentId,
         })
         .catch(error => {
@@ -124,7 +125,7 @@ export const registerCoworkSessionExecutionHandlers = ({
       getCoworkEngineRouter()
         .continueSession(options.sessionId, options.prompt, {
           skillIds: options.activeSkillIds,
-          imageAttachments: options.imageAttachments,
+          attachments: options.attachments,
         })
         .catch(error => {
           console.error('[Cowork] continue error:', error);

@@ -11,7 +11,7 @@ describe('coworkMessageToGateway', () => {
       content: '看看这张图',
       timestamp: 1,
       metadata: {
-        imageAttachments: [
+        attachments: [
           {
             name: 'example.png',
             mimeType: 'image/png',

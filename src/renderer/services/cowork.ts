@@ -96,7 +96,7 @@ class CoworkService {
 
     // Message listener - also check if session exists (for IM-created sessions)
     const messageCleanup = cowork.onStreamMessage(async ({ sessionId, message }) => {
-      // Debug: log user messages to check if imageAttachments are preserved
+      // Debug: log user messages to check if attachments are preserved
       if (message.type === 'user') {
         const meta = message.metadata as Record<string, unknown> | undefined;
         debugLog('[CoworkService] onStreamMessage received user message', {
@@ -104,9 +104,9 @@ class CoworkService {
           messageId: message.id,
           hasMetadata: !!meta,
           metadataKeys: meta ? Object.keys(meta) : [],
-          hasImageAttachments: !!meta?.imageAttachments,
-          imageAttachmentsCount: Array.isArray(meta?.imageAttachments)
-            ? (meta.imageAttachments as unknown[]).length
+          hasAttachments: !!meta?.attachments,
+          attachmentsCount: Array.isArray(meta?.attachments)
+            ? (meta.attachments as unknown[]).length
             : 0,
         });
       }
@@ -451,7 +451,7 @@ class CoworkService {
       sessionId: options.sessionId,
       prompt: options.prompt,
       activeSkillIds: options.activeSkillIds,
-      imageAttachments: options.imageAttachments,
+      attachments: options.attachments,
     });
     if (!result.success) {
       store.dispatch(setStreaming(false));

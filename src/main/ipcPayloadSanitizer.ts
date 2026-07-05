@@ -70,12 +70,12 @@ export const sanitizeCoworkMessageForIpc = (message: unknown): unknown => {
 
   let sanitizedMetadata: unknown;
   if (messageRecord.metadata && typeof messageRecord.metadata === 'object') {
-    const { imageAttachments, ...rest } = messageRecord.metadata as Record<string, unknown>;
+    const { attachments, ...rest } = messageRecord.metadata as Record<string, unknown>;
     const sanitizedRest = sanitizeIpcPayload(rest) as Record<string, unknown> | undefined;
     sanitizedMetadata = {
       ...(sanitizedRest && typeof sanitizedRest === 'object' ? sanitizedRest : {}),
-      ...(Array.isArray(imageAttachments) && imageAttachments.length > 0
-        ? { imageAttachments }
+      ...(Array.isArray(attachments) && attachments.length > 0
+        ? { attachments }
         : {}),
     };
   } else {

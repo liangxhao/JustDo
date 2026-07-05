@@ -8,7 +8,10 @@
  *   { role: 'user'|'assistant'|'toolresult', content: string | ContentBlock[], timestamp }
  */
 
+import { parseCoworkAttachments } from '@shared/coworkAttachment';
+
 import type { CoworkMessage } from '../../../types/cowork';
+import { toAttachmentContentBlocks } from '../attachments';
 import type { GatewayContentBlock, GatewayMessage } from '../types';
 
 /**
@@ -112,36 +115,10 @@ function mapRole(type: CoworkMessage['type']): string {
 }
 
 function buildUserContent(msg: CoworkMessage): string | GatewayContentBlock[] {
-  const rawAttachments = msg.metadata?.imageAttachments;
-  if (!Array.isArray(rawAttachments) || rawAttachments.length === 0) {
-    return msg.content;
-  }
-
+  const attachments = parseCoworkAttachments(msg.metadata?.attachments);
+  if (attachments.length === 0) return msg.content;
   const blocks: GatewayContentBlock[] = msg.content ? [{ type: 'text', text: msg.content }] : [];
-
-  for (const value of rawAttachments) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-    const attachment = value as Record<string, unknown>;
-    const base64Data =
-      typeof attachment.base64Data === 'string' ? attachment.base64Data.trim() : '';
-    const mimeType = typeof attachment.mimeType === 'string' ? attachment.mimeType.trim() : '';
-    if (!base64Data || !mimeType) continue;
-
-    blocks.push({
-      type: 'attachment',
-      attachment: {
-        url: base64Data.startsWith('data:') ? base64Data : `data:${mimeType};base64,${base64Data}`,
-        kind: mimeType.startsWith('image/') ? 'image' : 'document',
-        label:
-          typeof attachment.name === 'string' && attachment.name.trim()
-            ? attachment.name.trim()
-            : 'Attachment',
-        mimeType,
-      },
-    });
-  }
-
-  return blocks.length > 0 ? blocks : msg.content;
+  return [...blocks, ...toAttachmentContentBlocks(attachments)];
 }
 
 function buildAssistantContent(msg: CoworkMessage): string | GatewayContentBlock[] {

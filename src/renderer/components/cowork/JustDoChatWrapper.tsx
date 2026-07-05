@@ -12,7 +12,7 @@ import { useSelector } from 'react-redux';
 
 import { ChatController } from '../../libs/openclaw-chat/gateway/chat-controller';
 import { selectCurrentSession } from '../../store/selectors/coworkSelectors';
-import type { CoworkImageAttachment, CoworkSession } from '../../types/cowork';
+import type { CoworkAttachmentPayload, CoworkSession } from '../../types/cowork';
 import ChatMessageDisplay from './ChatMessageDisplay';
 
 const DEBUG_CHAT_WRAPPER =
@@ -35,9 +35,9 @@ interface JustDoChatWrapperProps {
 }
 
 export interface JustDoChatWrapperRef {
-  sendMessage: (text: string, imageAttachments?: CoworkImageAttachment[]) => Promise<void>;
+  sendMessage: (text: string, attachments?: CoworkAttachmentPayload[]) => Promise<void>;
   /** Set an optimistic user message shown until gateway history loads */
-  setPendingUserMessage: (text: string, imageAttachments?: CoworkImageAttachment[]) => void;
+  setPendingUserMessage: (text: string, attachments?: CoworkAttachmentPayload[]) => void;
   /** Clear sending state (e.g. when session start fails) */
   clearSending: () => void;
 }
@@ -63,26 +63,26 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     // Buffer for pending user message when the controller is not yet created
     const pendingUserMessageRef = useRef<{
       text: string;
-      imageAttachments: CoworkImageAttachment[];
+      attachments: CoworkAttachmentPayload[];
     } | null>(null);
 
     // Expose sendMessage and setPendingUserMessage to parent via ref
     useImperativeHandle(
       ref,
       () => ({
-        sendMessage: async (text: string, imageAttachments = []) => {
+        sendMessage: async (text: string, attachments = []) => {
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
-          await controller.sendMessage(text, imageAttachments);
+          await controller.sendMessage(text, attachments);
         },
-        setPendingUserMessage: (text: string, imageAttachments = []) => {
+        setPendingUserMessage: (text: string, attachments = []) => {
           const controller = controllerRef.current;
           // Always buffer the prompt — survives StrictMode remounts where the
           // controller is destroyed and recreated.
-          pendingUserMessageRef.current = { text, imageAttachments };
+          pendingUserMessageRef.current = { text, attachments };
           if (controller) {
             debugLog('[JustDoChatWrapper] setPendingUserMessage (immediate):', text.slice(0, 60));
-            controller.setPendingUserMessage(text, imageAttachments);
+            controller.setPendingUserMessage(text, attachments);
           } else {
             debugLog(
               '[JustDoChatWrapper] setPendingUserMessage (buffered, no controller):',
@@ -108,7 +108,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         debugLog('[JustDoChatWrapper] applying buffered pendingUserMessage on mount');
         controller.setPendingUserMessage(
           pendingUserMessageRef.current.text,
-          pendingUserMessageRef.current.imageAttachments,
+          pendingUserMessageRef.current.attachments,
         );
         pendingUserMessageRef.current = null;
       }
