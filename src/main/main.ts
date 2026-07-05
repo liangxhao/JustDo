@@ -1286,6 +1286,10 @@ if (!gotTheLock) {
       if (currentUseSystemProxy !== previousUseSystemProxy) {
         void applySystemProxyPreference(currentUseSystemProxy, outboundHeaderProxy).then(() => {
           if (getOpenClawEngineManager().getStatus().phase === 'running') {
+            // Dispose the adapter's client before restarting the Gateway. Otherwise the
+            // old socket closes asynchronously and leaves gatewayReadyPromise rejected,
+            // so requests made during the restart can observe a permanently stale client.
+            openClawRuntimeAdapter?.disconnectGatewayClient();
             void getOpenClawEngineManager().restartGateway();
           }
         });
