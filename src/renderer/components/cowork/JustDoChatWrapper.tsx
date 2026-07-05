@@ -35,184 +35,195 @@ interface JustDoChatWrapperProps {
 }
 
 export interface JustDoChatWrapperRef {
-  sendMessage: (
-    text: string,
-    imageAttachments?: CoworkImageAttachment[],
-  ) => Promise<void>;
+  sendMessage: (text: string, imageAttachments?: CoworkImageAttachment[]) => Promise<void>;
   /** Set an optimistic user message shown until gateway history loads */
   setPendingUserMessage: (text: string, imageAttachments?: CoworkImageAttachment[]) => void;
   /** Clear sending state (e.g. when session start fails) */
   clearSending: () => void;
 }
 
-const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(({
-  className,
-  assistantName,
-  searchQuery,
-  searchCaseSensitive,
-  searchNavigationToken,
-  searchNavigationDirection,
-  onSearchMatchCountChange,
-}, ref) => {
-  const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
-  const controllerRef = useRef<ChatController | null>(null);
-  const [controller, setController] = useState<ChatController | null>(null);
-  const connectedRef = useRef(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  // Buffer for pending user message when the controller is not yet created
-  const pendingUserMessageRef = useRef<{
-    text: string;
-    imageAttachments: CoworkImageAttachment[];
-  } | null>(null);
-
-  // Expose sendMessage and setPendingUserMessage to parent via ref
-  useImperativeHandle(ref, () => ({
-    sendMessage: async (text: string, imageAttachments = []) => {
-      const controller = controllerRef.current;
-      if (!controller) throw new Error('Controller not initialized');
-      await controller.sendMessage(text, imageAttachments);
+const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(
+  (
+    {
+      className,
+      assistantName,
+      searchQuery,
+      searchCaseSensitive,
+      searchNavigationToken,
+      searchNavigationDirection,
+      onSearchMatchCountChange,
     },
-    setPendingUserMessage: (text: string, imageAttachments = []) => {
-      const controller = controllerRef.current;
-      // Always buffer the prompt — survives StrictMode remounts where the
-      // controller is destroyed and recreated.
-      pendingUserMessageRef.current = { text, imageAttachments };
-      if (controller) {
-        debugLog('[JustDoChatWrapper] setPendingUserMessage (immediate):', text.slice(0, 60));
-        controller.setPendingUserMessage(text, imageAttachments);
-      } else {
-        debugLog('[JustDoChatWrapper] setPendingUserMessage (buffered, no controller):', text.slice(0, 60));
-      }
-    },
-    clearSending: () => {
-      controllerRef.current?.clearSending();
-    },
-  }), []);
+    ref,
+  ) => {
+    const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
+    const controllerRef = useRef<ChatController | null>(null);
+    const [controller, setController] = useState<ChatController | null>(null);
+    const connectedRef = useRef(false);
+    const [connectionError, setConnectionError] = useState<string | null>(null);
+    // Buffer for pending user message when the controller is not yet created
+    const pendingUserMessageRef = useRef<{
+      text: string;
+      imageAttachments: CoworkImageAttachment[];
+    } | null>(null);
 
-  // Create the Lit element and controller on mount
-  useEffect(() => {
-    const controller = new ChatController();
-    controllerRef.current = controller;
-    setController(controller);
-
-    // Apply any buffered pending user message (set before controller existed)
-    if (pendingUserMessageRef.current) {
-      debugLog('[JustDoChatWrapper] applying buffered pendingUserMessage on mount');
-      controller.setPendingUserMessage(
-        pendingUserMessageRef.current.text,
-        pendingUserMessageRef.current.imageAttachments,
-      );
-      pendingUserMessageRef.current = null;
-    }
-
-    // Set initial sessionKey from current session BEFORE connecting
-    // (avoids race with the session-switch effect)
-    if (currentSession) {
-      const agentId = currentSession.agentId?.trim() || 'main';
-      controller.state.sessionKey = `agent:${agentId}:justdo:${currentSession.id}`;
-    }
-
-    // Cancellation flag: React StrictMode double-fires mount effects.
-    // If the cleanup runs before connectToGateway resolves, we must
-    // disconnect the zombie controller that would otherwise survive.
-    let cancelled = false;
-
-    // Connect to gateway with proper error state tracking
-    connectToGateway(controller)
-      .then(success => {
-        if (cancelled) {
-          debugLog('[JustDoChatWrapper] connectToGateway resolved after cleanup — disconnecting zombie');
-          controller.disconnect();
-          return;
-        }
-        if (success) {
-          connectedRef.current = true;
-          setConnectionError(null);
-        } else {
-          setConnectionError('Failed to connect to OpenClaw gateway');
-        }
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setConnectionError(err instanceof Error ? err.message : 'Unknown connection error');
-      });
-
-    return () => {
-      cancelled = true;
-      debugLog('[JustDoChatWrapper] cleanup — disconnecting controller');
-      try {
-        controller.disconnect();
-      } catch {
-        // Cleanup errors are non-fatal
-      }
-      controllerRef.current = null;
-      setController(null);
-      connectedRef.current = false;
-    };
-  }, []);
-
-  // Handle session switching
-  useEffect(() => {
-    const controller = controllerRef.current;
-    if (!controller || !currentSession) return;
-
-    // Build the gateway session key (same format as openclawChannelSessionSync)
-    const agentId = currentSession.agentId?.trim() || 'main';
-    const sessionKey = `agent:${agentId}:justdo:${currentSession.id}`;
-
-    if (connectedRef.current) {
-      controller.switchSession(sessionKey);
-    } else {
-      // Not yet connected — set sessionKey so connect() picks it up
-      controller.state.sessionKey = sessionKey;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSession?.id, currentSession?.agentId]);
-
-  if (connectionError) {
-    return (
-      <div
-        className={`${className ?? ''} flex items-center justify-center`}
-        style={{ flex: 1, minHeight: 0 }}
-      >
-        <div className="text-center space-y-3">
-          <div className="text-red-500 text-sm">{connectionError}</div>
-          <button
-            type="button"
-            onClick={() => {
-              setConnectionError(null);
-              const controller = controllerRef.current;
-              if (controller) {
-                connectToGateway(controller)
-                  .then(success => {
-                    if (success) connectedRef.current = true;
-                    else setConnectionError('Retry failed');
-                  })
-                  .catch(() => setConnectionError('Retry failed'));
-              }
-            }}
-            className="px-3 py-1.5 text-xs rounded bg-surface-raised hover:bg-surface-raised/80 transition-colors"
-          >
-            Retry Connection
-          </button>
-        </div>
-      </div>
+    // Expose sendMessage and setPendingUserMessage to parent via ref
+    useImperativeHandle(
+      ref,
+      () => ({
+        sendMessage: async (text: string, imageAttachments = []) => {
+          const controller = controllerRef.current;
+          if (!controller) throw new Error('Controller not initialized');
+          await controller.sendMessage(text, imageAttachments);
+        },
+        setPendingUserMessage: (text: string, imageAttachments = []) => {
+          const controller = controllerRef.current;
+          // Always buffer the prompt — survives StrictMode remounts where the
+          // controller is destroyed and recreated.
+          pendingUserMessageRef.current = { text, imageAttachments };
+          if (controller) {
+            debugLog('[JustDoChatWrapper] setPendingUserMessage (immediate):', text.slice(0, 60));
+            controller.setPendingUserMessage(text, imageAttachments);
+          } else {
+            debugLog(
+              '[JustDoChatWrapper] setPendingUserMessage (buffered, no controller):',
+              text.slice(0, 60),
+            );
+          }
+        },
+        clearSending: () => {
+          controllerRef.current?.clearSending();
+        },
+      }),
+      [],
     );
-  }
 
-  return (
-    <ChatMessageDisplay
-      className={className}
-      controller={controller}
-      assistantName={assistantName}
-      searchQuery={searchQuery}
-      searchCaseSensitive={searchCaseSensitive}
-      searchNavigationToken={searchNavigationToken}
-      searchNavigationDirection={searchNavigationDirection}
-      onSearchMatchCountChange={onSearchMatchCountChange}
-    />
-  );
-});
+    // Create the Lit element and controller on mount
+    useEffect(() => {
+      const controller = new ChatController();
+      controllerRef.current = controller;
+      setController(controller);
+
+      // Apply any buffered pending user message (set before controller existed)
+      if (pendingUserMessageRef.current) {
+        debugLog('[JustDoChatWrapper] applying buffered pendingUserMessage on mount');
+        controller.setPendingUserMessage(
+          pendingUserMessageRef.current.text,
+          pendingUserMessageRef.current.imageAttachments,
+        );
+        pendingUserMessageRef.current = null;
+      }
+
+      // Set initial sessionKey from current session BEFORE connecting
+      // (avoids race with the session-switch effect)
+      if (currentSession) {
+        const agentId = currentSession.agentId?.trim() || 'main';
+        controller.state.sessionKey = `agent:${agentId}:justdo:${currentSession.id}`;
+      }
+
+      // Cancellation flag: React StrictMode double-fires mount effects.
+      // If the cleanup runs before connectToGateway resolves, we must
+      // disconnect the zombie controller that would otherwise survive.
+      let cancelled = false;
+
+      // Connect to gateway with proper error state tracking
+      connectToGateway(controller)
+        .then(success => {
+          if (cancelled) {
+            debugLog(
+              '[JustDoChatWrapper] connectToGateway resolved after cleanup — disconnecting zombie',
+            );
+            controller.disconnect();
+            return;
+          }
+          if (success) {
+            connectedRef.current = true;
+            setConnectionError(null);
+          } else {
+            setConnectionError('Failed to connect to OpenClaw gateway');
+          }
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setConnectionError(err instanceof Error ? err.message : 'Unknown connection error');
+        });
+
+      return () => {
+        cancelled = true;
+        debugLog('[JustDoChatWrapper] cleanup — disconnecting controller');
+        try {
+          controller.disconnect();
+        } catch {
+          // Cleanup errors are non-fatal
+        }
+        controllerRef.current = null;
+        setController(null);
+        connectedRef.current = false;
+      };
+    }, []);
+
+    // Handle session switching
+    useEffect(() => {
+      const controller = controllerRef.current;
+      if (!controller || !currentSession) return;
+
+      // Build the gateway session key (same format as openclawChannelSessionSync)
+      const agentId = currentSession.agentId?.trim() || 'main';
+      const sessionKey = `agent:${agentId}:justdo:${currentSession.id}`;
+
+      if (connectedRef.current) {
+        controller.switchSession(sessionKey);
+      } else {
+        // Not yet connected — set sessionKey so connect() picks it up
+        controller.state.sessionKey = sessionKey;
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentSession?.id, currentSession?.agentId]);
+
+    if (connectionError) {
+      return (
+        <div
+          className={`${className ?? ''} flex items-center justify-center`}
+          style={{ flex: 1, minHeight: 0 }}
+        >
+          <div className="text-center space-y-3">
+            <div className="text-red-500 text-sm">{connectionError}</div>
+            <button
+              type="button"
+              onClick={() => {
+                setConnectionError(null);
+                const controller = controllerRef.current;
+                if (controller) {
+                  connectToGateway(controller)
+                    .then(success => {
+                      if (success) connectedRef.current = true;
+                      else setConnectionError('Retry failed');
+                    })
+                    .catch(() => setConnectionError('Retry failed'));
+                }
+              }}
+              className="px-3 py-1.5 text-xs rounded bg-surface-raised hover:bg-surface-raised/80 transition-colors"
+            >
+              Retry Connection
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <ChatMessageDisplay
+        className={className}
+        controller={controller}
+        assistantName={assistantName}
+        searchQuery={searchQuery}
+        searchCaseSensitive={searchCaseSensitive}
+        searchNavigationToken={searchNavigationToken}
+        searchNavigationDirection={searchNavigationDirection}
+        onSearchMatchCountChange={onSearchMatchCountChange}
+      />
+    );
+  },
+);
 
 // ─── Gateway Connection ─────────────────────────────────────────────────────
 

@@ -82,7 +82,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     maxTokensHint: '模型最大输出 token 数量，默认 32k',
     imageInput: '图像',
     modelSuffixSecure: '（安全）',
-    inputFileLabel: '输入文件',
     imageVisionHint:
       '当前模型未启用图片输入，图片将以文件路径形式发送。若该模型本身支持图片理解，可在模型配置中开启图片输入选项。',
     noModelsAvailable: '暂无可用模型',
@@ -307,6 +306,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDropFileHint: '拖拽文件到此处，或直接粘贴文件',
     coworkAttachmentRemove: '移除',
     coworkOpenAttachment: '打开附件',
+    coworkAttachmentReadFailed: '无法读取附件“{name}”，请检查文件是否存在或大小是否超限。',
     // Context menu
     contextMenuCut: '剪切',
     contextMenuCopy: '复制',
@@ -709,7 +709,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     maxTokensHint: 'Maximum output tokens. Default is 32k.',
     imageInput: 'Image',
     modelSuffixSecure: '(Secure)',
-    inputFileLabel: 'Input Files',
     imageVisionHint:
       'Image input is not enabled for the current model. Images will be sent as file paths. If the model supports vision, you can enable image input in the model configuration.',
     noModelsAvailable: 'No models available',
@@ -944,6 +943,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDropFileHint: 'Drop files here, or paste files directly',
     coworkAttachmentRemove: 'Remove',
     coworkOpenAttachment: 'Open attachment',
+    coworkAttachmentReadFailed:
+      'Could not read attachment “{name}”. Check that the file exists and is within the size limit.',
     // Context menu
     contextMenuCut: 'Cut',
     contextMenuCopy: 'Copy',

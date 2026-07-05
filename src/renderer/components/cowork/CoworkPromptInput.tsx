@@ -380,99 +380,108 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
     }, [value, draftPrompt, dispatch, draftKey]);
 
-    const handleSubmit = useCallback(async (promptOverride?: string) => {
-      if (showFolderSelector && !workingDirectory?.trim()) {
-        setShowFolderRequiredWarning(true);
-        if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
-        warningTimerRef.current = setTimeout(() => {
-          setShowFolderRequiredWarning(false);
-          warningTimerRef.current = null;
-        }, 3000);
-        return;
-      }
+    const handleSubmit = useCallback(
+      async (promptOverride?: string) => {
+        if (showFolderSelector && !workingDirectory?.trim()) {
+          setShowFolderRequiredWarning(true);
+          if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+          warningTimerRef.current = setTimeout(() => {
+            setShowFolderRequiredWarning(false);
+            warningTimerRef.current = null;
+          }, 3000);
+          return;
+        }
 
-      const promptValue = promptOverride ?? value;
-      const trimmedValue = promptValue.trim();
-      if (!trimmedValue || isStreaming || disabled) return;
-      setShowFolderRequiredWarning(false);
+        const promptValue = promptOverride ?? value;
+        const trimmedValue = promptValue.trim();
+        if (!trimmedValue || isStreaming || disabled) return;
+        setShowFolderRequiredWarning(false);
 
-      // Extract image attachments (with base64 data) for vision-capable models
-      console.log('[CoworkPromptInput] handleSubmit: attachments:', {
-        count: attachments.length,
-        details: attachments.map(a => ({
-          path: a.path,
-          isImage: a.isImage,
-          hasDataUrl: !!a.dataUrl,
-          dataUrlLength: a.dataUrl?.length ?? 0,
-        })),
-      });
-      const imageAtts: CoworkImageAttachment[] = [];
-      for (const attachment of attachments) {
-        if (attachment.isImage && attachment.dataUrl) {
-          const extracted = extractBase64FromDataUrl(attachment.dataUrl);
-          console.log('[CoworkPromptInput] handleSubmit: extracting base64 from', attachment.name, {
-            extracted: !!extracted,
-            mimeType: extracted?.mimeType,
-            base64Length: extracted?.base64Data.length ?? 0,
-          });
-          if (extracted) {
-            imageAtts.push({
-              name: attachment.name,
-              mimeType: extracted.mimeType,
-              base64Data: extracted.base64Data,
-            });
+        // Extract image attachments (with base64 data) for vision-capable models
+        console.log('[CoworkPromptInput] handleSubmit: attachments:', {
+          count: attachments.length,
+          details: attachments.map(a => ({
+            path: a.path,
+            isImage: a.isImage,
+            hasDataUrl: !!a.dataUrl,
+            dataUrlLength: a.dataUrl?.length ?? 0,
+          })),
+        });
+        const imageAtts: CoworkImageAttachment[] = [];
+        for (const attachment of attachments) {
+          let dataUrl = attachment.dataUrl;
+          if (!dataUrl && !attachment.path.startsWith('inline:')) {
+            const result = await window.electron.dialog.readFileAsDataUrl(attachment.path);
+            if (!result.success || !result.dataUrl) {
+              window.dispatchEvent(
+                new CustomEvent('app:showToast', {
+                  detail: i18nService
+                    .t('coworkAttachmentReadFailed')
+                    .replace('{name}', attachment.name),
+                }),
+              );
+              return;
+            }
+            dataUrl = result.dataUrl;
+          }
+          if (dataUrl) {
+            const extracted = extractBase64FromDataUrl(dataUrl);
+            console.log(
+              '[CoworkPromptInput] handleSubmit: extracting base64 from',
+              attachment.name,
+              {
+                extracted: !!extracted,
+                mimeType: extracted?.mimeType,
+                base64Length: extracted?.base64Data.length ?? 0,
+              },
+            );
+            if (extracted) {
+              imageAtts.push({
+                name: attachment.name,
+                mimeType: extracted.mimeType,
+                base64Data: extracted.base64Data,
+              });
+            }
           }
         }
-      }
 
-      // Build prompt with NON-IMAGE attachments that have real file paths.
-      // Images are processed purely through Gateway attachments mechanism (base64).
-      // Gateway handles them appropriately (inline or media store).
-      // Non-image files need text injection because Gateway does not process them.
-      // Note: inline/clipboard images have pseudo-paths starting with 'inline:'.
-      const attachmentLines = attachments
-        .filter(a => !a.path.startsWith('inline:') && !a.isImage)
-        .map(attachment => `${i18nService.t('inputFileLabel')}: ${attachment.path}`)
-        .join('\n');
-      const finalPrompt = trimmedValue
-        ? attachmentLines
-          ? `${trimmedValue}\n\n${attachmentLines}`
-          : trimmedValue
-        : attachmentLines;
+        const finalPrompt = trimmedValue;
 
-      if (imageAtts.length > 0) {
-        console.log('[CoworkPromptInput] handleSubmit: passing imageAtts to onSubmit', {
-          count: imageAtts.length,
-          names: imageAtts.map(a => a.name),
-          base64Lengths: imageAtts.map(a => a.base64Data.length),
-        });
-      }
-      const clearSubmittedInput = () => {
-        setValue('');
-        dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
-        dispatch(clearDraftAttachments(draftKey));
-        setImageVisionHint(false);
-      };
-      const clearBeforeSubmit = COMPACT_COMMAND_PATTERN.test(trimmedValue);
-      if (clearBeforeSubmit) {
-        clearSubmittedInput();
-      }
-      const result = await onSubmit(finalPrompt, imageAtts.length > 0 ? imageAtts : undefined);
-      if (result === false) return;
-      if (!clearBeforeSubmit) {
-        clearSubmittedInput();
-      }
-    }, [
-      value,
-      isStreaming,
-      disabled,
-      onSubmit,
-      attachments,
-      showFolderSelector,
-      workingDirectory,
-      dispatch,
-      draftKey,
-    ]);
+        if (imageAtts.length > 0) {
+          console.log('[CoworkPromptInput] handleSubmit: passing imageAtts to onSubmit', {
+            count: imageAtts.length,
+            names: imageAtts.map(a => a.name),
+            base64Lengths: imageAtts.map(a => a.base64Data.length),
+          });
+        }
+        const clearSubmittedInput = () => {
+          setValue('');
+          dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+          dispatch(clearDraftAttachments(draftKey));
+          setImageVisionHint(false);
+        };
+        const clearBeforeSubmit = COMPACT_COMMAND_PATTERN.test(trimmedValue);
+        if (clearBeforeSubmit) {
+          clearSubmittedInput();
+        }
+        const result = await onSubmit(finalPrompt, imageAtts.length > 0 ? imageAtts : undefined);
+        if (result === false) return;
+        if (!clearBeforeSubmit) {
+          clearSubmittedInput();
+        }
+      },
+      [
+        value,
+        isStreaming,
+        disabled,
+        onSubmit,
+        attachments,
+        showFolderSelector,
+        workingDirectory,
+        dispatch,
+        draftKey,
+      ],
+    );
 
     const handleSlashCommandSelect = useCallback(
       (command: SlashCommandDef, executeInstant = true) => {
@@ -1214,7 +1223,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         ? !!slashMenuCommand && slashMenuArgItems.length > 0
         : slashMenuItems.length > 0);
     const groupedSlashItems = useMemo(() => {
-      const grouped = new Map<SlashCommandCategory, Array<{ command: SlashCommandDef; index: number }>>();
+      const grouped = new Map<
+        SlashCommandCategory,
+        Array<{ command: SlashCommandDef; index: number }>
+      >();
       slashMenuItems.forEach((command, index) => {
         const category = command.category ?? 'session';
         const existing = grouped.get(category) ?? [];
@@ -1310,7 +1322,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                           /{command.name}
                         </span>
                         {command.args && (
-                          <span className="font-mono text-xs text-secondary/70">{command.args}</span>
+                          <span className="font-mono text-xs text-secondary/70">
+                            {command.args}
+                          </span>
                         )}
                         <span className="min-w-0 flex-1 truncate text-right text-xs text-secondary">
                           {command.description}

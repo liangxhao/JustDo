@@ -117,32 +117,25 @@ function buildUserContent(msg: CoworkMessage): string | GatewayContentBlock[] {
     return msg.content;
   }
 
-  const blocks: GatewayContentBlock[] = msg.content
-    ? [{ type: 'text', text: msg.content }]
-    : [];
+  const blocks: GatewayContentBlock[] = msg.content ? [{ type: 'text', text: msg.content }] : [];
 
   for (const value of rawAttachments) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
     const attachment = value as Record<string, unknown>;
     const base64Data =
       typeof attachment.base64Data === 'string' ? attachment.base64Data.trim() : '';
-    const mimeType =
-      typeof attachment.mimeType === 'string' && attachment.mimeType.startsWith('image/')
-        ? attachment.mimeType
-        : '';
+    const mimeType = typeof attachment.mimeType === 'string' ? attachment.mimeType.trim() : '';
     if (!base64Data || !mimeType) continue;
 
     blocks.push({
       type: 'attachment',
       attachment: {
-        url: base64Data.startsWith('data:')
-          ? base64Data
-          : `data:${mimeType};base64,${base64Data}`,
-        kind: 'image',
+        url: base64Data.startsWith('data:') ? base64Data : `data:${mimeType};base64,${base64Data}`,
+        kind: mimeType.startsWith('image/') ? 'image' : 'document',
         label:
           typeof attachment.name === 'string' && attachment.name.trim()
             ? attachment.name.trim()
-            : 'Image',
+            : 'Attachment',
         mimeType,
       },
     });

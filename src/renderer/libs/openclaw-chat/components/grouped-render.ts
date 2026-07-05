@@ -172,8 +172,13 @@ function extractToolCallId(message: unknown): string | null {
   for (const block of content) {
     const item = block as Record<string, unknown> | null;
     if (!item) continue;
-    const nested = [item.toolCallId, item.tool_call_id, item.toolUseId, item.tool_use_id, item.id]
-      .find(value => typeof value === 'string' && value.trim()) as string | undefined;
+    const nested = [
+      item.toolCallId,
+      item.tool_call_id,
+      item.toolUseId,
+      item.tool_use_id,
+      item.id,
+    ].find(value => typeof value === 'string' && value.trim()) as string | undefined;
     if (nested) return nested.trim();
   }
   return null;
@@ -235,6 +240,48 @@ function localPathFromAttachmentUrl(url: string): string {
   } catch {
     return url.replace(/^file:\/\/\/?/i, '');
   }
+}
+
+function labelForMediaPath(mediaPath: string): string {
+  const trimmed = mediaPath.trim();
+  try {
+    if (/^https?:\/\//i.test(trimmed)) {
+      const parsed = new URL(trimmed);
+      return parsed.pathname.split('/').pop()?.trim() || parsed.hostname || trimmed;
+    }
+  } catch {
+    // Fall back to path splitting below.
+  }
+  return trimmed.split(/[\\/]/).pop()?.trim() || trimmed;
+}
+
+function extractTranscriptAttachments(
+  message: unknown,
+): Array<Extract<MessageContentItem, { type: 'attachment' }>['attachment']> {
+  const record = message as Record<string, unknown>;
+  const mediaPaths = Array.isArray(record.MediaPaths)
+    ? record.MediaPaths.filter((value): value is string => typeof value === 'string')
+    : typeof record.MediaPath === 'string'
+      ? [record.MediaPath]
+      : [];
+  const mediaTypes = Array.isArray(record.MediaTypes)
+    ? record.MediaTypes
+    : typeof record.MediaType === 'string'
+      ? [record.MediaType]
+      : [];
+
+  return mediaPaths
+    .map((mediaPath, index) => {
+      const mimeType = typeof mediaTypes[index] === 'string' ? mediaTypes[index] : undefined;
+      if (mimeType?.startsWith('image/')) return null;
+      return {
+        url: mediaPath,
+        kind: mimeType?.startsWith('audio/') ? ('audio' as const) : ('document' as const),
+        label: labelForMediaPath(mediaPath),
+        ...(mimeType ? { mimeType } : {}),
+      };
+    })
+    .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
 }
 
 async function openAttachment(event: Event, url: string): Promise<void> {
@@ -330,7 +377,9 @@ function renderAssistantMessageInContentOrder(
       continue;
     }
 
-    if (['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(type)) {
+    if (
+      ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(type)
+    ) {
       const blockMessage = { ...raw, content: [block] };
       const cards = extractToolCards(blockMessage, `inline-tool:${index}`);
       const toolCallId = extractToolCallId(blockMessage);
@@ -380,7 +429,7 @@ export function renderMessageGroup(
       class=${`chat-group chat-group--${role}${isContinuation ? ' chat-group--continuation' : ''}`}
       data-group-key=${group.key}
     >
-      <div class="chat-group__avatar">${opts?.showAvatar ?? true ? avatar : nothing}</div>
+      <div class="chat-group__avatar">${(opts?.showAvatar ?? true) ? avatar : nothing}</div>
       <div class="chat-group__content">
         ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
         ${renderGroupFooter(group, opts?.showFooter ?? true)}
@@ -411,12 +460,14 @@ export function renderMessageGroupWithTrailingStream(
       data-group-key=${group.key}
     >
       <div class="chat-group__avatar">
-        ${opts?.showAvatar ?? true ? renderChatAvatar(role) : nothing}
+        ${(opts?.showAvatar ?? true) ? renderChatAvatar(role) : nothing}
       </div>
       <div class="chat-group__content">
         ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
-        ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
+        ${toolCards.length > 0
+          ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages))
+          : nothing}
         ${hasStreamText
           ? html`
               <div class="chat-bubble chat-bubble--assistant">
@@ -444,22 +495,20 @@ function renderSingleMessage(
   const isTool = role === 'tool';
 
   if (isTool) return renderToolMessage(message);
-  if (isUser) return renderUserMessage(normalized);
+  if (isUser) return renderUserMessage(normalized, message);
   return renderAssistantMessage(normalized, message);
 }
 
 // ─── User Message ───────────────────────────────────────────────────────────
 
-function renderUserMessage(msg: NormalizedMessage): TemplateResult {
+function renderUserMessage(msg: NormalizedMessage, rawMessage: unknown): TemplateResult {
   const textContent = msg.content.filter(
     (c): c is { type: 'text'; text?: string } => c.type === 'text',
   );
   const rawText = textContent.map(c => c.text ?? '').join('\n');
   const text =
     rawText.trim() === '[User sent media without caption]' &&
-    msg.content.some(
-      item => item.type === 'attachment' && item.attachment.kind === 'image',
-    )
+    msg.content.some(item => item.type === 'attachment' && item.attachment.kind === 'image')
       ? ''
       : rawText;
   const dir = detectTextDirection(text);
@@ -470,6 +519,13 @@ function renderUserMessage(msg: NormalizedMessage): TemplateResult {
         item.type === 'attachment' && item.attachment.kind === 'image',
     )
     .map(item => item.attachment);
+  const attachments = msg.content
+    .filter(
+      (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
+        item.type === 'attachment' && item.attachment.kind !== 'image',
+    )
+    .map(item => item.attachment);
+  const visibleAttachments = [...attachments, ...extractTranscriptAttachments(rawMessage)];
 
   return html`
     <div class="chat-bubble chat-bubble--user" dir=${dir}>
@@ -490,6 +546,7 @@ function renderUserMessage(msg: NormalizedMessage): TemplateResult {
             </div>
           `
         : nothing}
+      ${renderAssistantAttachments(visibleAttachments)}
       ${text ? html`<div class="chat-bubble__text">${unsafeHTML(htmlContent)}</div>` : nothing}
     </div>
   `;
@@ -524,8 +581,7 @@ function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): Te
     ${toolCards.length > 0
       ? renderToolTimeline(toolCards, !shouldOpenToolTimeline(rawMessage))
       : nothing}
-    ${renderAssistantTextBlock(text)}
-    ${renderAssistantAttachments(attachments)}
+    ${renderAssistantTextBlock(text)} ${renderAssistantAttachments(attachments)}
   `;
 }
 
@@ -735,7 +791,7 @@ export function renderStreamingThinkingGroup(
       }`}
     >
       <div class="chat-group__avatar">
-        ${opts?.showAvatar ?? true ? renderChatAvatar('assistant') : nothing}
+        ${(opts?.showAvatar ?? true) ? renderChatAvatar('assistant') : nothing}
       </div>
       <div class="chat-group__content">${renderStreamingThinkingBlock(text)}</div>
     </div>
@@ -759,11 +815,13 @@ export function renderStreamingGroup(
       }`}
     >
       <div class="chat-group__avatar">
-        ${opts?.showAvatar ?? true ? renderChatAvatar('assistant') : nothing}
+        ${(opts?.showAvatar ?? true) ? renderChatAvatar('assistant') : nothing}
       </div>
       <div class="chat-group__content">
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
-        ${toolCards.length > 0 ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages)) : nothing}
+        ${toolCards.length > 0
+          ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages))
+          : nothing}
         ${hasText
           ? html`
               <div class="chat-bubble chat-bubble--assistant">
@@ -810,7 +868,7 @@ export function renderReadingIndicatorGroup(opts?: { showAvatar?: boolean }): Te
       }`}
     >
       <div class="chat-group__avatar">
-        ${opts?.showAvatar ?? true ? renderChatAvatar('assistant') : nothing}
+        ${(opts?.showAvatar ?? true) ? renderChatAvatar('assistant') : nothing}
       </div>
       <div class="chat-group__content">
         <div class="chat-reading-indicator" aria-hidden="true">

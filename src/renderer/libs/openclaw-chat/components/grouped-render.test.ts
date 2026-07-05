@@ -79,9 +79,9 @@ function templateIncludesAttribute(
 
 describe('shouldRenderGroupFooter', () => {
   test('hides assistant footer when another assistant group follows', () => {
-    expect(shouldRenderGroupFooterByNextItem(createGroup('assistant'), createGroup('assistant'))).toBe(
-      false,
-    );
+    expect(
+      shouldRenderGroupFooterByNextItem(createGroup('assistant'), createGroup('assistant')),
+    ).toBe(false);
   });
 
   test('hides assistant footer while streaming continues', () => {
@@ -165,6 +165,61 @@ describe('group footer helpers', () => {
 });
 
 describe('renderMessageGroup', () => {
+  test('renders a persisted transcript file attachment from MediaPath fields', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'user-file-group',
+        role: 'user',
+        messages: [
+          {
+            key: 'user-file-msg',
+            message: {
+              role: 'user',
+              content: 'Review this file',
+              timestamp: 1,
+              MediaPath: 'C:\\openclaw\\media\\brief.pdf',
+              MediaType: 'application/pdf',
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('message-attachment');
+    expect(rendered).toContain('brief.pdf');
+    expect(rendered).toContain('C:\\openclaw\\media\\brief.pdf');
+  });
+
+  test('renders every persisted transcript file attachment from MediaPaths fields', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'user-files-group',
+        role: 'user',
+        messages: [
+          {
+            key: 'user-files-msg',
+            message: {
+              role: 'user',
+              content: 'Compare these files',
+              timestamp: 1,
+              MediaPaths: ['/openclaw/media/first.pdf', '/openclaw/media/second.txt'],
+              MediaTypes: ['application/pdf', 'text/plain'],
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('first.pdf');
+    expect(rendered).toContain('second.txt');
+  });
+
   test('keeps assistant text before a later tool call in the same history message', () => {
     const rendered = stringifyTemplate(
       renderMessageGroup({

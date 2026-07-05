@@ -205,10 +205,7 @@ async function hydrateMissingToolInputsFromLocalState(
       electron?: {
         openclaw?: {
           history?: {
-            getToolInputs?: (params: {
-              sessionKey: string;
-              toolCallIds: string[];
-            }) => Promise<{
+            getToolInputs?: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
               success?: boolean;
               inputs?: Record<string, { name?: string; input?: unknown }>;
             }>;
@@ -332,16 +329,16 @@ export class ChatController {
   ): void {
     debugLog('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
     const imageBlocks = imageAttachments
-      .filter(image => image.mimeType.startsWith('image/') && image.base64Data)
-      .map(image => ({
+      .filter(attachment => attachment.base64Data)
+      .map(attachment => ({
         type: 'attachment',
         attachment: {
-          url: image.base64Data.startsWith('data:')
-            ? image.base64Data
-            : `data:${image.mimeType};base64,${image.base64Data}`,
-          kind: 'image',
-          label: image.name,
-          mimeType: image.mimeType,
+          url: attachment.base64Data.startsWith('data:')
+            ? attachment.base64Data
+            : `data:${attachment.mimeType};base64,${attachment.base64Data}`,
+          kind: attachment.mimeType.startsWith('image/') ? 'image' : 'document',
+          label: attachment.name,
+          mimeType: attachment.mimeType,
         },
       }));
     this.state.pendingUserMessage = {
@@ -868,8 +865,7 @@ export class ChatController {
       const projectedMessages = rawMessages
         .filter(m => !shouldHideMessage(m))
         .filter(m => !(m as Record<string, unknown>)?.__openclawStreamFallback);
-      const messagesWithCompactionDetails =
-        await this.enrichCompactionMarkers(projectedMessages);
+      const messagesWithCompactionDetails = await this.enrichCompactionMarkers(projectedMessages);
       const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
         sessionKey,
         messagesWithCompactionDetails,
@@ -1468,16 +1464,16 @@ export class ChatController {
 
     // Optimistic: append user message immediately
     const imageBlocks = imageAttachments
-      .filter(image => image.mimeType.startsWith('image/') && image.base64Data)
-      .map(image => ({
+      .filter(attachment => attachment.base64Data)
+      .map(attachment => ({
         type: 'attachment',
         attachment: {
-          url: image.base64Data.startsWith('data:')
-            ? image.base64Data
-            : `data:${image.mimeType};base64,${image.base64Data}`,
-          kind: 'image',
-          label: image.name,
-          mimeType: image.mimeType,
+          url: attachment.base64Data.startsWith('data:')
+            ? attachment.base64Data
+            : `data:${attachment.mimeType};base64,${attachment.base64Data}`,
+          kind: attachment.mimeType.startsWith('image/') ? 'image' : 'document',
+          label: attachment.name,
+          mimeType: attachment.mimeType,
         },
       }));
     const userMessage = {
@@ -1499,11 +1495,12 @@ export class ChatController {
 
     try {
       const attachments = imageAttachments
-        .filter(image => image.mimeType.startsWith('image/') && image.base64Data)
-        .map(image => ({
-          type: 'image',
-          mimeType: image.mimeType,
-          content: image.base64Data,
+        .filter(attachment => attachment.base64Data)
+        .map(attachment => ({
+          type: attachment.mimeType.startsWith('image/') ? 'image' : 'file',
+          mimeType: attachment.mimeType,
+          content: attachment.base64Data,
+          ...(attachment.mimeType.startsWith('image/') ? {} : { fileName: attachment.name }),
         }));
       const ack = await client.request<{ runId?: string; status?: string }>('chat.send', {
         sessionKey: this.state.sessionKey,
@@ -1634,9 +1631,8 @@ export class ChatController {
   } | null> {
     const checkpoints = await this.loadCompactionCheckpoints();
     return (
-      [...checkpoints].sort(
-        (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0),
-      )[0] ?? null
+      [...checkpoints].sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))[0] ??
+      null
     );
   }
 
@@ -1702,8 +1698,7 @@ export class ChatController {
       const marker = record.__openclaw as Record<string, unknown>;
       const markerId = typeof marker.id === 'string' ? marker.id : undefined;
       const checkpoint =
-        (markerId ? checkpointsById.get(markerId) : undefined) ??
-        checkpointsNewestFirst[0];
+        (markerId ? checkpointsById.get(markerId) : undefined) ?? checkpointsNewestFirst[0];
       if (!checkpoint) return message;
       return {
         ...record,

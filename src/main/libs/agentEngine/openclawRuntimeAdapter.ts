@@ -241,7 +241,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       getGatewayClient: () => this.gatewayClient,
       store: this.store,
     });
-
   }
 
   setChannelSessionSync(sync: OpenClawChannelSessionSync): void {
@@ -299,7 +298,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (client) {
         void client
           .request('chat.abort', { sessionKey: turn.sessionKey, runId: turn.runId })
-          .catch(error => coworkLog('WARN', 'OpenClawRuntime', 'Failed to abort chat run', { error: String(error) }));
+          .catch(error =>
+            coworkLog('WARN', 'OpenClawRuntime', 'Failed to abort chat run', {
+              error: String(error),
+            }),
+          );
       }
     }
     this.stoppedSessions.set(sessionId, Date.now());
@@ -341,7 +344,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           if (!this.store.getSession(sessionId)) return;
           if (!this.isSessionActive(sessionId)) {
             void this.continueSession(sessionId, prompt).catch(error =>
-              coworkLog('WARN', 'OpenClawRuntime', 'Failed to continue session after approval', { error: String(error), sessionId }),
+              coworkLog('WARN', 'OpenClawRuntime', 'Failed to continue session after approval', {
+                error: String(error),
+                sessionId,
+              }),
             );
             return;
           }
@@ -466,10 +472,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = this.requireGatewayClient();
     try {
       const attachments = options.imageAttachments?.length
-        ? options.imageAttachments.map(img => ({
-            type: 'image',
-            mimeType: img.mimeType,
-            content: img.base64Data,
+        ? options.imageAttachments.map(attachment => ({
+            type: attachment.mimeType.startsWith('image/') ? 'image' : 'file',
+            mimeType: attachment.mimeType,
+            content: attachment.base64Data,
+            ...(attachment.mimeType.startsWith('image/') ? {} : { fileName: attachment.name }),
           }))
         : undefined;
       await client.request('chat.send', {
@@ -1185,10 +1192,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (final) this.commitVisibleAssistantSegment(stream);
   }
 
-  private prepareVisibleAssistantSnapshot(
-    stream: VisibleRunStreamState,
-    snapshot: string,
-  ): string {
+  private prepareVisibleAssistantSnapshot(stream: VisibleRunStreamState, snapshot: string): string {
     return this.stripCommittedAssistantSegments(stream.committedAssistantSegments, snapshot);
   }
 
@@ -1511,7 +1515,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!toolCallId) return;
 
     const kind = typeof data.kind === 'string' ? data.kind : '';
-    if (kind && kind !== 'tool' && kind !== 'command' && kind !== 'patch' && kind !== 'exec') return;
+    if (kind && kind !== 'tool' && kind !== 'command' && kind !== 'patch' && kind !== 'exec')
+      return;
 
     const phase = typeof data.phase === 'string' ? data.phase : '';
     const now = Date.now();
@@ -1741,7 +1746,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     void this.skillRpcHandler
       .patchSessionModel(sessionId, pendingPatch.model, pendingPatch.agentId)
       .catch(error =>
-        coworkLog('WARN', 'OpenClawRuntime', 'Deferred patchSessionModel failed', { error: String(error), sessionId }),
+        coworkLog('WARN', 'OpenClawRuntime', 'Deferred patchSessionModel failed', {
+          error: String(error),
+          sessionId,
+        }),
       );
   }
 
@@ -1982,7 +1990,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         lastError = error;
         const delay = GATEWAY_CONNECT_RETRY_DELAYS[attempt];
         if (attempt < GATEWAY_CONNECT_RETRY_DELAYS.length - 1) {
-          coworkLog('WARN', 'OpenClawRuntime', `Gateway client handshake failed; retrying in ${delay}ms`, { error: String(error) });
+          coworkLog(
+            'WARN',
+            'OpenClawRuntime',
+            `Gateway client handshake failed; retrying in ${delay}ms`,
+            { error: String(error) },
+          );
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
@@ -2083,7 +2096,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     try {
       clientToStop?.stop();
     } catch (error) {
-      coworkLog('WARN', 'OpenClawRuntime', 'Failed to stop gateway client', { error: String(error) });
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to stop gateway client', {
+        error: String(error),
+      });
     }
     this.gatewayClient = null;
     this.pendingGatewayClient = null;
@@ -2108,7 +2123,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     try {
       await client.request('sessions.subscribe', {});
     } catch (error) {
-      coworkLog('WARN', 'OpenClawRuntime', 'Failed to subscribe to Gateway session events', { error: String(error) });
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to subscribe to Gateway session events', {
+        error: String(error),
+      });
     }
   }
 
@@ -2595,7 +2612,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<{ ok: boolean; error?: string }> {
     if (this.isSessionActive(sessionId)) {
       this.pendingSessionModelPatches.set(sessionId, { model, agentId });
-      coworkLog('INFO', 'OpenClawRuntime', 'patchSessionModel: deferred active session', { sessionId, model });
+      coworkLog('INFO', 'OpenClawRuntime', 'patchSessionModel: deferred active session', {
+        sessionId,
+        model,
+      });
       return { ok: true };
     }
     return this.skillRpcHandler.patchSessionModel(sessionId, model, agentId);
