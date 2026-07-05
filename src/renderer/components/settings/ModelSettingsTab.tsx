@@ -19,18 +19,12 @@ import {
 import { i18nService } from '../../services/i18n';
 import PencilIcon from '../icons/PencilIcon';
 import PlusCircleIcon from '../icons/PlusCircleIcon';
-import { CustomProviderIcon, OllamaIcon } from '../icons/providers';
+import { CustomProviderIcon } from '../icons/providers';
 import TrashIcon from '../icons/TrashIcon';
 
 type ProviderType = string;
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 type ProviderConfig = ProvidersConfig[string];
-type BuiltinProviderType = 'ollama';
-
-const providerMeta: Record<BuiltinProviderType, { label: string; icon: React.ReactNode }> = {
-  ollama: { label: 'Ollama', icon: <OllamaIcon /> },
-};
-
 const formatContextLength = (tokens: number): string => {
   if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
@@ -97,8 +91,6 @@ const ModelSettingsTab: React.FC<Props> = ({
   const sortedProviders = Object.entries(providers).sort(([leftKey], [rightKey]) => {
     if (leftKey === 'builtin_models') return -1;
     if (rightKey === 'builtin_models') return 1;
-    if (leftKey === 'ollama') return -1;
-    if (rightKey === 'ollama') return 1;
     return leftKey.localeCompare(rightKey);
   });
 
@@ -211,10 +203,9 @@ const ModelSettingsTab: React.FC<Props> = ({
           const providerKey = provider as ProviderType;
           const isCustom = isCustomProvider(provider);
           const providerInfo =
-            providerMeta[providerKey as BuiltinProviderType] ??
-            (isCustom
+            isCustom
               ? { label: getCustomProviderDefaultName(provider), icon: <CustomProviderIcon /> }
-              : undefined);
+              : undefined;
           const readOnlyProviderRow = isProviderReadOnly(providerKey, config);
           const displayLabel =
             providerKey === 'builtin_models'

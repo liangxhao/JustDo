@@ -23,19 +23,6 @@ export interface AppConfig {
   };
   // 多模型提供商配置
   providers?: {
-    ollama: {
-      enabled: boolean;
-      apiKey: string;
-      baseUrl: string;
-      apiFormat?: 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-        contextLength?: number;
-        maxTokens?: number;
-      }>;
-    };
     [key: string]: {
       enabled: boolean;
       apiKey: string;
@@ -119,7 +106,7 @@ export const defaultConfig: AppConfig = {
   model: {
     availableModels: [],
     defaultModel: '',
-    defaultModelProvider: 'ollama',
+    defaultModelProvider: BUILTIN_MODELS_PROVIDER_KEY,
   },
   providers: buildDefaultProviders(),
   theme: 'system',
@@ -149,9 +136,8 @@ export const CONFIG_KEYS = {
 };
 
 export const getVisibleProviders = (_language: 'zh' | 'en'): readonly string[] => {
-  // Ollama is user-configurable; builtin_models is read-only and refreshed at startup.
   // Custom providers (custom_0...custom_9) are handled separately
-  return [BUILTIN_MODELS_PROVIDER_KEY, 'ollama'];
+  return [BUILTIN_MODELS_PROVIDER_KEY];
 };
 
 export const isBuiltinModelsProvider = (key: string): boolean =>
@@ -198,7 +184,7 @@ export const getProviderDisplayName = (
 /**
  * 内置 provider 名称列表（禁止作为 displayName 使用）
  */
-const BUILTIN_PROVIDER_NAMES = ['ollama', BUILTIN_MODELS_PROVIDER_KEY, '内置模型'];
+const BUILTIN_PROVIDER_NAMES = [BUILTIN_MODELS_PROVIDER_KEY, '内置模型'];
 
 /**
  * displayName 校验正则（允许字母、数字、下划线、中划线、空格）

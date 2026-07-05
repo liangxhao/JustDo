@@ -55,9 +55,6 @@ interface SettingsProps extends SettingsOpenOptions {
   onClose: () => void;
 }
 
-const BUILTIN_PROVIDER_KEYS = ['ollama'] as const;
-
-type BuiltinProviderType = (typeof BUILTIN_PROVIDER_KEYS)[number];
 type ProviderType = string;
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 type ProviderConfig = ProvidersConfig[string];
@@ -81,9 +78,6 @@ type ModelConnectionTestResult = {
 };
 
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'builtin_models';
-const providerMeta: Record<BuiltinProviderType, { label: string; icon: React.ReactNode }> = {
-  ollama: { label: 'Ollama', icon: <></> },
-};
 const isProviderReadOnly = (provider: ProviderType, config?: ProviderConfig): boolean =>
   provider === 'builtin_models' || config?.readonly === true;
 const getProviderDefaultBaseUrl = (provider: ProviderType): string | null =>
@@ -131,7 +125,7 @@ const getDefaultActiveProvider = (): ProviderType => {
   const firstEnabledProvider = Object.keys(providers).find(
     providerKey => providers[providerKey]?.enabled,
   );
-  return firstEnabledProvider ?? BUILTIN_PROVIDER_KEYS[0];
+  return firstEnabledProvider ?? 'builtin_models';
 };
 
 const getSortedCustomProviderKeys = (providers: ProvidersConfig): string[] =>
@@ -778,7 +772,7 @@ const Settings: React.FC<SettingsProps> = ({
     if (activeProvider === key) {
       const visibleKeys = Object.keys(visibleProviders).filter(k => k !== key) as ProviderType[];
       const firstEnabled = visibleKeys.find(k => visibleProviders[k]?.enabled);
-      setActiveProvider(firstEnabled ?? visibleKeys[0] ?? BUILTIN_PROVIDER_KEYS[0]);
+      setActiveProvider(firstEnabled ?? visibleKeys[0] ?? 'builtin_models');
     }
   };
 
@@ -1063,28 +1057,11 @@ const Settings: React.FC<SettingsProps> = ({
 
   const handleSaveNewModel = () => {
     const modelId = newModelId.trim();
-
-    if (activeProvider === 'ollama') {
-      // For Ollama, only the model name (stored as modelId) is required
-      if (!modelId) {
-        setModelFormError(i18nService.t('ollamaModelNameRequired'));
-        return;
-      }
-    } else {
-      const modelName = newModelName.trim();
-      if (!modelName || !modelId) {
-        setModelFormError(i18nService.t('modelNameAndIdRequired'));
-        return;
-      }
+    const modelName = newModelName.trim();
+    if (!modelName || !modelId) {
+      setModelFormError(i18nService.t('modelNameAndIdRequired'));
+      return;
     }
-
-    // For Ollama, auto-fill display name from modelId if not provided
-    const modelName =
-      activeProvider === 'ollama'
-        ? newModelName.trim() && newModelName.trim() !== modelId
-          ? newModelName.trim()
-          : modelId
-        : newModelName.trim();
 
     const currentModels = providers[activeProvider].models ?? [];
     const duplicateModel = currentModels.find(
@@ -1168,9 +1145,7 @@ const Settings: React.FC<SettingsProps> = ({
     setTestResult({
       ...result,
       provider,
-      providerName:
-        providerMeta[provider as BuiltinProviderType]?.label ??
-        getProviderDisplayName(provider, providerConfig),
+      providerName: getProviderDisplayName(provider, providerConfig),
     });
     setIsTestResultModalOpen(true);
   };
@@ -2346,54 +2321,6 @@ const Settings: React.FC<SettingsProps> = ({
               )}
 
               <div className="space-y-3">
-                {activeProvider === 'ollama' ? (
-                  <>
-                    <div>
-                      <label className="block text-xs font-medium text-secondary mb-1">
-                        {i18nService.t('ollamaModelName')}
-                      </label>
-                      <input
-                        autoFocus
-                        type="text"
-                        value={newModelId}
-                        onChange={e => {
-                          setNewModelId(e.target.value);
-                          if (!newModelName || newModelName === newModelId) {
-                            setNewModelName(e.target.value);
-                          }
-                          if (modelFormError) {
-                            setModelFormError(null);
-                          }
-                        }}
-                        className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
-                        placeholder={i18nService.t('ollamaModelNamePlaceholder')}
-                      />
-                      <p className="mt-1 text-[11px] text-muted">
-                        {i18nService.t('ollamaModelNameHint')}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-secondary mb-1">
-                        {i18nService.t('ollamaDisplayName')}
-                      </label>
-                      <input
-                        type="text"
-                        value={newModelName === newModelId ? '' : newModelName}
-                        onChange={e => {
-                          setNewModelName(e.target.value || newModelId);
-                          if (modelFormError) {
-                            setModelFormError(null);
-                          }
-                        }}
-                        className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
-                        placeholder={i18nService.t('ollamaDisplayNamePlaceholder')}
-                      />
-                      <p className="mt-1 text-[11px] text-muted">
-                        {i18nService.t('ollamaDisplayNameHint')}
-                      </p>
-                    </div>
-                  </>
-                ) : (
                   <>
                     <div>
                       <label className="block text-xs font-medium text-secondary mb-1">
@@ -2431,7 +2358,6 @@ const Settings: React.FC<SettingsProps> = ({
                       />
                     </div>
                   </>
-                )}
                 <div>
                   <label className="block text-xs font-medium text-secondary mb-1">
                     {i18nService.t('contextLength')}

@@ -1,12 +1,10 @@
 export const ProviderName = {
-  Ollama: 'ollama',
   BuiltinModels: 'builtin_models',
   Custom: 'custom',
 } as const;
 export type ProviderName = (typeof ProviderName)[keyof typeof ProviderName];
 
 export const OpenClawProviderId = {
-  Ollama: 'ollama',
   BuiltinModels: 'builtin_models',
   JustDo: 'justdo',
 } as const;
@@ -44,13 +42,6 @@ export interface ProviderDef {
 }
 
 const PROVIDER_DEFINITIONS = [
-  {
-    id: ProviderName.Ollama,
-    openClawProviderId: OpenClawProviderId.Ollama,
-    defaultBaseUrl: 'http://localhost:11434/v1',
-    defaultApiFormat: ApiFormat.OpenAI,
-    defaultModels: [],
-  },
   {
     id: ProviderName.BuiltinModels,
     openClawProviderId: OpenClawProviderId.BuiltinModels,

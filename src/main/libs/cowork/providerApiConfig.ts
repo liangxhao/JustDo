@@ -1,4 +1,3 @@
-import { ProviderName } from '../../../shared/providers';
 import type { SqliteStore } from '../../data/sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 
@@ -60,7 +59,7 @@ type MatchedProvider = {
 };
 
 function providerRequiresApiKey(providerName: string): boolean {
-  return providerName !== ProviderName.Ollama;
+  return providerName !== 'builtin_models';
 }
 
 function resolveMatchedProvider(appConfig: AppConfig): {

@@ -130,20 +130,6 @@ test('validateDisplayName: starts with space is valid after trim', () => {
   expect(validateDisplayName(' GPT')).toEqual({ valid: true });
 });
 
-test('validateDisplayName: built-in provider name is invalid', () => {
-  expect(validateDisplayName('ollama')).toEqual({
-    valid: false,
-    error: 'Cannot use built-in provider name',
-  });
-});
-
-test('validateDisplayName: built-in provider name case-insensitive is invalid', () => {
-  expect(validateDisplayName('Ollama')).toEqual({
-    valid: false,
-    error: 'Cannot use built-in provider name',
-  });
-});
-
 test('validateDisplayName: special characters are invalid', () => {
   expect(validateDisplayName('GPT@4')).toEqual({
     valid: false,

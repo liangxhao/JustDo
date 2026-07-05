@@ -7,7 +7,7 @@ import {
 } from '../config';
 import { localStore } from './store';
 
-const SUPPORTED_BUILTIN_PROVIDERS = new Set(['ollama', 'builtin_models']);
+const SUPPORTED_BUILTIN_PROVIDERS = new Set(['builtin_models']);
 
 const isSupportedProvider = (providerKey: string): boolean =>
   SUPPORTED_BUILTIN_PROVIDERS.has(providerKey) ||

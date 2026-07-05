@@ -5,7 +5,6 @@ import path from 'path';
 import {
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
-  ProviderName,
 } from '../../../../shared/providers';
 import type { Agent, CoworkConfig, CoworkExecutionMode } from '../../../coworkStore';
 import {
@@ -184,12 +183,7 @@ type ProviderDescriptor = {
   }>;
 };
 
-const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
-  [ProviderName.Ollama]: {
-    providerId: OpenClawProviderId.Ollama,
-    normalizeBaseUrl: stripChatCompletionsSuffix,
-  },
-};
+const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {};
 
 const DEFAULT_DESCRIPTOR: ProviderDescriptor = {
   providerId: OpenClawProviderId.JustDo,
