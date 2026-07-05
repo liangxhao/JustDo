@@ -154,8 +154,4 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     }
   });
 
-  ipcMain.handle(ScheduledTaskIpc.ListChannelConversations, async () => {
-    // IM channel conversations removed — channels disabled pending future adaptation
-    return { success: true, conversations: [] };
-  });
 }

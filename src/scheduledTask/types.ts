@@ -125,10 +125,3 @@ export interface ScheduledTaskChannelOption {
    *  falling back to the `default` account. */
   accountId?: string;
 }
-
-export interface ScheduledTaskConversationOption {
-  conversationId: string;
-  platform: string;
-  coworkSessionId: string;
-  lastActiveAt: number;
-}

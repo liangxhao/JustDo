@@ -62,7 +62,6 @@ export const IpcChannel = {
   ListRuns: 'scheduledTask:listRuns',
   ResolveSession: 'scheduledTask:resolveSession',
   ListChannels: 'scheduledTask:listChannels',
-  ListChannelConversations: 'scheduledTask:listChannelConversations',
   StatusUpdate: 'scheduledTask:statusUpdate',
   RunUpdate: 'scheduledTask:runUpdate',
   Refresh: 'scheduledTask:refresh',

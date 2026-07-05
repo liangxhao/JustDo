@@ -641,7 +641,7 @@ const Settings: React.FC<SettingsProps> = ({
           ...config.shortcuts,
         }));
       }
-    } catch (error) {
+    } catch {
       setError('Failed to load settings');
     }
   }, []);
@@ -1992,6 +1992,8 @@ const Settings: React.FC<SettingsProps> = ({
             handleRefreshBuiltinModels={handleRefreshBuiltinModels}
             isRefreshingBuiltinModels={isRefreshingBuiltinModels}
             setDisplayNameError={setDisplayNameError}
+            setProviders={setProviders}
+            setError={setError}
           />
         );
 

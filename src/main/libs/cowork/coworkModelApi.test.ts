@@ -4,7 +4,7 @@ import {
   buildOpenAIChatCompletionsUrl,
   extractApiErrorSnippet,
   extractTextFromOpenAIResponse,
-} from './cowork/coworkModelApi';
+} from './coworkModelApi';
 
 describe('coworkModelApi', () => {
   test('builds openai chat completions url from base url', () => {

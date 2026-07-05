@@ -1,7 +1,6 @@
 import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
-  ScheduledTaskConversationOption,
   ScheduledTaskInput,
   ScheduledTaskRunEvent,
   ScheduledTaskStatusEvent,
@@ -234,17 +233,6 @@ class ScheduledTaskService {
     }
   }
 
-  async listChannelConversations(channel: string, accountId?: string): Promise<ScheduledTaskConversationOption[]> {
-    const api = window.electron?.scheduledTasks;
-    if (!api?.listChannelConversations) return [];
-
-    try {
-      const result = await api.listChannelConversations(channel, accountId);
-      return result.success && result.conversations ? result.conversations : [];
-    } catch {
-      return [];
-    }
-  }
 }
 
 export const scheduledTaskService = new ScheduledTaskService();

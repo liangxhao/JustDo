@@ -5,7 +5,7 @@ import {
   extractGatewayHistoryEntries,
   extractGatewayHistoryEntry,
   extractGatewayMessageText,
-} from './openclaw/sessions/openclawHistory';
+} from './openclawHistory';
 
 describe('openclawHistory', () => {
   test('extracts plain text content blocks', () => {

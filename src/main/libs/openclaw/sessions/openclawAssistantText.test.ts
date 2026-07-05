@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { extractOpenClawAssistantStreamText } from './openclaw/sessions/openclawAssistantText';
+import { extractOpenClawAssistantStreamText } from './openclawAssistantText';
 
 describe('extractOpenClawAssistantStreamText', () => {
   test('extracts direct text field', () => {

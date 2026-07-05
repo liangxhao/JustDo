@@ -1,5 +1,5 @@
 import { ArrowPathIcon, SignalIcon } from '@heroicons/react/24/outline';
-import React from 'react';
+import React, { useRef, useState } from 'react';
 
 import {
   type AppConfig,
@@ -10,6 +10,12 @@ import {
   isCustomProvider,
   validateDisplayName,
 } from '../../config';
+import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../../constants/app';
+import {
+  decryptWithPassword,
+  encryptWithPassword,
+  type PasswordEncryptedPayload,
+} from '../../services/encryption';
 import { i18nService } from '../../services/i18n';
 import PencilIcon from '../icons/PencilIcon';
 import PlusCircleIcon from '../icons/PlusCircleIcon';
@@ -56,6 +62,8 @@ interface Props {
   handleRefreshBuiltinModels: () => void;
   isRefreshingBuiltinModels: boolean;
   setDisplayNameError: (value: string | null) => void;
+  setProviders: React.Dispatch<React.SetStateAction<ProvidersConfig>>;
+  setError: (value: string | null) => void;
 }
 
 const ModelSettingsTab: React.FC<Props> = ({
@@ -77,7 +85,12 @@ const ModelSettingsTab: React.FC<Props> = ({
   isRefreshingBuiltinModels,
   displayNameError,
   setDisplayNameError,
+  setProviders,
+  setError,
 }) => {
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const activeConfig = providers[activeProvider];
   const isReadOnly = isProviderReadOnly(activeProvider, activeConfig);
   const isBaseUrlLocked = false;
@@ -89,12 +102,101 @@ const ModelSettingsTab: React.FC<Props> = ({
     return leftKey.localeCompare(rightKey);
   });
 
+  const handleExport = async () => {
+    setError(null);
+    setIsExporting(true);
+    try {
+      const entries = await Promise.all(
+        Object.entries(providers)
+          .filter(([key, config]) => !isProviderReadOnly(key, config))
+          .map(async ([key, config]) => [
+            key,
+            {
+              ...config,
+              apiKey: await encryptWithPassword(config.apiKey, EXPORT_PASSWORD),
+            },
+          ]),
+      );
+      const blob = new Blob(
+        [JSON.stringify({ type: EXPORT_FORMAT_TYPE, version: 2, providers: Object.fromEntries(entries) }, null, 2)],
+        { type: 'application/json' },
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${APP_ID}-providers-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError(i18nService.t('exportProvidersFailed'));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setError(null);
+    setIsImporting(true);
+    try {
+      const payload = JSON.parse(await file.text()) as {
+        type?: string;
+        providers?: Record<string, ProviderConfig & { apiKey: PasswordEncryptedPayload | string }>;
+      };
+      if (payload.type !== EXPORT_FORMAT_TYPE || !payload.providers) {
+        setError(i18nService.t('invalidProvidersFile'));
+        return;
+      }
+      const entries = await Promise.all(
+        Object.entries(payload.providers).map(async ([key, config]) => {
+          const apiKey =
+            typeof config.apiKey === 'string'
+              ? config.apiKey
+              : await decryptWithPassword(config.apiKey, EXPORT_PASSWORD);
+          return [key, { ...config, apiKey }] as const;
+        }),
+      );
+      setProviders(previous => ({ ...previous, ...Object.fromEntries(entries) }));
+    } catch {
+      setError(i18nService.t('importProvidersFailed'));
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div className="flex h-full">
       <div className="shrink-0 pr-3 space-y-1.5 overflow-y-auto" style={{ width: 260 }}>
           <div className="flex items-center justify-between mb-2 px-1">
             <h3 className="text-sm font-medium text-foreground">{i18nService.t('modelProviders')}</h3>
             <div className="flex items-center space-x-1">
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={handleImport}
+              />
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                disabled={isImporting || isExporting}
+                className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 transition-colors"
+              >
+                {i18nService.t('import')}
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isImporting || isExporting}
+                className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 transition-colors"
+              >
+                {i18nService.t('export')}
+              </button>
               <button
                 type="button"
                 onClick={handleAddCustomProvider}

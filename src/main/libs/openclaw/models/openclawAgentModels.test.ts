@@ -6,7 +6,7 @@ import {
   parsePrimaryModelRef,
   resolveManagedSessionModelTarget,
   resolveQualifiedAgentModelRef,
-} from './openclaw/models/openclawAgentModels';
+} from './openclawAgentModels';
 
 describe('buildAgentEntry', () => {
   test('emits explicit model.primary for the main agent', () => {

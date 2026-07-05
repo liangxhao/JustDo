@@ -470,7 +470,6 @@ export function parseSubagentCompletionEvent(block: string): {
 export function extractSubagentCompletionMessages(
   content: string,
   baseTimestamp: number,
-  baseIndex: number,
 ): Array<{ type: string; content: string; timestamp: number; metadata?: Record<string, unknown> }> {
   if (!content.includes(INTERNAL_RUNTIME_CONTEXT_BEGIN)) {
     return [{ type: 'assistant', content, timestamp: baseTimestamp }];
@@ -573,7 +572,7 @@ export function convertEntriesToCoworkMessages(
 
   for (const entry of entries) {
     if (entry.role === 'assistant' && entry.text.includes(INTERNAL_RUNTIME_CONTEXT_BEGIN)) {
-      const extracted = extractSubagentCompletionMessages(entry.text, now, subIdx);
+      const extracted = extractSubagentCompletionMessages(entry.text, now);
       for (const msg of extracted) {
         const id =
           msg.type === 'subagent_completion'

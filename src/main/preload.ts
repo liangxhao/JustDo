@@ -442,8 +442,6 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Delivery channels
     listChannels: () => ipcRenderer.invoke(ScheduledTaskIpc.ListChannels),
-    listChannelConversations: (channel: string, accountId?: string) =>
-      ipcRenderer.invoke(ScheduledTaskIpc.ListChannelConversations, channel, accountId),
 
     onStatusUpdate: (callback: (data: any) => void) => {
       const handler = (_event: any, data: any) => callback(data);

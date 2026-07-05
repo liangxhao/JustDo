@@ -7,7 +7,7 @@ import {
   isManagedSessionKey,
   OpenClawChannelSessionSync,
   parseManagedSessionKey,
-} from './openclaw/sessions/openclawChannelSessionSync';
+} from './openclawChannelSessionSync';
 
 function createSync() {
   return new OpenClawChannelSessionSync({

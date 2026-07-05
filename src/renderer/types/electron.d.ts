@@ -221,30 +221,6 @@ interface McpServerConfigIPC {
   updatedAt: number;
 }
 
-interface McpMarketplaceServer {
-  id: string;
-  name: string;
-  description_zh: string;
-  description_en: string;
-  category: string;
-  transportType: 'stdio' | 'sse' | 'http';
-  command: string;
-  defaultArgs: string[];
-  requiredEnvKeys?: string[];
-  optionalEnvKeys?: string[];
-}
-
-interface McpMarketplaceCategory {
-  id: string;
-  name_zh: string;
-  name_en: string;
-}
-
-interface McpMarketplaceData {
-  categories: McpMarketplaceCategory[];
-  servers: McpMarketplaceServer[];
-}
-
 import type { Agent, PresetAgent } from './agent';
 
 interface IElectronAPI {
@@ -683,14 +659,6 @@ interface IElectronAPI {
     listChannels: () => Promise<{
       success: boolean;
       channels?: import('../../scheduledTask/types').ScheduledTaskChannelOption[];
-      error?: string;
-    }>;
-    listChannelConversations?: (
-      channel: string,
-      accountId?: string,
-    ) => Promise<{
-      success: boolean;
-      conversations?: import('../../scheduledTask/types').ScheduledTaskConversationOption[];
       error?: string;
     }>;
     onStatusUpdate: (
