@@ -1969,6 +1969,7 @@ const Settings: React.FC<SettingsProps> = ({
             setDisplayNameError={setDisplayNameError}
             setProviders={setProviders}
             setError={setError}
+            onRequestDeleteProvider={setPendingDeleteProvider}
           />
         );
 

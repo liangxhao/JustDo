@@ -1,4 +1,4 @@
-import { ArrowPathIcon, SignalIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, SignalIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useRef, useState } from 'react';
 
 import {
@@ -58,6 +58,7 @@ interface Props {
   setDisplayNameError: (value: string | null) => void;
   setProviders: React.Dispatch<React.SetStateAction<ProvidersConfig>>;
   setError: (value: string | null) => void;
+  onRequestDeleteProvider: (provider: ProviderType) => void;
 }
 
 const ModelSettingsTab: React.FC<Props> = ({
@@ -81,6 +82,7 @@ const ModelSettingsTab: React.FC<Props> = ({
   setDisplayNameError,
   setProviders,
   setError,
+  onRequestDeleteProvider,
 }) => {
   const importInputRef = useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -163,6 +165,7 @@ const ModelSettingsTab: React.FC<Props> = ({
   return (
     <div className="flex h-full">
       <div className="shrink-0 pr-3 space-y-1.5 overflow-y-auto" style={{ width: 260 }}>
+          {/* Heading with import/export */}
           <div className="flex items-center justify-between mb-2 px-1">
             <h3 className="text-sm font-medium text-foreground">{i18nService.t('modelProviders')}</h3>
             <div className="flex items-center space-x-1">
@@ -177,7 +180,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                 type="button"
                 onClick={() => importInputRef.current?.click()}
                 disabled={isImporting || isExporting}
-                className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 transition-colors"
+                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
               >
                 {i18nService.t('import')}
               </button>
@@ -185,19 +188,12 @@ const ModelSettingsTab: React.FC<Props> = ({
                 type="button"
                 onClick={handleExport}
                 disabled={isImporting || isExporting}
-                className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 transition-colors"
+                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
               >
                 {i18nService.t('export')}
               </button>
-              <button
-                type="button"
-                onClick={handleAddCustomProvider}
-              className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border border-border text-foreground hover:bg-surface-raised transition-colors"
-            >
-              {i18nService.t('addCustomProvider')}
-            </button>
+            </div>
           </div>
-        </div>
 
         {sortedProviders.map(([provider, config]) => {
           const providerKey = provider as ProviderType;
@@ -243,6 +239,19 @@ const ModelSettingsTab: React.FC<Props> = ({
                 </div>
               </div>
               <div className="flex items-center space-x-1 shrink-0">
+                {isCustom && (
+                  <button
+                    type="button"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-secondary hover:text-red-500 p-0.5"
+                    onClick={e => {
+                      e.stopPropagation();
+                      onRequestDeleteProvider(providerKey);
+                    }}
+                    title={i18nService.t('deleteCustomProvider')}
+                  >
+                    <XMarkIcon className="h-3.5 w-3.5" />
+                  </button>
+                )}
                 {!readOnlyProviderRow && (
                   <button
                     type="button"
@@ -267,6 +276,14 @@ const ModelSettingsTab: React.FC<Props> = ({
             </div>
           );
         })}
+
+        <button
+          type="button"
+          onClick={handleAddCustomProvider}
+          className="w-full mt-2 px-3 py-2 text-xs font-medium rounded-xl border border-dashed border-border text-secondary hover:text-foreground hover:border-primary hover:bg-primary/5 transition-colors"
+        >
+          {i18nService.t('addCustomProvider')}
+        </button>
       </div>
 
       <div className="flex-1 min-w-0 pl-3 border-l border-border">
