@@ -7,6 +7,7 @@ import { isImageMimeType } from '@shared/coworkAttachment';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import { getPreviewableFileExtension } from '../../../../shared/filePreview';
 import { i18nService } from '../../../services/i18n';
 import { getTranscriptMedia, type RenderableAttachment } from '../attachments';
 import {
@@ -278,9 +279,18 @@ async function openAttachment(
 ): Promise<void> {
   event.stopPropagation();
   try {
+    const localPath = localPathFromAttachmentUrl(url);
+    if (!/^https?:\/\//i.test(url) && getPreviewableFileExtension(localPath)) {
+      window.dispatchEvent(
+        new CustomEvent('cowork:preview-file', {
+          detail: { filePath: localPath, workingDirectory },
+        }),
+      );
+      return;
+    }
     const result = /^https?:\/\//i.test(url)
       ? await window.electron.shell.openExternal(url)
-      : await window.electron.shell.openPath(localPathFromAttachmentUrl(url), workingDirectory);
+      : await window.electron.shell.openPath(localPath, workingDirectory);
     if (!result.success) {
       if ('notFound' in result && result.notFound) {
         window.dispatchEvent(

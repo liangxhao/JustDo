@@ -524,6 +524,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       '定时任务「{name}」存在异常数据，已自动修正显示，建议重新编辑该任务',
 
     copy: '复制',
+    coworkFilePreviewFailed: '无法预览此文件',
+    coworkFilePreviewResize: '拖动以调整文件预览宽度',
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)
@@ -1129,6 +1131,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'Scheduled task "{name}" has abnormal data. Display has been auto-corrected. Consider re-editing this task',
 
     copy: 'Copy',
+    coworkFilePreviewFailed: 'Unable to preview this file',
+    coworkFilePreviewResize: 'Drag to resize the file preview',
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)

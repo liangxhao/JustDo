@@ -35,6 +35,7 @@ import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { resolveAgentModelSelection } from './agentModelSelection';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
+import FilePreviewDrawer, { type FilePreview } from './FilePreviewDrawer';
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
 import SubagentMenu, { type Subagent } from './SubagentMenu';
 import SubagentMessageDrawer from './SubagentMessageDrawer';
@@ -67,6 +68,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const [openClawStatus, setOpenClawStatus] = useState<OpenClawEngineStatus | null>(null);
   const [isRestartingGateway, setIsRestartingGateway] = useState(false);
   const [selectedSubagent, setSelectedSubagent] = useState<Subagent | null>(null);
+  const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSearchIgnoreCase, setSessionSearchIgnoreCase] = useState(true);
@@ -502,7 +504,33 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   useEffect(() => {
     setSelectedSubagent(null);
+    setFilePreview(null);
   }, [currentSession?.id]);
+
+  useEffect(() => {
+    const handlePreviewFile = async (event: Event) => {
+      const detail = (event as CustomEvent<{ filePath?: string; workingDirectory?: string }>).detail;
+      if (!detail?.filePath) return;
+      const result = await window.electron.shell.readPreviewFile(
+        detail.filePath,
+        detail.workingDirectory,
+      );
+      if (result.success && result.content !== undefined && result.filePath) {
+        setSelectedSubagent(null);
+        setFilePreview({ content: result.content, filePath: result.filePath });
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: result.notFound
+            ? i18nService.t('coworkAttachmentNotFound').replace('{filepath}', detail.filePath)
+            : result.error || i18nService.t('coworkFilePreviewFailed'),
+        }),
+      );
+    };
+    window.addEventListener('cowork:preview-file', handlePreviewFile);
+    return () => window.removeEventListener('cowork:preview-file', handlePreviewFile);
+  }, []);
 
   useEffect(() => {
     setIsSessionSearchOpen(false);
@@ -853,6 +881,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             subagent={selectedSubagent}
             onClose={() => setSelectedSubagent(null)}
           />
+          {filePreview && (
+            <FilePreviewDrawer preview={filePreview} onClose={() => setFilePreview(null)} />
+          )}
         </div>
       </div>
     );

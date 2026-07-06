@@ -2,6 +2,8 @@ import { ipcMain, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+import { getPreviewableFileExtension } from '../../../shared/filePreview';
+
 const safeDecodeURIComponent = (value: string): string => {
   try {
     return decodeURIComponent(value);
@@ -63,6 +65,22 @@ export const registerShellHandlers = (): void => {
       }
       const result = await shell.openPath(normalizedPath);
       return result ? { success: false, error: result } : { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  ipcMain.handle('shell:readPreviewFile', async (_event, filePath: string, workingDirectory?: string) => {
+    try {
+      const normalizedPath = resolveShellOpenPath(filePath, workingDirectory);
+      if (!getPreviewableFileExtension(normalizedPath)) {
+        return { success: false, error: 'Unsupported preview file type' };
+      }
+      if (!fs.existsSync(normalizedPath)) {
+        return { success: false, notFound: true };
+      }
+      const content = await fs.promises.readFile(normalizedPath, 'utf8');
+      return { success: true, content, filePath: normalizedPath };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
