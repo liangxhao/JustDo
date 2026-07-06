@@ -109,12 +109,7 @@ interface CoworkApiConfig {
 }
 
 type OpenClawEnginePhase =
-  | 'not_installed'
-  | 'installing'
-  | 'ready'
-  | 'starting'
-  | 'running'
-  | 'error';
+  'not_installed' | 'installing' | 'ready' | 'starting' | 'running' | 'error';
 
 interface OpenClawEngineStatus {
   phase: OpenClawEnginePhase;
@@ -571,6 +566,7 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
   };
   shell: {
+    showAttachmentContextMenu: () => Promise<'open' | 'open-with-system' | 'show-in-folder' | null>;
     openPath: (
       filePath: string,
       workingDirectory?: string,
@@ -585,7 +581,10 @@ interface IElectronAPI {
       error?: string;
       notFound?: boolean;
     }>;
-    showItemInFolder: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+    showItemInFolder: (
+      filePath: string,
+      workingDirectory?: string,
+    ) => Promise<{ success: boolean; error?: string; notFound?: boolean }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   };
   autoLaunch: {

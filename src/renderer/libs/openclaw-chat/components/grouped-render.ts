@@ -272,11 +272,7 @@ function extractTranscriptAttachments(message: unknown): RenderableAttachment[] 
     .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
 }
 
-async function openAttachment(
-  event: Event,
-  url: string,
-  workingDirectory?: string,
-): Promise<void> {
+async function openAttachment(event: Event, url: string, workingDirectory?: string): Promise<void> {
   event.stopPropagation();
   try {
     const localPath = localPathFromAttachmentUrl(url);
@@ -307,6 +303,47 @@ async function openAttachment(
   }
 }
 
+async function showAttachmentContextMenu(
+  event: Event,
+  url: string,
+  workingDirectory?: string,
+): Promise<void> {
+  event.preventDefault();
+  event.stopPropagation();
+  const action = await window.electron.shell.showAttachmentContextMenu();
+  if (!action) return;
+  if (action === 'open') {
+    await openAttachment(event, url, workingDirectory);
+    return;
+  }
+
+  try {
+    const isExternal = /^https?:\/\//i.test(url);
+    const localPath = localPathFromAttachmentUrl(url);
+    const result =
+      action === 'open-with-system'
+        ? isExternal
+          ? await window.electron.shell.openExternal(url)
+          : await window.electron.shell.openPath(localPath, workingDirectory)
+        : isExternal
+          ? { success: false, notFound: true }
+          : await window.electron.shell.showItemInFolder(localPath, workingDirectory);
+    if (!result.success) {
+      if ('notFound' in result && result.notFound) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkAttachmentNotFound').replace('{filepath}', url),
+          }),
+        );
+        return;
+      }
+      console.error('[GroupedRender] Failed to handle attachment menu action', result.error);
+    }
+  } catch (error) {
+    console.error('[GroupedRender] Failed to handle attachment menu action', error);
+  }
+}
+
 function renderAssistantAttachments(
   attachments: RenderableAttachment[],
   workingDirectory?: string,
@@ -321,8 +358,9 @@ function renderAssistantAttachments(
             class="message-attachment"
             title=${attachment.url}
             aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
-            @click=${(event: Event) =>
-              void openAttachment(event, attachment.url, workingDirectory)}
+            @click=${(event: Event) => void openAttachment(event, attachment.url, workingDirectory)}
+            @contextmenu=${(event: Event) =>
+              void showAttachmentContextMenu(event, attachment.url, workingDirectory)}
           >
             <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
             <span class="message-attachment__name">${attachment.label}</span>
@@ -477,19 +515,23 @@ export function renderMessageGroupWithTrailingStream(
       <div class="chat-group__content">
         ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
-        ${toolCards.length > 0
-          ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages))
-          : nothing}
-        ${hasStreamText
-          ? html`
-              <div class="chat-bubble chat-bubble--assistant">
-                ${renderCopyButton(streamText)}
-                <div class="chat-bubble__text markdown-content">
-                  ${unsafeHTML(toStreamingMarkdownHtml(streamText))}
+        ${
+          toolCards.length > 0
+            ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages))
+            : nothing
+        }
+        ${
+          hasStreamText
+            ? html`
+                <div class="chat-bubble chat-bubble--assistant">
+                  ${renderCopyButton(streamText)}
+                  <div class="chat-bubble__text markdown-content">
+                    ${unsafeHTML(toStreamingMarkdownHtml(streamText))}
+                  </div>
                 </div>
-              </div>
-            `
-          : renderReadingIndicator()}
+              `
+            : renderReadingIndicator()
+        }
       </div>
     </div>
   `;
@@ -546,10 +588,11 @@ function renderUserMessage(
   return html`
     <div class="chat-bubble chat-bubble--user" dir=${dir}>
       ${renderCopyButton(text)}
-      ${images.length > 0
-        ? html`
-            <div class="chat-bubble__images">
-              ${images.map(
+      ${
+        images.length > 0
+          ? html`
+              <div class="chat-bubble__images">
+                ${images.map(
                 image => html`
                   <img
                     class="chat-bubble__image"
@@ -559,9 +602,10 @@ function renderUserMessage(
                   />
                 `,
               )}
-            </div>
-          `
-        : nothing}
+              </div>
+            `
+          : nothing
+      }
       ${renderAssistantAttachments(visibleAttachments, workingDirectory)}
       ${text ? html`<div class="chat-bubble__text">${unsafeHTML(htmlContent)}</div>` : nothing}
     </div>
@@ -598,9 +642,11 @@ function renderAssistantMessage(
 
   return html`
     ${thinking ? renderThinkingBlock(thinking) : nothing}
-    ${toolCards.length > 0
-      ? renderToolTimeline(toolCards, !shouldOpenToolTimeline(rawMessage))
-      : nothing}
+    ${
+      toolCards.length > 0
+        ? renderToolTimeline(toolCards, !shouldOpenToolTimeline(rawMessage))
+        : nothing
+    }
     ${renderAssistantTextBlock(text)} ${renderAssistantAttachments(attachments, workingDirectory)}
   `;
 }
@@ -631,17 +677,19 @@ function renderToolMessage(message: unknown): TemplateResult {
     <details class="tool-message ${isError ? 'tool-message--error' : ''}">
       <summary class="tool-message__header">
         <span class="tool-message__icon">
-          ${isError
-            ? html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                <path
-                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
-                />
-              </svg>`
-            : html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                <path
-                  d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"
-                />
-              </svg>`}
+          ${
+            isError
+              ? html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                  <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+                  />
+                </svg>`
+              : html`<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                  <path
+                    d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"
+                  />
+                </svg>`
+          }
         </span>
         <span class="tool-message__name">${display.title}</span>
       </summary>
@@ -839,19 +887,23 @@ export function renderStreamingGroup(
       </div>
       <div class="chat-group__content">
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
-        ${toolCards.length > 0
-          ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages))
-          : nothing}
-        ${hasText
-          ? html`
-              <div class="chat-bubble chat-bubble--assistant">
-                ${renderCopyButton(text)}
-                <div class="chat-bubble__text markdown-content">
-                  ${unsafeHTML(toStreamingMarkdownHtml(text))}
+        ${
+          toolCards.length > 0
+            ? renderToolTimeline(toolCards, !hasLiveToolMessage(toolMessages))
+            : nothing
+        }
+        ${
+          hasText
+            ? html`
+                <div class="chat-bubble chat-bubble--assistant">
+                  ${renderCopyButton(text)}
+                  <div class="chat-bubble__text markdown-content">
+                    ${unsafeHTML(toStreamingMarkdownHtml(text))}
+                  </div>
                 </div>
-              </div>
-            `
-          : renderReadingIndicator()}
+              `
+            : renderReadingIndicator()
+        }
       </div>
     </div>
   `;

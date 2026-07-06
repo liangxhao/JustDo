@@ -142,12 +142,8 @@ contextBridge.exposeInMainWorld('electron', {
   getApiConfig: () => ipcRenderer.invoke('get-api-config'),
   checkApiConfig: (options?: { probeModel?: boolean }) =>
     ipcRenderer.invoke('check-api-config', options),
-  saveApiConfig: (config: {
-    apiKey: string;
-    baseURL: string;
-    model: string;
-    apiType?: 'openai';
-  }) => ipcRenderer.invoke('save-api-config', config),
+  saveApiConfig: (config: { apiKey: string; baseURL: string; model: string; apiType?: 'openai' }) =>
+    ipcRenderer.invoke('save-api-config', config),
   generateSessionTitle: (userInput: string | null) =>
     ipcRenderer.invoke('generate-session-title', userInput),
   getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),
@@ -384,11 +380,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('dialog:readFileAsDataUrl', filePath),
   },
   shell: {
+    showAttachmentContextMenu: () => ipcRenderer.invoke('shell:showAttachmentContextMenu'),
     openPath: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke('shell:openPath', filePath, workingDirectory),
     readPreviewFile: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke('shell:readPreviewFile', filePath, workingDirectory),
-    showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
+    showItemInFolder: (filePath: string, workingDirectory?: string) =>
+      ipcRenderer.invoke('shell:showItemInFolder', filePath, workingDirectory),
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   },
   autoLaunch: {
