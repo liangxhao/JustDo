@@ -278,6 +278,14 @@ async function openAttachment(event: Event, url: string): Promise<void> {
       ? await window.electron.shell.openExternal(url)
       : await window.electron.shell.openPath(localPathFromAttachmentUrl(url));
     if (!result.success) {
+      if ('notFound' in result && result.notFound) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkAttachmentNotFound'),
+          }),
+        );
+        return;
+      }
       console.error('[GroupedRender] Failed to open attachment', result.error);
     }
   } catch (error) {

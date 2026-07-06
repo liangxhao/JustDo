@@ -1,4 +1,5 @@
 import { ipcMain, shell } from 'electron';
+import fs from 'fs';
 
 const safeDecodeURIComponent = (value: string): string => {
   try {
@@ -42,7 +43,11 @@ const normalizeWindowsShellPath = (inputPath: string): string => {
 export const registerShellHandlers = (): void => {
   ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
     try {
-      const result = await shell.openPath(normalizeWindowsShellPath(filePath));
+      const normalizedPath = normalizeWindowsShellPath(filePath);
+      if (!fs.existsSync(normalizedPath)) {
+        return { success: false, notFound: true };
+      }
+      const result = await shell.openPath(normalizedPath);
       return result ? { success: false, error: result } : { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };

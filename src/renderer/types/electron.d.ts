@@ -571,7 +571,9 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
   };
   shell: {
-    openPath: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+    openPath: (
+      filePath: string,
+    ) => Promise<{ success: boolean; error?: string; notFound?: boolean }>;
     showItemInFolder: (filePath: string) => Promise<{ success: boolean; error?: string }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   };

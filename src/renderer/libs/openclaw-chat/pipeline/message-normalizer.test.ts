@@ -79,6 +79,28 @@ describe('normalizeMessage image content', () => {
   });
 });
 
+describe('normalizeMessage assistant media', () => {
+  test('renders a MEDIA path even when it is relative or does not exist', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: '文件已生成：\nMEDIA:missing/output/report.pdf',
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: '文件已生成：' },
+      {
+        type: 'attachment',
+        attachment: {
+          url: 'missing/output/report.pdf',
+          kind: 'document',
+          label: 'report.pdf',
+          mimeType: 'application/pdf',
+        },
+      },
+    ]);
+  });
+});
+
 describe('normalizeMessage assistant model label', () => {
   test('uses OpenClaw provider and model fields for assistant messages', () => {
     const message = normalizeMessage({
