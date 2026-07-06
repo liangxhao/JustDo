@@ -152,6 +152,42 @@ function dedupeToolCards(cards: ToolCard[]): ToolCard[] {
   return result;
 }
 
+export function getThinkingToolsGroupToolCount(group: MessageGroup): number | null {
+  if (normalizeRoleForGrouping(group.role) !== 'assistant' || group.messages.length === 0) {
+    return null;
+  }
+
+  let hasThinking = false;
+  const cards: ToolCard[] = [];
+  for (const entry of group.messages) {
+    const raw = asRecord(entry.message);
+    const attachedToolMessages = getAttachedToolMessages(entry.message);
+    if (raw?.__justdoToolActive === true || hasLiveToolMessage(attachedToolMessages)) {
+      return null;
+    }
+    const content = Array.isArray(raw?.content) ? raw.content : [];
+    for (const value of content) {
+      const block = asRecord(value);
+      if (!block) continue;
+      const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
+      if (type === 'thinking') {
+        hasThinking = true;
+        continue;
+      }
+      if (type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        return null;
+      }
+    }
+    cards.push(
+      ...(extractToolCardsCached(entry.message) as ToolCard[]),
+      ...toolMessagesToCards(attachedToolMessages),
+    );
+  }
+
+  const toolCount = dedupeToolCards(cards).length;
+  return hasThinking && toolCount > 0 ? toolCount : null;
+}
+
 function shouldOpenToolTimeline(rawMessage: unknown): boolean {
   return (rawMessage as Record<string, unknown> | null)?.__justdoToolTimelineOpen === true;
 }

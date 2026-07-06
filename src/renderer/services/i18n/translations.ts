@@ -198,6 +198,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkToolResult: '执行结果',
     coworkToolRunning: '执行中',
     coworkToolTimelineSummaryLabel: 'tools',
+    coworkThinkingToolsClusterSummary: 'Thinking × {thinkingCount}, Tool × {toolCount}',
     coworkDestructiveOperation: '高危操作：此命令可能导致不可逆的数据丢失，请务必确认。',
     coworkCautionOperation: '注意：此命令可能会修改文件或系统状态，请仔细检查。',
     dangerReasonRecursiveDelete: '递归删除文件',
@@ -786,6 +787,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkToolResult: 'Result',
     coworkToolRunning: 'Running...',
     coworkToolTimelineSummaryLabel: 'tools',
+    coworkThinkingToolsClusterSummary: 'Thinking × {thinkingCount}, Tool × {toolCount}',
     coworkDestructiveOperation:
       'Destructive operation: This command may cause irreversible data loss. Please confirm carefully.',
     coworkCautionOperation:

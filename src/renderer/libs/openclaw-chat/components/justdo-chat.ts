@@ -17,6 +17,7 @@ import { buildChatItems } from '../pipeline/build-chat-items';
 import { extractTextCached } from '../pipeline/message-extract';
 import type { ChatItem, GatewayMessage, MessageGroup } from '../types';
 import {
+  getThinkingToolsGroupToolCount,
   renderMessageGroup,
   renderMessageGroupWithTrailingStream,
   renderStreamingGroup,
@@ -1155,6 +1156,25 @@ export class JustDoChatElement extends LitElement {
       font-weight: 500;
     }
 
+    .thinking-tools-cluster {
+      margin: 1px 0 4px;
+    }
+
+    .thinking-tools-cluster__summary {
+      width: fit-content;
+      margin-left: 44px;
+      cursor: pointer;
+      color: var(--justdo-chat-text-secondary, #9ca3af);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 2px 0;
+      user-select: none;
+    }
+
+    .thinking-tools-cluster__content {
+      margin-top: 2px;
+    }
+
     @keyframes thinking-pulse {
       0%,
       100% {
@@ -1558,7 +1578,7 @@ export class JustDoChatElement extends LitElement {
       <div class="chat-shell">
         ${this.renderMinimap(minimapEntries)}
         <div class="chat-container">
-          ${this.renderItems(items, thinkingForStreamingGroup)}
+          ${this.renderItems(items, thinkingForStreamingGroup, isStreaming)}
           ${thinkingStream && !hasLiveStreamItem
             ? renderStreamingThinkingGroup(
                 thinkingStream,
@@ -1886,6 +1906,7 @@ export class JustDoChatElement extends LitElement {
   private renderItems(
     items: Array<ChatItem | MessageGroup>,
     thinkingStream: string | null = null,
+    isStreaming = false,
   ): Array<TemplateResult | typeof nothing> {
     const rendered: Array<TemplateResult | typeof nothing> = [];
 
@@ -1893,6 +1914,52 @@ export class JustDoChatElement extends LitElement {
       const item = items[index];
       const prev = items[index - 1];
       const next = items[index + 1];
+      if (item?.kind === 'group') {
+        const clusters: MessageGroup[] = [];
+        const toolCounts: number[] = [];
+        let cursor = index;
+        for (; cursor < items.length; cursor += 1) {
+          const candidate = items[cursor];
+          if (candidate?.kind !== 'group') break;
+          const toolCount = getThinkingToolsGroupToolCount(candidate);
+          if (toolCount == null) break;
+          clusters.push(candidate);
+          toolCounts.push(toolCount);
+        }
+        const hasLaterMessageGroup = items
+          .slice(cursor)
+          .some(candidate => candidate?.kind === 'group');
+        if (isStreaming && !hasLaterMessageGroup && clusters.length > 0) {
+          clusters.pop();
+          toolCounts.pop();
+        }
+        if (clusters.length > 1) {
+          const totalTools = toolCounts.reduce((total, count) => total + count, 0);
+          const summary = i18nService
+            .t('coworkThinkingToolsClusterSummary')
+            .replace('{thinkingCount}', String(clusters.length))
+            .replace('{toolCount}', String(totalTools));
+          rendered.push(html`
+            <details class="thinking-tools-cluster">
+              <summary class="thinking-tools-cluster__summary">${summary}</summary>
+              <div class="thinking-tools-cluster__content">
+                ${clusters.map((group, clusterIndex) =>
+                  renderMessageGroup(group, {
+                    searchQuery: this.searchQuery,
+                    showFooter: false,
+                    showAvatar:
+                      clusterIndex === 0 && shouldRenderGroupAvatarByPrevItem(group, prev),
+                    assistantName: this.assistantName,
+                    workingDirectory: this.workingDirectory,
+                  }),
+                )}
+              </div>
+            </details>
+          `);
+          index += clusters.length - 1;
+          continue;
+        }
+      }
       if (
         item?.kind === 'group' &&
         item.role === 'assistant' &&

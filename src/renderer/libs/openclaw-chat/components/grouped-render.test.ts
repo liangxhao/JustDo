@@ -9,10 +9,83 @@ import type { MessageGroup } from '../types';
 import {
   formatGroupTimestamp,
   getGroupFooterLabel,
+  getThinkingToolsGroupToolCount,
   renderMessageGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
 } from './grouped-render';
+
+function createThinkingToolsGroup(
+  toolCount: number,
+  includeText = false,
+  isActive = false,
+): MessageGroup {
+  return {
+    kind: 'group',
+    key: 'thinking-tools-group',
+    role: 'assistant',
+    messages: [
+      {
+        key: 'thinking-tools-message',
+        message: {
+          role: 'assistant',
+          __justdoToolActive: isActive,
+          content: [
+            { type: 'thinking', thinking: 'reasoning' },
+            ...Array.from({ length: toolCount }, (_, index) => ({
+              type: 'tool_use',
+              id: `tool-${index}`,
+              name: `Tool${index}`,
+              input: {},
+            })),
+            ...(includeText ? [{ type: 'text', text: 'answer' }] : []),
+          ],
+        },
+      },
+    ],
+    timestamp: 1,
+    isStreaming: false,
+  };
+}
+
+describe('getThinkingToolsGroupToolCount', () => {
+  test('counts tools in a Thinking and Tools group', () => {
+    expect(getThinkingToolsGroupToolCount(createThinkingToolsGroup(3))).toBe(3);
+  });
+
+  test('does not match a group that also contains Content', () => {
+    expect(getThinkingToolsGroupToolCount(createThinkingToolsGroup(2, true))).toBeNull();
+  });
+
+  test('does not match a Thinking and Tools group until its tool completes', () => {
+    expect(getThinkingToolsGroupToolCount(createThinkingToolsGroup(1, false, true))).toBeNull();
+    expect(getThinkingToolsGroupToolCount(createThinkingToolsGroup(1, false, false))).toBe(1);
+  });
+
+  test('does not match while an attached tool is active', () => {
+    const baseGroup = createThinkingToolsGroup(1);
+    const group = {
+      ...baseGroup,
+      messages: baseGroup.messages.map(entry => ({
+        ...entry,
+        message: {
+          ...(entry.message as Record<string, unknown>),
+          __justdoAttachedToolMessages: [
+            {
+              role: 'assistant',
+              toolCallId: 'attached-tool',
+              toolName: 'AttachedTool',
+              __justdoToolActive: true,
+              content: [{ type: 'toolcall', toolCallId: 'attached-tool', name: 'AttachedTool' }],
+            },
+          ],
+        },
+      })),
+    };
+
+    expect(getThinkingToolsGroupToolCount(group)).toBeNull();
+  });
+});
 
 function createGroup(role: string): MessageGroup {
   return {
