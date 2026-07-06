@@ -1,8 +1,13 @@
 import { app } from 'electron';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
-export const OUTBOUND_HEADER_POLICY_CONFIG = {
+export type OutboundHeaderPolicyConfig = {
+  /**
+   * Whether outbound header injection is enabled.
+   */
+  enabled: boolean;
   /**
    * Only requests matching one of these base URLs receive the configured headers.
    *
@@ -32,17 +37,61 @@ export const OUTBOUND_HEADER_POLICY_CONFIG = {
    * - To allow two subdomains, add each explicitly:
    *   `https://api.example.com/` and `https://files.example.com/`.
    */
-  baseUrlWhitelist: [],
-  headerNames: ['user_id', 'user_cookie'],
-} as const satisfies {
   baseUrlWhitelist: readonly string[];
+  /**
+   * Header names whose values are read from user_info.json and injected into
+   * matching outbound requests.
+   */
   headerNames: readonly string[];
 };
 
+export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig = Object.freeze({
+  enabled: true,
+  baseUrlWhitelist: [],
+  headerNames: ['user_id', 'cookie'],
+});
+
 const USER_INFO_RELATIVE_PATH = path.join('JustDo', 'huawei', 'user_info.json');
+const POLICY_CONFIG_RELATIVE_PATH = path.join(
+  'JustDo',
+  'outbound-header-proxy',
+  'config.json',
+);
+const POLICY_CONFIG_README_FILE_NAME = 'config.README.md';
 const EMPTY_HEADER_VALUE = '';
+const POLICY_CONFIG_README_CONTENT = `# config.json
+
+This file controls outbound header injection.
+
+- \`enabled\`: Enables or disables outbound header injection.
+- \`headerNames\`: Header names to read from \`user_info.json\` and inject.
+- \`baseUrlWhitelist\`: Only matching request URLs receive the configured headers.
+
+## baseUrlWhitelist matching
+
+- Each entry must be an absolute URL beginning with \`http://\` or \`https://\`.
+- Protocols, hostnames, and ports must match exactly.
+- Paths are matched by prefix.
+- Query strings and fragments are ignored.
+- Invalid entries are ignored.
+- An empty list matches no requests.
+- A trailing slash is recommended for directory paths. For example,
+  \`https://api.example.com/v1/\` matches \`/v1/models\` without also matching
+  \`/v10/models\`.
+
+Example:
+
+\`\`\`json
+{
+  "enabled": true,
+  "baseUrlWhitelist": ["https://api.example.com/v1/"],
+  "headerNames": ["user_id", "cookie"]
+}
+\`\`\`
+`;
 
 let cachedOutboundHeaderValues: Readonly<Record<string, string>> | null = null;
+let cachedOutboundHeaderPolicyConfig = DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
 
 const normalizeHeaderValue = (value: unknown): string => {
   if (value === null || value === undefined) {
@@ -60,10 +109,93 @@ const normalizeHeaderValue = (value: unknown): string => {
 export const resolveOutboundHeaderUserInfoPath = (): string =>
   path.join(app.getPath('appData'), USER_INFO_RELATIVE_PATH);
 
+export const resolveOutboundHeaderPolicyConfigPath = (): string =>
+  path.join(
+    app?.getPath('appData')
+      ?? process.env.APPDATA
+      ?? path.join(os.homedir(), 'AppData', 'Roaming'),
+    POLICY_CONFIG_RELATIVE_PATH,
+  );
+
+const readOutboundHeaderPolicyConfig = (
+  configPath: string,
+): OutboundHeaderPolicyConfig => {
+  const configDirectory = path.dirname(configPath);
+  const readmePath = path.join(configDirectory, POLICY_CONFIG_README_FILE_NAME);
+  try {
+    fs.mkdirSync(configDirectory, { recursive: true });
+    if (!fs.existsSync(readmePath)) {
+      fs.writeFileSync(readmePath, POLICY_CONFIG_README_CONTENT, 'utf8');
+    }
+  } catch (error) {
+    console.warn('[OutboundHeaderPolicy] Failed to create config README:', error);
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (
+      parsed
+      && typeof parsed === 'object'
+      && !Array.isArray(parsed)
+      && typeof (parsed as Record<string, unknown>).enabled === 'boolean'
+      && Array.isArray((parsed as Record<string, unknown>).baseUrlWhitelist)
+      && Array.isArray((parsed as Record<string, unknown>).headerNames)
+    ) {
+      const config = parsed as Record<string, unknown>;
+      return Object.freeze({
+        enabled: config.enabled as boolean,
+        baseUrlWhitelist: Object.freeze(
+          (config.baseUrlWhitelist as unknown[]).filter(
+            (value): value is string => typeof value === 'string',
+          ),
+        ),
+        headerNames: Object.freeze(
+          (config.headerNames as unknown[]).filter(
+            (value): value is string => typeof value === 'string',
+          ),
+        ),
+      });
+    }
+    console.warn('[OutboundHeaderPolicy] Invalid outbound header policy config; using defaults');
+  } catch (error) {
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    if (errorCode === 'ENOENT') {
+      fs.mkdirSync(configDirectory, { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        `${JSON.stringify(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG, null, 2)}\n`,
+        'utf8',
+      );
+    } else {
+      console.warn('[OutboundHeaderPolicy] Failed to read policy config:', error);
+    }
+  }
+  return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
+};
+
+export const getOutboundHeaderPolicyConfig = (): OutboundHeaderPolicyConfig =>
+  cachedOutboundHeaderPolicyConfig;
+
+/**
+ * Reloads the outbound header policy and user header values from disk.
+ *
+ * Call without arguments to refresh both default files:
+ * - `%APPDATA%/JustDo/outbound-header-proxy/config.json`
+ * - `%APPDATA%/JustDo/huawei/user_info.json`
+ *
+ * Subsequent requests handled by the running outbound header proxy use the
+ * refreshed policy and values. The optional parameters are intended for tests
+ * or callers that need to override the default paths or header names.
+ *
+ * @returns The refreshed header values keyed by configured header name.
+ */
 export const updateOutboundHeaderUserInfoCache = (
   userInfoPath = resolveOutboundHeaderUserInfoPath(),
-  headerNames: readonly string[] = OUTBOUND_HEADER_POLICY_CONFIG.headerNames,
+  headerNames?: readonly string[],
+  configPath = resolveOutboundHeaderPolicyConfigPath(),
 ): Readonly<Record<string, string>> => {
+  cachedOutboundHeaderPolicyConfig = readOutboundHeaderPolicyConfig(configPath);
+  const effectiveHeaderNames = headerNames ?? cachedOutboundHeaderPolicyConfig.headerNames;
   let userInfo: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(userInfoPath, 'utf8'));
@@ -79,7 +211,10 @@ export const updateOutboundHeaderUserInfoCache = (
 
   cachedOutboundHeaderValues = Object.freeze(
     Object.fromEntries(
-      headerNames.map(headerName => [headerName, normalizeHeaderValue(userInfo[headerName])]),
+      effectiveHeaderNames.map(headerName => [
+        headerName,
+        normalizeHeaderValue(userInfo[headerName]),
+      ]),
     ),
   );
   return cachedOutboundHeaderValues;
@@ -87,7 +222,7 @@ export const updateOutboundHeaderUserInfoCache = (
 
 export const getOutboundHeaderUserInfo = (
   userInfoPath = resolveOutboundHeaderUserInfoPath(),
-  headerNames: readonly string[] = OUTBOUND_HEADER_POLICY_CONFIG.headerNames,
+  headerNames?: readonly string[],
 ): Readonly<Record<string, string>> => {
   return cachedOutboundHeaderValues
     ?? updateOutboundHeaderUserInfoCache(userInfoPath, headerNames);

@@ -7,9 +7,10 @@ import path from 'path';
 import { ProxyAgent } from 'proxy-agent';
 
 import {
+  getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
-  OUTBOUND_HEADER_POLICY_CONFIG,
   resolveOutboundHeaderUserInfoPath,
+  updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
 
@@ -19,6 +20,7 @@ const CA_CERTIFICATE_PATH = path.join('certs', 'ca.pem');
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 export type OutboundHeaderProxyConfig = {
+  enabled: boolean;
   baseUrlWhitelist: readonly string[];
   headerNames: readonly string[];
 };
@@ -41,8 +43,9 @@ const normalizeBaseUrl = (value: string): string | null => {
 };
 
 export const resolveOutboundHeaderProxyConfig = (
-  policy: OutboundHeaderProxyConfig = OUTBOUND_HEADER_POLICY_CONFIG,
+  policy: OutboundHeaderProxyConfig = getOutboundHeaderPolicyConfig(),
 ): OutboundHeaderProxyConfig => ({
+  enabled: policy.enabled,
   headerNames: policy.headerNames
     .map(name => name.trim())
     .filter(name => HTTP_HEADER_NAME_PATTERN.test(name)),
@@ -109,12 +112,12 @@ export class OutboundHeaderProxy {
   private upstreamAgent: ProxyAgent | null = null;
   private info: OutboundHeaderProxyInfo | null = null;
   private originalFetch: typeof globalThis.fetch | null = null;
-  private readonly config: OutboundHeaderProxyConfig;
+  private readonly configuredPolicy: OutboundHeaderProxyConfig | null;
   private readonly userInfoPath: string;
   private readonly resolveUpstreamProxy: (targetUrl: string) => Promise<string | null>;
 
   constructor(
-    config = resolveOutboundHeaderProxyConfig(),
+    config?: OutboundHeaderProxyConfig,
     resolveUpstreamProxy = async (targetUrl: string): Promise<string | null> => {
       if (!isSystemProxyEnabled()) {
         return null;
@@ -123,9 +126,16 @@ export class OutboundHeaderProxy {
     },
     userInfoPath = resolveOutboundHeaderUserInfoPath(),
   ) {
-    this.config = config;
+    this.configuredPolicy = config ? resolveOutboundHeaderProxyConfig(config) : null;
     this.resolveUpstreamProxy = resolveUpstreamProxy;
     this.userInfoPath = userInfoPath;
+    if (!config) {
+      updateOutboundHeaderUserInfoCache(this.userInfoPath);
+    }
+  }
+
+  private getConfig(): OutboundHeaderProxyConfig {
+    return this.configuredPolicy ?? resolveOutboundHeaderProxyConfig();
   }
 
   async start(): Promise<OutboundHeaderProxyInfo> {
@@ -147,7 +157,8 @@ export class OutboundHeaderProxy {
       const requestUrl = /^https?:\/\//i.test(requestPath)
         ? requestPath
         : `${context.isSSL ? 'https' : 'http'}://${context.clientToProxyRequest.headers.host || ''}${requestPath}`;
-      if (shouldInjectOutboundHeaders(requestUrl, this.config.baseUrlWhitelist)) {
+      const config = this.getConfig();
+      if (config.enabled && shouldInjectOutboundHeaders(requestUrl, config.baseUrlWhitelist)) {
         const upstreamHeaders = context.proxyToServerRequestOptions?.headers;
         if (!upstreamHeaders || Array.isArray(upstreamHeaders)) {
           callback(new Error(`Upstream request headers are unavailable for ${requestUrl}`));
@@ -155,7 +166,7 @@ export class OutboundHeaderProxy {
         }
         applyOutboundHeaders(
           upstreamHeaders,
-          getOutboundHeaderUserInfo(this.userInfoPath, this.config.headerNames),
+          getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
         );
       }
       callback();
@@ -219,10 +230,11 @@ export class OutboundHeaderProxy {
   private registerElectronHeaderInjection(): void {
     session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
       const requestHeaders = { ...details.requestHeaders };
-      if (shouldInjectOutboundHeaders(details.url, this.config.baseUrlWhitelist)) {
+      const config = this.getConfig();
+      if (config.enabled && shouldInjectOutboundHeaders(details.url, config.baseUrlWhitelist)) {
         applyOutboundHeaders(
           requestHeaders,
-          getOutboundHeaderUserInfo(this.userInfoPath, this.config.headerNames),
+          getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
         );
       }
       callback({ requestHeaders });
@@ -239,7 +251,8 @@ export class OutboundHeaderProxy {
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const requestUrl =
         input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
-      if (!shouldInjectOutboundHeaders(requestUrl, this.config.baseUrlWhitelist)) {
+      const config = this.getConfig();
+      if (!config.enabled || !shouldInjectOutboundHeaders(requestUrl, config.baseUrlWhitelist)) {
         return originalFetch(input, init);
       }
 
@@ -247,7 +260,7 @@ export class OutboundHeaderProxy {
       new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
       const headerValues = getOutboundHeaderUserInfo(
         this.userInfoPath,
-        this.config.headerNames,
+        config.headerNames,
       );
       for (const [name, value] of Object.entries(headerValues)) {
         headers.set(name, value);

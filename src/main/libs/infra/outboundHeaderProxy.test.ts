@@ -4,6 +4,7 @@ import path from 'path';
 import { afterEach, expect, test } from 'vitest';
 
 import {
+  getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
   updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
@@ -29,6 +30,14 @@ const writeUserInfo = (content: string): string => {
   const userInfoPath = path.join(directory, 'user_info.json');
   fs.writeFileSync(userInfoPath, content);
   return userInfoPath;
+};
+
+const writePolicyConfig = (content: object): string => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-header-policy-'));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify(content));
+  return configPath;
 };
 
 test('matches no requests when the whitelist is empty', () => {
@@ -97,6 +106,24 @@ test('reuses cached user info until the update function is called', () => {
   });
 });
 
+test('reloads the outbound header policy together with user info', () => {
+  const userInfoPath = writeUserInfo(JSON.stringify({ account_id: 'account-123' }));
+  const configPath = writePolicyConfig({
+    enabled: false,
+    baseUrlWhitelist: ['https://example.com/api/'],
+    headerNames: ['account_id'],
+  });
+
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
+    account_id: 'account-123',
+  });
+  expect(getOutboundHeaderPolicyConfig()).toEqual({
+    enabled: false,
+    baseUrlWhitelist: ['https://example.com/api/'],
+    headerNames: ['account_id'],
+  });
+});
+
 test('adds only configured header values and replaces names case-insensitively', () => {
   const headers = { User_Id: 'old-value', untouched: 'yes' };
 
@@ -114,9 +141,11 @@ test('adds only configured header values and replaces names case-insensitively',
 
 test('normalizes the static policy and ignores invalid base URLs', () => {
   expect(resolveOutboundHeaderProxyConfig({
+    enabled: true,
     headerNames: [' user_id ', '', 'invalid header', 'bad:header', 'user_cookie'],
     baseUrlWhitelist: ['https://one.example/api/', 'invalid', 'http://two.example/'],
   })).toEqual({
+    enabled: true,
     headerNames: ['user_id', 'user_cookie'],
     baseUrlWhitelist: ['https://one.example/api/', 'http://two.example/'],
   });
