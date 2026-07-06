@@ -92,7 +92,7 @@ import {
 } from './libs/openclaw/sessions/openclawChannelSessionSync';
 import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
 import { createPluginMarketplaceService, PluginManager } from './libs/plugin';
-import { McpStore } from './mcpStore';
+import { McpStore } from './libs/mcp/mcpStore';
 
 const outboundHeaderProxy = new OutboundHeaderProxy();
 

@@ -15,7 +15,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import type { McpServerRecord } from '../../mcpStore';
+import type { McpServerRecord } from './mcpStore';
 import { getElectronNodeRuntimePath, getEnhancedEnv } from '../cowork/coworkUtil';
 
 export interface McpToolManifestEntry {

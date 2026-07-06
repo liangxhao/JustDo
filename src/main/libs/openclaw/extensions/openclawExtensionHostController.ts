@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 import type { AskUserRequest, AskUserResponse } from '../../../../shared/openclawExtensions';
-import type { McpServerRecord } from '../../../mcpStore';
+import type { McpServerRecord } from '../../mcp/mcpStore';
 import { McpServerManager } from '../../mcp/mcpServerManager';
 import type { McpBridgeConfig } from '../config/openclawConfigSync';
 import {

@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import type { McpServerFormData, McpStore } from '../../mcpStore';
+import type { McpServerFormData, McpStore } from '../../libs/mcp/mcpStore';
 
 interface McpHandlerDependencies {
   getStore: () => McpStore;
