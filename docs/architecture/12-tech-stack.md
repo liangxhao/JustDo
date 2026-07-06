@@ -10,7 +10,7 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **Electron** | ^41.2.0 | 跨平台桌面应用框架 |
+| **Electron** | ^42.6.0 | 跨平台桌面应用框架 |
 | **React** | ^18.2.0 | UI 组件框架（状态管理、设置、布局） |
 | **React DOM** | ^18.2.0 | React DOM 渲染器 |
 | **TypeScript** | ^5.7.3 | 类型安全的 JavaScript |
