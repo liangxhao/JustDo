@@ -14,6 +14,7 @@ interface ChatMessageDisplayProps {
   isStreaming?: boolean;
   fullWidth?: boolean;
   assistantName?: string;
+  workingDirectory?: string;
   searchQuery?: string;
   searchCaseSensitive?: boolean;
   searchNavigationToken?: number;
@@ -33,6 +34,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   isStreaming = false,
   fullWidth = false,
   assistantName,
+  workingDirectory = '',
   searchQuery = '',
   searchCaseSensitive = false,
   searchNavigationToken = 0,
@@ -104,7 +106,8 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       chat.isStreaming = isStreaming;
     }
     chat.assistantName = assistantName ?? '';
-  }, [assistantName, controller, gatewayMessages, isStreaming]);
+    chat.workingDirectory = workingDirectory;
+  }, [assistantName, controller, gatewayMessages, isStreaming, workingDirectory]);
 
   useEffect(() => {
     const chat = chatRef.current;

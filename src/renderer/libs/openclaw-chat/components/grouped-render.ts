@@ -271,17 +271,21 @@ function extractTranscriptAttachments(message: unknown): RenderableAttachment[] 
     .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
 }
 
-async function openAttachment(event: Event, url: string): Promise<void> {
+async function openAttachment(
+  event: Event,
+  url: string,
+  workingDirectory?: string,
+): Promise<void> {
   event.stopPropagation();
   try {
     const result = /^https?:\/\//i.test(url)
       ? await window.electron.shell.openExternal(url)
-      : await window.electron.shell.openPath(localPathFromAttachmentUrl(url));
+      : await window.electron.shell.openPath(localPathFromAttachmentUrl(url), workingDirectory);
     if (!result.success) {
       if ('notFound' in result && result.notFound) {
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
-            detail: i18nService.t('coworkAttachmentNotFound'),
+            detail: i18nService.t('coworkAttachmentNotFound').replace('{filepath}', url),
           }),
         );
         return;
@@ -295,6 +299,7 @@ async function openAttachment(event: Event, url: string): Promise<void> {
 
 function renderAssistantAttachments(
   attachments: RenderableAttachment[],
+  workingDirectory?: string,
 ): TemplateResult | typeof nothing {
   if (attachments.length === 0) return nothing;
   return html`
@@ -306,7 +311,8 @@ function renderAssistantAttachments(
             class="message-attachment"
             title=${attachment.url}
             aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
-            @click=${(event: Event) => void openAttachment(event, attachment.url)}
+            @click=${(event: Event) =>
+              void openAttachment(event, attachment.url, workingDirectory)}
           >
             <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
             <span class="message-attachment__name">${attachment.label}</span>
@@ -406,6 +412,7 @@ export function renderMessageGroup(
     showFooter?: boolean;
     showAvatar?: boolean;
     assistantName?: string;
+    workingDirectory?: string;
   },
 ): TemplateResult | typeof nothing {
   if (!group.messages || group.messages.length === 0) return nothing;
@@ -438,7 +445,7 @@ export function renderMessageGroupWithTrailingStream(
   streamText: string,
   toolMessages: unknown[] = [],
   thinkingText: string | null = null,
-  opts?: { searchQuery?: string; showAvatar?: boolean },
+  opts?: { searchQuery?: string; showAvatar?: boolean; workingDirectory?: string },
 ): TemplateResult | typeof nothing {
   if (!group.messages || group.messages.length === 0) return nothing;
 
@@ -481,7 +488,7 @@ export function renderMessageGroupWithTrailingStream(
 function renderSingleMessage(
   message: unknown,
   role: string,
-  _opts?: { searchQuery?: string },
+  opts?: { searchQuery?: string; workingDirectory?: string },
 ): TemplateResult {
   const normalized = normalizeMessage(message) as NormalizedMessage | null;
   if (!normalized) return html`<div class="chat-bubble chat-bubble--empty"></div>`;
@@ -490,13 +497,17 @@ function renderSingleMessage(
   const isTool = role === 'tool';
 
   if (isTool) return renderToolMessage(message);
-  if (isUser) return renderUserMessage(normalized, message);
-  return renderAssistantMessage(normalized, message);
+  if (isUser) return renderUserMessage(normalized, message, opts?.workingDirectory);
+  return renderAssistantMessage(normalized, message, opts?.workingDirectory);
 }
 
 // ─── User Message ───────────────────────────────────────────────────────────
 
-function renderUserMessage(msg: NormalizedMessage, rawMessage: unknown): TemplateResult {
+function renderUserMessage(
+  msg: NormalizedMessage,
+  rawMessage: unknown,
+  workingDirectory?: string,
+): TemplateResult {
   const textContent = msg.content.filter(
     (c): c is { type: 'text'; text?: string } => c.type === 'text',
   );
@@ -541,7 +552,7 @@ function renderUserMessage(msg: NormalizedMessage, rawMessage: unknown): Templat
             </div>
           `
         : nothing}
-      ${renderAssistantAttachments(visibleAttachments)}
+      ${renderAssistantAttachments(visibleAttachments, workingDirectory)}
       ${text ? html`<div class="chat-bubble__text">${unsafeHTML(htmlContent)}</div>` : nothing}
     </div>
   `;
@@ -549,7 +560,11 @@ function renderUserMessage(msg: NormalizedMessage, rawMessage: unknown): Templat
 
 // ─── Assistant Message ──────────────────────────────────────────────────────
 
-function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): TemplateResult {
+function renderAssistantMessage(
+  msg: NormalizedMessage,
+  rawMessage: unknown,
+  workingDirectory?: string,
+): TemplateResult {
   const orderedBlocks = renderAssistantMessageInContentOrder(rawMessage);
   const attachments = msg.content
     .filter(
@@ -558,7 +573,7 @@ function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): Te
     )
     .map(item => item.attachment);
   if (orderedBlocks) {
-    return html`${orderedBlocks}${renderAssistantAttachments(attachments)}`;
+    return html`${orderedBlocks}${renderAssistantAttachments(attachments, workingDirectory)}`;
   }
 
   const thinking = extractThinkingCached(rawMessage);
@@ -576,7 +591,7 @@ function renderAssistantMessage(msg: NormalizedMessage, rawMessage: unknown): Te
     ${toolCards.length > 0
       ? renderToolTimeline(toolCards, !shouldOpenToolTimeline(rawMessage))
       : nothing}
-    ${renderAssistantTextBlock(text)} ${renderAssistantAttachments(attachments)}
+    ${renderAssistantTextBlock(text)} ${renderAssistantAttachments(attachments, workingDirectory)}
   `;
 }
 

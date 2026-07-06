@@ -268,7 +268,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkDropFileHint: '拖拽文件到此处，或直接粘贴文件',
     coworkAttachmentRemove: '移除',
     coworkOpenAttachment: '打开附件',
-    coworkAttachmentNotFound: '文件不存在',
+    coworkAttachmentNotFound: '文件不存在：{filepath}',
     coworkAttachmentReadFailed: '无法读取附件“{name}”，请检查文件是否存在或大小是否超限。',
     // Context menu
     contextMenuCut: '剪切',
@@ -859,7 +859,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkDropFileHint: 'Drop files here, or paste files directly',
     coworkAttachmentRemove: 'Remove',
     coworkOpenAttachment: 'Open attachment',
-    coworkAttachmentNotFound: 'File does not exist',
+    coworkAttachmentNotFound: 'File does not exist: {filepath}',
     coworkAttachmentReadFailed:
       'Could not read attachment “{name}”. Check that the file exists and is within the size limit.',
     // Context menu

@@ -27,6 +27,7 @@ function debugLog(...args: unknown[]): void {
 interface JustDoChatWrapperProps {
   className?: string;
   assistantName?: string;
+  workingDirectory?: string;
   searchQuery?: string;
   searchCaseSensitive?: boolean;
   searchNavigationToken?: number;
@@ -47,6 +48,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     {
       className,
       assistantName,
+      workingDirectory,
       searchQuery,
       searchCaseSensitive,
       searchNavigationToken,
@@ -215,6 +217,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         className={className}
         controller={controller}
         assistantName={assistantName}
+        workingDirectory={workingDirectory}
         searchQuery={searchQuery}
         searchCaseSensitive={searchCaseSensitive}
         searchNavigationToken={searchNavigationToken}

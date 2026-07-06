@@ -59,6 +59,9 @@ export class JustDoChatElement extends LitElement {
   declare assistantName: string;
 
   @property({ type: String, attribute: false })
+  declare workingDirectory: string;
+
+  @property({ type: String, attribute: false })
   declare searchQuery: string;
 
   @property({ type: Boolean, attribute: false })
@@ -83,6 +86,7 @@ export class JustDoChatElement extends LitElement {
     this.streamStartedAt = null;
     this.isStreaming = false;
     this.assistantName = '';
+    this.workingDirectory = '';
     this.searchQuery = '';
     this.searchCaseSensitive = false;
     this.currentMinimapIndex = -1;
@@ -1829,6 +1833,7 @@ export class JustDoChatElement extends LitElement {
           searchQuery: this.searchQuery,
           showAvatar,
           assistantName: this.assistantName,
+          workingDirectory: this.workingDirectory,
         });
       }
       if (item.kind === 'stream') {
@@ -1905,6 +1910,7 @@ export class JustDoChatElement extends LitElement {
             {
               searchQuery: this.searchQuery,
               showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
+              workingDirectory: this.workingDirectory,
             },
           ),
         );
@@ -1919,6 +1925,7 @@ export class JustDoChatElement extends LitElement {
             showFooter: shouldRenderGroupFooterByNextItem(item as MessageGroup, next),
             showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
             assistantName: this.assistantName,
+            workingDirectory: this.workingDirectory,
           }),
         );
         continue;

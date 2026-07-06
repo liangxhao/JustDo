@@ -384,7 +384,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('dialog:readFileAsDataUrl', filePath),
   },
   shell: {
-    openPath: (filePath: string) => ipcRenderer.invoke('shell:openPath', filePath),
+    openPath: (filePath: string, workingDirectory?: string) =>
+      ipcRenderer.invoke('shell:openPath', filePath, workingDirectory),
     showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   },
