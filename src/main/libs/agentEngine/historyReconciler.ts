@@ -10,10 +10,10 @@
 import { BrowserWindow } from 'electron';
 import * as path from 'path';
 
-import type { CoworkMessage, CoworkStore } from '../../../coworkStore';
-import { isManagedSessionKey } from '../../openclaw/sessions/openclawChannelSessionSync';
-import { extractGatewayHistoryEntries } from '../../openclaw/sessions/openclawHistory';
-import type { GatewayClientLike, SessionTurn } from '../gateway/types';
+import type { CoworkMessage, CoworkStore } from '../../coworkStore';
+import { isManagedSessionKey } from '../openclaw/sessions/openclawChannelSessionSync';
+import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
+import type { GatewayClientLike, SessionTurn } from './gateway/types';
 import {
   extractMessageText,
   extractSentFilePathsFromHistory,
@@ -21,7 +21,7 @@ import {
   FINAL_HISTORY_SYNC_LIMIT,
   isRecord,
   stripDiscordMentions,
-} from '../utils/gatewayHelpers';
+} from './gatewayHelpers';
 
 // Callback interface
 

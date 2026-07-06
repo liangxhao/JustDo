@@ -5,8 +5,8 @@
  * across event handlers, subagent tracker, and history reconciler.
  */
 
-import type { CoworkMessage } from '../../../coworkStore';
-import { extractGatewayMessageText } from '../../openclaw/sessions/openclawHistory';
+import type { CoworkMessage } from '../../coworkStore';
+import { extractGatewayMessageText } from '../openclaw/sessions/openclawHistory';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 

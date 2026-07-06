@@ -27,6 +27,9 @@ import {
   type OpenClawChannelSessionSync,
 } from '../openclaw/sessions/openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
+import { SessionRpc } from './gateway/sessionRpc';
+import { SkillRpc } from './gateway/skillRpc';
+import { GatewayTitleGenerator } from './gateway/titleGenerator';
 import type {
   AgentEventPayload,
   ChatEventPayload,
@@ -38,7 +41,15 @@ import type {
   SessionTurn,
   ToolStreamEntry,
 } from './gateway/types';
-import { HistoryReconciler } from './history/historyReconciler';
+import {
+  CHANNEL_SESSION_DISCOVERY_LIMIT,
+  extractMessageText,
+  GATEWAY_READY_TIMEOUT_MS,
+  isRecord,
+  OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
+  waitWithTimeout,
+} from './gatewayHelpers';
+import { HistoryReconciler } from './historyReconciler';
 import {
   type GatewaySubagent,
   listGatewaySubagents,
@@ -48,7 +59,6 @@ import {
   resetWebchatToolStream,
   syncWebchatToolStreamMessages,
 } from './openclaw/webchatToolStream';
-import { SkillRpcHandler } from './rpc/skillRpc';
 import type { PermissionResult } from './types';
 import type {
   CoworkContinueOptions,
@@ -57,14 +67,6 @@ import type {
   CoworkStartOptions,
   PermissionRequest,
 } from './types';
-import {
-  CHANNEL_SESSION_DISCOVERY_LIMIT,
-  extractMessageText,
-  GATEWAY_READY_TIMEOUT_MS,
-  isRecord,
-  OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
-  waitWithTimeout,
-} from './utils/gatewayHelpers';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -193,7 +195,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // Collaborators
   private historyReconciler!: HistoryReconciler;
-  private skillRpcHandler!: SkillRpcHandler;
+  private sessionRpc!: SessionRpc;
+  private skillRpc!: SkillRpc;
+  private titleGenerator!: GatewayTitleGenerator;
 
   agentTimeoutSeconds = OPENCLAW_AGENT_TIMEOUT_SECONDS;
 
@@ -239,11 +243,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       getFullHistorySyncLimit: () => FULL_HISTORY_SYNC_LIMIT,
     });
 
-    this.skillRpcHandler = new SkillRpcHandler({
+    this.titleGenerator = new GatewayTitleGenerator({
       ensureGatewayClientReady: () => this.ensureGatewayClientReady(),
-      requireGatewayClient: () => this.requireGatewayClient(),
+      getGatewayClient: () => this.gatewayClient,
+    });
+    this.sessionRpc = new SessionRpc({
       getGatewayClient: () => this.gatewayClient,
       store: this.store,
+    });
+    this.skillRpc = new SkillRpc({
+      ensureGatewayClientReady: () => this.ensureGatewayClientReady(),
+      requireGatewayClient: () => this.requireGatewayClient(),
     });
   }
 
@@ -1742,8 +1752,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.pendingSessionModelPatches.delete(sessionId);
     if (!this.store.getSession(sessionId)) return;
 
-    void this.skillRpcHandler
-      .patchSessionModel(sessionId, pendingPatch.model, pendingPatch.agentId)
+    void this.sessionRpc
+      .patchModel(sessionId, pendingPatch.model, pendingPatch.agentId)
       .catch(error =>
         coworkLog('WARN', 'OpenClawRuntime', 'Deferred patchSessionModel failed', {
           error: String(error),
@@ -2601,7 +2611,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // ─── Skill RPC Delegates ────────────────────────────────────────────────
 
   async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string> {
-    return this.skillRpcHandler.generateTitle(userIntent, timeoutMs);
+    return this.titleGenerator.generateTitle(userIntent, timeoutMs);
   }
 
   async patchSessionModel(
@@ -2617,33 +2627,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       });
       return { ok: true };
     }
-    return this.skillRpcHandler.patchSessionModel(sessionId, model, agentId);
+    return this.sessionRpc.patchModel(sessionId, model, agentId);
   }
 
   async getSkillsStatus(agentId?: string): Promise<import('./types').GatewaySkillStatus> {
-    return this.skillRpcHandler.getSkillsStatus(agentId);
+    return this.skillRpc.getStatus(agentId);
   }
 
   async installSkill(
     params: import('./types').SkillInstallParams,
   ): Promise<import('./types').SkillRpcResult> {
-    return this.skillRpcHandler.installSkill(params);
+    return this.skillRpc.install(params);
   }
 
   async updateSkillConfig(
     params: import('./types').SkillUpdateParams,
   ): Promise<import('./types').SkillRpcResult> {
-    return this.skillRpcHandler.updateSkillConfig(params);
+    return this.skillRpc.updateConfig(params);
   }
 
   async searchClawHubSkills(
     query?: string,
     limit?: number,
   ): Promise<import('./types').ClawHubSearchResult[]> {
-    return this.skillRpcHandler.searchClawHubSkills(query, limit);
+    return this.skillRpc.search(query, limit);
   }
 
   async getClawHubSkillDetail(slug: string): Promise<import('./types').ClawHubDetail | null> {
-    return this.skillRpcHandler.getClawHubSkillDetail(slug);
+    return this.skillRpc.getDetail(slug);
   }
 }

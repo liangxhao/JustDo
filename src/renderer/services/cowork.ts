@@ -1,6 +1,6 @@
+import { isGatewayToolFailureNotice } from '@shared/toolFailureNotice';
 import { flushSync } from 'react-dom';
 
-import { isGatewayToolFailureNotice } from '../../common/toolFailureNotice';
 import { store } from '../store';
 import {
   addGroup,

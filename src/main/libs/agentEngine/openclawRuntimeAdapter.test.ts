@@ -792,9 +792,9 @@ test('patchSessionModel defers gateway patch while session is active', async () 
   const patchSessionModel = vi.fn().mockResolvedValue({ ok: true });
   (
     adapter as unknown as {
-      skillRpcHandler: { patchSessionModel: typeof patchSessionModel };
+      sessionRpc: { patchModel: typeof patchSessionModel };
     }
-  ).skillRpcHandler = { patchSessionModel };
+  ).sessionRpc = { patchModel: patchSessionModel };
 
   adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
   adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');

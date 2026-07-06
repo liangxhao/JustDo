@@ -1,39 +1,22 @@
 /**
- * Skill management RPC and title generation methods.
- *
- * Extracted from openclawRuntimeAdapter.ts to reduce file size.
- * Handles gateway RPC calls for skill status, install, update, search, and detail.
- * Also handles session title generation.
+ * Session title generation through the OpenClaw Gateway.
  */
 
 import { randomUUID } from 'crypto';
 
-import type { CoworkStore } from '../../../coworkStore';
 import type { GatewayClientLike } from '../gateway/types';
-import type {
-  ClawHubDetail,
-  ClawHubSearchResult,
-  GatewaySkillStatus,
-  SkillInstallParams,
-  SkillRpcResult,
-  SkillUpdateParams,
-} from '../types';
 
 const SESSION_TITLE_MAX_CHARS = 50;
 const SESSION_TITLE_FALLBACK = 'New Session';
 const SESSION_TITLE_TIMEOUT_MS = 30_000;
 
-export interface SkillRpcCallbacks {
+export interface TitleGeneratorCallbacks {
   ensureGatewayClientReady(): Promise<void>;
-  requireGatewayClient(): GatewayClientLike;
   getGatewayClient(): GatewayClientLike | null;
-  store: CoworkStore;
 }
 
-export class SkillRpcHandler {
-  constructor(private readonly callbacks: SkillRpcCallbacks) {}
-
-  // ─── Title Generation ──────────────────────────────────────────────────────
+export class GatewayTitleGenerator {
+  constructor(private readonly callbacks: TitleGeneratorCallbacks) {}
 
   async generateTitle(
     userIntent: string | null,
@@ -252,105 +235,4 @@ export class SkillRpcHandler {
     return null;
   }
 
-  // ─── Session Model Patching ────────────────────────────────────────────────
-
-  async patchSessionModel(
-    sessionId: string,
-    model: string,
-    agentId?: string,
-  ): Promise<{ ok: boolean; error?: string }> {
-    const client = this.callbacks.getGatewayClient();
-    if (!client) {
-      return { ok: false, error: 'OpenClaw gateway client not connected' };
-    }
-
-    const session = this.callbacks.store.getSession(sessionId);
-    const effectiveAgentId = agentId || session?.agentId || 'main';
-    const sessionKey = `agent:${effectiveAgentId}:justdo:${sessionId}`;
-
-    const normalizedModel = model.trim();
-    if (!normalizedModel) {
-      return { ok: false, error: 'Model reference is required' };
-    }
-
-    console.log(
-      '[OpenClawRuntime] patchSessionModel: sessionId=%s, agentId=%s, key=%s, model=%s',
-      sessionId,
-      effectiveAgentId,
-      sessionKey,
-      normalizedModel,
-    );
-
-    try {
-      await client.request<{ ok?: boolean; key?: string; entry?: unknown }>(
-        'sessions.patch',
-        {
-          key: sessionKey,
-          model: normalizedModel,
-        },
-      );
-      return { ok: true };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.warn('[OpenClawRuntime] patchSessionModel: failed:', errorMsg);
-      return { ok: false, error: errorMsg };
-    }
-  }
-
-  // ─── Skill Management RPC ──────────────────────────────────────────────────
-
-  async getSkillsStatus(agentId?: string): Promise<GatewaySkillStatus> {
-    await this.callbacks.ensureGatewayClientReady();
-    const client = this.callbacks.requireGatewayClient();
-    const result = await client.request<GatewaySkillStatus>('skills.status', {
-      agentId,
-    });
-    return result;
-  }
-
-  async installSkill(params: SkillInstallParams): Promise<SkillRpcResult> {
-    await this.callbacks.ensureGatewayClientReady();
-    const client = this.callbacks.requireGatewayClient();
-    console.log('[OpenClawRuntime] installSkill: params=', params);
-    const result = await client.request<SkillRpcResult>('skills.install', params);
-    console.log('[OpenClawRuntime] installSkill: result=', result);
-    return result;
-  }
-
-  async updateSkillConfig(params: SkillUpdateParams): Promise<SkillRpcResult> {
-    await this.callbacks.ensureGatewayClientReady();
-    const client = this.callbacks.requireGatewayClient();
-    console.log(
-      '[OpenClawRuntime] updateSkillConfig: skillKey=',
-      params.skillKey,
-      'enabled=',
-      params.enabled,
-    );
-    const result = await client.request<SkillRpcResult>('skills.update', params);
-    console.log('[OpenClawRuntime] updateSkillConfig: result=', result);
-    return result;
-  }
-
-  async searchClawHubSkills(query?: string, limit?: number): Promise<ClawHubSearchResult[]> {
-    await this.callbacks.ensureGatewayClientReady();
-    const client = this.callbacks.requireGatewayClient();
-    const result = await client.request<{ results?: ClawHubSearchResult[] }>('skills.search', {
-      query,
-      limit: limit || 20,
-    });
-    console.log(
-      '[OpenClawRuntime] searchClawHubSkills: received',
-      result.results?.length || 0,
-      'results',
-    );
-    return result.results || [];
-  }
-
-  async getClawHubSkillDetail(slug: string): Promise<ClawHubDetail | null> {
-    await this.callbacks.ensureGatewayClientReady();
-    const client = this.callbacks.requireGatewayClient();
-    const result = await client.request<ClawHubDetail>('skills.detail', { slug });
-    console.log('[OpenClawRuntime] getClawHubSkillDetail: slug=', slug, 'result=', result);
-    return result;
-  }
 }

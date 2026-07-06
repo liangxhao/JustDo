@@ -1,8 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
-import type { CoworkStore } from '../../../coworkStore';
-import type { GatewayClientLike } from '../gateway/types';
-import { SkillRpcHandler } from './skillRpc';
+import type { GatewayClientLike } from './types';
+import { GatewayTitleGenerator } from './titleGenerator';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -20,11 +19,9 @@ test('generateTitle falls back quietly when the gateway title request times out'
     stop: () => {},
     request: () => new Promise(() => {}),
   };
-  const handler = new SkillRpcHandler({
+  const handler = new GatewayTitleGenerator({
     ensureGatewayClientReady: async () => {},
-    requireGatewayClient: () => client,
     getGatewayClient: () => client,
-    store: {} as CoworkStore,
   });
 
   const titlePromise = handler.generateTitle('请帮我介绍一下 JustDo', 1_000);
@@ -60,11 +57,9 @@ test('generateTitle deletes the temporary OpenClaw title session after completio
     stop: () => {},
     request,
   };
-  const handler = new SkillRpcHandler({
+  const handler = new GatewayTitleGenerator({
     ensureGatewayClientReady: async () => {},
-    requireGatewayClient: () => client,
     getGatewayClient: () => client,
-    store: {} as CoworkStore,
   });
 
   await expect(handler.generateTitle('你好，请介绍一下你自己')).resolves.toBe('问候与介绍');

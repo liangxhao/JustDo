@@ -1,5 +1,5 @@
 import type { AgentEventPayload, SessionTurn, ToolStreamEntry } from '../gateway/types';
-import { isRecord } from '../utils/gatewayHelpers';
+import { isRecord } from '../gatewayHelpers';
 
 const TOOL_STREAM_LIMIT = 50;
 const TOOL_OUTPUT_CHAR_LIMIT = 120_000;
