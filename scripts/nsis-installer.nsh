@@ -1,5 +1,39 @@
 !include "FileFunc.nsh"
 
+!define JUSTDO_POWERSHELL "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+
+!macro StopJustDoProcesses
+  ; Only stop processes whose executable is inside the current installation.
+  ; Matching by process name or a loose "*JustDo*" path can terminate unrelated
+  ; applications and development servers.
+  retryStopJustDoProcesses:
+  nsExec::ExecToLog '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "\
+    $$installRoot = [IO.Path]::GetFullPath($\"$INSTDIR$\").TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar;\
+    $$isInstalledProcess = {\
+      param($$process)\
+      try {\
+        $$processPath = [IO.Path]::GetFullPath($$process.Path);\
+        return $$processPath.StartsWith($$installRoot, [StringComparison]::OrdinalIgnoreCase);\
+      } catch { return $$false }\
+    };\
+    $$findProcesses = {\
+      @(Get-Process -Name JustDo,node -ErrorAction SilentlyContinue | Where-Object { & $$isInstalledProcess $$_ })\
+    };\
+    & $$findProcesses | Stop-Process -Force -ErrorAction SilentlyContinue;\
+    for ($$i = 0; $$i -lt 15; $$i++) {\
+      if ((& $$findProcesses).Count -eq 0) { exit 0 };\
+      Start-Sleep -Milliseconds 500;\
+    };\
+    exit 1"'
+  Pop $0
+  ${If} $0 != "0"
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION \
+      "JustDo processes are still running. Close them and retry." \
+      IDRETRY retryStopJustDoProcesses
+    Abort "Installation cancelled because JustDo is still running."
+  ${EndIf}
+!macroend
+
 !macro customHeader
   ; Request admin privileges for script execution (tar extract, etc.)
   ; This does NOT change the default install path — just ensures UAC elevation.
@@ -11,38 +45,7 @@
 !macroend
 
 !macro customInit
-  ; ── Kill every process that might hold file handles in the install dir ──
-  ;
-  ; 1. JustDo.exe — the main app AND the OpenClaw gateway (ELECTRON_RUN_AS_NODE)
-  ; 2. node.exe whose binary lives inside the JustDo install tree
-  ;    (Web Search bridge server, MCP servers spawned with detached:true)
-  ;
-  ; Stop-Process -Force is equivalent to taskkill /F — the processes have no
-  ; chance to run before-quit cleanup, so file handles may linger briefly as
-  ; "ghost handles" in the Windows kernel. We poll until no matching process
-  ; remains, then force-remove the old install directory so that the old
-  ; uninstaller (which may lack our customUnInit fix) is never invoked.
-
-  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "\
-    Stop-Process -Name JustDo -Force -ErrorAction SilentlyContinue;\
-    Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*JustDo*\" } | Stop-Process -Force -ErrorAction SilentlyContinue;\
-    for ($$i = 0; $$i -lt 15; $$i++) {\
-      $$procs = @();\
-      $$procs += Get-Process -Name JustDo -ErrorAction SilentlyContinue;\
-      $$procs += Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*JustDo*\" };\
-      if ($$procs.Count -eq 0) { break };\
-      Start-Sleep -Milliseconds 500;\
-    }"'
-  Pop $0
-
-  ; ── Remove old installation directory ──
-  ; After all processes are gone, ghost file handles may still linger for a
-  ; few seconds. RMDir /r will silently skip locked files but remove the rest
-  ; — including the old uninstaller exe. This prevents electron-builder from
-  ; invoking old-uninstaller.exe (which lacks our customUnInit and would show
-  ; an "app cannot be closed" dialog the user can never dismiss).
-  ; The new installer will lay down a complete fresh copy of all files.
-  RMDir /r "$INSTDIR"
+  !insertmacro StopJustDoProcesses
 !macroend
 
 !macro customInstall
@@ -75,6 +78,8 @@
   StrCmp $0 "0" TarExtractOK
     FileWrite $2 "tar-extract-error: exit=$0 output=$1$\r$\n"
     MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed (exit code $0):$\r$\n$\r$\n$1"
+    System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
+    SetDetailsPrint both
     FileClose $2
     Abort "Resource extraction failed."
   TarExtractOK:
@@ -96,10 +101,24 @@
   ; - Only excludes the bundled runtime, not the entire application
   ; - Common practice for developer tools (VS Code, Docker Desktop, etc.)
 
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\" -ErrorAction Stop; Write-Output ok } catch { Write-Output skip }"'
+  MessageBox MB_YESNO|MB_ICONQUESTION \
+    "Allow JustDo to exclude its bundled OpenClaw runtime from Microsoft Defender scanning? This can improve startup performance and can be reversed during uninstall." \
+    IDNO DefenderExclusionSkipped
+  nsExec::ExecToStack '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\" -ErrorAction Stop; if ((Get-MpPreference).ExclusionPath -contains $\"$INSTDIR\resources\cfmind$\") { exit 0 } else { exit 1 } } catch { exit 1 }"'
   Pop $0
   Pop $1
-  FileWrite $2 "defender-exclusion: exit=$0 result=$1$\r$\n"
+  StrCmp $0 "0" 0 DefenderExclusionFailed
+    FileOpen $1 "$INSTDIR\resources\.justdo-defender-exclusion" w
+    FileWrite $1 "managed-by-justdo-installer"
+    FileClose $1
+    FileWrite $2 "defender-exclusion: added$\r$\n"
+    Goto DefenderExclusionDone
+  DefenderExclusionFailed:
+    FileWrite $2 "defender-exclusion: failed exit=$0 output=$1$\r$\n"
+    Goto DefenderExclusionDone
+  DefenderExclusionSkipped:
+    FileWrite $2 "defender-exclusion: declined$\r$\n"
+  DefenderExclusionDone:
 
   ; Clean up the unpack script — no longer needed after installation
   Delete "$INSTDIR\resources\unpack-cfmind.cjs"
@@ -118,23 +137,18 @@
   ; (also named JustDo.exe) and shows an "app cannot be closed" dialog
   ; where even "Retry" never succeeds — because the gateway has no UI window
   ; for the user to close.
-  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "\
-    Stop-Process -Name JustDo -Force -ErrorAction SilentlyContinue;\
-    Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*JustDo*\" } | Stop-Process -Force -ErrorAction SilentlyContinue;\
-    for ($$i = 0; $$i -lt 15; $$i++) {\
-      $$procs = @();\
-      $$procs += Get-Process -Name JustDo -ErrorAction SilentlyContinue;\
-      $$procs += Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like \"*JustDo*\" };\
-      if ($$procs.Count -eq 0) { break };\
-      Start-Sleep -Milliseconds 500;\
-    }"'
-  Pop $0
+  !insertmacro StopJustDoProcesses
 !macroend
 
 !macro customUnInstall
   ; ─── Remove Windows Defender Exclusion on uninstall ───
   ; Clean up the exclusion we added during installation.
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\" -ErrorAction SilentlyContinue } catch {}"'
-  Pop $0
-  Pop $1
+  ${If} ${FileExists} "$INSTDIR\resources\.justdo-defender-exclusion"
+    nsExec::ExecToStack '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\" -ErrorAction Stop; exit 0 } catch { exit 1 }"'
+    Pop $0
+    Pop $1
+    ${If} $0 == "0"
+      Delete "$INSTDIR\resources\.justdo-defender-exclusion"
+    ${EndIf}
+  ${EndIf}
 !macroend
