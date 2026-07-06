@@ -10,6 +10,10 @@ vi.mock('electron', () => ({
   },
 }));
 
+vi.mock('../cowork/coworkLogger', () => ({
+  coworkLog: vi.fn(),
+}));
+
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 function createEmptyStore() {
