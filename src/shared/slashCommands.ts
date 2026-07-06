@@ -3,6 +3,11 @@ export const SlashCommandIpc = {
 } as const;
 
 export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
+  'help',
+  'commands',
+  'status',
+  'tasks',
+  'dreaming',
   'new',
   'reset',
   'stop',
