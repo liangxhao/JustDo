@@ -300,6 +300,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       [updateSlashMenu],
     );
 
+    const focusInputAtEnd = useCallback((nextValue: string) => {
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(nextValue.length, nextValue.length);
+      });
+    }, []);
+
     // 暴露方法给父组件
     React.useImperativeHandle(ref, () => ({
       setValue: (newValue: string) => {
@@ -463,21 +472,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const handleSlashCommandSelect = useCallback(
       (command: SlashCommandDef, executeInstant = true) => {
         if (command.argOptions?.length) {
-          commitValue(`/${command.name} `);
+          const nextValue = `/${command.name} `;
+          commitValue(nextValue);
           setSlashMenuMode('args');
           setSlashMenuCommand(command);
           setSlashMenuArgItems(command.argOptions);
           setSlashMenuItems([]);
           setSlashMenuIndex(0);
           setSlashMenuOpen(true);
-          requestAnimationFrame(() => textareaRef.current?.focus());
+          focusInputAtEnd(nextValue);
           return;
         }
 
         const nextValue = command.args ? `/${command.name} ` : `/${command.name}`;
         commitValue(nextValue);
         resetSlashMenuState();
-        requestAnimationFrame(() => textareaRef.current?.focus());
+        focusInputAtEnd(nextValue);
 
         if (executeInstant && command.executeLocal && !command.args) {
           requestAnimationFrame(() => {
@@ -485,23 +495,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           });
         }
       },
-      [commitValue, handleSubmit, resetSlashMenuState],
+      [commitValue, focusInputAtEnd, handleSubmit, resetSlashMenuState],
     );
 
     const handleSlashArgSelect = useCallback(
       (arg: string, execute = true) => {
         const commandName = slashMenuCommand?.name ?? '';
         if (!commandName) return;
-        commitValue(`/${commandName} ${arg}`);
+        const nextValue = `/${commandName} ${arg}`;
+        commitValue(nextValue);
         resetSlashMenuState();
-        requestAnimationFrame(() => textareaRef.current?.focus());
+        focusInputAtEnd(nextValue);
         if (execute) {
           requestAnimationFrame(() => {
-            void handleSubmit(`/${commandName} ${arg}`);
+            void handleSubmit(nextValue);
           });
         }
       },
-      [commitValue, handleSubmit, resetSlashMenuState, slashMenuCommand?.name],
+      [commitValue, focusInputAtEnd, handleSubmit, resetSlashMenuState, slashMenuCommand?.name],
     );
 
     const handleSlashButtonClick = useCallback(() => {
@@ -1255,7 +1266,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <button
                     key={arg}
                     type="button"
-                    onClick={() => handleSlashArgSelect(arg, true)}
+                    onClick={() => handleSlashArgSelect(arg, false)}
                     onMouseEnter={() => setSlashMenuIndex(index)}
                     className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
                       index === slashMenuIndex ? 'bg-primary/10' : 'hover:bg-surface-raised'
