@@ -1,4 +1,4 @@
-export const PREVIEWABLE_FILE_EXTENSIONS = ['.md', '.markdown', '.json'] as const;
+export const PREVIEWABLE_FILE_EXTENSIONS = ['.md', '.markdown', '.json', '.txt'] as const;
 
 export type PreviewableFileExtension = (typeof PREVIEWABLE_FILE_EXTENSIONS)[number];
 

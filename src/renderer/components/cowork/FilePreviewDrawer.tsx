@@ -38,6 +38,8 @@ const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose 
   const markdownRef = useRef<HTMLElement>(null);
   const fileName = preview.filePath.split(/[\\/]/).pop() || preview.filePath;
   const isJson = preview.filePath.toLowerCase().endsWith('.json');
+  const isPlainText = preview.filePath.toLowerCase().endsWith('.txt');
+  const isPreformatted = isJson || isPlainText;
   const content = useMemo(() => {
     if (!isJson) return preview.content;
     try {
@@ -47,13 +49,13 @@ const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose 
     }
   }, [isJson, preview.content]);
   const markdownHtml = useMemo(
-    () => (isJson ? '' : toSanitizedMarkdownHtml(content)),
-    [content, isJson],
+    () => (isPreformatted ? '' : toSanitizedMarkdownHtml(content)),
+    [content, isPreformatted],
   );
 
   useEffect(() => {
     const root = markdownRef.current;
-    if (!root || isJson) return;
+    if (!root || isPreformatted) return;
 
     root.querySelectorAll<HTMLElement>('.code-block-copy__idle').forEach(label => {
       label.innerHTML = COPY_ICON;
@@ -99,7 +101,7 @@ const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose 
     return () => {
       cancelled = true;
     };
-  }, [isJson, markdownHtml]);
+  }, [isPreformatted, markdownHtml]);
 
   const handleMarkdownClick = useCallback(async (event: React.MouseEvent<HTMLElement>) => {
     const copyButton = (event.target as HTMLElement).closest<HTMLButtonElement>('.code-block-copy');
@@ -193,7 +195,7 @@ const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose 
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-5">
-        {isJson ? (
+        {isPreformatted ? (
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground">
             {content}
           </pre>
