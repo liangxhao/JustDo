@@ -592,8 +592,8 @@ async function beforePack(context) {
     // ── Validate the combined tar ──
     // Verify that each expected prefix actually has content in the archive.
     // This catches build misconfigurations early instead of at install time.
-    const requiredPrefixes = ['cfmind/', 'skills/', 'python-win/'];
-    const optionalPrefixes = ['mingit/'];
+    const requiredPrefixes = ['cfmind/', 'skills/', 'python-win/', 'mingit/'];
+    const optionalPrefixes = [];
     const tarEntries = [];
     const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
     const normalizedTarPath = outputTar.replace(/\\/g, '/');

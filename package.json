@@ -52,7 +52,7 @@
     "generate:tray-icons": "node scripts/generate-icons.cjs tray-icons",
     "generate:app-icon:win": "node scripts/generate-icons.cjs app-icon",
     "generate:app-icons:png": "node scripts/generate-icons.cjs png",
-    "setup:mingit": "node scripts/setup-mingit.js",
+    "setup:mingit": "node scripts/setup-mingit.js --required",
     "setup:python-runtime": "node scripts/setup-python-runtime.js",
     "openclaw:plugins": "node scripts/ensure-openclaw-plugins.cjs",
     "openclaw:resources": "node scripts/sync-openclaw-runtime-resources.cjs",
