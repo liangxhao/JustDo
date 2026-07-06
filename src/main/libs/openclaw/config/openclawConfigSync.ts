@@ -761,8 +761,6 @@ export class OpenClawConfigSync {
         skillIds: [],
         enabled: true,
         isDefault: true,
-        source: 'custom',
-        presetId: '',
         createdAt: 0,
         updatedAt: 0,
       });

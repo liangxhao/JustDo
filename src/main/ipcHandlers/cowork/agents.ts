@@ -1,16 +1,15 @@
 import { ipcMain } from 'electron';
 
-import type { CreateAgentRequest, UpdateAgentRequest } from '../../coworkStore';
-import type { AgentManager } from '../../features/agentManager';
+import type { CoworkStore, CreateAgentRequest, UpdateAgentRequest } from '../../coworkStore';
 
 interface AgentHandlerDependencies {
-  getManager: () => AgentManager;
+  getStore: () => CoworkStore;
   resolveDefaultModelRef: () => string;
   syncConfig: (reason: string) => Promise<unknown>;
 }
 
 export const registerAgentHandlers = ({
-  getManager,
+  getStore,
   resolveDefaultModelRef,
   syncConfig,
 }: AgentHandlerDependencies): void => {
@@ -20,7 +19,7 @@ export const registerAgentHandlers = ({
 
   ipcMain.handle('agents:list', async () => {
     try {
-      return { success: true, agents: getManager().listAgents() };
+      return { success: true, agents: getStore().listAgents() };
     } catch (error) {
       return {
         success: false,
@@ -31,7 +30,7 @@ export const registerAgentHandlers = ({
 
   ipcMain.handle('agents:get', async (_event, id: string) => {
     try {
-      return { success: true, agent: getManager().getAgent(id) };
+      return { success: true, agent: getStore().getAgent(id) };
     } catch (error) {
       return {
         success: false,
@@ -42,7 +41,10 @@ export const registerAgentHandlers = ({
 
   ipcMain.handle('agents:create', async (_event, request: CreateAgentRequest) => {
     try {
-      const agent = getManager().createAgent(request, resolveDefaultModelRef());
+      const agent = getStore().createAgent({
+        ...request,
+        model: request.model?.trim() || resolveDefaultModelRef().trim() || '',
+      });
       syncInBackground('agent-created');
       return { success: true, agent };
     } catch (error) {
@@ -55,7 +57,7 @@ export const registerAgentHandlers = ({
 
   ipcMain.handle('agents:update', async (_event, id: string, updates: UpdateAgentRequest) => {
     try {
-      const agent = getManager().updateAgent(id, updates);
+      const agent = getStore().updateAgent(id, updates);
       syncInBackground('agent-updated');
       return { success: true, agent };
     } catch (error) {
@@ -68,7 +70,7 @@ export const registerAgentHandlers = ({
 
   ipcMain.handle('agents:delete', async (_event, id: string) => {
     try {
-      const deleted = getManager().deleteAgent(id);
+      const deleted = getStore().deleteAgent(id);
       syncInBackground('agent-deleted');
       return { success: true, deleted };
     } catch (error) {
@@ -79,27 +81,4 @@ export const registerAgentHandlers = ({
     }
   });
 
-  ipcMain.handle('agents:presets', async () => {
-    try {
-      return { success: true, presets: getManager().getPresetAgents() };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get presets',
-      };
-    }
-  });
-
-  ipcMain.handle('agents:addPreset', async (_event, presetId: string) => {
-    try {
-      const agent = getManager().addPresetAgent(presetId, resolveDefaultModelRef());
-      syncInBackground('agent-preset-added');
-      return { success: true, agent };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to add preset agent',
-      };
-    }
-  });
 };

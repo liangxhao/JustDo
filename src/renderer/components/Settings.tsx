@@ -25,7 +25,6 @@ import { themeService } from '../services/theme';
 import { RootState } from '../store';
 import { selectCoworkConfig } from '../store/selectors/coworkSelectors';
 import { setAvailableModels } from '../store/slices/modelSlice';
-import type { PresetAgent } from '../types/agent';
 import type { CoworkAgentEngine, OpenClawEngineStatus } from '../types/cowork';
 import AgentCreateModal from './agent/AgentCreateModal';
 import AgentSettingsPanel from './agent/AgentSettingsPanel';
@@ -156,75 +155,20 @@ const getNextCustomProviderKey = (providers: ProvidersConfig): string => {
 const MyAgentsSettings: React.FC = () => {
   const agents = useSelector((state: RootState) => state.agent.agents);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-  const [presets, setPresets] = useState<PresetAgent[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
-  const [addingPreset, setAddingPreset] = useState<string | null>(null);
 
   useEffect(() => {
     agentService.loadAgents();
-    agentService.getPresets().then(setPresets);
   }, []);
 
-  // Refresh presets when agents change
-  useEffect(() => {
-    agentService.getPresets().then(setPresets);
-  }, [agents]);
-
   const enabledAgents = agents.filter(a => a.enabled && a.id !== 'main');
-  const presetAgents = enabledAgents.filter(a => a.source === 'preset');
-  const customAgents = enabledAgents.filter(a => a.source === 'custom');
-  const uninstalledPresets = presets.filter(p => !p.installed);
-
-  const handleAddPreset = async (presetId: string) => {
-    setAddingPreset(presetId);
-    try {
-      await agentService.addPreset(presetId);
-    } finally {
-      setAddingPreset(null);
-    }
-  };
+  const customAgents = enabledAgents;
 
   return (
     <div className="space-y-6">
       {/* Subtitle */}
       <p className="text-sm text-secondary">{i18nService.t('agentsSubtitle')}</p>
-
-      {/* Preset Agents Section */}
-      {(presetAgents.length > 0 || uninstalledPresets.length > 0) && (
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium text-foreground">{i18nService.t('presetAgents')}</h4>
-          <div className="grid grid-cols-2 gap-3">
-            {/* Installed presets */}
-            {presetAgents.map(agent => (
-              <AgentCard
-                key={agent.id}
-                icon={agent.icon}
-                name={agent.name}
-                description={agent.description}
-                isActive={agent.id === currentAgentId}
-                onClick={() => setSettingsAgentId(agent.id)}
-              />
-            ))}
-            {/* Uninstalled presets */}
-            {uninstalledPresets.map(preset => {
-              const isEn = i18nService.getLanguage() === 'en';
-              return (
-                <UninstalledPresetCard
-                  key={preset.id}
-                  icon={preset.icon}
-                  name={isEn && preset.nameEn ? preset.nameEn : preset.name}
-                  description={
-                    isEn && preset.descriptionEn ? preset.descriptionEn : preset.description
-                  }
-                  isAdding={addingPreset === preset.id}
-                  onAdd={() => handleAddPreset(preset.id)}
-                />
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Custom Agents Section */}
       <div className="space-y-3">
@@ -287,34 +231,6 @@ const AgentCard: React.FC<{
       )}
     </div>
   </button>
-);
-
-/* ── Uninstalled Preset Card ─────────────────────────── */
-
-const UninstalledPresetCard: React.FC<{
-  icon: string;
-  name: string;
-  description: string;
-  isAdding: boolean;
-  onAdd: () => void;
-}> = ({ icon, name, description, isAdding, onAdd }) => (
-  <div className="flex flex-col items-start gap-1.5 p-3 rounded-xl border-2 border-dashed border-border opacity-60 hover:opacity-80 transition-opacity min-h-[120px]">
-    <span className="text-2xl">{icon || '🤖'}</span>
-    <div className="min-w-0 w-full flex-1">
-      <div className="text-sm font-semibold text-foreground truncate">{name}</div>
-      {description && (
-        <div className="text-xs text-secondary mt-0.5 line-clamp-2">{description}</div>
-      )}
-    </div>
-    <button
-      type="button"
-      onClick={onAdd}
-      disabled={isAdding}
-      className="self-end px-2.5 py-1 text-xs font-medium rounded-lg bg-primary text-white hover:bg-primary-hover disabled:opacity-50 transition-colors"
-    >
-      {isAdding ? '...' : i18nService.t('addAgent')}
-    </button>
-  </div>
 );
 
 const Settings: React.FC<SettingsProps> = ({

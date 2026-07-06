@@ -181,8 +181,6 @@ export class SqliteStore {
         skill_ids TEXT NOT NULL DEFAULT '[]',
         enabled INTEGER NOT NULL DEFAULT 1,
         is_default INTEGER NOT NULL DEFAULT 0,
-        source TEXT NOT NULL DEFAULT 'custom',
-        preset_id TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -248,8 +246,8 @@ export class SqliteStore {
         this.db
           .prepare(
             `
-          INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-          VALUES ('main', 'main', '', ?, '', '', '', '[]', 1, 1, 'custom', '', ?, ?)
+          INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, created_at, updated_at)
+          VALUES ('main', 'main', '', ?, '', '', '', '[]', 1, 1, ?, ?)
         `,
           )
           .run(existingSystemPrompt, now, now);

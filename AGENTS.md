@@ -75,7 +75,6 @@ Strict process isolation: **Main** (IPC, SQLite, engine) ↔ **Preload** (contex
 |-----------|---------|
 | `core/` | App constants, logger, tray manager, auto-launch |
 | `data/` | SQLite database wrapper (`sqliteStore.ts`) |
-| `features/` | Agent manager, preset agents |
 | `ipcHandlers/` | IPC handler modules (scheduled task handlers) |
 | `libs/` | Domain-organized business logic (see below) |
 

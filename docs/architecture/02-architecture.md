@@ -234,8 +234,6 @@ src/main/
 ├── data/                            # 数据层
 │   └── sqliteStore.ts               # SQLite 数据库封装
 ├── features/                        # 功能管理
-│   ├── agentManager.ts              # Agent 管理器
-│   └── presetAgents.ts              # 预设 Agent
 ├── ipcHandlers/                     # IPC 处理模块
 │   └── scheduledTask/               # 定时任务 IPC
 └── libs/                            # 领域分组的业务逻辑库
@@ -312,7 +310,7 @@ window.electron = {
     { engine: { getStatus, install, retryInstall, restartGateway,
                 getPort, getToken, setPort, onProgress } },
   agents:                            // Agent 管理
-    { list, get, create, update, delete, presets, addPreset },
+    { list, get, create, update, delete },
   cowork:                            // Cowork 会话
     { startSession, continueSession, stopSession,
       deleteSession, deleteSessions, setSessionPinned, renameSession,
@@ -431,8 +429,6 @@ export const IpcChannel = {
   AgentCreate: 'agents:create',
   AgentUpdate: 'agents:update',
   AgentDelete: 'agents:delete',
-  AgentPresets: 'agents:presets',
-  AgentAddPreset: 'agents:addPreset',
 
   // Scheduled Task
   ScheduledTaskList: 'scheduledTask:list',

@@ -9,7 +9,7 @@ import {
 } from '../store/slices/agentSlice';
 import { clearCurrentSession } from '../store/slices/coworkSlice';
 import { clearActiveSkills,setActiveSkillIds } from '../store/slices/skillSlice';
-import type { Agent, PresetAgent } from '../types/agent';
+import type { Agent } from '../types/agent';
 import { coworkService } from './cowork';
 
 class AgentService {
@@ -26,7 +26,6 @@ class AgentService {
           model: a.model ?? '',
           enabled: a.enabled,
           isDefault: a.isDefault,
-          source: a.source,
           skillIds: a.skillIds ?? [],
         }));
         store.dispatch(setAgents(mappedAgents));
@@ -58,7 +57,6 @@ class AgentService {
           model: agent.model ?? '',
           enabled: agent.enabled,
           isDefault: agent.isDefault,
-          source: agent.source,
           skillIds: agent.skillIds ?? [],
         }));
         return agent;
@@ -116,40 +114,6 @@ class AgentService {
     } catch (error) {
       console.error('Failed to delete agent:', error);
       return false;
-    }
-  }
-
-  async getPresets(): Promise<PresetAgent[]> {
-    try {
-      const presets = await window.electron?.agents?.presets();
-      return presets ?? [];
-    } catch (error) {
-      console.error('Failed to get presets:', error);
-      return [];
-    }
-  }
-
-  async addPreset(presetId: string): Promise<Agent | null> {
-    try {
-      const agent = await window.electron?.agents?.addPreset(presetId);
-      if (agent) {
-        store.dispatch(addAgent({
-          id: agent.id,
-          name: agent.name,
-          description: agent.description,
-          icon: agent.icon,
-          model: agent.model ?? '',
-          enabled: agent.enabled,
-          isDefault: agent.isDefault,
-          source: agent.source,
-          skillIds: agent.skillIds ?? [],
-        }));
-        return agent;
-      }
-      return null;
-    } catch (error) {
-      console.error('Failed to add preset agent:', error);
-      return null;
     }
   }
 

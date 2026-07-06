@@ -221,7 +221,7 @@ interface McpServerConfigIPC {
   updatedAt: number;
 }
 
-import type { Agent, PresetAgent } from './agent';
+import type { Agent } from './agent';
 
 interface IElectronAPI {
   platform: string;
@@ -314,8 +314,6 @@ interface IElectronAPI {
       model?: string;
       icon?: string;
       skillIds?: string[];
-      source?: string;
-      presetId?: string;
     }) => Promise<Agent>;
     update: (
       id: string,
@@ -331,8 +329,6 @@ interface IElectronAPI {
       },
     ) => Promise<Agent>;
     delete: (id: string) => Promise<void>;
-    presets: () => Promise<PresetAgent[]>;
-    addPreset: (presetId: string) => Promise<Agent>;
   };
   api: {
     fetch: (options: {

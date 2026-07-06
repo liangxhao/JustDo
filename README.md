@@ -227,9 +227,6 @@ src/
 │   │   └── trayManager.ts
 │   ├── data/              # Data layer
 │   │   └── sqliteStore.ts # SQLite database management
-│   ├── features/          # Feature managers
-│   │   ├── agentManager.ts
-│   │   └── presetAgents.ts
 │   ├── ipcHandlers/       # IPC handler modules
 │   └── libs/              # Domain-organized libraries
 │       ├── agentEngine/   # Cowork engine routing & OpenClaw adapter

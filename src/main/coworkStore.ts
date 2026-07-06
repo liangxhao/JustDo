@@ -74,8 +74,6 @@ export type CoworkMessageType =
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
 export type CoworkAgentEngine = 'openclaw';
 
-export type AgentSource = 'custom' | 'preset';
-
 export interface Agent {
   id: string;
   name: string;
@@ -87,8 +85,6 @@ export interface Agent {
   skillIds: string[];
   enabled: boolean;
   isDefault: boolean;
-  source: AgentSource;
-  presetId: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -102,8 +98,6 @@ export interface CreateAgentRequest {
   model?: string;
   icon?: string;
   skillIds?: string[];
-  source?: AgentSource;
-  presetId?: string;
 }
 
 export interface UpdateAgentRequest {
@@ -1068,8 +1062,6 @@ export class CoworkStore {
       skill_ids: string;
       enabled: number;
       is_default: number;
-      source: string;
-      preset_id: string;
       created_at: number;
       updated_at: number;
     }
@@ -1093,8 +1085,6 @@ export class CoworkStore {
       skill_ids: string;
       enabled: number;
       is_default: number;
-      source: string;
-      preset_id: string;
       created_at: number;
       updated_at: number;
     }
@@ -1124,8 +1114,8 @@ export class CoworkStore {
     this.db
       .prepare(
         `
-      INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
     `,
       )
       .run(
@@ -1137,8 +1127,6 @@ export class CoworkStore {
         request.model || '',
         request.icon || '',
         JSON.stringify(request.skillIds || []),
-        request.source || 'custom',
-        request.presetId || '',
         now,
         now,
       );
@@ -1220,8 +1208,6 @@ export class CoworkStore {
     skill_ids: string;
     enabled: number;
     is_default: number;
-    source: string;
-    preset_id: string;
     created_at: number;
     updated_at: number;
   }): Agent {
@@ -1242,8 +1228,6 @@ export class CoworkStore {
       skillIds,
       enabled: Boolean(row.enabled),
       isDefault: Boolean(row.is_default),
-      source: row.source as AgentSource,
-      presetId: row.preset_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

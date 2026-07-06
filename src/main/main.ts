@@ -27,7 +27,6 @@ import {
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { CoworkStore } from './coworkStore';
 import { SqliteStore } from './data/sqliteStore';
-import { AgentManager } from './features/agentManager';
 import { GroupStore } from './groupStore';
 import { setLanguage } from './i18n';
 import {
@@ -75,6 +74,7 @@ import {
 } from './libs/cowork/providerApiConfig';
 import { OutboundHeaderProxy } from './libs/infra/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
+import { McpStore } from './libs/mcp/mcpStore';
 import type { McpBridgeConfig } from './libs/openclaw/config/openclawConfigSync';
 import {
   buildProviderSelection,
@@ -92,7 +92,6 @@ import {
 } from './libs/openclaw/sessions/openclawChannelSessionSync';
 import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
 import { createPluginMarketplaceService, PluginManager } from './libs/plugin';
-import { McpStore } from './libs/mcp/mcpStore';
 
 const outboundHeaderProxy = new OutboundHeaderProxy();
 
@@ -155,7 +154,7 @@ const migrateAgentModelRefs = (): number => {
   if (!defaultModelRef) return 0;
 
   const availableProviders = buildAvailableOpenClawProviders();
-  const agents = getAgentManager().listAgents();
+  const agents = getCoworkStore().listAgents();
   let changed = 0;
 
   for (const agent of agents) {
@@ -472,14 +471,6 @@ const getGroupStore = () => {
     groupStore = new GroupStore(sqliteStore.getDatabase());
   }
   return groupStore;
-};
-
-let agentManager: AgentManager | null = null;
-const getAgentManager = () => {
-  if (!agentManager) {
-    agentManager = new AgentManager(getCoworkStore());
-  }
-  return agentManager;
 };
 
 const getOpenClawConfigSync = (): OpenClawConfigSync => {
@@ -1002,7 +993,7 @@ if (!gotTheLock) {
   registerCoworkSubtaskHandlers(() => openClawRuntimeAdapter);
 
   registerAgentHandlers({
-    getManager: getAgentManager,
+    getStore: getCoworkStore,
     resolveDefaultModelRef: resolveDefaultAgentModelRef,
     syncConfig: reason => syncOpenClawConfig({ reason }),
   });

@@ -85,8 +85,6 @@ function setupDb(): void {
       skill_ids TEXT NOT NULL DEFAULT '[]',
       enabled INTEGER NOT NULL DEFAULT 1,
       is_default INTEGER NOT NULL DEFAULT 0,
-      source TEXT NOT NULL DEFAULT 'custom',
-      preset_id TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -216,11 +214,11 @@ test('no console.warn when all metadata is valid or null', () => {
 test('backfillEmptyAgentModels assigns the current default model to empty agents only', () => {
   const now = Date.now();
   db.prepare(
-    `INSERT INTO agents (id, name, model, icon, skill_ids, enabled, is_default, source, preset_id, description, system_prompt, identity, created_at, updated_at)
+    `INSERT INTO agents (id, name, model, icon, skill_ids, enabled, is_default, description, system_prompt, identity, created_at, updated_at)
      VALUES
-     ('main', 'main', '', '', '[]', 1, 1, 'custom', '', '', '', '', ?, ?),
-     ('writer', 'Writer', '', '', '[]', 1, 0, 'custom', '', '', '', '', ?, ?),
-     ('stockexpert', 'Stock Expert', 'qwen3.5-plus', '', '[]', 1, 0, 'preset', 'stockexpert', '', '', '', ?, ?)`,
+     ('main', 'main', '', '', '[]', 1, 1, '', '', '', ?, ?),
+     ('writer', 'Writer', '', '', '[]', 1, 0, '', '', '', ?, ?),
+     ('stockexpert', 'Stock Expert', 'qwen3.5-plus', '', '[]', 1, 0, '', '', '', ?, ?)`,
   ).run(now, now, now, now, now, now);
 
   expect(store.backfillEmptyAgentModels('deepseek-v3.2')).toBe(2);

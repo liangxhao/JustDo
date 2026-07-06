@@ -8,7 +8,6 @@ interface AgentSummary {
   model: string;
   enabled: boolean;
   isDefault: boolean;
-  source: 'custom' | 'preset';
   skillIds: string[];
 }
 

@@ -1,5 +1,3 @@
-export type AgentSource = 'custom' | 'preset';
-
 export interface Agent {
   id: string;
   name: string;
@@ -11,23 +9,8 @@ export interface Agent {
   skillIds: string[];
   enabled: boolean;
   isDefault: boolean;
-  source: AgentSource;
-  presetId: string;
   createdAt: number;
   updatedAt: number;
-}
-
-export interface PresetAgent {
-  id: string;
-  name: string;
-  nameEn: string;
-  icon: string;
-  description: string;
-  descriptionEn: string;
-  systemPrompt: string;
-  systemPromptEn: string;
-  skillIds: string[];
-  installed: boolean;
 }
 
 export interface CreateAgentRequest {
@@ -39,8 +22,6 @@ export interface CreateAgentRequest {
   model?: string;
   icon?: string;
   skillIds?: string[];
-  source?: string;
-  presetId?: string;
 }
 
 export interface UpdateAgentRequest {

@@ -189,8 +189,6 @@ contextBridge.exposeInMainWorld('electron', {
       model?: string;
       icon?: string;
       skillIds?: string[];
-      source?: string;
-      presetId?: string;
     }) => {
       const result = await ipcRenderer.invoke('agents:create', request);
       return result?.success ? result.agent : null;
@@ -214,14 +212,6 @@ contextBridge.exposeInMainWorld('electron', {
     delete: async (id: string) => {
       const result = await ipcRenderer.invoke('agents:delete', id);
       return result?.success ? result.deleted : false;
-    },
-    presets: async () => {
-      const result = await ipcRenderer.invoke('agents:presets');
-      return result?.success ? result.presets : [];
-    },
-    addPreset: async (presetId: string) => {
-      const result = await ipcRenderer.invoke('agents:addPreset', presetId);
-      return result?.success ? result.agent : null;
     },
   },
   cowork: {

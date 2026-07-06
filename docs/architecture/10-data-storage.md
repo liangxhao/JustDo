@@ -157,8 +157,6 @@ CREATE TABLE agents (
   skill_ids TEXT NOT NULL DEFAULT '[]',  -- JSON: ["web-search", "docx", ...]
   enabled INTEGER NOT NULL DEFAULT 1,
   is_default INTEGER NOT NULL DEFAULT 0,
-  source TEXT NOT NULL DEFAULT 'custom',  -- 'custom' | 'preset'
-  preset_id TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

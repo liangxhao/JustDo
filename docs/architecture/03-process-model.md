@@ -238,7 +238,7 @@ contextBridge.exposeInMainWorld('electron', {
     create: async (request: {
       id?: string; name: string; description?: string;
       systemPrompt?: string; identity?: string; model?: string;
-      icon?: string; skillIds?: string[]; source?: string; presetId?: string;
+      icon?: string; skillIds?: string[];
     }) => {
       const result = await ipcRenderer.invoke('agents:create', request);
       return result?.success ? result.agent : null;
@@ -254,14 +254,6 @@ contextBridge.exposeInMainWorld('electron', {
     delete: async (id: string) => {
       const result = await ipcRenderer.invoke('agents:delete', id);
       return result?.success ? result.deleted : false;
-    },
-    presets: async () => {
-      const result = await ipcRenderer.invoke('agents:presets');
-      return result?.success ? result.presets : [];
-    },
-    addPreset: async (presetId: string) => {
-      const result = await ipcRenderer.invoke('agents:addPreset', presetId);
-      return result?.success ? result.agent : null;
     },
   },
 
@@ -567,8 +559,6 @@ interface ElectronAPI {
     create: (request: AgentCreateRequest) => Promise<AgentConfig | null>;
     update: (id: string, updates: AgentUpdateRequest) => Promise<AgentConfig | null>;
     delete: (id: string) => Promise<boolean>;
-    presets: () => Promise<AgentPreset[]>;
-    addPreset: (presetId: string) => Promise<AgentConfig | null>;
   };
 
   cowork: {
@@ -796,8 +786,6 @@ function registerIpcHandlers() {
   ipcMain.handle('agents:create', handleAgentsCreate);
   ipcMain.handle('agents:update', handleAgentsUpdate);
   ipcMain.handle('agents:delete', handleAgentsDelete);
-  ipcMain.handle('agents:presets', handleAgentsPresets);
-  ipcMain.handle('agents:addPreset', handleAgentsAddPreset);
 
   // OpenClaw Engine
   ipcMain.handle('openclaw:engine:getStatus', handleOpenclawEngineGetStatus);
@@ -1043,8 +1031,6 @@ export const IpcChannel = {
   AgentCreate: 'agents:create',
   AgentUpdate: 'agents:update',
   AgentDelete: 'agents:delete',
-  AgentPresets: 'agents:presets',
-  AgentAddPreset: 'agents:addPreset',
 
   // API
   ApiFetch: 'api:fetch',
