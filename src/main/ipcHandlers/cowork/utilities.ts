@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
 import { saveCoworkApiConfig } from '../../libs/cowork/coworkConfigStore';
-import { probeCoworkModelReadiness } from '../../libs/cowork/coworkUtil';
+import { probeCoworkModelReadiness } from '../../libs/cowork/coworkModelReadiness';
 import { getCurrentApiConfig, resolveCurrentApiConfig } from '../../libs/cowork/providerApiConfig';
 
 interface TitleGenerator {

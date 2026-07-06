@@ -1,25 +1,16 @@
 import { execSync, spawnSync } from 'child_process';
 import { app } from 'electron';
-import { chmodSync, existsSync, mkdirSync, readdirSync,statSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 
 import { coworkLog } from '../cowork/coworkLogger';
-import {
-  buildEnvForConfig,
-  getCurrentApiConfig,
-  resolveCurrentApiConfig,
-} from '../cowork/providerApiConfig';
+import { buildEnvForConfig, getCurrentApiConfig } from '../cowork/providerApiConfig';
 import { appendPythonRuntimeToEnv } from '../infra/pythonRuntime';
 import {
   addLoopbackProxyBypass,
   isSystemProxyEnabled,
   resolveSystemProxyUrl,
 } from '../infra/systemProxy';
-import {
-  buildOpenAIChatCompletionsUrl,
-  extractApiErrorSnippet,
-  extractTextFromOpenAIResponse,
-} from './coworkModelApi';
 
 function appendEnvPath(current: string | undefined, additions: string[]): string | undefined {
   const items = new Set<string>();
@@ -1453,8 +1444,7 @@ function verifyNodeEnvironment(env: Record<string, string | undefined>): void {
  * Get enhanced environment variables (including proxy configuration)
  * Async function to fetch system proxy and inject into environment variables
  */
-export async function getEnhancedEnv(
-): Promise<Record<string, string | undefined>> {
+export async function getEnhancedEnv(): Promise<Record<string, string | undefined>> {
   const config = getCurrentApiConfig();
   const env = config ? buildEnvForConfig(config) : { ...process.env };
 
@@ -1527,232 +1517,4 @@ export async function getEnhancedEnvWithTmpdir(
   env.TEMP = tempDir; // Windows
 
   return env;
-}
-
-const SESSION_TITLE_FALLBACK = 'New Session';
-const SESSION_TITLE_MAX_CHARS = 50;
-const SESSION_TITLE_TIMEOUT_MS = 8000;
-const COWORK_MODEL_PROBE_TIMEOUT_MS = 20000;
-
-type SessionTitleApiConfig = {
-  apiKey: string;
-  baseURL: string;
-  model: string;
-};
-
-function resolveSessionTitleApiConfig(): { config: SessionTitleApiConfig | null; error?: string } {
-  const resolution = resolveCurrentApiConfig();
-  if (!resolution.config) {
-    return {
-      config: null,
-      error: resolution.error,
-    };
-  }
-
-  return {
-    config: {
-      apiKey: resolution.config.apiKey,
-      baseURL: resolution.config.baseURL,
-      model: resolution.config.model,
-    },
-  };
-}
-
-function normalizeTitleToPlainText(value: string, fallback: string): string {
-  if (!value.trim()) return fallback;
-
-  let title = value.trim();
-  const fenced = /```(?:[\w-]+)?\s*([\s\S]*?)```/i.exec(title);
-  if (fenced?.[1]) {
-    title = fenced[1].trim();
-  }
-
-  title = title
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/\*([^*\n]+)\*/g, '$1')
-    .replace(/_([^_\n]+)_/g, '$1')
-    .replace(/~~([^~]+)~~/g, '$1')
-    .replace(/^\s{0,3}#{1,6}\s+/, '')
-    .replace(/^\s*>\s?/, '')
-    .replace(/^\s*[-*+]\s+/, '')
-    .replace(/^\s*\d+\.\s+/, '')
-    .replace(/\r?\n+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const labeledTitle = /^(?:title|标题)\s*[:：]\s*(.+)$/i.exec(title);
-  if (labeledTitle?.[1]) {
-    title = labeledTitle[1].trim();
-  }
-
-  title = title
-    .replace(/^["'`“”‘’]+/, '')
-    .replace(/["'`“”‘’]+$/, '')
-    .trim();
-
-  if (!title) return fallback;
-  if (title.length > SESSION_TITLE_MAX_CHARS) {
-    title = title.slice(0, SESSION_TITLE_MAX_CHARS).trim();
-  }
-  return title || fallback;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError';
-}
-
-function buildFallbackSessionTitle(userIntent: string | null): string {
-  const normalizedInput = typeof userIntent === 'string' ? userIntent.trim() : '';
-  if (!normalizedInput) {
-    return SESSION_TITLE_FALLBACK;
-  }
-  const firstLine =
-    normalizedInput
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .find(Boolean) || '';
-  return normalizeTitleToPlainText(firstLine, SESSION_TITLE_FALLBACK);
-}
-
-export async function probeCoworkModelReadiness(
-  timeoutMs = COWORK_MODEL_PROBE_TIMEOUT_MS,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { config, error } = resolveSessionTitleApiConfig();
-  if (!config) {
-    return {
-      ok: false,
-      error: error || 'API configuration not found.',
-    };
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const url = buildOpenAIChatCompletionsUrl(config.baseURL);
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (config.apiKey) {
-      headers.Authorization = `Bearer ${config.apiKey}`;
-    }
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: config.model,
-        max_tokens: 1,
-        temperature: 0,
-        messages: [{ role: 'user', content: 'Reply with "ok".' }],
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      const errorSnippet = extractApiErrorSnippet(errorText);
-      return {
-        ok: false,
-        error: errorSnippet
-          ? `Model validation failed (${response.status}): ${errorSnippet}`
-          : `Model validation failed with status ${response.status}.`,
-      };
-    }
-
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      const timeoutSeconds = Math.ceil(timeoutMs / 1000);
-      return {
-        ok: false,
-        error: `Model validation timed out after ${timeoutSeconds}s.`,
-      };
-    }
-    return {
-      ok: false,
-      error: `Model validation failed: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-export async function generateSessionTitle(userIntent: string | null): Promise<string> {
-  const normalizedInput = typeof userIntent === 'string' ? userIntent.trim() : '';
-  const fallbackTitle = buildFallbackSessionTitle(normalizedInput);
-  if (!normalizedInput) {
-    return fallbackTitle;
-  }
-
-  const { config, error } = resolveSessionTitleApiConfig();
-  if (!config) {
-    if (error) {
-      console.warn('[cowork-title] Skip title generation due to missing API config:', error);
-    }
-    return fallbackTitle;
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), SESSION_TITLE_TIMEOUT_MS);
-
-  try {
-    const url = buildOpenAIChatCompletionsUrl(config.baseURL);
-    const prompt = `Generate a short title from this input, keep the same language, return plain text only (no markdown), and keep it within ${SESSION_TITLE_MAX_CHARS} characters: ${normalizedInput}`;
-
-    console.log(
-      `[cowork-title] Generating title: api=openai, baseURL=${config.baseURL}, requestUrl=${url}, model=${config.model}`,
-    );
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (config.apiKey) {
-      headers.Authorization = `Bearer ${config.apiKey}`;
-    }
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: config.model,
-        max_tokens: 80,
-        temperature: 0,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      console.warn(
-        '[cowork-title] Failed to generate title:',
-        response.status,
-        errorText.slice(0, 240),
-      );
-      return fallbackTitle;
-    }
-
-    const payload = await response.json();
-    console.log(`[cowork-title] Title response payload:`, JSON.stringify(payload).slice(0, 500));
-    const llmTitle = extractTextFromOpenAIResponse(payload);
-    console.log(`[cowork-title] Extracted title text: "${llmTitle}"`);
-    return normalizeTitleToPlainText(llmTitle, fallbackTitle);
-  } catch (error) {
-    if (isAbortError(error)) {
-      const timeoutSeconds = Math.ceil(SESSION_TITLE_TIMEOUT_MS / 1000);
-      console.debug(
-        `[cowork-title] Title generation timed out after ${timeoutSeconds}s. Using fallback title.`,
-      );
-      return fallbackTitle;
-    }
-    console.error('[cowork-title] Failed to generate session title:', error);
-    return fallbackTitle;
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
