@@ -648,9 +648,7 @@ export class JustDoChatElement extends LitElement {
 
     .markdown-content .markdown-plain-text-fallback {
       white-space: pre-wrap;
-      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-      font-size: 13px;
-      line-height: 1.5;
+      font: inherit;
     }
 
     /* ── Code Blocks ────────────────────────────────────────────────── */
