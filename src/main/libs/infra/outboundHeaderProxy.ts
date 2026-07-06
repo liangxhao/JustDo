@@ -107,6 +107,20 @@ export const applyOutboundProxyEnv = (
   env.NO_PROXY = '';
 };
 
+export const isIgnorableProxyClientError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const code = 'code' in error ? String(error.code).toUpperCase() : '';
+  if (['ECONNRESET', 'ECONNABORTED', 'EPIPE'].includes(code)) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(?:socket hang up|connection reset|connection aborted|broken pipe)\b/i.test(message);
+};
+
 export class OutboundHeaderProxy {
   private proxy: Proxy | null = null;
   private upstreamAgent: ProxyAgent | null = null;
@@ -172,6 +186,10 @@ export class OutboundHeaderProxy {
       callback();
     });
     proxy.onError((_context, error, errorKind) => {
+      if (isIgnorableProxyClientError(error)) {
+        console.debug(`[OutboundHeaderProxy] ${errorKind || 'proxy client disconnected'}:`, error);
+        return;
+      }
       console.warn(`[OutboundHeaderProxy] ${errorKind || 'proxy error'}:`, error);
     });
 

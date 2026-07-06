@@ -11,6 +11,7 @@ import {
 import {
   applyOutboundHeaders,
   applyOutboundProxyEnv,
+  isIgnorableProxyClientError,
   OutboundHeaderProxy,
   resolveOutboundHeaderProxyConfig,
   shouldInjectOutboundHeaders,
@@ -170,6 +171,16 @@ test('configures common Node, Python, and curl proxy environment variables', () 
     NO_PROXY: '',
     no_proxy: '',
   });
+});
+
+test('classifies proxy client disconnects as ignorable errors', () => {
+  expect(isIgnorableProxyClientError(Object.assign(new Error('socket hang up'), {
+    code: 'ECONNRESET',
+  }))).toBe(true);
+  expect(isIgnorableProxyClientError(new Error('connection reset by peer'))).toBe(true);
+  expect(isIgnorableProxyClientError(Object.assign(new Error('upstream failed'), {
+    code: 'ETIMEDOUT',
+  }))).toBe(false);
 });
 
 test('accepts a dynamic upstream proxy resolver and user info path', () => {
