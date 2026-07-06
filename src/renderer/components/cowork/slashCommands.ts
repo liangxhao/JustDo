@@ -2,6 +2,7 @@ import type {
   SlashCommandCategory,
   SlashCommandTier,
 } from '@shared/slashCommands';
+import { SlashCommandBlacklist } from '@shared/slashCommands';
 
 export type { SlashCommandCategory, SlashCommandTier };
 export type SlashCommandDef = import('@shared/slashCommands').SlashCommand;
@@ -21,7 +22,7 @@ const TIER_ORDER: Record<SlashCommandTier, number> = {
 
 const CATEGORY_ORDER: SlashCommandCategory[] = ['session', 'model', 'tools', 'agents'];
 
-export const SLASH_COMMANDS: SlashCommandDef[] = [
+const ALL_SLASH_COMMANDS: SlashCommandDef[] = [
   {
     key: 'help',
     name: 'help',
@@ -468,6 +469,10 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
     tier: 'power',
   },
 ];
+
+export const SLASH_COMMANDS: SlashCommandDef[] = ALL_SLASH_COMMANDS.filter(
+  command => !SlashCommandBlacklist.has(command.name),
+);
 
 function normalizeLowercaseStringOrEmpty(value: string): string {
   return value.trim().toLowerCase();

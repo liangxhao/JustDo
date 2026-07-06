@@ -87,6 +87,7 @@ import {
   type OpenClawEngineStatus,
 } from './libs/openclaw/runtime/openclawEngineManager';
 import { stopOpenClawTokenProxy } from './libs/openclaw/runtime/openclawTokenProxy';
+import { justDoSlashCommandPolicy } from './libs/slashCommands/slashCommandPolicies';
 import {
   parseManagedSessionKey,
 } from './libs/openclaw/sessions/openclawChannelSessionSync';
@@ -954,6 +955,7 @@ if (!gotTheLock) {
 
   registerSlashCommandHandlers({
     getGatewayClient: () => openClawRuntimeAdapter?.getGatewayClient() ?? null,
+    policies: [justDoSlashCommandPolicy],
   });
   registerSkillHandlers({
     getRuntimeAdapter: () => openClawRuntimeAdapter,
