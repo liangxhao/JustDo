@@ -15,6 +15,7 @@ import SearchIcon from '../icons/SearchIcon';
 import TrashIcon from '../icons/TrashIcon';
 import Tooltip from '../ui/Tooltip';
 import { groupSkillsBySource, SkillGroupId } from './skillGroups';
+import SkillMarketplace from './SkillMarketplace';
 
 type SkillTab = 'installed' | 'marketplace';
 
@@ -362,17 +363,19 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 space-y-4 shadow-sm">
         {/* Search */}
         <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
-            <input
-              type="text"
-              placeholder={i18nService.t('searchSkills')}
-              value={skillSearchQuery}
-              onChange={e => setSkillSearchQuery(e.target.value)}
-              disabled={gatewayOffline && activeTab === 'installed'}
-              className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
-            />
-          </div>
+          {activeTab === 'installed' && (
+            <div className="relative flex-1">
+              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
+              <input
+                type="text"
+                placeholder={i18nService.t('searchSkills')}
+                value={skillSearchQuery}
+                onChange={e => setSkillSearchQuery(e.target.value)}
+                disabled={gatewayOffline}
+                className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </div>
+          )}
           {/* Import buttons - only show in installed tab and when not readonly */}
           {activeTab === 'installed' && !readOnly && !gatewayOffline && (
             <>
@@ -575,19 +578,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
           </>
         )}
 
-        {activeTab === 'marketplace' && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 mb-4 rounded-2xl bg-surface flex items-center justify-center">
-              <PuzzleIcon className="h-8 w-8 text-secondary" />
-            </div>
-            <h3 className="text-lg font-medium text-foreground mb-2">
-              {i18nService.t('skillMarketplaceComingSoon')}
-            </h3>
-            <p className="text-sm text-secondary max-w-md">
-              {i18nService.t('skillMarketplaceComingSoonDesc')}
-            </p>
-          </div>
-        )}
+        {activeTab === 'marketplace' && <SkillMarketplace />}
       </div>
 
       {/* Skill detail modal */}

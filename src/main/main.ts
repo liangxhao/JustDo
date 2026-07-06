@@ -91,7 +91,7 @@ import {
   parseManagedSessionKey,
 } from './libs/openclaw/sessions/openclawChannelSessionSync';
 import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
-import { createSkillMarketplaceService } from './libs/skillMarketplace';
+import { createPluginMarketplaceService, PluginManager } from './libs/plugin';
 import { McpStore } from './mcpStore';
 
 const outboundHeaderProxy = new OutboundHeaderProxy();
@@ -296,7 +296,9 @@ let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let groupStore: GroupStore | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
-const skillMarketplaceService = createSkillMarketplaceService(() => openClawRuntimeAdapter);
+const pluginManager = new PluginManager(
+  createPluginMarketplaceService(() => openClawRuntimeAdapter),
+);
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let openClawSkillFiles: OpenClawSkillFiles | null = null;
 let mcpStore: McpStore | null = null;
@@ -965,7 +967,7 @@ if (!gotTheLock) {
   registerSkillHandlers({
     getRuntimeAdapter: () => openClawRuntimeAdapter,
     getSkillFiles: getOpenClawSkillFiles,
-    marketplaceService: skillMarketplaceService,
+    pluginManager,
   });
 
   registerOpenClawEngineHandlers({
@@ -977,7 +979,6 @@ if (!gotTheLock) {
     getStore: getMcpStore,
     refreshBridge: refreshMcpBridge,
   });
-
   registerCoworkSessionExecutionHandlers({
     ensureEngineRunning: ensureOpenClawRunningForCowork,
     getCoworkStore,

@@ -1,4 +1,5 @@
 import { ClawHubSkill, ClawHubSkillDetail, Skill } from '../types/skill';
+import { i18nService } from './i18n';
 
 type SkillListResult = {
   success: boolean;
@@ -100,30 +101,20 @@ class SkillService {
 
   /** Search ClawHub marketplace for skills */
   async searchMarketplace(query?: string, limit?: number): Promise<ClawHubSkill[]> {
-    try {
-      const result = await window.electron.skills.search({ query, limit });
-      if (result.success && result.results) {
-        return result.results;
-      }
-      return [];
-    } catch (error) {
-      console.error('Failed to search marketplace:', error);
-      return [];
+    const result = await window.electron.skills.search({ query, limit });
+    if (result.success && result.results) {
+      return result.results;
     }
+    throw new Error(result.error || i18nService.t('skillMarketplaceSearchFailed'));
   }
 
   /** Get detailed info for a ClawHub skill */
   async getMarketplaceDetail(slug: string): Promise<ClawHubSkillDetail | null> {
-    try {
-      const result = await window.electron.skills.detail({ slug });
-      if (result.success && result.detail) {
-        return result.detail;
-      }
-      return null;
-    } catch (error) {
-      console.error('Failed to get skill detail:', error);
-      return null;
+    const result = await window.electron.skills.detail({ slug });
+    if (result.success && result.detail) {
+      return result.detail;
     }
+    throw new Error(result.error || i18nService.t('skillMarketplaceDetailFailed'));
   }
 
   /** Install a skill from ClawHub marketplace */

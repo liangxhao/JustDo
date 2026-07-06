@@ -1,16 +1,15 @@
 import { ipcMain } from 'electron';
 
+import { MarketplaceSourceId, PluginKind } from '../../../shared/pluginMarketplace';
 import type { OpenClawRuntimeAdapter } from '../../libs/agentEngine';
 import type { GatewaySkillEntry, SkillInstallParams } from '../../libs/agentEngine/types';
 import type { OpenClawSkillFiles } from '../../libs/openclaw/skills/openclawSkillFiles';
-import { createSkillMarketplaceService } from '../../libs/skillMarketplace';
-
-type SkillMarketplaceService = ReturnType<typeof createSkillMarketplaceService>;
+import type { PluginManager } from '../../libs/plugin';
 
 interface SkillHandlerDependencies {
   getRuntimeAdapter: () => OpenClawRuntimeAdapter | null;
   getSkillFiles: () => OpenClawSkillFiles;
-  marketplaceService: SkillMarketplaceService;
+  pluginManager: PluginManager;
 }
 
 const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
@@ -35,7 +34,7 @@ const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
 export const registerSkillHandlers = ({
   getRuntimeAdapter,
   getSkillFiles,
-  marketplaceService,
+  pluginManager,
 }: SkillHandlerDependencies): void => {
   ipcMain.handle('skills:list', async () => {
     try {
@@ -90,7 +89,14 @@ export const registerSkillHandlers = ({
       if (!('source' in params) || params.source !== 'clawhub') {
         return { success: false, error: 'Unsupported marketplace install request' };
       }
-      return await marketplaceService.install(params);
+      await pluginManager.installFromMarketplace({
+        sourceId: MarketplaceSourceId.CLAWHUB,
+        pluginId: params.slug,
+        kind: PluginKind.SKILL,
+        version: params.version,
+        force: params.force,
+      });
+      return { success: true };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to install skill';
       return {
@@ -103,7 +109,22 @@ export const registerSkillHandlers = ({
 
   ipcMain.handle('skills:search', async (_event, options: { query?: string; limit?: number }) => {
     try {
-      return { success: true, results: await marketplaceService.search(options) };
+      const results = await pluginManager.searchMarketplace({
+        kind: PluginKind.SKILL,
+        ...options,
+      });
+      return {
+        success: true,
+        results: results.map(skill => ({
+          slug: skill.id,
+          name: skill.name,
+          description: skill.description,
+          version: skill.version,
+          author: skill.author,
+          tags: skill.tags,
+          homepage: skill.homepage,
+        })),
+      };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to search skills';
       return {
@@ -116,7 +137,27 @@ export const registerSkillHandlers = ({
 
   ipcMain.handle('skills:detail', async (_event, options: { slug: string }) => {
     try {
-      return { success: true, detail: await marketplaceService.getDetail(options.slug) };
+      const detail = await pluginManager.getMarketplaceDetail({
+        sourceId: MarketplaceSourceId.CLAWHUB,
+        pluginId: options.slug,
+        kind: PluginKind.SKILL,
+      });
+      return {
+        success: true,
+        detail: detail
+          ? {
+              slug: detail.id,
+              name: detail.name,
+              description: detail.description,
+              version: detail.version,
+              author: detail.author,
+              tags: detail.tags,
+              homepage: detail.homepage,
+              readme: detail.readme,
+              install: detail.requirements ? { requires: detail.requirements } : undefined,
+            }
+          : null,
+      };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to get skill detail';
       return {
