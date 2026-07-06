@@ -207,17 +207,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       } catch (error) {
         console.error('Failed to load quick actions:', error);
       }
-      try {
-        const apiConfig = await coworkService.checkApiConfig();
-        if (apiConfig && !apiConfig.hasConfig) {
-          onRequestAppSettings?.({
-            initialTab: 'model',
-            ...buildApiConfigNotice(apiConfig.error),
-          });
-        }
-      } catch (error) {
-        console.error('Failed to check cowork API config:', error);
-      }
       setIsInitialized(true);
     };
     init();
@@ -240,7 +229,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       unsubscribe();
       unsubscribeOpenClawStatus();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
 
   const handleStartSession = async (
