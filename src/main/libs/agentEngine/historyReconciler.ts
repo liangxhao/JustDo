@@ -8,7 +8,6 @@
  */
 
 import { BrowserWindow } from 'electron';
-import * as path from 'path';
 
 import type { CoworkMessage, CoworkStore } from '../../coworkStore';
 import { isManagedSessionKey } from '../openclaw/sessions/openclawChannelSessionSync';
@@ -16,11 +15,9 @@ import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHisto
 import type { GatewayClientLike, SessionTurn } from './gateway/types';
 import {
   extractMessageText,
-  extractSentFilePathsFromHistory,
   extractToolText,
   FINAL_HISTORY_SYNC_LIMIT,
   isRecord,
-  stripDiscordMentions,
 } from './gatewayHelpers';
 
 // Callback interface
@@ -63,11 +60,9 @@ const extractTokenUsage = (usage: unknown): TokenUsage | undefined => {
 export interface HistoryReconcilerCallbacks {
   // CoworkStore delegates
   getSession: CoworkStore['getSession'];
-  getAgent: CoworkStore['getAgent'];
   addMessage: CoworkStore['addMessage'];
   updateMessage: CoworkStore['updateMessage'];
   deleteMessage: CoworkStore['deleteMessage'];
-  replaceConversationMessages: CoworkStore['replaceConversationMessages'];
 
   // Gateway client
   getGatewayClient: () => GatewayClientLike | null;
@@ -173,10 +168,14 @@ export class HistoryReconciler {
   /**
    * Refresh local session message cache from the authoritative gateway chat.history.
    *
-   * OpenClaw is the single source of truth: after a turn completes, this fetches
-   * the conversation from OpenClaw and updates local user/assistant cache rows.
-   * Tool messages (tool_use, tool_result, system) are kept as-is because the
-   * gateway does not expose them in chat.history.
+   * OpenClaw is the single source of truth: this fetches enough recent
+   * transcript state to patch local tool output, tool args, usage, and system
+   * rows that the JustDo runtime still needs for session bookkeeping.
+   *
+   * It intentionally does not replace local user/assistant rows from
+   * chat.history. The rendered chat surface talks to the OpenClaw Gateway
+   * directly, so mirroring the conversation into SQLite creates a second,
+   * potentially stale source of truth.
    *
    * The reconciliation is idempotent — calling it multiple times produces
    * the same result.
@@ -237,168 +236,8 @@ export class HistoryReconciler {
         previousCount: previousHistoryCount,
       });
 
-      // Determine if this is a channel session (for Discord text normalization)
-      const isChannel =
-        !isManagedSessionKey(sessionKey) && this.callbacks.isChannelSessionKey(sessionKey);
-      const isDiscord = sessionKey.includes(':discord:');
-
-      // Extract authoritative user/assistant entries from gateway history
-      const session = this.callbacks.getSession(sessionId);
-      const sessionAgentId = session?.agentId || 'main';
-      const sessionAgent = this.callbacks.getAgent(sessionAgentId);
-      const sessionRawModel = sessionAgent?.model || '';
-      const sessionModelName = sessionRawModel.includes('/')
-        ? sessionRawModel.slice(sessionRawModel.indexOf('/') + 1)
-        : sessionRawModel;
-      const authoritativeEntries: Array<{
-        role: 'user' | 'assistant';
-        text: string;
-        modelName?: string;
-        usage?: TokenUsage;
-      }> = [];
-      for (const message of history.messages) {
-        if (!isRecord(message)) continue;
-        const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
-        if (role !== 'user' && role !== 'assistant') continue;
-        let text = extractMessageText(message).trim();
-        if (!text) continue;
-        if (isDiscord) text = stripDiscordMentions(text);
-
-        // Extract usage from gateway message (if assistant)
-        const usage = role === 'assistant' ? extractTokenUsage(message.usage) : undefined;
-
-        authoritativeEntries.push({
-          role: role as 'user' | 'assistant',
-          text,
-          ...(role === 'assistant' ? { modelName: sessionModelName } : {}),
-          ...(usage ? { usage } : {}),
-        });
-      }
-
-      // For channel sessions, append file paths from "message" tool calls
-      if (isChannel && authoritativeEntries.length > 0) {
-        const sentFilePaths = extractSentFilePathsFromHistory(history.messages);
-        if (sentFilePaths.length > 0) {
-          const lastAssistantIdx = authoritativeEntries.findLastIndex(e => e.role === 'assistant');
-          if (lastAssistantIdx >= 0) {
-            const fileLinks = sentFilePaths.map(fp => `[${path.basename(fp)}](${fp})`).join('\n');
-            authoritativeEntries[lastAssistantIdx] = {
-              ...authoritativeEntries[lastAssistantIdx],
-              text: `${authoritativeEntries[lastAssistantIdx].text}\n\n${fileLinks}`,
-            };
-          }
-        }
-      }
-
-      if (authoritativeEntries.length === 0) {
-        console.log('[Reconcile] no user/assistant entries in history — sessionId:', sessionId);
-        this.callbacks.setChannelSyncCursor(sessionId, 0);
-        return;
-      }
-
-      // Collect local user/assistant messages for comparison
-      const localSession = this.callbacks.getSession(sessionId);
-      const localEntries: Array<{ role: 'user' | 'assistant'; text: string }> = [];
-      if (localSession) {
-        for (const msg of localSession.messages) {
-          if (msg.type !== 'user' && msg.type !== 'assistant') continue;
-          const text = msg.content.trim();
-          if (!text) continue;
-          localEntries.push({ role: msg.type, text });
-        }
-      }
-
-      // Compare: if already in sync, skip the expensive replace — but still
-      // patch usage into assistant messages that are missing it.
-      const isInSync =
-        localEntries.length === authoritativeEntries.length &&
-        localEntries.every(
-          (entry, idx) =>
-            entry.role === authoritativeEntries[idx].role &&
-            entry.text === authoritativeEntries[idx].text,
-        );
-
-      if (isInSync) {
-        console.log(
-          '[Reconcile] already in sync — sessionId:',
-          sessionId,
-          'entries:',
-          localEntries.length,
-        );
-
-        // Patch usage into local assistant messages that are missing it.
-        // Since isInSync guarantees same order, walk both arrays in parallel.
-        const localSession = this.callbacks.getSession(sessionId);
-        if (localSession) {
-          let patchedAny = false;
-          let authAssistantIdx = 0;
-          for (const msg of localSession.messages) {
-            if (msg.type !== 'assistant') continue;
-            // Find the next assistant entry in authoritative
-            while (
-              authAssistantIdx < authoritativeEntries.length &&
-              authoritativeEntries[authAssistantIdx].role !== 'assistant'
-            ) {
-              authAssistantIdx++;
-            }
-            if (authAssistantIdx >= authoritativeEntries.length) break;
-            const authEntry = authoritativeEntries[authAssistantIdx];
-            authAssistantIdx++;
-
-            if (authEntry.usage && !msg.usage) {
-              this.callbacks.updateMessage(sessionId, msg.id, {
-                usage: authEntry.usage,
-              });
-              patchedAny = true;
-            }
-          }
-          if (patchedAny) {
-            for (const win of BrowserWindow.getAllWindows()) {
-              if (!win.isDestroyed()) {
-                win.webContents.send('cowork:sessions:changed');
-              }
-            }
-          }
-        }
-
-        this.callbacks.setChannelSyncCursor(sessionId, authoritativeEntries.length);
-        return;
-      }
-
-      // Guard: don't replace if gateway returned fewer entries.
-      // This typically means the gateway lost history (e.g., after restart)
-      // and replacing would permanently destroy local messages.
-      if (authoritativeEntries.length < localEntries.length) {
-        console.log(
-          '[Reconcile] skipping — gateway has fewer entries than local, preserving local history. sessionId:',
-          sessionId,
-          'local:',
-          localEntries.length,
-          'gateway:',
-          authoritativeEntries.length,
-        );
-        this.callbacks.setChannelSyncCursor(sessionId, localEntries.length);
-        return;
-      }
-
-      // Replace local messages with authoritative ones
-      console.log(
-        '[Reconcile] replacing messages — sessionId:',
-        sessionId,
-        'local:',
-        localEntries.length,
-        '→ authoritative:',
-        authoritativeEntries.length,
-      );
-      this.callbacks.replaceConversationMessages(sessionId, authoritativeEntries);
-      this.callbacks.setChannelSyncCursor(sessionId, authoritativeEntries.length);
-
-      // Notify renderer to refresh
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) {
-          win.webContents.send('cowork:sessions:changed');
-        }
-      }
+      this.patchUsageFromHistory(sessionId, history.messages);
+      this.callbacks.setChannelSyncCursor(sessionId, history.messages.length);
     } catch (error) {
       console.warn('[Reconcile] failed — sessionId:', sessionId, 'error:', error);
     }

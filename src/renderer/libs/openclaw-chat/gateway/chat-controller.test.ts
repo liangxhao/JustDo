@@ -63,7 +63,7 @@ test('compacts the current session instead of sending /compact as chat', async (
   });
   expect(request).toHaveBeenNthCalledWith(2, 'chat.startup', {
     sessionKey: 'agent:main:justdo:session-1',
-    limit: 100,
+    limit: 1000,
   });
   expect(request).toHaveBeenNthCalledWith(3, 'sessions.compaction.list', {
     key: 'agent:main:justdo:session-1',
@@ -264,6 +264,82 @@ test('uses the latest checkpoint when the history marker id differs', async () =
         tokensAfter: 1_069,
       },
     }),
+  ]);
+});
+
+test('loads older history pages from the OpenClaw REST cursor API', async () => {
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [{ role: 'assistant', content: 'rpc fallback' }],
+  });
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages: [
+            { role: 'assistant', content: 'recent 1' },
+            { role: 'assistant', content: 'recent 2' },
+          ],
+          hasMore: true,
+          nextCursor: '2',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages: [{ role: 'user', content: 'older' }],
+          hasMore: false,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+  vi.stubGlobal('fetch', fetchMock);
+
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  (controller as unknown as { gatewayHttpBase: string; gatewayToken: string }).gatewayHttpBase =
+    'http://127.0.0.1:4173';
+
+  await controller.loadHistory();
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=1000',
+    expect.anything(),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=1000&cursor=2',
+    expect.anything(),
+  );
+  expect(controller.state.chatMessages.map(message => (message as { content?: unknown }).content))
+    .toEqual(['older', 'recent 1', 'recent 2']);
+});
+
+test('skips paged REST history for Electron loopback gateway sessions', async () => {
+  vi.stubGlobal('window', { electron: {} });
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [{ role: 'assistant', content: 'rpc fallback' }],
+  });
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  (controller as unknown as { gatewayHttpBase: string; gatewayToken: string }).gatewayHttpBase =
+    'http://127.0.0.1:42871';
+
+  await controller.loadHistory();
+
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'assistant', content: 'rpc fallback' }),
   ]);
 });
 

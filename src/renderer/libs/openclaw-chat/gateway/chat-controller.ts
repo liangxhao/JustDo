@@ -72,7 +72,8 @@ type ToolContentBlock = {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const HISTORY_LIMIT = 100;
+const HISTORY_LIMIT = 1000;
+const HISTORY_PAGE_LIMIT = 1000;
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
 const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s.*)?$/i;
@@ -85,6 +86,30 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_CHAT_CONTROLLER) {
     console.debug(...args);
   }
+}
+
+function isElectronRenderer(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as unknown as Record<string, unknown>).electron);
+}
+
+function isLoopbackHttpBase(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      (parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '::1' ||
+        parsed.hostname === '[::1]')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shouldSkipPagedGatewayRestHistory(gatewayHttpBase: string): boolean {
+  return isElectronRenderer() && isLoopbackHttpBase(gatewayHttpBase);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -804,6 +829,52 @@ export class ChatController {
     );
   }
 
+  private async loadPagedHistoryFromRest(sessionKey: string): Promise<unknown[] | null> {
+    if (!this.gatewayHttpBase) {
+      return null;
+    }
+
+    if (shouldSkipPagedGatewayRestHistory(this.gatewayHttpBase)) {
+      return null;
+    }
+
+    const headers = new Headers({ Accept: 'application/json' });
+    if (this.gatewayToken) {
+      headers.set('Authorization', `Bearer ${this.gatewayToken}`);
+    }
+
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    let messages: unknown[] = [];
+    do {
+      const params = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
+      if (cursor) params.set('cursor', cursor);
+      const response = await fetch(
+        `${this.gatewayHttpBase}/sessions/${encodeURIComponent(sessionKey)}/history?${params}`,
+        { headers },
+      );
+      if (!response.ok) {
+        return null;
+      }
+      const body = (await response.json()) as {
+        messages?: unknown[];
+        hasMore?: boolean;
+        nextCursor?: string;
+      };
+      const pageMessages = Array.isArray(body.messages) ? body.messages : [];
+      messages = cursor ? [...pageMessages, ...messages] : pageMessages;
+      cursor = body.hasMore && typeof body.nextCursor === 'string' ? body.nextCursor : undefined;
+      if (cursor && seenCursors.has(cursor)) {
+        break;
+      }
+      if (cursor) {
+        seenCursors.add(cursor);
+      }
+    } while (cursor);
+
+    return messages;
+  }
+
   // ─── History Loading ──────────────────────────────────────────────────
 
   async loadHistory(queueIfBusy = false): Promise<void> {
@@ -839,7 +910,13 @@ export class ChatController {
 
       if (this.state.sessionKey !== sessionKey) return; // Session changed during load
 
-      const rawMessages = result?.messages ?? [];
+      const restMessages = await this.loadPagedHistoryFromRest(sessionKey).catch(error => {
+        debugLog('[ChatCtrl] paged REST history unavailable, using RPC history', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+      const rawMessages = restMessages ?? result?.messages ?? [];
       debugLog('[ChatCtrl] loadHistory AFTER-AWAIT:', sessionKey, {
         rawMsgCount: rawMessages.length,
         ...this._snap(),

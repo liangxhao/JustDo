@@ -73,7 +73,7 @@ import type {
 const NO_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const STOP_COOLDOWN_MS = 10_000;
 const RACE_RESOLUTION_MS = 1_000;
-const FULL_HISTORY_SYNC_LIMIT = 50;
+const FULL_HISTORY_SYNC_LIMIT = 1000;
 const TICK_WATCHDOG_INTERVAL_MS = 60_000;
 const TICK_TIMEOUT_MS = 90_000;
 const AGENT_ACTIVITY_ALIVE_WINDOW_MS = 60_000;
@@ -208,7 +208,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     this.historyReconciler = new HistoryReconciler({
       getSession: (id: string) => this.store.getSession(id),
-      getAgent: (id: string) => this.store.getAgent(id),
       addMessage: (id: string, msg: Parameters<CoworkStore['addMessage']>[1]) =>
         this.store.addMessage(id, msg),
       updateMessage: (
@@ -217,10 +216,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         patch: Parameters<CoworkStore['updateMessage']>[2],
       ) => this.store.updateMessage(id, msgId, patch),
       deleteMessage: (id: string, msgId: string) => this.store.deleteMessage(id, msgId),
-      replaceConversationMessages: (
-        id: string,
-        entries: Parameters<CoworkStore['replaceConversationMessages']>[1],
-      ) => this.store.replaceConversationMessages(id, entries),
       getGatewayClient: () => this.gatewayClient,
       getGatewayHistoryCount: (id: string) => this.gatewayHistoryCountBySession.get(id),
       setGatewayHistoryCount: (id: string, count: number) =>

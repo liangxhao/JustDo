@@ -12,7 +12,7 @@ import { extractGatewayMessageText } from '../openclaw/sessions/openclawHistory'
 
 export const OPENCLAW_GATEWAY_TOOL_EVENTS_CAP = 'tool-events';
 export const GATEWAY_READY_TIMEOUT_MS = 90_000;
-export const FINAL_HISTORY_SYNC_LIMIT = 50;
+export const FINAL_HISTORY_SYNC_LIMIT = 1000;
 export const CHANNEL_SESSION_DISCOVERY_LIMIT = 50;
 
 // Internal runtime context markers from OpenClaw
