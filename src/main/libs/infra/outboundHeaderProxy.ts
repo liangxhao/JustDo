@@ -12,12 +12,30 @@ import {
   resolveOutboundHeaderUserInfoPath,
   updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
-import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
+import {
+  isSystemProxyEnabled,
+  resolveSystemProxyUrl,
+  restoreOriginalProxyEnv,
+} from './systemProxy';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const CA_DIRECTORY_NAME = 'outbound-header-proxy';
 const CA_CERTIFICATE_PATH = path.join('certs', 'ca.pem');
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const OUTBOUND_HEADER_PROXY_ENV_KEYS = [
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_USE_ENV_PROXY',
+  'REQUESTS_CA_BUNDLE',
+  'CURL_CA_BUNDLE',
+  'SSL_CERT_FILE',
+] as const;
+const originalOutboundHeaderProxyEnv = OUTBOUND_HEADER_PROXY_ENV_KEYS.reduce(
+  (acc, key) => {
+    acc[key] = process.env[key];
+    return acc;
+  },
+  {} as Record<(typeof OUTBOUND_HEADER_PROXY_ENV_KEYS)[number], string | undefined>,
+);
 
 export type OutboundHeaderProxyConfig = {
   enabled: boolean;
@@ -66,15 +84,25 @@ export const shouldInjectOutboundHeaders = (
     const request = new URL(requestUrl);
     return baseUrlWhitelist.some(baseUrl => {
       const base = new URL(baseUrl);
-      return request.protocol === base.protocol
-        && request.hostname === base.hostname
-        && request.port === base.port
-        && request.pathname.startsWith(base.pathname);
+      return (
+        request.protocol === base.protocol &&
+        request.hostname === base.hostname &&
+        request.port === base.port &&
+        request.pathname.startsWith(base.pathname)
+      );
     });
   } catch {
     return false;
   }
 };
+
+export const shouldApplyOutboundHeadersForRequest = (
+  config: OutboundHeaderProxyConfig,
+  requestUrl: string,
+): boolean => config.enabled && shouldInjectOutboundHeaders(requestUrl, config.baseUrlWhitelist);
+
+export const isOutboundHeaderProxyActive = (config: OutboundHeaderProxyConfig): boolean =>
+  config.enabled && config.baseUrlWhitelist.length > 0;
 
 export const applyOutboundHeaders = (
   headers: Record<string, string | string[] | undefined>,
@@ -82,8 +110,8 @@ export const applyOutboundHeaders = (
 ): void => {
   for (const [headerName, value] of Object.entries(headerValues)) {
     const existingKey =
-      Object.keys(headers).find(key => key.toLowerCase() === headerName.toLowerCase())
-      || headerName;
+      Object.keys(headers).find(key => key.toLowerCase() === headerName.toLowerCase()) ||
+      headerName;
     headers[existingKey] = value;
   }
 };
@@ -91,7 +119,12 @@ export const applyOutboundHeaders = (
 export const applyOutboundProxyEnv = (
   env: NodeJS.ProcessEnv,
   info: OutboundHeaderProxyInfo,
+  config: OutboundHeaderProxyConfig,
 ): void => {
+  if (!isOutboundHeaderProxyActive(config)) {
+    return;
+  }
+
   env.http_proxy = info.proxyUrl;
   env.https_proxy = info.proxyUrl;
   env.HTTP_PROXY = info.proxyUrl;
@@ -101,10 +134,23 @@ export const applyOutboundProxyEnv = (
   env.REQUESTS_CA_BUNDLE = info.caCertificatePath;
   env.CURL_CA_BUNDLE = info.caCertificatePath;
   env.SSL_CERT_FILE = info.caCertificatePath;
-  // Every child request must enter the local header proxy first. The proxy
-  // itself still honors the application's system proxy/DIRECT resolution.
+  // Child processes are routed through the local proxy so header injection can
+  // be applied to whitelisted URLs. Non-whitelisted URLs are transparently
+  // forwarded without injected headers, while upstream system proxy resolution
+  // is still handled by the proxy itself.
   env.no_proxy = '';
   env.NO_PROXY = '';
+};
+
+export const restoreOutboundProxyEnv = (env: NodeJS.ProcessEnv): void => {
+  for (const key of OUTBOUND_HEADER_PROXY_ENV_KEYS) {
+    const originalValue = originalOutboundHeaderProxyEnv[key];
+    if (typeof originalValue === 'string') {
+      env[key] = originalValue;
+    } else {
+      delete env[key];
+    }
+  }
 };
 
 export const isIgnorableProxyClientError = (error: unknown): boolean => {
@@ -172,17 +218,20 @@ export class OutboundHeaderProxy {
         ? requestPath
         : `${context.isSSL ? 'https' : 'http'}://${context.clientToProxyRequest.headers.host || ''}${requestPath}`;
       const config = this.getConfig();
-      if (config.enabled && shouldInjectOutboundHeaders(requestUrl, config.baseUrlWhitelist)) {
-        const upstreamHeaders = context.proxyToServerRequestOptions?.headers;
-        if (!upstreamHeaders || Array.isArray(upstreamHeaders)) {
-          callback(new Error(`Upstream request headers are unavailable for ${requestUrl}`));
-          return;
-        }
-        applyOutboundHeaders(
-          upstreamHeaders,
-          getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
-        );
+      if (!shouldApplyOutboundHeadersForRequest(config, requestUrl)) {
+        callback();
+        return;
       }
+
+      const upstreamHeaders = context.proxyToServerRequestOptions?.headers;
+      if (!upstreamHeaders || Array.isArray(upstreamHeaders)) {
+        callback(new Error(`Upstream request headers are unavailable for ${requestUrl}`));
+        return;
+      }
+      applyOutboundHeaders(
+        upstreamHeaders,
+        getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
+      );
       callback();
     });
     proxy.onError((_context, error, errorKind) => {
@@ -204,7 +253,7 @@ export class OutboundHeaderProxy {
           httpAgent: upstreamAgent as unknown as http.Agent,
           httpsAgent: upstreamAgent as unknown as https.Agent,
         },
-        error => error ? reject(error) : resolve(),
+        error => (error ? reject(error) : resolve()),
       );
     });
 
@@ -220,7 +269,7 @@ export class OutboundHeaderProxy {
       proxyUrl: `http://${LOOPBACK_HOST}:${proxy.httpPort}`,
       caCertificatePath,
     };
-    applyOutboundProxyEnv(process.env, this.info);
+    applyOutboundProxyEnv(process.env, this.info, this.getConfig());
     this.registerGlobalFetchInjection();
     this.registerElectronHeaderInjection();
     console.log(`[OutboundHeaderProxy] listening on ${this.info.proxyUrl}`);
@@ -233,6 +282,8 @@ export class OutboundHeaderProxy {
     this.proxy = null;
     this.upstreamAgent = null;
     this.info = null;
+    restoreOriginalProxyEnv();
+    restoreOutboundProxyEnv(process.env);
     if (this.originalFetch) {
       globalThis.fetch = this.originalFetch;
       this.originalFetch = null;
@@ -241,7 +292,7 @@ export class OutboundHeaderProxy {
 
   reapplyProcessEnvironment(): void {
     if (this.info) {
-      applyOutboundProxyEnv(process.env, this.info);
+      applyOutboundProxyEnv(process.env, this.info, this.getConfig());
     }
   }
 
@@ -249,7 +300,7 @@ export class OutboundHeaderProxy {
     session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
       const requestHeaders = { ...details.requestHeaders };
       const config = this.getConfig();
-      if (config.enabled && shouldInjectOutboundHeaders(details.url, config.baseUrlWhitelist)) {
+      if (shouldApplyOutboundHeadersForRequest(config, details.url)) {
         applyOutboundHeaders(
           requestHeaders,
           getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
@@ -270,16 +321,13 @@ export class OutboundHeaderProxy {
       const requestUrl =
         input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
       const config = this.getConfig();
-      if (!config.enabled || !shouldInjectOutboundHeaders(requestUrl, config.baseUrlWhitelist)) {
+      if (!shouldApplyOutboundHeadersForRequest(config, requestUrl)) {
         return originalFetch(input, init);
       }
 
       const headers = new Headers(input instanceof Request ? input.headers : undefined);
       new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
-      const headerValues = getOutboundHeaderUserInfo(
-        this.userInfoPath,
-        config.headerNames,
-      );
+      const headerValues = getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames);
       for (const [name, value] of Object.entries(headerValues)) {
         headers.set(name, value);
       }
