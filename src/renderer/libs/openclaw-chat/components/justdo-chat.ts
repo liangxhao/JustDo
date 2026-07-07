@@ -16,6 +16,7 @@ import type { ChatController } from '../gateway/chat-controller';
 import { buildChatItems } from '../pipeline/build-chat-items';
 import { extractTextCached } from '../pipeline/message-extract';
 import type { ChatItem, GatewayMessage, MessageGroup } from '../types';
+import { renderChatAvatar } from './chat-avatar';
 import {
   getThinkingToolsGroupToolCount,
   renderMessageGroup,
@@ -1161,7 +1162,6 @@ export class JustDoChatElement extends LitElement {
     }
 
     .thinking-tools-cluster__summary {
-      width: fit-content;
       margin-left: 44px;
       cursor: pointer;
       color: var(--justdo-chat-text-secondary, #9ca3af);
@@ -1169,6 +1169,20 @@ export class JustDoChatElement extends LitElement {
       font-weight: 500;
       padding: 2px 0;
       user-select: none;
+    }
+
+    .thinking-tools-cluster__summary-row {
+      list-style: none;
+      margin-left: 0;
+    }
+
+    .thinking-tools-cluster__summary-row::-webkit-details-marker {
+      display: none;
+    }
+
+    .thinking-tools-cluster__summary-text {
+      width: fit-content;
+      font-weight: 520;
     }
 
     .thinking-tools-cluster__content {
@@ -1933,22 +1947,33 @@ export class JustDoChatElement extends LitElement {
           clusters.pop();
           toolCounts.pop();
         }
-        if (clusters.length > 1) {
+        if (clusters.length > 0) {
           const totalTools = toolCounts.reduce((total, count) => total + count, 0);
           const summary = i18nService
             .t('coworkThinkingToolsClusterSummary')
             .replace('{thinkingCount}', String(clusters.length))
             .replace('{toolCount}', String(totalTools));
+          const showClusterAvatar = shouldRenderGroupAvatarByPrevItem(clusters[0], prev);
           rendered.push(html`
             <details class="thinking-tools-cluster">
-              <summary class="thinking-tools-cluster__summary">${summary}</summary>
+              <summary
+                class=${`chat-group chat-group--assistant thinking-tools-cluster__summary thinking-tools-cluster__summary-row${
+                  showClusterAvatar ? '' : ' chat-group--continuation'
+                }`}
+              >
+                <div class="chat-group__avatar">
+                  ${showClusterAvatar ? renderChatAvatar('assistant') : nothing}
+                </div>
+                <div class="chat-group__content">
+                  <div class="thinking-tools-cluster__summary-text">${summary}</div>
+                </div>
+              </summary>
               <div class="thinking-tools-cluster__content">
-                ${clusters.map((group, clusterIndex) =>
+                ${clusters.map(group =>
                   renderMessageGroup(group, {
                     searchQuery: this.searchQuery,
                     showFooter: false,
-                    showAvatar:
-                      clusterIndex === 0 && shouldRenderGroupAvatarByPrevItem(group, prev),
+                    showAvatar: false,
                     assistantName: this.assistantName,
                     workingDirectory: this.workingDirectory,
                   }),
