@@ -444,6 +444,7 @@ const Settings: React.FC<SettingsProps> = ({
   );
   const [openClawGatewayPortSaving, setOpenClawGatewayPortSaving] = useState<boolean>(false);
   const [isRestartingOpenClawGateway, setIsRestartingOpenClawGateway] = useState<boolean>(false);
+  const openClawGatewayPortInputRef = useRef<HTMLInputElement>(null);
 
   // Load OpenClaw gateway port
   useEffect(() => {
@@ -454,6 +455,14 @@ const Settings: React.FC<SettingsProps> = ({
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!openClawGatewayPortEditing) {
+      return;
+    }
+    openClawGatewayPortInputRef.current?.focus();
+    openClawGatewayPortInputRef.current?.select();
+  }, [openClawGatewayPortEditing]);
 
   const handleSaveOpenClawGatewayPort = async () => {
     const port = parseInt(openClawGatewayPortInput, 10);
@@ -1437,35 +1446,6 @@ const Settings: React.FC<SettingsProps> = ({
               </label>
             </div>
 
-            {/* System proxy Section */}
-            <div>
-              <h4 className="text-sm font-medium text-foreground mb-3">
-                {i18nService.t('useSystemProxy')}
-              </h4>
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-sm text-secondary">
-                  {i18nService.t('useSystemProxyDescription')}
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={useSystemProxy}
-                  onClick={() => {
-                    setUseSystemProxy(prev => !prev);
-                  }}
-                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-                    useSystemProxy ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      useSystemProxy ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </label>
-            </div>
-
             {/* Developer Mode Section */}
             <div>
               <h4 className="text-sm font-medium text-foreground mb-3">
@@ -1495,85 +1475,109 @@ const Settings: React.FC<SettingsProps> = ({
               </label>
             </div>
 
-            {/* Gateway Port Configuration */}
-            <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium text-foreground">
-                    {i18nService.t('openclawGatewayPortTitle')}
-                  </div>
-                  <div className="text-xs text-secondary">
-                    {i18nService.t('openclawGatewayPortHint')}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleRestartOpenClawGateway()}
-                  disabled={isRestartingOpenClawGateway}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium border-border text-secondary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-                  title={i18nService.t('openclawGatewayRestartHint')}
-                >
-                  <ArrowPathIcon
-                    className={`h-4 w-4 ${isRestartingOpenClawGateway ? 'animate-spin' : ''}`}
-                    aria-hidden="true"
-                  />
-                  {isRestartingOpenClawGateway
-                    ? i18nService.t('openclawGatewayRestarting')
-                    : i18nService.t('coworkOpenClawRestartGateway')}
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                {openClawGatewayPortEditing ? (
-                  <>
-                    <input
-                      type="number"
-                      min={1}
-                      max={65535}
-                      value={openClawGatewayPortInput}
-                      onChange={e => setOpenClawGatewayPortInput(e.target.value)}
-                      className="w-32 rounded-lg border px-3 py-1.5 text-sm border-border bg-surface"
-                      disabled={openClawGatewayPortSaving}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveOpenClawGatewayPort()}
-                      disabled={
-                        openClawGatewayPortSaving ||
-                        isNaN(parseInt(openClawGatewayPortInput, 10)) ||
-                        parseInt(openClawGatewayPortInput, 10) < 1 ||
-                        parseInt(openClawGatewayPortInput, 10) > 65535
-                      }
-                      className="px-3 py-1.5 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {i18nService.t('save')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenClawGatewayPortEditing(false);
-                        setOpenClawGatewayPortInput(String(openClawGatewayPort));
-                      }}
-                      className="px-3 py-1.5 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                    >
-                      {i18nService.t('cancel')}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <span className="px-3 py-1.5 text-sm font-mono bg-surface-raised rounded-lg">
-                      {openClawGatewayPort}
+            {developerMode && (
+              <>
+                {/* System proxy Section */}
+                <div>
+                  <h4 className="text-sm font-medium text-foreground mb-3">
+                    {i18nService.t('useSystemProxy')}
+                  </h4>
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <span className="text-sm text-secondary">
+                      {i18nService.t('useSystemProxyDescription')}
                     </span>
                     <button
                       type="button"
-                      onClick={() => setOpenClawGatewayPortEditing(true)}
-                      className="px-3 py-1.5 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                      role="switch"
+                      aria-checked={useSystemProxy}
+                      onClick={() => {
+                        setUseSystemProxy(prev => !prev);
+                      }}
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                        useSystemProxy ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
                     >
-                      {i18nService.t('edit')}
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          useSystemProxy ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
                     </button>
-                  </>
-                )}
-              </div>
-            </div>
+                  </label>
+                </div>
+
+                {/* Gateway Port Configuration */}
+                <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="text-sm font-medium text-foreground">
+                        {i18nService.t('openclawGatewayPortTitle')}
+                      </div>
+                      <input
+                        ref={openClawGatewayPortInputRef}
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={openClawGatewayPortInput}
+                        readOnly={!openClawGatewayPortEditing}
+                        onDoubleClick={() => setOpenClawGatewayPortEditing(true)}
+                        onChange={e => setOpenClawGatewayPortInput(e.target.value)}
+                        className={`w-32 rounded-lg border px-3 py-1.5 text-center text-sm font-mono border-border bg-surface ${
+                          openClawGatewayPortEditing
+                            ? 'text-foreground'
+                            : 'cursor-default text-secondary'
+                        }`}
+                        disabled={openClawGatewayPortSaving}
+                      />
+                      {openClawGatewayPortEditing && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveOpenClawGatewayPort()}
+                            disabled={
+                              openClawGatewayPortSaving ||
+                              isNaN(parseInt(openClawGatewayPortInput, 10)) ||
+                              parseInt(openClawGatewayPortInput, 10) < 1 ||
+                              parseInt(openClawGatewayPortInput, 10) > 65535
+                            }
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+                            aria-label={i18nService.t('save')}
+                          >
+                            <CheckCircleIcon className="h-5 w-5" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpenClawGatewayPortEditing(false);
+                              setOpenClawGatewayPortInput(String(openClawGatewayPort));
+                            }}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                            aria-label={i18nService.t('cancel')}
+                          >
+                            <XCircleIcon className="h-5 w-5" aria-hidden="true" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleRestartOpenClawGateway()}
+                      disabled={isRestartingOpenClawGateway}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium border-border text-secondary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+                      title={i18nService.t('openclawGatewayRestartHint')}
+                    >
+                      <ArrowPathIcon
+                        className={`h-4 w-4 ${isRestartingOpenClawGateway ? 'animate-spin' : ''}`}
+                        aria-hidden="true"
+                      />
+                      {isRestartingOpenClawGateway
+                        ? i18nService.t('openclawGatewayRestarting')
+                        : i18nService.t('coworkOpenClawRestartGateway')}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Appearance Section — mode selector + theme gallery */}
             <div>

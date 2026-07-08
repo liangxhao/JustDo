@@ -175,8 +175,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenClawRunning: 'AI 引擎已就绪。',
     coworkOpenClawError: 'OpenClaw 网关未能在规定时间内启动成功。',
     openclawGatewayPortTitle: '网关端口',
-    openclawGatewayPortHint:
-      'AI 助理的本地网关服务端口。如果端口冲突，可在此修改。修改后需重启本软件才能生效。',
     openclawGatewayRestartHint: '停止并重新启动本地 AI 网关服务',
     openclawGatewayRestarting: '正在重启...',
     openclawGatewayRestarted: '网关已重新启动',
@@ -759,8 +757,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenClawRunning: 'AI engine is ready.',
     coworkOpenClawError: 'OpenClaw gateway failed to become healthy in time.',
     openclawGatewayPortTitle: 'Gateway Port',
-    openclawGatewayPortHint:
-      'The local gateway service port used by the AI assistant. Change it if the port conflicts with another service. Restart the app for changes to take effect.',
     openclawGatewayRestartHint: 'Stop and restart the local AI gateway service',
     openclawGatewayRestarting: 'Restarting...',
     openclawGatewayRestarted: 'Gateway restarted',
