@@ -283,6 +283,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       confirmationMode: options.confirmationMode,
       attachments: options.attachments,
       agentId: options.agentId,
+      workspaceRoot: options.workspaceRoot,
     });
   }
 
@@ -394,6 +395,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       confirmationMode?: 'modal' | 'text';
       attachments?: CoworkAttachmentPayload[];
       agentId?: string;
+      workspaceRoot?: string;
     },
   ): Promise<void> {
     if (!prompt.trim()) {
@@ -447,6 +449,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.rememberSessionKey(sessionId, sessionKey);
     this.store.updateSession(sessionId, { status: 'running' });
     await this.ensureGatewayClientReady();
+    try {
+      await this.syncAgentWorkspaceIfNeeded(agentId, options.workspaceRoot);
+    } catch (error) {
+      this.store.updateSession(sessionId, { status: 'error' });
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit('error', sessionId, message);
+      throw error;
+    }
 
     const runId = randomUUID();
     const turnToken = this.nextTurnToken(sessionId);
@@ -500,6 +510,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     await completionPromise;
+  }
+
+  private async syncAgentWorkspaceIfNeeded(agentId: string, workspaceRoot?: string): Promise<void> {
+    const workspace = workspaceRoot?.trim();
+    if (!workspace) return;
+    const client = this.requireGatewayClient();
+    try {
+      await client.request('agents.update', {
+        agentId,
+        workspace,
+      });
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to sync agent workspace before chat turn', {
+        agentId,
+        workspace,
+        error: String(error),
+      });
+      throw error;
+    }
   }
 
   // ─── Gateway Event Routing ──────────────────────────────────────────────
