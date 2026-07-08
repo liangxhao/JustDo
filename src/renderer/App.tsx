@@ -165,7 +165,7 @@ const App: React.FC = () => {
         console.info('[App] initializeApp: shell ready');
 
         // 初始化定时任务服务，但不阻塞首屏
-        void waitWithTimeout(scheduledTaskService.init(), 5000, 'scheduledTaskService.init').catch(
+        void waitWithTimeout(scheduledTaskService.init(), 10000, 'scheduledTaskService.init').catch(
           error => {
             console.error('[App] initializeApp: scheduledTaskService.init failed:', error);
           },

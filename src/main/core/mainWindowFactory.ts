@@ -112,9 +112,13 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     };
     tryLoadUrl();
 
-    mainWindow.webContents.on('did-finish-load', () => {
-      if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDevToolsOpened()) {
-        mainWindow.webContents.openDevTools({ mode: 'right' });
+    mainWindow.webContents.on('before-input-event', (_event, input) => {
+      const isDevtoolsShortcut =
+        input.key === 'F12' ||
+        (input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i';
+
+      if (isDevtoolsShortcut) {
+        mainWindow.webContents.toggleDevTools();
       }
     });
   } else {
