@@ -66,7 +66,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
   const [openClawStatus, setOpenClawStatus] = useState<OpenClawEngineStatus | null>(null);
-  const [isRestartingGateway, setIsRestartingGateway] = useState(false);
   const [selectedSubagent, setSelectedSubagent] = useState<Subagent | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
@@ -156,35 +155,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     return { noticeI18nKey: key, noticeExtra: error };
   };
 
-  const resolveEngineBannerText = (status: OpenClawEngineStatus): string => {
-    switch (status.phase) {
-      case 'ready':
-        return i18nService.t('coworkOpenClawReadyNotice');
-      case 'starting':
-        return i18nService.t('coworkOpenClawStarting');
-      case 'error':
-        return i18nService.t('coworkOpenClawError');
-      case 'running':
-      default:
-        return i18nService.t('coworkOpenClawRunning');
-    }
-  };
-
   const isOpenClawReadyForSession = (status: OpenClawEngineStatus | null): boolean => {
     if (!status) return false;
     return status.phase === 'running' || status.phase === 'ready';
-  };
-
-  const handleRestartGateway = async () => {
-    if (isRestartingGateway) return;
-    setIsRestartingGateway(true);
-    try {
-      await coworkService.restartOpenClawGateway();
-    } catch (error) {
-      console.error('[CoworkView] Failed to restart gateway:', error);
-    } finally {
-      setIsRestartingGateway(false);
-    }
   };
 
   useEffect(() => {
@@ -622,10 +595,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     );
   }
 
-  const shouldShowEngineStatus = Boolean(
-    isOpenClawEngine && openClawStatus && openClawStatus.phase !== 'running',
-  );
-  const isEngineError = openClawStatus?.phase === 'error';
   const isEngineReady = isOpenClawEngine ? isOpenClawReadyForSession(openClawStatus) : true;
 
   const homeHeader = (
@@ -656,37 +625,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     </div>
   );
 
-  // Engine status banner for error/non-running states (starting overlay is now global in App.tsx)
-  const engineStatusBanner =
-    shouldShowEngineStatus && openClawStatus && openClawStatus.phase !== 'starting' ? (
-      <div
-        className={`shrink-0 flex items-center justify-between px-4 py-2 text-xs ${
-          isEngineError
-            ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
-            : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <span>{resolveEngineBannerText(openClawStatus)}</span>
-          {typeof openClawStatus.progressPercent === 'number' && (
-            <span className="opacity-70">({Math.round(openClawStatus.progressPercent)}%)</span>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={handleRestartGateway}
-          disabled={isRestartingGateway}
-          className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-            isEngineError
-              ? 'bg-red-600 text-white hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600'
-              : 'bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600'
-          }`}
-        >
-          {i18nService.t('coworkOpenClawRestartGateway')}
-        </button>
-      </div>
-    ) : null;
-
   // When there's a current session, show the session detail view
   if (currentSession) {
     const handleSendMessage = async (
@@ -707,7 +645,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
     return (
       <div className="relative flex-1 flex flex-col h-full">
-        {engineStatusBanner}
         {/* Header */}
         <div className="draggable relative flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
           <div className="non-draggable h-8 flex items-center">
@@ -875,9 +812,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   // Home view - no current session
   return (
     <div className="flex-1 flex flex-col bg-background h-full">
-      {/* Engine status banner for error states */}
-      {engineStatusBanner}
-
       {/* Header */}
       {homeHeader}
 

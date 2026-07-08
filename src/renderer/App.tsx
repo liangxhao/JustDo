@@ -6,7 +6,7 @@ import { CoworkInteractionKind } from '../shared/openclawExtensions';
 import { CoworkView } from './components/cowork';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
-import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
+import EngineStartupStatusBar from './components/cowork/EngineStartupStatusBar';
 import PluginsView from './components/plugins/PluginsView';
 import { CronView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
@@ -503,7 +503,7 @@ const App: React.FC = () => {
         />
         <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
           <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
-            <EngineStartupOverlay />
+            <EngineStartupStatusBar />
             {mainView === 'scheduledTasks' ? (
               <CronView
                 isSidebarCollapsed={isSidebarCollapsed}
