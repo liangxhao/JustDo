@@ -15,6 +15,7 @@ import {
   defaultConfig,
   getProviderDisplayName,
   getVisibleProviders,
+  isBuiltinModelsProvider,
   isCustomProvider,
 } from '../config';
 import { agentService } from '../services/agent';
@@ -88,6 +89,16 @@ const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
   return getProviderDefaultBaseUrl(provider) || '';
 };
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
+
+const hideBuiltinModelUrlFromLog = (log?: string): string | undefined => {
+  if (!log) {
+    return log;
+  }
+  return log
+    .split('\n')
+    .filter(line => !line.startsWith(`${i18nService.t('testRequestUrl')}:`))
+    .join('\n');
+};
 
 const stringifyConnectivityLogValue = (value: unknown): string => {
   if (typeof value === 'string') {
@@ -1058,8 +1069,11 @@ const Settings: React.FC<SettingsProps> = ({
     provider: ProviderType,
   ) => {
     const providerConfig = providers[provider];
+    const shouldHideUrl = isBuiltinModelsProvider(provider);
     setTestResult({
       ...result,
+      baseUrl: shouldHideUrl ? undefined : result.baseUrl,
+      log: shouldHideUrl ? hideBuiltinModelUrlFromLog(result.log) : result.log,
       provider,
       providerName: getProviderDisplayName(provider, providerConfig),
     });
