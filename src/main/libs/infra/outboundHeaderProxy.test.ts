@@ -62,7 +62,7 @@ test('applies outbound headers only when enabled and the URL is whitelisted', ()
   const config = {
     enabled: true,
     baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: ['user-id'],
+    headerNames: ['User-Account'],
   };
 
   expect(isOutboundHeaderProxyActive(config)).toBe(true);
@@ -79,37 +79,37 @@ test('applies outbound headers only when enabled and the URL is whitelisted', ()
 test('reads configured values from user_info.json', () => {
   const userInfoPath = writeUserInfo(
     JSON.stringify({
-      user-id: 'user-123',
-      user_cookie: 'cookie-value',
+      User-Account: 'user-123',
+      user_Cookie: 'Cookie-value',
       ignored: 'not-a-header',
     }),
   );
 
-  expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['user-id', 'user_cookie'])).toEqual({
-    user-id: 'user-123',
-    user_cookie: 'cookie-value',
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['User-Account', 'user_Cookie'])).toEqual({
+    User-Account: 'user-123',
+    user_Cookie: 'Cookie-value',
   });
 });
 
 test('uses empty strings for missing, empty, null, or unsupported values', () => {
   const userInfoPath = writeUserInfo(
     JSON.stringify({
-      user-id: '',
-      user_cookie: null,
+      User-Account: '',
+      user_Cookie: null,
       object_value: { secret: true },
     }),
   );
 
   expect(
     updateOutboundHeaderUserInfoCache(userInfoPath, [
-      'user-id',
-      'user_cookie',
+      'User-Account',
+      'user_Cookie',
       'missing',
       'object_value',
     ]),
   ).toEqual({
-    user-id: '',
-    user_cookie: '',
+    User-Account: '',
+    user_Cookie: '',
     missing: '',
     object_value: '',
   });
@@ -117,22 +117,22 @@ test('uses empty strings for missing, empty, null, or unsupported values', () =>
 
 test('uses empty values when user_info.json does not exist', () => {
   expect(
-    updateOutboundHeaderUserInfoCache('missing-user-info.json', ['user-id', 'user_cookie']),
+    updateOutboundHeaderUserInfoCache('missing-user-info.json', ['User-Account', 'user_Cookie']),
   ).toEqual({
-    user-id: '',
-    user_cookie: '',
+    User-Account: '',
+    user_Cookie: '',
   });
 });
 
 test('reuses cached user info until the update function is called', () => {
-  const userInfoPath = writeUserInfo(JSON.stringify({ user-id: 'first' }));
+  const userInfoPath = writeUserInfo(JSON.stringify({ User-Account: 'first' }));
 
-  updateOutboundHeaderUserInfoCache(userInfoPath, ['user-id']);
-  fs.writeFileSync(userInfoPath, JSON.stringify({ user-id: 'second' }));
+  updateOutboundHeaderUserInfoCache(userInfoPath, ['User-Account']);
+  fs.writeFileSync(userInfoPath, JSON.stringify({ User-Account: 'second' }));
 
-  expect(getOutboundHeaderUserInfo(userInfoPath, ['user-id'])).toEqual({ user-id: 'first' });
-  expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['user-id'])).toEqual({
-    user-id: 'second',
+  expect(getOutboundHeaderUserInfo(userInfoPath, ['User-Account'])).toEqual({ User-Account: 'first' });
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['User-Account'])).toEqual({
+    User-Account: 'second',
   });
 });
 
@@ -155,16 +155,16 @@ test('reloads the outbound header policy together with user info', () => {
 });
 
 test('adds only configured header values and replaces names case-insensitively', () => {
-  const headers = { user-id: 'old-value', untouched: 'yes' };
+  const headers = { User-Account: 'old-value', untouched: 'yes' };
 
   applyOutboundHeaders(headers, {
-    user-id: 'user-123',
-    user_cookie: 'cookie-value',
+    User-Account: 'user-123',
+    user_Cookie: 'Cookie-value',
   });
 
   expect(headers).toEqual({
-    user-id: 'user-123',
-    user_cookie: 'cookie-value',
+    User-Account: 'user-123',
+    user_Cookie: 'Cookie-value',
     untouched: 'yes',
   });
 });
@@ -173,12 +173,12 @@ test('normalizes the static policy and ignores invalid base URLs', () => {
   expect(
     resolveOutboundHeaderProxyConfig({
       enabled: true,
-      headerNames: [' user-id ', '', 'invalid header', 'bad:header', 'user_cookie'],
+      headerNames: [' User-Account ', '', 'invalid header', 'bad:header', 'user_Cookie'],
       baseUrlWhitelist: ['https://one.example/api/', 'invalid', 'http://two.example/'],
     }),
   ).toEqual({
     enabled: true,
-    headerNames: ['user-id', 'user_cookie'],
+    headerNames: ['User-Account', 'user_Cookie'],
     baseUrlWhitelist: ['https://one.example/api/', 'http://two.example/'],
   });
 });
@@ -195,7 +195,7 @@ test('configures common Node, Python, and curl proxy environment variables for a
     {
       enabled: true,
       baseUrlWhitelist: ['https://example.com/api/'],
-      headerNames: ['user-id'],
+      headerNames: ['User-Account'],
     },
   );
 
@@ -228,12 +228,12 @@ test('does not configure proxy environment variables when disabled or whitelist 
   applyOutboundProxyEnv(disabledEnv, proxyInfo, {
     enabled: false,
     baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: ['user-id'],
+    headerNames: ['User-Account'],
   });
   applyOutboundProxyEnv(emptyWhitelistEnv, proxyInfo, {
     enabled: true,
     baseUrlWhitelist: [],
-    headerNames: ['user-id'],
+    headerNames: ['User-Account'],
   });
 
   expect(disabledEnv).toEqual({
