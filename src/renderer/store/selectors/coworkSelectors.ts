@@ -28,12 +28,7 @@ export const selectExpandedGroupIds = (state: RootState) => state.cowork.expande
 // These compute new values from the store and use createSelector to avoid
 // returning new object references when the inputs haven't changed.
 
-export const selectAgentEngine = createSelector(selectCoworkConfig, config => config.agentEngine);
-
-export const selectIsOpenClawEngine = createSelector(
-  selectAgentEngine,
-  engine => engine === 'openclaw',
-);
+export const selectIsOpenClawEngine = () => true;
 
 export const selectCurrentMessages = createSelector(
   selectCurrentSession,

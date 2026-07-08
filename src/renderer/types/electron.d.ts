@@ -108,8 +108,7 @@ interface CoworkApiConfig {
   apiType?: 'openai';
 }
 
-type OpenClawEnginePhase =
-  'not_installed' | 'installing' | 'ready' | 'starting' | 'running' | 'error';
+type OpenClawEnginePhase = 'ready' | 'starting' | 'running' | 'error';
 
 interface OpenClawEngineStatus {
   phase: OpenClawEnginePhase;
@@ -355,12 +354,6 @@ interface IElectronAPI {
   openclaw: {
     engine: {
       getStatus: () => Promise<{ success: boolean; status?: OpenClawEngineStatus; error?: string }>;
-      install: () => Promise<{ success: boolean; status?: OpenClawEngineStatus; error?: string }>;
-      retryInstall: () => Promise<{
-        success: boolean;
-        status?: OpenClawEngineStatus;
-        error?: string;
-      }>;
       restartGateway: () => Promise<{
         success: boolean;
         status?: OpenClawEngineStatus;

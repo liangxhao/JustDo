@@ -132,7 +132,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     agentModel: currentSessionAgent?.model ?? '',
     availableModels,
     fallbackModel: globalSelectedModel,
-    engine: config.agentEngine,
   });
   const assistantName =
     sessionSelectedModel?.name?.trim() ||
@@ -157,12 +156,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     return { noticeI18nKey: key, noticeExtra: error };
   };
 
-  const resolveEngineStatusText = (status: OpenClawEngineStatus): string => {
+  const resolveEngineBannerText = (status: OpenClawEngineStatus): string => {
     switch (status.phase) {
-      case 'not_installed':
-        return i18nService.t('coworkOpenClawNotInstalledNotice');
-      case 'installing':
-        return i18nService.t('coworkOpenClawInstalling');
       case 'ready':
         return i18nService.t('coworkOpenClawReadyNotice');
       case 'starting':
@@ -672,7 +667,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         }`}
       >
         <div className="flex items-center gap-2">
-          <span>{resolveEngineStatusText(openClawStatus)}</span>
+          <span>{resolveEngineBannerText(openClawStatus)}</span>
           {typeof openClawStatus.progressPercent === 'number' && (
             <span className="opacity-70">({Math.round(openClawStatus.progressPercent)}%)</span>
           )}

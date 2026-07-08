@@ -1,29 +1,11 @@
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-import React, { useEffect,useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { selectIsOpenClawEngine } from '../../store/selectors/coworkSelectors';
 import type { OpenClawEngineStatus } from '../../types/cowork';
-
-const resolveEngineStatusText = (status: OpenClawEngineStatus): string => {
-  switch (status.phase) {
-    case 'not_installed':
-      return i18nService.t('coworkOpenClawNotInstalledNotice');
-    case 'installing':
-      return i18nService.t('coworkOpenClawInstalling');
-    case 'ready':
-      return i18nService.t('coworkOpenClawReadyNotice');
-    case 'starting':
-      return i18nService.t('coworkOpenClawStarting');
-    case 'error':
-      return i18nService.t('coworkOpenClawError');
-    case 'running':
-    default:
-      return i18nService.t('coworkOpenClawRunning');
-  }
-};
 
 /**
  * Global overlay shown when the OpenClaw gateway is starting up.
@@ -36,11 +18,11 @@ const EngineStartupOverlay: React.FC = () => {
   useEffect(() => {
     if (!isOpenClawEngine) return;
 
-    coworkService.getOpenClawEngineStatus().then((s) => {
+    coworkService.getOpenClawEngineStatus().then(s => {
       if (s) setStatus(s);
     });
 
-    const unsubscribe = coworkService.onOpenClawEngineStatus((s) => {
+    const unsubscribe = coworkService.onOpenClawEngineStatus(s => {
       setStatus(s);
     });
 
@@ -51,9 +33,10 @@ const EngineStartupOverlay: React.FC = () => {
     return null;
   }
 
-  const progressPercent = typeof status.progressPercent === 'number'
-    ? Math.max(0, Math.min(100, Math.round(status.progressPercent)))
-    : null;
+  const progressPercent =
+    typeof status.progressPercent === 'number'
+      ? Math.max(0, Math.min(100, Math.round(status.progressPercent)))
+      : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm">
@@ -62,9 +45,7 @@ const EngineStartupOverlay: React.FC = () => {
           <div className="h-10 w-10 rounded-full bg-primary/15 text-primary flex items-center justify-center animate-pulse">
             <ChatBubbleLeftRightIcon className="h-5 w-5" />
           </div>
-          <div className="text-sm text-foreground">
-            {resolveEngineStatusText(status)}
-          </div>
+          <div className="text-sm text-foreground">{i18nService.t('coworkOpenClawStarting')}</div>
           {progressPercent !== null && (
             <div className="w-full space-y-1">
               <div className="h-1.5 w-full rounded-full bg-primary/15 overflow-hidden">
@@ -73,9 +54,7 @@ const EngineStartupOverlay: React.FC = () => {
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
-              <div className="text-xs text-secondary">
-                {progressPercent}%
-              </div>
+              <div className="text-xs text-secondary">{progressPercent}%</div>
             </div>
           )}
         </div>

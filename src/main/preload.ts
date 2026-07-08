@@ -150,8 +150,6 @@ contextBridge.exposeInMainWorld('electron', {
   openclaw: {
     engine: {
       getStatus: () => ipcRenderer.invoke('openclaw:engine:getStatus'),
-      install: () => ipcRenderer.invoke('openclaw:engine:install'),
-      retryInstall: () => ipcRenderer.invoke('openclaw:engine:retryInstall'),
       restartGateway: () => ipcRenderer.invoke('openclaw:engine:restartGateway'),
       getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),

@@ -17,7 +17,6 @@ describe('resolveAgentModelSelection', () => {
       agentModel: 'Anthropic/claude-sonnet-4',
       availableModels: models,
       fallbackModel: models[0],
-      engine: 'openclaw',
     });
 
     expect(result.selectedModel?.id).toBe('claude-sonnet-4');
@@ -30,7 +29,6 @@ describe('resolveAgentModelSelection', () => {
       agentModel: 'anthropic/claude-sonnet-4',
       availableModels: models,
       fallbackModel: models[0],
-      engine: 'openclaw',
     });
 
     expect(result.selectedModel?.id).toBe('claude-sonnet-4');
@@ -38,12 +36,11 @@ describe('resolveAgentModelSelection', () => {
     expect(result.hasInvalidExplicitModel).toBe(false);
   });
 
-  test('falls back to the global model in openclaw when agent model is empty', () => {
+  test('falls back to the global model when agent model is empty', () => {
     const result = resolveAgentModelSelection({
       agentModel: '',
       availableModels: models,
       fallbackModel: models[0],
-      engine: 'openclaw',
     });
 
     expect(result.selectedModel?.id).toBe('gpt-4o');
@@ -56,7 +53,6 @@ describe('resolveAgentModelSelection', () => {
       agentModel: 'deleted-model',
       availableModels: models,
       fallbackModel: models[0],
-      engine: 'openclaw',
     });
 
     expect(result.selectedModel?.id).toBe('gpt-4o');
@@ -69,7 +65,6 @@ describe('resolveAgentModelSelection', () => {
       agentModel: 'deepseek-v3.2',
       availableModels: models,
       fallbackModel: models[0],
-      engine: 'openclaw',
     });
 
     expect(result.selectedModel?.id).toBe('gpt-4o');

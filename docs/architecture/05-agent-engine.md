@@ -14,9 +14,9 @@ JustDo 采用 OpenClaw 作为唯一的 Agent 引擎（v2026.6.9），通过 Gate
 │  │                  OpenClaw Engine Manager                      │    │
 │  │                                                              │    │
 │  │  Status Machine:                                             │    │
-│  │  not_installed → installing → ready → starting → running     │    │
-│  │                                              ↓                │    │
-│  │                                            error              │    │
+│  │  ready → starting → running                                  │    │
+│  │             ↓          ↓                                      │    │
+│  │            error ←─────┘                                      │    │
 │  │                                                              │    │
 │  │  Lifecycle:                                                  │    │
 │  │  - ensureReady(): 确保 runtime 就绪                          │    │
@@ -85,8 +85,6 @@ Runtime 是预构建的 npm 包，直接从 npm registry 下载（非从 git clo
 
 ```typescript
 type OpenClawEnginePhase = 
-  | 'not_installed'   // Runtime 未安装/未找到
-  | 'installing'      // 安装中
   | 'ready'           // Runtime 已就绪，Gateway 未启动
   | 'starting'        // Gateway 启动中
   | 'running'         // Gateway 运行中
@@ -105,17 +103,14 @@ interface OpenClawEngineStatus {
 
 ```mermaid
 stateDiagram-v2
-  [*] --> not_installed: Runtime 文件缺失
-  not_installed --> ready: 找到 runtime 文件
-  not_installed --> installing: ensureReady()（需安装）
-  installing --> ready: 安装完成
+  [*] --> ready: Runtime 可用
+  [*] --> error: 内置 runtime 缺失或元数据无效
   ready --> starting: startGateway()
   starting --> running: Gateway 启动成功
   starting --> error: 启动失败
   running --> error: Gateway crash / 超时
   running --> ready: stopGateway()
-  error --> ready: resetGatewayState() / restartGateway()
-  installing --> error: 安装失败
+  error --> starting: restartGateway()
   ready --> [*]: 应用关闭
   running --> [*]: 应用关闭
 ```
@@ -135,10 +130,10 @@ class OpenClawEngineManager extends EventEmitter {
   private resolveRuntimeMetadata(): RuntimeMetadata { ... }
 
   /** 确保 runtime 可用（不启动 Gateway） */
-  async ensureReady(options?: { forceReinstall?: boolean }): Promise<OpenClawEngineStatus> {
+  async ensureReady(): Promise<OpenClawEngineStatus> {
     const runtime = this.resolveRuntimeMetadata();
     if (!runtime.root) {
-      this.setStatus({ phase: 'not_installed', ... });
+      this.setStatus({ phase: 'error', ... });
       return this.getStatus();
     }
     // 同步本地扩展

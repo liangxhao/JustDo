@@ -129,8 +129,6 @@ export interface CoworkApiConfig {
 }
 
 export type OpenClawEnginePhase =
-  | 'not_installed'
-  | 'installing'
   | 'ready'
   | 'starting'
   | 'running'

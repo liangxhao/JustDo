@@ -211,8 +211,6 @@ contextBridge.exposeInMainWorld('electron', {
   openclaw: {
     engine: {
       getStatus: () => ipcRenderer.invoke('openclaw:engine:getStatus'),
-      install: () => ipcRenderer.invoke('openclaw:engine:install'),
-      retryInstall: () => ipcRenderer.invoke('openclaw:engine:retryInstall'),
       restartGateway: () => ipcRenderer.invoke('openclaw:engine:restartGateway'),
       getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),
@@ -543,13 +541,11 @@ interface ElectronAPI {
   openclaw: {
     engine: {
       getStatus: () => Promise<EngineStatus>;
-      install: () => Promise<void>;
-      retryInstall: () => Promise<void>;
       restartGateway: () => Promise<void>;
       getPort: () => Promise<number>;
       getToken: () => Promise<string>;
       setPort: (port: number) => Promise<void>;
-      onProgress: (callback: (status: EngineInstallProgress) => void) => () => void;
+      onProgress: (callback: (status: EngineStatus) => void) => () => void;
     };
   };
 
@@ -789,8 +785,6 @@ function registerIpcHandlers() {
 
   // OpenClaw Engine
   ipcMain.handle('openclaw:engine:getStatus', handleOpenclawEngineGetStatus);
-  ipcMain.handle('openclaw:engine:install', handleOpenclawEngineInstall);
-  ipcMain.handle('openclaw:engine:retryInstall', handleOpenclawEngineRetryInstall);
   ipcMain.handle('openclaw:engine:restartGateway', handleOpenclawEngineRestartGateway);
   ipcMain.handle('openclaw:engine:getPort', handleOpenclawEngineGetPort);
   ipcMain.handle('openclaw:engine:getToken', handleOpenclawEngineGetToken);
@@ -1000,8 +994,6 @@ export const IpcChannel = {
 
   // OpenClaw Engine
   OpenClawEngineGetStatus: 'openclaw:engine:getStatus',
-  OpenClawEngineInstall: 'openclaw:engine:install',
-  OpenClawEngineRetryInstall: 'openclaw:engine:retryInstall',
   OpenClawEngineRestartGateway: 'openclaw:engine:restartGateway',
   OpenClawEngineGetPort: 'openclaw:engine:getPort',
   OpenClawEngineGetToken: 'openclaw:engine:getToken',

@@ -362,9 +362,7 @@ const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
   };
 };
 
-const bootstrapOpenClawEngine = async (
-  options: { forceReinstall?: boolean; reason?: string } = {},
-) => {
+const bootstrapOpenClawEngine = async (options: { reason?: string } = {}) => {
   if (openClawBootstrapPromise) {
     return openClawBootstrapPromise;
   }
@@ -400,10 +398,6 @@ const bootstrapOpenClawEngine = async (
       );
       if (!syncResult.success) {
         return syncResult.status || manager.getStatus();
-      }
-      if (options.forceReinstall) {
-        await manager.stopGateway();
-        console.log(`[OpenClaw] bootstrap: stopGateway done (${elapsed()})`);
       }
       const ensuredStatus = await manager.ensureReady();
       console.log(
@@ -960,7 +954,6 @@ if (!gotTheLock) {
 
   registerOpenClawEngineHandlers({
     getManager: getOpenClawEngineManager,
-    bootstrap: bootstrapOpenClawEngine,
   });
 
   registerMcpHandlers({

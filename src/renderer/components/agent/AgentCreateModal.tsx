@@ -29,7 +29,6 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [activeTab, setActiveTab] = useState<CreateTab>('basic');
-  const availableModels = useSelector((state: RootState) => state.model.availableModels);
   const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
@@ -225,12 +224,6 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({ isOpen, onClose }) 
                   {i18nService.t('agentDefaultModel') || 'Agent Default Model'}
                 </label>
                 <ModelSelector value={model} onChange={setModel} />
-                {availableModels.length > 0 && (
-                  <p className="mt-1 text-xs text-secondary/70">
-                    {i18nService.t('agentModelOpenClawOnly') ||
-                      'This setting only applies to the OpenClaw engine'}
-                  </p>
-                )}
               </div>
             </div>
           )}

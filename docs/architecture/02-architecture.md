@@ -307,8 +307,7 @@ window.electron = {
   getApiConfig, checkApiConfig, saveApiConfig,  // API 配置
   generateSessionTitle, getRecentCwds,           // 工具函数
   openclaw:                          // 引擎管理
-    { engine: { getStatus, install, retryInstall, restartGateway,
-                getPort, getToken, setPort, onProgress } },
+    { engine: { getStatus, restartGateway, getPort, getToken, setPort, onProgress } },
   agents:                            // Agent 管理
     { list, get, create, update, delete },
   cowork:                            // Cowork 会话
@@ -398,8 +397,6 @@ export const IpcChannel = {
 
   // OpenClaw Engine
   OpenClawEngineGetStatus: 'openclaw:engine:getStatus',
-  OpenClawEngineInstall: 'openclaw:engine:install',
-  OpenClawEngineRetryInstall: 'openclaw:engine:retryInstall',
   OpenClawEngineRestartGateway: 'openclaw:engine:restartGateway',
   OpenClawEngineGetPort: 'openclaw:engine:getPort',
   OpenClawEngineGetToken: 'openclaw:engine:getToken',

@@ -169,14 +169,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     modelGroupServer: '套餐模型',
     modelGroupUser: '自定义模型',
     modelSelectorNoModels: '请先在设置中配置模型',
-    coworkAgentEngine: 'Agent 引擎',
-    coworkAgentEngineOpenClaw: 'OpenClaw（默认）',
-    coworkAgentEngineOpenClawHint: '个人 AI 助理',
-    coworkOpenClawInstalling: '正在启动 OpenClaw...',
-    coworkOpenClawInstallHint: 'OpenClaw 运行时已内置。切换到该引擎或启动任务时会自动拉起网关。',
     coworkOpenClawRestartGateway: '重新启动网关',
-    coworkOpenClawNotInstalledNotice:
-      '未检测到内置 OpenClaw runtime（cfmind），请先执行打包前构建脚本。',
     coworkOpenClawReadyNotice: 'OpenClaw runtime 已就绪。开始任务时会自动启动网关。',
     coworkOpenClawStarting: 'AI 引擎正在启动网关...',
     coworkOpenClawRunning: 'AI 引擎已就绪。',
@@ -184,6 +177,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayPortTitle: '网关端口',
     openclawGatewayPortHint:
       'AI 助理的本地网关服务端口。如果端口冲突，可在此修改。修改后需重启本软件才能生效。',
+    openclawGatewayRestartHint: '停止并重新启动本地 AI 网关服务',
+    openclawGatewayRestarting: '正在重启...',
+    openclawGatewayRestarted: '网关已重新启动',
+    openclawGatewayRestartFailed: '网关重启失败',
     coworkConfigSaveFailed: '保存 JustDo 配置失败，请稍后重试。',
     coworkStatusIdle: '已停止',
     coworkStatusRunning: '运行中',
@@ -242,7 +239,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentIdentity: '身份',
     agentIdentityPlaceholder: '身份描述（IDENTITY.md）...',
     agentDefaultModel: 'Agent 默认模型',
-    agentModelOpenClawOnly: '仅 OpenClaw 引擎使用此设置',
     agentModelInvalidHint: '当前 Agent 绑定的模型已不可用，请先为该 Agent 重新选择有效模型',
     agentSkillsHint: '选择该 Agent 可使用的技能。不选则使用所有已启用技能。',
     agentSkillsSearch: '搜索技能...',
@@ -756,15 +752,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     modelGroupServer: 'Plan Models',
     modelGroupUser: 'Custom Models',
     modelSelectorNoModels: 'Please configure models in settings first',
-    coworkAgentEngine: 'Agent Engine',
-    coworkAgentEngineOpenClaw: 'OpenClaw (Default)',
-    coworkAgentEngineOpenClawHint: 'Personal AI assistant',
-    coworkOpenClawInstalling: 'Starting OpenClaw...',
-    coworkOpenClawInstallHint:
-      'OpenClaw runtime is bundled. Switching to this engine or starting a task will auto-start the gateway.',
     coworkOpenClawRestartGateway: 'Restart Gateway',
-    coworkOpenClawNotInstalledNotice:
-      'Bundled OpenClaw runtime (cfmind) was not found. Build the runtime before packaging.',
     coworkOpenClawReadyNotice:
       'OpenClaw runtime is ready. The gateway will auto-start when you run a task.',
     coworkOpenClawStarting: 'AI engine is starting the gateway...',
@@ -773,6 +761,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayPortTitle: 'Gateway Port',
     openclawGatewayPortHint:
       'The local gateway service port used by the AI assistant. Change it if the port conflicts with another service. Restart the app for changes to take effect.',
+    openclawGatewayRestartHint: 'Stop and restart the local AI gateway service',
+    openclawGatewayRestarting: 'Restarting...',
+    openclawGatewayRestarted: 'Gateway restarted',
+    openclawGatewayRestartFailed: 'Failed to restart gateway',
     coworkConfigSaveFailed: 'Failed to save JustDo settings. Please try again.',
     coworkStatusIdle: 'Idle',
     coworkStatusRunning: 'Running',
@@ -833,7 +825,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentIdentity: 'Identity',
     agentIdentityPlaceholder: 'Identity description (IDENTITY.md)...',
     agentDefaultModel: 'Agent Default Model',
-    agentModelOpenClawOnly: 'This setting only applies to the OpenClaw engine',
     agentModelInvalidHint:
       'The model bound to this Agent is no longer available. Please choose a valid model for this Agent first',
     agentSkillsHint:

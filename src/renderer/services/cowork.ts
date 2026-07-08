@@ -713,32 +713,6 @@ class CoworkService {
     return this.loadOpenClawEngineStatus();
   }
 
-  async installOpenClawEngine(): Promise<OpenClawEngineStatus | null> {
-    const engineApi = window.electron?.openclaw?.engine;
-    if (!engineApi?.install) {
-      return null;
-    }
-    const result = await engineApi.install();
-    if (result?.status) {
-      this.notifyOpenClawStatus(result.status);
-      return result.status;
-    }
-    return this.openClawStatus;
-  }
-
-  async retryOpenClawInstall(): Promise<OpenClawEngineStatus | null> {
-    const engineApi = window.electron?.openclaw?.engine;
-    if (!engineApi?.retryInstall) {
-      return null;
-    }
-    const result = await engineApi.retryInstall();
-    if (result?.status) {
-      this.notifyOpenClawStatus(result.status);
-      return result.status;
-    }
-    return this.openClawStatus;
-  }
-
   async restartOpenClawGateway(): Promise<OpenClawEngineStatus | null> {
     const engineApi = window.electron?.openclaw?.engine;
     if (!engineApi?.restartGateway) {

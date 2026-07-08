@@ -7,10 +7,6 @@ import type {
 
 interface OpenClawEngineHandlerDependencies {
   getManager: () => OpenClawEngineManager;
-  bootstrap: (options: {
-    forceReinstall: boolean;
-    reason: string;
-  }) => Promise<OpenClawEngineStatus>;
 }
 
 const isAvailable = (status: OpenClawEngineStatus): boolean =>
@@ -18,7 +14,6 @@ const isAvailable = (status: OpenClawEngineStatus): boolean =>
 
 export const registerOpenClawEngineHandlers = ({
   getManager,
-  bootstrap,
 }: OpenClawEngineHandlerDependencies): void => {
   let restartGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
 
@@ -29,32 +24,6 @@ export const registerOpenClawEngineHandlers = ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to get OpenClaw engine status',
-      };
-    }
-  });
-
-  ipcMain.handle('openclaw:engine:install', async () => {
-    try {
-      const status = await bootstrap({ forceReinstall: false, reason: 'manual-install' });
-      return { success: isAvailable(status), status };
-    } catch (error) {
-      return {
-        success: false,
-        status: getManager().getStatus(),
-        error: error instanceof Error ? error.message : 'Failed to install OpenClaw engine',
-      };
-    }
-  });
-
-  ipcMain.handle('openclaw:engine:retryInstall', async () => {
-    try {
-      const status = await bootstrap({ forceReinstall: true, reason: 'manual-retry' });
-      return { success: isAvailable(status), status };
-    } catch (error) {
-      return {
-        success: false,
-        status: getManager().getStatus(),
-        error: error instanceof Error ? error.message : 'Failed to retry OpenClaw engine install',
       };
     }
   });

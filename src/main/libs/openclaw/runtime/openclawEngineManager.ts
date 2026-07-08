@@ -20,8 +20,6 @@ const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
 const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
 
 export type OpenClawEnginePhase =
-  | 'not_installed'
-  | 'installing'
   | 'ready'
   | 'starting'
   | 'running'
@@ -192,7 +190,7 @@ export class OpenClawEngineManager extends EventEmitter {
             canRetry: true,
           }
         : {
-          phase: 'not_installed',
+          phase: 'error',
           version: null,
           message: `Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`,
           canRetry: true,
@@ -272,13 +270,13 @@ export class OpenClawEngineManager extends EventEmitter {
     };
   }
 
-  async ensureReady(_options: { forceReinstall?: boolean } = {}): Promise<OpenClawEngineStatus> {
+  async ensureReady(): Promise<OpenClawEngineStatus> {
     const runtime = this.resolveRuntimeMetadata();
     this.desiredVersion = runtime.version;
 
     if (!runtime.root) {
       this.setStatus({
-        phase: 'not_installed',
+        phase: 'error',
         version: null,
         message: `Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`,
         canRetry: true,
@@ -366,7 +364,7 @@ export class OpenClawEngineManager extends EventEmitter {
     );
     if (!runtime.root) {
       this.setStatus({
-        phase: 'not_installed',
+        phase: 'error',
         version: null,
         message: `Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`,
         canRetry: true,
@@ -595,7 +593,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const runtime = this.resolveRuntimeMetadata();
     this.setStatus({
-      phase: runtime.root && !runtime.version ? 'error' : runtime.root ? 'ready' : 'not_installed',
+      phase: runtime.root && runtime.version ? 'ready' : 'error',
       version: runtime.version,
       message:
         runtime.root && !runtime.version

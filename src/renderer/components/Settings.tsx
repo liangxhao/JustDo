@@ -1,4 +1,5 @@
 import {
+  ArrowPathIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
   CubeIcon,
@@ -20,13 +21,10 @@ import {
 } from '../config';
 import { agentService } from '../services/agent';
 import { configService } from '../services/config';
-import { coworkService } from '../services/cowork';
 import { i18nService, LanguageType } from '../services/i18n';
 import { themeService } from '../services/theme';
 import { RootState } from '../store';
-import { selectCoworkConfig } from '../store/selectors/coworkSelectors';
 import { setAvailableModels } from '../store/slices/modelSlice';
-import type { CoworkAgentEngine, OpenClawEngineStatus } from '../types/cowork';
 import AgentCreateModal from './agent/AgentCreateModal';
 import AgentSettingsPanel from './agent/AgentSettingsPanel';
 import Modal from './common/Modal';
@@ -352,12 +350,6 @@ const Settings: React.FC<SettingsProps> = ({
   // State for displayName validation
   const [displayNameError, setDisplayNameError] = useState<string | null>(null);
 
-  const coworkConfig = useSelector(selectCoworkConfig);
-
-  const [coworkAgentEngine, setCoworkAgentEngine] = useState<CoworkAgentEngine>(
-    coworkConfig.agentEngine || 'openclaw',
-  );
-
   // Drag to reposition state
   const [modalPosition, setModalPosition] = useState({ x: 0, y: 0 });
   const [modalWidth, setModalWidth] = useState(() => Math.min(1100, window.innerWidth - 48));
@@ -451,11 +443,7 @@ const Settings: React.FC<SettingsProps> = ({
     String(DEFAULT_OPENCLAW_GATEWAY_PORT),
   );
   const [openClawGatewayPortSaving, setOpenClawGatewayPortSaving] = useState<boolean>(false);
-  const [openClawEngineStatus] = useState<OpenClawEngineStatus | null>(null);
-
-  useEffect(() => {
-    setCoworkAgentEngine(coworkConfig.agentEngine || 'openclaw');
-  }, [coworkConfig.agentEngine]);
+  const [isRestartingOpenClawGateway, setIsRestartingOpenClawGateway] = useState<boolean>(false);
 
   // Load OpenClaw gateway port
   useEffect(() => {
@@ -481,6 +469,30 @@ const Settings: React.FC<SettingsProps> = ({
       }
     } finally {
       setOpenClawGatewayPortSaving(false);
+    }
+  };
+
+  const handleRestartOpenClawGateway = async () => {
+    if (isRestartingOpenClawGateway) {
+      return;
+    }
+    setIsRestartingOpenClawGateway(true);
+    setError(null);
+    try {
+      const result = await window.electron.openclaw.engine.restartGateway();
+      if (!result.success) {
+        setError(result.error || i18nService.t('openclawGatewayRestartFailed'));
+        return;
+      }
+      if (result.status) {
+        setNoticeMessage(i18nService.t('openclawGatewayRestarted'));
+      }
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : i18nService.t('openclawGatewayRestartFailed'),
+      );
+    } finally {
+      setIsRestartingOpenClawGateway(false);
     }
   };
 
@@ -745,12 +757,6 @@ const Settings: React.FC<SettingsProps> = ({
     });
   };
 
-  const hasCoworkConfigChanges = coworkAgentEngine !== coworkConfig.agentEngine;
-  const isOpenClawAgentEngine = coworkAgentEngine === 'openclaw';
-  const openClawProgressPercent: number | null = null;
-  const resolveOpenClawStatusText = (_status: OpenClawEngineStatus | null): string =>
-    i18nService.t('coworkOpenClawRunning');
-
   /**
    * Return file content directly, showing the actual content to users.
    * Previously hid OpenClaw default templates, but users expect to see file content.
@@ -866,15 +872,6 @@ const Settings: React.FC<SettingsProps> = ({
         }
       });
       dispatch(setAvailableModels(allModels));
-
-      if (hasCoworkConfigChanges) {
-        const updated = await coworkService.updateConfig({
-          agentEngine: coworkAgentEngine,
-        });
-        if (!updated) {
-          throw new Error(i18nService.t('coworkConfigSaveFailed'));
-        }
-      }
 
       didSaveRef.current = true;
       onClose();
@@ -1500,13 +1497,30 @@ const Settings: React.FC<SettingsProps> = ({
 
             {/* Gateway Port Configuration */}
             <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
-              <div className="space-y-1">
-                <div className="text-sm font-medium text-foreground">
-                  {i18nService.t('openclawGatewayPortTitle')}
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="text-sm font-medium text-foreground">
+                    {i18nService.t('openclawGatewayPortTitle')}
+                  </div>
+                  <div className="text-xs text-secondary">
+                    {i18nService.t('openclawGatewayPortHint')}
+                  </div>
                 </div>
-                <div className="text-xs text-secondary">
-                  {i18nService.t('openclawGatewayPortHint')}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleRestartOpenClawGateway()}
+                  disabled={isRestartingOpenClawGateway}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium border-border text-secondary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+                  title={i18nService.t('openclawGatewayRestartHint')}
+                >
+                  <ArrowPathIcon
+                    className={`h-4 w-4 ${isRestartingOpenClawGateway ? 'animate-spin' : ''}`}
+                    aria-hidden="true"
+                  />
+                  {isRestartingOpenClawGateway
+                    ? i18nService.t('openclawGatewayRestarting')
+                    : i18nService.t('coworkOpenClawRestartGateway')}
+                </button>
               </div>
               <div className="flex items-center gap-2">
                 {openClawGatewayPortEditing ? (
@@ -1756,123 +1770,6 @@ const Settings: React.FC<SettingsProps> = ({
                 );
               })()}
             </div>
-          </div>
-        );
-
-      case 'coworkAgentEngine' as TabType:
-        return (
-          <div className="space-y-6">
-            <div className="space-y-3">
-              <div className="flex items-start gap-3 rounded-xl border px-3 py-2 text-sm border-border">
-                <input type="radio" checked={true} readOnly className="mt-1" />
-                <span>
-                  <span className="block font-medium text-foreground">
-                    {i18nService.t('coworkAgentEngineOpenClaw')}
-                  </span>
-                  <span className="block text-xs text-secondary">
-                    {i18nService.t('coworkAgentEngineOpenClawHint')}
-                  </span>
-                </span>
-              </div>
-            </div>
-            {isOpenClawAgentEngine && (
-              <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
-                <div className="text-xs text-secondary">
-                  {i18nService.t('coworkOpenClawInstallHint')}
-                </div>
-                <div
-                  className={`rounded-xl border px-4 py-3 text-sm ${
-                    openClawEngineStatus?.phase === 'error'
-                      ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300'
-                      : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      {resolveOpenClawStatusText(openClawEngineStatus)}
-                      {openClawProgressPercent !== null && (
-                        <span className="ml-2 text-xs opacity-80">{openClawProgressPercent}%</span>
-                      )}
-                    </div>
-                  </div>
-                  {openClawProgressPercent !== null && (
-                    <div className="mt-2 h-2 rounded-full bg-black/10 overflow-hidden">
-                      <div
-                        className="h-full bg-primary transition-all"
-                        style={{ width: `${openClawProgressPercent}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Gateway Port Configuration */}
-            {isOpenClawAgentEngine && openClawEngineStatus?.phase === 'running' && (
-              <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="text-sm font-medium text-foreground">
-                      {i18nService.t('openclawGatewayPortTitle')}
-                    </div>
-                    <div className="text-xs text-secondary">
-                      {i18nService.t('openclawGatewayPortHint')}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {openClawGatewayPortEditing ? (
-                    <>
-                      <input
-                        type="number"
-                        min={1}
-                        max={65535}
-                        value={openClawGatewayPortInput}
-                        onChange={e => setOpenClawGatewayPortInput(e.target.value)}
-                        className="w-32 rounded-lg border px-3 py-1.5 text-sm border-border bg-surface"
-                        disabled={openClawGatewayPortSaving}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveOpenClawGatewayPort()}
-                        disabled={
-                          openClawGatewayPortSaving ||
-                          isNaN(parseInt(openClawGatewayPortInput, 10)) ||
-                          parseInt(openClawGatewayPortInput, 10) < 1 ||
-                          parseInt(openClawGatewayPortInput, 10) > 65535
-                        }
-                        className="px-3 py-1.5 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {i18nService.t('save')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpenClawGatewayPortEditing(false);
-                          setOpenClawGatewayPortInput(String(openClawGatewayPort));
-                        }}
-                        className="px-3 py-1.5 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                      >
-                        {i18nService.t('cancel')}
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="px-3 py-1.5 text-sm font-mono bg-surface-raised rounded-lg">
-                        {openClawGatewayPort}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setOpenClawGatewayPortEditing(true)}
-                        className="px-3 py-1.5 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                      >
-                        {i18nService.t('edit')}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         );
 

@@ -249,12 +249,6 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
                   {i18nService.t('agentDefaultModel') || 'Agent Default Model'}
                 </label>
                 <ModelSelector value={model} onChange={setModel} />
-                {availableModels.length > 0 && (
-                  <p className="mt-1 text-xs text-secondary/70">
-                    {i18nService.t('agentModelOpenClawOnly') ||
-                      'This setting only applies to the OpenClaw engine'}
-                  </p>
-                )}
               </div>
             </div>
           )}
