@@ -158,6 +158,8 @@ test('sync writes native moonshot provider config and migrates matching managed 
   assert.equal(config.models.pricing.enabled, false);
   assert.equal(config.agents.defaults.model.primary, 'moonshot/kimi-k2.5');
   assert.deepEqual(config.commands.ownerAllowFrom, ['gateway-client', '*']);
+  assert.equal(config.commands.mcp, true);
+  assert.equal(config.commands.plugins, true);
   assert.deepEqual(config.tools.deny, ['web_search']);
   assert.equal(config.tools.web.search.enabled, false);
   assert.equal(config.browser.enabled, true);
@@ -195,6 +197,8 @@ test('sync maps moonshot coding plan sessions to kimi-coding model refs', (t) =>
   assert.equal(config.models.providers['kimi-coding'].api, 'anthropic-messages');
   assert.equal(config.agents.defaults.model.primary, 'kimi-coding/k2p5');
   assert.deepEqual(config.commands.ownerAllowFrom, ['gateway-client', '*']);
+  assert.equal(config.commands.mcp, true);
+  assert.equal(config.commands.plugins, true);
 
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
   assert.equal(sessionStore['agent:main:justdo:current-session'].modelProvider, 'kimi-coding');

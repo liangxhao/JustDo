@@ -3,6 +3,7 @@
   "runtimeExtensionsPath": "vendor/openclaw-runtime/{platform}/dist/extensions",
   "description": "OpenClaw-managed bundled extension pruning policy for JustDo. JustDo-owned custom extensions are outside this policy. Build/startup cleanup scripts should remove only entries listed in remove.",
   "keep": [
+    "anthropic",
     "active-memory",
     "admin-http-rpc",
     "browser",
@@ -80,7 +81,7 @@
       "category": "unused-model-providers",
       "reason": "Model providers not kept in the default slim runtime. Move an extension from here to keep if the app is configured to use it.",
       "extensions": [
-        "anthropic",
+
         "byteplus",
         "cohere",
         "copilot-proxy",
