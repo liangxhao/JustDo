@@ -10,9 +10,9 @@ JustDo exposes skill marketplace actions through the main process only.
 
 ## Rules
 
-- Keep marketplace transport in `src/main/libs/skillMarketplace/`.
+- Keep marketplace transport in `src/main/libs/plugin/marketplace/`.
 - Do not let renderer code talk directly to the marketplace server.
-- Normalize slugs, versions, and limits before provider calls.
+- Normalize plugin IDs, versions, and limits before provider calls.
 - Keep credentials in the encrypted config store or another secret-managed source.
 
 ## Verification

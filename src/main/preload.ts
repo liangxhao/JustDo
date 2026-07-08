@@ -19,8 +19,8 @@ contextBridge.exposeInMainWorld('electron', {
     list: () => ipcRenderer.invoke('skills:list'),
     setEnabled: (options: { id: string; enabled: boolean }) =>
       ipcRenderer.invoke('skills:setEnabled', options),
-    // New: Gateway-based skill management
-    install: (params: { source: 'clawhub'; slug: string; version?: string; force?: boolean }) =>
+    // Marketplace-based skill management
+    install: (params: { id: string; version?: string; force?: boolean }) =>
       ipcRenderer.invoke('skills:install', params),
     // Offline import from local archive
     import: (archivePath: string) => ipcRenderer.invoke('skills:import', archivePath),
@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('electron', {
     importFolder: (folderPath: string) => ipcRenderer.invoke('skills:importFolder', folderPath),
     search: (options?: { query?: string; limit?: number }) =>
       ipcRenderer.invoke('skills:search', options || {}),
-    detail: (options: { slug: string }) => ipcRenderer.invoke('skills:detail', options),
+    detail: (options: { id: string }) => ipcRenderer.invoke('skills:detail', options),
     delete: (id: string) => ipcRenderer.invoke('skills:delete', id),
   },
   slashCommands: {

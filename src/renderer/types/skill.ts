@@ -51,9 +51,9 @@ export interface SkillInstallOption {
   optional?: boolean;
 }
 
-// ClawHub marketplace types
-export interface ClawHubSkill {
-  slug: string;
+// Marketplace skill types
+export interface MarketplaceSkill {
+  id: string;
   name: string;
   description: string;
   version: string;
@@ -62,7 +62,7 @@ export interface ClawHubSkill {
   homepage?: string;
 }
 
-export interface ClawHubSkillDetail extends ClawHubSkill {
+export interface MarketplaceSkillDetail extends MarketplaceSkill {
   readme?: string;
   install?: {
     requires?: {

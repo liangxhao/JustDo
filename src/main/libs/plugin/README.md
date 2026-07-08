@@ -13,8 +13,8 @@ To connect a private ClawHub, implement `PluginMarketplaceProvider` in
 `marketplace/types.ts`. Keep private authentication, endpoint configuration,
 and response DTO conversion inside that provider. Replace
 `OpenClawClawHubProvider` in `createPluginMarketplaceService` with the private
-provider. Keep the source ID `clawhub` when it is the application's configured
-ClawHub source; renderer and IPC code then need no changes.
+provider. Keep the application-facing source ID `default` for the configured
+marketplace source; renderer and IPC code then need no changes.
 
 Provider IDs must be stable and unique. A provider declares only the values of
 `PluginKind` it actually supports. Extension and MCP providers can implement the

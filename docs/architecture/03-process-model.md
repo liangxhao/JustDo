@@ -100,13 +100,13 @@ contextBridge.exposeInMainWorld('electron', {
     list: () => ipcRenderer.invoke('skills:list'),
     setEnabled: (options: { id: string; enabled: boolean }) =>
       ipcRenderer.invoke('skills:setEnabled', options),
-    install: (params: { source: 'clawhub'; slug: string; version?: string; force?: boolean }) =>
+    install: (params: { id: string; version?: string; force?: boolean }) =>
       ipcRenderer.invoke('skills:install', params),
     import: (archivePath: string) => ipcRenderer.invoke('skills:import', archivePath),
     importFolder: (folderPath: string) => ipcRenderer.invoke('skills:importFolder', folderPath),
     search: (options?: { query?: string; limit?: number }) =>
       ipcRenderer.invoke('skills:search', options || {}),
-    detail: (options: { slug: string }) => ipcRenderer.invoke('skills:detail', options),
+    detail: (options: { id: string }) => ipcRenderer.invoke('skills:detail', options),
     delete: (id: string) => ipcRenderer.invoke('skills:delete', id),
   },
 
@@ -482,7 +482,7 @@ interface ElectronAPI {
     import: (archivePath: string) => Promise<SkillEntry>;
     importFolder: (folderPath: string) => Promise<SkillEntry>;
     search: (options?: SkillSearchOptions) => Promise<SkillSearchResult[]>;
-    detail: (options: { slug: string }) => Promise<SkillDetail>;
+    detail: (options: { id: string }) => Promise<SkillDetail>;
     delete: (id: string) => Promise<void>;
     getRoot: () => Promise<string>;
     autoRoutingPrompt: () => Promise<string>;

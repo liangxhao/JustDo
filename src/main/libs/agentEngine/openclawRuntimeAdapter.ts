@@ -2658,9 +2658,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.skillRpc.getStatus(agentId);
   }
 
-  async installSkill(
-    params: import('./types').SkillInstallParams,
-  ): Promise<import('./types').SkillRpcResult> {
+  async installSkill(params: unknown): Promise<import('./types').SkillRpcResult> {
     return this.skillRpc.install(params);
   }
 
@@ -2670,14 +2668,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.skillRpc.updateConfig(params);
   }
 
-  async searchClawHubSkills(
-    query?: string,
-    limit?: number,
-  ): Promise<import('./types').ClawHubSearchResult[]> {
-    return this.skillRpc.search(query, limit);
-  }
-
-  async getClawHubSkillDetail(slug: string): Promise<import('./types').ClawHubDetail | null> {
-    return this.skillRpc.getDetail(slug);
+  async requestGateway<T>(method: string, params?: unknown): Promise<T> {
+    await this.ensureGatewayClientReady();
+    return this.requireGatewayClient().request<T>(method, params);
   }
 }

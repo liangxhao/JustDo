@@ -162,9 +162,9 @@ interface Skill {
   homepage?: string;
 }
 
-// ClawHub marketplace types
-interface ClawHubSkill {
-  slug: string;
+// Marketplace skill types
+interface MarketplaceSkill {
+  id: string;
   name: string;
   description: string;
   version: string;
@@ -173,7 +173,7 @@ interface ClawHubSkill {
   homepage?: string;
 }
 
-interface ClawHubSkillDetail extends ClawHubSkill {
+interface MarketplaceSkillDetail extends MarketplaceSkill {
   readme?: string;
   install?: {
     requires?: {
@@ -236,13 +236,12 @@ interface IElectronAPI {
       id: string;
       enabled: boolean;
     }) => Promise<{ success: boolean; skills?: Skill[]; error?: string; gatewayOffline?: boolean }>;
-    // Gateway-based skill management
-    install: (params: {
-      source: 'clawhub';
-      slug: string;
-      version?: string;
-      force?: boolean;
-    }) => Promise<{ success: boolean; error?: string; gatewayOffline?: boolean }>;
+    // Marketplace-based skill management
+    install: (params: { id: string; version?: string; force?: boolean }) => Promise<{
+      success: boolean;
+      error?: string;
+      gatewayOffline?: boolean;
+    }>;
     // Offline skill import
     import: (archivePath: string) => Promise<{
       success: boolean;
@@ -259,13 +258,13 @@ interface IElectronAPI {
     }>;
     search: (options?: { query?: string; limit?: number }) => Promise<{
       success: boolean;
-      results?: ClawHubSkill[];
+      results?: MarketplaceSkill[];
       error?: string;
       gatewayOffline?: boolean;
     }>;
-    detail: (options: { slug: string }) => Promise<{
+    detail: (options: { id: string }) => Promise<{
       success: boolean;
-      detail?: ClawHubSkillDetail;
+      detail?: MarketplaceSkillDetail;
       error?: string;
       gatewayOffline?: boolean;
     }>;

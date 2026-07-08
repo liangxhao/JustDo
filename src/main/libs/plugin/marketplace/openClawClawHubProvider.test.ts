@@ -6,23 +6,29 @@ import { OpenClawClawHubProvider } from './openClawClawHubProvider';
 
 const createAdapter = () =>
   ({
-    searchClawHubSkills: vi.fn(async () => [
-      {
+    requestGateway: vi.fn(async (method: string) => {
+      if (method === 'skills.search') {
+        return {
+          results: [
+            {
+              slug: 'writer',
+              name: 'Writer',
+              description: 'Writes text',
+              version: '1.2.3',
+              author: 'ClawHub',
+            },
+          ],
+        };
+      }
+      return {
         slug: 'writer',
         name: 'Writer',
         description: 'Writes text',
         version: '1.2.3',
-        author: 'ClawHub',
-      },
-    ]),
-    getClawHubSkillDetail: vi.fn(async () => ({
-      slug: 'writer',
-      name: 'Writer',
-      description: 'Writes text',
-      version: '1.2.3',
-      readme: '# Writer',
-      install: { requires: { bins: ['node'], env: ['WRITER_TOKEN'] } },
-    })),
+        readme: '# Writer',
+        install: { requires: { bins: ['node'], env: ['WRITER_TOKEN'] } },
+      };
+    }),
     installSkill: vi.fn(async () => ({ ok: true })),
   }) as unknown as OpenClawRuntimeAdapter;
 
@@ -42,10 +48,13 @@ test('maps ClawHub skill search results to the common plugin model', async () =>
       author: 'ClawHub',
       tags: undefined,
       homepage: undefined,
-      sourceId: MarketplaceSourceId.CLAWHUB,
+      sourceId: MarketplaceSourceId.DEFAULT,
     },
   ]);
-  expect(adapter.searchClawHubSkills).toHaveBeenCalledWith('writer', 10);
+  expect(adapter.requestGateway).toHaveBeenCalledWith('skills.search', {
+    query: 'writer',
+    limit: 10,
+  });
 });
 
 test('maps detail requirements and installs through OpenClaw', async () => {
@@ -53,12 +62,12 @@ test('maps detail requirements and installs through OpenClaw', async () => {
   const provider = new OpenClawClawHubProvider(() => adapter);
 
   const detail = await provider.getDetail({
-    sourceId: MarketplaceSourceId.CLAWHUB,
+    sourceId: MarketplaceSourceId.DEFAULT,
     pluginId: 'writer',
     kind: PluginKind.SKILL,
   });
   await provider.install({
-    sourceId: MarketplaceSourceId.CLAWHUB,
+    sourceId: MarketplaceSourceId.DEFAULT,
     pluginId: 'writer',
     kind: PluginKind.SKILL,
     version: '1.2.3',

@@ -87,56 +87,6 @@ export interface GatewaySkillInstallOption {
 }
 
 /**
- * ClawHub search result from skills.search RPC.
- */
-export interface ClawHubSearchResult {
-  slug: string;
-  name: string;
-  description: string;
-  version: string;
-  author?: string;
-  tags?: string[];
-  homepage?: string;
-}
-
-/**
- * ClawHub skill detail from skills.detail RPC.
- */
-export interface ClawHubDetail {
-  slug: string;
-  name: string;
-  description: string;
-  version: string;
-  author?: string;
-  tags?: string[];
-  homepage?: string;
-  readme?: string;
-  install?: {
-    requires?: {
-      bins?: string[];
-      env?: string[];
-    };
-  };
-}
-
-/**
- * Parameters for skills.install RPC.
- */
-export type SkillInstallParams =
-  | {
-      source: 'clawhub';
-      slug: string;
-      version?: string;
-      force?: boolean;
-    }
-  | {
-      name: string;
-      installId: string;
-      dangerouslyForceUnsafeInstall?: boolean;
-      timeoutMs?: number;
-    };
-
-/**
  * Parameters for skills.update RPC (config mode).
  */
 export interface SkillUpdateParams {

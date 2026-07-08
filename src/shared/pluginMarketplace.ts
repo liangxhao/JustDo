@@ -7,7 +7,7 @@ export const PluginKind = {
 export type PluginKind = (typeof PluginKind)[keyof typeof PluginKind];
 
 export const MarketplaceSourceId = {
-  CLAWHUB: 'clawhub',
+  DEFAULT: 'default',
 } as const;
 
 export interface MarketplaceSource {

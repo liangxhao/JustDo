@@ -241,7 +241,7 @@ Skills 在 JustDo 构建时处理，直接写入 OpenClaw Runtime 内置目录�
 
 **文件**: `src/main/libs/agentEngine/rpc/skillRpc.ts`
 
-JustDo 不再使用本地文件系统管理 Skills。所有 Skill 操作（安装、启用/禁用、搜索、详情）通过 Gateway RPC 完成：
+JustDo 不再使用本地文件系统管理 Skills。Skill 状态、安装、启用/禁用通过 Gateway RPC 完成；在线搜索和详情由插件市场层封装：
 
 ```typescript
 class SkillRpcHandler {
@@ -250,17 +250,11 @@ class SkillRpcHandler {
   // 获取当前 Skills 状态（含启用状态、版本等）
   async getSkillsStatus(agentId?: string): Promise<GatewaySkillStatus>
 
-  // 从 ClawHub 安装第三方 Skill
-  async installSkill(params: SkillInstallParams): Promise<SkillRpcResult>
+  // 执行 Gateway Skill 安装请求（具体市场参数由 plugin/marketplace 组装）
+  async installSkill(params: unknown): Promise<SkillRpcResult>
 
   // 更新 Skill 配置（启用/禁用、设置）
   async updateSkillConfig(params: SkillUpdateParams): Promise<SkillRpcResult>
-
-  // 搜索 ClawHub 上的 Skills
-  async searchClawHubSkills(query?: string, limit?: number): Promise<ClawHubSearchResult[]>
-
-  // 获取 ClawHub Skill 详情
-  async getClawHubSkillDetail(slug: string): Promise<ClawHubDetail | null>
 
   // 会话标题生成
   async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string>
@@ -275,10 +269,15 @@ class SkillRpcHandler {
 | SkillRpcHandler 方法 | Gateway RPC | 说明 |
 |----------------------|------------|------|
 | `getSkillsStatus()` | `skills.status` | 获取所有 Skill 状态信息 |
-| `installSkill()` | `skills.install` | 从 ClawHub 安装新 Skill |
+| `installSkill()` | `skills.install` | 执行 Skill 安装 |
 | `updateSkillConfig()` | `skills.update` | 更新 Skill 配置 |
-| `searchClawHubSkills()` | `skills.search` | 搜索 ClawHub Skill 市场 |
-| `getClawHubSkillDetail()` | `skills.detail` | 获取单个 Skill 详情 |
+
+市场搜索和详情 RPC 由 `src/main/libs/plugin/marketplace/` 负责：
+
+| Marketplace 类 | Gateway RPC | 说明 |
+|----------------|------------|------|
+| provider search RPC | `skills.search` | 搜索配置的 Skill 市场 |
+| provider detail RPC | `skills.detail` | 获取单个 Skill 详情 |
 
 ### 6.3 类型定义
 
@@ -297,13 +296,6 @@ interface GatewaySkillEntry {
   author?: string;
 }
 
-// 安装参数
-interface SkillInstallParams {
-  url?: string;
-  source?: 'clawhub' | 'file' | 'git';
-  slug?: string;
-}
-
 // 更新参数
 interface SkillUpdateParams {
   skillKey: string;
@@ -317,9 +309,9 @@ interface SkillRpcResult {
   error?: string;
 }
 
-// ClawHub 搜索结果
-interface ClawHubSearchResult {
-  slug: string;
+// 市场搜索结果（定义在 src/main/libs/plugin/marketplace/）
+interface MarketplaceSkillSearchResult {
+  id: string;
   name: string;
   description: string;
   author: string;
@@ -327,8 +319,8 @@ interface ClawHubSearchResult {
   rating: number;
 }
 
-interface ClawHubDetail {
-  slug: string;
+interface MarketplaceSkillDetail {
+  id: string;
   name: string;
   description: string;
   author: string;

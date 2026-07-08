@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 
 import { MarketplaceSourceId, PluginKind } from '../../../shared/pluginMarketplace';
 import type { OpenClawRuntimeAdapter } from '../../libs/agentEngine';
-import type { GatewaySkillEntry, SkillInstallParams } from '../../libs/agentEngine/types';
+import type { GatewaySkillEntry } from '../../libs/agentEngine/types';
 import type { OpenClawSkillFiles } from '../../libs/openclaw/skills/openclawSkillFiles';
 import type { PluginManager } from '../../libs/plugin';
 
@@ -84,28 +84,32 @@ export const registerSkillHandlers = ({
     }
   });
 
-  ipcMain.handle('skills:install', async (_event, params: SkillInstallParams) => {
-    try {
-      if (!('source' in params) || params.source !== 'clawhub') {
-        return { success: false, error: 'Unsupported marketplace install request' };
+  ipcMain.handle(
+    'skills:install',
+    async (_event, params: { id?: string; version?: string; force?: boolean } | undefined) => {
+      try {
+        const pluginId = params?.id?.trim();
+        if (!pluginId) {
+          return { success: false, error: 'Unsupported marketplace install request' };
+        }
+        await pluginManager.installFromMarketplace({
+          sourceId: MarketplaceSourceId.DEFAULT,
+          pluginId,
+          kind: PluginKind.SKILL,
+          version: params.version,
+          force: params.force,
+        });
+        return { success: true };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Failed to install skill';
+        return {
+          success: false,
+          error: errorMsg,
+          gatewayOffline: errorMsg.includes('not connected'),
+        };
       }
-      await pluginManager.installFromMarketplace({
-        sourceId: MarketplaceSourceId.CLAWHUB,
-        pluginId: params.slug,
-        kind: PluginKind.SKILL,
-        version: params.version,
-        force: params.force,
-      });
-      return { success: true };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to install skill';
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: errorMsg.includes('not connected'),
-      };
-    }
-  });
+    },
+  );
 
   ipcMain.handle('skills:search', async (_event, options: { query?: string; limit?: number }) => {
     try {
@@ -116,7 +120,7 @@ export const registerSkillHandlers = ({
       return {
         success: true,
         results: results.map(skill => ({
-          slug: skill.id,
+          id: skill.id,
           name: skill.name,
           description: skill.description,
           version: skill.version,
@@ -135,18 +139,22 @@ export const registerSkillHandlers = ({
     }
   });
 
-  ipcMain.handle('skills:detail', async (_event, options: { slug: string }) => {
+  ipcMain.handle('skills:detail', async (_event, options: { id?: string } | undefined) => {
     try {
+      const pluginId = options?.id?.trim();
+      if (!pluginId) {
+        return { success: false, error: 'Marketplace plugin id is required' };
+      }
       const detail = await pluginManager.getMarketplaceDetail({
-        sourceId: MarketplaceSourceId.CLAWHUB,
-        pluginId: options.slug,
+        sourceId: MarketplaceSourceId.DEFAULT,
+        pluginId,
         kind: PluginKind.SKILL,
       });
       return {
         success: true,
         detail: detail
           ? {
-              slug: detail.id,
+              id: detail.id,
               name: detail.name,
               description: detail.description,
               version: detail.version,

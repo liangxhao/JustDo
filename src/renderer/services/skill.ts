@@ -1,4 +1,4 @@
-import { ClawHubSkill, ClawHubSkillDetail, Skill } from '../types/skill';
+import { MarketplaceSkill, MarketplaceSkillDetail, Skill } from '../types/skill';
 import { i18nService } from './i18n';
 
 type SkillListResult = {
@@ -96,11 +96,11 @@ class SkillService {
   }
 
   // ============================================================
-  // Marketplace methods (Gateway ClawHub integration)
+  // Marketplace methods
   // ============================================================
 
-  /** Search ClawHub marketplace for skills */
-  async searchMarketplace(query?: string, limit?: number): Promise<ClawHubSkill[]> {
+  /** Search the configured marketplace for skills */
+  async searchMarketplace(query?: string, limit?: number): Promise<MarketplaceSkill[]> {
     const result = await window.electron.skills.search({ query, limit });
     if (result.success && result.results) {
       return result.results;
@@ -108,24 +108,20 @@ class SkillService {
     throw new Error(result.error || i18nService.t('skillMarketplaceSearchFailed'));
   }
 
-  /** Get detailed info for a ClawHub skill */
-  async getMarketplaceDetail(slug: string): Promise<ClawHubSkillDetail | null> {
-    const result = await window.electron.skills.detail({ slug });
+  /** Get detailed info for a marketplace skill */
+  async getMarketplaceDetail(id: string): Promise<MarketplaceSkillDetail | null> {
+    const result = await window.electron.skills.detail({ id });
     if (result.success && result.detail) {
       return result.detail;
     }
     throw new Error(result.error || i18nService.t('skillMarketplaceDetailFailed'));
   }
 
-  /** Install a skill from ClawHub marketplace */
-  async installSkill(
-    slug: string,
-    version?: string,
-  ): Promise<{ success: boolean; error?: string }> {
+  /** Install a skill from the configured marketplace */
+  async installSkill(id: string, version?: string): Promise<{ success: boolean; error?: string }> {
     try {
       const result = await window.electron.skills.install({
-        source: 'clawhub',
-        slug,
+        id,
         version,
       });
       return { success: result.success, error: result.error };
