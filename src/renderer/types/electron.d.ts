@@ -361,6 +361,11 @@ interface IElectronAPI {
       getPort: () => Promise<{ success: boolean; port?: number; error?: string }>;
       getToken: () => Promise<{ success: boolean; token?: string; error?: string }>;
       setPort: (port: number) => Promise<{ success: boolean; error?: string }>;
+      openTerminal: () => Promise<{
+        success: boolean;
+        error?: string;
+        status?: OpenClawEngineStatus;
+      }>;
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
     };
   };

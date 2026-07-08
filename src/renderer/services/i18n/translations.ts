@@ -221,6 +221,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkWelcome: '开始协作',
     coworkDescription: '7×24 小时帮你干活的硬件场景个人助理 Agent',
     openChatWeb: '打开 ChatWeb',
+    openTerminal: '打开 Terminal',
+    openTerminalError: '无法打开 Terminal',
     chatWebTokenError: '无法获取访问令牌，请尝试重启 AI 引擎',
     chatWebPortError: '无法获取服务端口',
 
@@ -805,6 +807,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkWelcome: 'Start Collaborating',
     coworkDescription: 'A 24/7 hardware-focused personal assistant agent',
     openChatWeb: 'Open ChatWeb',
+    openTerminal: 'Open Terminal',
+    openTerminalError: 'Unable to open Terminal',
     chatWebTokenError: 'Unable to get access token, please try restarting the AI engine',
     chatWebPortError: 'Unable to get service port',
 

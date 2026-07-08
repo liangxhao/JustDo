@@ -41,6 +41,14 @@ export interface OpenClawGatewayConnectionInfo {
   clientEntryPath: string | null;
 }
 
+export interface OpenClawCliEnvironment {
+  env: NodeJS.ProcessEnv;
+  runtimeRoot: string;
+  openclawEntry: string;
+  port: number;
+  token: string;
+}
+
 interface OpenClawEngineManagerEvents {
   status: (status: OpenClawEngineStatus) => void;
 }
@@ -323,6 +331,99 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.startGatewayPromise;
   }
 
+  async buildCliEnvironment(): Promise<OpenClawCliEnvironment> {
+    const ensured = await this.ensureReady();
+    if (ensured.phase !== 'ready' && ensured.phase !== 'running') {
+      throw new Error(ensured.message || 'OpenClaw runtime is not ready');
+    }
+
+    const runtime = this.resolveRuntimeMetadata();
+    if (!runtime.root) {
+      throw new Error(`Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`);
+    }
+    if (!runtime.version) {
+      throw new Error(`OpenClaw runtime version metadata is missing or invalid: ${runtime.root}`);
+    }
+
+    this.ensureBareEntryFiles(runtime.root);
+    const openclawEntry = this.resolveOpenClawEntry(runtime.root);
+    if (!openclawEntry) {
+      throw new Error(`OpenClaw entry file is missing in runtime: ${runtime.root}.`);
+    }
+
+    const token = this.ensureGatewayToken();
+    const port =
+      this.status.phase === 'running'
+        ? (this.gatewayPort ?? this.readGatewayPort() ?? DEFAULT_OPENCLAW_GATEWAY_PORT)
+        : await this.resolveGatewayPort();
+    this.gatewayPort = port;
+    this.writeGatewayPort(port);
+    this.ensureConfigFile();
+
+    const compileCacheDir = path.join(this.stateDir, '.compile-cache');
+    const electronNodeRuntimePath = getElectronNodeRuntimePath();
+    const cliShimDir = this.ensureBundledCliShims();
+    const userSkillsDir = path.join(this.stateDir, 'skills').replace(/\\/g, '/');
+    const bundledSkillsDir = path.join(runtime.root, 'skills').replace(/\\/g, '/');
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      SKILLS_ROOT: userSkillsDir,
+      JUSTDO_SKILLS_ROOT: userSkillsDir,
+      OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
+      OPENCLAW_STATE_DIR: this.stateDir,
+      OPENCLAW_CONFIG_PATH: this.configPath,
+      OPENCLAW_GATEWAY_TOKEN: token,
+      OPENCLAW_GATEWAY_PORT: String(port),
+      OPENCLAW_NO_RESPAWN: '1',
+      OPENCLAW_ENGINE_VERSION: runtime.version,
+      OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'extensions'),
+      OPENCLAW_LOG_LEVEL: app.isPackaged ? 'info' : 'debug',
+      NODE_COMPILE_CACHE: compileCacheDir,
+      JUSTDO_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
+      JUSTDO_OPENCLAW_ENTRY: openclawEntry.replace(/\\/g, '/'),
+      ...this.secretEnvVars,
+    };
+
+    if (!env.TZ) {
+      const hostTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (hostTimezone) {
+        env.TZ = hostTimezone;
+      }
+    }
+
+    if (cliShimDir) {
+      const currentPath = env.PATH || env.Path || '';
+      env.PATH = [cliShimDir, currentPath].filter(Boolean).join(path.delimiter);
+      if (process.platform === 'win32') {
+        env.Path = env.PATH;
+      }
+    }
+
+    appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
+
+    const npmBinDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
+      : undefined;
+    const nodeShimDir = ensureElectronNodeShim(electronNodeRuntimePath, npmBinDir);
+    if (nodeShimDir) {
+      const curPath = env.PATH || env.Path || '';
+      env.PATH = [nodeShimDir, curPath].filter(Boolean).join(path.delimiter);
+      if (process.platform === 'win32') {
+        env.Path = env.PATH;
+      }
+      env.JUSTDO_NPM_BIN_DIR = npmBinDir || '';
+    }
+
+    return {
+      env,
+      runtimeRoot: runtime.root,
+      openclawEntry,
+      port,
+      token,
+    };
+  }
+
   private async doStartGateway(): Promise<OpenClawEngineStatus> {
     this.shutdownRequested = false;
     const t0 = Date.now();
@@ -382,29 +483,15 @@ export class OpenClawEngineManager extends EventEmitter {
       return this.getStatus();
     }
 
-    this.ensureBareEntryFiles(runtime.root);
-    console.log(`[OpenClaw] startGateway: ensureBareEntryFiles done (${elapsed()})`);
-    const openclawEntry = this.resolveOpenClawEntry(runtime.root);
+    const cliEnvironment = await this.buildCliEnvironment();
+    console.log(`[OpenClaw] buildCliEnvironment done (${elapsed()})`);
+    const openclawEntry = cliEnvironment.openclawEntry;
     console.log(
       `[OpenClaw] startGateway: resolveOpenClawEntry done (${elapsed()}), entry=${openclawEntry}`,
     );
-    if (!openclawEntry) {
-      this.setStatus({
-        phase: 'error',
-        version: runtime.version,
-        message: `OpenClaw entry file is missing in runtime: ${runtime.root}.`,
-        canRetry: true,
-      });
-      return this.getStatus();
-    }
-
-    const token = this.ensureGatewayToken();
-    console.log(`[OpenClaw] startGateway: ensureGatewayToken done (${elapsed()})`);
-    const port = await this.resolveGatewayPort();
-    console.log(`[OpenClaw] startGateway: resolveGatewayPort done (${elapsed()}), port=${port}`);
-    this.gatewayPort = port;
-    this.writeGatewayPort(port);
-    this.ensureConfigFile();
+    const token = cliEnvironment.token;
+    const port = cliEnvironment.port;
+    const env = cliEnvironment.env;
     console.log(`[OpenClaw] startGateway: pre-fork setup done (${elapsed()})`);
 
     this.setStatus({
@@ -415,91 +502,15 @@ export class OpenClawEngineManager extends EventEmitter {
       canRetry: false,
     });
 
-    const compileCacheDir = path.join(this.stateDir, '.compile-cache');
-    console.log(`[OpenClaw] compile cache dir: ${compileCacheDir}`);
-    const electronNodeRuntimePath = getElectronNodeRuntimePath();
-    const cliShimDir = this.ensureBundledCliShims();
-    // User imported skills are in stateDir/skills (userData/openclaw/state/skills)
-    const userSkillsDir = path.join(this.stateDir, 'skills').replace(/\\/g, '/');
-    // Bundled skills are in runtime root skills directory
-    const bundledSkillsDir = path.join(runtime.root, 'skills').replace(/\\/g, '/');
-
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      SKILLS_ROOT: userSkillsDir,
-      JUSTDO_SKILLS_ROOT: userSkillsDir,
-      // Gateway checks OPENCLAW_BUNDLED_SKILLS_DIR (not JUSTDO_BUNDLED_SKILLS_DIR)
-      OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
-      // NOTE: OPENCLAW_HOME and OPENCLAW_USER_HOME are NOT set here.
-      // This allows them to use the default user home directory (C:\Users\xxx).
-      // Skills paths in AppData (C:\Users\xxx\AppData\...\skills) won't be compacted
-      // to ~/... format because AppData is NOT a subdirectory of the home directory
-      // (the path is C:\Users\xxx\AppData, not C:\Users\xxx\AppData).
-      // Bundled skills (E:\...\runtime\current\skills) also won't be compacted.
-      // This prevents creation of __JUSTDO_NO_HOME__ folder on C: drive root.
-      OPENCLAW_STATE_DIR: this.stateDir,
-      OPENCLAW_CONFIG_PATH: this.configPath,
-      OPENCLAW_GATEWAY_TOKEN: token,
-      OPENCLAW_GATEWAY_PORT: String(port),
-      OPENCLAW_NO_RESPAWN: '1',
-      OPENCLAW_ENGINE_VERSION: runtime.version,
-      OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'extensions'),
-      // Preserve full diagnostics during development, while keeping installed
-      // builds concise (debug logs every agent stream delta).
-      OPENCLAW_LOG_LEVEL: app.isPackaged ? 'info' : 'debug',
-      // Enable V8 compile cache for both CJS and ESM modules.
-      // This env var works for import() (ESM), unlike enableCompileCache() which is CJS-only.
-      NODE_COMPILE_CACHE: compileCacheDir,
-      JUSTDO_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
-      JUSTDO_OPENCLAW_ENTRY: openclawEntry.replace(/\\/g, '/'),
-      // Inject secret values for ${VAR} placeholders in openclaw.json.
-      // This keeps plaintext credentials out of the config file on disk.
-      ...this.secretEnvVars,
-    };
-
     // Debug: Log skills-related environment variables passed to Gateway
     console.log('[OpenClaw] Skills env vars passed to Gateway:', {
       OPENCLAW_STATE_DIR: this.stateDir,
-      OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
+      OPENCLAW_BUNDLED_SKILLS_DIR: env.OPENCLAW_BUNDLED_SKILLS_DIR,
       // OPENCLAW_HOME and OPENCLAW_USER_HOME are inherited from process.env (default user home)
-      userSkillsDir,
+      userSkillsDir: env.JUSTDO_SKILLS_ROOT,
       runtimeRoot: runtime.root,
       isPackaged: app.isPackaged,
     });
-
-    // Ensure the gateway process uses the host's local timezone for logging.
-    // macOS does not set TZ in the environment by default (it uses NSTimeZone/ICU),
-    // so utilityProcess.fork() children may fall back to UTC for date formatting.
-    if (!env.TZ) {
-      const hostTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (hostTimezone) {
-        env.TZ = hostTimezone;
-        console.log(`[OpenClaw] injected TZ=${hostTimezone} into gateway env`);
-      }
-    }
-
-    if (cliShimDir) {
-      // Plain object is case-sensitive: the spread key from process.env on Windows is "Path",
-      // not "PATH". We must read the actual key to avoid creating a PATH with only cliShimDir.
-      const currentPath = env.PATH || env.Path || '';
-      env.PATH = [cliShimDir, currentPath].filter(Boolean).join(path.delimiter);
-    }
-
-    // Prepend bundled/user Python runtime paths so gateway exec commands
-    // find the JustDo-managed Python instead of the Windows Store stub.
-    appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
-
-    // Inject node/npm/npx shims so gateway exec commands can use them.
-    // The shims wrap Electron as a Node.js runtime via ELECTRON_RUN_AS_NODE=1.
-    const npmBinDir = app.isPackaged
-      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
-      : undefined;
-    const nodeShimDir = ensureElectronNodeShim(electronNodeRuntimePath, npmBinDir);
-    if (nodeShimDir) {
-      const curPath = env.PATH || env.Path || '';
-      env.PATH = [nodeShimDir, curPath].filter(Boolean).join(path.delimiter);
-      env.JUSTDO_NPM_BIN_DIR = npmBinDir || '';
-    }
 
     const forkArgs = [
       'gateway',
@@ -765,12 +776,17 @@ export class OpenClawEngineManager extends EventEmitter {
       '  echo JUSTDO_OPENCLAW_ENTRY is not set 1>&2',
       '  exit /b 127',
       ')',
+      'for /f "delims=" %%N in (\'where.exe node.exe 2^>nul\') do (',
+      '  "%%N" "%JUSTDO_OPENCLAW_ENTRY%" %*',
+      '  exit /b %ERRORLEVEL%',
+      ')',
       'if not "%JUSTDO_ELECTRON_PATH%"=="" (',
       '  set ELECTRON_RUN_AS_NODE=1',
       '  "%JUSTDO_ELECTRON_PATH%" "%JUSTDO_OPENCLAW_ENTRY%" %*',
       '  exit /b %ERRORLEVEL%',
       ')',
-      'node "%JUSTDO_OPENCLAW_ENTRY%" %*',
+      'echo Neither node.exe nor JUSTDO_ELECTRON_PATH is available for OpenClaw CLI. 1>&2',
+      'exit /b 127',
       '',
     ].join('\r\n');
 

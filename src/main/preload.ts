@@ -154,6 +154,7 @@ contextBridge.exposeInMainWorld('electron', {
       getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),
       setPort: (port: number) => ipcRenderer.invoke('openclaw:engine:setPort', port),
+      openTerminal: () => ipcRenderer.invoke('openclaw:engine:openTerminal'),
       onProgress: (callback: (status: any) => void) => {
         const handler = (_event: any, status: any) => callback(status);
         ipcRenderer.on('openclaw:engine:onProgress', handler);

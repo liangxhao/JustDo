@@ -1,4 +1,8 @@
-import { ipcMain } from 'electron';
+import { spawn } from 'child_process';
+import { ipcMain, shell } from 'electron';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import type {
   OpenClawEngineManager,
@@ -11,6 +15,157 @@ interface OpenClawEngineHandlerDependencies {
 
 const isAvailable = (status: OpenClawEngineStatus): boolean =>
   status.phase === 'running' || status.phase === 'ready';
+
+const quoteAppleScriptString = (value: string): string =>
+  value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+const quotePosixShell = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
+const escapeWindowsCmdValue = (value: string): string =>
+  value
+    .replace(/\^/g, '^^')
+    .replace(/%/g, '%%')
+    .replace(/&/g, '^&')
+    .replace(/\|/g, '^|')
+    .replace(/</g, '^<')
+    .replace(/>/g, '^>');
+
+const interactiveShellCommand = (fallbackShell: string): string =>
+  'exec ${SHELL:-' + fallbackShell + '}';
+
+const isOpenClawTerminalEnvKey = (key: string): boolean =>
+  key === 'SKILLS_ROOT' ||
+  key === 'JUSTDO_SKILLS_ROOT' ||
+  key === 'OPENCLAW_BUNDLED_SKILLS_DIR' ||
+  key === 'OPENCLAW_STATE_DIR' ||
+  key === 'OPENCLAW_CONFIG_PATH' ||
+  key === 'OPENCLAW_GATEWAY_TOKEN' ||
+  key === 'OPENCLAW_GATEWAY_PORT' ||
+  key === 'OPENCLAW_NO_RESPAWN' ||
+  key === 'OPENCLAW_ENGINE_VERSION' ||
+  key === 'OPENCLAW_BUNDLED_PLUGINS_DIR' ||
+  key === 'OPENCLAW_LOG_LEVEL' ||
+  key === 'NODE_COMPILE_CACHE' ||
+  key === 'JUSTDO_ELECTRON_PATH' ||
+  key === 'JUSTDO_OPENCLAW_ENTRY' ||
+  key === 'JUSTDO_NPM_BIN_DIR' ||
+  key === 'PATH' ||
+  key === 'Path' ||
+  key === 'TZ' ||
+  key.startsWith('JUSTDO_');
+
+const getOpenClawTerminalEnvKeys = (env: NodeJS.ProcessEnv): string[] => {
+  const keys = Object.keys(env).filter(isOpenClawTerminalEnvKey);
+  const orderedKeys = ['PATH', ...keys.filter(key => key !== 'PATH' && key !== 'Path').sort()];
+  return Array.from(new Set(orderedKeys));
+};
+
+const buildPosixExportScript = (env: NodeJS.ProcessEnv): string => {
+  return getOpenClawTerminalEnvKeys(env)
+    .map(key => {
+      const value = key === 'PATH' ? env.PATH || env.Path : env[key];
+      return typeof value === 'string' ? `export ${key}=${quotePosixShell(value)}` : null;
+    })
+    .filter((line): line is string => line !== null)
+    .join('; ');
+};
+
+const launchTerminal = (options: {
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+}): Promise<{ success: boolean; error?: string }> => {
+  const { env, cwd } = options;
+
+  if (process.platform === 'win32') {
+    const title = 'JustDo Terminal';
+    const launcherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-openclaw-terminal-'));
+    fs.mkdirSync(launcherDir, { recursive: true });
+    const launcherPath = path.join(launcherDir, 'justdo-openclaw-terminal.cmd');
+    const envLines = getOpenClawTerminalEnvKeys(env)
+      .map(key => {
+        const value = key === 'PATH' ? env.PATH || env.Path : env[key];
+        return typeof value === 'string' ? `set "${key}=${escapeWindowsCmdValue(value)}"` : null;
+      })
+      .filter((line): line is string => line !== null);
+    const launcher = [
+      '@echo off',
+      `title ${title}`,
+      ...envLines,
+      `cd /d "${cwd}"`,
+      'echo JustDo Terminal',
+      'echo.',
+      'echo JustDo CLI is ready. Try: openclaw --help',
+      'echo.',
+      'del "%~f0" >nul 2>nul',
+      'rmdir "%~dp0" >nul 2>nul',
+      'cmd /k',
+      '',
+    ].join('\r\n');
+
+    fs.writeFileSync(launcherPath, launcher, 'utf8');
+
+    console.log(
+      `[OpenClawEngine] Opening OpenClaw terminal on Windows via launcher=${launcherPath}, cwd=${cwd}`,
+    );
+    return shell.openPath(launcherPath).then(error => {
+      if (error) {
+        fs.rmSync(launcherDir, { recursive: true, force: true });
+        return { success: false, error };
+      }
+      return { success: true };
+    });
+  }
+
+  if (process.platform === 'darwin') {
+    const script = [
+      'tell application "Terminal"',
+      'activate',
+      `do script "${quoteAppleScriptString(
+        `cd ${quotePosixShell(cwd)}; ${buildPosixExportScript(
+          env,
+        )}; clear; echo 'JustDo Terminal'; echo; echo 'JustDo CLI is ready. Try: openclaw --help'; echo; ${interactiveShellCommand('/bin/zsh')}`,
+      )}"`,
+      'end tell',
+    ].join('\n');
+    console.log(`[OpenClawEngine] Opening OpenClaw terminal on macOS, cwd=${cwd}`);
+    const child = spawn('osascript', ['-e', script], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    return Promise.resolve({ success: true });
+  }
+
+  const command = `cd ${quotePosixShell(cwd)}; ${buildPosixExportScript(
+    env,
+  )}; clear; echo 'JustDo Terminal'; echo; echo 'JustDo CLI is ready. Try: openclaw --help'; echo; ${interactiveShellCommand('/bin/bash')}`;
+  const terminalCandidates: Array<{ command: string; args: string[] }> = [
+    { command: 'x-terminal-emulator', args: ['-e', 'sh', '-lc', command] },
+    { command: 'gnome-terminal', args: ['--', 'sh', '-lc', command] },
+    { command: 'konsole', args: ['-e', 'sh', '-lc', command] },
+    { command: 'xterm', args: ['-e', 'sh', '-lc', command] },
+  ];
+
+  for (const candidate of terminalCandidates) {
+    try {
+      console.log(
+        `[OpenClawEngine] Opening OpenClaw terminal on Linux via ${candidate.command}, cwd=${cwd}`,
+      );
+      const child = spawn(candidate.command, candidate.args, {
+        cwd,
+        env,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      return Promise.resolve({ success: true });
+    } catch {
+      // Try the next installed terminal.
+    }
+  }
+
+  return Promise.resolve({ success: false, error: 'No supported terminal emulator was found' });
+};
 
 export const registerOpenClawEngineHandlers = ({
   getManager,
@@ -95,6 +250,35 @@ export const registerOpenClawEngineHandlers = ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to set OpenClaw gateway port',
+      };
+    }
+  });
+
+  ipcMain.handle('openclaw:engine:openTerminal', async () => {
+    try {
+      const manager = getManager();
+      const status = manager.getStatus();
+      if (status.phase !== 'running') {
+        const started = await manager.startGateway();
+        if (started.phase !== 'running') {
+          return {
+            success: false,
+            error: started.message || 'OpenClaw gateway is not running',
+            status: started,
+          };
+        }
+      }
+
+      const cliEnvironment = await manager.buildCliEnvironment();
+      return launchTerminal({
+        env: cliEnvironment.env,
+        cwd: cliEnvironment.runtimeRoot,
+      });
+    } catch (error) {
+      console.error('[OpenClawEngine] Failed to open terminal:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to open OpenClaw terminal',
       };
     }
   });
