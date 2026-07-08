@@ -48,7 +48,7 @@ export type OutboundHeaderPolicyConfig = {
 export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig = Object.freeze({
   enabled: true,
   baseUrlWhitelist: [],
-  headerNames: ['user_id', 'cookie'],
+  headerNames: ['user-id', 'cookie'],
 });
 
 const USER_INFO_RELATIVE_PATH = path.join('JustDo', 'huawei', 'user_info.json');
@@ -85,7 +85,7 @@ Example:
 {
   "enabled": true,
   "baseUrlWhitelist": ["https://api.example.com/v1/"],
-  "headerNames": ["user_id", "cookie"]
+  "headerNames": ["user-id", "cookie"]
 }
 \`\`\`
 `;
