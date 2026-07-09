@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { ipcMain, shell } from 'electron';
+import { ipcMain } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -94,11 +94,8 @@ const launchTerminal = (options: {
       `cd /d "${cwd}"`,
       'echo JustDo Terminal',
       'echo.',
-      'echo JustDo CLI is ready. Try: openclaw --help',
+      'echo JustDo CLI is ready.',
       'echo.',
-      'del "%~f0" >nul 2>nul',
-      'rmdir "%~dp0" >nul 2>nul',
-      'cmd /k',
       '',
     ].join('\r\n');
 
@@ -107,12 +104,40 @@ const launchTerminal = (options: {
     console.log(
       `[OpenClawEngine] Opening OpenClaw terminal on Windows via launcher=${launcherPath}, cwd=${cwd}`,
     );
-    return shell.openPath(launcherPath).then(error => {
-      if (error) {
+    const commandProcessor = process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
+
+    return new Promise(resolve => {
+      const child = spawn(
+        commandProcessor,
+        ['/d', '/c', 'start', '', commandProcessor, '/d', '/k', launcherPath],
+        {
+          cwd,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        },
+      );
+
+      child.once('error', error => {
         fs.rmSync(launcherDir, { recursive: true, force: true });
-        return { success: false, error };
-      }
-      return { success: true };
+        console.error('[OpenClawEngine] Failed to launch Windows terminal:', error);
+        resolve({ success: false, error: error.message });
+      });
+      child.once('exit', code => {
+        if (code !== 0) {
+          fs.rmSync(launcherDir, { recursive: true, force: true });
+          const error = `Windows terminal launcher exited with code ${code}`;
+          console.error(`[OpenClawEngine] ${error}`);
+          resolve({ success: false, error });
+          return;
+        }
+        child.unref();
+        const cleanupTimer = setTimeout(() => {
+          fs.rmSync(launcherDir, { recursive: true, force: true });
+        }, 10_000);
+        cleanupTimer.unref();
+        resolve({ success: true });
+      });
     });
   }
 
@@ -123,7 +148,7 @@ const launchTerminal = (options: {
       `do script "${quoteAppleScriptString(
         `cd ${quotePosixShell(cwd)}; ${buildPosixExportScript(
           env,
-        )}; clear; echo 'JustDo Terminal'; echo; echo 'JustDo CLI is ready. Try: openclaw --help'; echo; ${interactiveShellCommand('/bin/zsh')}`,
+        )}; clear; echo 'JustDo Terminal'; echo; echo 'JustDo CLI is ready.'; echo; ${interactiveShellCommand('/bin/zsh')}`,
       )}"`,
       'end tell',
     ].join('\n');
@@ -138,7 +163,7 @@ const launchTerminal = (options: {
 
   const command = `cd ${quotePosixShell(cwd)}; ${buildPosixExportScript(
     env,
-  )}; clear; echo 'JustDo Terminal'; echo; echo 'JustDo CLI is ready. Try: openclaw --help'; echo; ${interactiveShellCommand('/bin/bash')}`;
+  )}; clear; echo 'JustDo Terminal'; echo; echo 'JustDo CLI is ready.'; echo; ${interactiveShellCommand('/bin/bash')}`;
   const terminalCandidates: Array<{ command: string; args: string[] }> = [
     { command: 'x-terminal-emulator', args: ['-e', 'sh', '-lc', command] },
     { command: 'gnome-terminal', args: ['--', 'sh', '-lc', command] },
