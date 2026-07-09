@@ -5,7 +5,6 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
-import { CoworkInteractionKind, OpenClawToolName } from '../shared/openclawExtensions';
 import { APP_NAME } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
@@ -54,7 +53,7 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
-import { CoworkEngineRouter, OpenClawRuntimeAdapter } from './libs/agentEngine';
+import { CoworkEngineService } from './libs/agentEngine';
 import { bindCoworkRuntimeForwarder } from './libs/agentEngine/coworkRuntimeForwarder';
 import { syncBuiltinModelProvider } from './libs/cowork/builtinModelProvider';
 import {
@@ -64,21 +63,18 @@ import {
 } from './libs/cowork/providerApiConfig';
 import { OutboundHeaderProxy } from './libs/infra/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
-import { McpStore } from './libs/mcp/mcpStore';
+import { McpServices } from './libs/mcp/mcpServices';
 import type { AskUserExtensionConfig } from './libs/openclaw/config/openclawConfigSync';
-import {
-  buildProviderSelection,
-  OpenClawConfigSync,
-} from './libs/openclaw/config/openclawConfigSync';
-import { OpenClawExtensionHostController } from './libs/openclaw/extensions/openclawExtensionHostController';
+import { buildProviderSelection } from './libs/openclaw/config/openclawConfigSync';
+import { OpenClawConfigSyncService } from './libs/openclaw/config/openclawConfigSyncService';
+import { OpenClawExtensionHostLifecycle } from './libs/openclaw/extensions/openclawExtensionHostLifecycle';
 import { resolveQualifiedAgentModelRef } from './libs/openclaw/models/openclawAgentModels';
 import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
 } from './libs/openclaw/runtime/openclawEngineManager';
 import { stopOpenClawTokenProxy } from './libs/openclaw/runtime/openclawTokenProxy';
-import { parseManagedSessionKey } from './libs/openclaw/sessions/openclawChannelSessionSync';
-import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
+import { OpenClawSkillFileService } from './libs/openclaw/skills/openclawSkillFileService';
 import { OpenClawSkillService } from './libs/openclaw/skills/openclawSkillService';
 import { createPluginMarketplaceService, PluginManager } from './libs/plugin';
 import { justDoSlashCommandPolicy } from './libs/slashCommands/slashCommandPolicies';
@@ -278,19 +274,22 @@ process.on('exit', code => {
 let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let groupStore: GroupStore | null = null;
-let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
-const openClawSkillService = new OpenClawSkillService(() => openClawRuntimeAdapter);
+let coworkEngineService: CoworkEngineService | null = null;
+const openClawSkillService = new OpenClawSkillService(
+  () => coworkEngineService?.getRuntimeAdapter() ?? null,
+);
 const pluginManager = new PluginManager(createPluginMarketplaceService(openClawSkillService));
-let coworkEngineRouter: CoworkEngineRouter | null = null;
-let openClawSkillFiles: OpenClawSkillFiles | null = null;
-let mcpStore: McpStore | null = null;
-let extensionHostController: OpenClawExtensionHostController | null = null;
 const askUserSessionByRequestId = new Map<string, string>();
+const extensionHostLifecycle = new OpenClawExtensionHostLifecycle({
+  askUserSessionByRequestId,
+});
+let openClawSkillFileService: OpenClawSkillFileService | null = null;
+let mcpServices: McpServices | null = null;
+let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
-let openClawConfigSync: OpenClawConfigSync | null = null;
-let openClawBootstrapPromise: Promise<OpenClawEngineStatus> | null = null;
 let openClawStatusForwarderBound = false;
+let openClawGatewayPortProxyBypassBound = false;
 let preventSleepBlockerId: number | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
@@ -339,6 +338,19 @@ const bindOpenClawStatusForwarder = (): void => {
   forwardOpenClawStatus(manager.getStatus());
 };
 
+const bindOpenClawGatewayPortProxyBypass = (): void => {
+  if (openClawGatewayPortProxyBypassBound) return;
+  const manager = getOpenClawEngineManager();
+  manager.setGatewayPortListener(port => {
+    if (port) {
+      outboundHeaderProxy.setProxyBypassEntries([`127.0.0.1:${port}`]);
+      return;
+    }
+    outboundHeaderProxy.setProxyBypassEntries([]);
+  });
+  openClawGatewayPortProxyBypassBound = true;
+};
+
 const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
   const fallbackMessage = 'AI engine is initializing. Please try again in a moment.';
   return {
@@ -349,74 +361,8 @@ const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
   };
 };
 
-const bootstrapOpenClawEngine = async (options: { reason?: string } = {}) => {
-  if (openClawBootstrapPromise) {
-    return openClawBootstrapPromise;
-  }
-
-  const manager = getOpenClawEngineManager();
-  manager.setGatewayPortListener(port => {
-    if (port) {
-      outboundHeaderProxy.setProxyBypassEntries([`127.0.0.1:${port}`]);
-      return;
-    }
-    outboundHeaderProxy.setProxyBypassEntries([]);
-  });
-  bindOpenClawStatusForwarder();
-
-  const task = async (): Promise<OpenClawEngineStatus> => {
-    const reason = options.reason || 'unknown';
-    const t0 = Date.now();
-    const elapsed = () => `${Date.now() - t0}ms`;
-    try {
-      console.log(`[OpenClaw] bootstrap starting (reason=${reason})`);
-
-      const extensionConfig = await startExtensionHost().catch(
-        (err: unknown): AskUserExtensionConfig | null => {
-          console.error(`[OpenClaw] bootstrap: extension host startup failed (non-fatal):`, err);
-          return null;
-        },
-      );
-      console.log(
-        `[OpenClaw] bootstrap: extension host setup done (${elapsed()}), result=${extensionConfig ? 'ready' : 'null'}`,
-      );
-
-      const syncResult = await syncOpenClawConfig({
-        reason: `bootstrap:${reason}`,
-        restartGatewayIfRunning: false,
-      });
-      console.log(
-        `[OpenClaw] bootstrap: syncOpenClawConfig done (${elapsed()}), success=${syncResult.success}`,
-      );
-      if (!syncResult.success) {
-        return syncResult.status || manager.getStatus();
-      }
-      const ensuredStatus = await manager.ensureReady();
-      console.log(
-        `[OpenClaw] bootstrap: ensureReady done (${elapsed()}), phase=${ensuredStatus.phase}`,
-      );
-      if (ensuredStatus.phase !== 'ready' && ensuredStatus.phase !== 'running') {
-        return ensuredStatus;
-      }
-      const result = await manager.startGateway();
-      console.log(`[OpenClaw] bootstrap completed (${elapsed()}), phase=${result.phase}`);
-      return result;
-    } catch (error) {
-      console.error(`[OpenClaw] bootstrap failed (${reason}, ${elapsed()}):`, error);
-      return manager.getStatus();
-    }
-  };
-
-  const promise = task().finally(() => {
-    if (openClawBootstrapPromise === promise) {
-      openClawBootstrapPromise = null;
-    }
-  });
-  openClawBootstrapPromise = promise;
-  return promise;
-};
-
 const ensureOpenClawRunningForCowork = async () => {
+  bindOpenClawGatewayPortProxyBypass();
   const manager = getOpenClawEngineManager();
   const status = manager.getStatus();
   if (status.phase === 'running' || status.phase === 'starting') {
@@ -453,320 +399,75 @@ const getGroupStore = () => {
   return groupStore;
 };
 
-const getOpenClawConfigSync = (): OpenClawConfigSync => {
-  if (!openClawConfigSync) {
-    openClawConfigSync = new OpenClawConfigSync({
-      engineManager: getOpenClawEngineManager(),
-      getCoworkConfig: () => getCoworkStore().getConfig(),
-      getAskUserExtensionConfig: () => {
-        return extensionHostController?.config ?? null;
-      },
-      getMcpServers: () => getMcpStore().listServers(),
-      getAgents: () => getCoworkStore().listAgents(),
+const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
+  if (!openClawConfigSyncService) {
+    openClawConfigSyncService = new OpenClawConfigSyncService({
+      getCoworkStore,
+      getOpenClawEngineManager,
+      getAskUserExtensionConfig: () => extensionHostLifecycle.config,
+      getMcpStore,
+      hasActiveGatewayWorkloads: () => getCoworkEngineService().hasActiveSessions(),
+      disconnectGatewayClient: () => getCoworkEngineService().disconnectGatewayClient(),
     });
   }
-  return openClawConfigSync;
+  return openClawConfigSyncService;
 };
 
-// Deferred gateway restart: when a config change requires a gateway restart
-// but active cowork sessions or cron jobs exist, we defer the restart until
-// all workloads complete.  A polling interval checks periodically; a hard
-// timeout ensures the restart eventually happens even if a session hangs.
-let deferredRestartTimer: ReturnType<typeof setInterval> | null = null;
-let deferredRestartTimeout: ReturnType<typeof setTimeout> | null = null;
-const DEFERRED_RESTART_POLL_MS = 3_000;
-const DEFERRED_RESTART_MAX_WAIT_MS = 5 * 60_000; // 5 minutes hard cap
-
-const hasActiveGatewayWorkloads = (): boolean => {
-  if (openClawRuntimeAdapter?.hasActiveSessions()) return true;
-  return false;
-};
-
-const clearDeferredRestart = () => {
-  if (deferredRestartTimer) {
-    clearInterval(deferredRestartTimer);
-    deferredRestartTimer = null;
-  }
-  if (deferredRestartTimeout) {
-    clearTimeout(deferredRestartTimeout);
-    deferredRestartTimeout = null;
-  }
-};
-
-const executeDeferredGatewayRestart = async (reason: string) => {
-  clearDeferredRestart();
-  console.log(
-    `[OpenClaw] executeDeferredGatewayRestart: performing deferred restart (reason: ${reason})`,
-  );
-  await syncOpenClawConfig({ reason: `deferred:${reason}` });
-};
-
-const scheduleDeferredGatewayRestart = (reason: string) => {
-  // If already scheduled, the latest config is already on disk — just let
-  // the existing timer handle the restart.
-  if (deferredRestartTimer) {
-    console.log(
-      `[OpenClaw] scheduleDeferredGatewayRestart: already scheduled, skipping (reason: ${reason})`,
-    );
-    return;
-  }
-
-  deferredRestartTimer = setInterval(() => {
-    if (!hasActiveGatewayWorkloads()) {
-      void executeDeferredGatewayRestart(reason);
-    }
-  }, DEFERRED_RESTART_POLL_MS);
-
-  // Hard timeout: restart anyway after max wait to avoid config drift.
-  deferredRestartTimeout = setTimeout(() => {
-    console.warn(
-      `[OpenClaw] scheduleDeferredGatewayRestart: max wait exceeded, forcing restart (reason: ${reason})`,
-    );
-    void executeDeferredGatewayRestart(reason);
-  }, DEFERRED_RESTART_MAX_WAIT_MS);
-};
-
-const syncOpenClawConfig = async (
+const syncOpenClawConfig = (
   options: { reason: string; restartGatewayIfRunning?: boolean } = { reason: 'unknown' },
-): Promise<{
-  success: boolean;
-  changed: boolean;
-  status?: OpenClawEngineStatus;
-  error?: string;
-}> => {
-  console.log(
-    `[OpenClaw] syncOpenClawConfig: called (reason: ${options.reason}, restart gateway if running: ${options.restartGatewayIfRunning ? 'yes' : 'no'})`,
-  );
-  // Always write openclaw.json immediately. OpenClaw's built-in file-watcher
-  // will detect the change and gracefully reload (waiting for active tasks to
-  // complete before restarting, up to a 30s drain timeout).  Previous versions
-  // deferred the file write when active workloads existed, but that caused
-  // stale config (e.g. model switches not taking effect for new sessions).
+) => getOpenClawConfigSyncService().syncConfig(options);
 
-  const syncResult = getOpenClawConfigSync().sync(options.reason);
-  if (!syncResult.ok) {
-    const status = getOpenClawEngineManager().setExternalError(
-      `OpenClaw config sync failed: ${syncResult.error || 'unknown error'}`,
-    );
-    return {
-      success: false,
-      changed: false,
-      status,
-      error: syncResult.error,
-    };
+const getCoworkEngineService = (): CoworkEngineService => {
+  if (!coworkEngineService) {
+    coworkEngineService = new CoworkEngineService({
+      getCoworkStore,
+      getOpenClawEngineManager,
+    });
   }
-
-  // Update secret env vars so the gateway process receives the latest
-  // plaintext credentials via environment variables (openclaw.json only
-  // contains ${VAR} placeholders, never plaintext secrets).
-  const nextSecretEnvVars = getOpenClawConfigSync().collectSecretEnvVars();
-  const prevSecretEnvVars = getOpenClawEngineManager().getSecretEnvVars();
-  const secretEnvVarsChanged =
-    JSON.stringify(nextSecretEnvVars) !== JSON.stringify(prevSecretEnvVars);
-  getOpenClawEngineManager().setSecretEnvVars(nextSecretEnvVars);
-
-  // When secret env vars change, the running gateway must be restarted even if
-  // the caller didn't request it — the ${VAR} placeholders in openclaw.json
-  // resolve from the process environment which is fixed at spawn time.
-  const needsHardRestart =
-    secretEnvVarsChanged || (syncResult.changed && options.restartGatewayIfRunning);
-
-  if (!needsHardRestart) {
-    // Config file was written; OpenClaw's file-watcher will handle the reload.
-    return {
-      success: true,
-      changed: syncResult.changed,
-    };
-  }
-
-  const manager = getOpenClawEngineManager();
-  const status = manager.getStatus();
-  if (status.phase !== 'running') {
-    return {
-      success: true,
-      changed: true,
-      status,
-    };
-  }
-
-  // Hard restart required (e.g. secret env vars changed) but active workloads
-  // exist — defer the restart to avoid killing in-flight sessions.
-  if (hasActiveGatewayWorkloads()) {
-    console.log(
-      `[OpenClaw] syncOpenClawConfig: deferring hard restart because active workloads exist (reason: ${options.reason})`,
-    );
-    scheduleDeferredGatewayRestart(options.reason);
-    return {
-      success: true,
-      changed: true,
-      status,
-    };
-  }
-
-  // Tear down the runtime adapter's WebSocket client BEFORE killing the gateway process.
-  // This prevents a race where the old client's async `onClose` fires after a new client
-  // has already been created, destroying the new connection.
-  if (openClawRuntimeAdapter) {
-    console.log(
-      `[OpenClaw] syncOpenClawConfig: pre-emptively disconnecting runtime adapter before gateway restart (reason: ${options.reason})`,
-    );
-    openClawRuntimeAdapter.disconnectGatewayClient();
-  }
-
-  await manager.stopGateway();
-  const restarted = await manager.startGateway();
-  if (restarted.phase !== 'running') {
-    return {
-      success: false,
-      changed: true,
-      status: restarted,
-      error: restarted.message || 'Failed to restart OpenClaw gateway after config sync.',
-    };
-  }
-  return {
-    success: true,
-    changed: true,
-    status: restarted,
-  };
+  return coworkEngineService;
 };
 
 const getCoworkEngineRouter = () => {
-  if (!coworkEngineRouter) {
-    if (!openClawRuntimeAdapter) {
-      openClawRuntimeAdapter = new OpenClawRuntimeAdapter(
-        getCoworkStore(),
-        getOpenClawEngineManager(),
-      );
-    }
-    coworkEngineRouter = new CoworkEngineRouter({
-      openclawRuntime: openClawRuntimeAdapter,
-    });
-  }
-  return coworkEngineRouter;
+  return getCoworkEngineService().getRouter();
+};
+
+const getOpenClawRuntimeAdapter = () => {
+  return coworkEngineService?.getRuntimeAdapter() ?? null;
 };
 
 const getOpenClawSkillFiles = () => {
-  if (!openClawSkillFiles) {
-    const managedSkillsDir = path.join(getOpenClawEngineManager().getStateDir(), 'skills');
-    openClawSkillFiles = new OpenClawSkillFiles(managedSkillsDir);
+  if (!openClawSkillFileService) {
+    openClawSkillFileService = new OpenClawSkillFileService({
+      getOpenClawEngineManager,
+    });
   }
-  return openClawSkillFiles;
+  return openClawSkillFileService.getSkillFiles();
+};
+
+const getMcpServices = (): McpServices => {
+  if (!mcpServices) {
+    mcpServices = new McpServices({
+      getDatabase: () => getStore().getDatabase(),
+      syncOpenClawConfig,
+    });
+  }
+  return mcpServices;
 };
 
 const getMcpStore = () => {
-  if (!mcpStore) {
-    const sqliteStore = getStore();
-    mcpStore = new McpStore(sqliteStore.getDatabase());
-  }
-  return mcpStore;
-};
-
-const getExtensionHostController = (): OpenClawExtensionHostController => {
-  if (!extensionHostController) {
-    extensionHostController = new OpenClawExtensionHostController({
-      onAskUser: request => {
-        const managedSession = parseManagedSessionKey(request.sessionKey);
-        const requestSessionId = managedSession?.sessionId ?? '__askuser__';
-        askUserSessionByRequestId.set(request.requestId, requestSessionId);
-        BrowserWindow.getAllWindows().forEach(win => {
-          if (win.isDestroyed()) return;
-          win.webContents.send('cowork:stream:permission', {
-            sessionId: requestSessionId,
-            request: {
-              requestId: request.requestId,
-              toolName: OpenClawToolName.ASK_USER_QUESTION,
-              interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
-              toolInput: {
-                questions: request.questions,
-                sessionKey: request.sessionKey,
-                sessionId: requestSessionId,
-              },
-            },
-          });
-        });
-      },
-      onAskUserDismiss: requestId => {
-        askUserSessionByRequestId.delete(requestId);
-        BrowserWindow.getAllWindows().forEach(win => {
-          if (!win.isDestroyed()) {
-            win.webContents.send('cowork:stream:permissionDismiss', { requestId });
-          }
-        });
-      },
-    });
-  }
-  return extensionHostController;
+  return getMcpServices().getStore();
 };
 
 const startExtensionHost = (): Promise<AskUserExtensionConfig | null> => {
-  return getExtensionHostController().start();
+  return extensionHostLifecycle.start();
 };
 
-const stopExtensionHost = async (): Promise<void> => {
-  try {
-    await extensionHostController?.stop();
-  } catch (error) {
-    console.error(
-      '[OpenClawExtensionHost] shutdown error:',
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-};
-
-/**
- * Sync MCP server configuration into OpenClaw. OpenClaw owns transport
- * lifecycle, tool discovery, execution, and hot reload.
- */
-let mcpConfigSyncPromise: Promise<{ tools: number; error?: string }> | null = null;
-
-const broadcastMcpConfigSync = (channel: string, data?: Record<string, unknown>): void => {
-  const windows = BrowserWindow.getAllWindows();
-  windows.forEach(win => {
-    if (win.isDestroyed()) return;
-    try {
-      win.webContents.send(channel, data ?? {});
-    } catch (error) {
-      console.error(`[OpenClawMcp] Failed to broadcast ${channel}:`, error);
-    }
-  });
+const stopExtensionHost = (): Promise<void> => {
+  return extensionHostLifecycle.stop();
 };
 
 const syncMcpConfig = (): Promise<{ tools: number; error?: string }> => {
-  if (mcpConfigSyncPromise) {
-    return mcpConfigSyncPromise;
-  }
-  mcpConfigSyncPromise = (async () => {
-    try {
-      console.log('[OpenClawMcp] syncing configuration...');
-      broadcastMcpConfigSync('mcp:config:syncStart');
-      const syncResult = await syncOpenClawConfig({
-        reason: 'mcp-server-changed',
-      });
-      if (!syncResult.success) {
-        console.error('[OpenClawMcp] config sync failed:', syncResult.error);
-        return { tools: 0, error: syncResult.error };
-      }
-      console.log(`[OpenClawMcp] sync complete, changed=${syncResult.changed}`);
-      return { tools: getMcpStore().getEnabledServers().length };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error('[OpenClawMcp] sync error:', msg);
-      return { tools: 0, error: msg };
-    }
-  })()
-    .then(result => {
-      broadcastMcpConfigSync('mcp:config:syncDone', { tools: result.tools, error: result.error });
-      return result;
-    })
-    .catch(err => {
-      const error = err instanceof Error ? err.message : String(err);
-      broadcastMcpConfigSync('mcp:config:syncDone', { tools: 0, error });
-      return { tools: 0, error };
-    })
-    .finally(() => {
-      mcpConfigSyncPromise = null;
-    });
-  return mcpConfigSyncPromise;
+  return getMcpServices().syncConfig();
 };
 
 // 获取正确的预加载脚本路径
@@ -918,7 +619,7 @@ if (!gotTheLock) {
   registerOpenClawHistoryHandlers(() => getOpenClawEngineManager().getStateDir());
 
   registerSlashCommandHandlers({
-    getGatewayClient: () => openClawRuntimeAdapter?.getGatewayClient() ?? null,
+    getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     policies: [justDoSlashCommandPolicy],
   });
   registerSkillHandlers({
@@ -950,12 +651,12 @@ if (!gotTheLock) {
   registerCoworkSessionRuntimeHandlers({
     getCoworkStore,
     getCoworkEngineRouter,
-    getRuntime: () => openClawRuntimeAdapter,
+    getRuntime: getOpenClawRuntimeAdapter,
   });
 
   registerSessionGroupHandlers(getGroupStore);
 
-  registerCoworkSubtaskHandlers(() => openClawRuntimeAdapter);
+  registerCoworkSubtaskHandlers(getOpenClawRuntimeAdapter);
 
   registerAgentHandlers({
     getStore: getCoworkStore,
@@ -966,7 +667,7 @@ if (!gotTheLock) {
   registerCoworkPermissionHandlers({
     getCoworkStore,
     getCoworkEngineRouter,
-    getExtensionHostController: () => extensionHostController,
+    getExtensionHostController: () => extensionHostLifecycle.currentController,
     askUserSessionByRequestId,
   });
 
@@ -988,11 +689,11 @@ if (!gotTheLock) {
   // ==================== Scheduled Task IPC Handlers (OpenClaw) ====================
 
   initCronJobServiceManager({
-    getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
+    getOpenClawRuntimeAdapter,
   });
   registerScheduledTaskHandlers({
     getCronJobService,
-    getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
+    getOpenClawRuntimeAdapter,
   });
 
   registerCalendarPermissionHandlers(isDev);
@@ -1064,9 +765,10 @@ if (!gotTheLock) {
     console.log('[Main] App is quitting, starting cleanup...');
     destroyTray();
     // Stop Cowork sessions without blocking shutdown.
-    if (coworkEngineRouter) {
+    const coworkRouter = coworkEngineService?.getCurrentRouter();
+    if (coworkRouter) {
       console.log('[Main] Stopping cowork sessions...');
-      coworkEngineRouter.stopAllSessions();
+      coworkRouter.stopAllSessions();
     }
 
     stopOpenClawTokenProxy();
@@ -1197,9 +899,7 @@ if (!gotTheLock) {
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
     powerMonitor.on('resume', () => {
-      if (openClawRuntimeAdapter) {
-        openClawRuntimeAdapter.onSystemResume();
-      }
+      getOpenClawRuntimeAdapter()?.onSystemResume();
     });
 
     // 首次启动时默认关闭开机自启动（先写标记再设置，避免崩溃后重复设置）
@@ -1241,7 +941,7 @@ if (!gotTheLock) {
             // Dispose the adapter's client before restarting the Gateway. Otherwise the
             // old socket closes asynchronously and leaves gatewayReadyPromise rejected,
             // so requests made during the restart can observe a permanently stale client.
-            openClawRuntimeAdapter?.disconnectGatewayClient();
+            getOpenClawRuntimeAdapter()?.disconnectGatewayClient();
             void getOpenClawEngineManager().restartGateway();
           }
         });
