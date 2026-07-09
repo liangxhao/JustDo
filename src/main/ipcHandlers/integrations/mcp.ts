@@ -1,10 +1,12 @@
 import { ipcMain } from 'electron';
 
+import type { McpProbeResult } from '../../libs/mcp/mcpProbeService';
 import type { McpServerFormData, McpStore } from '../../libs/mcp/mcpStore';
 
 interface McpHandlerDependencies {
   getStore: () => McpStore;
   syncConfig: () => Promise<{ tools: number; error?: string }>;
+  probeServer: (id: string) => Promise<McpProbeResult>;
 }
 
 const syncMcpConfigInBackground = (
@@ -15,7 +17,11 @@ const syncMcpConfigInBackground = (
   });
 };
 
-export const registerMcpHandlers = ({ getStore, syncConfig }: McpHandlerDependencies): void => {
+export const registerMcpHandlers = ({
+  getStore,
+  syncConfig,
+  probeServer,
+}: McpHandlerDependencies): void => {
   ipcMain.handle('mcp:list', () => {
     try {
       return { success: true, servers: getStore().listServers() };
@@ -92,6 +98,18 @@ export const registerMcpHandlers = ({ getStore, syncConfig }: McpHandlerDependen
         success: false,
         tools: 0,
         error: error instanceof Error ? error.message : 'Failed to sync MCP configuration',
+      };
+    }
+  });
+
+  ipcMain.handle('mcp:probe', async (_event, id: string) => {
+    try {
+      const result = await probeServer(id);
+      return { success: true, result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to probe MCP server',
       };
     }
   });

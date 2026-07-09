@@ -214,6 +214,44 @@ interface McpServerConfigIPC {
   updatedAt: number;
 }
 
+interface McpProbeResultIPC {
+  available: boolean;
+  serverName?: string;
+  serverVersion?: string;
+  instructions?: string;
+  capabilities?: {
+    tools: boolean;
+    resources: boolean;
+    prompts: boolean;
+  };
+  tools: Array<{
+    name: string;
+    title?: string;
+    description?: string;
+    inputSchema?: unknown;
+    outputSchema?: unknown;
+  }>;
+  resources: Array<{
+    uri: string;
+    name: string;
+    title?: string;
+    description?: string;
+    mimeType?: string;
+  }>;
+  prompts: Array<{
+    name: string;
+    title?: string;
+    description?: string;
+    arguments?: Array<{
+      name: string;
+      description?: string;
+      required?: boolean;
+    }>;
+  }>;
+  latencyMs: number;
+  error?: string;
+}
+
 import type { Agent } from './agent';
 
 interface IElectronAPI {
@@ -291,6 +329,9 @@ interface IElectronAPI {
       enabled: boolean;
     }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     syncConfig: () => Promise<{ success: boolean; tools: number; error?: string }>;
+    probe: (
+      id: string,
+    ) => Promise<{ success: boolean; result?: McpProbeResultIPC; error?: string }>;
     onConfigSyncStart: (callback: () => void) => () => void;
     onConfigSyncDone: (callback: (data: { tools: number; error?: string }) => void) => () => void;
   };

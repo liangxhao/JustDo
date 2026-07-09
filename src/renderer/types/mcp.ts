@@ -42,3 +42,50 @@ export interface McpRegistryEntry {
   optionalEnvKeys?: string[];    // optional env vars
   argPlaceholders?: string[];    // placeholder hints for args (e.g. path)
 }
+
+export interface McpProbeTool {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  [key: string]: unknown;
+}
+
+export interface McpProbeResource {
+  uri: string;
+  name: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  [key: string]: unknown;
+}
+
+export interface McpProbePrompt {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments?: Array<{
+    name: string;
+    description?: string;
+    required?: boolean;
+  }>;
+  [key: string]: unknown;
+}
+
+export interface McpProbeResult {
+  available: boolean;
+  serverName?: string;
+  serverVersion?: string;
+  instructions?: string;
+  capabilities?: {
+    tools: boolean;
+    resources: boolean;
+    prompts: boolean;
+  };
+  tools: McpProbeTool[];
+  resources: McpProbeResource[];
+  prompts: McpProbePrompt[];
+  latencyMs: number;
+  error?: string;
+}

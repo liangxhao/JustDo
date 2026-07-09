@@ -1,4 +1,4 @@
-import { McpServerConfig, McpServerFormData } from '../types/mcp';
+import { McpProbeResult, McpServerConfig, McpServerFormData } from '../types/mcp';
 
 class McpService {
   private servers: McpServerConfig[] = [];
@@ -109,6 +109,18 @@ class McpService {
       const message = error instanceof Error ? error.message : 'Failed to sync MCP configuration';
       console.error('Failed to sync MCP configuration:', error);
       return { success: false, tools: 0, error: message };
+    }
+  }
+
+  async probeServer(
+    id: string,
+  ): Promise<{ success: boolean; result?: McpProbeResult; error?: string }> {
+    try {
+      return await window.electron.mcp.probe(id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to probe MCP server';
+      console.error('Failed to probe MCP server:', error);
+      return { success: false, error: message };
     }
   }
 

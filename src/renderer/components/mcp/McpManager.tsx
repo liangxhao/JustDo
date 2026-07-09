@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { mcpRegistry } from '../../data/mcpRegistry';
@@ -6,10 +6,17 @@ import { i18nService } from '../../services/i18n';
 import { mcpService } from '../../services/mcp';
 import { RootState } from '../../store';
 import { setMcpServers } from '../../store/slices/mcpSlice';
-import { McpRegistryEntry, McpServerConfig, McpServerFormData } from '../../types/mcp';
+import {
+  McpProbeResult,
+  McpRegistryEntry,
+  McpServerConfig,
+  McpServerFormData,
+} from '../../types/mcp';
 import Modal from '../common/Modal';
 import ErrorMessage from '../ErrorMessage';
+import ClockIcon from '../icons/ClockIcon';
 import ConnectorIcon from '../icons/ConnectorIcon';
+import InformationCircleIcon from '../icons/InformationCircleIcon';
 import PencilIcon from '../icons/PencilIcon';
 import SearchIcon from '../icons/SearchIcon';
 import TrashIcon from '../icons/TrashIcon';
@@ -24,6 +31,15 @@ const TRANSPORT_BADGE_COLORS: Record<string, string> = {
 
 type McpTab = 'installed' | 'marketplace';
 
+const formatSchema = (schema?: unknown): string => {
+  if (!schema) return '';
+  try {
+    return JSON.stringify(schema, null, 2);
+  } catch {
+    return String(schema);
+  }
+};
+
 const McpManager: React.FC = () => {
   const dispatch = useDispatch();
   const servers = useSelector((state: RootState) => state.mcp.servers);
@@ -36,6 +52,11 @@ const McpManager: React.FC = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
+  const [probingServerIds, setProbingServerIds] = useState<Set<string>>(() => new Set());
+  const [probeResults, setProbeResults] = useState<Record<string, McpProbeResult>>({});
+  const [detailServer, setDetailServer] = useState<McpServerConfig | null>(null);
+  const [expandedToolNames, setExpandedToolNames] = useState<Set<string>>(() => new Set());
+  const [expandedPromptNames, setExpandedPromptNames] = useState<Set<string>>(() => new Set());
   // Using local registry only (no remote marketplace)
   const dynamicRegistry = mcpRegistry;
   const [bridgeSyncing, setBridgeSyncing] = useState(false);
@@ -75,7 +96,7 @@ const McpManager: React.FC = () => {
     );
   };
 
-  const getTransportSummary = (server: McpServerConfig): string => {
+  const getTransportSummary = useCallback((server: McpServerConfig): string => {
     if (server.transportType === 'stdio') {
       const parts = [server.command || ''];
       if (server.args && server.args.length > 0) {
@@ -85,11 +106,24 @@ const McpManager: React.FC = () => {
       return parts.join(' ');
     }
     return server.url || '';
+  }, []);
+
+  const getConnectionDetail = (server: McpServerConfig): string => {
+    if (server.transportType === 'stdio') {
+      return [server.command, ...(server.args ?? [])].filter(Boolean).join(' ');
+    }
+    return server.url || i18nService.t('mcpDetailEmpty');
   };
 
-  const getInstalledDescription = (server: McpServerConfig): string => {
-    return getTransportSummary(server);
+  const getConnectionDetailLabel = (server: McpServerConfig): string => {
+    return server.transportType === 'stdio'
+      ? i18nService.t('mcpDetailConnectionDetail')
+      : i18nService.t('mcpDetailEndpoint');
   };
+
+  const getInstalledDescription = useCallback((server: McpServerConfig): string => {
+    return getTransportSummary(server);
+  }, [getTransportSummary]);
 
   const filteredInstalled = useMemo(() => {
     const query = searchQuery.toLowerCase();
@@ -99,7 +133,7 @@ const McpManager: React.FC = () => {
         server.name.toLowerCase().includes(query) ||
         getInstalledDescription(server).toLowerCase().includes(query),
     );
-  }, [servers, searchQuery, dynamicRegistry]);
+  }, [servers, searchQuery, getInstalledDescription]);
 
   const handleToggleEnabled = async (serverId: string) => {
     const targetServer = servers.find(s => s.id === serverId);
@@ -180,6 +214,70 @@ const McpManager: React.FC = () => {
     setEditingServer(null);
     setInstallingRegistry(null);
     setIsFormOpen(true);
+  };
+
+  const setServerProbing = (serverId: string, probing: boolean) => {
+    setProbingServerIds(current => {
+      const next = new Set(current);
+      if (probing) {
+        next.add(serverId);
+      } else {
+        next.delete(serverId);
+      }
+      return next;
+    });
+  };
+
+  const handleProbeServer = async (server: McpServerConfig, openDetail = false) => {
+    setActionError('');
+    setServerProbing(server.id, true);
+    const result = await mcpService.probeServer(server.id);
+    setServerProbing(server.id, false);
+
+    if (!result.success || !result.result) {
+      setActionError(result.error || i18nService.t('mcpProbeFailed'));
+      return;
+    }
+
+    setProbeResults(current => ({
+      ...current,
+      [server.id]: result.result!,
+    }));
+
+    if (openDetail) {
+      setDetailServer(server);
+      setExpandedToolNames(new Set());
+      setExpandedPromptNames(new Set());
+    }
+  };
+
+  const toggleExpandedTool = (toolName: string) => {
+    setExpandedToolNames(current => {
+      const next = new Set(current);
+      if (next.has(toolName)) {
+        next.delete(toolName);
+      } else {
+        next.add(toolName);
+      }
+      return next;
+    });
+  };
+
+  const toggleExpandedPrompt = (promptName: string) => {
+    setExpandedPromptNames(current => {
+      const next = new Set(current);
+      if (next.has(promptName)) {
+        next.delete(promptName);
+      } else {
+        next.add(promptName);
+      }
+      return next;
+    });
+  };
+
+  const getDetailResult = (): McpProbeResult | null => {
+    if (!detailServer) return null;
+    return probeResults[detailServer.id] ?? null;
   };
 
   const existingNames = useMemo(() => servers.map(s => s.name), [servers]);
@@ -375,6 +473,24 @@ const McpManager: React.FC = () => {
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           <button
                             type="button"
+                            onClick={() => handleProbeServer(server)}
+                            disabled={probingServerIds.has(server.id)}
+                            className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-wait"
+                            title={i18nService.t('mcpTestServer')}
+                          >
+                            <ClockIcon className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleProbeServer(server, true)}
+                            disabled={probingServerIds.has(server.id)}
+                            className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-wait"
+                            title={i18nService.t('mcpServerDetails')}
+                          >
+                            <InformationCircleIcon className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleOpenEditForm(server)}
                             className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors"
                             title={i18nService.t('editMcpServer')}
@@ -447,6 +563,23 @@ const McpManager: React.FC = () => {
                             </>
                           )}
                       </div>
+
+                      {probeResults[server.id] && (
+                        <div
+                          className={`mt-2 rounded-lg border px-2 py-1 text-[10px] ${
+                            probeResults[server.id].available
+                              ? 'border-green-200 bg-green-50 text-green-600 dark:border-green-500/20 dark:bg-green-500/10 dark:text-green-400'
+                              : 'border-red-200 bg-red-50 text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400'
+                          }`}
+                        >
+                          {probeResults[server.id].available
+                            ? i18nService
+                                .t('mcpProbeAvailable')
+                                .replace('{latency}', String(probeResults[server.id].latencyMs))
+                                .replace('{tools}', String(probeResults[server.id].tools.length))
+                            : `${i18nService.t('mcpProbeUnavailable')}: ${probeResults[server.id].error || ''}`}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -512,6 +645,316 @@ const McpManager: React.FC = () => {
         onClose={handleCloseForm}
         onSave={handleSaveForm}
       />
+
+      {detailServer && getDetailResult() && (
+        <Modal
+          onClose={() => setDetailServer(null)}
+          overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          className="w-full max-w-4xl max-h-[84vh] mx-4 rounded-2xl bg-surface border border-border shadow-2xl overflow-hidden flex flex-col"
+        >
+          {(() => {
+            const detail = getDetailResult()!;
+            return (
+              <>
+                <div className="px-5 py-4 border-b border-border bg-surface-raised/60 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="truncate text-lg font-semibold leading-6 text-foreground">
+                        {detailServer.name}
+                      </div>
+                      <div
+                        title={detail.available ? undefined : detail.error}
+                        className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                          detail.available
+                            ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                            : 'bg-red-500/10 text-red-600 dark:text-red-400'
+                        }`}
+                      >
+                        {detail.available
+                          ? i18nService.t('mcpProbeStatusAvailable')
+                          : i18nService.t('mcpProbeUnavailable')}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDetailServer(null)}
+                    className="shrink-0 px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface transition-colors"
+                  >
+                    {i18nService.t('close')}
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto p-5 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="rounded-xl border border-border bg-surface px-3 py-2.5 flex items-center justify-between gap-3">
+                      <div className="text-[11px] text-secondary shrink-0">
+                        {i18nService.t('mcpDetailTransport')}
+                      </div>
+                      <div className="min-w-0">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            TRANSPORT_BADGE_COLORS[detailServer.transportType]
+                          }`}
+                        >
+                          {detailServer.transportType.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-border bg-surface px-3 py-2.5 flex items-center justify-between gap-3">
+                      <div className="text-[11px] text-secondary shrink-0">
+                        {i18nService.t('mcpDetailServerName')}
+                      </div>
+                      <div className="min-w-0 text-sm font-medium text-foreground truncate">
+                        {detail.serverName || detailServer.name}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-border bg-surface px-3 py-2.5 flex items-center justify-between gap-3">
+                      <div className="text-[11px] text-secondary shrink-0">
+                        {i18nService.t('mcpDetailLatency')}
+                      </div>
+                      <div className="text-sm font-medium text-foreground truncate">
+                        {detail.latencyMs}ms
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-border bg-surface px-3 py-2.5 flex items-center justify-between gap-3">
+                      <div className="text-[11px] text-secondary shrink-0">
+                        {i18nService.t('mcpDetailVersion')}
+                      </div>
+                      <div className="min-w-0 text-sm font-medium text-foreground truncate">
+                        {detail.serverVersion || i18nService.t('mcpDetailEmpty')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-surface px-3 py-2.5 flex items-start gap-3">
+                    <div className="text-[11px] text-secondary shrink-0 pt-0.5">
+                      {getConnectionDetailLabel(detailServer)}
+                    </div>
+                    <div className="min-w-0 flex-1 text-xs font-mono text-foreground break-all">
+                      {getConnectionDetail(detailServer)}
+                    </div>
+                  </div>
+
+                  {detail.instructions && (
+                    <div className="rounded-xl border border-border bg-surface p-3">
+                      <div>
+                        <div className="text-[11px] font-medium text-foreground">
+                          {i18nService.t('mcpDetailInstructions')}
+                        </div>
+                        <div className="mt-1 text-xs text-secondary whitespace-pre-wrap">
+                          {detail.instructions}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-xl border border-border bg-surface p-3">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-sm font-medium text-foreground">
+                        {i18nService.t('mcpDetailTools')}
+                      </div>
+                      <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-secondary">
+                        {detail.tools.length}
+                      </span>
+                    </div>
+                    {detail.tools.length === 0 ? (
+                      <div className="text-xs text-secondary">{i18nService.t('mcpDetailEmpty')}</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {detail.tools.map(tool => {
+                          const inputSchema = formatSchema(tool.inputSchema);
+                          const outputSchema = formatSchema(tool.outputSchema);
+                          const isExpanded = expandedToolNames.has(tool.name);
+                          return (
+                            <div
+                              key={tool.name}
+                              className="rounded-lg bg-surface-raised overflow-hidden"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandedTool(tool.name)}
+                                className="w-full px-3 py-2.5 text-left hover:bg-surface transition-colors"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                      <span className="text-xs font-semibold text-foreground break-all">
+                                        {tool.title || tool.name}
+                                      </span>
+                                      {tool.title && (
+                                        <span className="text-[11px] text-secondary break-all">
+                                          {tool.name}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {tool.title && tool.title !== tool.name && (
+                                      <div className="sr-only">
+                                        {i18nService.t('mcpDetailTitle')}: {tool.title}
+                                      </div>
+                                    )}
+                                    <div className="mt-1 text-xs text-secondary whitespace-pre-wrap">
+                                      {tool.description || i18nService.t('mcpDetailEmpty')}
+                                    </div>
+                                  </div>
+                                  <span className="shrink-0 text-[11px] text-secondary">
+                                    {isExpanded ? '-' : '+'}
+                                  </span>
+                                </div>
+                              </button>
+                              {isExpanded && (
+                                <div className="border-t border-border p-3 grid grid-cols-1 lg:grid-cols-2 gap-2">
+                                  <div className="rounded-lg border border-border bg-surface p-2">
+                                    <div className="text-[11px] font-medium text-foreground">
+                                      {i18nService.t('mcpDetailInputSchema')}
+                                    </div>
+                                    {inputSchema ? (
+                                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
+                                        {inputSchema}
+                                      </pre>
+                                    ) : (
+                                      <div className="mt-2 text-xs text-secondary">
+                                        {i18nService.t('mcpDetailEmpty')}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="rounded-lg border border-border bg-surface p-2">
+                                    <div className="text-[11px] font-medium text-foreground">
+                                      {i18nService.t('mcpDetailOutputSchema')}
+                                    </div>
+                                    {outputSchema ? (
+                                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
+                                        {outputSchema}
+                                      </pre>
+                                    ) : (
+                                      <div className="mt-2 text-xs text-secondary">
+                                        {i18nService.t('mcpDetailEmpty')}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-border bg-surface p-3">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="text-sm font-medium text-foreground">
+                          {i18nService.t('mcpDetailResources')}
+                        </div>
+                        <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-secondary">
+                          {detail.resources.length}
+                        </span>
+                      </div>
+                      {detail.resources.length === 0 ? (
+                        <div className="text-xs text-secondary">
+                          {i18nService.t('mcpDetailEmpty')}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {detail.resources.map(resource => (
+                            <div key={resource.uri} className="rounded-lg bg-surface-raised px-3 py-2">
+                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
+                                {formatSchema(resource)}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-border bg-surface p-3">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="text-sm font-medium text-foreground">
+                          {i18nService.t('mcpDetailPrompts')}
+                        </div>
+                        <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-secondary">
+                          {detail.prompts.length}
+                        </span>
+                      </div>
+                      {detail.prompts.length === 0 ? (
+                        <div className="text-xs text-secondary">
+                          {i18nService.t('mcpDetailEmpty')}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {detail.prompts.map(prompt => {
+                            const isExpanded = expandedPromptNames.has(prompt.name);
+                            return (
+                              <div
+                                key={prompt.name}
+                                className="rounded-lg bg-surface-raised overflow-hidden"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpandedPrompt(prompt.name)}
+                                  className="w-full px-3 py-2.5 text-left hover:bg-surface transition-colors"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                        <span className="text-xs font-semibold text-foreground break-all">
+                                          {prompt.title || prompt.name}
+                                        </span>
+                                        {prompt.title && (
+                                          <span className="text-[11px] text-secondary break-all">
+                                            {prompt.name}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="mt-1 text-xs text-secondary whitespace-pre-wrap">
+                                        {prompt.description || i18nService.t('mcpDetailEmpty')}
+                                      </div>
+                                    </div>
+                                    <span className="shrink-0 text-[11px] text-secondary">
+                                      {isExpanded ? '-' : '+'}
+                                    </span>
+                                  </div>
+                                </button>
+                                {isExpanded && (
+                                  <div className="border-t border-border p-3 space-y-2">
+                                    <div className="rounded-lg border border-border bg-surface p-2">
+                                      <div className="text-[11px] font-medium text-foreground">
+                                        {i18nService.t('mcpDetailArguments')}
+                                      </div>
+                                      {prompt.arguments && prompt.arguments.length > 0 ? (
+                                        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
+                                          {formatSchema(prompt.arguments)}
+                                        </pre>
+                                      ) : (
+                                        <div className="mt-2 text-xs text-secondary">
+                                          {i18nService.t('mcpDetailEmpty')}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="rounded-lg border border-border bg-surface p-2">
+                                      <div className="text-[11px] font-medium text-foreground">
+                                        {i18nService.t('mcpDetailMetadata')}
+                                      </div>
+                                      <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
+                                        {formatSchema(prompt)}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </Modal>
+      )}
     </div>
   );
 };
