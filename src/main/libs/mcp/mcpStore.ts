@@ -4,7 +4,6 @@ import crypto from 'crypto';
 export interface McpServerRecord {
   id: string;
   name: string;
-  description: string;
   enabled: boolean;
   transportType: 'stdio' | 'sse' | 'http';
   command?: string;
@@ -21,7 +20,6 @@ export interface McpServerRecord {
 
 export interface McpServerFormData {
   name: string;
-  description: string;
   transportType: 'stdio' | 'sse' | 'http';
   command?: string;
   args?: string[];
@@ -36,7 +34,6 @@ export interface McpServerFormData {
 interface McpServerRow {
   id: string;
   name: string;
-  description: string;
   enabled: number;
   transport_type: string;
   config_json: string;
@@ -73,7 +70,6 @@ export class McpStore {
     return {
       id: row.id,
       name: row.name,
-      description: row.description,
       enabled: row.enabled === 1,
       transportType: row.transport_type as 'stdio' | 'sse' | 'http',
       command: config.command,
@@ -105,7 +101,7 @@ export class McpStore {
   listServers(): McpServerRecord[] {
     const rows = this.db
       .prepare(
-        'SELECT id, name, description, enabled, transport_type, config_json, created_at, updated_at FROM mcp_servers ORDER BY created_at ASC',
+        'SELECT id, name, enabled, transport_type, config_json, created_at, updated_at FROM mcp_servers ORDER BY created_at ASC',
       )
       .all() as McpServerRow[];
     return rows.map((row) => this.deserializeRow(row));
@@ -114,7 +110,7 @@ export class McpStore {
   getServer(id: string): McpServerRecord | null {
     const row = this.db
       .prepare(
-        'SELECT id, name, description, enabled, transport_type, config_json, created_at, updated_at FROM mcp_servers WHERE id = ?',
+        'SELECT id, name, enabled, transport_type, config_json, created_at, updated_at FROM mcp_servers WHERE id = ?',
       )
       .get(id) as McpServerRow | undefined;
     if (!row) return null;
@@ -128,10 +124,10 @@ export class McpStore {
 
     this.db
       .prepare(
-        `INSERT INTO mcp_servers (id, name, description, enabled, transport_type, config_json, created_at, updated_at)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+        `INSERT INTO mcp_servers (id, name, enabled, transport_type, config_json, created_at, updated_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?)`,
       )
-      .run(id, data.name, data.description, data.transportType, configJson, now, now);
+      .run(id, data.name, data.transportType, configJson, now, now);
 
     return this.getServer(id)!;
   }
@@ -143,7 +139,6 @@ export class McpStore {
     const now = Date.now();
     const merged: McpServerFormData = {
       name: data.name ?? existing.name,
-      description: data.description ?? existing.description,
       transportType: data.transportType ?? existing.transportType,
       command: data.command !== undefined ? data.command : existing.command,
       args: data.args !== undefined ? data.args : existing.args,
@@ -159,9 +154,9 @@ export class McpStore {
 
     this.db
       .prepare(
-        `UPDATE mcp_servers SET name = ?, description = ?, transport_type = ?, config_json = ?, updated_at = ? WHERE id = ?`,
+        `UPDATE mcp_servers SET name = ?, transport_type = ?, config_json = ?, updated_at = ? WHERE id = ?`,
       )
-      .run(merged.name, merged.description, merged.transportType, configJson, now, id);
+      .run(merged.name, merged.transportType, configJson, now, id);
 
     return this.getServer(id);
   }
@@ -188,7 +183,7 @@ export class McpStore {
   getEnabledServers(): McpServerRecord[] {
     const rows = this.db
       .prepare(
-        'SELECT id, name, description, enabled, transport_type, config_json, created_at, updated_at FROM mcp_servers WHERE enabled = 1 ORDER BY created_at ASC',
+        'SELECT id, name, enabled, transport_type, config_json, created_at, updated_at FROM mcp_servers WHERE enabled = 1 ORDER BY created_at ASC',
       )
       .all() as McpServerRow[];
     return rows.map((row) => this.deserializeRow(row));

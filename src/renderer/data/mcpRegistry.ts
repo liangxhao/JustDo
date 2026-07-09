@@ -7,26 +7,18 @@ import { McpRegistryEntry } from '../types/mcp';
  * before it is saved to the database.
  */
 export const mcpRegistry: McpRegistryEntry[] = [
-  // ── Search ──────────────────────────────────────────────
   {
     id: 'tavily',
     name: 'Tavily',
-    descriptionKey: 'mcpDesc_tavily',
-    category: 'search',
-    categoryKey: 'mcpCategorySearch',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', 'tavily-mcp@latest'],
     requiredEnvKeys: ['TAVILY_API_KEY'],
   },
 
-  // ── Developer Tools ─────────────────────────────────────
   {
     id: 'github',
     name: 'GitHub',
-    descriptionKey: 'mcpDesc_github',
-    category: 'developer',
-    categoryKey: 'mcpCategoryDeveloper',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@modelcontextprotocol/server-github'],
@@ -35,9 +27,6 @@ export const mcpRegistry: McpRegistryEntry[] = [
   {
     id: 'gitlab',
     name: 'GitLab',
-    descriptionKey: 'mcpDesc_gitlab',
-    category: 'developer',
-    categoryKey: 'mcpCategoryDeveloper',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@modelcontextprotocol/server-gitlab'],
@@ -47,21 +36,14 @@ export const mcpRegistry: McpRegistryEntry[] = [
   {
     id: 'context7',
     name: 'Context7',
-    descriptionKey: 'mcpDesc_context7',
-    category: 'developer',
-    categoryKey: 'mcpCategoryDeveloper',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@upstash/context7-mcp@latest'],
   },
 
-  // ── Productivity ────────────────────────────────────────
   {
     id: 'google-drive',
     name: 'Google Drive',
-    descriptionKey: 'mcpDesc_google_drive',
-    category: 'productivity',
-    categoryKey: 'mcpCategoryProductivity',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@modelcontextprotocol/server-gdrive'],
@@ -70,9 +52,6 @@ export const mcpRegistry: McpRegistryEntry[] = [
   {
     id: 'gmail',
     name: 'Gmail',
-    descriptionKey: 'mcpDesc_gmail',
-    category: 'productivity',
-    categoryKey: 'mcpCategoryProductivity',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
@@ -81,9 +60,6 @@ export const mcpRegistry: McpRegistryEntry[] = [
   {
     id: 'google-calendar',
     name: 'Google Calendar',
-    descriptionKey: 'mcpDesc_google_calendar',
-    category: 'productivity',
-    categoryKey: 'mcpCategoryProductivity',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@cocal/google-calendar-mcp'],
@@ -92,9 +68,6 @@ export const mcpRegistry: McpRegistryEntry[] = [
   {
     id: 'notion',
     name: 'Notion',
-    descriptionKey: 'mcpDesc_notion',
-    category: 'productivity',
-    categoryKey: 'mcpCategoryProductivity',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@notionhq/notion-mcp-server'],
@@ -103,9 +76,6 @@ export const mcpRegistry: McpRegistryEntry[] = [
   {
     id: 'slack',
     name: 'Slack',
-    descriptionKey: 'mcpDesc_slack',
-    category: 'productivity',
-    categoryKey: 'mcpCategoryProductivity',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@modelcontextprotocol/server-slack'],
@@ -114,63 +84,35 @@ export const mcpRegistry: McpRegistryEntry[] = [
   {
     id: 'todoist',
     name: 'TodoList',
-    descriptionKey: 'mcpDesc_todoist',
-    category: 'productivity',
-    categoryKey: 'mcpCategoryProductivity',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', 'todoist-mcp@latest'],
     requiredEnvKeys: ['TODOIST_API_TOKEN'],
   },
 
-  // ── Browser ─────────────────────────────────────────────
   {
     id: 'playwright',
     name: 'Playwright',
-    descriptionKey: 'mcpDesc_playwright',
-    category: 'browser',
-    categoryKey: 'mcpCategoryBrowser',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@executeautomation/playwright-mcp-server'],
   },
 
-  // ── Design ──────────────────────────────────────────────
   {
     id: 'canva',
     name: 'Canva',
-    descriptionKey: 'mcpDesc_canva',
-    category: 'design',
-    categoryKey: 'mcpCategoryDesign',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', '@iflow-mcp/mattcoatsworth-canva-mcp-server'],
     requiredEnvKeys: ['CANVA_API_KEY'],
   },
 
-  // ── Data & API ──────────────────────────────────────────
   {
     id: 'firecrawl',
     name: 'Firecrawl',
-    descriptionKey: 'mcpDesc_firecrawl',
-    category: 'data-api',
-    categoryKey: 'mcpCategoryDataApi',
     transportType: 'stdio',
     command: 'npx',
     defaultArgs: ['-y', 'firecrawl-mcp@latest'],
     requiredEnvKeys: ['FIRECRAWL_API_KEY'],
   },
 ];
-
-/**
- * All available categories with their i18n keys.
- */
-export const mcpCategories = [
-  { id: 'all', key: 'mcpCategoryAll' },
-  { id: 'search', key: 'mcpCategorySearch' },
-  { id: 'developer', key: 'mcpCategoryDeveloper' },
-  { id: 'productivity', key: 'mcpCategoryProductivity' },
-  { id: 'browser', key: 'mcpCategoryBrowser' },
-  { id: 'design', key: 'mcpCategoryDesign' },
-  { id: 'data-api', key: 'mcpCategoryDataApi' },
-] as const;

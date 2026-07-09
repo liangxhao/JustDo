@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { mcpCategories, mcpRegistry } from '../../data/mcpRegistry';
+import { mcpRegistry } from '../../data/mcpRegistry';
 import { i18nService } from '../../services/i18n';
 import { mcpService } from '../../services/mcp';
 import { RootState } from '../../store';
@@ -36,17 +36,13 @@ const McpManager: React.FC = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
-  const [activeCategory, setActiveCategory] = useState('all');
   // Using local registry only (no remote marketplace)
   const dynamicRegistry = mcpRegistry;
-  const dynamicCategories = mcpCategories;
   const [bridgeSyncing, setBridgeSyncing] = useState(false);
   const [bridgeSyncResult, setBridgeSyncResult] = useState<{
     tools: number;
     error?: string;
   } | null>(null);
-  const currentLanguage = i18nService.getLanguage();
-
   useEffect(() => {
     let isActive = true;
     const loadServers = async () => {
@@ -59,14 +55,6 @@ const McpManager: React.FC = () => {
       isActive = false;
     };
   }, [dispatch]);
-
-  const getRegistryEntryDescription = (entry: McpRegistryEntry): string => {
-    const remoteDescription =
-      currentLanguage === 'zh' ? entry.description_zh : entry.description_en;
-    if (remoteDescription) return remoteDescription;
-    if (entry.descriptionKey) return i18nService.t(entry.descriptionKey);
-    return '';
-  };
 
   const getStdioCommandSummary = (command?: string, args?: string[]): string => {
     if (!command) return '';
@@ -100,13 +88,6 @@ const McpManager: React.FC = () => {
   };
 
   const getInstalledDescription = (server: McpServerConfig): string => {
-    const persistedDescription = server.description?.trim();
-    if (persistedDescription) return persistedDescription;
-    const registryEntry = getRegistryEntryForServer(server);
-    if (registryEntry) {
-      const registryDescription = getRegistryEntryDescription(registryEntry).trim();
-      if (registryDescription) return registryDescription;
-    }
     return getTransportSummary(server);
   };
 
@@ -118,7 +99,7 @@ const McpManager: React.FC = () => {
         server.name.toLowerCase().includes(query) ||
         getInstalledDescription(server).toLowerCase().includes(query),
     );
-  }, [servers, searchQuery, dynamicRegistry, currentLanguage]);
+  }, [servers, searchQuery, dynamicRegistry]);
 
   const handleToggleEnabled = async (serverId: string) => {
     const targetServer = servers.find(s => s.id === serverId);
@@ -310,7 +291,7 @@ const McpManager: React.FC = () => {
         </div>
       )}
 
-      {/* Sticky toolbar: Description + Search + Tabs + Category pills */}
+      {/* Sticky toolbar: Description + Search + Tabs */}
       <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 space-y-4 shadow-sm">
         {/* Description */}
         <p className="text-sm text-secondary">{i18nService.t('mcpDescription')}</p>
@@ -353,28 +334,6 @@ const McpManager: React.FC = () => {
             <div className={tabIndicatorClass('marketplace')} />
           </button>
         </div>
-
-        {/* Category filter pills (Marketplace only) */}
-        {activeTab === 'marketplace' && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {dynamicCategories.map(cat => (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => setActiveCategory(cat.id)}
-                className={`px-2.5 py-1 text-xs rounded-lg transition-colors ${
-                  activeCategory === cat.id
-                    ? 'bg-primary text-white'
-                    : 'bg-surface text-secondary hover:bg-surface-raised border border-border'
-                }`}
-              >
-                {(i18nService.getLanguage() === 'zh'
-                  ? (cat as any).name_zh
-                  : (cat as any).name_en) || i18nService.t(cat.key)}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       <div>

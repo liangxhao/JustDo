@@ -6,7 +6,6 @@ import { buildOpenClawMcpServers } from './openclawConfigSync';
 const record = (overrides: Partial<McpServerRecord>): McpServerRecord => ({
   id: 'id',
   name: 'server',
-  description: '',
   enabled: true,
   transportType: 'stdio',
   isBuiltIn: false,
