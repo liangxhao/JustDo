@@ -497,6 +497,27 @@ export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string)
 
     // Windows .cmd wrapper (only needed on Windows)
     if (process.platform === 'win32') {
+      const hideChildProcessPreload = join(shimDir, 'hide-child-process-windows.cjs');
+      const hideChildProcessPreloadContent = [
+        "'use strict';",
+        "const childProcess = require('node:child_process');",
+        'const originalSpawn = childProcess.spawn;',
+        'childProcess.spawn = function hiddenWindowsSpawn(command, args, options) {',
+        '  if (!Array.isArray(args)) {',
+        '    options = args;',
+        '    args = [];',
+        '  }',
+        '  return originalSpawn.call(this, command, args, { ...(options || {}), windowsHide: true });',
+        '};',
+        '',
+      ].join('\r\n');
+      writeFileSync(hideChildProcessPreload, hideChildProcessPreloadContent, 'utf8');
+      coworkLog(
+        'INFO',
+        'resolveNodeShim',
+        `Created Windows child-process preload: ${hideChildProcessPreload}`,
+      );
+
       const nodeCmd = join(shimDir, 'node.cmd');
       const nodeCmdContent = [
         '@echo off',

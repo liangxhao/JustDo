@@ -1,9 +1,7 @@
 import crypto from 'crypto';
 
 import type { AskUserRequest, AskUserResponse } from '../../../../shared/openclawExtensions';
-import type { McpServerRecord } from '../../mcp/mcpStore';
-import { McpServerManager } from '../../mcp/mcpServerManager';
-import type { McpBridgeConfig } from '../config/openclawConfigSync';
+import type { AskUserExtensionConfig } from '../config/openclawConfigSync';
 import {
   type ExtensionInteractionResponse,
   type ExtensionInteractionResult,
@@ -12,17 +10,15 @@ import {
 import { OpenClawExtensionCallbackServer } from './openclawExtensionCallbackServer';
 
 type OpenClawExtensionHostControllerDeps = {
-  getEnabledMcpServers: () => McpServerRecord[];
   onAskUser: (request: AskUserRequest) => void;
   onAskUserDismiss: (requestId: string) => void;
 };
 
 export class OpenClawExtensionHostController {
   private readonly deps: OpenClawExtensionHostControllerDeps;
-  private readonly mcpManager = new McpServerManager();
   private bridgeServer: OpenClawExtensionCallbackServer | null = null;
   private secret: string | null = null;
-  private startPromise: Promise<McpBridgeConfig | null> | null = null;
+  private startPromise: Promise<AskUserExtensionConfig | null> | null = null;
   private readonly interactionRouter = new ExtensionInteractionRouter();
 
   constructor(deps: OpenClawExtensionHostControllerDeps) {
@@ -40,31 +36,23 @@ export class OpenClawExtensionHostController {
     });
   }
 
-  get config(): McpBridgeConfig | null {
-    const callbackUrl = this.bridgeServer?.callbackUrl;
+  get config(): AskUserExtensionConfig | null {
     const askUserCallbackUrl = this.bridgeServer?.askUserCallbackUrl;
-    if (!callbackUrl || !askUserCallbackUrl || !this.secret) return null;
+    if (!askUserCallbackUrl || !this.secret) return null;
 
     return {
-      callbackUrl,
       askUserCallbackUrl,
       secret: this.secret,
-      tools: this.mcpManager.toolManifest,
     };
   }
 
-  start(): Promise<McpBridgeConfig | null> {
+  start(): Promise<AskUserExtensionConfig | null> {
     if (this.startPromise) return this.startPromise;
 
     this.startPromise = this.startInternal().finally(() => {
       this.startPromise = null;
     });
     return this.startPromise;
-  }
-
-  async restartMcpServers(): Promise<McpBridgeConfig | null> {
-    await this.mcpManager.stopServers();
-    return this.start();
   }
 
   resolveAskUser(requestId: string, response: AskUserResponse): boolean {
@@ -82,20 +70,15 @@ export class OpenClawExtensionHostController {
     // A shutdown may race with the initial bridge startup. Wait for startup to
     // settle first so it cannot create resources after cleanup has completed.
     await this.startPromise;
-    await this.mcpManager.stopServers();
     await this.bridgeServer?.stop();
   }
 
-  private async startInternal(): Promise<McpBridgeConfig | null> {
+  private async startInternal(): Promise<AskUserExtensionConfig | null> {
     try {
       this.secret ??= crypto.randomUUID();
-      const enabledServers = this.deps.getEnabledMcpServers();
-      if (enabledServers.length > 0) {
-        await this.mcpManager.startServers(enabledServers);
-      }
 
       if (!this.bridgeServer) {
-        this.bridgeServer = new OpenClawExtensionCallbackServer(this.mcpManager, this.secret);
+        this.bridgeServer = new OpenClawExtensionCallbackServer(this.secret);
         this.bridgeServer.onAskUser(this.deps.onAskUser);
         this.bridgeServer.onAskUserDismiss(this.deps.onAskUserDismiss);
       }

@@ -298,7 +298,7 @@ const McpManager: React.FC = () => {
           <span>
             {bridgeSyncResult.error
               ? `${i18nService.t('mcpBridgeSyncError') || 'Sync failed'}: ${bridgeSyncResult.error}`
-              : `${i18nService.t('mcpBridgeSyncDone') || 'MCP tools synced'}: ${bridgeSyncResult.tools} ${bridgeSyncResult.tools === 1 ? 'tool' : 'tools'}`}
+              : `${i18nService.t('mcpBridgeSyncDone') || 'MCP configuration synced'}: ${bridgeSyncResult.tools}`}
           </span>
           <button
             type="button"

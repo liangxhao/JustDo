@@ -44,8 +44,7 @@ function runNpm(args, opts = {}) {
   if (result.status !== 0) {
     const stderr = (result.stderr || '').trim();
     throw new Error(
-      `npm ${args.join(' ')} exited with code ${result.status}` +
-        (stderr ? `\n${stderr}` : ''),
+      `npm ${args.join(' ')} exited with code ${result.status}` + (stderr ? `\n${stderr}` : ''),
     );
   }
 
@@ -81,6 +80,7 @@ const npmVersion = openclawVersion.replace(/^v/, '');
 const npmSpec = `openclaw@${npmVersion}`;
 
 const outDir = path.join(rootDir, 'vendor', 'openclaw-runtime', targetId);
+const currentRuntimeDir = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
 
 const targetPlatform = targetId.split('-')[0];
 const targetArch = targetId.split('-')[1];
@@ -97,7 +97,9 @@ if (!['x64', 'arm64', 'ia32'].includes(targetArch)) {
   fail(`Unsupported arch: ${targetArch}`);
 }
 
-console.log(`[install-openclaw-runtime] Target: ${targetId} (npm platform=${npmTargetPlatform}, arch=${targetArch})`);
+console.log(
+  `[install-openclaw-runtime] Target: ${targetId} (npm platform=${npmTargetPlatform}, arch=${targetArch})`,
+);
 console.log(`[install-openclaw-runtime] Package: ${npmSpec}`);
 
 // ---------------------------------------------------------------------------
@@ -107,7 +109,9 @@ console.log(`[install-openclaw-runtime] Package: ${npmSpec}`);
 if (process.env.OPENCLAW_FORCE_INSTALL !== '1') {
   const buildInfo = readJsonFile(path.join(outDir, 'runtime-build-info.json'));
   if (buildInfo && buildInfo.openclawVersion === openclawVersion) {
-    console.log(`[install-openclaw-runtime] Already installed ${openclawVersion} (target=${targetId}), skipping.`);
+    console.log(
+      `[install-openclaw-runtime] Already installed ${openclawVersion} (target=${targetId}), skipping.`,
+    );
     console.log(`[install-openclaw-runtime] Use OPENCLAW_FORCE_INSTALL=1 to force reinstall.`);
     process.exit(0);
   }
@@ -151,6 +155,31 @@ fs.mkdirSync(extractDir, { recursive: true });
     // 5. Copy to output directory
     // ---------------------------------------------------------------------------
     console.log(`[install-openclaw-runtime] [3/7] Copying to ${outDir}...`);
+    // On Windows, deleting a directory that is still the target of the
+    // `current` junction can fail with EPERM. Detach only when the junction
+    // points at the target being replaced. The following
+    // sync-openclaw-runtime-current step recreates it.
+    if (process.platform === 'win32') {
+      try {
+        const currentStat = fs.lstatSync(currentRuntimeDir);
+        if (currentStat.isSymbolicLink()) {
+          const linkedTarget = path.resolve(
+            path.dirname(currentRuntimeDir),
+            fs.readlinkSync(currentRuntimeDir),
+          );
+          if (path.resolve(linkedTarget).toLowerCase() === path.resolve(outDir).toLowerCase()) {
+            fs.unlinkSync(currentRuntimeDir);
+            console.log(
+              `[install-openclaw-runtime] Detached current junction before replacing ${targetId}.`,
+            );
+          }
+        }
+      } catch (error) {
+        if (error?.code !== 'ENOENT') {
+          throw error;
+        }
+      }
+    }
     if (fs.existsSync(outDir)) {
       fs.rmSync(outDir, { recursive: true, force: true });
     }
@@ -216,7 +245,7 @@ fs.mkdirSync(extractDir, { recursive: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {}
   }
-})().catch((error) => {
+})().catch(error => {
   console.error(error?.stack || String(error));
   process.exit(1);
 });
@@ -236,7 +265,9 @@ function patchFacadeRuntime(runtimeDir) {
     fail('facade-runtime-*.js not found in dist/. The npm package structure may have changed.');
   }
   if (facadeFiles.length > 1) {
-    console.warn(`[install-openclaw-runtime] Warning: Multiple facade-runtime files found: ${facadeFiles.join(', ')}`);
+    console.warn(
+      `[install-openclaw-runtime] Warning: Multiple facade-runtime files found: ${facadeFiles.join(', ')}`,
+    );
   }
 
   const facadePath = path.join(distDir, facadeFiles[0]);
@@ -244,19 +275,20 @@ function patchFacadeRuntime(runtimeDir) {
 
   // Verify the dynamic pattern exists (not already patched).
   if (!content.includes('createRequire(import.meta.url)')) {
-    console.log(`[install-openclaw-runtime] facade-runtime already patched or pattern changed, skipping.`);
+    console.log(
+      `[install-openclaw-runtime] facade-runtime already patched or pattern changed, skipping.`,
+    );
     return;
   }
   if (!content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES')) {
-    console.warn(`[install-openclaw-runtime] Warning: FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES not found. Pattern may have changed.`);
+    console.warn(
+      `[install-openclaw-runtime] Warning: FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES not found. Pattern may have changed.`,
+    );
     return;
   }
 
   // 1. Remove unused imports.
-  content = content.replace(
-    /import\s*\{\s*createRequire\s*\}\s*from\s*"node:module";\s*\n?/g,
-    '',
-  );
+  content = content.replace(/import\s*\{\s*createRequire\s*\}\s*from\s*"node:module";\s*\n?/g, '');
   content = content.replace(
     /import\s*\{\s*r\s+as\s+getCachedPluginSourceModuleLoader\s*\}\s*from\s*"[^"]*plugin-module-loader-cache[^"]*";\s*\n?/g,
     '',
@@ -264,7 +296,8 @@ function patchFacadeRuntime(runtimeDir) {
 
   // 2. Add static import after the last existing import statement.
   const lastImportIdx = findLastImportEnd(content);
-  const staticImport = 'import * as _facadeActivationCheckStatic from "./facade-activation-check.runtime.js";\n';
+  const staticImport =
+    'import * as _facadeActivationCheckStatic from "./facade-activation-check.runtime.js";\n';
   content = content.slice(0, lastImportIdx) + staticImport + content.slice(lastImportIdx);
 
   // 3. Remove dead code: variable declarations and helper functions.
@@ -281,10 +314,7 @@ function patchFacadeRuntime(runtimeDir) {
   );
 
   // Remove: let facadeActivationCheckRuntimeModule;
-  content = content.replace(
-    /let\s+facadeActivationCheckRuntimeModule;\s*\n?/g,
-    '',
-  );
+  content = content.replace(/let\s+facadeActivationCheckRuntimeModule;\s*\n?/g, '');
 
   // Remove: const facadeActivationCheckRuntimeLoaders = /* @__PURE__ */ new Map();
   content = content.replace(
@@ -353,7 +383,9 @@ function processSkills(electronRoot, runtimeRoot) {
       console.log(`[install-openclaw-runtime] [skills] Loaded config from ${configPath}`);
     }
   } catch (error) {
-    console.warn(`[install-openclaw-runtime] [skills] Failed to load builtin-skills.json: ${error.message}`);
+    console.warn(
+      `[install-openclaw-runtime] [skills] Failed to load builtin-skills.json: ${error.message}`,
+    );
   }
 
   const runtimeSkillsDir = path.join(runtimeRoot, 'skills');
@@ -365,7 +397,8 @@ function processSkills(electronRoot, runtimeRoot) {
 
   if (config.disableOpenClawDefaults) {
     console.log('[install-openclaw-runtime] [skills] Deleting OpenClaw default skills...');
-    const existingSkills = fs.readdirSync(runtimeSkillsDir, { withFileTypes: true })
+    const existingSkills = fs
+      .readdirSync(runtimeSkillsDir, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => d.name);
     for (const skillName of existingSkills) {
@@ -381,10 +414,15 @@ function processSkills(electronRoot, runtimeRoot) {
     }
     const sourceDir = path.join(justDoSkillsDir, skillConfig.id);
     if (!fs.existsSync(sourceDir)) {
-      console.warn(`[install-openclaw-runtime] [skills] Skill "${skillConfig.id}" not found in JustDo skills directory`);
+      console.warn(
+        `[install-openclaw-runtime] [skills] Skill "${skillConfig.id}" not found in JustDo skills directory`,
+      );
       continue;
     }
-    fs.cpSync(sourceDir, path.join(runtimeSkillsDir, skillConfig.id), { recursive: true, force: true });
+    fs.cpSync(sourceDir, path.join(runtimeSkillsDir, skillConfig.id), {
+      recursive: true,
+      force: true,
+    });
     console.log(`[install-openclaw-runtime] [skills] Copied: ${skillConfig.id}`);
   }
 }

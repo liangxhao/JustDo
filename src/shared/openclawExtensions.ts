@@ -1,5 +1,4 @@
 export const OpenClawExtensionId = {
-  MCP_BRIDGE: 'mcp-bridge',
   ASK_USER_QUESTION: 'ask-user-question',
 } as const;
 

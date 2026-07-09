@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { OpenClawExtensionId } from '../../../../shared/openclawExtensions';
 import {
@@ -6,60 +6,30 @@ import {
   buildBundledExtensionToolContracts,
 } from './openclawExtensionRegistry';
 
-describe('buildBundledExtensionEntries', () => {
-  test('builds configuration only for available extensions', () => {
+describe('openclawExtensionRegistry', () => {
+  it('configures only the AskUser extension callback', () => {
     const entries = buildBundledExtensionEntries(
       {
-        mcpBridge: {
-          callbackUrl: 'http://localhost/mcp',
-          askUserCallbackUrl: 'http://localhost/ask',
-          secret: 'runtime-only',
-          tools: [{ server: 'files', name: 'read', description: '', inputSchema: {} }],
-        },
-      },
-      id => id === OpenClawExtensionId.MCP_BRIDGE,
-    );
-
-    expect(Object.keys(entries)).toEqual([OpenClawExtensionId.MCP_BRIDGE]);
-    expect(entries[OpenClawExtensionId.MCP_BRIDGE]).toMatchObject({
-      enabled: true,
-      config: {
-        callbackUrl: 'http://localhost/mcp',
-        secret: '${JUSTDO_MCP_BRIDGE_SECRET}',
-      },
-    });
-  });
-
-  test('keeps extensions enabled before their host configuration is ready', () => {
-    const entries = buildBundledExtensionEntries({ mcpBridge: null }, () => true);
-
-    expect(entries).toEqual({
-      [OpenClawExtensionId.MCP_BRIDGE]: { enabled: true },
-      [OpenClawExtensionId.ASK_USER_QUESTION]: { enabled: true },
-    });
-  });
-
-  test('builds deterministic unique tool contract names through descriptors', () => {
-    const contracts = buildBundledExtensionToolContracts(
-      {
-        mcpBridge: {
-          callbackUrl: 'http://localhost/mcp',
-          askUserCallbackUrl: 'http://localhost/ask',
-          secret: 'runtime-only',
-          tools: [
-            { server: 'My Server', name: 'Read File', description: '', inputSchema: {} },
-            { server: 'My Server', name: 'Read File', description: '', inputSchema: {} },
-          ],
+        askUser: {
+          askUserCallbackUrl: 'http://127.0.0.1:1234/askuser',
+          secret: 'runtime-secret',
         },
       },
       () => true,
     );
 
-    expect(contracts).toEqual([
-      {
-        id: OpenClawExtensionId.MCP_BRIDGE,
-        tools: ['mcp_my_server_read_file', 'mcp_my_server_read_file_2'],
+    expect(entries).toEqual({
+      [OpenClawExtensionId.ASK_USER_QUESTION]: {
+        enabled: true,
+        config: {
+          callbackUrl: 'http://127.0.0.1:1234/askuser',
+          secret: '${JUSTDO_ASK_USER_SECRET}',
+        },
       },
-    ]);
+    });
+  });
+
+  it('does not declare MCP bridge tool contracts', () => {
+    expect(buildBundledExtensionToolContracts({ askUser: null }, () => true)).toEqual([]);
   });
 });

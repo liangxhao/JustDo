@@ -1,8 +1,8 @@
 import { OpenClawExtensionId } from '../../../../shared/openclawExtensions';
-import type { McpBridgeConfig } from '../config/openclawConfigSync';
+import type { AskUserExtensionConfig } from '../config/openclawConfigSync';
 
 export type OpenClawExtensionContext = {
-  mcpBridge: McpBridgeConfig | null;
+  askUser: AskUserExtensionConfig | null;
 };
 
 export type OpenClawExtensionDescriptor = {
@@ -11,34 +11,17 @@ export type OpenClawExtensionDescriptor = {
   buildToolContracts?: (context: OpenClawExtensionContext) => string[];
 };
 
-const SECRET_PLACEHOLDER = '${JUSTDO_MCP_BRIDGE_SECRET}';
+const SECRET_PLACEHOLDER = '${JUSTDO_ASK_USER_SECRET}';
 
 export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] = [
   {
-    id: OpenClawExtensionId.MCP_BRIDGE,
-    buildEntry: ({ mcpBridge }) => ({
-      enabled: true,
-      ...(mcpBridge?.tools.length
-        ? {
-            config: {
-              callbackUrl: mcpBridge.callbackUrl,
-              secret: SECRET_PLACEHOLDER,
-              tools: mcpBridge.tools,
-            },
-          }
-        : {}),
-    }),
-    buildToolContracts: ({ mcpBridge }) =>
-      mcpBridge ? buildMcpBridgeToolContractNames(mcpBridge.tools) : [],
-  },
-  {
     id: OpenClawExtensionId.ASK_USER_QUESTION,
-    buildEntry: ({ mcpBridge }) => ({
+    buildEntry: ({ askUser }) => ({
       enabled: true,
-      ...(mcpBridge
+      ...(askUser
         ? {
             config: {
-              callbackUrl: mcpBridge.askUserCallbackUrl,
+              callbackUrl: askUser.askUserCallbackUrl,
               secret: SECRET_PLACEHOLDER,
             },
           }
@@ -46,32 +29,6 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     }),
   },
 ] as const;
-
-const sanitizeToolSegment = (value: string): string => {
-  const sanitized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return sanitized || 'tool';
-};
-
-const buildMcpBridgeToolContractNames = (
-  tools: McpBridgeConfig['tools'],
-): string[] => {
-  const usedNames = new Set<string>();
-  return tools.map(tool => {
-    const base = `mcp_${sanitizeToolSegment(tool.server)}_${sanitizeToolSegment(tool.name)}`;
-    let next = base;
-    let index = 2;
-    while (usedNames.has(next)) {
-      next = `${base}_${index}`;
-      index += 1;
-    }
-    usedNames.add(next);
-    return next;
-  });
-};
 
 export const buildBundledExtensionEntries = (
   context: OpenClawExtensionContext,

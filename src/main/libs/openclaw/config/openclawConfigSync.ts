@@ -13,7 +13,7 @@ import {
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
 } from '../../cowork/providerApiConfig';
-import type { McpToolManifestEntry } from '../../mcp/mcpServerManager';
+import type { McpServerRecord } from '../../mcp/mcpStore';
 import {
   buildBundledExtensionEntries,
   buildBundledExtensionToolContracts,
@@ -29,11 +29,31 @@ import {
 import type { OpenClawEngineManager } from '../runtime/openclawEngineManager';
 import { repairOpenClawWorkspaceState } from './workspaceStateRepair';
 
-export type McpBridgeConfig = {
-  callbackUrl: string;
+export type AskUserExtensionConfig = {
   askUserCallbackUrl: string;
   secret: string;
-  tools: McpToolManifestEntry[];
+};
+
+export const buildOpenClawMcpServers = (
+  servers: McpServerRecord[],
+): Record<string, Record<string, unknown>> => {
+  return Object.fromEntries(
+    servers.map(server => {
+      const config: Record<string, unknown> = {
+        enabled: server.enabled,
+      };
+      if (server.transportType === 'stdio') {
+        config.command = server.command;
+        config.args = server.args ?? [];
+        if (server.env && Object.keys(server.env).length > 0) config.env = server.env;
+      } else {
+        config.url = server.url;
+        config.transport = server.transportType === 'sse' ? 'sse' : 'streamable-http';
+        if (server.headers && Object.keys(server.headers).length > 0) config.headers = server.headers;
+      }
+      return [server.name, config];
+    }),
+  );
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -61,6 +81,7 @@ export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
 export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 // Allow substantial work while still terminating runaway subagent runs.
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
+export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 
 const ensureDir = (dirPath: string): void => {
   if (!fs.existsSync(dirPath)) {
@@ -291,20 +312,23 @@ export type OpenClawConfigSyncResult = {
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
-  getMcpBridgeConfig?: () => McpBridgeConfig | null;
+  getAskUserExtensionConfig?: () => AskUserExtensionConfig | null;
+  getMcpServers?: () => McpServerRecord[];
   getAgents?: () => Agent[];
 };
 
 export class OpenClawConfigSync {
   private readonly engineManager: OpenClawEngineManager;
   private readonly getCoworkConfig: () => CoworkConfig;
-  private readonly getMcpBridgeConfig?: () => McpBridgeConfig | null;
+  private readonly getAskUserExtensionConfig?: () => AskUserExtensionConfig | null;
+  private readonly getMcpServers?: () => McpServerRecord[];
   private readonly getAgents?: () => Agent[];
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
     this.getCoworkConfig = deps.getCoworkConfig;
-    this.getMcpBridgeConfig = deps.getMcpBridgeConfig;
+    this.getAskUserExtensionConfig = deps.getAskUserExtensionConfig;
+    this.getMcpServers = deps.getMcpServers;
     this.getAgents = deps.getAgents;
   }
 
@@ -408,11 +432,12 @@ export class OpenClawConfigSync {
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
       isBundledPluginAvailable(id),
     );
-    const mcpBridgeCfg = this.getMcpBridgeConfig?.() ?? null;
+    const askUserConfig = this.getAskUserExtensionConfig?.() ?? null;
     const bundledExtensionEntries = buildBundledExtensionEntries(
-      { mcpBridge: mcpBridgeCfg },
+      { askUser: askUserConfig },
       isBundledPluginAvailable,
     );
+    const mcpServers = buildOpenClawMcpServers(this.getMcpServers?.() ?? []);
 
     const managedConfig: Record<string, unknown> = {
       gateway: {
@@ -467,8 +492,20 @@ export class OpenClawConfigSync {
         mcp: true,
         plugins: true,
       },
+      mcp: {
+        servers: mcpServers,
+      },
       tools: {
         deny: ['web_search'],
+        // OpenClaw applies an additional tool gate to sandboxed turns. Native
+        // MCP tools belong to bundle-mcp, so explicitly allow that owner when
+        // executionMode maps to `all` or `non-main`. This is harmless when the
+        // sandbox is off and keeps one stable generated config across modes.
+        sandbox: {
+          tools: {
+            alsoAllow: [OPENCLAW_MCP_TOOL_OWNER],
+          },
+        },
         web: {
           search: {
             enabled: false,
@@ -529,7 +566,7 @@ export class OpenClawConfigSync {
 
     const configChanged = currentContent !== nextContent;
     const extensionContractsChanged = buildBundledExtensionToolContracts(
-      { mcpBridge: mcpBridgeCfg },
+      { askUser: askUserConfig },
       isBundledPluginAvailable,
     ).reduce(
       (changed, contract) =>
@@ -657,10 +694,8 @@ export class OpenClawConfigSync {
     // is never resolved. Use a fixed value to avoid secretEnvVarsChanged on switch.
     env.JUSTDO_PROVIDER_API_KEY = 'legacy-unused';
 
-    // MCP Bridge Secret — always set so stale openclaw.json with
-    // ${JUSTDO_MCP_BRIDGE_SECRET} placeholder doesn't crash the gateway.
-    const mcpBridgeCfg = this.getMcpBridgeConfig?.();
-    env.JUSTDO_MCP_BRIDGE_SECRET = mcpBridgeCfg?.secret || 'unconfigured';
+    const askUserConfig = this.getAskUserExtensionConfig?.();
+    env.JUSTDO_ASK_USER_SECRET = askUserConfig?.secret || 'unconfigured';
 
     // IM channel secrets removed — channels disabled pending future adaptation
 

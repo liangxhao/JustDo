@@ -414,13 +414,24 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const npmBinDir = app.isPackaged
       ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
-      : undefined;
+      : (() => {
+          const npmExecPath = process.env.npm_execpath?.trim();
+          if (npmExecPath) {
+            return path.dirname(npmExecPath);
+          }
+          const projectNpmBin = path.join(app.getAppPath(), 'node_modules', 'npm', 'bin');
+          return fs.existsSync(projectNpmBin) ? projectNpmBin : undefined;
+        })();
     const nodeShimDir = ensureElectronNodeShim(electronNodeRuntimePath, npmBinDir);
     if (nodeShimDir) {
       const curPath = env.PATH || env.Path || '';
       env.PATH = [nodeShimDir, curPath].filter(Boolean).join(path.delimiter);
       if (process.platform === 'win32') {
         env.Path = env.PATH;
+        env.JUSTDO_WINDOWS_HIDE_PRELOAD = path.join(
+          nodeShimDir,
+          'hide-child-process-windows.cjs',
+        ).replace(/\\/g, '/');
       }
       env.JUSTDO_NPM_BIN_DIR = npmBinDir || '';
     }

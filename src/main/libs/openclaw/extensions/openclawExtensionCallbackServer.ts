@@ -1,7 +1,6 @@
 /**
  * Callback server for locally hosted OpenClaw extensions.
  *
- * OpenClaw's mcp-bridge plugin calls this endpoint to execute MCP tools.
  * OpenClaw's ask-user-question plugin calls /askuser for user confirmation dialogs.
  * Binds to 127.0.0.1 only (local traffic).
  */
@@ -13,13 +12,12 @@ import type {
   AskUserRequest,
   AskUserResponse,
 } from '../../../../shared/openclawExtensions';
-import type { McpServerManager } from '../../mcp/mcpServerManager';
 import { AskUserRequestBroker } from './askUserRequestBroker';
 
 export type { AskUserRequest, AskUserResponse } from '../../../../shared/openclawExtensions';
 
 const log = (level: string, msg: string) => {
-  const formatted = `[McpBridge][${level}] ${msg}`;
+  const formatted = `[OpenClawExtensionCallback][${level}] ${msg}`;
   if (level === 'ERROR') {
     console.error(formatted);
   } else if (level === 'WARN') {
@@ -32,12 +30,10 @@ const log = (level: string, msg: string) => {
 export class OpenClawExtensionCallbackServer {
   private server: http.Server | null = null;
   private _port: number | null = null;
-  private readonly mcpManager: McpServerManager;
   private readonly secret: string;
   private readonly askUserBroker = new AskUserRequestBroker();
 
-  constructor(mcpManager: McpServerManager, secret: string) {
-    this.mcpManager = mcpManager;
+  constructor(secret: string) {
     this.secret = secret;
   }
 
@@ -133,7 +129,7 @@ export class OpenClawExtensionCallbackServer {
     }
 
     // Verify secret token (accept either header name)
-    const authHeader = req.headers['x-mcp-bridge-secret'] || req.headers['x-ask-user-secret'];
+    const authHeader = req.headers['x-ask-user-secret'];
     if (authHeader !== this.secret) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized' }));
@@ -142,11 +138,6 @@ export class OpenClawExtensionCallbackServer {
 
     if (req.url?.startsWith('/askuser')) {
       await this.handleAskUser(req, res);
-      return;
-    }
-
-    if (req.url?.startsWith('/mcp/execute')) {
-      await this.handleMcpExecute(req, res);
       return;
     }
 
@@ -181,41 +172,6 @@ export class OpenClawExtensionCallbackServer {
       log('ERROR', `AskUser request error: ${errMsg}`);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ behavior: 'deny' }));
-    }
-  }
-
-  private async handleMcpExecute(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-  ): Promise<void> {
-    try {
-      const body = await this.readBody(req);
-      const { server, tool, args } = JSON.parse(body) as {
-        server: string;
-        tool: string;
-        args: Record<string, unknown>;
-      };
-
-      if (!server || !tool) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Missing "server" or "tool" field' }));
-        return;
-      }
-
-      const result = await this.mcpManager.callTool(server, tool, args || {});
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      log('ERROR', `Request handling error: ${errMsg}`);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          content: [{ type: 'text', text: `Bridge error: ${errMsg}` }],
-          isError: true,
-        }),
-      );
     }
   }
 

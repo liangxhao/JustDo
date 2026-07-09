@@ -1,12 +1,5 @@
 import type { WebContents } from 'electron';
-import {
-  app,
-  BrowserWindow,
-  Menu,
-  nativeTheme,
-  powerMonitor,
-  powerSaveBlocker,
-} from 'electron';
+import { app, BrowserWindow, Menu, nativeTheme, powerMonitor, powerSaveBlocker } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -20,10 +13,7 @@ import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
 import { createMainWindow } from './core/mainWindowFactory';
-import {
-  applySystemProxyPreference,
-  isSystemProxyEnabled,
-} from './core/systemProxyPreference';
+import { applySystemProxyPreference, isSystemProxyEnabled } from './core/systemProxyPreference';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { CoworkStore } from './coworkStore';
 import { SqliteStore } from './data/sqliteStore';
@@ -75,7 +65,7 @@ import {
 import { OutboundHeaderProxy } from './libs/infra/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
 import { McpStore } from './libs/mcp/mcpStore';
-import type { McpBridgeConfig } from './libs/openclaw/config/openclawConfigSync';
+import type { AskUserExtensionConfig } from './libs/openclaw/config/openclawConfigSync';
 import {
   buildProviderSelection,
   OpenClawConfigSync,
@@ -87,9 +77,7 @@ import {
   type OpenClawEngineStatus,
 } from './libs/openclaw/runtime/openclawEngineManager';
 import { stopOpenClawTokenProxy } from './libs/openclaw/runtime/openclawTokenProxy';
-import {
-  parseManagedSessionKey,
-} from './libs/openclaw/sessions/openclawChannelSessionSync';
+import { parseManagedSessionKey } from './libs/openclaw/sessions/openclawChannelSessionSync';
 import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
 import { OpenClawSkillService } from './libs/openclaw/skills/openclawSkillService';
 import { createPluginMarketplaceService, PluginManager } from './libs/plugin';
@@ -185,7 +173,6 @@ const migrateAgentModelRefs = (): number => {
 
   return changed;
 };
-
 
 const configureUserDataPath = (): void => {
   const appDataPath = app.getPath('appData');
@@ -293,9 +280,7 @@ let coworkStore: CoworkStore | null = null;
 let groupStore: GroupStore | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
 const openClawSkillService = new OpenClawSkillService(() => openClawRuntimeAdapter);
-const pluginManager = new PluginManager(
-  createPluginMarketplaceService(openClawSkillService),
-);
+const pluginManager = new PluginManager(createPluginMarketplaceService(openClawSkillService));
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let openClawSkillFiles: OpenClawSkillFiles | null = null;
 let mcpStore: McpStore | null = null;
@@ -370,7 +355,7 @@ const bootstrapOpenClawEngine = async (options: { reason?: string } = {}) => {
   }
 
   const manager = getOpenClawEngineManager();
-  manager.setGatewayPortListener((port) => {
+  manager.setGatewayPortListener(port => {
     if (port) {
       outboundHeaderProxy.setProxyBypassEntries([`127.0.0.1:${port}`]);
       return;
@@ -386,16 +371,14 @@ const bootstrapOpenClawEngine = async (options: { reason?: string } = {}) => {
     try {
       console.log(`[OpenClaw] bootstrap starting (reason=${reason})`);
 
-      // Start MCP Bridge before config sync so mcpBridge tools are included in openclaw.json
-      const bridgeResult = await startMcpBridge().catch((err: unknown) => {
-        console.error(`[OpenClaw] bootstrap: MCP bridge startup failed (non-fatal):`, err);
-        return null as McpBridgeConfig | null;
-      });
-      console.log(
-        `[OpenClaw] bootstrap: MCP bridge setup done (${elapsed()}), result=${bridgeResult ? `${bridgeResult.tools.length} tools` : 'null'}`,
+      const extensionConfig = await startExtensionHost().catch(
+        (err: unknown): AskUserExtensionConfig | null => {
+          console.error(`[OpenClaw] bootstrap: extension host startup failed (non-fatal):`, err);
+          return null;
+        },
       );
       console.log(
-        `[OpenClaw] bootstrap: extensionHost=${extensionHostController?.config ? 'ready' : 'not-ready'}, tools=${extensionHostController?.config?.tools.length ?? 0}`,
+        `[OpenClaw] bootstrap: extension host setup done (${elapsed()}), result=${extensionConfig ? 'ready' : 'null'}`,
       );
 
       const syncResult = await syncOpenClawConfig({
@@ -440,13 +423,11 @@ const ensureOpenClawRunningForCowork = async () => {
     return manager.getStatus();
   }
 
-  // Ensure MCP bridge is started and config is synced before launching the gateway,
-  // so that mcpBridge tools are available in openclaw.json when the gateway loads.
-  await startMcpBridge().catch((err: unknown) => {
-    console.error('[OpenClaw] ensureRunning: MCP bridge startup failed (non-fatal):', err);
+  await startExtensionHost().catch((err: unknown) => {
+    console.error('[OpenClaw] ensureRunning: extension host startup failed (non-fatal):', err);
   });
   const syncResult = await syncOpenClawConfig({
-    reason: 'ensureRunning:mcpBridge',
+    reason: 'ensureRunning',
     restartGatewayIfRunning: false,
   });
   if (!syncResult.success) {
@@ -477,9 +458,10 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
     openClawConfigSync = new OpenClawConfigSync({
       engineManager: getOpenClawEngineManager(),
       getCoworkConfig: () => getCoworkStore().getConfig(),
-      getMcpBridgeConfig: (): McpBridgeConfig | null => {
+      getAskUserExtensionConfig: () => {
         return extensionHostController?.config ?? null;
       },
+      getMcpServers: () => getMcpStore().listServers(),
       getAgents: () => getCoworkStore().listAgents(),
     });
   }
@@ -682,7 +664,6 @@ const getMcpStore = () => {
 const getExtensionHostController = (): OpenClawExtensionHostController => {
   if (!extensionHostController) {
     extensionHostController = new OpenClawExtensionHostController({
-      getEnabledMcpServers: () => getMcpStore().getEnabledServers(),
       onAskUser: request => {
         const managedSession = parseManagedSessionKey(request.sessionKey);
         const requestSessionId = managedSession?.sessionId ?? '__askuser__';
@@ -717,90 +698,75 @@ const getExtensionHostController = (): OpenClawExtensionHostController => {
   return extensionHostController;
 };
 
-const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
+const startExtensionHost = (): Promise<AskUserExtensionConfig | null> => {
   return getExtensionHostController().start();
 };
 
-/**
- * Stop the MCP Bridge: server manager + HTTP callback.
- */
-const stopMcpBridge = async (): Promise<void> => {
+const stopExtensionHost = async (): Promise<void> => {
   try {
     await extensionHostController?.stop();
   } catch (error) {
     console.error(
-      '[McpBridge] shutdown error:',
+      '[OpenClawExtensionHost] shutdown error:',
       error instanceof Error ? error.message : String(error),
     );
   }
 };
 
 /**
- * Refresh the MCP Bridge after server config changes:
- * stop existing MCP servers → restart with new config → sync openclaw.json → restart gateway.
- * Returns a summary for the renderer to display.
+ * Sync MCP server configuration into OpenClaw. OpenClaw owns transport
+ * lifecycle, tool discovery, execution, and hot reload.
  */
-let mcpBridgeRefreshPromise: Promise<{ tools: number; error?: string }> | null = null;
+let mcpConfigSyncPromise: Promise<{ tools: number; error?: string }> | null = null;
 
-const broadcastMcpBridgeSync = (channel: string, data?: Record<string, unknown>): void => {
+const broadcastMcpConfigSync = (channel: string, data?: Record<string, unknown>): void => {
   const windows = BrowserWindow.getAllWindows();
   windows.forEach(win => {
     if (win.isDestroyed()) return;
     try {
       win.webContents.send(channel, data ?? {});
     } catch (error) {
-      console.error(`[McpBridge] Failed to broadcast ${channel}:`, error);
+      console.error(`[OpenClawMcp] Failed to broadcast ${channel}:`, error);
     }
   });
 };
 
-const refreshMcpBridge = (): Promise<{ tools: number; error?: string }> => {
-  if (mcpBridgeRefreshPromise) {
-    return mcpBridgeRefreshPromise;
+const syncMcpConfig = (): Promise<{ tools: number; error?: string }> => {
+  if (mcpConfigSyncPromise) {
+    return mcpConfigSyncPromise;
   }
-  mcpBridgeRefreshPromise = (async () => {
+  mcpConfigSyncPromise = (async () => {
     try {
-      console.log('[McpBridge] refreshing after config change...');
-      broadcastMcpBridgeSync('mcp:bridge:syncStart');
-
-      // Restart MCP processes while keeping the callback endpoint stable.
-      const bridgeConfig = await getExtensionHostController().restartMcpServers();
-      const toolCount = bridgeConfig?.tools.length ?? 0;
-      console.log(`[McpBridge] refresh: ${toolCount} tools discovered`);
-
-      // 3. Sync openclaw.json — OpenClaw's file watcher will hot-reload;
-      // hard restart only happens when secret env vars change.
+      console.log('[OpenClawMcp] syncing configuration...');
+      broadcastMcpConfigSync('mcp:bridge:syncStart');
       const syncResult = await syncOpenClawConfig({
         reason: 'mcp-server-changed',
       });
       if (!syncResult.success) {
-        console.error('[McpBridge] refresh: config sync failed:', syncResult.error);
-        return { tools: toolCount, error: syncResult.error };
+        console.error('[OpenClawMcp] config sync failed:', syncResult.error);
+        return { tools: 0, error: syncResult.error };
       }
-
-      console.log(
-        `[McpBridge] refresh complete: ${toolCount} tools, gateway restarted=${syncResult.changed}`,
-      );
-      return { tools: toolCount };
+      console.log(`[OpenClawMcp] sync complete, changed=${syncResult.changed}`);
+      return { tools: getMcpStore().getEnabledServers().length };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      console.error('[McpBridge] refresh error:', msg);
+      console.error('[OpenClawMcp] sync error:', msg);
       return { tools: 0, error: msg };
     }
   })()
     .then(result => {
-      broadcastMcpBridgeSync('mcp:bridge:syncDone', { tools: result.tools, error: result.error });
+      broadcastMcpConfigSync('mcp:bridge:syncDone', { tools: result.tools, error: result.error });
       return result;
     })
     .catch(err => {
       const error = err instanceof Error ? err.message : String(err);
-      broadcastMcpBridgeSync('mcp:bridge:syncDone', { tools: 0, error });
+      broadcastMcpConfigSync('mcp:bridge:syncDone', { tools: 0, error });
       return { tools: 0, error };
     })
     .finally(() => {
-      mcpBridgeRefreshPromise = null;
+      mcpConfigSyncPromise = null;
     });
-  return mcpBridgeRefreshPromise;
+  return mcpConfigSyncPromise;
 };
 
 // 获取正确的预加载脚本路径
@@ -967,7 +933,7 @@ if (!gotTheLock) {
 
   registerMcpHandlers({
     getStore: getMcpStore,
-    refreshBridge: refreshMcpBridge,
+    refreshBridge: syncMcpConfig,
   });
   registerCoworkSessionExecutionHandlers({
     ensureEngineRunning: ensureOpenClawRunningForCowork,
@@ -1066,10 +1032,7 @@ if (!gotTheLock) {
       onDidFinishLoad: window => {
         emitWindowState(window);
         if (openClawEngineManager && !window.isDestroyed()) {
-          window.webContents.send(
-            'openclaw:engine:onProgress',
-            openClawEngineManager.getStatus(),
-          );
+          window.webContents.send('openclaw:engine:onProgress', openClawEngineManager.getStatus());
         }
       },
       onReadyToShow: window => {
@@ -1117,7 +1080,7 @@ if (!gotTheLock) {
     // The extension host owns MCP client transports/stdio child processes and
     // the local callback server. Stop it after the Gateway can no longer issue
     // tool calls, and before closing application storage.
-    await stopMcpBridge();
+    await stopExtensionHost();
 
     // Stop the cron job polling
     try {
@@ -1257,9 +1220,7 @@ if (!gotTheLock) {
     }
 
     let lastLanguage = getStore().get<AppConfigSettings>('app_config')?.language;
-    let lastUseSystemProxy = isSystemProxyEnabled(
-      getStore().get<AppConfigSettings>('app_config'),
-    );
+    let lastUseSystemProxy = isSystemProxyEnabled(getStore().get<AppConfigSettings>('app_config'));
     getStore().onDidChange<AppConfigSettings>('app_config', (newConfig, oldConfig) => {
       updateTitleBarOverlay();
       // 仅在语言变更时刷新托盘菜单文本

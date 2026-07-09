@@ -23,7 +23,6 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 | 技术 | 版本 | 用途 |
 |------|------|------|
 | **OpenClaw Gateway** | v2026.6.9 | 单一 Agent 引擎（预构建 npm 包） |
-| **@modelcontextprotocol/sdk** | ^1.27.1 | MCP 协议 SDK |
 
 > **注意**：`@anthropic-ai/claude-agent-sdk` 已弃用并移除。JustDo 仅使用 OpenClaw Gateway 作为唯一 Agent 引擎，不维护任何双引擎架构。
 
@@ -408,7 +407,6 @@ JustDo/
 │   └── ...
 │
 ├── openclaw-extensions/       # OpenClaw 本地扩展
-│   ├── mcp-bridge/
 │   └── ask-user-question/
 │
 ├── tests/                     # 测试文件
