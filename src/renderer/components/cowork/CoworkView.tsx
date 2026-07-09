@@ -789,6 +789,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                   size="large"
                   showModelSelector={true}
                   sessionId={currentSession.id}
+                  hasAssistantMessage={currentSession.messages.some(
+                    message => message.type === 'assistant',
+                  )}
                 />
               </div>
               <p className="px-1 text-center text-[11px] font-light leading-4 text-muted">

@@ -75,7 +75,7 @@ export const registerCoworkSessionRuntimeHandlers = ({
         session = fallback.sessions?.find(item => keys.has(item.key));
       }
       if (!session) {
-        console.warn('[CoworkContextUsage] session not found in gateway', {
+        console.debug('[CoworkContextUsage] session is not available in gateway yet', {
           sessionId,
           effectiveAgentId: agentId,
           sessionKeys: Array.from(keys),

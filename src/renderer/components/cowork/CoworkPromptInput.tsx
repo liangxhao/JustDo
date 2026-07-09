@@ -118,6 +118,8 @@ interface CoworkPromptInputProps {
   showFolderSelector?: boolean;
   showModelSelector?: boolean;
   sessionId?: string;
+  /** Whether the session has completed at least one Gateway-backed turn. */
+  hasAssistantMessage?: boolean;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
 }
@@ -146,6 +148,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       showFolderSelector = false,
       showModelSelector = false,
       sessionId,
+      hasAssistantMessage = false,
       remoteManaged = false,
     } = props;
     const dispatch = useDispatch();
@@ -1172,9 +1175,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => window.removeEventListener('config-updated', syncFromConfig);
     }, []);
 
-    // Fetch context usage from OpenClaw gateway only for the selected idle session.
+    // A newly created local session does not exist in Gateway until its first turn starts.
+    // Wait for an assistant message so context usage is only queried for persisted sessions.
     useEffect(() => {
-      if (!sessionId || isStreaming) {
+      if (!sessionId || isStreaming || !hasAssistantMessage) {
         setContextUsage(null);
         return;
       }
@@ -1198,7 +1202,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => {
         cancelled = true;
       };
-    }, [sessionId, isStreaming, effectiveSelectedModel?.contextLength]);
+    }, [sessionId, isStreaming, hasAssistantMessage, effectiveSelectedModel?.contextLength]);
 
     const slashMenuVisible =
       slashMenuOpen &&
