@@ -106,13 +106,16 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     return { ok: false, error: 'patchSessionModel not supported by current runtime' };
   }
 
-  async getSessionRuntimeStatus(sessionId: string): Promise<{
+  async getSessionRuntimeStatus(
+    sessionId: string,
+    options?: { includeSubagents?: boolean },
+  ): Promise<{
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
   }> {
     if (this.runtime.getSessionRuntimeStatus) {
-      return this.runtime.getSessionRuntimeStatus(sessionId);
+      return this.runtime.getSessionRuntimeStatus(sessionId, options);
     }
     return { mainRunning: false, subagentRunning: false, running: false };
   }
@@ -166,6 +169,5 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     runtime.on('sessionStopped', sessionId => {
       this.emit('sessionStopped', sessionId);
     });
-
   }
 }

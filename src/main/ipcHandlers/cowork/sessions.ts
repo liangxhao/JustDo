@@ -125,20 +125,23 @@ export const registerCoworkSessionHandlers = ({
     }
   });
 
-  ipcMain.handle('cowork:session:runtimeStatus', async (_event, sessionId: string) => {
-    try {
-      return {
-        success: true,
-        ...(await getCoworkEngineRouter().getSessionRuntimeStatus(sessionId)),
-      };
-    } catch (error) {
-      return {
-        success: false,
-        mainRunning: false,
-        subagentRunning: false,
-        running: false,
-        error: error instanceof Error ? error.message : 'Failed to get session runtime status',
-      };
-    }
-  });
+  ipcMain.handle(
+    'cowork:session:runtimeStatus',
+    async (_event, sessionId: string, options?: { includeSubagents?: boolean }) => {
+      try {
+        return {
+          success: true,
+          ...(await getCoworkEngineRouter().getSessionRuntimeStatus(sessionId, options)),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          mainRunning: false,
+          subagentRunning: false,
+          running: false,
+          error: error instanceof Error ? error.message : 'Failed to get session runtime status',
+        };
+      }
+    },
+  );
 };

@@ -424,7 +424,10 @@ interface IElectronAPI {
     remoteManaged: (
       sessionId: string,
     ) => Promise<{ success: boolean; remoteManaged: boolean; error?: string }>;
-    getSessionRuntimeStatus: (sessionId: string) => Promise<{
+    getSessionRuntimeStatus: (
+      sessionId: string,
+      options?: { includeSubagents?: boolean },
+    ) => Promise<{
       success: boolean;
       mainRunning: boolean;
       subagentRunning: boolean;

@@ -43,6 +43,11 @@ import SubagentMessageDrawer from './SubagentMessageDrawer';
 const DEBUG_COWORK_VIEW =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_COWORK_VIEW === 'true';
 
+const SESSION_MAIN_RUNNING_POLL_MS = 2000;
+const SESSION_SUBAGENT_POLL_MS = 15000;
+const SESSION_IDLE_MAIN_POLL_MS = 30000;
+const SESSION_SUBAGENT_POLL_WINDOW_MS = 60 * 60 * 1000;
+
 function debugLog(...args: unknown[]): void {
   if (DEBUG_COWORK_VIEW) {
     console.debug(...args);
@@ -99,8 +104,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
   const isStreaming = useSelector(selectIsStreaming);
-  const sessionRuntimeActivity = useSelector(
-    (state: RootState) => state.cowork.sessionRuntimeActivity,
+  const sessionMainRuntimeActivity = useSelector(
+    (state: RootState) => state.cowork.sessionMainRuntimeActivity,
   );
   const config = useSelector(selectCoworkConfig);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
@@ -115,7 +120,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const currentSessionRuntimeRunning = currentSession
     ? currentSession.id.startsWith('temp-')
       ? currentSession.status === 'running'
-      : sessionRuntimeActivity[currentSession.id] === true
+      : sessionMainRuntimeActivity[currentSession.id] === true
     : isStreaming;
   const previousRuntimeStateRef = useRef<{
     sessionId: string | null;
@@ -125,7 +130,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     running: currentSessionRuntimeRunning,
   });
   const currentSessionAgent = currentSession
-    ? agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null
+    ? (agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null)
     : null;
   const { selectedModel: sessionSelectedModel } = resolveAgentModelSelection({
     agentModel: currentSessionAgent?.model ?? '',
@@ -271,9 +276,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
               sessionSkillIds.length > 0 || (attachments && attachments.length > 0)
                 ? {
                     ...(sessionSkillIds.length > 0 ? { skillIds: sessionSkillIds } : {}),
-                    ...(attachments && attachments.length > 0
-                      ? { attachments }
-                      : {}),
+                    ...(attachments && attachments.length > 0 ? { attachments } : {}),
                   }
                 : undefined,
           },
@@ -435,6 +438,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   useEffect(() => {
     if (!currentSessionId || currentSessionId.startsWith('temp-')) return;
+    const currentSessionUpdatedAt = currentSession?.updatedAt ?? 0;
     const previousRuntimeState = previousRuntimeStateRef.current;
     const isSameRuntimeSession = previousRuntimeState.sessionId === currentSessionId;
     const skippedBecauseJustStopped =
@@ -444,19 +448,40 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       running: currentSessionRuntimeRunning,
     };
     let isCancelled = false;
+    let timeoutId: number | null = null;
+    const shouldPollSubagents = () =>
+      !currentSessionRuntimeRunning &&
+      currentSessionUpdatedAt > 0 &&
+      Date.now() - currentSessionUpdatedAt < SESSION_SUBAGENT_POLL_WINDOW_MS;
+    const getNextDelay = () => {
+      if (currentSessionRuntimeRunning) return SESSION_MAIN_RUNNING_POLL_MS;
+      if (shouldPollSubagents()) return SESSION_SUBAGENT_POLL_MS;
+      return SESSION_IDLE_MAIN_POLL_MS;
+    };
+    const scheduleNextRefresh = () => {
+      if (isCancelled) return;
+      timeoutId = window.setTimeout(refresh, getNextDelay());
+    };
     const refresh = () => {
       if (isCancelled) return;
-      void coworkService.refreshSessionRuntimeActivity(currentSessionId);
+      void coworkService
+        .refreshSessionRuntimeActivity(currentSessionId, {
+          includeSubagents: shouldPollSubagents(),
+        })
+        .finally(scheduleNextRefresh);
     };
     if (!skippedBecauseJustStopped) {
       refresh();
+    } else {
+      scheduleNextRefresh();
     }
-    const intervalId = window.setInterval(refresh, currentSessionRuntimeRunning ? 2000 : 30000);
     return () => {
       isCancelled = true;
-      window.clearInterval(intervalId);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
-  }, [currentSessionId, currentSessionRuntimeRunning]);
+  }, [currentSession?.updatedAt, currentSessionId, currentSessionRuntimeRunning]);
 
   useEffect(() => {
     setSelectedSubagent(null);
@@ -465,7 +490,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   useEffect(() => {
     const handlePreviewFile = async (event: Event) => {
-      const detail = (event as CustomEvent<{ filePath?: string; workingDirectory?: string }>).detail;
+      const detail = (event as CustomEvent<{ filePath?: string; workingDirectory?: string }>)
+        .detail;
       if (!detail?.filePath) return;
       const result = await window.electron.shell.readPreviewFile(
         detail.filePath,
@@ -563,8 +589,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     } catch (error) {
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
-          detail:
-            error instanceof Error ? error.message : i18nService.t('coworkOpenFolderFailed'),
+          detail: error instanceof Error ? error.message : i18nService.t('coworkOpenFolderFailed'),
         }),
       );
     }
@@ -573,7 +598,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   // Apply pending prompt to ChatController once the wrapper is mounted
   useEffect(() => {
     if (!pendingPromptRef.current || !chatWrapperRef.current) return;
-    debugLog('[CoworkView] useEffect applying pendingPrompt:', pendingPromptRef.current.slice(0, 60));
+    debugLog(
+      '[CoworkView] useEffect applying pendingPrompt:',
+      pendingPromptRef.current.slice(0, 60),
+    );
     chatWrapperRef.current.setPendingUserMessage(
       pendingPromptRef.current,
       pendingAttachmentsRef.current,
@@ -627,10 +655,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   // When there's a current session, show the session detail view
   if (currentSession) {
-    const handleSendMessage = async (
-      prompt: string,
-      attachments?: CoworkAttachmentPayload[],
-    ) => {
+    const handleSendMessage = async (prompt: string, attachments?: CoworkAttachmentPayload[]) => {
       try {
         await chatWrapperRef.current?.sendMessage(prompt, attachments);
       } catch (err) {

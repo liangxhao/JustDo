@@ -416,9 +416,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         options.skillIds?.length || options.attachments?.length
           ? {
               ...(options.skillIds?.length ? { skillIds: options.skillIds } : {}),
-              ...(options.attachments?.length
-                ? { attachments: options.attachments }
-                : {}),
+              ...(options.attachments?.length ? { attachments: options.attachments } : {}),
             }
           : undefined;
       const userMessage = this.store.addMessage(sessionId, {
@@ -2521,7 +2519,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     };
   }
 
-  async getSessionRuntimeStatus(sessionId: string): Promise<{
+  async getSessionRuntimeStatus(
+    sessionId: string,
+    options?: { includeSubagents?: boolean },
+  ): Promise<{
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
@@ -2558,6 +2559,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    if (!options?.includeSubagents || mainRunning) {
+      return {
+        mainRunning,
+        subagentRunning: false,
+        running: mainRunning,
+      };
+    }
+
     const cachedSubagents = this.subagentStatusCache.get(sessionId);
     const subagents =
       cachedSubagents && cachedSubagents.expiresAt > Date.now()
@@ -2579,7 +2588,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return {
       mainRunning,
       subagentRunning,
-      running: mainRunning || subagentRunning,
+      running: subagentRunning,
     };
   }
 

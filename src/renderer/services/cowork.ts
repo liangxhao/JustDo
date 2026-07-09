@@ -20,6 +20,7 @@ import {
   setCurrentSession,
   setGroups,
   setRemoteManaged,
+  setSessionMainRuntimeActivity,
   setSessionRuntimeActivities,
   setSessionRuntimeActivity,
   setSessions,
@@ -118,26 +119,24 @@ class CoworkService {
 
       // Summarize message content for logging
       const msg = message as unknown as Record<string, unknown>;
-      const contentPreview = typeof msg.content === 'string'
-        ? msg.content.slice(0, 80)
-        : Array.isArray(msg.content)
-          ? `[${(msg.content as unknown[]).length} blocks]`
-          : String(msg.content ?? '').slice(0, 80);
+      const contentPreview =
+        typeof msg.content === 'string'
+          ? msg.content.slice(0, 80)
+          : Array.isArray(msg.content)
+            ? `[${(msg.content as unknown[]).length} blocks]`
+            : String(msg.content ?? '').slice(0, 80);
 
-      debugLog(
-        '[CoworkService] ▶ onStreamMessage',
-        {
-          sessionId: sessionId.slice(0, 8),
-          type: message.type,
-          messageId: message.id?.slice?.(0, 8),
-          sessionExists,
-          isCurrentSession,
-          currentSessionId: currentSessionId?.slice?.(0, 8),
-          totalSessions: state.sessions.length,
-          isStreaming: state.isStreaming,
-          contentPreview,
-        },
-      );
+      debugLog('[CoworkService] ▶ onStreamMessage', {
+        sessionId: sessionId.slice(0, 8),
+        type: message.type,
+        messageId: message.id?.slice?.(0, 8),
+        sessionExists,
+        isCurrentSession,
+        currentSessionId: currentSessionId?.slice?.(0, 8),
+        totalSessions: state.sessions.length,
+        isStreaming: state.isStreaming,
+        contentPreview,
+      });
       if (!sessionExists) {
         // Session was created by IM or another source, refresh the session list
         debugLog(
@@ -157,6 +156,7 @@ class CoworkService {
       // A new user turn means this session is actively running again
       // (especially important for IM-triggered turns that do not call continueSession from renderer).
       if (message.type === 'user') {
+        store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: true }));
         store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
         store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
       }
@@ -233,9 +233,10 @@ class CoworkService {
 
     // Complete listener
     const completeCleanup = cowork.onStreamComplete(({ sessionId, finalStatus }) => {
-      // Use finalStatus from backend if provided (includes subagent status check)
+      // Use finalStatus from backend if provided.
       // If not provided, default to 'completed' (backward compatibility)
       const status: 'idle' | 'running' | 'completed' | 'error' = finalStatus ?? 'completed';
+      store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: status === 'running' }));
       store.dispatch(setSessionRuntimeActivity({ sessionId, running: status === 'running' }));
       store.dispatch(updateSessionStatus({ sessionId, status }));
     });
@@ -249,6 +250,7 @@ class CoworkService {
       if (isGatewayToolFailureNotice(error)) {
         return;
       }
+      store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: false }));
       store.dispatch(setSessionRuntimeActivity({ sessionId, running: false }));
       store.dispatch(updateSessionStatus({ sessionId, status: 'error' }));
       // Surface the error as a visible message so the user knows what happened.
@@ -332,7 +334,10 @@ class CoworkService {
     }
   }
 
-  async getSessionRuntimeStatus(sessionId: string): Promise<{
+  async getSessionRuntimeStatus(
+    sessionId: string,
+    options?: { includeSubagents?: boolean },
+  ): Promise<{
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
@@ -341,7 +346,7 @@ class CoworkService {
     if (!cowork?.getSessionRuntimeStatus) {
       return { mainRunning: false, subagentRunning: false, running: false };
     }
-    const result = await cowork.getSessionRuntimeStatus(sessionId);
+    const result = await cowork.getSessionRuntimeStatus(sessionId, options);
     if (!result.success) {
       return { mainRunning: false, subagentRunning: false, running: false };
     }
@@ -352,8 +357,14 @@ class CoworkService {
     };
   }
 
-  async refreshSessionRuntimeActivity(sessionId: string): Promise<void> {
-    const status = await this.getSessionRuntimeStatus(sessionId);
+  async refreshSessionRuntimeActivity(
+    sessionId: string,
+    options?: { includeSubagents?: boolean },
+  ): Promise<void> {
+    const status = await this.getSessionRuntimeStatus(sessionId, {
+      includeSubagents: options?.includeSubagents === true,
+    });
+    store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: status.mainRunning }));
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: status.running }));
   }
 
@@ -370,9 +381,7 @@ class CoworkService {
       }),
     );
     store.dispatch(
-      setSessionRuntimeActivities(
-        Object.fromEntries(entries.filter(([, running]) => running)),
-      ),
+      setSessionRuntimeActivities(Object.fromEntries(entries.filter(([, running]) => running))),
     );
   }
 
@@ -412,6 +421,9 @@ class CoworkService {
     if (result.success && result.session) {
       const runningSession: CoworkSession = { ...result.session, status: 'running' };
       store.dispatch(addSession(runningSession));
+      store.dispatch(
+        setSessionMainRuntimeActivity({ sessionId: runningSession.id, running: true }),
+      );
       store.dispatch(setSessionRuntimeActivity({ sessionId: runningSession.id, running: true }));
       return { session: runningSession };
     }
@@ -443,6 +455,9 @@ class CoworkService {
 
     store.dispatch(setStreaming(true));
     if (options.sessionId) {
+      store.dispatch(
+        setSessionMainRuntimeActivity({ sessionId: options.sessionId, running: true }),
+      );
       store.dispatch(setSessionRuntimeActivity({ sessionId: options.sessionId, running: true }));
     }
     store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
@@ -455,6 +470,9 @@ class CoworkService {
     });
     if (!result.success) {
       store.dispatch(setStreaming(false));
+      store.dispatch(
+        setSessionMainRuntimeActivity({ sessionId: options.sessionId, running: false }),
+      );
       store.dispatch(setSessionRuntimeActivity({ sessionId: options.sessionId, running: false }));
       if (result.engineStatus) {
         this.notifyOpenClawStatus(result.engineStatus);
@@ -509,6 +527,7 @@ class CoworkService {
     const result = await cowork.stopSession(sessionId);
     if (result.success) {
       store.dispatch(setStreaming(false));
+      store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: false }));
       store.dispatch(setSessionRuntimeActivity({ sessionId, running: false }));
       store.dispatch(updateSessionStatus({ sessionId, status: 'idle' }));
       return true;
@@ -616,15 +635,18 @@ class CoworkService {
       if (requestId !== this.latestLoadSessionRequestId) {
         return result.session;
       }
-      const runtimeRunning =
-        store.getState().cowork.sessionRuntimeActivity[sessionId] === true ||
+      const mainRuntimeRunning =
+        store.getState().cowork.sessionMainRuntimeActivity[sessionId] === true ||
         result.session.status === 'running';
-      const session = runtimeRunning ? { ...result.session, status: 'running' as const } : result.session;
+      const session = mainRuntimeRunning
+        ? { ...result.session, status: 'running' as const }
+        : result.session;
       store.dispatch(setCurrentSession(session));
-      if (runtimeRunning) {
+      if (mainRuntimeRunning) {
+        store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: true }));
         store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
       }
-      store.dispatch(setStreaming(runtimeRunning));
+      store.dispatch(setStreaming(mainRuntimeRunning));
 
       const imResult = await cowork.remoteManaged(sessionId);
       if (requestId === this.latestLoadSessionRequestId) {

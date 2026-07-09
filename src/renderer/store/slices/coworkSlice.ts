@@ -30,6 +30,7 @@ interface CoworkState {
   unreadSessionIds: string[];
   isCoworkActive: boolean;
   isStreaming: boolean;
+  sessionMainRuntimeActivity: Record<string, boolean>;
   sessionRuntimeActivity: Record<string, boolean>;
   remoteManaged: boolean;
   pendingPermissions: CoworkPermissionRequest[];
@@ -51,6 +52,7 @@ const initialState: CoworkState = {
   unreadSessionIds: [],
   isCoworkActive: false,
   isStreaming: false,
+  sessionMainRuntimeActivity: {},
   sessionRuntimeActivity: {},
   remoteManaged: false,
   pendingPermissions: [],
@@ -119,6 +121,18 @@ const coworkSlice = createSlice({
           state.currentSession.status = 'idle';
         }
       }
+    },
+
+    setSessionMainRuntimeActivity(
+      state,
+      action: PayloadAction<{ sessionId: string; running: boolean }>,
+    ) {
+      const { sessionId, running } = action.payload;
+      if (running) {
+        state.sessionMainRuntimeActivity[sessionId] = true;
+      } else {
+        delete state.sessionMainRuntimeActivity[sessionId];
+      }
       if (state.currentSessionId === sessionId) {
         state.isStreaming = running;
       }
@@ -129,9 +143,6 @@ const coworkSlice = createSlice({
       if (state.currentSessionId?.startsWith('temp-')) {
         return;
       }
-      state.isStreaming = state.currentSessionId
-        ? action.payload[state.currentSessionId] === true
-        : false;
     },
 
     setCurrentSession(state, action: PayloadAction<CoworkSession | null>) {
@@ -203,8 +214,6 @@ const coworkSlice = createSlice({
       if (state.currentSession?.id === sessionId) {
         state.currentSession.status = status;
         state.currentSession.updatedAt = Date.now();
-        // Streaming state is tied to the currently opened session only
-        state.isStreaming = status === 'running';
       }
     },
 
@@ -536,6 +545,7 @@ export const {
   setSessions,
   setCurrentSessionId,
   setCurrentSession,
+  setSessionMainRuntimeActivity,
   setSessionRuntimeActivity,
   setSessionRuntimeActivities,
   setDraftPrompt,

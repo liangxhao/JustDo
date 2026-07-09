@@ -147,6 +147,84 @@ test('getSessionKeysForSession prefers channel keys before managed fallback', ()
   ]);
 });
 
+test('getSessionRuntimeStatus only treats the main session as running', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({
+    sessions: [
+      {
+        key: 'agent:main:justdo:session-1',
+        hasActiveRun: false,
+        status: 'completed',
+        runState: 'idle',
+      },
+      {
+        key: 'agent:main:subagent:child-run',
+        hasActiveRun: true,
+        status: 'running',
+        runState: 'active',
+      },
+    ],
+  });
+
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toEqual({
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(request).toHaveBeenCalledWith('sessions.list', {
+    limit: 100,
+    includeDerivedTitles: true,
+  });
+});
+
+test('getSessionRuntimeStatus can include subagent running state on request', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({
+    sessions: [
+      {
+        key: 'agent:main:justdo:session-1',
+        hasActiveRun: false,
+        status: 'completed',
+        runState: 'idle',
+      },
+      {
+        key: 'agent:main:subagent:child-run',
+        spawnedBy: 'agent:main:justdo:session-1',
+        hasActiveSubagentRun: true,
+        status: 'running',
+        subagentRunState: 'active',
+      },
+    ],
+  });
+
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { includeSubagents: true }),
+  ).resolves.toEqual({
+    mainRunning: false,
+    subagentRunning: true,
+    running: true,
+  });
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(request).toHaveBeenLastCalledWith('sessions.list', {
+    spawnedBy: 'agent:main:justdo:session-1',
+    limit: 100,
+    includeDerivedTitles: true,
+  });
+});
+
 test('announce run events follow webchat chat-final and tool-stream split', () => {
   const session = {
     id: 'session-1',
@@ -814,10 +892,7 @@ test('session.message reload is deferred until sessions.changed clears active ru
     },
   });
 
-  expect(reconcileWithHistory).toHaveBeenCalledWith(
-    'session-1',
-    'agent:main:justdo:session-1',
-  );
+  expect(reconcileWithHistory).toHaveBeenCalledWith('session-1', 'agent:main:justdo:session-1');
   expect(session.status).toBe('idle');
 });
 
@@ -874,9 +949,5 @@ test('patchSessionModel defers gateway patch while session is active', async () 
     },
   });
 
-  expect(patchSessionModel).toHaveBeenCalledWith(
-    'session-1',
-    'bailian/qwen3.6-plus',
-    undefined,
-  );
+  expect(patchSessionModel).toHaveBeenCalledWith('session-1', 'bailian/qwen3.6-plus', undefined);
 });

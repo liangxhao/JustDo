@@ -188,7 +188,10 @@ export interface CoworkRuntime {
     model: string,
     agentId?: string,
   ): Promise<{ ok: boolean; error?: string }>;
-  getSessionRuntimeStatus?(sessionId: string): Promise<{
+  getSessionRuntimeStatus?(
+    sessionId: string,
+    options?: { includeSubagents?: boolean },
+  ): Promise<{
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
