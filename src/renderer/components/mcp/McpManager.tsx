@@ -210,7 +210,7 @@ const McpManager: React.FC = () => {
   useEffect(() => {
     let syncTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const cleanupStart = mcpService.onBridgeSyncStart(() => {
+    const cleanupStart = mcpService.onConfigSyncStart(() => {
       setBridgeSyncing(true);
       setBridgeSyncResult(null);
       // Fallback: auto-clear overlay after 40s to prevent permanent lock
@@ -223,7 +223,7 @@ const McpManager: React.FC = () => {
         });
       }, 40_000);
     });
-    const cleanupDone = mcpService.onBridgeSyncDone(data => {
+    const cleanupDone = mcpService.onConfigSyncDone(data => {
       if (syncTimeout) {
         clearTimeout(syncTimeout);
         syncTimeout = null;

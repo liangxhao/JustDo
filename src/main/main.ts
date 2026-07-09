@@ -738,7 +738,7 @@ const syncMcpConfig = (): Promise<{ tools: number; error?: string }> => {
   mcpConfigSyncPromise = (async () => {
     try {
       console.log('[OpenClawMcp] syncing configuration...');
-      broadcastMcpConfigSync('mcp:bridge:syncStart');
+      broadcastMcpConfigSync('mcp:config:syncStart');
       const syncResult = await syncOpenClawConfig({
         reason: 'mcp-server-changed',
       });
@@ -755,12 +755,12 @@ const syncMcpConfig = (): Promise<{ tools: number; error?: string }> => {
     }
   })()
     .then(result => {
-      broadcastMcpConfigSync('mcp:bridge:syncDone', { tools: result.tools, error: result.error });
+      broadcastMcpConfigSync('mcp:config:syncDone', { tools: result.tools, error: result.error });
       return result;
     })
     .catch(err => {
       const error = err instanceof Error ? err.message : String(err);
-      broadcastMcpConfigSync('mcp:bridge:syncDone', { tools: 0, error });
+      broadcastMcpConfigSync('mcp:config:syncDone', { tools: 0, error });
       return { tools: 0, error };
     })
     .finally(() => {
@@ -933,7 +933,7 @@ if (!gotTheLock) {
 
   registerMcpHandlers({
     getStore: getMcpStore,
-    refreshBridge: syncMcpConfig,
+    syncConfig: syncMcpConfig,
   });
   registerCoworkSessionExecutionHandlers({
     ensureEngineRunning: ensureOpenClawRunningForCowork,

@@ -4,18 +4,18 @@ import type { McpServerFormData, McpStore } from '../../libs/mcp/mcpStore';
 
 interface McpHandlerDependencies {
   getStore: () => McpStore;
-  refreshBridge: () => Promise<{ tools: number; error?: string }>;
+  syncConfig: () => Promise<{ tools: number; error?: string }>;
 }
 
 const syncMcpConfigInBackground = (
-  refreshBridge: McpHandlerDependencies['refreshBridge'],
+  syncConfig: McpHandlerDependencies['syncConfig'],
 ): void => {
-  void refreshBridge().catch(error => {
+  void syncConfig().catch(error => {
     console.error('[OpenClawMcp] background configuration sync error:', error);
   });
 };
 
-export const registerMcpHandlers = ({ getStore, refreshBridge }: McpHandlerDependencies): void => {
+export const registerMcpHandlers = ({ getStore, syncConfig }: McpHandlerDependencies): void => {
   ipcMain.handle('mcp:list', () => {
     try {
       return { success: true, servers: getStore().listServers() };
@@ -31,7 +31,7 @@ export const registerMcpHandlers = ({ getStore, refreshBridge }: McpHandlerDepen
     try {
       getStore().createServer(data);
       const servers = getStore().listServers();
-      syncMcpConfigInBackground(refreshBridge);
+      syncMcpConfigInBackground(syncConfig);
       return { success: true, servers };
     } catch (error) {
       return {
@@ -45,7 +45,7 @@ export const registerMcpHandlers = ({ getStore, refreshBridge }: McpHandlerDepen
     try {
       getStore().updateServer(id, data);
       const servers = getStore().listServers();
-      syncMcpConfigInBackground(refreshBridge);
+      syncMcpConfigInBackground(syncConfig);
       return { success: true, servers };
     } catch (error) {
       return {
@@ -59,7 +59,7 @@ export const registerMcpHandlers = ({ getStore, refreshBridge }: McpHandlerDepen
     try {
       getStore().deleteServer(id);
       const servers = getStore().listServers();
-      syncMcpConfigInBackground(refreshBridge);
+      syncMcpConfigInBackground(syncConfig);
       return { success: true, servers };
     } catch (error) {
       return {
@@ -73,7 +73,7 @@ export const registerMcpHandlers = ({ getStore, refreshBridge }: McpHandlerDepen
     try {
       getStore().setEnabled(options.id, options.enabled);
       const servers = getStore().listServers();
-      syncMcpConfigInBackground(refreshBridge);
+      syncMcpConfigInBackground(syncConfig);
       return { success: true, servers };
     } catch (error) {
       return {
@@ -83,15 +83,15 @@ export const registerMcpHandlers = ({ getStore, refreshBridge }: McpHandlerDepen
     }
   });
 
-  ipcMain.handle('mcp:refreshBridge', async () => {
+  ipcMain.handle('mcp:syncConfig', async () => {
     try {
-      const result = await refreshBridge();
+      const result = await syncConfig();
       return { success: true, tools: result.tools, error: result.error };
     } catch (error) {
       return {
         success: false,
         tools: 0,
-        error: error instanceof Error ? error.message : 'Failed to refresh MCP bridge',
+        error: error instanceof Error ? error.message : 'Failed to sync MCP configuration',
       };
     }
   });

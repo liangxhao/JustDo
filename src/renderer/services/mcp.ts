@@ -101,27 +101,23 @@ class McpService {
     return this.servers.find(s => s.id === id);
   }
 
-  /**
-   * Refresh the MCP Bridge: restarts MCP servers, re-discovers tools,
-   * syncs openclaw.json, and restarts the gateway.
-   * Returns the number of tools discovered.
-   */
-  async refreshBridge(): Promise<{ success: boolean; tools: number; error?: string }> {
+  /** Sync MCP server configuration to OpenClaw. */
+  async syncConfig(): Promise<{ success: boolean; tools: number; error?: string }> {
     try {
-      return await window.electron.mcp.refreshBridge();
+      return await window.electron.mcp.syncConfig();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to refresh MCP bridge';
-      console.error('Failed to refresh MCP bridge:', error);
+      const message = error instanceof Error ? error.message : 'Failed to sync MCP configuration';
+      console.error('Failed to sync MCP configuration:', error);
       return { success: false, tools: 0, error: message };
     }
   }
 
-  onBridgeSyncStart(callback: () => void): () => void {
-    return window.electron.mcp.onBridgeSyncStart(callback);
+  onConfigSyncStart(callback: () => void): () => void {
+    return window.electron.mcp.onConfigSyncStart(callback);
   }
 
-  onBridgeSyncDone(callback: (data: { tools: number; error?: string }) => void): () => void {
-    return window.electron.mcp.onBridgeSyncDone(callback);
+  onConfigSyncDone(callback: (data: { tools: number; error?: string }) => void): () => void {
+    return window.electron.mcp.onConfigSyncDone(callback);
   }
 }
 

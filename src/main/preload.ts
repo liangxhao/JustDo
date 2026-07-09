@@ -42,16 +42,16 @@ contextBridge.exposeInMainWorld('electron', {
     delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),
     setEnabled: (options: { id: string; enabled: boolean }) =>
       ipcRenderer.invoke('mcp:setEnabled', options),
-    refreshBridge: () => ipcRenderer.invoke('mcp:refreshBridge'),
-    onBridgeSyncStart: (callback: () => void) => {
+    syncConfig: () => ipcRenderer.invoke('mcp:syncConfig'),
+    onConfigSyncStart: (callback: () => void) => {
       const handler = () => callback();
-      ipcRenderer.on('mcp:bridge:syncStart', handler);
-      return () => ipcRenderer.removeListener('mcp:bridge:syncStart', handler);
+      ipcRenderer.on('mcp:config:syncStart', handler);
+      return () => ipcRenderer.removeListener('mcp:config:syncStart', handler);
     },
-    onBridgeSyncDone: (callback: (data: { tools: number; error?: string }) => void) => {
+    onConfigSyncDone: (callback: (data: { tools: number; error?: string }) => void) => {
       const handler = (_event: any, data: { tools: number; error?: string }) => callback(data);
-      ipcRenderer.on('mcp:bridge:syncDone', handler);
-      return () => ipcRenderer.removeListener('mcp:bridge:syncDone', handler);
+      ipcRenderer.on('mcp:config:syncDone', handler);
+      return () => ipcRenderer.removeListener('mcp:config:syncDone', handler);
     },
   },
   permissions: {
