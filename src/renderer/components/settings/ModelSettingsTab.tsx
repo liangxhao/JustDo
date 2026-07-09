@@ -286,8 +286,8 @@ const ModelSettingsTab: React.FC<Props> = ({
         </button>
       </div>
 
-      <div className="flex-1 min-w-0 pl-3 border-l border-border">
-        <div className="space-y-4">
+      <div className="flex flex-1 min-w-0 min-h-0 flex-col pl-3 border-l border-border">
+        <div className="flex flex-1 min-h-0 flex-col space-y-4">
           {!isBuiltinModelsProvider(activeProvider) && (
             <div>
               <label htmlFor={`${activeProvider}-displayName`} className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1">
@@ -374,7 +374,7 @@ const ModelSettingsTab: React.FC<Props> = ({
             </div>
           )}
 
-          <div>
+          <div className="flex flex-1 min-h-0 flex-col">
             <div className="flex items-center justify-between mb-1.5">
               <h3 className="text-xs font-medium text-foreground">{i18nService.t('availableModels')}</h3>
               {!isReadOnly && (
@@ -385,7 +385,7 @@ const ModelSettingsTab: React.FC<Props> = ({
               )}
             </div>
 
-            <div className="space-y-1.5 max-h-60 overflow-y-auto">
+            <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto">
               {(activeConfig.models ?? []).map(model => (
                 <div key={model.id} className="bg-surface p-2 rounded-xl border-border border transition-colors hover:border-primary group">
                   <div className="flex items-center justify-between gap-2 min-w-0">
