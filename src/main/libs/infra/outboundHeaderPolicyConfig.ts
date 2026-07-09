@@ -41,6 +41,11 @@ export type OutboundHeaderPolicyConfig = {
   /**
    * Header names whose values are read from user_info.json and injected into
    * matching outbound requests.
+   *
+   * Every name must begin with `X-`. These requests are sent through LiteLLM,
+   * which only passes these custom `X-` headers through to the upstream model
+   * provider. A name without the prefix may reach LiteLLM but be omitted from
+   * the provider request.
    */
   headerNames: readonly string[];
 };
@@ -48,7 +53,7 @@ export type OutboundHeaderPolicyConfig = {
 export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig = Object.freeze({
   enabled: true,
   baseUrlWhitelist: [],
-  headerNames: ['User-Account', 'Cookie'],
+  headerNames: ['X-User-Account', 'X-Cookie'],
 });
 
 const USER_INFO_RELATIVE_PATH = path.join('JustDo', 'huawei', 'user_info.json');
@@ -66,6 +71,16 @@ This file controls outbound header injection.
 - \`enabled\`: Enables or disables outbound header injection.
 - \`headerNames\`: Header names to read from \`user_info.json\` and inject.
 - \`baseUrlWhitelist\`: Only matching request URLs receive the configured headers.
+
+## headerNames requirements
+
+- Every custom header name must begin with \`X-\`, for example
+  \`X-User-Account\` and \`X-Cookie\`.
+- This prefix is required because requests pass through LiteLLM. LiteLLM
+  forwards these custom \`X-\` headers to the upstream model provider; a custom
+  header without the prefix may be dropped before the provider request is sent.
+- The name in \`headerNames\` must exactly match the corresponding property in
+  \`user_info.json\`.
 
 ## baseUrlWhitelist matching
 
@@ -85,7 +100,7 @@ Example:
 {
   "enabled": true,
   "baseUrlWhitelist": ["https://api.example.com/v1/"],
-  "headerNames": ["User-Account", "Cookie"]
+  "headerNames": ["X-User-Account", "X-Cookie"]
 }
 \`\`\`
 `;

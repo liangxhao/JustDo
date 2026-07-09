@@ -21,6 +21,11 @@ import {
 } from './outboundHeaderProxy';
 
 const temporaryDirectories: string[] = [];
+const HEADER_NAMES = {
+  USER_ACCOUNT: 'X-User-Account',
+  COOKIE: 'X-Cookie',
+} as const;
+const CONFIGURED_HEADER_NAMES = [HEADER_NAMES.USER_ACCOUNT, HEADER_NAMES.COOKIE] as const;
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -62,7 +67,7 @@ test('applies outbound headers only when enabled and the URL is whitelisted', ()
   const config = {
     enabled: true,
     baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: ['User-Account'],
+    headerNames: [HEADER_NAMES.USER_ACCOUNT],
   };
 
   expect(isOutboundHeaderProxyActive(config)).toBe(true);
@@ -79,37 +84,36 @@ test('applies outbound headers only when enabled and the URL is whitelisted', ()
 test('reads configured values from user_info.json', () => {
   const userInfoPath = writeUserInfo(
     JSON.stringify({
-      User-Account: 'user-123',
-      user_Cookie: 'Cookie-value',
+      [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+      [HEADER_NAMES.COOKIE]: 'cookie-value',
       ignored: 'not-a-header',
     }),
   );
 
-  expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['User-Account', 'user_Cookie'])).toEqual({
-    User-Account: 'user-123',
-    user_Cookie: 'Cookie-value',
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath, CONFIGURED_HEADER_NAMES)).toEqual({
+    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+    [HEADER_NAMES.COOKIE]: 'cookie-value',
   });
 });
 
 test('uses empty strings for missing, empty, null, or unsupported values', () => {
   const userInfoPath = writeUserInfo(
     JSON.stringify({
-      User-Account: '',
-      user_Cookie: null,
+      [HEADER_NAMES.USER_ACCOUNT]: '',
+      [HEADER_NAMES.COOKIE]: null,
       object_value: { secret: true },
     }),
   );
 
   expect(
     updateOutboundHeaderUserInfoCache(userInfoPath, [
-      'User-Account',
-      'user_Cookie',
+      ...CONFIGURED_HEADER_NAMES,
       'missing',
       'object_value',
     ]),
   ).toEqual({
-    User-Account: '',
-    user_Cookie: '',
+    [HEADER_NAMES.USER_ACCOUNT]: '',
+    [HEADER_NAMES.COOKIE]: '',
     missing: '',
     object_value: '',
   });
@@ -117,22 +121,24 @@ test('uses empty strings for missing, empty, null, or unsupported values', () =>
 
 test('uses empty values when user_info.json does not exist', () => {
   expect(
-    updateOutboundHeaderUserInfoCache('missing-user-info.json', ['User-Account', 'user_Cookie']),
+    updateOutboundHeaderUserInfoCache('missing-user-info.json', CONFIGURED_HEADER_NAMES),
   ).toEqual({
-    User-Account: '',
-    user_Cookie: '',
+    [HEADER_NAMES.USER_ACCOUNT]: '',
+    [HEADER_NAMES.COOKIE]: '',
   });
 });
 
 test('reuses cached user info until the update function is called', () => {
-  const userInfoPath = writeUserInfo(JSON.stringify({ User-Account: 'first' }));
+  const userInfoPath = writeUserInfo(JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'first' }));
 
-  updateOutboundHeaderUserInfoCache(userInfoPath, ['User-Account']);
-  fs.writeFileSync(userInfoPath, JSON.stringify({ User-Account: 'second' }));
+  updateOutboundHeaderUserInfoCache(userInfoPath, [HEADER_NAMES.USER_ACCOUNT]);
+  fs.writeFileSync(userInfoPath, JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'second' }));
 
-  expect(getOutboundHeaderUserInfo(userInfoPath, ['User-Account'])).toEqual({ User-Account: 'first' });
-  expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['User-Account'])).toEqual({
-    User-Account: 'second',
+  expect(getOutboundHeaderUserInfo(userInfoPath, [HEADER_NAMES.USER_ACCOUNT])).toEqual({
+    [HEADER_NAMES.USER_ACCOUNT]: 'first',
+  });
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath, [HEADER_NAMES.USER_ACCOUNT])).toEqual({
+    [HEADER_NAMES.USER_ACCOUNT]: 'second',
   });
 });
 
@@ -155,16 +161,16 @@ test('reloads the outbound header policy together with user info', () => {
 });
 
 test('adds only configured header values and replaces names case-insensitively', () => {
-  const headers = { User-Account: 'old-value', untouched: 'yes' };
+  const headers = { [HEADER_NAMES.USER_ACCOUNT]: 'old-value', untouched: 'yes' };
 
   applyOutboundHeaders(headers, {
-    User-Account: 'user-123',
-    user_Cookie: 'Cookie-value',
+    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+    [HEADER_NAMES.COOKIE]: 'cookie-value',
   });
 
   expect(headers).toEqual({
-    User-Account: 'user-123',
-    user_Cookie: 'Cookie-value',
+    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+    [HEADER_NAMES.COOKIE]: 'cookie-value',
     untouched: 'yes',
   });
 });
@@ -173,18 +179,26 @@ test('normalizes the static policy and ignores invalid base URLs', () => {
   expect(
     resolveOutboundHeaderProxyConfig({
       enabled: true,
-      headerNames: [' User-Account ', '', 'invalid header', 'bad:header', 'user_Cookie'],
+      headerNames: [
+        ` ${HEADER_NAMES.USER_ACCOUNT} `,
+        '',
+        'invalid header',
+        'bad:header',
+        HEADER_NAMES.COOKIE,
+      ],
       baseUrlWhitelist: ['https://one.example/api/', 'invalid', 'http://two.example/'],
     }),
   ).toEqual({
     enabled: true,
-    headerNames: ['User-Account', 'user_Cookie'],
+    headerNames: CONFIGURED_HEADER_NAMES,
     baseUrlWhitelist: ['https://one.example/api/', 'http://two.example/'],
   });
 });
 
 test('configures common Node, Python, and curl proxy environment variables for active policies', () => {
-  const env: NodeJS.ProcessEnv = {};
+  const env: NodeJS.ProcessEnv = {
+    NO_PROXY: 'internal.example',
+  };
 
   applyOutboundProxyEnv(
     env,
@@ -195,7 +209,7 @@ test('configures common Node, Python, and curl proxy environment variables for a
     {
       enabled: true,
       baseUrlWhitelist: ['https://example.com/api/'],
-      headerNames: ['User-Account'],
+      headerNames: [HEADER_NAMES.USER_ACCOUNT],
     },
   );
 
@@ -207,8 +221,8 @@ test('configures common Node, Python, and curl proxy environment variables for a
     REQUESTS_CA_BUNDLE: '/tmp/ca.pem',
     CURL_CA_BUNDLE: '/tmp/ca.pem',
     SSL_CERT_FILE: '/tmp/ca.pem',
-    NO_PROXY: '',
-    no_proxy: '',
+    NO_PROXY: 'internal.example,localhost,127.0.0.1,::1',
+    no_proxy: 'internal.example,localhost,127.0.0.1,::1',
   });
 });
 
@@ -228,12 +242,12 @@ test('does not configure proxy environment variables when disabled or whitelist 
   applyOutboundProxyEnv(disabledEnv, proxyInfo, {
     enabled: false,
     baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: ['User-Account'],
+    headerNames: [HEADER_NAMES.USER_ACCOUNT],
   });
   applyOutboundProxyEnv(emptyWhitelistEnv, proxyInfo, {
     enabled: true,
     baseUrlWhitelist: [],
-    headerNames: ['User-Account'],
+    headerNames: [HEADER_NAMES.USER_ACCOUNT],
   });
 
   expect(disabledEnv).toEqual({

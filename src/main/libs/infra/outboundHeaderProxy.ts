@@ -13,6 +13,7 @@ import {
   updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
 import {
+  addLoopbackProxyBypass,
   isSystemProxyEnabled,
   resolveSystemProxyUrl,
   restoreOriginalProxyEnv,
@@ -134,12 +135,11 @@ export const applyOutboundProxyEnv = (
   env.REQUESTS_CA_BUNDLE = info.caCertificatePath;
   env.CURL_CA_BUNDLE = info.caCertificatePath;
   env.SSL_CERT_FILE = info.caCertificatePath;
-  // Child processes are routed through the local proxy so header injection can
-  // be applied to whitelisted URLs. Non-whitelisted URLs are transparently
-  // forwarded without injected headers, while upstream system proxy resolution
-  // is still handled by the proxy itself.
-  env.no_proxy = '';
-  env.NO_PROXY = '';
+  // Keep loopback traffic direct so local services such as the OpenClaw Gateway
+  // WebSocket are not routed through the MITM proxy. Other child-process
+  // requests still use the local proxy, which injects headers only for
+  // whitelisted URLs.
+  addLoopbackProxyBypass(env);
 };
 
 export const restoreOutboundProxyEnv = (env: NodeJS.ProcessEnv): void => {
