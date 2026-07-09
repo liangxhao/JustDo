@@ -197,7 +197,41 @@ test('normalizes the static policy and ignores invalid base URLs', () => {
 
 test('configures common Node, Python, and curl proxy environment variables for active policies', () => {
   const env: NodeJS.ProcessEnv = {
-    NO_PROXY: 'internal.example',
+    NO_PROXY: 'internal.example,localhost,127.0.0.1',
+    no_proxy: 'legacy.example,::1',
+  };
+
+  applyOutboundProxyEnv(
+    env,
+    {
+      proxyUrl: 'http://127.0.0.1:1234',
+      caCertificatePath: '/tmp/ca.pem',
+    },
+    {
+      enabled: true,
+      baseUrlWhitelist: ['https://example.com/api/'],
+      headerNames: [HEADER_NAMES.USER_ACCOUNT],
+    },
+    ['127.0.0.1:4321'],
+  );
+
+  expect(env).toMatchObject({
+    HTTP_PROXY: 'http://127.0.0.1:1234',
+    HTTPS_PROXY: 'http://127.0.0.1:1234',
+    NODE_EXTRA_CA_CERTS: '/tmp/ca.pem',
+    NODE_USE_ENV_PROXY: '1',
+    REQUESTS_CA_BUNDLE: '/tmp/ca.pem',
+    CURL_CA_BUNDLE: '/tmp/ca.pem',
+    SSL_CERT_FILE: '/tmp/ca.pem',
+    NO_PROXY: 'internal.example,legacy.example,127.0.0.1:4321',
+    no_proxy: 'internal.example,legacy.example,127.0.0.1:4321',
+  });
+});
+
+test('routes local LiteLLM through the proxy when no explicit bypass entries are provided', () => {
+  const env: NodeJS.ProcessEnv = {
+    NO_PROXY: 'internal.example,localhost,127.0.0.1,::1',
+    no_proxy: '*',
   };
 
   applyOutboundProxyEnv(
@@ -213,17 +247,29 @@ test('configures common Node, Python, and curl proxy environment variables for a
     },
   );
 
-  expect(env).toMatchObject({
-    HTTP_PROXY: 'http://127.0.0.1:1234',
-    HTTPS_PROXY: 'http://127.0.0.1:1234',
-    NODE_EXTRA_CA_CERTS: '/tmp/ca.pem',
-    NODE_USE_ENV_PROXY: '1',
-    REQUESTS_CA_BUNDLE: '/tmp/ca.pem',
-    CURL_CA_BUNDLE: '/tmp/ca.pem',
-    SSL_CERT_FILE: '/tmp/ca.pem',
-    NO_PROXY: 'internal.example,localhost,127.0.0.1,::1',
-    no_proxy: 'internal.example,localhost,127.0.0.1,::1',
-  });
+  expect(env.NO_PROXY).toBe('internal.example');
+  expect(env.no_proxy).toBe('internal.example');
+});
+
+test('replaces a stale Gateway bypass when its port changes', () => {
+  const env: NodeJS.ProcessEnv = {
+    NO_PROXY: 'internal.example,localhost',
+  };
+  const proxyInfo = {
+    proxyUrl: 'http://127.0.0.1:1234',
+    caCertificatePath: '/tmp/ca.pem',
+  };
+  const config = {
+    enabled: true,
+    baseUrlWhitelist: ['http://127.0.0.1:4000/'],
+    headerNames: [HEADER_NAMES.USER_ACCOUNT],
+  };
+
+  applyOutboundProxyEnv(env, proxyInfo, config, ['127.0.0.1:4321']);
+  applyOutboundProxyEnv(env, proxyInfo, config, ['127.0.0.1:4322']);
+
+  expect(env.NO_PROXY).toBe('internal.example,127.0.0.1:4322');
+  expect(env.no_proxy).toBe('internal.example,127.0.0.1:4322');
 });
 
 test('does not configure proxy environment variables when disabled or whitelist is empty', () => {

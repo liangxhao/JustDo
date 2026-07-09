@@ -370,6 +370,13 @@ const bootstrapOpenClawEngine = async (options: { reason?: string } = {}) => {
   }
 
   const manager = getOpenClawEngineManager();
+  manager.setGatewayPortListener((port) => {
+    if (port) {
+      outboundHeaderProxy.setProxyBypassEntries([`127.0.0.1:${port}`]);
+      return;
+    }
+    outboundHeaderProxy.setProxyBypassEntries([]);
+  });
   bindOpenClawStatusForwarder();
 
   const task = async (): Promise<OpenClawEngineStatus> => {

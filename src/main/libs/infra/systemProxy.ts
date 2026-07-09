@@ -20,6 +20,11 @@ const originalProxyEnv: ProxyEnvSnapshot = PROXY_ENV_KEYS.reduce((acc, key) => {
 let systemProxyEnabled = false;
 
 const LOOPBACK_PROXY_BYPASSES = ['localhost', '127.0.0.1', '::1'] as const;
+const OUTBOUND_PROXY_OVERRIDDEN_BYPASSES = new Set([
+  '*',
+  ...LOOPBACK_PROXY_BYPASSES,
+]);
+const outboundProxyBypassBaselines = new WeakMap<NodeJS.ProcessEnv, readonly string[]>();
 
 function setEnvValue(key: ProxyEnvKey, value: string | undefined): void {
   if (typeof value === 'string' && value.length > 0) {
@@ -62,14 +67,39 @@ function parseProxyRule(rule: string): string | null {
   return `http://${hostPort}`;
 }
 
-export function addLoopbackProxyBypass(env: NodeJS.ProcessEnv): void {
+function mergeNoProxyEntries(
+  env: NodeJS.ProcessEnv,
+  extraEntries: readonly string[],
+): void {
   const existingEntries = (env.NO_PROXY || env.no_proxy || '')
     .split(',')
     .map(entry => entry.trim())
     .filter(Boolean);
   const bypassEntries = Array.from(
-    new Set([...existingEntries, ...LOOPBACK_PROXY_BYPASSES]),
+    new Set([...existingEntries, ...extraEntries]),
   ).join(',');
+
+  env.no_proxy = bypassEntries;
+  env.NO_PROXY = bypassEntries;
+}
+
+export function addLoopbackProxyBypass(env: NodeJS.ProcessEnv): void {
+  mergeNoProxyEntries(env, LOOPBACK_PROXY_BYPASSES);
+}
+
+export function configureOutboundProxyBypass(
+  env: NodeJS.ProcessEnv,
+  explicitEntries: readonly string[],
+): void {
+  let baselineEntries = outboundProxyBypassBaselines.get(env);
+  if (!baselineEntries) {
+    baselineEntries = [env.NO_PROXY, env.no_proxy]
+      .flatMap(value => (value || '').split(','))
+      .map(entry => entry.trim())
+      .filter(entry => entry && !OUTBOUND_PROXY_OVERRIDDEN_BYPASSES.has(entry.toLowerCase()));
+    outboundProxyBypassBaselines.set(env, baselineEntries);
+  }
+  const bypassEntries = Array.from(new Set([...baselineEntries, ...explicitEntries])).join(',');
 
   env.no_proxy = bypassEntries;
   env.NO_PROXY = bypassEntries;

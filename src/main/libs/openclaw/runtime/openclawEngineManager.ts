@@ -162,6 +162,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private gatewayPort: number | null = null;
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
   private secretEnvVars: Record<string, string> = {};
+  private gatewayPortListener: ((port: number | null) => void) | null = null;
 
   constructor() {
     super();
@@ -331,6 +332,11 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.startGatewayPromise;
   }
 
+  setGatewayPortListener(listener: ((port: number | null) => void) | null): void {
+    this.gatewayPortListener = listener;
+    listener?.(this.gatewayPort ?? this.readGatewayPort());
+  }
+
   async buildCliEnvironment(): Promise<OpenClawCliEnvironment> {
     const ensured = await this.ensureReady();
     if (ensured.phase !== 'ready' && ensured.phase !== 'running') {
@@ -358,6 +364,10 @@ export class OpenClawEngineManager extends EventEmitter {
         : await this.resolveGatewayPort();
     this.gatewayPort = port;
     this.writeGatewayPort(port);
+    // Update the parent proxy environment before copying it into the Gateway
+    // environment below. Updating it only after the Gateway becomes healthy is
+    // too late: the already-spawned process keeps its original NO_PROXY value.
+    this.gatewayPortListener?.(port);
     this.ensureConfigFile();
 
     const compileCacheDir = path.join(this.stateDir, '.compile-cache');
@@ -583,6 +593,7 @@ export class OpenClawEngineManager extends EventEmitter {
       message: `OpenClaw gateway is running on loopback:${port}.`,
       canRetry: false,
     });
+    this.gatewayPortListener?.(port);
 
     return this.getStatus();
   }
@@ -614,6 +625,7 @@ export class OpenClawEngineManager extends EventEmitter {
         : `Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`,
       canRetry: !runtime.root || !runtime.version,
     });
+    this.gatewayPortListener?.(null);
   }
 
   async restartGateway(): Promise<OpenClawEngineStatus> {

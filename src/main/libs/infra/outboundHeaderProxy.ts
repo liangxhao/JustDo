@@ -13,7 +13,7 @@ import {
   updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
 import {
-  addLoopbackProxyBypass,
+  configureOutboundProxyBypass,
   isSystemProxyEnabled,
   resolveSystemProxyUrl,
   restoreOriginalProxyEnv,
@@ -121,6 +121,7 @@ export const applyOutboundProxyEnv = (
   env: NodeJS.ProcessEnv,
   info: OutboundHeaderProxyInfo,
   config: OutboundHeaderProxyConfig,
+  bypassEntries: readonly string[] = [],
 ): void => {
   if (!isOutboundHeaderProxyActive(config)) {
     return;
@@ -135,11 +136,11 @@ export const applyOutboundProxyEnv = (
   env.REQUESTS_CA_BUNDLE = info.caCertificatePath;
   env.CURL_CA_BUNDLE = info.caCertificatePath;
   env.SSL_CERT_FILE = info.caCertificatePath;
-  // Keep loopback traffic direct so local services such as the OpenClaw Gateway
-  // WebSocket are not routed through the MITM proxy. Other child-process
-  // requests still use the local proxy, which injects headers only for
-  // whitelisted URLs.
-  addLoopbackProxyBypass(env);
+  // Only bypass the specific loopback endpoints that must stay direct.
+  // We intentionally avoid broad loopback bypasses here so local services like
+  // LiteLLM can still be reached through the local MITM proxy and receive
+  // injected headers.
+  configureOutboundProxyBypass(env, bypassEntries);
 };
 
 export const restoreOutboundProxyEnv = (env: NodeJS.ProcessEnv): void => {
@@ -172,6 +173,7 @@ export class OutboundHeaderProxy {
   private upstreamAgent: ProxyAgent | null = null;
   private info: OutboundHeaderProxyInfo | null = null;
   private originalFetch: typeof globalThis.fetch | null = null;
+  private bypassEntries: readonly string[] = [];
   private readonly configuredPolicy: OutboundHeaderProxyConfig | null;
   private readonly userInfoPath: string;
   private readonly resolveUpstreamProxy: (targetUrl: string) => Promise<string | null>;
@@ -196,6 +198,11 @@ export class OutboundHeaderProxy {
 
   private getConfig(): OutboundHeaderProxyConfig {
     return this.configuredPolicy ?? resolveOutboundHeaderProxyConfig();
+  }
+
+  setProxyBypassEntries(entries: readonly string[]): void {
+    this.bypassEntries = entries;
+    this.reapplyProcessEnvironment();
   }
 
   async start(): Promise<OutboundHeaderProxyInfo> {
@@ -269,7 +276,7 @@ export class OutboundHeaderProxy {
       proxyUrl: `http://${LOOPBACK_HOST}:${proxy.httpPort}`,
       caCertificatePath,
     };
-    applyOutboundProxyEnv(process.env, this.info, this.getConfig());
+    applyOutboundProxyEnv(process.env, this.info, this.getConfig(), this.bypassEntries);
     this.registerGlobalFetchInjection();
     this.registerElectronHeaderInjection();
     console.log(`[OutboundHeaderProxy] listening on ${this.info.proxyUrl}`);
@@ -292,7 +299,7 @@ export class OutboundHeaderProxy {
 
   reapplyProcessEnvironment(): void {
     if (this.info) {
-      applyOutboundProxyEnv(process.env, this.info, this.getConfig());
+      applyOutboundProxyEnv(process.env, this.info, this.getConfig(), this.bypassEntries);
     }
   }
 
