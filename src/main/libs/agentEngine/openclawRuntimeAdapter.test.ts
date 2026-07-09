@@ -4,6 +4,7 @@ vi.mock('electron', () => ({
   app: {
     getAppPath: () => process.cwd(),
     getPath: () => process.cwd(),
+    getVersion: () => 'test-version',
   },
   BrowserWindow: {
     getAllWindows: () => [],
@@ -14,6 +15,7 @@ vi.mock('../cowork/coworkLogger', () => ({
   coworkLog: vi.fn(),
 }));
 
+import type { GatewayClientCtor, GatewayClientLike } from './gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 function createEmptyStore() {
@@ -69,6 +71,65 @@ function createEmptyStore() {
     },
   };
 }
+
+test('an intentionally stopped gateway client cannot reclaim the active connection', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const stop = vi.fn();
+  let clientOptions: Record<string, unknown> | null = null;
+
+  class FakeGatewayClient {
+    constructor(options: Record<string, unknown>) {
+      clientOptions = options;
+    }
+
+    start() {}
+
+    stop() {
+      stop();
+    }
+
+    async request() {
+      return {};
+    }
+  }
+
+  const connectionAdapter = adapter as unknown as {
+    createGatewayClient(connection: {
+      url: string;
+      token: string;
+      version: string;
+      clientEntryPath: string;
+    }): Promise<void>;
+    disconnectGatewayClient(): void;
+    gatewayClient: GatewayClientLike | null;
+    pendingGatewayClient: GatewayClientLike | null;
+    loadGatewayClientCtor: ReturnType<typeof vi.fn>;
+  };
+  connectionAdapter.loadGatewayClientCtor = vi
+    .fn()
+    .mockResolvedValue(FakeGatewayClient as unknown as GatewayClientCtor);
+
+  await connectionAdapter.createGatewayClient({
+    url: 'ws://127.0.0.1:12345',
+    token: 'token',
+    version: 'runtime-version',
+    clientEntryPath: 'gateway-client.js',
+  });
+
+  const onHelloOk = clientOptions?.onHelloOk;
+  expect(typeof onHelloOk).toBe('function');
+  (onHelloOk as () => void)();
+  expect(connectionAdapter.gatewayClient).not.toBeNull();
+  expect(connectionAdapter.pendingGatewayClient).toBeNull();
+
+  connectionAdapter.disconnectGatewayClient();
+  expect(connectionAdapter.gatewayClient).toBeNull();
+
+  (onHelloOk as () => void)();
+  expect(connectionAdapter.gatewayClient).toBeNull();
+  expect(stop).toHaveBeenCalledTimes(2);
+});
 
 test('getSessionKeysForSession prefers channel keys before managed fallback', () => {
   const { store } = createEmptyStore();

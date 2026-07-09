@@ -161,6 +161,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly intentionallyStoppedGatewayClients = new WeakSet<object>();
   private gatewayReadyPromise: Promise<void> | null = null;
   private gatewayClientInitLock: Promise<void> | null = null;
+  private gatewayClientGeneration = 0;
   private gatewayStoppingIntentionally = false;
   private gatewayReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private gatewayReconnectAttempt = 0;
@@ -2037,9 +2038,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private async createGatewayClient(connection: OpenClawGatewayConnectionInfo): Promise<void> {
+    const generation = this.gatewayClientGeneration;
     const clientEntryPath = connection.clientEntryPath;
     if (!clientEntryPath) throw new Error('Gateway client entry path is not available');
     const GatewayClient = await this.loadGatewayClientCtor(clientEntryPath);
+    if (generation !== this.gatewayClientGeneration) {
+      throw new Error('Gateway client initialization was superseded');
+    }
 
     let resolveReady: (() => void) | null = null;
     let rejectReady: ((error: Error) => void) | null = null;
@@ -2071,7 +2076,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       role: 'operator',
       scopes: ['operator.admin'],
       onHelloOk: () => {
+        const isExpectedClient =
+          generation === this.gatewayClientGeneration &&
+          this.pendingGatewayClient === client &&
+          !this.intentionallyStoppedGatewayClients.has(client);
+        if (!isExpectedClient) {
+          this.intentionallyStoppedGatewayClients.add(client);
+          client.stop();
+          return;
+        }
         this.gatewayClient = client;
+        this.pendingGatewayClient = null;
         this.gatewayClientVersion = connection.version;
         this.gatewayClientEntryPath = connection.clientEntryPath;
         settleResolve();
@@ -2119,6 +2134,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private stopGatewayClient(): void {
+    this.gatewayClientGeneration++;
     this.gatewayStoppingIntentionally = true;
     this.cancelGatewayReconnect();
     this.stopTickWatchdog();
