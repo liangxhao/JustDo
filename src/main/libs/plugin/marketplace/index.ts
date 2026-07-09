@@ -1,11 +1,11 @@
-import type { OpenClawRuntimeAdapter } from '../../agentEngine/openclawRuntimeAdapter';
+import type { OpenClawSkillService } from '../../openclaw/skills/openclawSkillService';
 import { OpenClawClawHubProvider } from './openClawClawHubProvider';
 import { PluginMarketplaceService } from './pluginMarketplaceService';
 
 export const createPluginMarketplaceService = (
-  resolveOpenClawAdapter: () => OpenClawRuntimeAdapter | null,
+  skillService: OpenClawSkillService,
 ): PluginMarketplaceService =>
-  new PluginMarketplaceService([new OpenClawClawHubProvider(resolveOpenClawAdapter)]);
+  new PluginMarketplaceService([new OpenClawClawHubProvider(skillService)]);
 
 export { PluginMarketplaceService } from './pluginMarketplaceService';
 export type { PluginMarketplaceProvider } from './types';

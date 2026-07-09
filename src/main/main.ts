@@ -87,12 +87,13 @@ import {
   type OpenClawEngineStatus,
 } from './libs/openclaw/runtime/openclawEngineManager';
 import { stopOpenClawTokenProxy } from './libs/openclaw/runtime/openclawTokenProxy';
-import { justDoSlashCommandPolicy } from './libs/slashCommands/slashCommandPolicies';
 import {
   parseManagedSessionKey,
 } from './libs/openclaw/sessions/openclawChannelSessionSync';
 import { OpenClawSkillFiles } from './libs/openclaw/skills/openclawSkillFiles';
+import { OpenClawSkillService } from './libs/openclaw/skills/openclawSkillService';
 import { createPluginMarketplaceService, PluginManager } from './libs/plugin';
+import { justDoSlashCommandPolicy } from './libs/slashCommands/slashCommandPolicies';
 
 const outboundHeaderProxy = new OutboundHeaderProxy();
 
@@ -291,8 +292,9 @@ let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let groupStore: GroupStore | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
+const openClawSkillService = new OpenClawSkillService(() => openClawRuntimeAdapter);
 const pluginManager = new PluginManager(
-  createPluginMarketplaceService(() => openClawRuntimeAdapter),
+  createPluginMarketplaceService(openClawSkillService),
 );
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let openClawSkillFiles: OpenClawSkillFiles | null = null;
@@ -947,7 +949,7 @@ if (!gotTheLock) {
     policies: [justDoSlashCommandPolicy],
   });
   registerSkillHandlers({
-    getRuntimeAdapter: () => openClawRuntimeAdapter,
+    skillService: openClawSkillService,
     getSkillFiles: getOpenClawSkillFiles,
     pluginManager,
   });

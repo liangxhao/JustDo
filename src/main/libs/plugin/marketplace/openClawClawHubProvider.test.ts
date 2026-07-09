@@ -1,12 +1,12 @@
 import { expect, test, vi } from 'vitest';
 
 import { MarketplaceSourceId, PluginKind } from '../../../../shared/pluginMarketplace';
-import type { OpenClawRuntimeAdapter } from '../../agentEngine/openclawRuntimeAdapter';
+import type { OpenClawSkillService } from '../../openclaw/skills/openclawSkillService';
 import { OpenClawClawHubProvider } from './openClawClawHubProvider';
 
-const createAdapter = () =>
+const createSkillService = () =>
   ({
-    requestGateway: vi.fn(async (method: string) => {
+    request: vi.fn(async (method: string) => {
       if (method === 'skills.search') {
         return {
           results: [
@@ -29,12 +29,12 @@ const createAdapter = () =>
         install: { requires: { bins: ['node'], env: ['WRITER_TOKEN'] } },
       };
     }),
-    installSkill: vi.fn(async () => ({ ok: true })),
-  }) as unknown as OpenClawRuntimeAdapter;
+    install: vi.fn(async () => ({ ok: true })),
+  }) as unknown as OpenClawSkillService;
 
 test('maps ClawHub skill search results to the common plugin model', async () => {
-  const adapter = createAdapter();
-  const provider = new OpenClawClawHubProvider(() => adapter);
+  const skillService = createSkillService();
+  const provider = new OpenClawClawHubProvider(skillService);
 
   const results = await provider.search({ kind: PluginKind.SKILL, query: 'writer', limit: 10 });
 
@@ -51,15 +51,15 @@ test('maps ClawHub skill search results to the common plugin model', async () =>
       sourceId: MarketplaceSourceId.DEFAULT,
     },
   ]);
-  expect(adapter.requestGateway).toHaveBeenCalledWith('skills.search', {
+  expect(skillService.request).toHaveBeenCalledWith('skills.search', {
     query: 'writer',
     limit: 10,
   });
 });
 
 test('maps detail requirements and installs through OpenClaw', async () => {
-  const adapter = createAdapter();
-  const provider = new OpenClawClawHubProvider(() => adapter);
+  const skillService = createSkillService();
+  const provider = new OpenClawClawHubProvider(skillService);
 
   const detail = await provider.getDetail({
     sourceId: MarketplaceSourceId.DEFAULT,
@@ -74,7 +74,7 @@ test('maps detail requirements and installs through OpenClaw', async () => {
   });
 
   expect(detail?.requirements).toEqual({ bins: ['node'], env: ['WRITER_TOKEN'] });
-  expect(adapter.installSkill).toHaveBeenCalledWith({
+  expect(skillService.install).toHaveBeenCalledWith({
     source: 'clawhub',
     slug: 'writer',
     version: '1.2.3',

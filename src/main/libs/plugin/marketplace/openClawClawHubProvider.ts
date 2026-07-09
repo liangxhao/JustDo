@@ -7,11 +7,9 @@ import {
   MarketplaceSourceId,
   PluginKind,
 } from '../../../../shared/pluginMarketplace';
-import type { OpenClawRuntimeAdapter } from '../../agentEngine/openclawRuntimeAdapter';
+import type { OpenClawSkillService } from '../../openclaw/skills/openclawSkillService';
 import { ClawHubSkillRpc } from './clawHubSkillRpc';
 import type { PluginMarketplaceProvider } from './types';
-
-export type OpenClawRuntimeAdapterResolver = () => OpenClawRuntimeAdapter | null;
 
 export class OpenClawClawHubProvider implements PluginMarketplaceProvider {
   readonly source = {
@@ -20,7 +18,7 @@ export class OpenClawClawHubProvider implements PluginMarketplaceProvider {
     supportedKinds: [PluginKind.SKILL],
   };
 
-  constructor(private readonly resolveAdapter: OpenClawRuntimeAdapterResolver) {}
+  constructor(private readonly skillService: OpenClawSkillService) {}
 
   async search(query: MarketplaceQuery): Promise<MarketplacePlugin[]> {
     if (query.kind !== PluginKind.SKILL) return [];
@@ -59,7 +57,7 @@ export class OpenClawClawHubProvider implements PluginMarketplaceProvider {
 
   async install(request: MarketplaceInstallRequest): Promise<void> {
     this.requireSkill(request.kind);
-    const result = await this.requireAdapter().installSkill({
+    const result = await this.skillService.install({
       source: 'clawhub',
       slug: request.pluginId,
       version: request.version,
@@ -76,15 +74,7 @@ export class OpenClawClawHubProvider implements PluginMarketplaceProvider {
     }
   }
 
-  private requireAdapter(): OpenClawRuntimeAdapter {
-    const adapter = this.resolveAdapter();
-    if (!adapter) {
-      throw new Error('Gateway not connected');
-    }
-    return adapter;
-  }
-
   private createSkillRpc(): ClawHubSkillRpc {
-    return new ClawHubSkillRpc(this.requireAdapter());
+    return new ClawHubSkillRpc(this.skillService);
   }
 }

@@ -28,7 +28,6 @@ import {
 } from '../openclaw/sessions/openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
 import { SessionRpc } from './gateway/sessionRpc';
-import { SkillRpc } from './gateway/skillRpc';
 import { GatewayTitleGenerator } from './gateway/titleGenerator';
 import type {
   AgentEventPayload,
@@ -197,7 +196,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // Collaborators
   private historyReconciler!: HistoryReconciler;
   private sessionRpc!: SessionRpc;
-  private skillRpc!: SkillRpc;
   private titleGenerator!: GatewayTitleGenerator;
 
   agentTimeoutSeconds = OPENCLAW_AGENT_TIMEOUT_SECONDS;
@@ -246,10 +244,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.sessionRpc = new SessionRpc({
       getGatewayClient: () => this.gatewayClient,
       store: this.store,
-    });
-    this.skillRpc = new SkillRpc({
-      ensureGatewayClientReady: () => this.ensureGatewayClientReady(),
-      requireGatewayClient: () => this.requireGatewayClient(),
     });
   }
 
@@ -2648,7 +2642,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  // ─── Skill RPC Delegates ────────────────────────────────────────────────
+  // ─── Public API ────────────────────────────────────────────────────────
 
   async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string> {
     return this.titleGenerator.generateTitle(userIntent, timeoutMs);
@@ -2668,20 +2662,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return { ok: true };
     }
     return this.sessionRpc.patchModel(sessionId, model, agentId);
-  }
-
-  async getSkillsStatus(agentId?: string): Promise<import('./types').GatewaySkillStatus> {
-    return this.skillRpc.getStatus(agentId);
-  }
-
-  async installSkill(params: unknown): Promise<import('./types').SkillRpcResult> {
-    return this.skillRpc.install(params);
-  }
-
-  async updateSkillConfig(
-    params: import('./types').SkillUpdateParams,
-  ): Promise<import('./types').SkillRpcResult> {
-    return this.skillRpc.updateConfig(params);
   }
 
   async requestGateway<T>(method: string, params?: unknown): Promise<T> {

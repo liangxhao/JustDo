@@ -1,13 +1,13 @@
 import { ipcMain } from 'electron';
 
 import { MarketplaceSourceId, PluginKind } from '../../../shared/pluginMarketplace';
-import type { OpenClawRuntimeAdapter } from '../../libs/agentEngine';
 import type { GatewaySkillEntry } from '../../libs/agentEngine/types';
 import type { OpenClawSkillFiles } from '../../libs/openclaw/skills/openclawSkillFiles';
+import type { OpenClawSkillService } from '../../libs/openclaw/skills/openclawSkillService';
 import type { PluginManager } from '../../libs/plugin';
 
 interface SkillHandlerDependencies {
-  getRuntimeAdapter: () => OpenClawRuntimeAdapter | null;
+  skillService: OpenClawSkillService;
   getSkillFiles: () => OpenClawSkillFiles;
   pluginManager: PluginManager;
 }
@@ -32,17 +32,13 @@ const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
 });
 
 export const registerSkillHandlers = ({
-  getRuntimeAdapter,
+  skillService,
   getSkillFiles,
   pluginManager,
 }: SkillHandlerDependencies): void => {
   ipcMain.handle('skills:list', async () => {
     try {
-      const adapter = getRuntimeAdapter();
-      if (!adapter) {
-        return { success: false, error: 'Gateway not connected', gatewayOffline: true };
-      }
-      const status = await adapter.getSkillsStatus();
+      const status = await skillService.getStatus();
       return {
         success: true,
         skills: status.skills.map(mapGatewaySkill),
@@ -61,18 +57,14 @@ export const registerSkillHandlers = ({
 
   ipcMain.handle('skills:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
     try {
-      const adapter = getRuntimeAdapter();
-      if (!adapter) {
-        return { success: false, error: 'Gateway not connected', gatewayOffline: true };
-      }
-      const result = await adapter.updateSkillConfig({
+      const result = await skillService.updateConfig({
         skillKey: options.id,
         enabled: options.enabled,
       });
       if (!result.ok) {
         return { success: false, error: result.error || 'Failed to update skill' };
       }
-      const status = await adapter.getSkillsStatus();
+      const status = await skillService.getStatus();
       return { success: true, skills: status.skills.map(mapGatewaySkill) };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to update skill';
@@ -200,11 +192,7 @@ export const registerSkillHandlers = ({
   ipcMain.handle('skills:delete', async (_event, id: string) => {
     try {
       getSkillFiles().delete(id);
-      const adapter = getRuntimeAdapter();
-      if (!adapter) {
-        return { success: false, error: 'Gateway not connected', gatewayOffline: true };
-      }
-      const status = await adapter.getSkillsStatus();
+      const status = await skillService.getStatus();
       return { success: true, skills: status.skills.map(mapGatewaySkill) };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';

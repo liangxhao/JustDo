@@ -1,14 +1,14 @@
 import type { ClawHubSkillDetail, ClawHubSkillSearchResult } from './clawHubSkillTypes';
 
 export interface ClawHubSkillGateway {
-  requestGateway<T>(method: string, params?: unknown): Promise<T>;
+  request<T>(method: string, params?: unknown): Promise<T>;
 }
 
 export class ClawHubSkillRpc {
   constructor(private readonly gateway: ClawHubSkillGateway) {}
 
   async search(query?: string, limit?: number): Promise<ClawHubSkillSearchResult[]> {
-    const result = await this.gateway.requestGateway<{ results?: ClawHubSkillSearchResult[] }>(
+    const result = await this.gateway.request<{ results?: ClawHubSkillSearchResult[] }>(
       'skills.search',
       {
         query,
@@ -20,7 +20,7 @@ export class ClawHubSkillRpc {
   }
 
   async getDetail(slug: string): Promise<ClawHubSkillDetail | null> {
-    const result = await this.gateway.requestGateway<ClawHubSkillDetail>('skills.detail', { slug });
+    const result = await this.gateway.request<ClawHubSkillDetail>('skills.detail', { slug });
     console.log('[PluginMarketplace] get ClawHub skill detail: slug=', slug, 'result=', result);
     return result;
   }
