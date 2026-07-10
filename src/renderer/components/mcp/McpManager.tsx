@@ -16,7 +16,6 @@ import Modal from '../common/Modal';
 import ErrorMessage from '../ErrorMessage';
 import ClockIcon from '../icons/ClockIcon';
 import ConnectorIcon from '../icons/ConnectorIcon';
-import InformationCircleIcon from '../icons/InformationCircleIcon';
 import PencilIcon from '../icons/PencilIcon';
 import SearchIcon from '../icons/SearchIcon';
 import TrashIcon from '../icons/TrashIcon';
@@ -77,12 +76,6 @@ const McpManager: React.FC = () => {
     };
   }, [dispatch]);
 
-  const getStdioCommandSummary = (command?: string, args?: string[]): string => {
-    if (!command) return '';
-    if (!args || args.length === 0) return command;
-    return `${command} ${args[args.length - 1]}`;
-  };
-
   const getRegistryEntryForServer = (server: McpServerConfig): McpRegistryEntry | undefined => {
     if (server.registryId) {
       return dynamicRegistry.find(entry => entry.id === server.registryId);
@@ -96,16 +89,30 @@ const McpManager: React.FC = () => {
     );
   };
 
-  const getTransportSummary = useCallback((server: McpServerConfig): string => {
-    if (server.transportType === 'stdio') {
-      const parts = [server.command || ''];
-      if (server.args && server.args.length > 0) {
-        parts.push(server.args[0]);
-        if (server.args.length > 1) parts.push('...');
-      }
-      return parts.join(' ');
-    }
-    return server.url || '';
+  const getMcpJsonConfig = useCallback((server: McpServerConfig): string => {
+    const serverConfig =
+      server.transportType === 'stdio'
+        ? {
+            command: server.command || '',
+            ...(server.args && server.args.length > 0 ? { args: server.args } : {}),
+            ...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
+          }
+        : {
+            url: server.url || '',
+            ...(server.headers && Object.keys(server.headers).length > 0
+              ? { headers: server.headers }
+              : {}),
+          };
+
+    return JSON.stringify(
+      {
+        mcpServers: {
+          [server.name]: serverConfig,
+        },
+      },
+      null,
+      2,
+    );
   }, []);
 
   const getConnectionDetail = (server: McpServerConfig): string => {
@@ -122,8 +129,30 @@ const McpManager: React.FC = () => {
   };
 
   const getInstalledDescription = useCallback((server: McpServerConfig): string => {
-    return getTransportSummary(server);
-  }, [getTransportSummary]);
+    return getMcpJsonConfig(server);
+  }, [getMcpJsonConfig]);
+
+  const getServerStatusLabel = (server: McpServerConfig): string => {
+    const probeResult = probeResults[server.id];
+    if (probeResult) {
+      return probeResult.available
+        ? i18nService.t('mcpProbeStatusAvailable')
+        : i18nService.t('mcpProbeUnavailable');
+    }
+    return server.enabled ? i18nService.t('mcpProbeStatusAvailable') : i18nService.t('disabled');
+  };
+
+  const getServerStatusClass = (server: McpServerConfig): string => {
+    const probeResult = probeResults[server.id];
+    if (probeResult) {
+      return probeResult.available
+        ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+        : 'bg-red-500/10 text-red-600 dark:text-red-400';
+    }
+    return server.enabled
+      ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+      : 'bg-surface-raised text-secondary';
+  };
 
   const filteredInstalled = useMemo(() => {
     const query = searchQuery.toLowerCase();
@@ -452,14 +481,14 @@ const McpManager: React.FC = () => {
                 {i18nService.t('mcpNoInstalledServers')}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-3">
                 {filteredInstalled.map(server => {
                   const registryEntry = getRegistryEntryForServer(server);
                   const installedDescription = getInstalledDescription(server);
                   return (
                     <div
                       key={server.id}
-                      className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
+                      className="flex h-full flex-col rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
                     >
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2 min-w-0">
@@ -471,24 +500,6 @@ const McpManager: React.FC = () => {
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleProbeServer(server)}
-                            disabled={probingServerIds.has(server.id)}
-                            className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-wait"
-                            title={i18nService.t('mcpTestServer')}
-                          >
-                            <ClockIcon className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleProbeServer(server, true)}
-                            disabled={probingServerIds.has(server.id)}
-                            className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-wait"
-                            title={i18nService.t('mcpServerDetails')}
-                          >
-                            <InformationCircleIcon className="h-3.5 w-3.5" />
-                          </button>
                           <button
                             type="button"
                             onClick={() => handleOpenEditForm(server)}
@@ -523,63 +534,49 @@ const McpManager: React.FC = () => {
                       <Tooltip
                         content={installedDescription}
                         position="bottom"
-                        maxWidth="360px"
+                        maxWidth="560px"
                         className="block w-full"
                       >
-                        <p className="text-xs text-secondary line-clamp-2 mb-2">
+                        <pre className="mb-3 max-h-32 overflow-hidden whitespace-pre-wrap break-words rounded-lg bg-surface-raised px-2 py-2 font-mono text-[10px] leading-4 text-secondary">
                           {installedDescription}
-                        </p>
+                        </pre>
                       </Tooltip>
 
-                      <div className="flex items-center gap-2 text-[10px] text-secondary">
-                        <span
-                          className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
-                        >
-                          {server.transportType}
-                        </span>
-                        {server.transportType === 'stdio' && server.command && (
-                          <>
-                            <span>·</span>
-                            <span className="truncate">
-                              {getStdioCommandSummary(server.command, server.args)}
-                            </span>
-                          </>
-                        )}
-                        {(server.transportType === 'sse' || server.transportType === 'http') &&
-                          server.url && (
-                            <>
-                              <span>·</span>
-                              <span className="truncate">{server.url}</span>
-                            </>
-                          )}
-                        {registryEntry?.requiredEnvKeys &&
-                          registryEntry.requiredEnvKeys.length > 0 && (
-                            <>
-                              <span>·</span>
-                              <span className="text-amber-500 dark:text-amber-400">
-                                {registryEntry.requiredEnvKeys.length} key
-                                {registryEntry.requiredEnvKeys.length > 1 ? 's' : ''}
-                              </span>
-                            </>
-                          )}
-                      </div>
-
-                      {probeResults[server.id] && (
-                        <div
-                          className={`mt-2 rounded-lg border px-2 py-1 text-[10px] ${
-                            probeResults[server.id].available
-                              ? 'border-green-200 bg-green-50 text-green-600 dark:border-green-500/20 dark:bg-green-500/10 dark:text-green-400'
-                              : 'border-red-200 bg-red-50 text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400'
-                          }`}
-                        >
-                          {probeResults[server.id].available
-                            ? i18nService
-                                .t('mcpProbeAvailable')
-                                .replace('{latency}', String(probeResults[server.id].latencyMs))
-                                .replace('{tools}', String(probeResults[server.id].tools.length))
-                            : `${i18nService.t('mcpProbeUnavailable')}: ${probeResults[server.id].error || ''}`}
+                      <div className="mt-auto flex items-center justify-between gap-3 text-[10px] text-secondary">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span
+                            className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
+                          >
+                            {server.transportType}
+                          </span>
+                          {registryEntry?.requiredEnvKeys &&
+                            registryEntry.requiredEnvKeys.length > 0 && (
+                              <>
+                                <span>·</span>
+                                <span className="text-amber-500 dark:text-amber-400">
+                                  {registryEntry.requiredEnvKeys.length} key
+                                  {registryEntry.requiredEnvKeys.length > 1 ? 's' : ''}
+                                </span>
+                              </>
+                            )}
+                          <span
+                            title={probeResults[server.id]?.error}
+                            className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${getServerStatusClass(server)}`}
+                          >
+                            {getServerStatusLabel(server)}
+                          </span>
                         </div>
-                      )}
+                        <button
+                          type="button"
+                          onClick={() => handleProbeServer(server, true)}
+                          disabled={probingServerIds.has(server.id)}
+                          className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-wait disabled:opacity-60"
+                          title={i18nService.t('mcpTestServer')}
+                        >
+                          <ClockIcon className="h-3.5 w-3.5" />
+                          <span>{i18nService.t('mcpTestShort')}</span>
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
