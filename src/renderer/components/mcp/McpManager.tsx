@@ -135,6 +135,10 @@ const McpManager: React.FC = () => {
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
   const [probingServerIds, setProbingServerIds] = useState<Set<string>>(() => new Set());
   const [probeResults, setProbeResults] = useState<Record<string, McpProbeResult>>({});
+  const [isBulkProbeOpen, setIsBulkProbeOpen] = useState(false);
+  const [isBulkProbing, setIsBulkProbing] = useState(false);
+  const [bulkProbeServerId, setBulkProbeServerId] = useState<string | null>(null);
+  const [bulkProbeResults, setBulkProbeResults] = useState<Record<string, McpProbeResult>>({});
   const [detailServer, setDetailServer] = useState<McpServerConfig | null>(null);
   const [expandedToolNames, setExpandedToolNames] = useState<Set<string>>(() => new Set());
   const [expandedPromptNames, setExpandedPromptNames] = useState<Set<string>>(() => new Set());
@@ -220,26 +224,24 @@ const McpManager: React.FC = () => {
     return getMcpJsonConfig(server);
   }, [getMcpJsonConfig]);
 
-  const getServerStatusLabel = (server: McpServerConfig): string => {
+  const getServerStatusLabel = (server: McpServerConfig): string | null => {
     const probeResult = probeResults[server.id];
     if (probeResult) {
       return probeResult.available
         ? i18nService.t('mcpProbeStatusAvailable')
         : i18nService.t('mcpProbeUnavailable');
     }
-    return server.enabled ? i18nService.t('mcpProbeStatusAvailable') : i18nService.t('disabled');
+    return null;
   };
 
-  const getServerStatusClass = (server: McpServerConfig): string => {
+  const getServerStatusClass = (server: McpServerConfig): string | null => {
     const probeResult = probeResults[server.id];
     if (probeResult) {
       return probeResult.available
         ? 'bg-green-500/10 text-green-600 dark:text-green-400'
         : 'bg-red-500/10 text-red-600 dark:text-red-400';
     }
-    return server.enabled
-      ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-      : 'bg-surface-raised text-secondary';
+    return null;
   };
 
   const filteredInstalled = useMemo(() => {
@@ -372,6 +374,63 @@ const McpManager: React.FC = () => {
       setResourceContents({});
       setResourceErrors({});
     }
+  };
+
+  const handleOpenBulkProbe = async () => {
+    if (servers.length === 0 || isBulkProbing) return;
+    setActionError('');
+    setIsBulkProbeOpen(true);
+    setIsBulkProbing(true);
+    setBulkProbeResults({});
+
+    const pendingIds = servers.map(server => server.id);
+    setProbingServerIds(current => new Set([...current, ...pendingIds]));
+
+    for (const server of servers) {
+      setBulkProbeServerId(server.id);
+      let normalizedResult: McpProbeResult;
+      try {
+        const result = await mcpService.probeServer(server.id);
+        normalizedResult =
+          result.success && result.result
+            ? normalizeProbeResult(result.result)
+            : {
+                available: false,
+                tools: [],
+                prompts: [],
+                resources: [],
+                latencyMs: 0,
+                error: result.error || i18nService.t('mcpProbeFailed'),
+              };
+      } catch (error) {
+        normalizedResult = {
+          available: false,
+          tools: [],
+          prompts: [],
+          resources: [],
+          latencyMs: 0,
+          error: error instanceof Error ? error.message : i18nService.t('mcpProbeFailed'),
+        };
+      }
+
+      setBulkProbeResults(current => ({
+        ...current,
+        [server.id]: normalizedResult,
+      }));
+      setServerProbing(server.id, false);
+    }
+
+    setBulkProbeServerId(null);
+    setIsBulkProbing(false);
+  };
+
+  const handleCloseBulkProbe = () => {
+    if (isBulkProbing) return;
+    setProbeResults(current => ({
+      ...current,
+      ...bulkProbeResults,
+    }));
+    setIsBulkProbeOpen(false);
   };
 
   const toggleExpandedTool = (toolName: string) => {
@@ -606,13 +665,22 @@ const McpManager: React.FC = () => {
         {/* ── Tab: Installed ──────────────────────────────── */}
         {activeTab === 'installed' && (
           <div className="space-y-3">
-            <div className="flex justify-center">
+            <div className="flex items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={handleOpenCreateForm}
                 className="rounded-lg border border-dashed border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:border-primary hover:text-primary dark:hover:border-primary dark:hover:text-primary"
               >
                 + {i18nService.t('addMcpServer')}
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenBulkProbe}
+                disabled={servers.length === 0 || isBulkProbing}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <ClockIcon className="h-4 w-4" />
+                <span>{i18nService.t('mcpTestAll')}</span>
               </button>
             </div>
             {filteredInstalled.length === 0 ? (
@@ -624,6 +692,8 @@ const McpManager: React.FC = () => {
                 {filteredInstalled.map(server => {
                   const registryEntry = getRegistryEntryForServer(server);
                   const installedDescription = getInstalledDescription(server);
+                  const statusLabel = getServerStatusLabel(server);
+                  const statusClass = getServerStatusClass(server);
                   return (
                     <div
                       key={server.id}
@@ -698,12 +768,14 @@ const McpManager: React.FC = () => {
                                 </span>
                               </>
                             )}
-                          <span
-                            title={probeResults[server.id]?.error}
-                            className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${getServerStatusClass(server)}`}
-                          >
-                            {getServerStatusLabel(server)}
-                          </span>
+                          {statusLabel && statusClass && (
+                            <span
+                              title={probeResults[server.id]?.error}
+                              className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${statusClass}`}
+                            >
+                              {statusLabel}
+                            </span>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -781,6 +853,93 @@ const McpManager: React.FC = () => {
         onClose={handleCloseForm}
         onSave={handleSaveForm}
       />
+
+      {isBulkProbeOpen && (
+        <Modal
+          onClose={handleCloseBulkProbe}
+          closeOnBackdrop={false}
+          overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          className="w-full max-w-2xl max-h-[76vh] mx-4 rounded-2xl bg-surface border border-border shadow-2xl overflow-hidden flex flex-col"
+        >
+          <div className="px-5 py-4 border-b border-border bg-surface-raised/60 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-lg font-semibold leading-6 text-foreground">
+                {i18nService.t('mcpTestAllTitle')}
+              </div>
+              <div className="mt-1 text-xs text-secondary">
+                {i18nService.t('mcpTestAllProgress')
+                  .replace('{done}', String(Object.keys(bulkProbeResults).length))
+                  .replace('{total}', String(servers.length))}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleCloseBulkProbe}
+              disabled={isBulkProbing}
+              className="shrink-0 px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface transition-colors disabled:cursor-wait disabled:opacity-60"
+            >
+              {i18nService.t('close')}
+            </button>
+          </div>
+
+          <div className="overflow-y-auto p-4 space-y-2">
+            {servers.map(server => {
+              const result = bulkProbeResults[server.id];
+              const isRunning = bulkProbeServerId === server.id;
+              const statusText = isRunning
+                ? i18nService.t('mcpTestAllTesting')
+                : result
+                  ? result.available
+                    ? i18nService.t('mcpProbeStatusAvailable')
+                    : i18nService.t('mcpProbeUnavailable')
+                  : i18nService.t('mcpTestAllPending');
+              const statusClass = isRunning
+                ? 'bg-primary/10 text-primary'
+                : result
+                  ? result.available
+                    ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                    : 'bg-red-500/10 text-red-600 dark:text-red-400'
+                  : 'bg-surface-raised text-secondary';
+
+              return (
+                <div
+                  key={server.id}
+                  className="rounded-xl border border-border bg-surface px-3 py-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {server.name}
+                        </span>
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
+                        >
+                          {server.transportType}
+                        </span>
+                      </div>
+                      {result && (
+                        <div className="mt-1 text-[11px] text-secondary">
+                          {result.available
+                            ? i18nService.t('mcpProbeAvailable')
+                                .replace('{latency}', String(result.latencyMs))
+                                .replace('{tools}', String(result.tools.length))
+                            : result.error || i18nService.t('mcpDetailErrorEmpty')}
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${statusClass}`}
+                    >
+                      {statusText}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Modal>
+      )}
 
       {detailServer && getDetailResult() && (
         <Modal
@@ -872,6 +1031,17 @@ const McpManager: React.FC = () => {
                       {getConnectionDetail(detailServer)}
                     </div>
                   </div>
+
+                  {!detail.available && (
+                    <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
+                      <div className="text-[11px] font-medium text-red-600 dark:text-red-400">
+                        {i18nService.t('mcpDetailErrorReason')}
+                      </div>
+                      <div className="mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-5 text-red-700 dark:text-red-300">
+                        {detail.error || i18nService.t('mcpDetailErrorEmpty')}
+                      </div>
+                    </div>
+                  )}
 
                   {detail.instructions && (
                     <div className="rounded-xl border border-border bg-surface p-3">
