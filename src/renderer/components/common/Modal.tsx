@@ -6,6 +6,7 @@ interface ModalProps {
   className?: string;
   overlayClassName?: string;
   onClick?: React.MouseEventHandler<HTMLDivElement>;
+  closeOnBackdrop?: boolean;
   children: React.ReactNode;
   /** Custom style for modal content (e.g., for positioning) */
   style?: React.CSSProperties;
@@ -23,6 +24,7 @@ const Modal: React.FC<ModalProps> = ({
   className,
   overlayClassName,
   onClick,
+  closeOnBackdrop = true,
   children,
   style,
 }) => {
@@ -39,7 +41,7 @@ const Modal: React.FC<ModalProps> = ({
       }}
       onClick={(e) => {
         // Only close if both mousedown and click ended on the backdrop
-        if (e.target === e.currentTarget && mouseDownOnBackdropRef.current) {
+        if (closeOnBackdrop && e.target === e.currentTarget && mouseDownOnBackdropRef.current) {
           mouseDownOnBackdropRef.current = false;
           onClose();
         }

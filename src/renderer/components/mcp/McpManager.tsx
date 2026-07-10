@@ -7,7 +7,10 @@ import { mcpService } from '../../services/mcp';
 import { RootState } from '../../store';
 import { setMcpServers } from '../../store/slices/mcpSlice';
 import {
+  McpProbePrompt,
+  McpProbeResource,
   McpProbeResult,
+  McpProbeTool,
   McpRegistryEntry,
   McpServerConfig,
   McpServerFormData,
@@ -37,6 +40,59 @@ const formatSchema = (schema?: unknown): string => {
   } catch {
     return String(schema);
   }
+};
+
+const hasProperty = (value: unknown, property: string): value is Record<string, unknown> => {
+  return Boolean(value && typeof value === 'object' && property in value);
+};
+
+const normalizeProbeResult = (result: McpProbeResult): McpProbeResult => {
+  const tools: McpProbeTool[] = [];
+  const prompts: McpProbePrompt[] = [];
+  const resources: McpProbeResource[] = [];
+
+  const addTool = (item: McpProbeTool) => {
+    if (!tools.some(tool => tool.name === item.name)) {
+      tools.push(item);
+    }
+  };
+
+  const addPrompt = (item: McpProbePrompt) => {
+    if (!prompts.some(prompt => prompt.name === item.name)) {
+      prompts.push(item);
+    }
+  };
+
+  const addResource = (item: McpProbeResource) => {
+    if (!resources.some(resource => resource.uri === item.uri)) {
+      resources.push(item);
+    }
+  };
+
+  result.tools.forEach(item => {
+    if (hasProperty(item, 'arguments') && !hasProperty(item, 'inputSchema')) {
+      addPrompt(item as McpProbePrompt);
+      return;
+    }
+    addTool(item);
+  });
+
+  result.prompts.forEach(item => {
+    if (hasProperty(item, 'inputSchema') || hasProperty(item, 'outputSchema')) {
+      addTool(item as McpProbeTool);
+      return;
+    }
+    addPrompt(item);
+  });
+
+  result.resources.forEach(addResource);
+
+  return {
+    ...result,
+    tools,
+    prompts,
+    resources,
+  };
 };
 
 const McpManager: React.FC = () => {
@@ -268,9 +324,11 @@ const McpManager: React.FC = () => {
       return;
     }
 
+    const normalizedResult = normalizeProbeResult(result.result);
+
     setProbeResults(current => ({
       ...current,
-      [server.id]: result.result!,
+      [server.id]: normalizedResult,
     }));
 
     if (openDetail) {
@@ -646,6 +704,7 @@ const McpManager: React.FC = () => {
       {detailServer && getDetailResult() && (
         <Modal
           onClose={() => setDetailServer(null)}
+          closeOnBackdrop={false}
           overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
           className="w-full max-w-4xl max-h-[84vh] mx-4 rounded-2xl bg-surface border border-border shadow-2xl overflow-hidden flex flex-col"
         >
@@ -749,7 +808,7 @@ const McpManager: React.FC = () => {
                   <div className="rounded-xl border border-border bg-surface p-3">
                     <div className="flex items-center justify-between mb-3">
                       <div className="text-sm font-medium text-foreground">
-                        {i18nService.t('mcpDetailTools')}
+                        Tools
                       </div>
                       <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-secondary">
                         {detail.tools.length}
@@ -838,37 +897,11 @@ const McpManager: React.FC = () => {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="space-y-4">
                     <div className="rounded-xl border border-border bg-surface p-3">
                       <div className="flex items-center justify-between mb-3">
                         <div className="text-sm font-medium text-foreground">
-                          {i18nService.t('mcpDetailResources')}
-                        </div>
-                        <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-secondary">
-                          {detail.resources.length}
-                        </span>
-                      </div>
-                      {detail.resources.length === 0 ? (
-                        <div className="text-xs text-secondary">
-                          {i18nService.t('mcpDetailEmpty')}
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {detail.resources.map(resource => (
-                            <div key={resource.uri} className="rounded-lg bg-surface-raised px-3 py-2">
-                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
-                                {formatSchema(resource)}
-                              </pre>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="rounded-xl border border-border bg-surface p-3">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="text-sm font-medium text-foreground">
-                          {i18nService.t('mcpDetailPrompts')}
+                          Prompts
                         </div>
                         <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-secondary">
                           {detail.prompts.length}
@@ -914,7 +947,7 @@ const McpManager: React.FC = () => {
                                   </div>
                                 </button>
                                 {isExpanded && (
-                                  <div className="border-t border-border p-3 space-y-2">
+                                  <div className="border-t border-border p-3">
                                     <div className="rounded-lg border border-border bg-surface p-2">
                                       <div className="text-[11px] font-medium text-foreground">
                                         {i18nService.t('mcpDetailArguments')}
@@ -929,19 +962,37 @@ const McpManager: React.FC = () => {
                                         </div>
                                       )}
                                     </div>
-                                    <div className="rounded-lg border border-border bg-surface p-2">
-                                      <div className="text-[11px] font-medium text-foreground">
-                                        {i18nService.t('mcpDetailMetadata')}
-                                      </div>
-                                      <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
-                                        {formatSchema(prompt)}
-                                      </pre>
-                                    </div>
                                   </div>
                                 )}
                               </div>
                             );
                           })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-border bg-surface p-3">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="text-sm font-medium text-foreground">
+                          Resources
+                        </div>
+                        <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-secondary">
+                          {detail.resources.length}
+                        </span>
+                      </div>
+                      {detail.resources.length === 0 ? (
+                        <div className="text-xs text-secondary">
+                          {i18nService.t('mcpDetailEmpty')}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {detail.resources.map(resource => (
+                            <div key={resource.uri} className="rounded-lg bg-surface-raised px-3 py-2">
+                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
+                                {formatSchema(resource)}
+                              </pre>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
