@@ -89,17 +89,6 @@ export interface Agent {
   updatedAt: number;
 }
 
-export interface CreateAgentRequest {
-  id?: string;
-  name: string;
-  description?: string;
-  systemPrompt?: string;
-  identity?: string;
-  model?: string;
-  icon?: string;
-  skillIds?: string[];
-}
-
 export interface UpdateAgentRequest {
   name?: string;
   description?: string;
@@ -1048,7 +1037,7 @@ export class CoworkStore {
     }));
   }
 
-  // ========== Agent CRUD ==========
+  // ========== Agent state ==========
 
   listAgents(): Agent[] {
     interface AgentRow {
@@ -1092,46 +1081,6 @@ export class CoworkStore {
     const row = this.getOne<AgentRow>(`SELECT * FROM agents WHERE id = ?`, [id]);
     if (!row) return null;
     return this.mapAgentRow(row);
-  }
-
-  createAgent(request: CreateAgentRequest): Agent {
-    const id =
-      request.id ||
-      request.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '') ||
-      uuidv4();
-    const now = Date.now();
-
-    // Ensure no duplicate ID
-    const existing = this.getAgent(id);
-    if (existing) {
-      // Append timestamp to make unique
-      return this.createAgent({ ...request, id: `${id}-${Date.now()}` });
-    }
-
-    this.db
-      .prepare(
-        `
-      INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
-    `,
-      )
-      .run(
-        id,
-        request.name,
-        request.description || '',
-        request.systemPrompt || '',
-        request.identity || '',
-        request.model || '',
-        request.icon || '',
-        JSON.stringify(request.skillIds || []),
-        now,
-        now,
-      );
-
-    return this.getAgent(id)!;
   }
 
   backfillEmptyAgentModels(modelId: string): number {
@@ -1189,12 +1138,6 @@ export class CoworkStore {
     values.push(id);
     this.db.prepare(`UPDATE agents SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
     return this.getAgent(id);
-  }
-
-  deleteAgent(id: string): boolean {
-    if (id === 'main') return false; // Cannot delete default agent
-    this.db.prepare('DELETE FROM agents WHERE id = ? AND is_default = 0').run(id);
-    return true;
   }
 
   private mapAgentRow(row: {

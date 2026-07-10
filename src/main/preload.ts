@@ -172,43 +172,6 @@ contextBridge.exposeInMainWorld('electron', {
       const result = await ipcRenderer.invoke('agents:list');
       return result?.success ? result.agents : [];
     },
-    get: async (id: string) => {
-      const result = await ipcRenderer.invoke('agents:get', id);
-      return result?.success ? result.agent : null;
-    },
-    create: async (request: {
-      id?: string;
-      name: string;
-      description?: string;
-      systemPrompt?: string;
-      identity?: string;
-      model?: string;
-      icon?: string;
-      skillIds?: string[];
-    }) => {
-      const result = await ipcRenderer.invoke('agents:create', request);
-      return result?.success ? result.agent : null;
-    },
-    update: async (
-      id: string,
-      updates: {
-        name?: string;
-        description?: string;
-        systemPrompt?: string;
-        identity?: string;
-        model?: string;
-        icon?: string;
-        skillIds?: string[];
-        enabled?: boolean;
-      },
-    ) => {
-      const result = await ipcRenderer.invoke('agents:update', id, updates);
-      return result?.success ? result.agent : null;
-    },
-    delete: async (id: string) => {
-      const result = await ipcRenderer.invoke('agents:delete', id);
-      return result?.success ? result.deleted : false;
-    },
   },
   cowork: {
     // Session management

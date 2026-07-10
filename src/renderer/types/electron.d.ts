@@ -337,31 +337,6 @@ interface IElectronAPI {
   };
   agents: {
     list: () => Promise<Agent[]>;
-    get: (id: string) => Promise<Agent | null>;
-    create: (request: {
-      id?: string;
-      name: string;
-      description?: string;
-      systemPrompt?: string;
-      identity?: string;
-      model?: string;
-      icon?: string;
-      skillIds?: string[];
-    }) => Promise<Agent>;
-    update: (
-      id: string,
-      updates: {
-        name?: string;
-        description?: string;
-        systemPrompt?: string;
-        identity?: string;
-        model?: string;
-        icon?: string;
-        skillIds?: string[];
-        enabled?: boolean;
-      },
-    ) => Promise<Agent>;
-    delete: (id: string) => Promise<void>;
   };
   api: {
     fetch: (options: {

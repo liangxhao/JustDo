@@ -665,8 +665,6 @@ if (!gotTheLock) {
 
   registerAgentHandlers({
     getStore: getCoworkStore,
-    resolveDefaultModelRef: resolveDefaultAgentModelRef,
-    syncConfig: reason => syncOpenClawConfig({ reason }),
   });
 
   registerCoworkPermissionHandlers({

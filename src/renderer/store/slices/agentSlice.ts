@@ -31,16 +31,8 @@ const agentSlice = createSlice({
       state.agents = action.payload;
     },
 
-    setCurrentAgentId(state, action: PayloadAction<string>) {
-      state.currentAgentId = action.payload;
-    },
-
     setLoading(state, action: PayloadAction<boolean>) {
       state.loading = action.payload;
-    },
-
-    addAgent(state, action: PayloadAction<AgentSummary>) {
-      state.agents.push(action.payload);
     },
 
     updateAgent(state, action: PayloadAction<{ id: string; updates: Partial<AgentSummary> }>) {
@@ -50,22 +42,13 @@ const agentSlice = createSlice({
       }
     },
 
-    removeAgent(state, action: PayloadAction<string>) {
-      state.agents = state.agents.filter((a) => a.id !== action.payload);
-      if (state.currentAgentId === action.payload) {
-        state.currentAgentId = 'main';
-      }
-    },
   },
 });
 
 export const {
   setAgents,
-  setCurrentAgentId,
   setLoading,
-  addAgent,
   updateAgent,
-  removeAgent,
 } = agentSlice.actions;
 
 export default agentSlice.reducer;

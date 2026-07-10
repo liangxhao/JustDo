@@ -6,9 +6,8 @@ import {
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { PlusIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import { useDispatch } from 'react-redux';
 
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
 import {
@@ -19,14 +18,10 @@ import {
   isBuiltinModelsProvider,
   isCustomProvider,
 } from '../config';
-import { agentService } from '../services/agent';
 import { configService } from '../services/config';
 import { i18nService, LanguageType } from '../services/i18n';
 import { themeService } from '../services/theme';
-import { RootState } from '../store';
 import { setAvailableModels } from '../store/slices/modelSlice';
-import AgentCreateModal from './agent/AgentCreateModal';
-import AgentSettingsPanel from './agent/AgentSettingsPanel';
 import Modal from './common/Modal';
 import ErrorMessage from './ErrorMessage';
 import ModelSettingsTab from './settings/ModelSettingsTab';
@@ -36,11 +31,9 @@ import ShortcutsSettings, {
 } from './settings/ShortcutsSettings';
 import ThemedSelect from './ui/ThemedSelect';
 
-type TabType = 'general' | 'model' | 'myAgents' | 'im' | 'shortcuts' | 'help';
+type TabType = 'general' | 'model' | 'im' | 'shortcuts' | 'help';
 
-const isSettingsTabEnabled = (tab: TabType): boolean => tab !== 'myAgents';
-const getEnabledSettingsTab = (tab?: TabType): TabType =>
-  tab && isSettingsTabEnabled(tab) ? tab : 'general';
+const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
 export type SettingsOpenOptions = {
   initialTab?: TabType;
@@ -158,89 +151,6 @@ const getNextCustomProviderKey = (providers: ProvidersConfig): string => {
   }
   return `custom_${index}`;
 };
-
-/* ── My Agents Settings Component ─────────────────────────── */
-
-const MyAgentsSettings: React.FC = () => {
-  const agents = useSelector((state: RootState) => state.agent.agents);
-  const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
-
-  useEffect(() => {
-    agentService.loadAgents();
-  }, []);
-
-  const enabledAgents = agents.filter(a => a.enabled && a.id !== 'main');
-  const customAgents = enabledAgents;
-
-  return (
-    <div className="space-y-6">
-      {/* Subtitle */}
-      <p className="text-sm text-secondary">{i18nService.t('agentsSubtitle')}</p>
-
-      {/* Custom Agents Section */}
-      <div className="space-y-3">
-        <h4 className="text-sm font-medium text-foreground">{i18nService.t('myCustomAgents')}</h4>
-        <div className="grid grid-cols-2 gap-3">
-          {customAgents.map(agent => (
-            <AgentCard
-              key={agent.id}
-              icon={agent.icon}
-              name={agent.name}
-              description={agent.description}
-              isActive={agent.id === currentAgentId}
-              onClick={() => setSettingsAgentId(agent.id)}
-            />
-          ))}
-          {/* Create new agent card */}
-          <button
-            type="button"
-            onClick={() => setIsCreateOpen(true)}
-            className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed border-border hover:border-primary hover:bg-primary/5 transition-colors min-h-[120px] cursor-pointer"
-          >
-            <div className="w-8 h-8 rounded-full flex items-center justify-center bg-primary/10">
-              <PlusIcon className="h-4 w-4 text-primary" />
-            </div>
-            <span className="text-sm font-medium text-primary">
-              {i18nService.t('createNewAgent')}
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {/* Modals */}
-      <AgentCreateModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
-      <AgentSettingsPanel agentId={settingsAgentId} onClose={() => setSettingsAgentId(null)} />
-    </div>
-  );
-};
-
-/* ── Agent Card (installed) ─────────────────────────── */
-
-const AgentCard: React.FC<{
-  icon: string;
-  name: string;
-  description: string;
-  isActive: boolean;
-  onClick: () => void;
-}> = ({ icon, name, description, isActive, onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={`flex flex-col items-start gap-1.5 p-3 rounded-xl border-2 text-left transition-all min-h-[120px] hover:shadow-md hover:bg-surface-raised ${
-      isActive ? 'border-primary bg-primary/5' : 'border-border'
-    }`}
-  >
-    <span className="text-2xl">{icon || '🤖'}</span>
-    <div className="min-w-0 w-full">
-      <div className="text-sm font-semibold text-foreground truncate">{name}</div>
-      {description && (
-        <div className="text-xs text-secondary mt-0.5 line-clamp-2">{description}</div>
-      )}
-    </div>
-  </button>
-);
 
 const Settings: React.FC<SettingsProps> = ({
   onClose,
@@ -1243,93 +1153,83 @@ const Settings: React.FC<SettingsProps> = ({
   };
 
   // 渲染标签页
-  const sidebarTabs: { key: TabType; label: string; icon: React.ReactNode }[] = useMemo(() => {
-    const allTabs = [
-      {
-        key: 'general' as TabType,
-        label: i18nService.t('general'),
-        icon: <Cog6ToothIcon className="h-5 w-5" />,
-      },
-      {
-        key: 'model' as TabType,
-        label: i18nService.t('model'),
-        icon: <CubeIcon className="h-5 w-5" />,
-      },
-      {
-        key: 'myAgents' as TabType,
-        label: i18nService.t('myAgents'),
-        icon: <UserGroupIcon className="h-5 w-5" />,
-      },
-      {
-        key: 'im' as TabType,
-        label: i18nService.t('imBot'),
-        icon: (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="h-5 w-5"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-            />
-          </svg>
-        ),
-      },
-      {
-        key: 'shortcuts' as TabType,
-        label: i18nService.t('shortcuts'),
-        icon: (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="h-5 w-5"
-          >
-            <rect x="2" y="4" width="20" height="14" rx="2" />
-            <line x1="6" y1="8" x2="8" y2="8" />
-            <line x1="10" y1="8" x2="12" y2="8" />
-            <line x1="14" y1="8" x2="16" y2="8" />
-            <line x1="6" y1="12" x2="8" y2="12" />
-            <line x1="10" y1="12" x2="14" y2="12" />
-            <line x1="16" y1="12" x2="18" y2="12" />
-            <line x1="8" y1="15.5" x2="16" y2="15.5" />
-          </svg>
-        ),
-      },
-      {
-        key: 'help' as TabType,
-        label: i18nService.t('help'),
-        icon: (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="h-5 w-5"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
-            />
-          </svg>
-        ),
-      },
-    ];
-    return allTabs.filter(tab => isSettingsTabEnabled(tab.key));
-  }, [language]);
+  const sidebarTabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
+    {
+      key: 'general',
+      label: i18nService.t('general'),
+      icon: <Cog6ToothIcon className="h-5 w-5" />,
+    },
+    {
+      key: 'model',
+      label: i18nService.t('model'),
+      icon: <CubeIcon className="h-5 w-5" />,
+    },
+    {
+      key: 'im',
+      label: i18nService.t('imBot'),
+      icon: (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.5}
+          stroke="currentColor"
+          className="h-5 w-5"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+          />
+        </svg>
+      ),
+    },
+    {
+      key: 'shortcuts',
+      label: i18nService.t('shortcuts'),
+      icon: (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.5}
+          stroke="currentColor"
+          className="h-5 w-5"
+        >
+          <rect x="2" y="4" width="20" height="14" rx="2" />
+          <line x1="6" y1="8" x2="8" y2="8" />
+          <line x1="10" y1="8" x2="12" y2="8" />
+          <line x1="14" y1="8" x2="16" y2="8" />
+          <line x1="6" y1="12" x2="8" y2="12" />
+          <line x1="10" y1="12" x2="14" y2="12" />
+          <line x1="16" y1="12" x2="18" y2="12" />
+          <line x1="8" y1="15.5" x2="16" y2="15.5" />
+        </svg>
+      ),
+    },
+    {
+      key: 'help',
+      label: i18nService.t('help'),
+      icon: (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.5}
+          stroke="currentColor"
+          className="h-5 w-5"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
+          />
+        </svg>
+      ),
+    },
+  ];
 
-  const activeTabLabel = useMemo(() => {
-    return sidebarTabs.find(t => t.key === activeTab)?.label ?? '';
-  }, [activeTab, sidebarTabs]);
+  const activeTabLabel = sidebarTabs.find(t => t.key === activeTab)?.label ?? '';
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -1806,9 +1706,6 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'shortcuts':
         return <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />;
-
-      case 'myAgents':
-        return <MyAgentsSettings />;
 
       case 'im':
         return (
