@@ -11,6 +11,7 @@ import {
   McpProbeResource,
   McpProbeResult,
   McpProbeTool,
+  McpReadResourceResult,
   McpRegistryEntry,
   McpServerConfig,
   McpServerFormData,
@@ -40,6 +41,31 @@ const formatSchema = (schema?: unknown): string => {
   } catch {
     return String(schema);
   }
+};
+
+const formatResourceContent = (content: McpReadResourceResult): string => {
+  const displayContents = content.contents.map(item => {
+    if (typeof item.text === 'string') {
+      const trimmedText = item.text.trim();
+      if (item.mimeType?.includes('json')) {
+        try {
+          return JSON.parse(trimmedText);
+        } catch {
+          return item.text;
+        }
+      }
+      return item.text;
+    }
+    if (typeof item.blob === 'string') {
+      return {
+        mimeType: item.mimeType,
+        blob: item.blob,
+      };
+    }
+    return item;
+  });
+
+  return JSON.stringify(displayContents, null, 2);
 };
 
 const hasProperty = (value: unknown, property: string): value is Record<string, unknown> => {
@@ -112,6 +138,12 @@ const McpManager: React.FC = () => {
   const [detailServer, setDetailServer] = useState<McpServerConfig | null>(null);
   const [expandedToolNames, setExpandedToolNames] = useState<Set<string>>(() => new Set());
   const [expandedPromptNames, setExpandedPromptNames] = useState<Set<string>>(() => new Set());
+  const [expandedResourceUris, setExpandedResourceUris] = useState<Set<string>>(() => new Set());
+  const [readingResourceUris, setReadingResourceUris] = useState<Set<string>>(() => new Set());
+  const [resourceContents, setResourceContents] = useState<Record<string, McpReadResourceResult>>(
+    {},
+  );
+  const [resourceErrors, setResourceErrors] = useState<Record<string, string>>({});
   // Using local registry only (no remote marketplace)
   const dynamicRegistry = mcpRegistry;
   const [bridgeSyncing, setBridgeSyncing] = useState(false);
@@ -335,6 +367,10 @@ const McpManager: React.FC = () => {
       setDetailServer(server);
       setExpandedToolNames(new Set());
       setExpandedPromptNames(new Set());
+      setExpandedResourceUris(new Set());
+      setReadingResourceUris(new Set());
+      setResourceContents({});
+      setResourceErrors({});
     }
   };
 
@@ -360,6 +396,51 @@ const McpManager: React.FC = () => {
       }
       return next;
     });
+  };
+
+  const handleReadResource = async (resourceUri: string) => {
+    if (!detailServer || readingResourceUris.has(resourceUri)) return;
+    setExpandedResourceUris(current => new Set(current).add(resourceUri));
+    setReadingResourceUris(current => new Set(current).add(resourceUri));
+    setResourceErrors(current => {
+      const next = { ...current };
+      delete next[resourceUri];
+      return next;
+    });
+
+    const result = await mcpService.readResource(detailServer.id, resourceUri);
+
+    setReadingResourceUris(current => {
+      const next = new Set(current);
+      next.delete(resourceUri);
+      return next;
+    });
+
+    const readResult = result.result;
+    if (!result.success || !readResult) {
+      setResourceErrors(current => ({
+        ...current,
+        [resourceUri]: result.error || 'Failed to read MCP resource',
+      }));
+      return;
+    }
+
+    setResourceContents(current => ({
+      ...current,
+      [resourceUri]: readResult,
+    }));
+  };
+
+  const handleToggleResource = (resourceUri: string, isExpanded: boolean) => {
+    if (isExpanded) {
+      setExpandedResourceUris(current => {
+        const next = new Set(current);
+        next.delete(resourceUri);
+        return next;
+      });
+      return;
+    }
+    void handleReadResource(resourceUri);
   };
 
   const getDetailResult = (): McpProbeResult | null => {
@@ -986,13 +1067,85 @@ const McpManager: React.FC = () => {
                         </div>
                       ) : (
                         <div className="space-y-2">
-                          {detail.resources.map(resource => (
-                            <div key={resource.uri} className="rounded-lg bg-surface-raised px-3 py-2">
-                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
-                                {formatSchema(resource)}
-                              </pre>
-                            </div>
-                          ))}
+                          {detail.resources.map(resource => {
+                            const isExpanded = expandedResourceUris.has(resource.uri);
+                            const isReading = readingResourceUris.has(resource.uri);
+                            const content = resourceContents[resource.uri];
+                            const error = resourceErrors[resource.uri];
+                            return (
+                              <div
+                                key={resource.uri}
+                                className="rounded-lg bg-surface-raised overflow-hidden"
+                              >
+                                <div className="px-3 py-2.5">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                        <span className="text-xs font-semibold text-foreground break-all">
+                                          {resource.title || resource.name || resource.uri}
+                                        </span>
+                                        {resource.mimeType && (
+                                          <span className="rounded bg-background px-1.5 py-0.5 text-[10px] text-secondary">
+                                            {resource.mimeType}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="mt-1 text-[11px] font-mono text-secondary break-all">
+                                        {resource.uri}
+                                      </div>
+                                      {resource.description && (
+                                        <div className="mt-1 text-xs text-secondary whitespace-pre-wrap">
+                                          {resource.description}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleToggleResource(resource.uri, isExpanded)
+                                        }
+                                        disabled={isReading}
+                                        className="rounded-lg border border-border px-2 py-1 text-[11px] text-secondary transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        {isReading ? 'Reading...' : isExpanded ? 'Hide' : 'Show'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                                {isExpanded && (
+                                  <div className="border-t border-border p-3 space-y-2">
+                                    <div className="rounded-lg border border-border bg-surface p-2">
+                                      <div className="text-[11px] font-medium text-foreground">
+                                        Metadata
+                                      </div>
+                                      <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
+                                        {formatSchema(resource)}
+                                      </pre>
+                                    </div>
+                                    <div className="rounded-lg border border-border bg-surface p-2">
+                                      <div className="text-[11px] font-medium text-foreground">
+                                        Content
+                                      </div>
+                                      {isReading ? (
+                                        <div className="mt-2 text-xs text-secondary">Reading...</div>
+                                      ) : error ? (
+                                        <div className="mt-2 text-xs text-red-500">{error}</div>
+                                      ) : content ? (
+                                        <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-2 py-2 text-[10px] leading-4 text-secondary">
+                                          {formatResourceContent(content)}
+                                        </pre>
+                                      ) : (
+                                        <div className="mt-2 text-xs text-secondary">
+                                          Content has not been loaded.
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>

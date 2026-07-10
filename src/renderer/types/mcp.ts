@@ -89,3 +89,15 @@ export interface McpProbeResult {
   latencyMs: number;
   error?: string;
 }
+
+export interface McpResourceContent {
+  uri?: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+  [key: string]: unknown;
+}
+
+export interface McpReadResourceResult {
+  contents: McpResourceContent[];
+}

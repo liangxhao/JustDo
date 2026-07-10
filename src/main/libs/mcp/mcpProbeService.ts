@@ -31,6 +31,18 @@ export interface McpProbeResource {
   [key: string]: unknown;
 }
 
+export interface McpResourceContent {
+  uri?: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+  [key: string]: unknown;
+}
+
+export interface McpReadResourceResult {
+  contents: McpResourceContent[];
+}
+
 export interface McpProbePrompt {
   name: string;
   title?: string;
@@ -231,6 +243,32 @@ export const probeMcpServer = async (server: McpServerRecord): Promise<McpProbeR
       prompts: [],
       latencyMs: Date.now() - startedAt,
       error: toErrorMessage(error),
+    };
+  } finally {
+    try {
+      await transport?.close();
+    } catch (error) {
+      console.warn('[McpProbe] transport close failed:', toErrorMessage(error));
+    }
+  }
+};
+
+export const readMcpResource = async (
+  server: McpServerRecord,
+  uri: string,
+): Promise<McpReadResourceResult> => {
+  let transport: Transport | null = null;
+  const client = new Client({ name: 'justdo-mcp-resource-reader', version: '1.0.0' });
+
+  try {
+    transport = createTransport(server);
+    await withTimeout(client.connect(transport), MCP_PROBE_TIMEOUT_MS, 'MCP connection');
+    const result = await client.readResource(
+      { uri },
+      { timeout: MCP_PROBE_REQUEST_TIMEOUT_MS },
+    );
+    return {
+      contents: result.contents.map(content => ({ ...content })),
     };
   } finally {
     try {

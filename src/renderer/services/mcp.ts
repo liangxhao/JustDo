@@ -1,4 +1,9 @@
-import { McpProbeResult, McpServerConfig, McpServerFormData } from '../types/mcp';
+import {
+  McpProbeResult,
+  McpReadResourceResult,
+  McpServerConfig,
+  McpServerFormData,
+} from '../types/mcp';
 
 class McpService {
   private servers: McpServerConfig[] = [];
@@ -120,6 +125,19 @@ class McpService {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to probe MCP server';
       console.error('Failed to probe MCP server:', error);
+      return { success: false, error: message };
+    }
+  }
+
+  async readResource(
+    id: string,
+    uri: string,
+  ): Promise<{ success: boolean; result?: McpReadResourceResult; error?: string }> {
+    try {
+      return await window.electron.mcp.readResource({ id, uri });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to read MCP resource';
+      console.error('Failed to read MCP resource:', error);
       return { success: false, error: message };
     }
   }

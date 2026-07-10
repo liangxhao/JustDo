@@ -1,7 +1,12 @@
 import type Database from 'better-sqlite3';
 
 import { McpConfigSyncService } from './mcpConfigSyncService';
-import { McpProbeResult, probeMcpServer } from './mcpProbeService';
+import {
+  McpProbeResult,
+  McpReadResourceResult,
+  probeMcpServer,
+  readMcpResource,
+} from './mcpProbeService';
 import { McpStore } from './mcpStore';
 
 type McpServicesDeps = {
@@ -45,6 +50,14 @@ export class McpServices {
       };
     }
     return probeMcpServer(server);
+  }
+
+  async readResource(id: string, uri: string): Promise<McpReadResourceResult> {
+    const server = this.getStore().getServer(id);
+    if (!server) {
+      throw new Error('MCP server not found');
+    }
+    return readMcpResource(server, uri);
   }
 
   private getConfigSyncService(): McpConfigSyncService {

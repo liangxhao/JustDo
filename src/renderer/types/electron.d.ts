@@ -252,6 +252,16 @@ interface McpProbeResultIPC {
   error?: string;
 }
 
+interface McpReadResourceResultIPC {
+  contents: Array<{
+    uri?: string;
+    mimeType?: string;
+    text?: string;
+    blob?: string;
+    [key: string]: unknown;
+  }>;
+}
+
 import type { Agent } from './agent';
 
 interface IElectronAPI {
@@ -332,6 +342,10 @@ interface IElectronAPI {
     probe: (
       id: string,
     ) => Promise<{ success: boolean; result?: McpProbeResultIPC; error?: string }>;
+    readResource: (options: {
+      id: string;
+      uri: string;
+    }) => Promise<{ success: boolean; result?: McpReadResourceResultIPC; error?: string }>;
     onConfigSyncStart: (callback: () => void) => () => void;
     onConfigSyncDone: (callback: (data: { tools: number; error?: string }) => void) => () => void;
   };

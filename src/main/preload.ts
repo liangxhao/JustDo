@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('mcp:setEnabled', options),
     syncConfig: () => ipcRenderer.invoke('mcp:syncConfig'),
     probe: (id: string) => ipcRenderer.invoke('mcp:probe', id),
+    readResource: (options: { id: string; uri: string }) =>
+      ipcRenderer.invoke('mcp:readResource', options),
     onConfigSyncStart: (callback: () => void) => {
       const handler = () => callback();
       ipcRenderer.on('mcp:config:syncStart', handler);

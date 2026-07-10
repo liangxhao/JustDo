@@ -474,6 +474,10 @@ const probeMcpServer = (id: string) => {
   return getMcpServices().probeServer(id);
 };
 
+const readMcpResource = (id: string, uri: string) => {
+  return getMcpServices().readResource(id, uri);
+};
+
 // 获取正确的预加载脚本路径
 const PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'preload.js')
@@ -640,6 +644,7 @@ if (!gotTheLock) {
     getStore: getMcpStore,
     syncConfig: syncMcpConfig,
     probeServer: probeMcpServer,
+    readResource: readMcpResource,
   });
   registerCoworkSessionExecutionHandlers({
     ensureEngineRunning: ensureOpenClawRunningForCowork,

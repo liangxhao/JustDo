@@ -1,12 +1,13 @@
 import { ipcMain } from 'electron';
 
-import type { McpProbeResult } from '../../libs/mcp/mcpProbeService';
+import type { McpProbeResult, McpReadResourceResult } from '../../libs/mcp/mcpProbeService';
 import type { McpServerFormData, McpStore } from '../../libs/mcp/mcpStore';
 
 interface McpHandlerDependencies {
   getStore: () => McpStore;
   syncConfig: () => Promise<{ tools: number; error?: string }>;
   probeServer: (id: string) => Promise<McpProbeResult>;
+  readResource: (id: string, uri: string) => Promise<McpReadResourceResult>;
 }
 
 const syncMcpConfigInBackground = (
@@ -21,6 +22,7 @@ export const registerMcpHandlers = ({
   getStore,
   syncConfig,
   probeServer,
+  readResource,
 }: McpHandlerDependencies): void => {
   ipcMain.handle('mcp:list', () => {
     try {
@@ -110,6 +112,18 @@ export const registerMcpHandlers = ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to probe MCP server',
+      };
+    }
+  });
+
+  ipcMain.handle('mcp:readResource', async (_event, options: { id: string; uri: string }) => {
+    try {
+      const result = await readResource(options.id, options.uri);
+      return { success: true, result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read MCP resource',
       };
     }
   });
