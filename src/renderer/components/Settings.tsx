@@ -58,6 +58,8 @@ type ProviderConnectionTestResult = {
   modelLabel?: string;
   modelId?: string;
   log?: string;
+  isRunning?: boolean;
+  modelResults?: ModelConnectionTestResult[];
 };
 
 type ModelConnectionTestResult = {
@@ -66,6 +68,7 @@ type ModelConnectionTestResult = {
   modelId: string;
   detail: string;
   log?: string;
+  status?: 'pending' | 'testing' | 'success' | 'failed';
 };
 
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'builtin_models';
@@ -81,6 +84,13 @@ const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
 };
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
 
+const waitForNextPaint = () =>
+  new Promise<void>(resolve => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+
 const hideBuiltinModelUrlFromLog = (log?: string): string | undefined => {
   if (!log) {
     return log;
@@ -91,6 +101,13 @@ const hideBuiltinModelUrlFromLog = (log?: string): string | undefined => {
     .join('\n');
 };
 
+const hideBuiltinModelUrlFromResult = (
+  result: ModelConnectionTestResult,
+): ModelConnectionTestResult => ({
+  ...result,
+  log: hideBuiltinModelUrlFromLog(result.log),
+});
+
 const stringifyConnectivityLogValue = (value: unknown): string => {
   if (typeof value === 'string') {
     return value;
@@ -100,6 +117,58 @@ const stringifyConnectivityLogValue = (value: unknown): string => {
   } catch {
     return String(value);
   }
+};
+
+const toConnectivityRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+const getConnectivityErrorMessage = (data: unknown): string | null => {
+  const record = toConnectivityRecord(data);
+  if (!record) {
+    return typeof data === 'string' && data.trim() ? data : null;
+  }
+
+  const error = toConnectivityRecord(record.error);
+  if (typeof error?.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+
+  if (typeof record.message === 'string' && record.message.trim()) {
+    return record.message;
+  }
+
+  return null;
+};
+
+const isValidConnectivityResponse = (data: unknown): boolean => {
+  const record = toConnectivityRecord(data);
+  if (!record || record.error) {
+    return false;
+  }
+
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  return choices.some(choice => {
+    const choiceRecord = toConnectivityRecord(choice);
+    if (!choiceRecord) {
+      return false;
+    }
+
+    const message = toConnectivityRecord(choiceRecord.message);
+    const delta = toConnectivityRecord(choiceRecord.delta);
+    const hasContent =
+      (typeof message?.content === 'string' && message.content.length > 0) ||
+      (typeof message?.reasoning_content === 'string' && message.reasoning_content.length > 0) ||
+      (typeof delta?.content === 'string' && delta.content.length > 0) ||
+      (typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0) ||
+      (typeof choiceRecord.text === 'string' && choiceRecord.text.length > 0);
+    const hasToolCalls =
+      Array.isArray(message?.tool_calls) ||
+      Array.isArray(delta?.tool_calls) ||
+      typeof message?.function_call === 'object';
+    const reachedTokenLimit = choiceRecord.finish_reason === 'length';
+
+    return hasContent || hasToolCalls || reachedTokenLimit;
+  });
 };
 
 const getDefaultProviders = (): ProvidersConfig => {
@@ -990,10 +1059,35 @@ const Settings: React.FC<SettingsProps> = ({
       ...result,
       baseUrl: shouldHideUrl ? undefined : result.baseUrl,
       log: shouldHideUrl ? hideBuiltinModelUrlFromLog(result.log) : result.log,
+      modelResults: shouldHideUrl
+        ? result.modelResults?.map(hideBuiltinModelUrlFromResult)
+        : result.modelResults,
       provider,
       providerName: getProviderDisplayName(provider, providerConfig),
     });
     setIsTestResultModalOpen(true);
+  };
+
+  const updateConnectionTestModelResult = (
+    modelId: string,
+    nextResult: ModelConnectionTestResult,
+  ) => {
+    setTestResult(current => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        modelResults: current.modelResults?.map(result =>
+          result.modelId === modelId
+            ? current.provider === 'builtin_models'
+              ? hideBuiltinModelUrlFromResult(nextResult)
+              : nextResult
+            : result,
+        ),
+      };
+    });
   };
 
   // 测试 API 连接
@@ -1001,7 +1095,6 @@ const Settings: React.FC<SettingsProps> = ({
     const testingProvider = activeProvider;
     const providerConfig = providers[testingProvider];
     setIsTesting(true);
-    setIsTestResultModalOpen(false);
     setTestResult(null);
 
     // Check if provider has valid authentication
@@ -1034,9 +1127,35 @@ const Settings: React.FC<SettingsProps> = ({
         headers.Authorization = `Bearer ${effectiveApiKey}`;
       }
 
+      showTestResultModal(
+        {
+          success: false,
+          isRunning: true,
+          message: i18nService.t('testing'),
+          baseUrl: normalizedBaseUrl,
+          modelResults: modelsToTest.map(model => ({
+            success: false,
+            status: 'pending',
+            modelLabel: model.name?.trim() || model.id,
+            modelId: model.id,
+            detail: i18nService.t('connectionTestPending'),
+          })),
+        },
+        testingProvider,
+      );
+
       const results: ModelConnectionTestResult[] = [];
       for (const model of modelsToTest) {
         const modelLabel = model.name?.trim() || model.id;
+        updateConnectionTestModelResult(model.id, {
+          success: false,
+          status: 'testing',
+          modelLabel,
+          modelId: model.id,
+          detail: i18nService.t('connectionTestRunning'),
+        });
+        await waitForNextPaint();
+
         const requestBody: Record<string, unknown> = {
           model: model.id,
           messages: [{ role: 'user', content: 'Hi' }],
@@ -1050,27 +1169,33 @@ const Settings: React.FC<SettingsProps> = ({
             headers,
             body: JSON.stringify(requestBody),
           });
-          if (response.ok) {
-            results.push({
+          const data = response.data || {};
+          if (response.ok && isValidConnectivityResponse(data)) {
+            const nextResult: ModelConnectionTestResult = {
               success: true,
+              status: 'success',
               modelLabel,
               modelId: model.id,
               detail: i18nService.t('connectionSuccess'),
-            });
+            };
+            results.push(nextResult);
+            updateConnectionTestModelResult(model.id, nextResult);
             continue;
           }
 
-          const data = response.data || {};
           const errorMessage =
-            data.error?.message ||
-            data.message ||
-            `${i18nService.t('connectionFailed')}: ${response.status}`;
+            getConnectivityErrorMessage(data) ||
+            (response.ok
+              ? i18nService.t('connectionInvalidResponse')
+              : `${i18nService.t('connectionFailed')}: ${response.status}`);
           const recovered =
+            !response.ok &&
             typeof errorMessage === 'string' &&
             errorMessage.toLowerCase().includes('model output limit was reached');
 
-          results.push({
+          const nextResult: ModelConnectionTestResult = {
             success: recovered,
+            status: recovered ? 'success' : 'failed',
             modelLabel,
             modelId: model.id,
             detail: recovered ? i18nService.t('connectionSuccess') : errorMessage,
@@ -1080,10 +1205,13 @@ const Settings: React.FC<SettingsProps> = ({
               `${i18nService.t('testStatus')}: ${response.status}`,
               `${i18nService.t('testResponse')}: ${stringifyConnectivityLogValue(data)}`,
             ].join('\n'),
-          });
+          };
+          results.push(nextResult);
+          updateConnectionTestModelResult(model.id, nextResult);
         } catch (err) {
-          results.push({
+          const nextResult: ModelConnectionTestResult = {
             success: false,
+            status: 'failed',
             modelLabel,
             modelId: model.id,
             detail: err instanceof Error ? err.message : i18nService.t('connectionFailed'),
@@ -1094,7 +1222,9 @@ const Settings: React.FC<SettingsProps> = ({
                 err instanceof Error ? err.stack || err.message : stringifyConnectivityLogValue(err)
               }`,
             ].join('\n'),
-          });
+          };
+          results.push(nextResult);
+          updateConnectionTestModelResult(model.id, nextResult);
         }
       }
 
@@ -1111,6 +1241,8 @@ const Settings: React.FC<SettingsProps> = ({
             .replace('{passed}', String(passedCount))
             .replace('{total}', String(results.length))}${allPassed ? `\n${i18nService.t('connectionSuccess')}` : ''}`,
           baseUrl: normalizedBaseUrl,
+          isRunning: false,
+          modelResults: results,
           log: results
             .map(result =>
               [
@@ -1921,18 +2053,33 @@ const Settings: React.FC<SettingsProps> = ({
                 </button>
               </div>
 
-              <div
-                className={`mb-3 inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${testResult.success ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300' : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'}`}
-              >
-                {testResult.success ? (
-                  <CheckCircleIcon className="h-4 w-4 flex-none" />
-                ) : (
-                  <XCircleIcon className="h-4 w-4 flex-none" />
-                )}
-                <span className="whitespace-nowrap">
-                  {testResult.success
-                    ? i18nService.t('connectionSuccess')
-                    : i18nService.t('connectionFailed')}
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <div
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${
+                    testResult.isRunning
+                      ? 'bg-surface-raised text-secondary'
+                      : testResult.success
+                        ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300'
+                        : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'
+                  }`}
+                >
+                  {testResult.isRunning ? (
+                    <ArrowPathIcon className="h-4 w-4 flex-none animate-spin" />
+                  ) : testResult.success ? (
+                    <CheckCircleIcon className="h-4 w-4 flex-none" />
+                  ) : (
+                    <XCircleIcon className="h-4 w-4 flex-none" />
+                  )}
+                  <span className="whitespace-nowrap">
+                    {testResult.isRunning
+                      ? i18nService.t('testing')
+                      : testResult.success
+                        ? i18nService.t('connectionSuccess')
+                        : i18nService.t('connectionFailed')}
+                  </span>
+                </div>
+                <span className="rounded-full border border-border bg-surface px-2 py-1 text-xs font-medium text-secondary">
+                  stream=false
                 </span>
               </div>
 
@@ -1961,7 +2108,75 @@ const Settings: React.FC<SettingsProps> = ({
                 {testResult.message}
               </p>
 
-              {testResult.log && (
+              {testResult.modelResults && testResult.modelResults.length > 0 && (
+                <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface">
+                  {testResult.modelResults.map(modelResult => {
+                    const status = modelResult.status ?? (modelResult.success ? 'success' : 'failed');
+                    const isPending = status === 'pending';
+                    const isRunningModel = status === 'testing';
+                    const isPassed = status === 'success';
+                    return (
+                      <div
+                        key={modelResult.modelId}
+                        className="border-b border-border px-3 py-2 last:border-b-0"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          {isRunningModel ? (
+                            <ArrowPathIcon className="h-4 w-4 flex-none animate-spin text-secondary" />
+                          ) : isPassed ? (
+                            <CheckCircleIcon className="h-4 w-4 flex-none text-green-500" />
+                          ) : isPending ? (
+                            <span className="h-4 w-4 flex-none rounded-full border border-border" />
+                          ) : (
+                            <XCircleIcon className="h-4 w-4 flex-none text-red-500" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-medium text-foreground">
+                              {modelResult.modelLabel}
+                            </div>
+                            <div className="truncate text-[11px] text-secondary">
+                              {modelResult.modelId}
+                            </div>
+                          </div>
+                          <span
+                            className={`flex-none text-[11px] ${
+                              isRunningModel || isPending
+                                ? 'text-secondary'
+                                : isPassed
+                                  ? 'text-green-600 dark:text-green-300'
+                                  : 'text-red-600 dark:text-red-300'
+                            }`}
+                          >
+                            {isPending
+                              ? i18nService.t('connectionTestPending')
+                              : isRunningModel
+                                ? i18nService.t('connectionTestRunning')
+                                : isPassed
+                                  ? i18nService.t('connectionSuccess')
+                                  : i18nService.t('connectionFailed')}
+                          </span>
+                        </div>
+                        {!isPending && !isRunningModel && !isPassed && (
+                          <div className="mt-2 space-y-2 pl-6">
+                            {modelResult.detail && (
+                              <p className="whitespace-pre-wrap break-words text-[11px] leading-5 text-red-600 dark:text-red-300">
+                                {modelResult.detail}
+                              </p>
+                            )}
+                            {modelResult.log && (
+                              <pre className="max-h-32 overflow-y-auto rounded-lg border border-border bg-background px-2 py-1.5 text-[11px] leading-5 text-secondary whitespace-pre-wrap break-words">
+                                {modelResult.log}
+                              </pre>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {testResult.log && !testResult.modelResults?.length && (
                 <pre className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-border bg-surface px-3 py-2 text-[11px] leading-5 text-secondary whitespace-pre-wrap break-words">
                   {testResult.log}
                 </pre>
