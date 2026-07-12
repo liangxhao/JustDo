@@ -316,16 +316,25 @@ test('loads older history pages from the OpenClaw REST cursor API', async () => 
     'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=1000&cursor=2',
     expect.anything(),
   );
-  expect(controller.state.chatMessages.map(message => (message as { content?: unknown }).content))
-    .toEqual(['older', 'recent 1', 'recent 2']);
+  expect(
+    controller.state.chatMessages.map(message => (message as { content?: unknown }).content),
+  ).toEqual(['older', 'recent 1', 'recent 2']);
 });
 
-test('skips paged REST history for Electron loopback gateway sessions', async () => {
+test('loads paged REST history for Electron loopback gateway sessions', async () => {
   vi.stubGlobal('window', { electron: {} });
   const request = vi.fn().mockResolvedValueOnce({
     messages: [{ role: 'assistant', content: 'rpc fallback' }],
   });
-  const fetchMock = vi.fn();
+  const fetchMock = vi.fn().mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        messages: [{ role: 'assistant', content: 'rest history' }],
+        hasMore: false,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ),
+  );
   vi.stubGlobal('fetch', fetchMock);
 
   const controller = new ChatController();
@@ -337,10 +346,59 @@ test('skips paged REST history for Electron loopback gateway sessions', async ()
 
   await controller.loadHistory();
 
-  expect(fetchMock).not.toHaveBeenCalled();
+  expect(fetchMock).toHaveBeenCalledWith(
+    'http://127.0.0.1:42871/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=1000',
+    expect.anything(),
+  );
   expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ role: 'assistant', content: 'rpc fallback' }),
+    expect.objectContaining({ role: 'assistant', content: 'rest history' }),
   ]);
+});
+
+test('preserves the just-finished terminal message when refreshed history has not caught up', async () => {
+  const userMessage = {
+    role: 'user',
+    content: 'please inspect the repo',
+    timestamp: 1000,
+  };
+  const terminalMessage = {
+    role: 'assistant',
+    content: 'The repo inspection is complete.',
+    timestamp: 2000,
+    __justdoOptimisticHistoryTail: true,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [userMessage],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [userMessage, terminalMessage];
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([userMessage, terminalMessage]);
+});
+
+test('does not preserve ordinary cached messages when refreshed history is empty', async () => {
+  const staleMessage = {
+    role: 'assistant',
+    content: 'old cached history',
+    timestamp: 1000,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [staleMessage];
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([]);
 });
 
 test('hydrates OpenClaw transcript MediaPaths as image blocks', async () => {

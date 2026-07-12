@@ -79,6 +79,7 @@ const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a r
 const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s.*)?$/i;
 const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
 const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const LOCAL_OPTIMISTIC_MESSAGE_FLAG = '__justdoOptimisticHistoryTail';
 const DEBUG_CHAT_CONTROLLER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
 
@@ -86,30 +87,6 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_CHAT_CONTROLLER) {
     console.debug(...args);
   }
-}
-
-function isElectronRenderer(): boolean {
-  if (typeof window === 'undefined') return false;
-  return Boolean((window as unknown as Record<string, unknown>).electron);
-}
-
-function isLoopbackHttpBase(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return (
-      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
-      (parsed.hostname === '127.0.0.1' ||
-        parsed.hostname === 'localhost' ||
-        parsed.hostname === '::1' ||
-        parsed.hostname === '[::1]')
-    );
-  } catch {
-    return false;
-  }
-}
-
-function shouldSkipPagedGatewayRestHistory(gatewayHttpBase: string): boolean {
-  return isElectronRenderer() && isLoopbackHttpBase(gatewayHttpBase);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -355,10 +332,7 @@ export class ChatController {
 
   /** Set an optimistic user message shown until the next loadHistory.
    *  Also marks chatSending=true so session.message events are deferred. */
-  setPendingUserMessage(
-    text: string,
-    attachments: CoworkAttachmentPayload[] = [],
-  ): void {
+  setPendingUserMessage(text: string, attachments: CoworkAttachmentPayload[] = []): void {
     debugLog('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
     const attachmentBlocks = toAttachmentContentBlocks(attachments);
     this.state.pendingUserMessage = {
@@ -433,8 +407,7 @@ export class ChatController {
     }
 
     const last = this.state.chatThinkingMessages[this.state.chatThinkingMessages.length - 1] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const lastContent = Array.isArray(last?.content) ? last.content : [];
     const lastThinking = lastContent
       .map(item => (item as Record<string, unknown>).thinking)
@@ -834,10 +807,6 @@ export class ChatController {
       return null;
     }
 
-    if (shouldSkipPagedGatewayRestHistory(this.gatewayHttpBase)) {
-      return null;
-    }
-
     const headers = new Headers({ Accept: 'application/json' });
     if (this.gatewayToken) {
       headers.set('Authorization', `Bearer ${this.gatewayToken}`);
@@ -887,6 +856,7 @@ export class ChatController {
       return;
     }
     this.historyLoadsInFlight.add(sessionKey);
+    const previousMessages = this.state.chatMessages;
     debugLog('[ChatCtrl] loadHistory START:', sessionKey, {
       chatSending: this.state.chatSending,
       pendingUserMsg: !!this.state.pendingUserMessage,
@@ -931,9 +901,18 @@ export class ChatController {
         sessionKey,
         messagesWithCompactionDetails,
       );
-      const messages = hydratedMessages.map(message =>
+      let messages = hydratedMessages.map(message =>
         normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
       );
+      messages = preserveOptimisticTailMessages(messages, previousMessages);
+      const lateOptimisticTail = collectLateOptimisticTailMessages(
+        previousMessages,
+        this.state.chatMessages,
+        messages,
+      );
+      if (lateOptimisticTail.length > 0) {
+        messages = [...messages, ...lateOptimisticTail];
+      }
 
       // Guard: if the gateway returned no messages but we already have
       // materialized content from lifecycle:finishing, don't overwrite it.
@@ -1130,9 +1109,9 @@ export class ChatController {
       ...this._snap(),
     });
     if (willAppend) {
-      const terminalMessage = liveThinkingText
-        ? withThinkingContent(message, liveThinkingText)
-        : message;
+      const terminalMessage = markOptimisticHistoryTail(
+        liveThinkingText ? withThinkingContent(message, liveThinkingText) : message,
+      );
       this.state.chatMessages = appendTerminalMessage(this.state.chatMessages, terminalMessage);
       this.state.chatStreamSegments = [];
     }
@@ -1504,10 +1483,7 @@ export class ChatController {
 
   // ─── Send Message ─────────────────────────────────────────────────────
 
-  async sendMessage(
-    message: string,
-    attachments: CoworkAttachmentPayload[] = [],
-  ): Promise<void> {
+  async sendMessage(message: string, attachments: CoworkAttachmentPayload[] = []): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
     if (this.state.chatSending) return;
@@ -1938,6 +1914,143 @@ function appendTerminalMessage(messages: unknown[], terminal: unknown): unknown[
 
   result.push(terminal);
   return result;
+}
+
+function markOptimisticHistoryTail(message: unknown): unknown {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    return message;
+  }
+  return {
+    ...(message as Record<string, unknown>),
+    [LOCAL_OPTIMISTIC_MESSAGE_FLAG]: true,
+  };
+}
+
+function isLocallyOptimisticHistoryTail(message: unknown): boolean {
+  return Boolean(
+    message &&
+    typeof message === 'object' &&
+    !Array.isArray(message) &&
+    (message as Record<string, unknown>)[LOCAL_OPTIMISTIC_MESSAGE_FLAG] === true,
+  );
+}
+
+function messageTimestampMs(message: unknown): number | null {
+  if (!message || typeof message !== 'object') return null;
+  const record = message as { timestamp?: unknown; ts?: unknown };
+  if (typeof record.timestamp === 'number' && Number.isFinite(record.timestamp)) {
+    return record.timestamp;
+  }
+  if (typeof record.ts === 'number' && Number.isFinite(record.ts)) {
+    return record.ts;
+  }
+  return null;
+}
+
+function messageDisplaySignature(message: unknown): string | null {
+  if (!message || typeof message !== 'object') return null;
+  const record = message as Record<string, unknown>;
+  const role = typeof record.role === 'string' ? record.role : '';
+  if (!role) return null;
+  const text = extractSnapshotText(message);
+  if (typeof text === 'string' && text.trim()) {
+    return `${role}:text:${text.trim()}`;
+  }
+  try {
+    return `${role}:content:${JSON.stringify(record.content ?? record.text ?? null)}`;
+  } catch {
+    return null;
+  }
+}
+
+function historyHasSameOrNewerDisplayMessage(
+  historyMessages: unknown[],
+  signature: string,
+  message: unknown,
+): boolean {
+  const timestamp = messageTimestampMs(message);
+  if (timestamp == null) return false;
+  return historyMessages.some(historyMessage => {
+    if (messageDisplaySignature(historyMessage) !== signature) return false;
+    const historyTimestamp = messageTimestampMs(historyMessage);
+    return historyTimestamp != null && historyTimestamp >= timestamp;
+  });
+}
+
+function isOptimisticTailMessage(message: unknown): boolean {
+  return (
+    isLocallyOptimisticHistoryTail(message) &&
+    Boolean(messageDisplaySignature(message)) &&
+    !shouldHideMessage(message)
+  );
+}
+
+function preserveOptimisticTailMessages(
+  historyMessages: unknown[],
+  previousMessages: unknown[],
+): unknown[] {
+  if (previousMessages.length === 0) return historyMessages;
+  if (historyMessages.length === 0) {
+    const optimisticMessages = previousMessages.filter(isOptimisticTailMessage);
+    return optimisticMessages.length === previousMessages.length
+      ? previousMessages
+      : historyMessages;
+  }
+
+  const historySignatureIndexes = new Map<string, number>();
+  historyMessages.forEach((message, index) => {
+    const signature = messageDisplaySignature(message);
+    if (signature) historySignatureIndexes.set(signature, index);
+  });
+
+  let sharedPreviousIndex = -1;
+  let sharedHistoryIndex = -1;
+  for (let index = previousMessages.length - 1; index >= 0; index--) {
+    const signature = messageDisplaySignature(previousMessages[index]);
+    const historyIndex = signature ? historySignatureIndexes.get(signature) : undefined;
+    if (typeof historyIndex === 'number') {
+      sharedPreviousIndex = index;
+      sharedHistoryIndex = historyIndex;
+      break;
+    }
+  }
+
+  if (sharedPreviousIndex < 0 || sharedHistoryIndex < historyMessages.length - 1) {
+    return historyMessages;
+  }
+
+  const optimisticTail: unknown[] = [];
+  for (const message of previousMessages.slice(sharedPreviousIndex + 1)) {
+    if (!isOptimisticTailMessage(message)) return historyMessages;
+    const signature = messageDisplaySignature(message);
+    if (!signature || historySignatureIndexes.has(signature)) return historyMessages;
+    optimisticTail.push(message);
+  }
+  return optimisticTail.length > 0 ? [...historyMessages, ...optimisticTail] : historyMessages;
+}
+
+function collectLateOptimisticTailMessages(
+  previousMessages: unknown[],
+  currentMessages: unknown[],
+  historyMessages: unknown[],
+): unknown[] {
+  if (currentMessages === previousMessages || currentMessages.length <= previousMessages.length) {
+    return [];
+  }
+  if (previousMessages.some((message, index) => currentMessages[index] !== message)) {
+    return [];
+  }
+  const lateTail: unknown[] = [];
+  for (const message of currentMessages.slice(previousMessages.length)) {
+    if (!isOptimisticTailMessage(message)) return [];
+    const signature = messageDisplaySignature(message);
+    if (!signature) return [];
+    if (historyHasSameOrNewerDisplayMessage(historyMessages, signature, message)) {
+      continue;
+    }
+    lateTail.push(message);
+  }
+  return lateTail;
 }
 
 function stringifyToolOutput(value: unknown): string | null {

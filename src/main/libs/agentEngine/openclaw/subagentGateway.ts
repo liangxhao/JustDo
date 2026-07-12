@@ -142,8 +142,9 @@ const listPersistedSessions = async (
 
 /**
  * Invokes OpenClaw's structured `subagents` tool through the public Gateway API.
- * The session projection only supplements completed runs older than the tool's
- * 24-hour maximum recent window.
+ * The session projection supplements completed runs older than the tool's
+ * 24-hour maximum recent window. Lightweight runtime polling can opt out of the
+ * structured tool to avoid touching the parent session's tool-loop counters.
  */
 export const listGatewaySubagents = async (options: {
   client: GatewayClientLike;

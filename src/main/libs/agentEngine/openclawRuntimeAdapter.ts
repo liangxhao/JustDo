@@ -1747,6 +1747,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         });
       }
       if (turn.assistantMessageId) {
+        this.persistStreamingAssistantSnapshot(sessionId, turn.assistantMessageId, turn.chatStream);
         this.clearPendingMessageUpdate(turn.assistantMessageId);
         this.lastMessageUpdateEmitTime.delete(turn.assistantMessageId);
       }
@@ -1914,6 +1915,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // ─── MessageUpdate Throttle ─────────────────────────────────────────────
 
   private throttledEmitMessageUpdate(sessionId: string, messageId: string, content: string): void {
+    this.persistStreamingAssistantSnapshot(sessionId, messageId, content);
+
     const now = Date.now();
     const lastEmit = this.lastMessageUpdateEmitTime.get(messageId) ?? 0;
     const elapsed = now - lastEmit;
@@ -1934,6 +1937,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.emit('messageUpdate', sessionId, messageId, content);
       }, MESSAGE_UPDATE_THROTTLE_MS - elapsed),
     );
+  }
+
+  private persistStreamingAssistantSnapshot(
+    sessionId: string,
+    messageId: string,
+    content: string,
+  ): void {
+    if (!content) return;
+    this.store.updateMessage(sessionId, messageId, { content });
   }
 
   private clearPendingMessageUpdate(messageId: string): void {

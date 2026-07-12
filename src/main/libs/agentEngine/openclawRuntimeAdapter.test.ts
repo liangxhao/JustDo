@@ -794,6 +794,53 @@ test('agent assistant stream wins over duplicate chat deltas for active run', ()
   expect(updates.at(-1)?.content).toBe(finalSnapshot);
 });
 
+test('throttled assistant stream updates are persisted before renderer reloads', () => {
+  vi.useFakeTimers();
+  const { session, store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const updates: Array<{ messageId: string; content: string }> = [];
+  adapter.on('messageUpdate', (_sessionId, messageId, content) => {
+    updates.push({ messageId, content });
+  });
+
+  const sessionKey = 'agent:main:justdo:session-1';
+  const runId = 'run-1';
+  adapter.rememberSessionKey('session-1', sessionKey);
+  adapter.ensureActiveTurn('session-1', sessionKey, runId);
+
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: 'first chunk' },
+    },
+  });
+  const firstMessageId = session.messages[0].id as string;
+  (
+    adapter as unknown as {
+      lastMessageUpdateEmitTime: Map<string, number>;
+    }
+  ).lastMessageUpdateEmitTime.set(firstMessageId, Date.now());
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: 'first chunk plus more' },
+    },
+  });
+
+  expect(updates).toHaveLength(0);
+  expect(session.messages).toHaveLength(1);
+  expect(session.messages[0].content).toBe('first chunk plus more');
+
+  vi.runOnlyPendingTimers();
+  vi.useRealTimers();
+});
+
 test('chat delta without run id is ignored while a turn is active', () => {
   const session = {
     id: 'session-1',
