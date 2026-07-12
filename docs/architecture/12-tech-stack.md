@@ -22,7 +22,7 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **OpenClaw Gateway** | v2026.6.9 | 单一 Agent 引擎（预构建 npm 包） |
+| **OpenClaw Gateway** | v2026.6.11 | 单一 Agent 引擎（预构建 npm 包） |
 
 > **注意**：`@anthropic-ai/claude-agent-sdk` 已弃用并移除。JustDo 仅使用 OpenClaw Gateway 作为唯一 Agent 引擎，不维护任何双引擎架构。
 
@@ -325,7 +325,7 @@ npm run openclaw:prune                  # 清理运行时
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.9",
+    "version": "v2026.6.11",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   }
@@ -477,5 +477,5 @@ import log from 'electron-log';
 
 - **Last Updated**: 2026-07-04
 - **JustDo Version**: v2026.7.3
-- **OpenClaw Gateway**: v2026.6.9
+- **OpenClaw Gateway**: v2026.6.11
 - **Node.js**: >= 24 < 25

@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-07-04
 **Current Version:** 2026.7.3
-**OpenClaw Gateway:** v2026.6.9
+**OpenClaw Gateway:** v2026.6.11
 
 ## 1. 产品定位
 

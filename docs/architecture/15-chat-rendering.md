@@ -361,4 +361,4 @@ ChatController.handleEvent()
 
 - **Last Updated**: 2026-07-04
 - **JustDo Version**: v2026.7.3
-- **OpenClaw Gateway**: v2026.6.9
+- **OpenClaw Gateway**: v2026.6.11

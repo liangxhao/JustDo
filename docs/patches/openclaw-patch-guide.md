@@ -13,18 +13,17 @@ Patch files are compatibility shims for the bundled OpenClaw runtime.
 ## Current location
 
 - `scripts/patches/README.md`
-- `scripts/patches/v2026.6.9/`
+- `scripts/patches/v2026.6.11/`
 - `scripts/patch-openclaw-runtime.cjs`
 
 ## Current patch set
 
 - `001-thinking-stream.cjs`
-- `002-session-write-lock-self-timeout.cjs`
-- `003-agent-announce-reasoning-stream.cjs`
-- `004-openai-content-reasoning-tags.cjs`
-- `007-windows-mcp-package-runner.cjs`
-- `008-history-thinking-and-subagent-yield.cjs`
-- `009-sessions-yield-active-guard.cjs`
+- `002-agent-announce-reasoning-stream.cjs`
+- `003-openai-content-reasoning-tags.cjs`
+- `004-windows-mcp-package-runner.cjs`
+- `005-history-thinking-and-subagent-yield.cjs`
+- `006-sessions-yield-active-guard.cjs`
 
 ## Maintenance
 

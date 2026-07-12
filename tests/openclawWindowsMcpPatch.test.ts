@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { applyPatch } = require('../scripts/patches/v2026.6.9/007-windows-mcp-package-runner.cjs') as {
+const { applyPatch } = require('../scripts/patches/v2026.6.11/004-windows-mcp-package-runner.cjs') as {
   applyPatch: (runtimeDir: string) => string[];
 };
 

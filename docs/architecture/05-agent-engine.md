@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-JustDo 采用 OpenClaw 作为唯一的 Agent 引擎（v2026.6.9），通过 Gateway WebSocket API 进行实时通信。OpenClaw 提供完整的 Agent 运行时能力，包括工具执行、沙箱隔离、持久化记忆等。JustDo 作为纯薄前端，所有 Agent 逻辑由 OpenClaw Gateway 全权负责。
+JustDo 采用 OpenClaw 作为唯一的 Agent 引擎（v2026.6.11），通过 Gateway WebSocket API 进行实时通信。OpenClaw 提供完整的 Agent 运行时能力，包括工具执行、沙箱隔离、持久化记忆等。JustDo 作为纯薄前端，所有 Agent 逻辑由 OpenClaw Gateway 全权负责。
 
 ### 1.1 架构关系
 
@@ -68,7 +68,7 @@ OpenClaw 版本在 `package.json` 的 `openclaw` 字段中声明：
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.9",
+    "version": "v2026.6.11",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   }
@@ -501,8 +501,8 @@ npm run electron:dev:openclaw
 
 ```json
 {
-  "openclawVersion": "v2026.6.9",
-  "npmVersion": "2026.6.9",
+  "openclawVersion": "v2026.6.11",
+  "npmVersion": "2026.6.11",
   "targetId": "win-x64",
   "installedAt": 1712851200000,
   "platform": "win32",

@@ -6,7 +6,7 @@ Guidance for AI coding agents working with this repository — a README for agen
 
 JustDo is a **24/7 personal AI assistant** desktop application. It's an Electron + React app where AI agents actually execute tasks (not just suggest them). Core capabilities: real task execution, local-first SQLite storage, 15 bundled skills, scheduled tasks via OpenClaw cron engine, and IM remote control.
 
-- **Version**: 2026.7.3 | **Electron**: 42.6.0 | **OpenClaw**: v2026.6.9
+- **Version**: 2026.7.3 | **Electron**: 42.6.0 | **OpenClaw**: v2026.6.11
 - **Engine**: Node.js >=24 <25 (see `.nvmrc`)
 - **Package manager**: npm
 - **License**: MIT

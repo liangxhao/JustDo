@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { expect, test } from 'vitest';
 
-const { applyPatch } = require('../scripts/patches/v2026.6.9/004-openai-content-reasoning-tags.cjs') as {
+const { applyPatch } = require('../scripts/patches/v2026.6.11/003-openai-content-reasoning-tags.cjs') as {
   applyPatch: (runtimeDir: string) => string[];
 };
 

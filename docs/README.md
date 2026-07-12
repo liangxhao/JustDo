@@ -41,7 +41,7 @@ docs/
 |------|------|
 | [openclaw-patch-guide.md](patches/openclaw-patch-guide.md) | OpenClaw Runtime Patch 完整文档：规范、当前 patch 列表、运维指南 |
 
-> **注意**：当前 OpenClaw 版本为 v2026.6.9，共有 6 个 patches。详见 patch guide。
+> **注意**：当前 OpenClaw 版本为 v2026.6.11，共有 6 个 patches。详见 patch guide。
 
 ### 功能实现 (features/)
 

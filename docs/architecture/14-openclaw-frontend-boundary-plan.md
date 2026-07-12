@@ -103,14 +103,16 @@ JustDo 当前定位是 OpenClaw 的桌面前端：负责 Electron 桌面体验�
 
 ## 5. Runtime Patches 现状
 
-当前保留的 patches (`scripts/patches/v2026.6.9/`):
+当前保留的 patches (`scripts/patches/v2026.6.11/`):
 
 | Patch | 用途 | 分类 |
 |-------|------|------|
 | `001-thinking-stream.cjs` | Thinking 流式输出 | 临时修复 |
-| `002-session-write-lock-self-timeout.cjs` | 会话写锁超时 | Electron 兼容 |
-| `003-agent-announce-reasoning-stream.cjs` | Agent announce 推理流 | 临时修复 |
-| `004-openai-content-reasoning-tags.cjs` | OpenAI reasoning 标签 | 临时修复 |
+| `002-agent-announce-reasoning-stream.cjs` | Agent announce 推理流 | 临时修复 |
+| `003-openai-content-reasoning-tags.cjs` | OpenAI reasoning 标签 | 临时修复 |
+| `004-windows-mcp-package-runner.cjs` | Windows MCP stdio 启动 | Windows 兼容 |
+| `005-history-thinking-and-subagent-yield.cjs` | 历史 thinking 与 subagent yield 展示 | 临时修复 |
+| `006-sessions-yield-active-guard.cjs` | 无活跃 subagent 时避免 yield 空等 | 临时修复 |
 
 所有 patch 已在 `scripts/patches/README.md` 中记录用途、风险、删除条件。
 
