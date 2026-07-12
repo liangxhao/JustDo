@@ -156,11 +156,111 @@ function verifyOpenClawReasoningStreamPatches(gatewayBundlePath, buildHint) {
   console.log('[electron-builder-hooks] Verified OpenClaw reasoning stream patches.');
 }
 
+function verifyRequiredPathSet(rootDir, relativePaths, label, buildHint) {
+  const missing = relativePaths.filter((relativePath) => !existsSync(path.join(rootDir, relativePath)));
+  if (missing.length > 0) {
+    throw new Error(
+      `[electron-builder-hooks] ${label} is incomplete. Missing: `
+      + missing.join(', ')
+      + `. Run \`${buildHint}\` before packaging.`,
+    );
+  }
+}
+
+const OPENCLAW_RUNTIME_COMPANION_CHECKS = [
+  {
+    marker: 'subagent-registry.runtime',
+    path: 'dist/subagent-registry.runtime.js',
+  },
+  {
+    marker: 'model-provider-auth.worker.js',
+    path: 'dist/agents/model-provider-auth.worker.js',
+  },
+  {
+    marker: 'compaction-planning.worker.js',
+    path: 'dist/agents/compaction-planning.worker.js',
+  },
+  {
+    marker: 'code-mode.worker.js',
+    path: 'dist/agents/code-mode.worker.js',
+  },
+];
+
+function getRuntimeCompanionPathsReferencedByBundle(gatewayBundlePath) {
+  if (!existsSync(gatewayBundlePath)) {
+    return [];
+  }
+
+  const bundle = readFileSync(gatewayBundlePath, 'utf8');
+  return OPENCLAW_RUNTIME_COMPANION_CHECKS
+    .filter(({ marker }) => bundle.includes(marker))
+    .map(({ path: relativePath }) => relativePath);
+}
+
+function verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, buildHint) {
+  const companionPaths = getRuntimeCompanionPathsReferencedByBundle(gatewayBundlePath);
+  if (companionPaths.length === 0) {
+    console.log(
+      '[electron-builder-hooks] No known OpenClaw runtime companion references found in bundle.',
+    );
+    return;
+  }
+
+  verifyRequiredPathSet(
+    runtimeRoot,
+    companionPaths,
+    'Bundled OpenClaw runtime companions',
+    buildHint,
+  );
+}
+
+function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
+  verifyRequiredPathSet(
+    runtimeRoot,
+    [
+      'package.json',
+      'runtime-build-info.json',
+      'gateway-bundle.mjs',
+      'gateway-launcher.cjs',
+      'gateway.asar',
+      'openclaw.mjs',
+      'docs/reference/templates/AGENTS.md',
+      'docs/reference/templates/BOOT.md',
+      'docs/reference/templates/TOOLS.md',
+      'docs/reference/templates/USER.md',
+    ],
+    'Bundled OpenClaw runtime',
+    buildHint,
+  );
+}
+
+function verifyBundledSkillResources(buildHint) {
+  const repoRoot = path.join(__dirname, '..');
+  const configPath = path.join(repoRoot, 'resources', 'builtin-skills.json');
+  const skillsRoot = path.join(repoRoot, 'resources', 'skills');
+  if (!existsSync(configPath)) {
+    throw new Error(
+      '[electron-builder-hooks] Missing bundled skill manifest: resources/builtin-skills.json. '
+      + `Run \`${buildHint}\` before packaging.`,
+    );
+  }
+  if (!existsSync(skillsRoot)) {
+    throw new Error(
+      '[electron-builder-hooks] Missing bundled skills directory: resources/skills. '
+      + `. Run \`${buildHint}\` before packaging.`,
+    );
+  }
+
+  console.log('[electron-builder-hooks] Verified bundled skill resources.');
+}
+
 function ensureBundledOpenClawRuntime(context) {
   const { runtimeRoot, targetId } = syncCurrentOpenClawRuntimeForTarget(context);
   const buildHint = getOpenClawRuntimeBuildHint(targetId);
 
   syncOpenClawRuntimeResources(runtimeRoot, { label: 'electron-builder-hooks' });
+  verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint);
+  verifyBundledSkillResources(buildHint);
 
   const requiredExternalPaths = [
     path.join(runtimeRoot, 'node_modules'),
@@ -196,6 +296,7 @@ function ensureBundledOpenClawRuntime(context) {
       + ' bytes, expected ~27MB). Rebuild with: `npm run openclaw:bundle`.',
     );
   }
+  verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, buildHint);
   verifyOpenClawReasoningStreamPatches(gatewayBundlePath, buildHint);
 
   const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
@@ -612,6 +713,35 @@ async function beforePack(context) {
         '[electron-builder-hooks] Combined tar validation FAILED. '
         + `Missing required prefixes: ${missingRequired.join(', ')}. `
         + `Found: ${tarPrefixes.join(', ') || '(none)'}`
+      );
+    }
+
+    const tarEntryPaths = new Set(tarEntries.map(e => e.path.replace(/\\/g, '/')));
+    const runtimeCompanionTarEntries = getRuntimeCompanionPathsReferencedByBundle(
+      path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current', 'gateway-bundle.mjs'),
+    ).map(entry => `cfmind/${entry}`);
+    const requiredTarEntries = [
+      'cfmind/package.json',
+      'cfmind/runtime-build-info.json',
+      'cfmind/gateway-bundle.mjs',
+      'cfmind/gateway-launcher.cjs',
+      'cfmind/gateway.asar',
+      'cfmind/openclaw.mjs',
+      'cfmind/docs/reference/templates/AGENTS.md',
+      'python-win/python.exe',
+      ...runtimeCompanionTarEntries,
+    ];
+    const missingTarEntries = requiredTarEntries.filter(entry => !tarEntryPaths.has(entry));
+    const hasPortableGit = tarEntryPaths.has('mingit/bin/git.exe')
+      || tarEntryPaths.has('mingit/cmd/git.exe');
+
+    if (missingTarEntries.length > 0 || !hasPortableGit) {
+      throw new Error(
+        '[electron-builder-hooks] Combined tar validation FAILED. Missing critical entries: '
+        + [
+          ...missingTarEntries,
+          ...(!hasPortableGit ? ['mingit/bin/git.exe or mingit/cmd/git.exe'] : []),
+        ].join(', '),
       );
     }
 

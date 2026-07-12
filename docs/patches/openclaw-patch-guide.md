@@ -22,8 +22,9 @@ Patch files are compatibility shims for the bundled OpenClaw runtime.
 - `002-session-write-lock-self-timeout.cjs`
 - `003-agent-announce-reasoning-stream.cjs`
 - `004-openai-content-reasoning-tags.cjs`
-- `005-subagent-registry-runtime-import.cjs`
-- `006-provider-auth-worker-import.cjs`
+- `007-windows-mcp-package-runner.cjs`
+- `008-history-thinking-and-subagent-yield.cjs`
+- `009-sessions-yield-active-guard.cjs`
 
 ## Maintenance
 

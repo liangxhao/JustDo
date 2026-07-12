@@ -23,6 +23,7 @@ const runtimeDir = process.argv[2]
   : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
 
 const bundleOutPath = path.join(runtimeDir, 'gateway-bundle.mjs');
+const scriptPath = __filename;
 
 // Prefer gateway-entry.js (dedicated gateway entry, skips CLI overhead).
 // Fall back to entry.js (full CLI entry) if gateway-entry.js doesn't exist.
@@ -40,7 +41,8 @@ if (!fs.existsSync(entryPath)) {
 if (fs.existsSync(bundleOutPath)) {
   const bundleStat = fs.statSync(bundleOutPath);
   const entryStat = fs.statSync(entryPath);
-  if (bundleStat.mtimeMs > entryStat.mtimeMs) {
+  const scriptStat = fs.statSync(scriptPath);
+  if (bundleStat.mtimeMs > Math.max(entryStat.mtimeMs, scriptStat.mtimeMs)) {
     console.log(`[bundle-openclaw-gateway] Bundle is up-to-date, skipping.`);
     patchOpenClawRuntime(runtimeDir, { label: 'bundle-openclaw-gateway' });
     process.exit(0);
@@ -91,6 +93,150 @@ try {
 
 const t0 = Date.now();
 
+function toPosixPath(value) {
+  return value.replace(/\\/g, '/');
+}
+
+function isPathInside(parentDir, candidatePath) {
+  const relative = path.relative(parentDir, candidatePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function createRuntimeImportMetaUrlPlugin(openclawRuntimeDir) {
+  const runtimeRoot = path.resolve(openclawRuntimeDir);
+  const runtimeRoots = [runtimeRoot];
+
+  try {
+    const realRuntimeRoot = fs.realpathSync(runtimeRoot);
+    if (!runtimeRoots.includes(realRuntimeRoot)) {
+      runtimeRoots.push(realRuntimeRoot);
+    }
+  } catch {
+    // The caller already validates runtime existence before bundling.
+  }
+
+  const runtimeRootCandidates = runtimeRoots.map((rootPath) => ({
+    runtimeRoot: rootPath,
+    distRoot: path.join(rootPath, 'dist'),
+  }));
+
+  return {
+    name: 'openclaw-runtime-import-meta-url',
+    setup(build) {
+      build.onLoad({ filter: /\.[cm]?js$/ }, (args) => {
+        const filePath = path.resolve(args.path);
+        const matchedRoot = runtimeRootCandidates.find(({ distRoot }) => (
+          isPathInside(distRoot, filePath)
+        ));
+        if (!matchedRoot) {
+          return null;
+        }
+
+        const source = fs.readFileSync(filePath, 'utf8');
+        if (!source.includes('import.meta.url')) {
+          return null;
+        }
+
+        const runtimeRelativePath = `./${toPosixPath(path.relative(matchedRoot.runtimeRoot, filePath))}`;
+        const replacement = `new URL(${JSON.stringify(runtimeRelativePath)}, import.meta.url).href`;
+        let contents = source;
+
+        contents = contents.replace(
+          /importRuntimeModule\(\s*import\.meta\.url\s*,\s*SUBAGENT_REGISTRY_RUNTIME_SPEC\s*\)/g,
+          `importRuntimeModule(${replacement}, SUBAGENT_REGISTRY_RUNTIME_SPEC)`,
+        );
+        contents = contents.replace(
+          /resolveProviderAuthWarmWorkerUrl\(\s*import\.meta\.url\s*\)/g,
+          `resolveProviderAuthWarmWorkerUrl(${replacement})`,
+        );
+        contents = contents.replace(
+          /resolveCompactionPlanningWorkerUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/g,
+          `resolveCompactionPlanningWorkerUrl(currentModuleUrl = ${replacement})`,
+        );
+        contents = contents.replace(
+          /resolveCodeModeWorkerUrl\(\s*import\.meta\.url\s*\)/g,
+          `resolveCodeModeWorkerUrl(${replacement})`,
+        );
+
+        if (contents === source) {
+          return null;
+        }
+
+        return {
+          contents,
+          loader: 'js',
+        };
+      });
+    },
+  };
+}
+
+const RUNTIME_COMPANION_CHECKS = [
+  {
+    marker: 'subagent-registry.runtime',
+    path: 'dist/subagent-registry.runtime.js',
+  },
+  {
+    marker: 'model-provider-auth.worker.js',
+    path: 'dist/agents/model-provider-auth.worker.js',
+  },
+  {
+    marker: 'compaction-planning.worker.js',
+    path: 'dist/agents/compaction-planning.worker.js',
+  },
+  {
+    marker: 'code-mode.worker.js',
+    path: 'dist/agents/code-mode.worker.js',
+  },
+];
+
+const STALE_RUNTIME_IMPORT_META_PATTERNS = [
+  /importRuntimeModule\(\s*import\.meta\.url\s*,\s*SUBAGENT_REGISTRY_RUNTIME_SPEC\s*\)/,
+  /resolveProviderAuthWarmWorkerUrl\(\s*import\.meta\.url\s*\)/,
+  /resolveCompactionPlanningWorkerUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/,
+  /resolveCodeModeWorkerUrl\(\s*import\.meta\.url\s*\)/,
+];
+
+function listBundleReferencedRuntimeCompanions(bundle) {
+  return RUNTIME_COMPANION_CHECKS
+    .filter(({ marker }) => bundle.includes(marker))
+    .map(({ path: relativePath }) => relativePath);
+}
+
+function verifyBundledRuntimeCompanions(openclawRuntimeDir, bundledPath) {
+  const bundle = fs.readFileSync(bundledPath, 'utf8');
+  const stalePatterns = STALE_RUNTIME_IMPORT_META_PATTERNS.filter(
+    (pattern) => pattern.test(bundle),
+  );
+
+  if (stalePatterns.length > 0) {
+    throw new Error(
+      'Bundled gateway still contains runtime-relative import.meta.url call sites. '
+        + 'Update createRuntimeImportMetaUrlPlugin() before shipping this bundle.',
+    );
+  }
+
+  const referencedCompanions = listBundleReferencedRuntimeCompanions(bundle);
+  if (referencedCompanions.length === 0) {
+    console.log(
+      '[bundle-openclaw-gateway] No known runtime companion references found in bundle; '
+        + 'assuming OpenClaw inlined or renamed them.',
+    );
+    return;
+  }
+
+  const missing = referencedCompanions.filter(
+    (relativePath) => !fs.existsSync(path.join(openclawRuntimeDir, relativePath)),
+  );
+
+  if (missing.length > 0) {
+    throw new Error(
+      'Bundled gateway companion files referenced by the bundle are missing: '
+        + missing.join(', '),
+    );
+  }
+}
+
 esbuild
   .build({
     entryPoints: [entryPath],
@@ -115,8 +261,12 @@ esbuild
     logOverride: {
       'ignored-bare-import': 'silent',
     },
+    plugins: [
+      createRuntimeImportMetaUrlPlugin(runtimeDir),
+    ],
   })
   .then((result) => {
+    verifyBundledRuntimeCompanions(runtimeDir, bundleOutPath);
     patchOpenClawRuntime(runtimeDir, { label: 'bundle-openclaw-gateway' });
     const elapsed = Date.now() - t0;
     const sizeKB = Math.round(fs.statSync(bundleOutPath).size / 1024);
