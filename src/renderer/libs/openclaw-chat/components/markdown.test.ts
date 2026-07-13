@@ -37,3 +37,46 @@ describe('Mermaid Markdown fences', () => {
     expect(html).toContain('class="mermaid-toggle"');
   });
 });
+
+describe('Nested Markdown fences', () => {
+  test('renders markdown examples with escaped inner backtick fences', () => {
+    const input = `\`\`\`markdown
+# 技能名称 - 使用示例
+
+## 描述
+...
+
+## 示例
+\\\`\\\`\\\`
+代码或步骤
+\\\`\\\`\\\`
+
+## 说明
+...
+\`\`\``;
+    const html = md.render(input);
+
+    expect(html).toContain('code-block-wrapper--markdown');
+    expect(html).toContain('language-markdown');
+    expect(html).toContain('code-language-markdown');
+    expect(html).toContain('# 技能名称 - 使用示例');
+    expect(html).toContain('## 示例');
+    expect(html).toContain('```');
+    expect(html).not.toContain('\\`\\`\\`');
+    expect(html).toContain('代码或步骤');
+    expect(html).not.toContain('<h1>');
+    expect(html).not.toContain('<h2>');
+    expect(html.match(/code-block-wrapper/g)).toHaveLength(2);
+  });
+
+  test('normalizes repeated backslashes before inner markdown fences', () => {
+    const html = md.render(`\`\`\`markdown
+\\\\\`\\\\\`\\\\\`
+代码或步骤
+\\\\\`\\\\\`\\\\\`
+\`\`\``);
+
+    expect(html).toContain('```');
+    expect(html).not.toContain('\\\\`');
+  });
+});

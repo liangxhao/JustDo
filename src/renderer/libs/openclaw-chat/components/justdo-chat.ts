@@ -685,6 +685,8 @@ export class JustDoChatElement extends LitElement {
     }
 
     .code-block-header {
+      position: relative;
+      z-index: 3;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -699,6 +701,22 @@ export class JustDoChatElement extends LitElement {
       border-radius: 0 0 8px 8px;
     }
 
+    .code-block-wrapper--markdown .code-block-header {
+      background: #eef2f7;
+    }
+
+    .code-block-wrapper--markdown pre {
+      background: #f8fafc;
+    }
+
+    .chat-bubble--user .code-block-wrapper--markdown .code-block-header {
+      background: #edf2f7;
+    }
+
+    .chat-bubble--user .code-block-wrapper--markdown pre {
+      background: #f8fafc;
+    }
+
     .code-block-lang {
       color: var(--justdo-chat-text-secondary, #9ca3af);
       font-size: 11px;
@@ -706,6 +724,8 @@ export class JustDoChatElement extends LitElement {
     }
 
     .code-block-copy {
+      position: relative;
+      z-index: 4;
       background: none;
       border: 1px solid var(--justdo-chat-border, rgba(255, 255, 255, 0.15));
       color: var(--justdo-chat-text-secondary, #9ca3af);
@@ -1045,6 +1065,12 @@ export class JustDoChatElement extends LitElement {
     }
     :host(.dark) .code-block-header {
       background: #161b22;
+    }
+    :host(.dark) .code-block-wrapper--markdown .code-block-header {
+      background: #1f2937;
+    }
+    :host(.dark) .code-block-wrapper--markdown pre {
+      background: #111827;
     }
     :host(.dark) .mermaid-block {
       border-color: rgba(255, 255, 255, 0.1);
@@ -1640,6 +1666,18 @@ export class JustDoChatElement extends LitElement {
   }
 
   private readonly handleMarkdownClick = (event: Event): void => {
+    const copyTarget = event.composedPath().find(
+      node => node instanceof HTMLElement && node.classList.contains('code-block-copy'),
+    ) as HTMLButtonElement | undefined;
+    if (copyTarget) {
+      event.preventDefault();
+      event.stopPropagation();
+      const code = copyTarget.dataset.code;
+      if (code === undefined) return;
+      void this.copyCodeBlock(copyTarget, code);
+      return;
+    }
+
     const target = event.composedPath().find(
       node => node instanceof HTMLElement && node.classList.contains('mermaid-toggle'),
     ) as HTMLButtonElement | undefined;
@@ -1659,6 +1697,18 @@ export class JustDoChatElement extends LitElement {
     target.setAttribute('aria-label', buttonLabel);
     target.title = buttonLabel;
   };
+
+  private async copyCodeBlock(button: HTMLButtonElement, code: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(code);
+      button.classList.add('copied');
+      window.setTimeout(() => {
+        button.classList.remove('copied');
+      }, 1500);
+    } catch (error) {
+      console.error('[JustDoChat] Failed to copy code block', error);
+    }
+  }
 
   private async renderMermaidDiagrams(): Promise<void> {
     const blocks = this.renderRoot.querySelectorAll<HTMLElement>(

@@ -32,6 +32,7 @@ const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
+const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v4';
 const INLINE_DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CONTAINER_PREFIX_RE = /^[ \t]{0,3}(?:(?:>\s?)|(?:(?:[-+*]|\d{1,9}[.)])[ \t]+))/;
@@ -150,11 +151,29 @@ function highlightCode(text: string, lang: string): string {
 }
 
 function codeClassAttribute(lang: string, highlighted: string): string {
+  const language = lang.trim().toLowerCase();
   const classes = [
     highlighted.includes('hljs-') ? 'hljs' : '',
     lang ? `language-${lang}` : '',
+    language === 'markdown' || language === 'md' ? 'code-language-markdown' : '',
   ].filter(Boolean);
   return classes.length > 0 ? ` class="${escapeHtml(classes.join(' '))}"` : '';
+}
+
+function normalizeMarkdownFenceContent(text: string, lang: string): string {
+  const language = lang.trim().toLowerCase();
+  if (language !== 'markdown' && language !== 'md') return text;
+
+  return text.replace(/^([ \t]{0,3})(?:\\+`){3,}([ \t]*)$/gm, (line, indent, suffix) => {
+    const escapedFence = line.slice(indent.length).match(/^(?:\\+`)+/)?.[0] ?? '';
+    const fenceLength = escapedFence.match(/`/g)?.length ?? 0;
+    return `${indent}${'`'.repeat(fenceLength)}${suffix}`;
+  });
+}
+
+function shouldSkipSyntaxHighlight(lang: string): boolean {
+  const language = lang.trim().toLowerCase();
+  return language === 'markdown' || language === 'md';
 }
 
 // ── DOMPurify hooks ─────────────────────────────────────────────────────────
@@ -308,8 +327,9 @@ md.renderer.rules.image = (tokens, idx) => {
 md.renderer.rules.fence = (tokens, idx, _options, env) => {
   const token = tokens[idx];
   const lang = token.info.trim().split(/\s+/)[0] || '';
-  const text = token.content;
-  const highlighted = highlightCode(text, lang);
+  const isMarkdownCodeBlock = ['markdown', 'md'].includes(lang.trim().toLowerCase());
+  const text = normalizeMarkdownFenceContent(token.content, lang);
+  const highlighted = shouldSkipSyntaxHighlight(lang) ? escapeHtml(text) : highlightCode(text, lang);
   const classAttr = codeClassAttribute(lang, highlighted);
   const codeBlock = `<pre><code${classAttr}>${highlighted}</code></pre>`;
 
@@ -338,7 +358,10 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
     const label = lineCount > 1 ? `JSON · ${lineCount} lines` : 'JSON';
     return `<details class="json-collapse"><summary>${label}</summary><div class="code-block-wrapper">${header}${codeBlock}</div></details>`;
   }
-  return `<div class="code-block-wrapper">${header}${codeBlock}</div>`;
+  const wrapperClass = isMarkdownCodeBlock
+    ? 'code-block-wrapper code-block-wrapper--markdown'
+    : 'code-block-wrapper';
+  return `<div class="${wrapperClass}">${header}${codeBlock}</div>`;
 };
 
 // Override indented code blocks
@@ -374,7 +397,7 @@ export function toSanitizedMarkdownHtml(text: string): string {
   const input = text.trim().replace(/\r\n?/g, '\n');
   if (!input) return '';
 
-  const cacheKey = input;
+  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${input}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;
