@@ -176,6 +176,8 @@ const MITM_DISCONNECT_ERROR_KINDS = new Set([
   'SERVER_TO_PROXY_RESPONSE_ERROR',
   'PROXY_TO_SERVER_REQUEST_ERROR',
   'CLIENT_TO_PROXY_REQUEST_ERROR',
+  'CLIENT_TO_PROXY_SOCKET',
+  'HTTPS_CLIENT_ERROR',
   'PROXY_TO_CLIENT_RESPONSE_ERROR',
 ]);
 
@@ -381,7 +383,6 @@ export class OutboundHeaderProxy {
     });
     proxy.onError((_context, error, errorKind) => {
       if (isIgnorableProxyClientError(error)) {
-        console.debug(`[OutboundHeaderProxy] ${errorKind || 'proxy client disconnected'}:`, error);
         return;
       }
       console.warn(`[OutboundHeaderProxy] ${errorKind || 'proxy error'}:`, error);

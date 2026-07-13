@@ -386,6 +386,8 @@ test('suppresses noisy MITM logs only for ignorable disconnects', () => {
 
   expect(shouldSuppressMitmProxyErrorLog('SERVER_TO_PROXY_RESPONSE_ERROR', resetError)).toBe(true);
   expect(shouldSuppressMitmProxyErrorLog('PROXY_TO_SERVER_REQUEST_ERROR', resetError)).toBe(true);
+  expect(shouldSuppressMitmProxyErrorLog('CLIENT_TO_PROXY_SOCKET', resetError)).toBe(true);
+  expect(shouldSuppressMitmProxyErrorLog('HTTPS_CLIENT_ERROR', resetError)).toBe(true);
   expect(shouldSuppressMitmProxyErrorLog('ON_REQUEST_ERROR', resetError)).toBe(false);
   expect(
     shouldSuppressMitmProxyErrorLog(
