@@ -1,10 +1,8 @@
 import { app, session } from 'electron';
 import fs from 'fs';
-import type http from 'http';
 import { Proxy } from 'http-mitm-proxy';
-import type https from 'https';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import path from 'path';
-import { ProxyAgent } from 'proxy-agent';
 
 import {
   getOutboundHeaderPolicyConfig,
@@ -14,6 +12,7 @@ import {
 } from './outboundHeaderPolicyConfig';
 import {
   configureOutboundProxyBypass,
+  getFixedProxyUrl,
   isSystemProxyEnabled,
   resolveSystemProxyUrl,
   restoreOriginalProxyEnv,
@@ -23,6 +22,7 @@ const LOOPBACK_HOST = '127.0.0.1';
 const CA_DIRECTORY_NAME = 'outbound-header-proxy';
 const CA_CERTIFICATE_PATH = path.join('certs', 'ca.pem');
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const HTTP_HEADER_VALUE_PATTERN = /^[\u0020-\u007e\u0080-\u00ff]*$/;
 const OUTBOUND_HEADER_PROXY_ENV_KEYS = [
   'NODE_EXTRA_CA_CERTS',
   'NODE_USE_ENV_PROXY',
@@ -110,6 +110,10 @@ export const applyOutboundHeaders = (
   headerValues: Readonly<Record<string, string>>,
 ): void => {
   for (const [headerName, value] of Object.entries(headerValues)) {
+    if (!HTTP_HEADER_VALUE_PATTERN.test(value)) {
+      console.warn(`[OutboundHeaderProxy] Skipped unsafe outbound header value: ${headerName}`);
+      continue;
+    }
     const existingKey =
       Object.keys(headers).find(key => key.toLowerCase() === headerName.toLowerCase()) ||
       headerName;
@@ -185,13 +189,30 @@ type MitmContextWithErrorHandlers = {
   onErrorHandlers?: MitmErrorHandler[];
 };
 
+type ProxyRequestContext = {
+  isSSL?: boolean;
+  clientToProxyRequest: {
+    headers: Record<string, string | string[] | undefined>;
+  };
+  proxyToServerRequestOptions?: {
+    host?: string;
+    port?: string | number;
+    path?: string;
+    headers?: Record<string, string | string[] | undefined>;
+    agent?: unknown;
+  };
+};
+
+const DEFAULT_HTTP_PORT = 80;
+const DEFAULT_HTTPS_PORT = 443;
+
 export const shouldSuppressMitmProxyErrorLog = (
   errorKind: string | undefined,
   error: unknown,
 ): boolean =>
-  typeof errorKind === 'string'
-  && MITM_DISCONNECT_ERROR_KINDS.has(errorKind)
-  && isIgnorableProxyClientError(error);
+  typeof errorKind === 'string' &&
+  MITM_DISCONNECT_ERROR_KINDS.has(errorKind) &&
+  isIgnorableProxyClientError(error);
 
 export const suppressNoisyMitmDisconnectLogs = (proxy: Proxy): void => {
   const mitmProxy = proxy as MitmProxyWithInternalErrorHook;
@@ -215,28 +236,98 @@ export const suppressNoisyMitmDisconnectLogs = (proxy: Proxy): void => {
   };
 };
 
+const getDefaultPort = (protocol: string): number =>
+  protocol === 'https:' ? DEFAULT_HTTPS_PORT : DEFAULT_HTTP_PORT;
+
+const toOriginFormPath = (requestUrl: string): string => {
+  try {
+    const url = new URL(requestUrl);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return requestUrl;
+  }
+};
+
+const resolveConfiguredUpstreamProxy = async (requestUrl: string): Promise<string | null> => {
+  const fixedProxyUrl = getFixedProxyUrl();
+  if (fixedProxyUrl) {
+    return fixedProxyUrl;
+  }
+
+  if (!isSystemProxyEnabled()) {
+    return null;
+  }
+
+  return resolveSystemProxyUrl(requestUrl);
+};
+
+const setProxyAuthorizationHeader = (
+  proxyUrl: URL,
+  headers: Record<string, string | string[] | undefined>,
+): void => {
+  if (!proxyUrl.username && !proxyUrl.password) {
+    return;
+  }
+
+  const auth = `${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`;
+  headers['Proxy-Authorization'] = `Basic ${Buffer.from(auth).toString('base64')}`;
+};
+
+const applyUpstreamProxyForRequest = async (
+  context: ProxyRequestContext,
+  requestUrl: string,
+): Promise<void> => {
+  const upstreamProxyUrl = await resolveConfiguredUpstreamProxy(requestUrl);
+  if (!upstreamProxyUrl || !context.proxyToServerRequestOptions) {
+    return;
+  }
+
+  const proxyUrl = new URL(upstreamProxyUrl);
+  const proxyProtocol = proxyUrl.protocol;
+
+  if (context.isSSL) {
+    if (proxyProtocol !== 'http:' && proxyProtocol !== 'https:') {
+      console.warn(`[OutboundHeaderProxy] Unsupported upstream proxy for HTTPS: ${proxyProtocol}`);
+      return;
+    }
+    context.proxyToServerRequestOptions.agent = new HttpsProxyAgent(upstreamProxyUrl);
+    return;
+  }
+
+  if (proxyProtocol === 'https:') {
+    context.proxyToServerRequestOptions.agent = new HttpsProxyAgent(upstreamProxyUrl);
+    context.proxyToServerRequestOptions.path = toOriginFormPath(requestUrl);
+    return;
+  }
+
+  if (proxyProtocol !== 'http:') {
+    console.warn(`[OutboundHeaderProxy] Unsupported upstream proxy for HTTP: ${proxyProtocol}`);
+    return;
+  }
+
+  const headers = context.proxyToServerRequestOptions.headers ?? {};
+  context.proxyToServerRequestOptions.headers = headers;
+  context.proxyToServerRequestOptions.host = proxyUrl.hostname;
+  context.proxyToServerRequestOptions.port = proxyUrl.port || getDefaultPort(proxyProtocol);
+  context.proxyToServerRequestOptions.path = requestUrl;
+  setProxyAuthorizationHeader(proxyUrl, headers);
+  headers['Proxy-Connection'] = 'close';
+};
+
 export class OutboundHeaderProxy {
   private proxy: Proxy | null = null;
-  private upstreamAgent: ProxyAgent | null = null;
   private info: OutboundHeaderProxyInfo | null = null;
   private originalFetch: typeof globalThis.fetch | null = null;
   private bypassEntries: readonly string[] = [];
   private readonly configuredPolicy: OutboundHeaderProxyConfig | null;
   private readonly userInfoPath: string;
-  private readonly resolveUpstreamProxy: (targetUrl: string) => Promise<string | null>;
 
   constructor(
     config?: OutboundHeaderProxyConfig,
-    resolveUpstreamProxy = async (targetUrl: string): Promise<string | null> => {
-      if (!isSystemProxyEnabled()) {
-        return null;
-      }
-      return resolveSystemProxyUrl(targetUrl);
-    },
+    _resolveUpstreamProxy?: (targetUrl: string) => Promise<string | null>,
     userInfoPath = resolveOutboundHeaderUserInfoPath(),
   ) {
     this.configuredPolicy = config ? resolveOutboundHeaderProxyConfig(config) : null;
-    this.resolveUpstreamProxy = resolveUpstreamProxy;
     this.userInfoPath = userInfoPath;
     if (!config) {
       updateOutboundHeaderUserInfoCache(this.userInfoPath);
@@ -260,34 +351,33 @@ export class OutboundHeaderProxy {
     const caDirectory = path.join(app.getPath('userData'), CA_DIRECTORY_NAME);
     fs.mkdirSync(caDirectory, { recursive: true });
 
-    const upstreamAgent = new ProxyAgent({
-      keepAlive: true,
-      getProxyForUrl: async (targetUrl: string) =>
-        (await this.resolveUpstreamProxy(targetUrl)) || '',
-    });
     const proxy = new Proxy();
     suppressNoisyMitmDisconnectLogs(proxy);
     proxy.onRequest((context, callback) => {
-      const requestPath = context.clientToProxyRequest.url || '/';
-      const requestUrl = /^https?:\/\//i.test(requestPath)
-        ? requestPath
-        : `${context.isSSL ? 'https' : 'http'}://${context.clientToProxyRequest.headers.host || ''}${requestPath}`;
-      const config = this.getConfig();
-      if (!shouldApplyOutboundHeadersForRequest(config, requestUrl)) {
-        callback();
-        return;
-      }
+      void (async () => {
+        const requestContext = context as ProxyRequestContext;
+        const requestPath = context.clientToProxyRequest.url || '/';
+        const requestUrl = /^https?:\/\//i.test(requestPath)
+          ? requestPath
+          : `${context.isSSL ? 'https' : 'http'}://${context.clientToProxyRequest.headers.host || ''}${requestPath}`;
+        await applyUpstreamProxyForRequest(requestContext, requestUrl);
+        const config = this.getConfig();
+        if (!shouldApplyOutboundHeadersForRequest(config, requestUrl)) {
+          callback();
+          return;
+        }
 
-      const upstreamHeaders = context.proxyToServerRequestOptions?.headers;
-      if (!upstreamHeaders || Array.isArray(upstreamHeaders)) {
-        callback(new Error(`Upstream request headers are unavailable for ${requestUrl}`));
-        return;
-      }
-      applyOutboundHeaders(
-        upstreamHeaders,
-        getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
-      );
-      callback();
+        const upstreamHeaders = context.proxyToServerRequestOptions?.headers;
+        if (!upstreamHeaders || Array.isArray(upstreamHeaders)) {
+          callback(new Error(`Upstream request headers are unavailable for ${requestUrl}`));
+          return;
+        }
+        applyOutboundHeaders(
+          upstreamHeaders,
+          getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
+        );
+        callback();
+      })().catch(error => callback(error instanceof Error ? error : new Error(String(error))));
     });
     proxy.onError((_context, error, errorKind) => {
       if (isIgnorableProxyClientError(error)) {
@@ -303,10 +393,6 @@ export class OutboundHeaderProxy {
           host: LOOPBACK_HOST,
           port: 0,
           sslCaDir: caDirectory,
-          // ProxyAgent implements Node's agent contract through agent-base. The
-          // MITM package types are narrower and only declare concrete core agents.
-          httpAgent: upstreamAgent as unknown as http.Agent,
-          httpsAgent: upstreamAgent as unknown as https.Agent,
         },
         error => (error ? reject(error) : resolve()),
       );
@@ -319,7 +405,6 @@ export class OutboundHeaderProxy {
     }
 
     this.proxy = proxy;
-    this.upstreamAgent = upstreamAgent;
     this.info = {
       proxyUrl: `http://${LOOPBACK_HOST}:${proxy.httpPort}`,
       caCertificatePath,
@@ -333,9 +418,7 @@ export class OutboundHeaderProxy {
 
   stop(): void {
     this.proxy?.close();
-    this.upstreamAgent?.destroy();
     this.proxy = null;
-    this.upstreamAgent = null;
     this.info = null;
     restoreOriginalProxyEnv();
     restoreOutboundProxyEnv(process.env);

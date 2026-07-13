@@ -9,6 +9,12 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch } from 'react-redux';
 
+import {
+  type CustomProxyConfig,
+  defaultCustomProxyConfig,
+  ProxyMode,
+  ProxyProtocol,
+} from '../../common/proxy';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
 import {
   type AppConfig,
@@ -120,7 +126,9 @@ const stringifyConnectivityLogValue = (value: unknown): string => {
 };
 
 const toConnectivityRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 
 const getConnectivityErrorMessage = (data: unknown): string | null => {
   const record = toConnectivityRecord(data);
@@ -235,7 +243,8 @@ const Settings: React.FC<SettingsProps> = ({
   const [themeId, setThemeId] = useState<string>(themeService.getThemeId());
   const [language, setLanguage] = useState<LanguageType>('zh');
   const [autoLaunch, setAutoLaunchState] = useState(false);
-  const [useSystemProxy, setUseSystemProxy] = useState(false);
+  const [proxyMode, setProxyMode] = useState<ProxyMode>(ProxyMode.DIRECT);
+  const [customProxy, setCustomProxy] = useState<CustomProxyConfig>(defaultCustomProxyConfig);
   const [developerMode, setDeveloperMode] = useState(false);
   const [isUpdatingAutoLaunch, setIsUpdatingAutoLaunch] = useState(false);
   const [preventSleep, setPreventSleepState] = useState(false);
@@ -493,7 +502,17 @@ const Settings: React.FC<SettingsProps> = ({
       initialLanguageRef.current = config.language;
       setTheme(config.theme);
       setLanguage(config.language);
-      setUseSystemProxy(config.useSystemProxy ?? false);
+      setProxyMode(
+        config.proxy?.mode === ProxyMode.CUSTOM
+          ? ProxyMode.CUSTOM
+          : config.proxy?.mode === ProxyMode.SYSTEM || config.useSystemProxy
+            ? ProxyMode.SYSTEM
+            : ProxyMode.DIRECT,
+      );
+      setCustomProxy({
+        ...defaultCustomProxyConfig,
+        ...(config.proxy?.custom ?? {}),
+      });
       setDeveloperMode(config.developerMode ?? false);
 
       // Load auto-launch setting
@@ -816,6 +835,16 @@ const Settings: React.FC<SettingsProps> = ({
       const primaryProvider = firstEnabledProvider
         ? firstEnabledProvider[1]
         : normalizedProviders[activeProvider];
+      const normalizedProxy = {
+        mode: proxyMode,
+        custom: {
+          protocol: customProxy.protocol,
+          host: customProxy.host.trim(),
+          port: customProxy.port.trim(),
+          username: customProxy.username?.trim() ?? '',
+          password: customProxy.password ?? '',
+        },
+      };
 
       await configService.updateConfig({
         api: {
@@ -825,7 +854,8 @@ const Settings: React.FC<SettingsProps> = ({
         providers: normalizedProviders, // Save all providers configuration
         theme,
         language,
-        useSystemProxy,
+        useSystemProxy: proxyMode === ProxyMode.SYSTEM,
+        proxy: normalizedProxy,
         developerMode,
         shortcuts,
       });
@@ -1068,6 +1098,17 @@ const Settings: React.FC<SettingsProps> = ({
     setIsTestResultModalOpen(true);
   };
 
+  const handleProxyModeChange = (mode: ProxyMode) => {
+    setProxyMode(mode);
+  };
+
+  const handleCustomProxyChange = (key: keyof CustomProxyConfig, value: string) => {
+    setCustomProxy(prev => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
   const updateConnectionTestModelResult = (
     modelId: string,
     nextResult: ModelConnectionTestResult,
@@ -1237,9 +1278,13 @@ const Settings: React.FC<SettingsProps> = ({
       showTestResultModal(
         {
           success: allPassed,
-          message: `${i18nService.t('connectionTestSummary')
+          message: `${i18nService
+            .t('connectionTestSummary')
             .replace('{passed}', String(passedCount))
-            .replace('{total}', String(results.length))}${allPassed ? `\n${i18nService.t('connectionSuccess')}` : ''}`,
+            .replace(
+              '{total}',
+              String(results.length),
+            )}${allPassed ? `\n${i18nService.t('connectionSuccess')}` : ''}`,
           baseUrl: normalizedBaseUrl,
           isRunning: false,
           modelResults: results,
@@ -1509,33 +1554,155 @@ const Settings: React.FC<SettingsProps> = ({
 
             {developerMode && (
               <>
-                {/* System proxy Section */}
-                <div>
+                {/* Proxy Settings Section */}
+                <div className="space-y-4 rounded-xl border px-4 py-4 border-border">
                   <h4 className="text-sm font-medium text-foreground mb-3">
-                    {i18nService.t('useSystemProxy')}
+                    {i18nService.t('proxySettings')}
                   </h4>
-                  <label className="flex items-center justify-between cursor-pointer">
-                    <span className="text-sm text-secondary">
-                      {i18nService.t('useSystemProxyDescription')}
-                    </span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={useSystemProxy}
-                      onClick={() => {
-                        setUseSystemProxy(prev => !prev);
-                      }}
-                      className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-                        useSystemProxy ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                          useSystemProxy ? 'translate-x-6' : 'translate-x-1'
-                        }`}
+                  <div className="space-y-3">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="proxyMode"
+                        value={ProxyMode.DIRECT}
+                        checked={proxyMode === ProxyMode.DIRECT}
+                        onChange={() => handleProxyModeChange(ProxyMode.DIRECT)}
+                        className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
                       />
+                      <span>
+                        <span className="block text-sm font-medium text-foreground">
+                          {i18nService.t('noProxy')}
+                        </span>
+                        <span className="block text-xs text-secondary mt-1">
+                          {i18nService.t('noProxyDescription')}
+                        </span>
+                      </span>
+                    </label>
+
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="proxyMode"
+                        value={ProxyMode.SYSTEM}
+                        checked={proxyMode === ProxyMode.SYSTEM}
+                        onChange={() => handleProxyModeChange(ProxyMode.SYSTEM)}
+                        className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-foreground">
+                          {i18nService.t('useSystemProxy')}
+                        </span>
+                        <span className="block text-xs text-secondary mt-1">
+                          {i18nService.t('useSystemProxyDescription')}
+                        </span>
+                      </span>
+                    </label>
+
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="proxyMode"
+                        value={ProxyMode.CUSTOM}
+                        checked={proxyMode === ProxyMode.CUSTOM}
+                        onChange={() => handleProxyModeChange(ProxyMode.CUSTOM)}
+                        className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-foreground">
+                          {i18nService.t('customProxy')}
+                        </span>
+                        <span className="block text-xs text-secondary mt-1">
+                          {i18nService.t('customProxyDescription')}
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {proxyMode === ProxyMode.CUSTOM && (
+                    <div className="space-y-3 pl-7 max-w-[640px]">
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_8rem]">
+                        <div>
+                          <label className="block text-xs font-medium text-secondary mb-1">
+                            {i18nService.t('proxyHost')}
+                          </label>
+                          <div className="flex w-full overflow-hidden rounded-xl border border-border bg-surface-inset focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/30">
+                            <select
+                              id="proxyProtocol"
+                              value={customProxy.protocol}
+                              onChange={e =>
+                                handleCustomProxyChange(
+                                  'protocol',
+                                  e.target.value as CustomProxyConfig['protocol'],
+                                )
+                              }
+                              aria-label={i18nService.t('proxyProtocol')}
+                              className="w-28 shrink-0 border-0 border-r border-border bg-surface px-3 py-2 text-sm font-medium text-foreground focus:outline-none"
+                            >
+                              <option value={ProxyProtocol.HTTP}>HTTP</option>
+                              <option value={ProxyProtocol.HTTPS}>HTTPS</option>
+                            </select>
+                            <input
+                              type="text"
+                              value={customProxy.host}
+                              onChange={e => handleCustomProxyChange('host', e.target.value)}
+                              className="block min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-sm text-foreground focus:outline-none"
+                              placeholder="127.0.0.1"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-secondary mb-1">
+                            {i18nService.t('proxyPort')}
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={65535}
+                            value={customProxy.port}
+                            onChange={e => handleCustomProxyChange('port', e.target.value)}
+                            className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
+                            placeholder="7890"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div>
+                          <label className="block text-xs font-medium text-secondary mb-1">
+                            {i18nService.t('proxyUsername')}
+                          </label>
+                          <input
+                            type="text"
+                            value={customProxy.username ?? ''}
+                            onChange={e => handleCustomProxyChange('username', e.target.value)}
+                            className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
+                            placeholder={i18nService.t('optional')}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-secondary mb-1">
+                            {i18nService.t('proxyPassword')}
+                          </label>
+                          <input
+                            type="password"
+                            value={customProxy.password ?? ''}
+                            onChange={e => handleCustomProxyChange('password', e.target.value)}
+                            className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
+                            placeholder={i18nService.t('optional')}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end pl-7 max-w-[640px]">
+                    <button
+                      type="submit"
+                      disabled={isSaving}
+                      className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                    >
+                      {isSaving ? i18nService.t('saving') : i18nService.t('confirm')}
                     </button>
-                  </label>
+                  </div>
                 </div>
 
                 {/* Gateway Port Configuration */}
@@ -2111,7 +2278,8 @@ const Settings: React.FC<SettingsProps> = ({
               {testResult.modelResults && testResult.modelResults.length > 0 && (
                 <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface">
                   {testResult.modelResults.map(modelResult => {
-                    const status = modelResult.status ?? (modelResult.success ? 'success' : 'failed');
+                    const status =
+                      modelResult.status ?? (modelResult.success ? 'success' : 'failed');
                     const isPending = status === 'pending';
                     const isRunningModel = status === 'testing';
                     const isPassed = status === 'success';
@@ -2265,43 +2433,43 @@ const Settings: React.FC<SettingsProps> = ({
               )}
 
               <div className="space-y-3">
-                  <>
-                    <div>
-                      <label className="block text-xs font-medium text-secondary mb-1">
-                        {i18nService.t('modelName')}
-                      </label>
-                      <input
-                        autoFocus
-                        type="text"
-                        value={newModelName}
-                        onChange={e => {
-                          setNewModelName(e.target.value);
-                          if (modelFormError) {
-                            setModelFormError(null);
-                          }
-                        }}
-                        className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
-                        placeholder="GPT-4"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-secondary mb-1">
-                        {i18nService.t('modelId')}
-                      </label>
-                      <input
-                        type="text"
-                        value={newModelId}
-                        onChange={e => {
-                          setNewModelId(e.target.value);
-                          if (modelFormError) {
-                            setModelFormError(null);
-                          }
-                        }}
-                        className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
-                        placeholder="gpt-4"
-                      />
-                    </div>
-                  </>
+                <>
+                  <div>
+                    <label className="block text-xs font-medium text-secondary mb-1">
+                      {i18nService.t('modelName')}
+                    </label>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newModelName}
+                      onChange={e => {
+                        setNewModelName(e.target.value);
+                        if (modelFormError) {
+                          setModelFormError(null);
+                        }
+                      }}
+                      className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
+                      placeholder="GPT-4"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-secondary mb-1">
+                      {i18nService.t('modelId')}
+                    </label>
+                    <input
+                      type="text"
+                      value={newModelId}
+                      onChange={e => {
+                        setNewModelId(e.target.value);
+                        if (modelFormError) {
+                          setModelFormError(null);
+                        }
+                      }}
+                      className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
+                      placeholder="gpt-4"
+                    />
+                  </div>
+                </>
                 <div>
                   <label className="block text-xs font-medium text-secondary mb-1">
                     {i18nService.t('contextLength')}

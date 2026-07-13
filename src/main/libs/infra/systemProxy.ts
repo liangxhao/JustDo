@@ -18,12 +18,10 @@ const originalProxyEnv: ProxyEnvSnapshot = PROXY_ENV_KEYS.reduce((acc, key) => {
 }, {} as ProxyEnvSnapshot);
 
 let systemProxyEnabled = false;
+let fixedProxyUrl: string | null = null;
 
 const LOOPBACK_PROXY_BYPASSES = ['localhost', '127.0.0.1', '::1'] as const;
-const OUTBOUND_PROXY_OVERRIDDEN_BYPASSES = new Set([
-  '*',
-  ...LOOPBACK_PROXY_BYPASSES,
-]);
+const OUTBOUND_PROXY_OVERRIDDEN_BYPASSES = new Set(['*', ...LOOPBACK_PROXY_BYPASSES]);
 const outboundProxyBypassBaselines = new WeakMap<NodeJS.ProcessEnv, readonly string[]>();
 
 function setEnvValue(key: ProxyEnvKey, value: string | undefined): void {
@@ -67,17 +65,12 @@ function parseProxyRule(rule: string): string | null {
   return `http://${hostPort}`;
 }
 
-function mergeNoProxyEntries(
-  env: NodeJS.ProcessEnv,
-  extraEntries: readonly string[],
-): void {
+function mergeNoProxyEntries(env: NodeJS.ProcessEnv, extraEntries: readonly string[]): void {
   const existingEntries = (env.NO_PROXY || env.no_proxy || '')
     .split(',')
     .map(entry => entry.trim())
     .filter(Boolean);
-  const bypassEntries = Array.from(
-    new Set([...existingEntries, ...extraEntries]),
-  ).join(',');
+  const bypassEntries = Array.from(new Set([...existingEntries, ...extraEntries])).join(',');
 
   env.no_proxy = bypassEntries;
   env.NO_PROXY = bypassEntries;
@@ -113,8 +106,16 @@ export function setSystemProxyEnabled(enabled: boolean): void {
   systemProxyEnabled = enabled;
 }
 
+export function getFixedProxyUrl(): string | null {
+  return fixedProxyUrl;
+}
+
+export function setFixedProxyUrl(proxyUrl: string | null): void {
+  fixedProxyUrl = proxyUrl;
+}
+
 export function restoreOriginalProxyEnv(): void {
-  PROXY_ENV_KEYS.forEach((key) => {
+  PROXY_ENV_KEYS.forEach(key => {
     setEnvValue(key, originalProxyEnv[key]);
   });
 }

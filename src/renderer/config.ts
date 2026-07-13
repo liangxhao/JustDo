@@ -1,5 +1,7 @@
 import { ProviderRegistry } from '@shared/providers';
 
+import { defaultProxySettings, type ProxySettings } from '../common/proxy';
+
 const BUILTIN_MODELS_PROVIDER_KEY = 'builtin_models';
 
 // 配置类型定义
@@ -45,6 +47,8 @@ export interface AppConfig {
   language: 'zh' | 'en';
   // 是否使用系统代理
   useSystemProxy: boolean;
+  // 代理设置
+  proxy: ProxySettings;
   // 是否启用开发者模式
   developerMode: boolean;
   // 语言初始化标记 (用于判断是否是首次启动)
@@ -112,6 +116,7 @@ export const defaultConfig: AppConfig = {
   theme: 'system',
   language: 'zh',
   useSystemProxy: false,
+  proxy: defaultProxySettings,
   developerMode: false,
   app: {
     port: 3000,

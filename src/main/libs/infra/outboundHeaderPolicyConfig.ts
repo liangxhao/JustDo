@@ -57,13 +57,10 @@ export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig =
 });
 
 const USER_INFO_RELATIVE_PATH = path.join('JustDo', 'huawei', 'user_info.json');
-const POLICY_CONFIG_RELATIVE_PATH = path.join(
-  'JustDo',
-  'outbound-header-proxy',
-  'config.json',
-);
+const POLICY_CONFIG_RELATIVE_PATH = path.join('JustDo', 'outbound-header-proxy', 'config.json');
 const POLICY_CONFIG_README_FILE_NAME = 'config.README.md';
 const EMPTY_HEADER_VALUE = '';
+const UNSAFE_HEADER_VALUE_PATTERN = /[\u0000-\u001f\u007f]/;
 const POLICY_CONFIG_README_CONTENT = `# config.json
 
 This file controls outbound header injection.
@@ -113,7 +110,12 @@ const normalizeHeaderValue = (value: unknown): string => {
     return EMPTY_HEADER_VALUE;
   }
   if (typeof value === 'string') {
-    return value.trim();
+    const trimmedValue = value.trim();
+    if (UNSAFE_HEADER_VALUE_PATTERN.test(trimmedValue)) {
+      console.warn('[OutboundHeaderPolicy] Ignored unsafe outbound header value.');
+      return EMPTY_HEADER_VALUE;
+    }
+    return trimmedValue;
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
@@ -126,15 +128,11 @@ export const resolveOutboundHeaderUserInfoPath = (): string =>
 
 export const resolveOutboundHeaderPolicyConfigPath = (): string =>
   path.join(
-    app?.getPath('appData')
-      ?? process.env.APPDATA
-      ?? path.join(os.homedir(), 'AppData', 'Roaming'),
+    app?.getPath('appData') ?? process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'),
     POLICY_CONFIG_RELATIVE_PATH,
   );
 
-const readOutboundHeaderPolicyConfig = (
-  configPath: string,
-): OutboundHeaderPolicyConfig => {
+const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHeaderPolicyConfig => {
   const configDirectory = path.dirname(configPath);
   const readmePath = path.join(configDirectory, POLICY_CONFIG_README_FILE_NAME);
   try {
@@ -149,12 +147,12 @@ const readOutboundHeaderPolicyConfig = (
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     if (
-      parsed
-      && typeof parsed === 'object'
-      && !Array.isArray(parsed)
-      && typeof (parsed as Record<string, unknown>).enabled === 'boolean'
-      && Array.isArray((parsed as Record<string, unknown>).baseUrlWhitelist)
-      && Array.isArray((parsed as Record<string, unknown>).headerNames)
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      typeof (parsed as Record<string, unknown>).enabled === 'boolean' &&
+      Array.isArray((parsed as Record<string, unknown>).baseUrlWhitelist) &&
+      Array.isArray((parsed as Record<string, unknown>).headerNames)
     ) {
       const config = parsed as Record<string, unknown>;
       return Object.freeze({
@@ -239,6 +237,5 @@ export const getOutboundHeaderUserInfo = (
   userInfoPath = resolveOutboundHeaderUserInfoPath(),
   headerNames?: readonly string[],
 ): Readonly<Record<string, string>> => {
-  return cachedOutboundHeaderValues
-    ?? updateOutboundHeaderUserInfoCache(userInfoPath, headerNames);
+  return cachedOutboundHeaderValues ?? updateOutboundHeaderUserInfoCache(userInfoPath, headerNames);
 };

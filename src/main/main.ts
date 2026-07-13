@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
+import type { ProxySettings } from '../common/proxy';
 import { APP_NAME } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
@@ -12,7 +13,10 @@ import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
 import { createMainWindow } from './core/mainWindowFactory';
-import { applySystemProxyPreference, isSystemProxyEnabled } from './core/systemProxyPreference';
+import {
+  applySystemProxyPreference,
+  getProxyPreferenceSignature,
+} from './core/systemProxyPreference';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { CoworkStore } from './coworkStore';
 import { SqliteStore } from './data/sqliteStore';
@@ -502,6 +506,7 @@ type AppConfigSettings = {
   theme?: string;
   language?: string;
   useSystemProxy?: boolean;
+  proxy?: Partial<ProxySettings>;
 };
 
 const resolveThemeFromConfig = (config?: AppConfigSettings): 'light' | 'dark' => {
@@ -889,7 +894,7 @@ if (!gotTheLock) {
     }
 
     const appConfig = getStore().get<AppConfigSettings>('app_config');
-    await applySystemProxyPreference(isSystemProxyEnabled(appConfig), outboundHeaderProxy);
+    await applySystemProxyPreference(appConfig, outboundHeaderProxy);
 
     // 设置安全策略
     registerContentSecurityPolicy({
@@ -923,7 +928,9 @@ if (!gotTheLock) {
     }
 
     let lastLanguage = getStore().get<AppConfigSettings>('app_config')?.language;
-    let lastUseSystemProxy = isSystemProxyEnabled(getStore().get<AppConfigSettings>('app_config'));
+    let lastProxyPreference = getProxyPreferenceSignature(
+      getStore().get<AppConfigSettings>('app_config'),
+    );
     getStore().onDidChange<AppConfigSettings>('app_config', (newConfig, oldConfig) => {
       updateTitleBarOverlay();
       // 仅在语言变更时刷新托盘菜单文本
@@ -934,12 +941,12 @@ if (!gotTheLock) {
         updateTrayMenu(() => mainWindow);
       }
 
-      const previousUseSystemProxy = oldConfig
-        ? isSystemProxyEnabled(oldConfig)
-        : lastUseSystemProxy;
-      const currentUseSystemProxy = isSystemProxyEnabled(newConfig);
-      if (currentUseSystemProxy !== previousUseSystemProxy) {
-        void applySystemProxyPreference(currentUseSystemProxy, outboundHeaderProxy).then(() => {
+      const previousProxyPreference = oldConfig
+        ? getProxyPreferenceSignature(oldConfig)
+        : lastProxyPreference;
+      const currentProxyPreference = getProxyPreferenceSignature(newConfig);
+      if (currentProxyPreference !== previousProxyPreference) {
+        void applySystemProxyPreference(newConfig, outboundHeaderProxy).then(() => {
           if (getOpenClawEngineManager().getStatus().phase === 'running') {
             // Dispose the adapter's client before restarting the Gateway. Otherwise the
             // old socket closes asynchronously and leaves gatewayReadyPromise rejected,
@@ -949,7 +956,7 @@ if (!gotTheLock) {
           }
         });
       }
-      lastUseSystemProxy = currentUseSystemProxy;
+      lastProxyPreference = currentProxyPreference;
     });
 
     // 在 macOS 上，当点击 dock 图标时显示已有窗口或重新创建

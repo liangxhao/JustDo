@@ -98,6 +98,20 @@ test('reads configured values from user_info.json', () => {
   });
 });
 
+test('drops unsafe outbound header values with control characters', () => {
+  const userInfoPath = writeUserInfo(
+    JSON.stringify({
+      [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+      [HEADER_NAMES.COOKIE]: 'Cookie: a=b\r\nHost: example.com\r\n\r\nbody',
+    }),
+  );
+
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath, CONFIGURED_HEADER_NAMES)).toEqual({
+    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+    [HEADER_NAMES.COOKIE]: '',
+  });
+});
+
 test('uses empty strings for missing, empty, null, or unsupported values', () => {
   const userInfoPath = writeUserInfo(
     JSON.stringify({
@@ -173,6 +187,20 @@ test('adds only configured header values and replaces names case-insensitively',
   expect(headers).toEqual({
     [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
     [HEADER_NAMES.COOKIE]: 'cookie-value',
+    untouched: 'yes',
+  });
+});
+
+test('skips unsafe outbound header values during injection', () => {
+  const headers = { untouched: 'yes' };
+
+  applyOutboundHeaders(headers, {
+    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+    [HEADER_NAMES.COOKIE]: 'Cookie: a=b\r\nHost: example.com',
+  });
+
+  expect(headers).toEqual({
+    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
     untouched: 'yes',
   });
 });
@@ -387,7 +415,11 @@ test('keeps MITM error handlers while skipping raw disconnect logging', () => {
 
   expect(originalOnError).not.toHaveBeenCalled();
   expect(proxyHandler).toHaveBeenCalledWith(context, resetError, 'SERVER_TO_PROXY_RESPONSE_ERROR');
-  expect(contextHandler).toHaveBeenCalledWith(context, resetError, 'SERVER_TO_PROXY_RESPONSE_ERROR');
+  expect(contextHandler).toHaveBeenCalledWith(
+    context,
+    resetError,
+    'SERVER_TO_PROXY_RESPONSE_ERROR',
+  );
 
   const timeoutError = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
   proxy._onError('SERVER_TO_PROXY_RESPONSE_ERROR', context, timeoutError);
