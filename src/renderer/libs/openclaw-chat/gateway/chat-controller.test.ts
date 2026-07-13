@@ -4,6 +4,7 @@ import { ChatController } from './chat-controller';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 test('clears active sending state when switching between existing sessions', async () => {
@@ -381,6 +382,504 @@ test('preserves the just-finished terminal message when refreshed history has no
   expect(controller.state.chatMessages).toEqual([userMessage, terminalMessage]);
 });
 
+test('preserves optimistic terminal content when refreshed history advanced without it', async () => {
+  const userMessage = {
+    role: 'user',
+    content: 'please inspect the repo',
+    timestamp: 1000,
+  };
+  const yieldedMessage = {
+    role: 'toolResult',
+    content: 'yielded',
+    timestamp: 1500,
+  };
+  const laterToolMessage = {
+    role: 'toolResult',
+    content: 'late tool result',
+    timestamp: 2500,
+  };
+  const terminalMessage = {
+    role: 'assistant',
+    content: 'The repo inspection is complete.',
+    timestamp: 3000,
+    __justdoOptimisticHistoryTail: true,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [userMessage, yieldedMessage, laterToolMessage],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [userMessage, yieldedMessage, terminalMessage];
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([
+    userMessage,
+    yieldedMessage,
+    laterToolMessage,
+    terminalMessage,
+  ]);
+});
+
+test('does not duplicate optimistic terminal content when history has a fuller persisted version', async () => {
+  const userMessage = {
+    role: 'user',
+    content: 'please inspect the repo',
+    timestamp: 1000,
+  };
+  const yieldedMessage = {
+    role: 'toolResult',
+    content: 'yielded',
+    timestamp: 1500,
+  };
+  const terminalMessage = {
+    role: 'assistant',
+    content:
+      '## 完成汇总\n\n工作方式：5 个 subagent 并行，每组处理 3 个 skill，异步产出示例 JSON。',
+    timestamp: 3000,
+    __justdoOptimisticHistoryTail: true,
+  };
+  const persistedTerminalMessage = {
+    role: 'assistant',
+    content:
+      '## 完成汇总\n\n工作方式：5 个 subagent 并行，每组处理 3 个 skill，异步产出示例 JSON。文件已写入 E:\\workspace\\justdo\\project\\Skill_示例汇总.xlsx',
+    timestamp: 3100,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [userMessage, yieldedMessage, persistedTerminalMessage],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [userMessage, yieldedMessage, terminalMessage];
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([
+    userMessage,
+    yieldedMessage,
+    persistedTerminalMessage,
+  ]);
+});
+
+test('does not duplicate optimistic terminal content when persisted timestamp is slightly older', async () => {
+  const userMessage = {
+    role: 'user',
+    content: '针对每个skill，写一个例子，可以开subagent，等完成之后，汇总一些，写入excel中',
+    timestamp: 1000,
+  };
+  const optimisticTerminalMessage = {
+    role: 'assistant',
+    content:
+      '全部完成！以下是执行摘要：\n\n---\n\n## 任务完成：15 个技能示例 → Excel 汇总\n\n### 执行过程\n1. 读取了所有 15 个技能的 SKILL.md 文档\n2. 通过 5 个并行 subagent 分别生成示例（每组 3 个技能）\n3. 等待全部完成后，汇总写入 Excel\n\n### 生成文件\n- OpenClaw_技能使用示例汇总.xlsx\n\n### Excel 表格结构\n| 列 | 内容 |\n|---|---|\n| 序号 | 1-15 |\n| 技能名称 | 含英文名+中文说明 |\n| 典型场景 | 每个技能的一个实际应用场景 |\n| 具体示例 | 可直接执行的示例说明 |\n\n### 格式优化\n- 标题行加粗\n- 代码列使用 Consolas 字体',
+    timestamp: 113_000,
+    __justdoOptimisticHistoryTail: true,
+  };
+  const persistedTerminalMessage = {
+    role: 'assistant',
+    content: [
+      { type: 'thinking', thinking: '我需要确认所有子代理已完成，然后汇总最终文件路径。' },
+      {
+        type: 'text',
+        text:
+          '全部完成！以下是执行摘要：\n\n---\n\n## 任务完成：15 个技能示例 → Excel 汇总\n\n### 执行过程\n1. 读取了所有 15 个技能的 SKILL.md 文档\n2. 通过 5 个并行 subagent 分别生成示例（每组 3 个技能）\n3. 等待全部完成后，汇总写入 Excel\n\n### 生成文件\n- OpenClaw_技能使用示例汇总.xlsx\n\n### Excel 表格结构\n| 列 | 内容 |\n|---|---|\n| 序号 | 1-15 |\n| 技能名称 | 含英文名+中文说明 |\n| 典型场景 | 每个技能的一个实际应用场景 |\n| 具体示例 | 可直接执行的示例说明 |\n\n文件路径：E:\\workspace\\JustDo\\project\\OpenClaw_技能使用示例汇总.xlsx',
+      },
+    ],
+    timestamp: 100_000,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [userMessage, persistedTerminalMessage],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [userMessage, optimisticTerminalMessage];
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([userMessage, persistedTerminalMessage]);
+});
+
+test('strips trailing NO_REPLY from terminal messages and dedupes persisted replacements', async () => {
+  const userMessage = {
+    role: 'user',
+    content: '针对每个 skill 写一个例子并汇总',
+    timestamp: 1000,
+  };
+  const persistedTerminalMessage = {
+    role: 'assistant',
+    content:
+      '全部完成！以下是整个工作的汇总。\n\n---\n\n## 执行摘要\n3 个子代理并行工作，为全部 15 个 OpenClaw 技能各创建了示例文件。\n\nMEDIA:examples/sales-report.xlsx',
+    timestamp: 100_000,
+  };
+  const optimisticTerminalMessage = {
+    role: 'assistant',
+    content:
+      '全部完成！以下是整个工作的汇总。\n\n---\n\n## 执行摘要\n3 个子代理并行工作，为全部 15 个 OpenClaw 技能各创建了示例文件。\n\n### 输出文件NO_REPLY',
+    timestamp: 220_000,
+    __justdoOptimisticHistoryTail: true,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [userMessage, persistedTerminalMessage],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [userMessage, optimisticTerminalMessage];
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([userMessage, persistedTerminalMessage]);
+});
+
+test('strips trailing NO_REPLY from renderable final payloads', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+
+  (
+    controller as unknown as {
+      handleFinal(payload: {
+        sessionKey: string;
+        state: 'final';
+        runId: string;
+        message: unknown;
+      }): void;
+    }
+  ).handleFinal({
+    sessionKey: 'agent:main:justdo:session-1',
+    state: 'final',
+    runId: 'run-1',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: '全部完成！以下是整个工作的汇总。NO_REPLY' }],
+      timestamp: 2000,
+    },
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      content: [{ type: 'text', text: '全部完成！以下是整个工作的汇总。' }],
+    }),
+  ]);
+});
+
+test('does not replay deferred session.message reload immediately after renderable final message', async () => {
+  vi.useFakeTimers();
+  const request = vi.fn().mockResolvedValue({ messages: [] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({ event: 'session.message', payload: {} });
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Final answer' }] },
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Final answer' }],
+    }),
+  ]);
+  expect(request).not.toHaveBeenCalled();
+
+  await vi.runOnlyPendingTimersAsync();
+
+  expect(request).toHaveBeenCalledWith('chat.startup', {
+    sessionKey: 'agent:main:justdo:session-1',
+    limit: 1000,
+  });
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Final answer' }],
+    }),
+  ]);
+});
+
+test('keeps live tool messages until delayed post-final history catches up', async () => {
+  vi.useFakeTimers();
+  const persistedFinal = {
+    role: 'assistant',
+    content: [{ type: 'text', text: 'Final answer' }],
+    timestamp: Date.now(),
+  };
+  const request = vi.fn().mockResolvedValue({ messages: [persistedFinal] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        toolCallId: 'tool-1',
+        name: 'Read',
+        args: { file_path: 'README.md' },
+      },
+    },
+  });
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Final answer' }] },
+    },
+  });
+
+  expect(controller.state.chatToolMessages).toHaveLength(1);
+  expect(controller.state.chatToolMessages[0]).toEqual(
+    expect.objectContaining({ __justdoToolActive: false }),
+  );
+  expect(request).not.toHaveBeenCalled();
+
+  await vi.runOnlyPendingTimersAsync();
+
+  expect(controller.state.chatToolMessages).toHaveLength(0);
+  expect(controller.state.chatMessages).toEqual([persistedFinal]);
+});
+
+test('replays deferred session.message reload after silent final message', async () => {
+  vi.useFakeTimers();
+  const request = vi.fn().mockResolvedValue({ messages: [] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({ event: 'session.message', payload: {} });
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'NO_REPLY' }] },
+    },
+  });
+
+  expect(request).toHaveBeenCalledWith('chat.startup', {
+    sessionKey: 'agent:main:justdo:session-1',
+    limit: 1000,
+  });
+});
+
+test('does not retain NO_REPLY assistant streams for later lifecycle renders', () => {
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId: 'run-1',
+      stream: 'assistant',
+      data: { text: 'NO_REPLY' },
+    },
+  });
+
+  expect(controller.state.chatStream).toBeNull();
+  expect(streamListener).not.toHaveBeenCalled();
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId: 'run-1',
+      stream: 'lifecycle',
+      data: { phase: 'finishing' },
+    },
+  });
+
+  expect(controller.state.chatStream).toBeNull();
+  expect(streamListener).toHaveBeenCalledTimes(1);
+});
+
+test('drops stale optimistic wait messages once persisted history has advanced past them', async () => {
+  const userMessage = {
+    role: 'user',
+    content: 'please inspect the repo',
+    timestamp: 1000,
+  };
+  const staleWaitMessage = {
+    role: 'assistant',
+    content: '收到 docx 完成。继续等待其余 4 个完成。',
+    timestamp: 2000,
+    __justdoOptimisticHistoryTail: true,
+  };
+  const optimisticTerminalMessage = {
+    role: 'assistant',
+    content: '所有 15 个 subagent 全部完成！现在创建汇总 Excel 文件。',
+    timestamp: 120_000,
+    __justdoOptimisticHistoryTail: true,
+  };
+  const persistedTerminalMessage = {
+    role: 'assistant',
+    content:
+      '所有 15 个 subagent 全部完成！现在创建汇总 Excel 文件。文件路径：`OpenClaw_Skills_示例汇总.xlsx`',
+    timestamp: 121_000,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [userMessage, persistedTerminalMessage],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [userMessage, staleWaitMessage, optimisticTerminalMessage];
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([userMessage, persistedTerminalMessage]);
+});
+
+test('does not let a stale history refresh overwrite newer visible messages', async () => {
+  vi.useFakeTimers();
+  const waitingMessage = {
+    role: 'assistant',
+    content: '3 个子代理已启动，分别负责 5 个技能的示例创作。等待它们完成...',
+    timestamp: 1000,
+  };
+  const finalMessage = {
+    role: 'assistant',
+    content: '已完成！`Skill_Examples_汇总.xlsx` 已生成（14KB）。',
+    timestamp: 2000,
+  };
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ messages: [waitingMessage] })
+    .mockResolvedValueOnce({ messages: [waitingMessage, finalMessage] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [waitingMessage];
+
+  const load = controller.loadHistory();
+  controller.state.chatMessages = [waitingMessage, finalMessage];
+  await load;
+
+  expect(controller.state.chatMessages).toEqual([waitingMessage, finalMessage]);
+  expect(request).toHaveBeenCalledTimes(1);
+
+  await vi.advanceTimersByTimeAsync(1300);
+  await vi.waitFor(() => {
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(controller.state.chatMessages).toEqual([waitingMessage, finalMessage]);
+});
+
+test('does not apply a shorter post-run history snapshot over a newer visible final tail', async () => {
+  vi.useFakeTimers();
+  const userMessage = {
+    role: 'user',
+    content: '针对每个skill，写一个例子',
+    timestamp: 1000,
+  };
+  const waitingMessage = {
+    role: 'assistant',
+    content: '5 个子 agent 已启动，正在并行编写示例。等待它们完成...',
+    timestamp: 2000,
+  };
+  const yieldedMessage = {
+    role: 'toolResult',
+    content: '{ "status": "yielded", "message": "等待5个子agent完成skill示例编写" }',
+    timestamp: 3000,
+  };
+  const finalMessage = {
+    role: 'assistant',
+    content: '任务完成 ✅ 以下是执行摘要：Skill Examples 汇总 Excel 已生成。',
+    timestamp: 130_000,
+  };
+  const staleHistory = [userMessage, waitingMessage, yieldedMessage];
+  const settledHistory = [userMessage, waitingMessage, yieldedMessage, finalMessage];
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ messages: staleHistory })
+    .mockResolvedValueOnce({ messages: settledHistory });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [...staleHistory, finalMessage];
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual(settledHistory);
+  expect(request).toHaveBeenCalledTimes(1);
+
+  await vi.advanceTimersByTimeAsync(1300);
+  await vi.waitFor(() => {
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  expect(controller.state.chatMessages).toEqual(settledHistory);
+});
+
 test('does not preserve ordinary cached messages when refreshed history is empty', async () => {
   const staleMessage = {
     role: 'assistant',
@@ -454,7 +953,7 @@ test('hydrates OpenClaw transcript MediaPaths as image blocks', async () => {
   expect(readFileAsDataUrl).toHaveBeenCalledTimes(1);
 });
 
-test('clears live overlays before the post-final history refresh', () => {
+test('clears stream overlays and completes live tools after a renderable final', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:session-1';
   controller.state.chatSending = true;
@@ -527,8 +1026,45 @@ test('clears live overlays before the post-final history refresh', () => {
   expect(controller.state.chatStream).toBeNull();
   expect(controller.state.chatThinkingStream).toBeNull();
   expect(controller.state.chatThinkingMessages).toHaveLength(0);
-  expect(controller.state.chatToolMessages).toHaveLength(0);
+  expect(controller.state.chatToolMessages).toHaveLength(2);
+  expect(controller.state.chatToolMessages).toEqual([
+    expect.objectContaining({ toolCallId: 'tool-1', __justdoToolActive: false }),
+    expect.objectContaining({ toolCallId: 'tool-2', __justdoToolActive: false }),
+  ]);
   expect(controller.state.chatStreamSegments).toHaveLength(0);
+});
+
+test('backfills live thinking from history while preserving an active run display', async () => {
+  const visibleMessage = {
+    role: 'assistant',
+    content: 'previous content',
+    timestamp: 1000,
+  };
+  const persistedLiveMessage = {
+    role: 'assistant',
+    content: [
+      { type: 'thinking', thinking: 'history thinking for live announce' },
+      { type: 'text', text: 'Group2 也完成了（但内容截断）。继续等待 group1 和 group4：' },
+    ],
+    timestamp: 2000,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [visibleMessage, persistedLiveMessage],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'announce:v1:agent:main:subagent:child:run-1';
+  controller.state.chatMessages = [visibleMessage];
+  controller.state.chatStream = 'Group2 也完成了（但内容截断）。继续等待 group1 和 group4：';
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([visibleMessage]);
+  expect(controller.state.chatThinkingStream).toBe('history thinking for live announce');
+  expect(controller.state.chatSending).toBe(true);
 });
 
 test('merges later non-empty tool arguments over an earlier empty tool call', () => {

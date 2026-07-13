@@ -57,6 +57,15 @@ function isHiddenDisplayBlockType(type: unknown): boolean {
   return type === 'thinking' || type === 'reasoning';
 }
 
+function hasReasoningDisplayBlock(content: unknown): boolean {
+  if (!Array.isArray(content)) return false;
+  return content.some(block => {
+    if (!block || typeof block !== 'object' || !('type' in block)) return false;
+    const type = (block as { type?: unknown }).type;
+    return type === 'thinking' || type === 'reasoning';
+  });
+}
+
 function resolveDisplayContent(content: unknown): {
   text: string;
   hasVisibleNonTextContent: boolean;
@@ -102,6 +111,7 @@ export function isAssistantHeartbeatAckForDisplay(message: unknown): boolean {
 
   const content =
     typeof entry.content === 'string' || Array.isArray(entry.content) ? entry.content : entry.text;
+  if (hasReasoningDisplayBlock(content)) return false;
   const { text, hasVisibleNonTextContent } = resolveDisplayContent(content);
   if (hasVisibleNonTextContent) return false;
   return stripHeartbeatTokenForDisplay(text).shouldSkip;

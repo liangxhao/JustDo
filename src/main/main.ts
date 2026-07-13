@@ -73,7 +73,6 @@ import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
 } from './libs/openclaw/runtime/openclawEngineManager';
-import { stopOpenClawTokenProxy } from './libs/openclaw/runtime/openclawTokenProxy';
 import { OpenClawSkillFileService } from './libs/openclaw/skills/openclawSkillFileService';
 import { OpenClawSkillService } from './libs/openclaw/skills/openclawSkillService';
 import { createPluginMarketplaceService, PluginManager } from './libs/plugin';
@@ -624,7 +623,17 @@ if (!gotTheLock) {
     showSystemMenu,
   });
 
-  registerOpenClawHistoryHandlers(() => getOpenClawEngineManager().getStateDir());
+  registerOpenClawHistoryHandlers(
+    () => getOpenClawEngineManager().getStateDir(),
+    () => {
+      const manager = getOpenClawEngineManager();
+      const connectionInfo = manager.getGatewayConnectionInfo();
+      return {
+        port: manager.getGatewayPort(),
+        token: manager.getGatewayToken() ?? connectionInfo.token,
+      };
+    },
+  );
 
   registerSlashCommandHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
@@ -778,8 +787,6 @@ if (!gotTheLock) {
       console.log('[Main] Stopping cowork sessions...');
       coworkRouter.stopAllSessions();
     }
-
-    stopOpenClawTokenProxy();
 
     if (openClawEngineManager) {
       await openClawEngineManager.stopGateway().catch(error => {

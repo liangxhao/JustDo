@@ -490,6 +490,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         sessionKey,
         message: prompt.trim(),
         deliver: false,
+        timeoutMs: this.agentTimeoutSeconds * 1000,
         idempotencyKey: runId,
         ...(attachments ? { attachments } : {}),
       });
@@ -690,6 +691,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // Emit streaming update
         if (turn.assistantMessageId) {
           this.throttledEmitMessageUpdate(sessionId, turn.assistantMessageId, text);
+        } else if (
+          this.promoteThinkingSegmentToAssistantMessage(sessionId, turn, text, {
+            isStreaming: true,
+            isFinal: false,
+            isThinking: false,
+            modelName: turn.modelName,
+          })
+        ) {
+          // The thinking-only row is now the live assistant row.
         } else {
           // Create streaming message on first delta
           const msg = this.store.addMessage(sessionId, {
@@ -717,6 +727,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             metadata: { isStreaming: false, isFinal: true, modelName: turn.modelName },
           });
           this.emit('messageUpdate', sessionId, turn.assistantMessageId, finalText);
+        } else if (
+          this.promoteThinkingSegmentToAssistantMessage(sessionId, turn, finalText, {
+            isStreaming: false,
+            isFinal: true,
+            isThinking: false,
+            modelName: turn.modelName,
+          })
+        ) {
+          // The thinking-only row is now the finalized assistant row.
         } else {
           const duplicate = this.findRecentAssistantByContent(sessionId, finalText);
           if (duplicate) {
@@ -759,6 +778,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             metadata: { isStreaming: false, isFinal: true, modelName: turn.modelName },
           });
           this.emit('messageUpdate', sessionId, turn.assistantMessageId, text);
+        } else if (
+          this.promoteThinkingSegmentToAssistantMessage(sessionId, turn, text, {
+            isStreaming: false,
+            isFinal: true,
+            isThinking: false,
+            modelName: turn.modelName,
+          })
+        ) {
+          // The thinking-only row is now the aborted assistant row.
         } else {
           const msg = this.store.addMessage(sessionId, {
             type: 'assistant',
@@ -889,13 +917,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // Assistant text stream
     if (stream === 'assistant') {
       turn.agentAssistantStreamSeen = true;
-      this.finalizeThinkingSegment(sessionId, turn);
       const rawText = typeof data.text === 'string' ? data.text : '';
       const text = this.prepareAssistantSnapshot(turn, rawText);
       if (text && !isNoReply(text)) {
         turn.chatStream = text;
         if (turn.assistantMessageId) {
           this.throttledEmitMessageUpdate(sessionId, turn.assistantMessageId, text);
+        } else if (
+          this.promoteThinkingSegmentToAssistantMessage(sessionId, turn, text, {
+            isStreaming: true,
+            isFinal: false,
+            isThinking: false,
+            modelName: turn.modelName,
+          })
+        ) {
+          // The thinking-only row is now the live assistant row.
         } else {
           const msg = this.store.addMessage(sessionId, {
             type: 'assistant',
@@ -1037,6 +1073,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     });
     turn.thinkingMessageId = null;
     turn.thinkingContent = '';
+  }
+
+  private promoteThinkingSegmentToAssistantMessage(
+    sessionId: string,
+    turn: SessionTurn,
+    content: string,
+    metadata: Record<string, unknown>,
+  ): boolean {
+    if (!turn.thinkingMessageId || !turn.thinkingContent) return false;
+
+    const messageId = turn.thinkingMessageId;
+    this.store.updateMessage(sessionId, messageId, {
+      content,
+      thinkingContent: turn.thinkingContent,
+      metadata,
+    });
+    this.emit('messageUpdate', sessionId, messageId, content);
+    this.emit('messageMetadataUpdate', sessionId, messageId, metadata);
+
+    turn.assistantMessageId = messageId;
+    turn.thinkingMessageId = null;
+    turn.thinkingContent = '';
+    return true;
   }
 
   private findRecentAssistantByContent(sessionId: string, content: string): CoworkMessage | null {
@@ -1193,18 +1252,26 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const stream = this.getVisibleRunStream(sessionId, sessionKey, runId, modelName);
-    this.finalizeVisibleRunThinking(stream);
     const text = this.prepareVisibleAssistantSnapshot(stream, snapshot);
     if (!text || isNoReply(text)) return;
 
     const metadata = { isStreaming: !final, isFinal: final, modelName: stream.modelName };
     if (stream.assistantMessageId) {
+      this.finalizeVisibleRunThinking(stream);
       this.store.updateMessage(sessionId, stream.assistantMessageId, { content: text, metadata });
       this.emit('messageUpdate', sessionId, stream.assistantMessageId, text);
       if (final) {
         this.emit('messageMetadataUpdate', sessionId, stream.assistantMessageId, metadata);
       }
+    } else if (
+      this.promoteVisibleRunThinkingToAssistantMessage(stream, text, {
+        ...metadata,
+        isThinking: false,
+      })
+    ) {
+      // The visible announce run's thinking row is now its live assistant row.
     } else {
+      this.finalizeVisibleRunThinking(stream);
       const msg = this.store.addMessage(sessionId, {
         type: 'assistant',
         content: text,
@@ -1216,6 +1283,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     stream.assistantText = text;
     if (final) this.commitVisibleAssistantSegment(stream);
+  }
+
+  private promoteVisibleRunThinkingToAssistantMessage(
+    stream: VisibleRunStreamState,
+    content: string,
+    metadata: Record<string, unknown>,
+  ): boolean {
+    if (!stream.thinkingMessageId || !stream.thinkingContent) return false;
+
+    const messageId = stream.thinkingMessageId;
+    this.store.updateMessage(stream.sessionId, messageId, {
+      content,
+      thinkingContent: stream.thinkingContent,
+      metadata,
+    });
+    this.emit('messageUpdate', stream.sessionId, messageId, content);
+    this.emit('messageMetadataUpdate', stream.sessionId, messageId, metadata);
+
+    stream.assistantMessageId = messageId;
+    stream.thinkingMessageId = null;
+    stream.thinkingContent = '';
+    return true;
   }
 
   private prepareVisibleAssistantSnapshot(stream: VisibleRunStreamState, snapshot: string): string {

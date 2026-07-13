@@ -22,6 +22,7 @@ export type ChatItem =
       kind: 'stream';
       key: string;
       text: string;
+      thinkingText?: string | null;
       startedAt: number;
       isStreaming: boolean;
       toolMessages?: unknown[];

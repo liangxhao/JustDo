@@ -1872,15 +1872,18 @@ export class JustDoChatElement extends LitElement {
         const streamItem = item as {
           kind: 'stream';
           text: string;
+          thinkingText?: string | null;
           startedAt: number;
           isStreaming: boolean;
           toolMessages?: unknown[];
         };
+        const thinkingText =
+          streamItem.thinkingText ?? (streamItem.isStreaming ? thinkingStream : null);
         return renderStreamingGroup(
           streamItem.text,
           streamItem.startedAt,
           streamItem.toolMessages ?? [],
-          streamItem.isStreaming ? thinkingStream : null,
+          thinkingText,
           { showAvatar },
         );
       }

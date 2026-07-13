@@ -7,7 +7,7 @@ import {
   stripHeartbeatTokenForDisplay,
 } from './heartbeat-display';
 import { CHAT_HISTORY_RENDER_CHAR_BUDGET, CHAT_HISTORY_RENDER_LIMIT } from './history-limits';
-import { extractTextCached } from './message-extract';
+import { extractTextCached, extractThinkingCached } from './message-extract';
 import { normalizeMessage, stripMessageDisplayMetadataText } from './message-normalizer';
 import { normalizeRoleForGrouping } from './role-normalizer';
 import { messageMatchesSearchQuery } from './search-match';
@@ -363,6 +363,69 @@ function isLiveToolMessage(toolMessage: unknown): boolean {
   return asRecord(toolMessage)?.__justdoToolActive === true;
 }
 
+function isLiveThinkingOnlyMessage(
+  item: ChatItem | undefined,
+): item is Extract<ChatItem, { kind: 'message' }> {
+  if (item?.kind !== 'message') {
+    return false;
+  }
+  const raw = asRecord(item.message);
+  if (!raw || raw.__openclawLiveThinking !== true) {
+    return false;
+  }
+  if (
+    normalizeRoleForGrouping(
+      typeof raw.role === 'string' ? raw.role : '',
+    ).toLowerCase() !== 'assistant'
+  ) {
+    return false;
+  }
+  return Boolean(extractThinkingCached(item.message)) && !extractTextCached(item.message);
+}
+
+function popMergeableLiveThinkingTail(
+  items: ChatItem[],
+): Extract<ChatItem, { kind: 'message' }> | null {
+  const tail = items[items.length - 1];
+  if (!isLiveThinkingOnlyMessage(tail)) {
+    return null;
+  }
+  if (getAttachedToolMessages(tail.message).length > 0) {
+    return null;
+  }
+  items.pop();
+  return tail;
+}
+
+function mergeLiveThinkingWithTextMessage(
+  thinkingMessage: unknown,
+  text: string,
+  timestamp: number,
+): unknown {
+  const raw = asRecord(thinkingMessage) ?? {};
+  const {
+    __openclawLiveThinking: _liveThinking,
+    __openclawLiveThinkingReason: _liveThinkingReason,
+    content: rawContent,
+    timestamp: rawTimestamp,
+    ...rest
+  } = raw;
+  const thinkingBlocks = Array.isArray(rawContent)
+    ? rawContent.filter(block => {
+        const item = asRecord(block);
+        const type = typeof item?.type === 'string' ? item.type.toLowerCase() : '';
+        return type === 'thinking' || type === 'reasoning';
+      })
+    : [];
+
+  return {
+    ...rest,
+    role: 'assistant',
+    timestamp: typeof rawTimestamp === 'number' ? rawTimestamp : timestamp,
+    content: [...thinkingBlocks, { type: 'text', text }],
+  };
+}
+
 function isToolMessageRole(message: unknown): boolean {
   const normalized = safeNormalizeMessage(message);
   if (!normalized) {
@@ -398,7 +461,11 @@ function isToolMessageRole(message: unknown): boolean {
     if (type === 'text' && typeof item.text === 'string' && item.text.trim()) {
       return false;
     }
-    if (type === 'thinking' && typeof item.thinking === 'string' && item.thinking.trim()) {
+    if (
+      (type === 'thinking' || type === 'reasoning') &&
+      ((typeof item.thinking === 'string' && item.thinking.trim()) ||
+        (typeof item.text === 'string' && item.text.trim()))
+    ) {
       return false;
     }
   }
@@ -761,6 +828,9 @@ function collapseSequentialDuplicateMessages(items: ChatItem[]): ChatItem[] {
 
 function hasRenderableNormalizedMessage(message: unknown): boolean {
   if (getAttachedToolMessages(message).length > 0) {
+    return true;
+  }
+  if (extractThinkingCached(message)) {
     return true;
   }
   const normalized = safeNormalizeMessage(message);
@@ -1292,14 +1362,20 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
         previousAccumulatedStreamText = text;
       }
       if (visibleText.length > 0) {
+        const willAttachToolAtThisIndex = props.showToolCalls && i < tools.length;
+        const liveThinkingTail = willAttachToolAtThisIndex
+          ? null
+          : popMergeableLiveThinkingTail(items);
         items.push({
           kind: 'message',
           key: `stream-seg:${props.sessionKey}:${i}`,
-          message: {
-            role: 'assistant',
-            content: visibleText,
-            timestamp: segments[i].ts,
-          },
+          message: liveThinkingTail
+            ? mergeLiveThinkingWithTextMessage(liveThinkingTail.message, visibleText, segments[i].ts)
+            : {
+                role: 'assistant',
+                content: visibleText,
+                timestamp: segments[i].ts,
+              },
         });
       }
     }
@@ -1312,6 +1388,7 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     const key = `stream:${props.sessionKey}:${props.streamStartedAt ?? 'live'}`;
     const text = sanitizeStreamText(props.stream);
     const visibleText = trimAccumulatedStreamPrefix(text, previousAccumulatedStreamText);
+    const liveThinkingTail = visibleText.length > 0 ? popMergeableLiveThinkingTail(items) : null;
     const startedAt = timestampAfterVisibleItems(items, props.streamStartedAt ?? Date.now());
     if (visibleText.length > 0) {
       if (!stripHeartbeatTokenForDisplay(visibleText).shouldSkip) {
@@ -1319,6 +1396,7 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
           kind: 'stream',
           key,
           text: visibleText,
+          thinkingText: liveThinkingTail ? extractThinkingCached(liveThinkingTail.message) : null,
           startedAt,
           isStreaming: true,
         });
@@ -1368,7 +1446,7 @@ function resolveAssistantGroupingBlockKind(
     const item = asRecord(block);
     if (!item) continue;
     const type = typeof item.type === 'string' ? item.type.toLowerCase() : '';
-    if (type === 'thinking') {
+    if (type === 'thinking' || type === 'reasoning') {
       hasThinking = true;
     } else if (
       ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(type)

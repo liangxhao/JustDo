@@ -79,6 +79,84 @@ function liveToolMessage(timestamp = 1100): Record<string, unknown> {
   };
 }
 
+test('keeps a persisted thinking-only assistant message after history refresh', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'user',
+        content: 'start',
+        timestamp: 900,
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'I should inspect the available skills.' }],
+        timestamp: 1000,
+      },
+      {
+        role: 'toolresult',
+        toolCallId: 'tool-1',
+        toolName: 'read',
+        content: 'ok',
+        timestamp: 1100,
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+
+  expect(assistantMessages).toHaveLength(1);
+  expect(assistantMessages[0]).toEqual(
+    expect.objectContaining({
+      content: [{ type: 'thinking', thinking: 'I should inspect the available skills.' }],
+    }),
+  );
+});
+
+test('keeps reasoning visible when hiding tool calls', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'I should inspect the generated files.' },
+          {
+            type: 'toolcall',
+            toolCallId: 'tool-1',
+            name: 'Read',
+            arguments: { file_path: 'README.md' },
+          },
+        ],
+        timestamp: 1000,
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: false,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+
+  expect(assistantMessages).toHaveLength(1);
+  expect(assistantMessages[0]).toEqual(
+    expect.objectContaining({
+      content: expect.arrayContaining([
+        { type: 'reasoning', text: 'I should inspect the generated files.' },
+      ]),
+    }),
+  );
+});
+
 test('keeps a live tool attached to the preceding thinking message during incremental updates', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',
@@ -126,13 +204,13 @@ test('keeps a live tool attached to the preceding thinking message during increm
   });
 
   const assistantGroups = groups(items).filter(group => group.role === 'assistant');
-  expect(assistantGroups).toHaveLength(2);
+  expect(assistantGroups).toHaveLength(1);
 
   const firstMessage = assistantGroups[0]?.messages[0]?.message;
-  const secondMessage = assistantGroups[1]?.messages[0]?.message;
   expect(attachedToolMessages(firstMessage)).toHaveLength(1);
-  expect(attachedToolMessages(secondMessage)).toHaveLength(0);
-  expect(items.some(item => item.kind === 'stream')).toBe(true);
+  const liveStream = streamItems(items)[0];
+  expect(liveStream?.thinkingText).toBe('Thinking 2');
+  expect(liveStream?.text).toBe('Content');
 });
 
 test('keeps split live tool start and result attached to the first tool location', () => {
@@ -191,9 +269,10 @@ test('keeps split live tool start and result attached to the first tool location
 
   const assistantGroups = groups(items).filter(group => group.role === 'assistant');
   const firstMessage = assistantGroups[0]?.messages[0]?.message;
-  const secondMessage = assistantGroups[1]?.messages[0]?.message;
   expect(attachedToolMessages(firstMessage)).toHaveLength(2);
-  expect(attachedToolMessages(secondMessage)).toHaveLength(0);
+  const liveStream = streamItems(items)[0];
+  expect(liveStream?.thinkingText).toBe('Thinking 2');
+  expect(liveStream?.text).toBe('Content');
 });
 
 test('keeps Thinking Tool Content order during incremental updates', () => {
@@ -219,6 +298,70 @@ test('keeps Thinking Tool Content order during incremental updates', () => {
   expect(assistantMessages).toHaveLength(1);
   expect(attachedToolMessages(assistantMessages[0])).toHaveLength(1);
   expect(items[items.length - 1]?.kind).toBe('stream');
+});
+
+test('attaches live thinking to the following content stream during incremental updates', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'Thinking before content' }],
+        timestamp: 1000,
+        __openclawLiveThinking: true,
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [],
+    stream: 'Content',
+    streamStartedAt: 1100,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+  const liveStream = streamItems(items)[0];
+
+  expect(assistantMessages).toHaveLength(0);
+  expect(liveStream?.thinkingText).toBe('Thinking before content');
+  expect(liveStream?.text).toBe('Content');
+});
+
+test('merges committed live thinking with the following committed content segment', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'Thinking before segment' }],
+        timestamp: 1000,
+        __openclawLiveThinking: true,
+      },
+    ],
+    toolMessages: [],
+    streamSegments: [
+      {
+        text: 'Segment content',
+        ts: 1100,
+      },
+    ],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessages = firstAssistantMessages(items);
+
+  expect(assistantMessages).toHaveLength(1);
+  expect(assistantMessages[0]).toEqual(
+    expect.objectContaining({
+      content: [
+        { type: 'thinking', thinking: 'Thinking before segment' },
+        { type: 'text', text: 'Segment content' },
+      ],
+    }),
+  );
 });
 
 test('keeps the waiting indicator and first content delta on the same stream item', () => {

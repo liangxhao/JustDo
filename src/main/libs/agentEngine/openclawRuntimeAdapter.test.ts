@@ -363,17 +363,22 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
 
   expect(mainMessages.map(message => message.type)).toEqual([
     'assistant',
-    'assistant',
     'tool_use',
     'tool_result',
   ]);
   expect(session.messages.map(message => message.type)).toEqual([
     'assistant',
-    'assistant',
     'tool_use',
     'tool_result',
   ]);
-  expect(session.messages[1].content).toBe('I will inspect the file and then report back.');
+  expect(session.messages[0].content).toBe('I will inspect the file and then report back.');
+  expect(session.messages[0].thinkingContent).toBe('thinking snapshot');
+  expect(session.messages[0].metadata).toEqual(
+    expect.objectContaining({
+      isThinking: false,
+      isFinal: true,
+    }),
+  );
 });
 
 test('announce item and command_output events render tool messages', () => {

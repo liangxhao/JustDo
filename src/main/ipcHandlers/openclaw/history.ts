@@ -6,6 +6,35 @@ import { OpenClawHistoryIpc } from '../../../shared/openclawHistoryIpc';
 
 export type OpenClawToolInputLookup = Record<string, { name?: string; input: unknown }>;
 
+type GatewayConnectionInfo = {
+  port: number | null;
+  token: string | null;
+};
+
+type PagedHistoryPage = {
+  messages?: unknown[];
+  hasMore?: boolean;
+  nextCursor?: string;
+};
+
+export type OpenClawPagedHistoryResult = {
+  success: boolean;
+  messages?: unknown[];
+  error?: string;
+};
+
+const HISTORY_PAGE_LIMIT = 1000;
+
+class OpenClawHistoryRestError extends Error {
+  constructor(readonly status: number) {
+    super(`OpenClaw history REST returned ${status}`);
+    this.name = 'OpenClawHistoryRestError';
+  }
+}
+
+const isHistoryRestNotFound = (error: unknown): boolean =>
+  error instanceof OpenClawHistoryRestError && error.status === 404;
+
 const coerceToolInput = (value: unknown): unknown => {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
@@ -100,7 +129,56 @@ const collectSessionJsonlFiles = (rootDir: string): string[] => {
   return files;
 };
 
-export const registerOpenClawHistoryHandlers = (getStateDir: () => string): void => {
+const normalizeSessionKey = (value: unknown): string => {
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+const normalizeCursor = (value: unknown): string | undefined => {
+  const cursor = typeof value === 'string' ? value.trim() : '';
+  return cursor || undefined;
+};
+
+export const fetchPagedHistoryFromGateway = async (params: {
+  sessionKey: string;
+  port: number;
+  token?: string | null;
+  fetchImpl?: typeof fetch;
+}): Promise<unknown[]> => {
+  const fetcher = params.fetchImpl ?? fetch;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (params.token) headers.Authorization = `Bearer ${params.token}`;
+
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  let messages: unknown[] = [];
+  do {
+    const query = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
+    if (cursor) query.set('cursor', cursor);
+    const url = `http://127.0.0.1:${params.port}/sessions/${encodeURIComponent(
+      params.sessionKey,
+    )}/history?${query}`;
+    const response = await fetcher(url, { headers });
+    if (!response.ok) {
+      throw new OpenClawHistoryRestError(response.status);
+    }
+    const body = (await response.json()) as PagedHistoryPage;
+    const pageMessages = Array.isArray(body.messages) ? body.messages : [];
+    messages = cursor ? [...pageMessages, ...messages] : pageMessages;
+    cursor = body.hasMore === true ? normalizeCursor(body.nextCursor) : undefined;
+    if (cursor && seenCursors.has(cursor)) {
+      console.warn('[OpenClawHistory] repeated paged history cursor:', cursor);
+      break;
+    }
+    if (cursor) seenCursors.add(cursor);
+  } while (cursor);
+
+  return messages;
+};
+
+export const registerOpenClawHistoryHandlers = (
+  getStateDir: () => string,
+  getGatewayConnectionInfo?: () => GatewayConnectionInfo,
+): void => {
   ipcMain.handle(
     OpenClawHistoryIpc.GetToolInputs,
     async (
@@ -139,6 +217,34 @@ export const registerOpenClawHistoryHandlers = (getStateDir: () => string): void
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn('[OpenClawHistory] failed to hydrate tool inputs:', message);
+        return { success: false, error: message };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    OpenClawHistoryIpc.GetPagedHistory,
+    async (_event, params: { sessionKey?: unknown }): Promise<OpenClawPagedHistoryResult> => {
+      try {
+        const sessionKey = normalizeSessionKey(params?.sessionKey);
+        if (!sessionKey) return { success: false, error: 'Missing session key' };
+        const connection = getGatewayConnectionInfo?.();
+        const port = connection?.port;
+        if (!port || !Number.isInteger(port) || port < 1 || port > 65535) {
+          return { success: false, error: 'Gateway port not available' };
+        }
+
+        const messages = await fetchPagedHistoryFromGateway({
+          sessionKey,
+          port,
+          token: connection?.token ?? null,
+        });
+        return { success: true, messages };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!isHistoryRestNotFound(error)) {
+          console.warn('[OpenClawHistory] failed to load paged history:', message);
+        }
         return { success: false, error: message };
       }
     },

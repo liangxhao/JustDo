@@ -397,6 +397,21 @@ interface IElectronAPI {
       }>;
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
     };
+    history: {
+      getToolInputs: (params: {
+        sessionKey: string;
+        toolCallIds: string[];
+      }) => Promise<{
+        success: boolean;
+        inputs?: Record<string, { name?: string; input: unknown }>;
+        error?: string;
+      }>;
+      getPagedHistory: (params: { sessionKey: string }) => Promise<{
+        success: boolean;
+        messages?: unknown[];
+        error?: string;
+      }>;
+    };
   };
   ipcRenderer: {
     send: (channel: string, ...args: any[]) => void;

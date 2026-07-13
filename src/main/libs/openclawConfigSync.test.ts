@@ -6,6 +6,13 @@ import {
   ProviderName,
   ProviderRegistry,
 } from '../../shared/providers';
+import {
+  buildOpenClawConfigMeta,
+  buildProviderSelection,
+  OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
+  OPENCLAW_STUCK_SESSION_ABORT_MS,
+  OPENCLAW_STUCK_SESSION_WARN_MS,
+} from './openclaw/config/openclawConfigSync';
 
 const providerApiKeyEnvVar = (providerName: string): string => {
   const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
@@ -73,5 +80,41 @@ describe('default provider descriptor', () => {
     ['', ''],
   ])('normalizes provider base URL %s', (input, expected) => {
     expect(resolveDescriptor('custom_0').normalizeBaseUrl(input)).toBe(expected);
+  });
+});
+
+describe('OpenClaw provider config', () => {
+  test('sets a provider idle timeout above the OpenClaw default', () => {
+    const selection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://api.example.com/v1',
+      modelId: 'deepseek-v4-flash',
+      apiType: 'openai',
+      providerName: ProviderName.Custom,
+    });
+
+    expect(selection.providerConfig.timeoutSeconds).toBe(OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS);
+    expect(selection.providerConfig.timeoutSeconds).toBeGreaterThan(120);
+  });
+
+  test('keeps stalled-session recovery slower than long model calls', () => {
+    expect(OPENCLAW_STUCK_SESSION_WARN_MS).toBeGreaterThanOrEqual(10 * 60 * 1000);
+    expect(OPENCLAW_STUCK_SESSION_ABORT_MS).toBeGreaterThan(
+      OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS * 1000,
+    );
+  });
+});
+
+describe('OpenClaw managed config metadata', () => {
+  test('stamps metadata so gateway config recovery accepts JustDo writes', () => {
+    const meta = buildOpenClawConfigMeta(
+      '2026.6.11',
+      new Date('2026-07-13T03:27:00.677Z'),
+    );
+
+    expect(meta).toEqual({
+      lastTouchedVersion: '2026.6.11',
+      lastTouchedAt: '2026-07-13T03:27:00.677Z',
+    });
   });
 });

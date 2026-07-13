@@ -45,4 +45,19 @@ describe('coworkMessageToGateway', () => {
 
     expect(coworkMessageToGateway(message).content).toBe('hello');
   });
+
+  test('keeps assistant thinking before text when both are on one message', () => {
+    const message: CoworkMessage = {
+      id: 'message-3',
+      type: 'assistant',
+      content: 'Now I can continue.',
+      thinkingContent: 'I should wait for the subagent result.',
+      timestamp: 3,
+    };
+
+    expect(coworkMessageToGateway(message).content).toEqual([
+      { type: 'thinking', thinking: 'I should wait for the subagent result.' },
+      { type: 'text', text: 'Now I can continue.' },
+    ]);
+  });
 });

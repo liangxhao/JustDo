@@ -167,6 +167,8 @@ contextBridge.exposeInMainWorld('electron', {
     history: {
       getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
+      getPagedHistory: (params: { sessionKey: string }) =>
+        ipcRenderer.invoke(OpenClawHistoryIpc.GetPagedHistory, params),
     },
   },
   agents: {

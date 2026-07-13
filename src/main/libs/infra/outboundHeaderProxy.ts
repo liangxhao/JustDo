@@ -168,6 +168,53 @@ export const isIgnorableProxyClientError = (error: unknown): boolean => {
   return /\b(?:socket hang up|connection reset|connection aborted|broken pipe)\b/i.test(message);
 };
 
+const MITM_DISCONNECT_ERROR_KINDS = new Set([
+  'SERVER_TO_PROXY_RESPONSE_ERROR',
+  'PROXY_TO_SERVER_REQUEST_ERROR',
+  'CLIENT_TO_PROXY_REQUEST_ERROR',
+  'PROXY_TO_CLIENT_RESPONSE_ERROR',
+]);
+
+type MitmErrorHandler = (context: unknown, error: Error, kind: string) => void;
+type MitmProxyWithInternalErrorHook = Proxy & {
+  _onError?: (kind: string, context: unknown, error: Error) => void;
+  onErrorHandlers?: MitmErrorHandler[];
+};
+
+type MitmContextWithErrorHandlers = {
+  onErrorHandlers?: MitmErrorHandler[];
+};
+
+export const shouldSuppressMitmProxyErrorLog = (
+  errorKind: string | undefined,
+  error: unknown,
+): boolean =>
+  typeof errorKind === 'string'
+  && MITM_DISCONNECT_ERROR_KINDS.has(errorKind)
+  && isIgnorableProxyClientError(error);
+
+export const suppressNoisyMitmDisconnectLogs = (proxy: Proxy): void => {
+  const mitmProxy = proxy as MitmProxyWithInternalErrorHook;
+  const originalOnError = mitmProxy._onError?.bind(proxy);
+  if (!originalOnError) {
+    return;
+  }
+
+  mitmProxy._onError = (kind, context, error) => {
+    if (!shouldSuppressMitmProxyErrorLog(kind, error)) {
+      originalOnError(kind, context, error);
+      return;
+    }
+
+    for (const handler of mitmProxy.onErrorHandlers || []) {
+      handler(context, error, kind);
+    }
+    for (const handler of (context as MitmContextWithErrorHandlers | null)?.onErrorHandlers || []) {
+      handler(context, error, kind);
+    }
+  };
+};
+
 export class OutboundHeaderProxy {
   private proxy: Proxy | null = null;
   private upstreamAgent: ProxyAgent | null = null;
@@ -219,6 +266,7 @@ export class OutboundHeaderProxy {
         (await this.resolveUpstreamProxy(targetUrl)) || '',
     });
     const proxy = new Proxy();
+    suppressNoisyMitmDisconnectLogs(proxy);
     proxy.onRequest((context, callback) => {
       const requestPath = context.clientToProxyRequest.url || '/';
       const requestUrl = /^https?:\/\//i.test(requestPath)

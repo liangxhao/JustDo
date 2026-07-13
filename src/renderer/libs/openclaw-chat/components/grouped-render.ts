@@ -446,9 +446,14 @@ function renderAssistantMessageInContentOrder(
     if (!block) continue;
     const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
 
-    if (type === 'thinking') {
+    if (type === 'thinking' || type === 'reasoning') {
       flushPendingToolCards();
-      const thinking = typeof block.thinking === 'string' ? block.thinking : '';
+      const thinking =
+        typeof block.thinking === 'string'
+          ? block.thinking
+          : typeof block.text === 'string'
+            ? block.text
+            : '';
       if (thinking) {
         ordered.push(renderThinkingBlock(thinking));
       }

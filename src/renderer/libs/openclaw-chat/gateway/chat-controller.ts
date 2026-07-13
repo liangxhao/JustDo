@@ -8,7 +8,8 @@
  * - Handles streaming events (delta, final, aborted, error)
  * - Sends messages via chat.send RPC
  *
- * No JustDo adapter, no Redux, no IPC — direct gateway connection.
+ * No JustDo adapter and no Redux. Electron-only filesystem/HTTP bridge calls
+ * are kept narrow and only used where browser security blocks gateway REST.
  */
 
 import {
@@ -70,6 +71,30 @@ type ToolContentBlock = {
   isError?: boolean;
 };
 
+type OpenClawHistoryBridge = {
+  getToolInputs?: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
+    success?: boolean;
+    inputs?: Record<string, { name?: string; input?: unknown }>;
+  }>;
+  getPagedHistory?: (params: { sessionKey: string }) => Promise<{
+    success?: boolean;
+    messages?: unknown[];
+    error?: string;
+  }>;
+};
+
+function getOpenClawHistoryBridge(): OpenClawHistoryBridge | undefined {
+  return (
+    globalThis as {
+      electron?: {
+        openclaw?: {
+          history?: OpenClawHistoryBridge;
+        };
+      };
+    }
+  ).electron?.openclaw?.history;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const HISTORY_LIMIT = 1000;
@@ -80,13 +105,24 @@ const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s.*)?$/i;
 const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
 const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const LOCAL_OPTIMISTIC_MESSAGE_FLAG = '__justdoOptimisticHistoryTail';
+const POST_FINAL_HISTORY_RELOAD_DELAY_MS = 1500;
+const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
+const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
 const DEBUG_CHAT_CONTROLLER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
+const FORWARD_CHAT_CONTROLLER_DEBUG = true;
+
+function isHistoryNotFoundError(value: unknown): boolean {
+  return typeof value === 'string' && /\bhistory REST returned 404\b/i.test(value);
+}
 
 function debugLog(...args: unknown[]): void {
   if (DEBUG_CHAT_CONTROLLER) {
     console.debug(...args);
   }
+  if (!FORWARD_CHAT_CONTROLLER_DEBUG) return;
+  const message = typeof args[0] === 'string' ? args[0] : '[ChatCtrl] debug';
+  writeRuntimeDebug(message, normalizeDebugArgs(args.slice(typeof args[0] === 'string' ? 1 : 0)));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -209,21 +245,7 @@ async function hydrateMissingToolInputsFromLocalState(
   );
   if (missingIds.length === 0) return messages;
 
-  const electronApi = (
-    globalThis as {
-      electron?: {
-        openclaw?: {
-          history?: {
-            getToolInputs?: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
-              success?: boolean;
-              inputs?: Record<string, { name?: string; input?: unknown }>;
-            }>;
-          };
-        };
-      };
-    }
-  ).electron;
-  const result = await electronApi?.openclaw?.history?.getToolInputs?.({
+  const result = await getOpenClawHistoryBridge()?.getToolInputs?.({
     sessionKey,
     toolCallIds: missingIds,
   });
@@ -280,8 +302,12 @@ export class ChatController {
   private listeners: Set<ChatStateListener> = new Set();
   private streamListeners: Set<() => void> = new Set();
   private lifecycleEndFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private postFinalHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private deferredHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private deferredHistoryReloadAttempts = new Map<string, number>();
   private assistantSnapshotRunId: string | null = null;
   private ignoredDeltaAfterAssistantSnapshotCount = 0;
+  private historyLoadSeq = 0;
 
   /** Compact state snapshot for diagnostic logging */
   private _snap(): Record<string, unknown> {
@@ -306,6 +332,7 @@ export class ChatController {
           m =>
             `${m.role ?? '?'}${(m as Record<string, unknown>).__openclawStreamFallback ? '(fallback)' : ''}`,
         ),
+      tail: summarizeMessagesForDebug(this.state.chatMessages, 3),
     };
   }
 
@@ -385,6 +412,100 @@ export class ChatController {
     this.lifecycleEndFallbackTimer = null;
   }
 
+  private clearPostFinalHistoryReload(): void {
+    if (!this.postFinalHistoryReloadTimer) return;
+    clearTimeout(this.postFinalHistoryReloadTimer);
+    this.postFinalHistoryReloadTimer = null;
+  }
+
+  private clearDeferredHistoryReload(): void {
+    if (!this.deferredHistoryReloadTimer) return;
+    clearTimeout(this.deferredHistoryReloadTimer);
+    this.deferredHistoryReloadTimer = null;
+  }
+
+  private scheduleDeferredHistoryReload(sessionKey: string, reason: string): void {
+    if (reason === 'agent-item') {
+      this.deferredHistoryReloadAttempts.delete(sessionKey);
+    }
+    if (reason === 'stale-history' || reason === 'regressive-history') {
+      const attempts = (this.deferredHistoryReloadAttempts.get(sessionKey) ?? 0) + 1;
+      if (attempts > MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS) {
+        debugLog('[ChatCtrl] deferred history reload suppressed after catchup limit', {
+          sessionKey,
+          reason,
+          attempts,
+          ...this._snap(),
+        });
+        return;
+      }
+      this.deferredHistoryReloadAttempts.set(sessionKey, attempts);
+    }
+    this.historyReloadRequested.add(sessionKey);
+    if (this.deferredHistoryReloadTimer) {
+      debugLog('[ChatCtrl] deferred history reload already scheduled', {
+        sessionKey,
+        reason,
+        ...this._snap(),
+      });
+      return;
+    }
+
+    this.deferredHistoryReloadTimer = setTimeout(() => {
+      this.deferredHistoryReloadTimer = null;
+      if (this.state.sessionKey !== sessionKey || !this.state.connected) {
+        this.historyReloadRequested.delete(sessionKey);
+        this.deferredHistoryReloadAttempts.delete(sessionKey);
+        debugLog('[ChatCtrl] deferred history reload skipped', {
+          sessionKey,
+          reason,
+          ...this._snap(),
+        });
+        return;
+      }
+      if (this.state.chatSending || this.historyLoadsInFlight.has(sessionKey)) {
+        debugLog('[ChatCtrl] deferred history reload waiting', {
+          sessionKey,
+          reason,
+          ...this._snap(),
+        });
+        this.scheduleDeferredHistoryReload(sessionKey, reason);
+        return;
+      }
+
+      this.historyReloadRequested.delete(sessionKey);
+      debugLog('[ChatCtrl] deferred history reload → loadHistory', {
+        sessionKey,
+        reason,
+        ...this._snap(),
+      });
+      void this.loadHistory(true);
+    }, DEFERRED_HISTORY_RELOAD_DELAY_MS);
+  }
+
+  private schedulePostFinalHistoryReload(sessionKey: string): void {
+    this.clearPostFinalHistoryReload();
+    this.postFinalHistoryReloadTimer = setTimeout(() => {
+      this.postFinalHistoryReloadTimer = null;
+      if (
+        this.state.sessionKey !== sessionKey ||
+        !this.state.connected ||
+        this.state.chatSending
+      ) {
+        debugLog('[ChatCtrl] post-final history reload skipped', {
+          sessionKey,
+          ...this._snap(),
+        });
+        return;
+      }
+      debugLog('[ChatCtrl] post-final history reload → loadHistory', {
+        sessionKey,
+        ...this._snap(),
+      });
+      void this.loadHistory(true);
+    }, POST_FINAL_HISTORY_RELOAD_DELAY_MS);
+  }
+
   private resetAssistantSnapshotSource(): void {
     this.assistantSnapshotRunId = null;
     this.ignoredDeltaAfterAssistantSnapshotCount = 0;
@@ -429,6 +550,46 @@ export class ChatController {
     }
 
     this.state.chatThinkingStream = null;
+  }
+
+  private backfillLiveThinkingFromHistory(historyMessages: unknown[]): boolean {
+    const liveText =
+      this.state.chatStream ??
+      this.state.chatStreamSegments[this.state.chatStreamSegments.length - 1]?.text ??
+      '';
+    const normalizedLiveText = normalizeComparableText(liveText);
+    if (normalizedLiveText.length < 8) return false;
+
+    for (let index = historyMessages.length - 1; index >= 0; index -= 1) {
+      const message = historyMessages[index];
+      const record = asRecord(message);
+      if (!record || String(record.role ?? '').toLowerCase() !== 'assistant') continue;
+
+      const thinkingText = extractThinkingTextFromMessage(message);
+      if (!thinkingText) continue;
+
+      const historyText = normalizeComparableText(extractSnapshotText(message) ?? '');
+      if (
+        historyText.length > 0 &&
+        (historyText.includes(normalizedLiveText) || normalizedLiveText.includes(historyText))
+      ) {
+        if ((this.state.chatThinkingStream?.trim().length ?? 0) >= thinkingText.length) {
+          return false;
+        }
+        this.state.chatThinkingStream = thinkingText;
+        debugLog('[ChatCtrl] live thinking backfilled from history', {
+          historyIndex: index,
+          liveTextLen: normalizedLiveText.length,
+          historyTextLen: historyText.length,
+          thinkingLen: thinkingText.length,
+          message: summarizeMessageForDebug(message),
+          ...this._snap(),
+        });
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private upsertToolMessage(toolMessage: Record<string, unknown>): {
@@ -545,6 +706,19 @@ export class ChatController {
     };
   }
 
+  private completeLiveToolMessages(): void {
+    if (this.state.chatToolMessages.length === 0) return;
+    this.state.chatToolMessages = this.state.chatToolMessages.map(message => {
+      if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return message;
+      }
+      return {
+        ...(message as Record<string, unknown>),
+        __justdoToolActive: false,
+      };
+    });
+  }
+
   // ─── Connection ───────────────────────────────────────────────────────
 
   /**
@@ -613,6 +787,8 @@ export class ChatController {
     this.state.chatRunId = null;
     this.state.chatLoading = true;
     this.pendingHistoryReload = false;
+    this.clearPostFinalHistoryReload();
+    this.clearDeferredHistoryReload();
     this.resetAssistantSnapshotSource();
     this.notify();
 
@@ -624,6 +800,8 @@ export class ChatController {
   /** Disconnect and clean up */
   disconnect(): void {
     this.clearLifecycleEndFallback();
+    this.clearPostFinalHistoryReload();
+    this.clearDeferredHistoryReload();
     this.state.client?.stop();
     this.state.client = null;
     this.state.connected = false;
@@ -678,12 +856,17 @@ export class ChatController {
     if (event.event === 'session.message') {
       if (this.state.chatSending || this.pendingHistoryReload) {
         debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
+          eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
           chatSending: this.state.chatSending,
           pendingReload: this.pendingHistoryReload,
+          ...this._snap(),
         });
         this.pendingHistoryReload = true;
       } else {
-        debugLog('[ChatCtrl] session.message → loadHistory:', this.state.sessionKey);
+        debugLog('[ChatCtrl] session.message → loadHistory:', this.state.sessionKey, {
+          eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
+          ...this._snap(),
+        });
         this.loadHistory(true);
       }
     }
@@ -802,7 +985,35 @@ export class ChatController {
     );
   }
 
+  private async loadPagedHistoryFromIpc(sessionKey: string): Promise<unknown[] | null> {
+    const getPagedHistory = getOpenClawHistoryBridge()?.getPagedHistory;
+    if (!getPagedHistory) return null;
+
+    const result = await getPagedHistory({ sessionKey });
+    if (!result?.success || !Array.isArray(result.messages)) {
+      const error = result?.error ?? 'unknown error';
+      if (!isHistoryNotFoundError(error)) {
+        debugLog('[ChatCtrl] paged IPC history unavailable', {
+          sessionKey,
+          error,
+        });
+      }
+      return null;
+    }
+    debugLog('[ChatCtrl] paged IPC history done', {
+      sessionKey,
+      totalCount: result.messages.length,
+      summary: summarizeHistoryForDebug(result.messages),
+    });
+    return result.messages;
+  }
+
   private async loadPagedHistoryFromRest(sessionKey: string): Promise<unknown[] | null> {
+    const ipcMessages = await this.loadPagedHistoryFromIpc(sessionKey);
+    if (ipcMessages) return ipcMessages;
+    if (getOpenClawHistoryBridge()?.getPagedHistory) {
+      return null;
+    }
     if (!this.gatewayHttpBase) {
       return null;
     }
@@ -815,14 +1026,22 @@ export class ChatController {
     let cursor: string | undefined;
     const seenCursors = new Set<string>();
     let messages: unknown[] = [];
+    let pageIndex = 0;
     do {
       const params = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
       if (cursor) params.set('cursor', cursor);
+      const requestCursor = cursor ?? null;
       const response = await fetch(
         `${this.gatewayHttpBase}/sessions/${encodeURIComponent(sessionKey)}/history?${params}`,
         { headers },
       );
       if (!response.ok) {
+        debugLog('[ChatCtrl] paged REST history non-ok', {
+          sessionKey,
+          pageIndex,
+          status: response.status,
+          requestCursor,
+        });
         return null;
       }
       const body = (await response.json()) as {
@@ -833,14 +1052,36 @@ export class ChatController {
       const pageMessages = Array.isArray(body.messages) ? body.messages : [];
       messages = cursor ? [...pageMessages, ...messages] : pageMessages;
       cursor = body.hasMore && typeof body.nextCursor === 'string' ? body.nextCursor : undefined;
+      debugLog('[ChatCtrl] paged REST history page', {
+        sessionKey,
+        pageIndex,
+        pageCount: pageMessages.length,
+        accumulatedCount: messages.length,
+        hasMore: Boolean(body.hasMore),
+        requestCursor,
+        nextCursor: cursor ?? null,
+        pageSummary: summarizeHistoryForDebug(pageMessages),
+      });
       if (cursor && seenCursors.has(cursor)) {
+        debugLog('[ChatCtrl] paged REST history repeated cursor', {
+          sessionKey,
+          pageIndex,
+          cursor,
+        });
         break;
       }
       if (cursor) {
         seenCursors.add(cursor);
       }
+      pageIndex += 1;
     } while (cursor);
 
+    debugLog('[ChatCtrl] paged REST history done', {
+      sessionKey,
+      pageCount: pageIndex,
+      totalCount: messages.length,
+      summary: summarizeHistoryForDebug(messages),
+    });
     return messages;
   }
 
@@ -853,14 +1094,26 @@ export class ChatController {
     const sessionKey = this.state.sessionKey;
     if (this.historyLoadsInFlight.has(sessionKey)) {
       if (queueIfBusy) this.historyReloadRequested.add(sessionKey);
+      debugLog('[ChatCtrl] loadHistory SKIP busy', {
+        sessionKey,
+        queueIfBusy,
+        queued: this.historyReloadRequested.has(sessionKey),
+        inFlightSessions: [...this.historyLoadsInFlight],
+        ...this._snap(),
+      });
       return;
     }
+    const loadSeq = ++this.historyLoadSeq;
     this.historyLoadsInFlight.add(sessionKey);
     const previousMessages = this.state.chatMessages;
-    debugLog('[ChatCtrl] loadHistory START:', sessionKey, {
+    debugLog('[ChatCtrl] loadHistory START', {
+      seq: loadSeq,
+      sessionKey,
       chatSending: this.state.chatSending,
       pendingUserMsg: !!this.state.pendingUserMessage,
       chatRunId: this.state.chatRunId,
+      previousSummary: summarizeHistoryForDebug(previousMessages),
+      currentSummary: summarizeHistoryForDebug(this.state.chatMessages),
     });
     this.state.chatLoading = true;
     this.notify();
@@ -870,32 +1123,68 @@ export class ChatController {
       let result: { messages?: unknown[]; sessionId?: string } | undefined;
       try {
         result = await client.request('chat.startup', { sessionKey, limit: HISTORY_LIMIT });
+        debugLog('[ChatCtrl] loadHistory RPC startup OK', {
+          seq: loadSeq,
+          sessionKey,
+          rpcCount: Array.isArray(result?.messages) ? result.messages.length : null,
+          rpcSessionId: result?.sessionId ?? null,
+          rpcSummary: summarizeHistoryForDebug(result?.messages ?? []),
+        });
       } catch (err: unknown) {
         if (isUnknownMethodError(err)) {
           result = await client.request('chat.history', { sessionKey, limit: HISTORY_LIMIT });
+          debugLog('[ChatCtrl] loadHistory RPC history fallback OK', {
+            seq: loadSeq,
+            sessionKey,
+            rpcCount: Array.isArray(result?.messages) ? result.messages.length : null,
+            rpcSessionId: result?.sessionId ?? null,
+            rpcSummary: summarizeHistoryForDebug(result?.messages ?? []),
+          });
         } else {
           throw err;
         }
       }
 
-      if (this.state.sessionKey !== sessionKey) return; // Session changed during load
+      if (this.state.sessionKey !== sessionKey) {
+        debugLog('[ChatCtrl] loadHistory ABORT session changed after RPC', {
+          seq: loadSeq,
+          requestedSessionKey: sessionKey,
+          currentSessionKey: this.state.sessionKey,
+        });
+        return;
+      }
 
-      const restMessages = await this.loadPagedHistoryFromRest(sessionKey).catch(error => {
-        debugLog('[ChatCtrl] paged REST history unavailable, using RPC history', {
+      const pagedMessages = await this.loadPagedHistoryFromRest(sessionKey).catch(error => {
+        debugLog('[ChatCtrl] paged history unavailable, using RPC history', {
+          seq: loadSeq,
+          sessionKey,
           error: error instanceof Error ? error.message : String(error),
         });
         return null;
       });
-      const rawMessages = restMessages ?? result?.messages ?? [];
-      debugLog('[ChatCtrl] loadHistory AFTER-AWAIT:', sessionKey, {
+      const rawMessages = pagedMessages ?? result?.messages ?? [];
+      debugLog('[ChatCtrl] loadHistory AFTER-AWAIT', {
+        seq: loadSeq,
+        sessionKey,
+        source: pagedMessages ? 'paged' : 'rpc',
         rawMsgCount: rawMessages.length,
+        rawSummary: summarizeHistoryForDebug(rawMessages),
         ...this._snap(),
       });
       // Remove stream-fallback messages — the real persisted message from the
       // gateway will replace them, preventing content duplication.
       const projectedMessages = rawMessages
+        .map(stripAssistantSilentReplySuffix)
         .filter(m => !shouldHideMessage(m))
         .filter(m => !(m as Record<string, unknown>)?.__openclawStreamFallback);
+      debugLog('[ChatCtrl] loadHistory PROJECTED', {
+        seq: loadSeq,
+        sessionKey,
+        rawCount: rawMessages.length,
+        projectedCount: projectedMessages.length,
+        hiddenCount: rawMessages.length - projectedMessages.length,
+        projectedSummary: summarizeHistoryForDebug(projectedMessages),
+      });
       const messagesWithCompactionDetails = await this.enrichCompactionMarkers(projectedMessages);
       const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
         sessionKey,
@@ -904,6 +1193,7 @@ export class ChatController {
       let messages = hydratedMessages.map(message =>
         normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
       );
+      const beforeTailPreserveCount = messages.length;
       messages = preserveOptimisticTailMessages(messages, previousMessages);
       const lateOptimisticTail = collectLateOptimisticTailMessages(
         previousMessages,
@@ -913,6 +1203,15 @@ export class ChatController {
       if (lateOptimisticTail.length > 0) {
         messages = [...messages, ...lateOptimisticTail];
       }
+      debugLog('[ChatCtrl] loadHistory NORMALIZED', {
+        seq: loadSeq,
+        sessionKey,
+        hydratedCount: hydratedMessages.length,
+        beforeTailPreserveCount,
+        afterTailPreserveCount: messages.length,
+        lateOptimisticTailCount: lateOptimisticTail.length,
+        normalizedSummary: summarizeHistoryForDebug(messages),
+      });
 
       // Guard: if the gateway returned no messages but we already have
       // materialized content from lifecycle:finishing, don't overwrite it.
@@ -922,7 +1221,14 @@ export class ChatController {
         m => (m as Record<string, unknown>)?.__openclawStreamFallback,
       );
       if (messages.length === 0 && hasMaterializedContent) {
-        debugLog('[ChatCtrl] loadHistory: gateway returned empty, preserving materialized content');
+        debugLog(
+          '[ChatCtrl] loadHistory: gateway returned empty, preserving materialized content',
+          {
+            seq: loadSeq,
+            sessionKey,
+            currentSummary: summarizeHistoryForDebug(this.state.chatMessages),
+          },
+        );
         this.state.chatLoading = false;
         this.notify();
         return;
@@ -933,12 +1239,66 @@ export class ChatController {
         // chatMessages, overlays, or trigger a re-render.  The active run
         // owns all display state; loadHistory data will be fetched again in
         // flushPendingHistoryReload after the run ends.
-        debugLog('[ChatCtrl] loadHistory: skipped — new run active, preserving in-flight state');
+        const backfilledThinking = this.backfillLiveThinkingFromHistory(messages);
+        debugLog('[ChatCtrl] loadHistory: skipped — new run active, preserving in-flight state', {
+          seq: loadSeq,
+          sessionKey,
+          backfilledThinking,
+          loadedSummary: summarizeHistoryForDebug(messages),
+          currentSummary: summarizeHistoryForDebug(this.state.chatMessages),
+        });
+        this.state.chatLoading = false;
+        if (backfilledThinking) this.notifyStream();
+        return;
+      }
+
+      if (isStaleHistoryRefresh(messages, previousMessages, this.state.chatMessages)) {
+        debugLog('[ChatCtrl] loadHistory: skipped stale history refresh', {
+          seq: loadSeq,
+          sessionKey,
+          loadedCount: messages.length,
+          previousCount: previousMessages.length,
+          currentCount: this.state.chatMessages.length,
+          loadedSummary: summarizeHistoryForDebug(messages),
+          previousSummary: summarizeHistoryForDebug(previousMessages),
+          currentSummary: summarizeHistoryForDebug(this.state.chatMessages),
+          missingVisibleTail: summarizeMissingVisibleTailForDebug(
+            messages,
+            previousMessages,
+            this.state.chatMessages,
+          ),
+        });
+        this.scheduleDeferredHistoryReload(sessionKey, 'stale-history');
+        this.state.chatLoading = false;
+        return;
+      }
+
+      if (isRegressiveHistoryRefresh(messages, this.state.chatMessages)) {
+        debugLog('[ChatCtrl] loadHistory: skipped regressive history refresh', {
+          seq: loadSeq,
+          sessionKey,
+          loadedCount: messages.length,
+          currentCount: this.state.chatMessages.length,
+          loadedSummary: summarizeHistoryForDebug(messages),
+          currentSummary: summarizeHistoryForDebug(this.state.chatMessages),
+          missingVisibleTail: summarizeRegressiveVisibleTailForDebug(
+            messages,
+            this.state.chatMessages,
+          ),
+        });
+        this.scheduleDeferredHistoryReload(sessionKey, 'regressive-history');
         this.state.chatLoading = false;
         return;
       }
 
       // Normal post-run load: replace everything with authoritative history.
+      debugLog('[ChatCtrl] loadHistory APPLY', {
+        seq: loadSeq,
+        sessionKey,
+        beforeSummary: summarizeHistoryForDebug(this.state.chatMessages),
+        nextSummary: summarizeHistoryForDebug(messages),
+      });
+      this.deferredHistoryReloadAttempts.delete(sessionKey);
       this.state.chatToolMessages = [];
       this.state.chatThinkingMessages = [];
       this.state.chatStreamSegments = [];
@@ -980,10 +1340,16 @@ export class ChatController {
               content: p.content,
             };
           }
-          debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage found in history, clearing');
+          debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage found in history, clearing', {
+            seq: loadSeq,
+            sessionKey,
+            foundIndex,
+          });
           this.state.pendingUserMessage = null;
         } else {
           debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage NOT in history, keeping', {
+            seq: loadSeq,
+            sessionKey,
             pendingLen: p.text.length,
             userCandidates: messages
               .filter(m => (m as Record<string, unknown>).role === 'user')
@@ -998,7 +1364,12 @@ export class ChatController {
           });
         }
       } else {
-        debugLog('[ChatCtrl] loadHistory OK:', messages.length, 'messages');
+        debugLog('[ChatCtrl] loadHistory OK', {
+          seq: loadSeq,
+          sessionKey,
+          count: messages.length,
+          finalSummary: summarizeHistoryForDebug(messages),
+        });
       }
 
       this.notify();
@@ -1007,11 +1378,29 @@ export class ChatController {
       this.state.chatLoading = false;
       this.state.lastError = (err as Error).message;
       console.error('[ChatCtrl] loadHistory FAILED:', (err as Error).message);
+      debugLog('[ChatCtrl] loadHistory FAILED', {
+        seq: loadSeq,
+        sessionKey,
+        error: err instanceof Error ? err.message : String(err),
+        ...this._snap(),
+      });
       this.notify();
     } finally {
       this.historyLoadsInFlight.delete(sessionKey);
       if (this.historyReloadRequested.delete(sessionKey) && this.state.sessionKey === sessionKey) {
-        void this.loadHistory();
+        debugLog('[ChatCtrl] loadHistory QUEUED reload starting', {
+          seq: loadSeq,
+          sessionKey,
+          nextSeq: this.historyLoadSeq + 1,
+        });
+        this.scheduleDeferredHistoryReload(sessionKey, 'queued-history');
+      } else {
+        debugLog('[ChatCtrl] loadHistory FINISH', {
+          seq: loadSeq,
+          sessionKey,
+          queued: this.historyReloadRequested.has(sessionKey),
+          ...this._snap(),
+        });
       }
     }
   }
@@ -1085,9 +1474,8 @@ export class ChatController {
       this.state.chatStreamStartedAt ??= Date.now();
     }
 
-    // Filter out NO_REPLY and heartbeat
-    if (this.state.chatStream && isHiddenStreamText(this.state.chatStream)) {
-      return; // Don't notify for hidden streams
+    if (this.clearHiddenActiveStream('chat.delta')) {
+      return;
     }
 
     this.notifyStream();
@@ -1096,7 +1484,7 @@ export class ChatController {
   private handleFinal(payload: ChatEventPayload): void {
     this.clearLifecycleEndFallback();
     this.commitActiveThinking('final');
-    const message = payload.message;
+    const message = stripAssistantSilentReplySuffix(payload.message);
     const willAppend = message && !shouldHideMessage(message);
     const liveThinkingText = collectThinkingText(this.state.chatThinkingMessages);
     debugLog('[ChatCtrl] ▶ chat.final', {
@@ -1106,6 +1494,8 @@ export class ChatController {
       finalContentType: Array.isArray((message as Record<string, unknown>)?.content)
         ? 'array'
         : typeof (message as Record<string, unknown>)?.content,
+      finalMessage: summarizeMessageForDebug(message),
+      liveThinkingLen: liveThinkingText?.length ?? 0,
       ...this._snap(),
     });
     if (willAppend) {
@@ -1114,18 +1504,36 @@ export class ChatController {
       );
       this.state.chatMessages = appendTerminalMessage(this.state.chatMessages, terminalMessage);
       this.state.chatStreamSegments = [];
+      debugLog('[ChatCtrl] ▶ chat.final appended terminal', {
+        terminalMessage: summarizeMessageForDebug(terminalMessage),
+        afterSummary: summarizeHistoryForDebug(this.state.chatMessages),
+      });
     }
     this.state.chatStream = null;
     this.state.chatStreamStartedAt = null;
     this.state.chatThinkingStream = null;
     this.state.chatThinkingMessages = [];
-    this.state.chatToolMessages = [];
+    if (willAppend) {
+      this.completeLiveToolMessages();
+    } else {
+      this.state.chatToolMessages = [];
+    }
     this.state.chatStreamSegments = [];
     this.state.chatSending = false;
     this.state.chatRunId = null;
     this.resetAssistantSnapshotSource();
-    this.pendingHistoryReload = true;
-    this.flushPendingHistoryReload();
+    if (willAppend) {
+      // Match OpenClaw webchat: a renderable final message already reconciles
+      // the visible turn. Replaying a deferred session.message reload here can
+      // race with transcript persistence and briefly replace the final message
+      // with stale history. A delayed guarded reload lets persisted history
+      // catch up and clears live overlays once the authoritative tail exists.
+      this.pendingHistoryReload = false;
+      this.schedulePostFinalHistoryReload(payload.sessionKey);
+    } else {
+      this.pendingHistoryReload = true;
+      this.flushPendingHistoryReload();
+    }
     debugLog('[ChatCtrl] ▶ chat.final (done)', this._snap());
     this.notify();
   }
@@ -1168,7 +1576,9 @@ export class ChatController {
 
   private flushPendingHistoryReload(): void {
     if (this.pendingHistoryReload) {
-      debugLog('[ChatCtrl] flushPendingHistoryReload → loadHistory:', this.state.sessionKey);
+      debugLog('[ChatCtrl] flushPendingHistoryReload → loadHistory:', this.state.sessionKey, {
+        ...this._snap(),
+      });
       this.pendingHistoryReload = false;
       this.loadHistory();
     }
@@ -1288,8 +1698,7 @@ export class ChatController {
       this.assistantSnapshotRunId = runId ?? this.state.chatRunId;
       this.state.chatStream = text;
 
-      // Filter out NO_REPLY and heartbeat
-      if (this.state.chatStream && isHiddenStreamText(this.state.chatStream)) {
+      if (this.clearHiddenActiveStream('agent.assistant')) {
         debugLog('[ChatCtrl] ▶ assistant (hidden)', { textLen: text.length });
         return;
       }
@@ -1304,6 +1713,17 @@ export class ChatController {
         ...this._snap(),
       });
       this.notifyStream();
+      return;
+    }
+
+    if (stream === 'item') {
+      debugLog('[ChatCtrl] ▶ item → deferred history reload', {
+        sourceEvent,
+        runId,
+        aseq,
+        ...this._snap(),
+      });
+      this.scheduleDeferredHistoryReload(this.state.sessionKey, 'agent-item');
       return;
     }
 
@@ -1479,6 +1899,22 @@ export class ChatController {
       errorType: typeof data.error,
     });
     this.notifyStream();
+  }
+
+  private clearHiddenActiveStream(source: string): boolean {
+    if (!this.state.chatStream || !isHiddenStreamText(this.state.chatStream)) {
+      return false;
+    }
+
+    debugLog('[ChatCtrl] ▶ hidden stream cleared', {
+      source,
+      runId: this.state.chatRunId,
+      textLen: this.state.chatStream.length,
+      ...this._snap(),
+    });
+    this.state.chatStream = null;
+    this.state.chatStreamStartedAt = null;
+    return true;
   }
 
   // ─── Send Message ─────────────────────────────────────────────────────
@@ -1765,9 +2201,208 @@ function formatI18n(key: string, params: Record<string, string>): string {
   );
 }
 
+function normalizeDebugArgs(args: unknown[]): Record<string, unknown> {
+  if (args.length === 0) return {};
+  if (args.length === 1) {
+    const record = asRecord(args[0]);
+    if (record) return sanitizeDebugRecord(record);
+  }
+  return { args: args.map(value => sanitizeDebugValue(value)) };
+}
+
+function sanitizeDebugRecord(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, sanitizeDebugValue(value)]),
+  );
+}
+
+function sanitizeDebugValue(value: unknown, depth = 0): unknown {
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.length > 240 ? `${value.slice(0, 240)}...` : value;
+  if (Array.isArray(value)) {
+    if (looksLikeMessageArray(value)) {
+      return summarizeHistoryForDebug(value);
+    }
+    const limit = depth > 1 ? 8 : 20;
+    return value.slice(0, limit).map(item => sanitizeDebugValue(item, depth + 1));
+  }
+  const record = asRecord(value);
+  if (!record) return String(value);
+  if (looksLikeMessageRecord(record)) {
+    return summarizeMessageForDebug(record);
+  }
+  if (depth > 2) return '[object]';
+  return Object.fromEntries(
+    Object.entries(record)
+      .slice(0, 30)
+      .map(([key, item]) => [key, sanitizeDebugValue(item, depth + 1)]),
+  );
+}
+
+function looksLikeMessageArray(value: unknown[]): boolean {
+  if (value.length === 0) return false;
+  return value.some(item => {
+    const record = asRecord(item);
+    return Boolean(record && looksLikeMessageRecord(record));
+  });
+}
+
+function looksLikeMessageRecord(record: Record<string, unknown>): boolean {
+  return typeof record.role === 'string' && ('content' in record || 'text' in record);
+}
+
+function summarizeHistoryForDebug(messages: unknown[]): Record<string, unknown> {
+  const roleCounts: Record<string, number> = {};
+  let textLen = 0;
+  let thinkingLen = 0;
+  let toolBlockCount = 0;
+  let localOptimisticTailCount = 0;
+  let streamFallbackCount = 0;
+
+  for (const message of messages) {
+    const record = asRecord(message);
+    const role = typeof record?.role === 'string' ? record.role : '?';
+    roleCounts[role] = (roleCounts[role] ?? 0) + 1;
+    textLen += extractSnapshotText(message)?.length ?? 0;
+    thinkingLen += thinkingLengthForDebug(message);
+    toolBlockCount += toolBlockCountForDebug(message);
+    if (isLocallyOptimisticHistoryTail(message)) localOptimisticTailCount += 1;
+    if (record?.__openclawStreamFallback) streamFallbackCount += 1;
+  }
+
+  return {
+    count: messages.length,
+    roleCounts,
+    textLen,
+    thinkingLen,
+    toolBlockCount,
+    localOptimisticTailCount,
+    streamFallbackCount,
+    first: summarizeMessageForDebug(messages[0]),
+    last: summarizeMessageForDebug(messages[messages.length - 1]),
+    tail: summarizeMessagesForDebug(messages, 5),
+  };
+}
+
+function summarizeMessagesForDebug(messages: unknown[], count: number): unknown[] {
+  return messages.slice(-count).map(message => summarizeMessageForDebug(message));
+}
+
+function summarizeMessageForDebug(message: unknown): Record<string, unknown> | null {
+  const record = asRecord(message);
+  if (!record) return null;
+  const text = extractSnapshotText(message) ?? '';
+  const signature = messageDisplaySignature(message);
+  return {
+    role: typeof record.role === 'string' ? record.role : null,
+    timestamp: messageTimestampMs(message),
+    stopReason: typeof record.stopReason === 'string' ? record.stopReason : null,
+    contentKind: Array.isArray(record.content) ? 'array' : typeof record.content,
+    contentTypes: contentTypesForDebug(record.content),
+    textLen: text.length,
+    textPreview: previewForDebug(text),
+    textHash: hashTextForDebug(text),
+    thinkingLen: thinkingLengthForDebug(message),
+    toolBlockCount: toolBlockCountForDebug(message),
+    hidden: shouldHideMessage(message),
+    localOptimisticTail: isLocallyOptimisticHistoryTail(message),
+    streamFallback: Boolean(record.__openclawStreamFallback),
+    signatureHash: signature ? hashTextForDebug(signature) : null,
+  };
+}
+
+function contentTypesForDebug(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  return content.map(block => {
+    const record = asRecord(block);
+    return typeof record?.type === 'string' ? record.type : typeof block;
+  });
+}
+
+function thinkingLengthForDebug(message: unknown): number {
+  const content = asRecord(message)?.content;
+  if (!Array.isArray(content)) return 0;
+  return content.reduce((total, block) => {
+    const record = asRecord(block);
+    const thinking = typeof record?.thinking === 'string' ? record.thinking : '';
+    const reasoning = typeof record?.reasoning === 'string' ? record.reasoning : '';
+    return total + thinking.length + reasoning.length;
+  }, 0);
+}
+
+function toolBlockCountForDebug(message: unknown): number {
+  const content = asRecord(message)?.content;
+  if (!Array.isArray(content)) return 0;
+  return content.filter(block => {
+    const type = asRecord(block)?.type;
+    return type === 'toolcall' || type === 'toolresult';
+  }).length;
+}
+
+function summarizeMissingVisibleTailForDebug(
+  historyMessages: unknown[],
+  previousMessages: unknown[],
+  currentMessages: unknown[],
+): unknown[] {
+  if (currentMessages === previousMessages || currentMessages.length <= previousMessages.length) {
+    return [];
+  }
+  return currentMessages
+    .slice(previousMessages.length)
+    .filter(message => {
+      if (shouldHideMessage(message)) return false;
+      const signature = messageDisplaySignature(message);
+      return Boolean(
+        signature && !historyHasSameOrNewerDisplayMessage(historyMessages, signature, message),
+      );
+    })
+    .map(message => summarizeMessageForDebug(message));
+}
+
+function summarizeRegressiveVisibleTailForDebug(
+  historyMessages: unknown[],
+  currentMessages: unknown[],
+): unknown[] {
+  return currentMessages
+    .slice(historyMessages.length)
+    .filter(message => {
+      if (shouldHideMessage(message)) return false;
+      const signature = messageDisplaySignature(message);
+      return Boolean(
+        signature && !historyHasSameOrNewerDisplayMessage(historyMessages, signature, message),
+      );
+    })
+    .map(message => summarizeMessageForDebug(message));
+}
+
+function previewForDebug(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 120) return normalized;
+  return `${normalized.slice(0, 80)} ... ${normalized.slice(-32)}`;
+}
+
+function hashTextForDebug(text: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
 function writeRuntimeDebug(message: string, details: Record<string, unknown>): void {
   if (typeof window === 'undefined') return;
-  window.electron.log.debug(message, details);
+  const debug = (
+    window as unknown as {
+      electron?: { log?: { debug?: (message: string, details?: Record<string, unknown>) => void } };
+    }
+  ).electron?.log?.debug;
+  if (typeof debug !== 'function') return;
+  try {
+    debug(message, details);
+  } catch {
+    // Debug logging must never affect chat rendering.
+  }
 }
 
 function isTempJustDoSessionKey(sessionKey: string): boolean {
@@ -1803,6 +2438,42 @@ function messageText(content: unknown): string {
     .join('\n');
 }
 
+function stripSilentReplySuffixFromText(text: string): string {
+  if (SILENT_REPLY_PATTERN.test(text.trim())) return text;
+  return text.replace(/\s*NO_REPLY\s*$/i, '').trimEnd();
+}
+
+function stripAssistantSilentReplySuffix(message: unknown): unknown {
+  const record = asRecord(message);
+  if (!record || String(record.role ?? '').toLowerCase() !== 'assistant') return message;
+
+  if (typeof record.content === 'string') {
+    const stripped = stripSilentReplySuffixFromText(record.content);
+    return stripped === record.content ? message : { ...record, content: stripped };
+  }
+
+  if (typeof record.text === 'string') {
+    const stripped = stripSilentReplySuffixFromText(record.text);
+    return stripped === record.text ? message : { ...record, text: stripped };
+  }
+
+  const originalContent = record.content;
+  if (!Array.isArray(originalContent)) return message;
+
+  let changed = false;
+  const content = originalContent.map((item, index) => {
+    const block = asRecord(item);
+    if (!block || block.type !== 'text' || typeof block.text !== 'string') return item;
+    if (index !== originalContent.length - 1) return item;
+    const stripped = stripSilentReplySuffixFromText(block.text);
+    if (stripped === block.text) return item;
+    changed = true;
+    return { ...block, text: stripped };
+  });
+
+  return changed ? { ...record, content } : message;
+}
+
 function collectThinkingText(messages: unknown[]): string | null {
   const text = messages
     .map(message => {
@@ -1812,6 +2483,22 @@ function collectThinkingText(messages: unknown[]): string | null {
         .map(item => (item as Record<string, unknown> | undefined)?.thinking)
         .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
         .join('\n');
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  return text || null;
+}
+
+function extractThinkingTextFromMessage(message: unknown): string | null {
+  const content = asRecord(message)?.content;
+  if (!Array.isArray(content)) return null;
+  const text = content
+    .map(item => {
+      const record = asRecord(item);
+      const thinking = typeof record?.thinking === 'string' ? record.thinking : '';
+      const reasoning = typeof record?.reasoning === 'string' ? record.reasoning : '';
+      return [thinking, reasoning].filter(Boolean).join('\n');
     })
     .filter(Boolean)
     .join('\n')
@@ -1963,6 +2650,37 @@ function messageDisplaySignature(message: unknown): string | null {
   }
 }
 
+function messageRoleAndText(message: unknown): { role: string; text: string } | null {
+  if (!message || typeof message !== 'object') return null;
+  const record = message as Record<string, unknown>;
+  const role = typeof record.role === 'string' ? record.role : '';
+  if (!role) return null;
+  const text = extractSnapshotText(message)?.trim();
+  return text ? { role, text } : null;
+}
+
+function normalizeComparableText(text: string): string {
+  return stripSilentReplySuffixFromText(text).replace(/\s+/g, ' ').trim();
+}
+
+function hasSimilarDisplayText(left: string, right: string): boolean {
+  const normalizedLeft = normalizeComparableText(left);
+  const normalizedRight = normalizeComparableText(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  if (normalizedLeft === normalizedRight) return true;
+  if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) {
+    return true;
+  }
+  const shorterLength = Math.min(normalizedLeft.length, normalizedRight.length);
+  if (shorterLength < 60) return false;
+  const commonPrefixLength = [...normalizedLeft].findIndex(
+    (char, index) => normalizedRight[index] !== char,
+  );
+  const prefixLength =
+    commonPrefixLength >= 0 ? commonPrefixLength : Math.min(normalizedLeft.length, normalizedRight.length);
+  return prefixLength / shorterLength >= 0.8 || prefixLength >= 160;
+}
+
 function historyHasSameOrNewerDisplayMessage(
   historyMessages: unknown[],
   signature: string,
@@ -1970,11 +2688,57 @@ function historyHasSameOrNewerDisplayMessage(
 ): boolean {
   const timestamp = messageTimestampMs(message);
   if (timestamp == null) return false;
+  const localDisplay = messageRoleAndText(message);
   return historyMessages.some(historyMessage => {
-    if (messageDisplaySignature(historyMessage) !== signature) return false;
+    if (messageDisplaySignature(historyMessage) !== signature) {
+      const historyDisplay = messageRoleAndText(historyMessage);
+      if (
+        !localDisplay ||
+        !historyDisplay ||
+        historyDisplay.role !== localDisplay.role ||
+        !hasSimilarDisplayText(historyDisplay.text, localDisplay.text)
+      ) {
+        return false;
+      }
+    }
+    const toleranceMs = isLocallyOptimisticHistoryTail(message) ? 60_000 : 10_000;
     const historyTimestamp = messageTimestampMs(historyMessage);
-    return historyTimestamp != null && historyTimestamp >= timestamp;
+    if (historyTimestamp != null && historyTimestamp >= timestamp - toleranceMs) {
+      return true;
+    }
+    return isLocallyOptimisticHistoryTail(message) && isLikelyPersistedOptimisticReplacement(
+      historyMessage,
+      message,
+    );
   });
+}
+
+function isLikelyPersistedOptimisticReplacement(historyMessage: unknown, localMessage: unknown): boolean {
+  const historyDisplay = messageRoleAndText(historyMessage);
+  const localDisplay = messageRoleAndText(localMessage);
+  if (!historyDisplay || !localDisplay || historyDisplay.role !== localDisplay.role) return false;
+  if (!hasSimilarDisplayText(historyDisplay.text, localDisplay.text)) return false;
+
+  const historyTimestamp = messageTimestampMs(historyMessage);
+  const localTimestamp = messageTimestampMs(localMessage);
+  if (historyTimestamp == null || localTimestamp == null) return true;
+  return Math.abs(historyTimestamp - localTimestamp) <= 10 * 60 * 1000;
+}
+
+function latestMessageTimestampMs(messages: unknown[]): number | null {
+  let latest: number | null = null;
+  for (const message of messages) {
+    const timestamp = messageTimestampMs(message);
+    if (timestamp == null) continue;
+    latest = latest == null ? timestamp : Math.max(latest, timestamp);
+  }
+  return latest;
+}
+
+function isNewerThanHistoryTail(message: unknown, latestHistoryTimestamp: number | null): boolean {
+  if (latestHistoryTimestamp == null) return true;
+  const timestamp = messageTimestampMs(message);
+  return timestamp != null && timestamp >= latestHistoryTimestamp - 10_000;
 }
 
 function isOptimisticTailMessage(message: unknown): boolean {
@@ -2016,12 +2780,23 @@ function preserveOptimisticTailMessages(
   }
 
   if (sharedPreviousIndex < 0 || sharedHistoryIndex < historyMessages.length - 1) {
-    return historyMessages;
+    const latestHistoryTimestamp = latestMessageTimestampMs(historyMessages);
+    const optimisticTail = previousMessages.filter(message => {
+      if (!isOptimisticTailMessage(message)) return false;
+      if (!isNewerThanHistoryTail(message, latestHistoryTimestamp)) return false;
+      const signature = messageDisplaySignature(message);
+      return Boolean(
+        signature && !historyHasSameOrNewerDisplayMessage(historyMessages, signature, message),
+      );
+    });
+    return optimisticTail.length > 0 ? [...historyMessages, ...optimisticTail] : historyMessages;
   }
 
   const optimisticTail: unknown[] = [];
+  const latestHistoryTimestamp = latestMessageTimestampMs(historyMessages);
   for (const message of previousMessages.slice(sharedPreviousIndex + 1)) {
     if (!isOptimisticTailMessage(message)) return historyMessages;
+    if (!isNewerThanHistoryTail(message, latestHistoryTimestamp)) return historyMessages;
     const signature = messageDisplaySignature(message);
     if (!signature || historySignatureIndexes.has(signature)) return historyMessages;
     optimisticTail.push(message);
@@ -2041,8 +2816,10 @@ function collectLateOptimisticTailMessages(
     return [];
   }
   const lateTail: unknown[] = [];
+  const latestHistoryTimestamp = latestMessageTimestampMs(historyMessages);
   for (const message of currentMessages.slice(previousMessages.length)) {
     if (!isOptimisticTailMessage(message)) return [];
+    if (!isNewerThanHistoryTail(message, latestHistoryTimestamp)) return [];
     const signature = messageDisplaySignature(message);
     if (!signature) return [];
     if (historyHasSameOrNewerDisplayMessage(historyMessages, signature, message)) {
@@ -2051,6 +2828,85 @@ function collectLateOptimisticTailMessages(
     lateTail.push(message);
   }
   return lateTail;
+}
+
+function isDisplayPrefixOfCurrent(historyMessages: unknown[], currentMessages: unknown[]): boolean {
+  if (historyMessages.length === 0 || historyMessages.length >= currentMessages.length) {
+    return false;
+  }
+  return historyMessages.every((historyMessage, index) => {
+    const currentMessage = currentMessages[index];
+    const historySignature = messageDisplaySignature(historyMessage);
+    if (historySignature && historySignature === messageDisplaySignature(currentMessage)) {
+      return true;
+    }
+    const historyDisplay = messageRoleAndText(historyMessage);
+    const currentDisplay = messageRoleAndText(currentMessage);
+    return Boolean(
+      historyDisplay &&
+        currentDisplay &&
+        historyDisplay.role === currentDisplay.role &&
+        hasSimilarDisplayText(historyDisplay.text, currentDisplay.text),
+    );
+  });
+}
+
+function hasMissingProtectableTail(historyMessages: unknown[], currentMessages: unknown[]): boolean {
+  return currentMessages.slice(historyMessages.length).some(message => {
+    if (shouldHideMessage(message)) return false;
+    if (
+      !isLocallyOptimisticHistoryTail(message) &&
+      !asRecord(message)?.__openclawStreamFallback
+    ) {
+      return false;
+    }
+    const signature = messageDisplaySignature(message);
+    return Boolean(
+      signature && !historyHasSameOrNewerDisplayMessage(historyMessages, signature, message),
+    );
+  });
+}
+
+function isRegressiveHistoryRefresh(
+  historyMessages: unknown[],
+  currentMessages: unknown[],
+): boolean {
+  if (currentMessages.length <= historyMessages.length) return false;
+  if (!isDisplayPrefixOfCurrent(historyMessages, currentMessages)) return false;
+  if (hasMissingProtectableTail(historyMessages, currentMessages)) return true;
+
+  const latestHistoryTimestamp = latestMessageTimestampMs(historyMessages);
+  const latestCurrentTimestamp = latestMessageTimestampMs(currentMessages);
+  if (
+    latestHistoryTimestamp == null ||
+    latestCurrentTimestamp == null ||
+    latestCurrentTimestamp <= latestHistoryTimestamp + 10_000
+  ) {
+    return false;
+  }
+
+  return summarizeRegressiveVisibleTailForDebug(historyMessages, currentMessages).length > 0;
+}
+
+function isStaleHistoryRefresh(
+  historyMessages: unknown[],
+  previousMessages: unknown[],
+  currentMessages: unknown[],
+): boolean {
+  if (currentMessages === previousMessages || currentMessages.length <= previousMessages.length) {
+    return false;
+  }
+  if (previousMessages.some((message, index) => currentMessages[index] !== message)) {
+    return false;
+  }
+
+  return currentMessages.slice(previousMessages.length).some(message => {
+    if (shouldHideMessage(message)) return false;
+    const signature = messageDisplaySignature(message);
+    return Boolean(
+      signature && !historyHasSameOrNewerDisplayMessage(historyMessages, signature, message),
+    );
+  });
 }
 
 function stringifyToolOutput(value: unknown): string | null {

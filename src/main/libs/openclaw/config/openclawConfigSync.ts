@@ -77,11 +77,24 @@ const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-
  * Also used by the runtime adapter's client-side timeout watchdog.
  */
 export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
+// Provider idle timeout for slow long-context model calls. This must be lower
+// than the agent ceiling but higher than OpenClaw's default 120s.
+export const OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS = 30 * 60;
+export const OPENCLAW_STUCK_SESSION_WARN_MS = 10 * 60 * 1000;
+export const OPENCLAW_STUCK_SESSION_ABORT_MS = 40 * 60 * 1000;
 // OpenClaw treats zero as "never archive" for completed run-mode subagents.
 export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 // Allow substantial work while still terminating runaway subagent runs.
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
+
+export const buildOpenClawConfigMeta = (
+  version: string | null | undefined,
+  now = new Date(),
+): Record<string, string> => ({
+  lastTouchedVersion: version || 'unknown',
+  lastTouchedAt: now.toISOString(),
+});
 
 const ensureDir = (dirPath: string): void => {
   if (!fs.existsSync(dirPath)) {
@@ -129,6 +142,7 @@ type OpenClawProviderSelection = {
     api: OpenClawProviderApi;
     apiKey: string;
     auth: 'api-key';
+    timeoutSeconds: number;
     models: Array<{
       id: string;
       name: string;
@@ -267,6 +281,7 @@ export const buildProviderSelection = (options: {
       api,
       apiKey,
       auth: 'api-key' as const,
+      timeoutSeconds: OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
       models: [
         {
           id: sessionModelId,
@@ -455,6 +470,10 @@ export class OpenClawConfigSync {
         },
         providers: allProvidersMap,
       },
+      diagnostics: {
+        stuckSessionWarnMs: OPENCLAW_STUCK_SESSION_WARN_MS,
+        stuckSessionAbortMs: OPENCLAW_STUCK_SESSION_ABORT_MS,
+      },
       agents: {
         defaults: {
           timeoutSeconds: OPENCLAW_AGENT_TIMEOUT_SECONDS,
@@ -546,6 +565,7 @@ export class OpenClawConfigSync {
             }
           : {};
       })(),
+      meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
     };
 
     // IM channel config syncing removed — channels disabled pending future adaptation
@@ -1001,6 +1021,7 @@ export class OpenClawConfigSync {
           enabled: false,
         },
       },
+      meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
       // Don't enable plugins in minimal config — plugin loading via jiti happens
       // synchronously BEFORE the HTTP server binds, and can block gateway startup
       // for minutes on a fresh install.  Plugins will be enabled when the user

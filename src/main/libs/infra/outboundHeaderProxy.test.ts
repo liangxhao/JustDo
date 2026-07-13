@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 
 import {
   getOutboundHeaderPolicyConfig,
@@ -18,6 +18,8 @@ import {
   restoreOutboundProxyEnv,
   shouldApplyOutboundHeadersForRequest,
   shouldInjectOutboundHeaders,
+  shouldSuppressMitmProxyErrorLog,
+  suppressNoisyMitmDisconnectLogs,
 } from './outboundHeaderProxy';
 
 const temporaryDirectories: string[] = [];
@@ -347,6 +349,54 @@ test('classifies proxy client disconnects as ignorable errors', () => {
       }),
     ),
   ).toBe(false);
+});
+
+test('suppresses noisy MITM logs only for ignorable disconnects', () => {
+  const resetError = Object.assign(new Error('socket hang up'), {
+    code: 'ECONNRESET',
+  });
+
+  expect(shouldSuppressMitmProxyErrorLog('SERVER_TO_PROXY_RESPONSE_ERROR', resetError)).toBe(true);
+  expect(shouldSuppressMitmProxyErrorLog('PROXY_TO_SERVER_REQUEST_ERROR', resetError)).toBe(true);
+  expect(shouldSuppressMitmProxyErrorLog('ON_REQUEST_ERROR', resetError)).toBe(false);
+  expect(
+    shouldSuppressMitmProxyErrorLog(
+      'SERVER_TO_PROXY_RESPONSE_ERROR',
+      Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }),
+    ),
+  ).toBe(false);
+});
+
+test('keeps MITM error handlers while skipping raw disconnect logging', () => {
+  const originalOnError = vi.fn();
+  const proxyHandler = vi.fn();
+  const contextHandler = vi.fn();
+  const proxy = {
+    _onError: originalOnError,
+    onErrorHandlers: [proxyHandler],
+  };
+  const context = {
+    onErrorHandlers: [contextHandler],
+  };
+  const resetError = Object.assign(new Error('socket hang up'), {
+    code: 'ECONNRESET',
+  });
+
+  suppressNoisyMitmDisconnectLogs(proxy as never);
+  proxy._onError('SERVER_TO_PROXY_RESPONSE_ERROR', context, resetError);
+
+  expect(originalOnError).not.toHaveBeenCalled();
+  expect(proxyHandler).toHaveBeenCalledWith(context, resetError, 'SERVER_TO_PROXY_RESPONSE_ERROR');
+  expect(contextHandler).toHaveBeenCalledWith(context, resetError, 'SERVER_TO_PROXY_RESPONSE_ERROR');
+
+  const timeoutError = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+  proxy._onError('SERVER_TO_PROXY_RESPONSE_ERROR', context, timeoutError);
+
+  expect(originalOnError).toHaveBeenCalledWith(
+    'SERVER_TO_PROXY_RESPONSE_ERROR',
+    context,
+    timeoutError,
+  );
 });
 
 test('accepts a dynamic upstream proxy resolver and user info path', () => {
