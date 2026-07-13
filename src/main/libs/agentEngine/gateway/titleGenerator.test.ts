@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
-import type { GatewayClientLike } from './types';
 import { GatewayTitleGenerator } from './titleGenerator';
+import type { GatewayClientLike } from './types';
 
 afterEach(() => {
   vi.useRealTimers();

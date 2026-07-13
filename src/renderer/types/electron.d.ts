@@ -262,6 +262,35 @@ interface McpReadResourceResultIPC {
   }>;
 }
 
+interface HookEntryIPC {
+  id?: string;
+  hookKey?: string;
+  name: string;
+  description: string;
+  emoji?: string;
+  eligible: boolean;
+  disabled?: boolean;
+  enabledByConfig?: boolean;
+  requirementsSatisfied: boolean;
+  loadable: boolean;
+  blockedReason?: string;
+  source: string;
+  pluginId?: string;
+  events: string[];
+  homepage?: string;
+  filePath?: string;
+  baseDir?: string;
+  handlerPath?: string;
+  missing: {
+    bins: string[];
+    anyBins?: string[];
+    env: string[];
+    config: string[];
+    os: string[];
+  };
+  managedByPlugin: boolean;
+}
+
 import type { Agent } from './agent';
 
 interface IElectronAPI {
@@ -316,6 +345,28 @@ interface IElectronAPI {
       gatewayOffline?: boolean;
     }>;
     delete: (id: string) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
+  };
+  hooks: {
+    list: () => Promise<{
+      success: boolean;
+      hooks?: HookEntryIPC[];
+      workspaceDir?: string;
+      managedHooksDir?: string;
+      error?: string;
+      gatewayOffline?: boolean;
+    }>;
+    setEnabled: (options: {
+      id: string;
+      enabled: boolean;
+    }) => Promise<{
+      success: boolean;
+      hooks?: HookEntryIPC[];
+      workspaceDir?: string;
+      managedHooksDir?: string;
+      restartRequired?: boolean;
+      error?: string;
+      gatewayOffline?: boolean;
+    }>;
   };
   slashCommands: {
     list: (

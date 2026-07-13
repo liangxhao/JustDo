@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
+import HookManager from '../hooks/HookManager';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import McpManager from '../mcp/McpManager';
 import SkillsManager from '../skills/SkillsManager';
 import WindowTitleBar from '../window/WindowTitleBar';
 
-type PluginTab = 'extensions' | 'skills' | 'mcp';
+type PluginTab = 'extensions' | 'skills' | 'mcp' | 'hooks';
 
-const PLUGIN_TABS: PluginTab[] = ['extensions', 'skills', 'mcp'];
+const PLUGIN_TABS: PluginTab[] = ['extensions', 'skills', 'mcp', 'hooks'];
 
 interface PluginsViewProps {
   isSidebarCollapsed: boolean;
@@ -29,6 +30,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
     extensions: i18nService.t('extensions'),
     skills: i18nService.t('skills'),
     mcp: i18nService.t('mcpServers'),
+    hooks: i18nService.t('hooks'),
   };
 
   return (
@@ -85,6 +87,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
         )}
         {activeTab === 'skills' && <SkillsManager />}
         {activeTab === 'mcp' && <McpManager />}
+        {activeTab === 'hooks' && <HookManager />}
       </main>
     </div>
   );

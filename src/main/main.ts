@@ -47,6 +47,7 @@ import {
 } from './ipcHandlers/cowork';
 import { registerApiProxyHandlers, registerMcpHandlers } from './ipcHandlers/integrations';
 import {
+  registerHookHandlers,
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
   registerSkillHandlers,
@@ -72,6 +73,7 @@ import type { AskUserExtensionConfig } from './libs/openclaw/config/openclawConf
 import { buildProviderSelection } from './libs/openclaw/config/openclawConfigSync';
 import { OpenClawConfigSyncService } from './libs/openclaw/config/openclawConfigSyncService';
 import { OpenClawExtensionHostLifecycle } from './libs/openclaw/extensions/openclawExtensionHostLifecycle';
+import { OpenClawHookServices } from './libs/openclaw/hooks/openclawHookServices';
 import { resolveQualifiedAgentModelRef } from './libs/openclaw/models/openclawAgentModels';
 import {
   OpenClawEngineManager,
@@ -288,6 +290,7 @@ const extensionHostLifecycle = new OpenClawExtensionHostLifecycle({
 });
 let openClawSkillFileService: OpenClawSkillFileService | null = null;
 let mcpServices: McpServices | null = null;
+let openClawHookServices: OpenClawHookServices | null = null;
 let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
@@ -409,6 +412,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       getOpenClawEngineManager,
       getAskUserExtensionConfig: () => extensionHostLifecycle.config,
       getMcpStore,
+      getHookStore,
       hasActiveGatewayWorkloads: () => getCoworkEngineService().hasActiveSessions(),
       disconnectGatewayClient: () => getCoworkEngineService().disconnectGatewayClient(),
     });
@@ -461,6 +465,20 @@ const getMcpStore = () => {
   return getMcpServices().getStore();
 };
 
+const getOpenClawHookServices = (): OpenClawHookServices => {
+  if (!openClawHookServices) {
+    openClawHookServices = new OpenClawHookServices({
+      getDatabase: () => getStore().getDatabase(),
+      syncOpenClawConfig,
+    });
+  }
+  return openClawHookServices;
+};
+
+const getHookStore = () => {
+  return getOpenClawHookServices().getStore();
+};
+
 const startExtensionHost = (): Promise<AskUserExtensionConfig | null> => {
   return extensionHostLifecycle.start();
 };
@@ -471,6 +489,10 @@ const stopExtensionHost = (): Promise<void> => {
 
 const syncMcpConfig = (): Promise<{ tools: number; error?: string }> => {
   return getMcpServices().syncConfig();
+};
+
+const syncHookConfig = (): Promise<{ hooks: number; error?: string }> => {
+  return getOpenClawHookServices().syncConfig();
 };
 
 const probeMcpServer = (id: string) => {
@@ -648,6 +670,11 @@ if (!gotTheLock) {
     skillService: openClawSkillService,
     getSkillFiles: getOpenClawSkillFiles,
     pluginManager,
+  });
+  registerHookHandlers({
+    getManager: getOpenClawEngineManager,
+    getStore: getHookStore,
+    syncConfig: syncHookConfig,
   });
 
   registerOpenClawEngineHandlers({

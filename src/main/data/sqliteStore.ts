@@ -199,6 +199,17 @@ export class SqliteStore {
       );
     `);
 
+    // Create OpenClaw hooks table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS openclaw_hooks (
+        id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        config_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+
     // Create session groups table
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (

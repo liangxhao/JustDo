@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('electron', {
     detail: (options: { id: string }) => ipcRenderer.invoke('skills:detail', options),
     delete: (id: string) => ipcRenderer.invoke('skills:delete', id),
   },
+  hooks: {
+    list: () => ipcRenderer.invoke('hooks:list'),
+    setEnabled: (options: { id: string; enabled: boolean }) =>
+      ipcRenderer.invoke('hooks:setEnabled', options),
+  },
   slashCommands: {
     list: (options?: { agentId?: string | null }) =>
       ipcRenderer.invoke(SlashCommandIpc.List, options || {}),

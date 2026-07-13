@@ -19,6 +19,7 @@ import {
   buildBundledExtensionToolContracts,
 } from '../extensions/openclawExtensionRegistry';
 import { hasBundledOpenClawExtension } from '../extensions/openclawLocalExtensions';
+import type { OpenClawHookRecord } from '../hooks/openclawHookStore';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
@@ -54,6 +55,31 @@ export const buildOpenClawMcpServers = (
       return [server.name, config];
     }),
   );
+};
+
+export const buildOpenClawHookConfig = (
+  hooks: OpenClawHookRecord[],
+): { hooks?: Record<string, unknown> } => {
+  const entries = Object.fromEntries(
+    hooks.map(hook => [
+      hook.id,
+      {
+        ...hook.config,
+        enabled: hook.enabled,
+      },
+    ]),
+  );
+
+  return Object.keys(entries).length > 0
+    ? {
+        hooks: {
+          internal: {
+            enabled: hooks.some(hook => hook.enabled),
+            entries,
+          },
+        },
+      }
+    : {};
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -329,6 +355,7 @@ type OpenClawConfigSyncDeps = {
   getCoworkConfig: () => CoworkConfig;
   getAskUserExtensionConfig?: () => AskUserExtensionConfig | null;
   getMcpServers?: () => McpServerRecord[];
+  getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
 };
 
@@ -337,6 +364,7 @@ export class OpenClawConfigSync {
   private readonly getCoworkConfig: () => CoworkConfig;
   private readonly getAskUserExtensionConfig?: () => AskUserExtensionConfig | null;
   private readonly getMcpServers?: () => McpServerRecord[];
+  private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
 
   constructor(deps: OpenClawConfigSyncDeps) {
@@ -344,6 +372,7 @@ export class OpenClawConfigSync {
     this.getCoworkConfig = deps.getCoworkConfig;
     this.getAskUserExtensionConfig = deps.getAskUserExtensionConfig;
     this.getMcpServers = deps.getMcpServers;
+    this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
   }
 
@@ -450,6 +479,7 @@ export class OpenClawConfigSync {
       isBundledPluginAvailable,
     );
     const mcpServers = buildOpenClawMcpServers(this.getMcpServers?.() ?? []);
+    const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
 
     const managedConfig: Record<string, unknown> = {
       gateway: {
@@ -511,6 +541,7 @@ export class OpenClawConfigSync {
       mcp: {
         servers: mcpServers,
       },
+      ...hookConfig,
       tools: {
         deny: ['web_search'],
         // OpenClaw applies an additional tool gate to sandboxed turns. Native
@@ -999,6 +1030,7 @@ export class OpenClawConfigSync {
    * user sets up a model in the UI.
    */
   private writeMinimalConfig(configPath: string, _reason: string): OpenClawConfigSyncResult {
+    const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const minimalConfig: Record<string, unknown> = {
       gateway: {
         mode: 'local',
@@ -1012,6 +1044,7 @@ export class OpenClawConfigSync {
           enabled: false,
         },
       },
+      ...hookConfig,
       meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
       // Don't enable plugins in minimal config — plugin loading via jiti happens
       // synchronously BEFORE the HTTP server binds, and can block gateway startup
@@ -1033,6 +1066,23 @@ export class OpenClawConfigSync {
     if (currentContent && currentContent !== nextContent) {
       try {
         const existing = JSON.parse(currentContent);
+        const hasHookConfig = Object.keys(hookConfig).length > 0;
+        if (hasHookConfig && isRecord(existing)) {
+          const mergedConfig = {
+            ...existing,
+            ...hookConfig,
+            meta: minimalConfig.meta,
+          };
+          const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
+          if (currentContent !== mergedContent) {
+            ensureDir(path.dirname(configPath));
+            const tmpPath = `${configPath}.tmp-${Date.now()}`;
+            fs.writeFileSync(tmpPath, mergedContent, 'utf8');
+            fs.renameSync(tmpPath, configPath);
+            return { ok: true, changed: true, configPath };
+          }
+          return { ok: true, changed: false, configPath };
+        }
         if (existing.models?.providers || existing.plugins?.entries || existing.gateway?.mode) {
           // Already has a config with substance — keep it.
           return { ok: true, changed: false, configPath };

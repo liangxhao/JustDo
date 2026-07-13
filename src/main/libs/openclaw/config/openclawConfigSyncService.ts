@@ -1,5 +1,6 @@
 import type { CoworkStore } from '../../../coworkStore';
 import type { McpStore } from '../../mcp/mcpStore';
+import type { OpenClawHookStore } from '../hooks/openclawHookStore';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -12,6 +13,7 @@ type OpenClawConfigSyncServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
   getAskUserExtensionConfig: () => AskUserExtensionConfig | null;
   getMcpStore: () => McpStore;
+  getHookStore: () => OpenClawHookStore;
   hasActiveGatewayWorkloads: () => boolean;
   disconnectGatewayClient: () => void;
 };
@@ -128,6 +130,7 @@ export class OpenClawConfigSyncService {
         getCoworkConfig: () => this.deps.getCoworkStore().getConfig(),
         getAskUserExtensionConfig: this.deps.getAskUserExtensionConfig,
         getMcpServers: () => this.deps.getMcpStore().listServers(),
+        getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),
       });
     }

@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest';
+
 import {
-  SlashCommandBlacklist,
   type SlashCommand,
+  SlashCommandBlacklist,
 } from '../../../shared/slashCommands';
 import { justDoSlashCommandPolicy } from './slashCommandPolicies';
 
