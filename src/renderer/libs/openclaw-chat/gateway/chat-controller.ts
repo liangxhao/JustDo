@@ -110,7 +110,6 @@ const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
 const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
 const DEBUG_CHAT_CONTROLLER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
-const FORWARD_CHAT_CONTROLLER_DEBUG = true;
 
 function isHistoryNotFoundError(value: unknown): boolean {
   return typeof value === 'string' && /\bhistory REST returned 404\b/i.test(value);
@@ -120,9 +119,6 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_CHAT_CONTROLLER) {
     console.debug(...args);
   }
-  if (!FORWARD_CHAT_CONTROLLER_DEBUG) return;
-  const message = typeof args[0] === 'string' ? args[0] : '[ChatCtrl] debug';
-  writeRuntimeDebug(message, normalizeDebugArgs(args.slice(typeof args[0] === 'string' ? 1 : 0)));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -2116,16 +2112,6 @@ export class ChatController {
           createdAt?: number;
         }>;
       }>('sessions.compaction.list', { key: this.state.sessionKey });
-      writeRuntimeDebug('[ChatController] Loaded compaction checkpoints', {
-        sessionKey: this.state.sessionKey,
-        count: response?.checkpoints?.length ?? 0,
-        checkpoints: response?.checkpoints?.map(checkpoint => ({
-          checkpointId: checkpoint.checkpointId,
-          hasSummary: Boolean(checkpoint.summary),
-          tokensBefore: checkpoint.tokensBefore,
-          tokensAfter: checkpoint.tokensAfter,
-        })),
-      });
       return response?.checkpoints ?? [];
     } catch (err) {
       console.warn(
@@ -2199,56 +2185,6 @@ function formatI18n(key: string, params: Record<string, string>): string {
     (text, [name, value]) => text.replace(`{${name}}`, value),
     i18nService.t(key),
   );
-}
-
-function normalizeDebugArgs(args: unknown[]): Record<string, unknown> {
-  if (args.length === 0) return {};
-  if (args.length === 1) {
-    const record = asRecord(args[0]);
-    if (record) return sanitizeDebugRecord(record);
-  }
-  return { args: args.map(value => sanitizeDebugValue(value)) };
-}
-
-function sanitizeDebugRecord(record: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [key, sanitizeDebugValue(value)]),
-  );
-}
-
-function sanitizeDebugValue(value: unknown, depth = 0): unknown {
-  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
-  if (typeof value === 'string') return value.length > 240 ? `${value.slice(0, 240)}...` : value;
-  if (Array.isArray(value)) {
-    if (looksLikeMessageArray(value)) {
-      return summarizeHistoryForDebug(value);
-    }
-    const limit = depth > 1 ? 8 : 20;
-    return value.slice(0, limit).map(item => sanitizeDebugValue(item, depth + 1));
-  }
-  const record = asRecord(value);
-  if (!record) return String(value);
-  if (looksLikeMessageRecord(record)) {
-    return summarizeMessageForDebug(record);
-  }
-  if (depth > 2) return '[object]';
-  return Object.fromEntries(
-    Object.entries(record)
-      .slice(0, 30)
-      .map(([key, item]) => [key, sanitizeDebugValue(item, depth + 1)]),
-  );
-}
-
-function looksLikeMessageArray(value: unknown[]): boolean {
-  if (value.length === 0) return false;
-  return value.some(item => {
-    const record = asRecord(item);
-    return Boolean(record && looksLikeMessageRecord(record));
-  });
-}
-
-function looksLikeMessageRecord(record: Record<string, unknown>): boolean {
-  return typeof record.role === 'string' && ('content' in record || 'text' in record);
 }
 
 function summarizeHistoryForDebug(messages: unknown[]): Record<string, unknown> {
@@ -2388,21 +2324,6 @@ function hashTextForDebug(text: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-function writeRuntimeDebug(message: string, details: Record<string, unknown>): void {
-  if (typeof window === 'undefined') return;
-  const debug = (
-    window as unknown as {
-      electron?: { log?: { debug?: (message: string, details?: Record<string, unknown>) => void } };
-    }
-  ).electron?.log?.debug;
-  if (typeof debug !== 'function') return;
-  try {
-    debug(message, details);
-  } catch {
-    // Debug logging must never affect chat rendering.
-  }
 }
 
 function isTempJustDoSessionKey(sessionKey: string): boolean {

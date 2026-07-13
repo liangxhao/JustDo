@@ -818,9 +818,7 @@ if (!gotTheLock) {
 
   // 初始化应用
   const initApp = async () => {
-    console.log('[Main] initApp: waiting for app.whenReady()');
     await app.whenReady();
-    console.log('[Main] initApp: app is ready');
 
     await outboundHeaderProxy.start();
 
@@ -833,19 +831,15 @@ if (!gotTheLock) {
       fs.mkdirSync(defaultProjectDir, { recursive: true });
       console.log('Created default project directory:', defaultProjectDir);
     }
-    console.log('[Main] initApp: default project dir ensured');
 
     // 注册 localfile:// 自定义协议，用于安全加载本地文件（图片等）
     registerLocalFileProtocol();
 
-    console.log('[Main] initApp: starting initStore()');
     store = await initStore();
-    console.log('[Main] initApp: store initialized');
 
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them on startup.
     const resetCount = getCoworkStore().resetRunningSessions();
-    console.log('[Main] initApp: resetRunningSessions done, count:', resetCount);
     if (resetCount > 0) {
       console.log(`[Main] Reset ${resetCount} stuck cowork session(s) from running -> idle`);
     }
@@ -885,14 +879,10 @@ if (!gotTheLock) {
         console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
       });
 
-    console.log('[Main] initApp: setStoreGetter done');
-
     try {
       const runtimeResult = await ensurePythonRuntimeReady();
       if (!runtimeResult.success) {
         console.error('[Main] initApp: ensurePythonRuntimeReady failed:', runtimeResult.error);
-      } else {
-        console.log('[Main] initApp: ensurePythonRuntimeReady done');
       }
     } catch (error) {
       console.error('[Main] initApp: ensurePythonRuntimeReady threw:', error);
@@ -908,9 +898,7 @@ if (!gotTheLock) {
     });
 
     // 创建窗口
-    console.log('[Main] initApp: creating window');
     createWindow();
-    console.log('[Main] initApp: window created');
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
     powerMonitor.on('resume', () => {

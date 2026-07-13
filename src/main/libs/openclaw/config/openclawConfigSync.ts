@@ -434,9 +434,6 @@ export class OpenClawConfigSync {
     }
 
     const sandboxMode = mapExecutionModeToSandboxMode(coworkConfig.executionMode || 'local');
-    console.log(
-      `[OpenClawConfigSync] sandbox mode: ${sandboxMode} (executionMode: ${coworkConfig.executionMode || 'local'})`,
-    );
 
     const workspaceDir = (coworkConfig.workingDirectory || '').trim();
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
@@ -571,12 +568,6 @@ export class OpenClawConfigSync {
     // IM channel config syncing removed — channels disabled pending future adaptation
 
     const nextContent = `${JSON.stringify(managedConfig, null, 2)}\n`;
-    console.log('[OpenClawConfigSync] sync() managedConfig key fields:', {
-      providers: (managedConfig.models as Record<string, unknown>)?.providers,
-      primaryModel: (
-        (managedConfig.agents as Record<string, unknown>)?.defaults as Record<string, unknown>
-      )?.model,
-    });
     let currentContent = '';
     try {
       currentContent = fs.readFileSync(configPath, 'utf8');
