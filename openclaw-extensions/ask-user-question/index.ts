@@ -1,3 +1,6 @@
+import http from 'node:http';
+import https from 'node:https';
+
 import { Type } from '@sinclair/typebox';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 
@@ -41,6 +44,101 @@ type AskUserResponse = {
 };
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+const LOOPBACK_CALLBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+type HttpCallbackResult = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  body: string;
+};
+
+type CallbackResponse = Response | HttpCallbackResult;
+
+const isLoopbackCallbackUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:')
+      && LOOPBACK_CALLBACK_HOSTS.has(url.hostname.toLowerCase())
+    );
+  } catch {
+    return false;
+  }
+};
+
+const postLoopbackJson = (
+  callbackUrl: string,
+  input: AskUserInput,
+  secret: string,
+  signal: AbortSignal,
+): Promise<HttpCallbackResult> => {
+  return new Promise((resolve, reject) => {
+    let url: URL;
+    try {
+      url = new URL(callbackUrl);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const body = JSON.stringify(input);
+    const client = url.protocol === 'https:' ? https : http;
+    const request = client.request(
+      url,
+      {
+        method: 'POST',
+        agent: false,
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(body),
+          'x-ask-user-secret': secret,
+        },
+      },
+      response => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () => {
+          const status = response.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            statusText: response.statusMessage ?? '',
+            body: Buffer.concat(chunks).toString('utf8'),
+          });
+        });
+      },
+    );
+
+    const abort = () => {
+      request.destroy(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
+    };
+
+    request.on('error', error => {
+      signal.removeEventListener('abort', abort);
+      reject(error);
+    });
+    request.on('close', () => {
+      signal.removeEventListener('abort', abort);
+    });
+
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+
+    signal.addEventListener('abort', abort, { once: true });
+    request.end(body);
+  });
+};
+
+const readCallbackBody = async (response: CallbackResponse): Promise<string> => {
+  const body = (response as HttpCallbackResult).body;
+  if (typeof body === 'string') {
+    return body;
+  }
+  return response.text();
+};
 
 const formatAnswerValue = (value: string): string => {
   return value
@@ -94,17 +192,19 @@ async function askUser(
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 
   try {
-    const response = await fetch(config.callbackUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-ask-user-secret': config.secret,
-      },
-      body: JSON.stringify(input),
-      signal: controller.signal,
-    });
+    const response = isLoopbackCallbackUrl(config.callbackUrl)
+      ? await postLoopbackJson(config.callbackUrl, input, config.secret, controller.signal)
+      : await fetch(config.callbackUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-ask-user-secret': config.secret,
+          },
+          body: JSON.stringify(input),
+          signal: controller.signal,
+        });
 
-    const text = await response.text();
+    const text = await readCallbackBody(response);
 
     if (!response.ok) {
       throw new Error(`AskUserQuestion callback HTTP ${response.status}: ${text.trim() || response.statusText}`);
