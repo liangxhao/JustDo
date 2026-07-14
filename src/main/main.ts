@@ -584,17 +584,18 @@ const showSystemMenu = (position?: { x?: number; y?: number }) => {
   if (!isWindows) return;
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
-  const isMaximized = mainWindow.isMaximized();
+  const window = mainWindow;
+  const isMaximized = window.isMaximized();
   const menu = Menu.buildFromTemplate([
-    { label: 'Restore', enabled: isMaximized, click: () => mainWindow.restore() },
+    { label: 'Restore', enabled: isMaximized, click: () => window.restore() },
     { role: 'minimize' },
-    { label: 'Maximize', enabled: !isMaximized, click: () => mainWindow.maximize() },
+    { label: 'Maximize', enabled: !isMaximized, click: () => window.maximize() },
     { type: 'separator' },
     { role: 'close' },
   ]);
 
   menu.popup({
-    window: mainWindow,
+    window,
     x: Math.max(0, Math.round(position?.x ?? 0)),
     y: Math.max(0, Math.round(position?.y ?? 0)),
   });

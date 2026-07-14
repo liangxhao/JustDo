@@ -98,7 +98,10 @@ export interface CoworkRuntimeEvents {
   messageMetadataUpdate: (
     sessionId: string,
     messageId: string,
-    metadata: Partial<CoworkMessage['metadata']>,
+    metadata: Partial<NonNullable<CoworkMessage['metadata']>>,
+    extra?: {
+      usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+    },
   ) => void;
   messageDelete: (sessionId: string, messageId: string) => void;
   thinkingUpdate: (sessionId: string, messageId: string, thinkingDelta: string) => void;

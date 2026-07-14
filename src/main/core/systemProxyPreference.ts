@@ -86,7 +86,7 @@ export const getProxyPreferenceSignature = (config?: SystemProxySettings): strin
 };
 
 export const applySystemProxyPreference = async (
-  config: SystemProxySettings | boolean,
+  config: SystemProxySettings | boolean | undefined,
   outboundHeaderProxy: OutboundHeaderProxy,
 ): Promise<void> => {
   const settings = typeof config === 'boolean' ? { useSystemProxy: config } : config;

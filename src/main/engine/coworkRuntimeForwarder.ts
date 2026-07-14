@@ -92,7 +92,7 @@ export const bindCoworkRuntimeForwarder = (
     (
       sessionId: string,
       messageId: string,
-      metadata: Record<string, unknown>,
+      metadata: Partial<NonNullable<CoworkMessage['metadata']>>,
       extra?: {
         usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
       },
