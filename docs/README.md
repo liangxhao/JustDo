@@ -1,59 +1,57 @@
-# JustDo 设计文档
+# JustDo 文档索引
 
-本目录包含 JustDo 软件的设计文档，按类别组织。
+本文档目录描述 JustDo 当前实现。历史迁移计划已经收敛为“当前边界/当前状态”说明，避免读者把已完成的改造当成待办事项。
 
-## 目录结构
+## 当前版本事实
 
-```
-docs/
-├── architecture/     # 系统架构与核心模块设计
-├── patches/          # OpenClaw Patch 适配文档
-├── features/         # 功能实现与重构方案文档
-└── README.md         # 本索引文件
-```
+| 项 | 当前值 |
+| --- | --- |
+| JustDo | `v2026.7.6` |
+| OpenClaw Gateway | `v2026.6.11` |
+| Electron | `42.6.0` |
+| Node.js | `>=24 <25` |
+| 开发端口 | `4175` |
+| Redux slices | 7 |
+| 内置 Skills | 15 个声明，14 个默认启用 |
+| 当前 Runtime patches | 6 个，位于 `scripts/patches/v2026.6.11/` |
 
----
+## 架构文档
 
-## 文档索引
+| 文档 | 内容 |
+| --- | --- |
+| [01-overview.md](architecture/01-overview.md) | 产品和系统总览 |
+| [02-architecture.md](architecture/02-architecture.md) | 分层架构、目录和核心边界 |
+| [03-process-model.md](architecture/03-process-model.md) | Electron 进程模型与 IPC API |
+| [04-cowork-system.md](architecture/04-cowork-system.md) | Cowork 会话系统 |
+| [05-agent-engine.md](architecture/05-agent-engine.md) | OpenClaw 引擎集成 |
+| [07-skills-system.md](architecture/07-skills-system.md) | Skills 系统 |
+| [08-scheduled-tasks.md](architecture/08-scheduled-tasks.md) | 定时任务系统 |
+| [10-data-storage.md](architecture/10-data-storage.md) | SQLite 和本地数据 |
+| [11-security-model.md](architecture/11-security-model.md) | 安全模型 |
+| [12-tech-stack.md](architecture/12-tech-stack.md) | 技术栈和构建工具 |
+| [13-pure-frontend-design.md](architecture/13-pure-frontend-design.md) | OpenClaw 桌面前端边界 |
+| [14-openclaw-frontend-boundary-plan.md](architecture/14-openclaw-frontend-boundary-plan.md) | Gateway/JustDo 职责矩阵 |
+| [15-chat-rendering.md](architecture/15-chat-rendering.md) | Lit 聊天渲染管线 |
+| [16-skill-marketplace-adapter.md](architecture/16-skill-marketplace-adapter.md) | Skill marketplace adapter |
+| [openclaw-gateway-capability-matrix.md](architecture/openclaw-gateway-capability-matrix.md) | Gateway 能力边界矩阵 |
 
-### 系统架构 (architecture/)
+## 功能状态文档
 
-| 文档 | 说明 |
-|------|------|
-| [01-overview.md](architecture/01-overview.md) | 项目概述与产品定位 |
-| [02-architecture.md](architecture/02-architecture.md) | 系统架构设计 |
-| [03-process-model.md](architecture/03-process-model.md) | Electron 进程模型与 IPC 通信 |
-| [04-cowork-system.md](architecture/04-cowork-system.md) | Cowork 会话系统设计 |
-| [05-agent-engine.md](architecture/05-agent-engine.md) | Agent 引擎与 OpenClaw 集成 |
-| [07-skills-system.md](architecture/07-skills-system.md) | Skills 技能系统设计 |
-| [08-scheduled-tasks.md](architecture/08-scheduled-tasks.md) | 定时任务系统设计 |
-| [10-data-storage.md](architecture/10-data-storage.md) | 数据存储与 SQLite 设计 |
-| [11-security-model.md](architecture/11-security-model.md) | 安全模型与权限控制 |
-| [12-tech-stack.md](architecture/12-tech-stack.md) | 技术栈与依赖说明 |
-| [13-pure-frontend-design.md](architecture/13-pure-frontend-design.md) | 纯 OpenClaw 前端架构设计 |
-| [14-openclaw-frontend-boundary-plan.md](architecture/14-openclaw-frontend-boundary-plan.md) | OpenClaw 前端边界与去自定义化规划 |
-| [15-chat-rendering.md](architecture/15-chat-rendering.md) | 消息渲染系统（Lit 管线） |
-| [openclaw-gateway-capability-matrix.md](architecture/openclaw-gateway-capability-matrix.md) | OpenClaw Gateway 能力矩阵 |
+| 文档 | 内容 |
+| --- | --- |
+| [openclaw-thin-frontend-refactor-plan.md](features/openclaw-thin-frontend-refactor-plan.md) | Thin frontend 当前完成状态 |
+| [thinking-stream-implementation.md](features/thinking-stream-implementation.md) | Thinking stream 当前实现 |
 
-### OpenClaw Patch (patches/)
+## Patch 文档
 
-| 文档 | 说明 |
-|------|------|
-| [openclaw-patch-guide.md](patches/openclaw-patch-guide.md) | OpenClaw Runtime Patch 完整文档：规范、当前 patch 列表、运维指南 |
+| 文档 | 内容 |
+| --- | --- |
+| [openclaw-patch-guide.md](patches/openclaw-patch-guide.md) | OpenClaw runtime patch 清单和维护规则 |
 
-> **注意**：当前 OpenClaw 版本为 v2026.6.11，共有 6 个 patches。详见 patch guide。
+## 维护规则
 
-### 功能实现 (features/)
-
-| 文档 | 说明 |
-|------|------|
-| [thinking-stream-implementation.md](features/thinking-stream-implementation.md) | Thinking 内容当前渲染说明 |
-| [openclaw-thin-frontend-refactor-plan.md](features/openclaw-thin-frontend-refactor-plan.md) | OpenClaw 薄前端当前边界说明 |
-
----
-
----
-
-## 致谢
-
-本项目参考 [LobsterAI](https://github.com/netease-youdao/LobsterAI) 开发，感谢原作者的开源贡献。
+- 更新 `package.json` 中版本、端口、OpenClaw 版本时，同步更新根 README 和本文件。
+- 修改 IPC surface 时，同步更新 `03-process-model.md`。
+- 修改 SQLite schema 时，同步更新 `10-data-storage.md`。
+- 修改 skill manifest 或安装逻辑时，同步更新 `07-skills-system.md`。
+- 修改 runtime patch 时，同步更新 `patches/openclaw-patch-guide.md`。

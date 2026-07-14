@@ -1,175 +1,165 @@
-# JustDo 纯前端架构设计
+# OpenClaw 桌面前端设计
 
-> **状态**: JustDo 采用薄前端边界。OpenClaw Gateway 负责会话、历史和 Subagent，JustDo 负责 UI、配置与权限。
+JustDo 当前定位是 OpenClaw Gateway 的桌面前端，而不是 Gateway 的替代实现。它负责桌面体验、本地配置、权限交互、UI 缓存和插件管理界面。
 
-## 1. 设计目标
+## 设计目标
 
-JustDo 作为 **OpenClaw Gateway 的纯前端**，不注入任何自己的上下文内容。所有 AI 推理、上下文管理、历史存储由 OpenClaw Gateway 处理，JustDo 仅负责：
+- 保留原生桌面体验：窗口、托盘、系统权限、本地文件、日志、代理、打包资源。
+- 将 Agent execution、history、skills、cron 等 runtime 能力委派给 Gateway。
+- 用 SQLite 保存产品所需的本地状态，而不是复制 Gateway 的执行权威。
+- 给 renderer 一个稳定、窄、可审计的 `window.electron` API。
 
-- 用户界面（UI）
-- 配置管理（API keys、provider、model）
-- OpenClaw Gateway 进程管理
-- Skill 构建时部署（从 JustDo resources/skills 复制到 OpenClaw Runtime）
+```mermaid
+flowchart LR
+  subgraph JustDo["JustDo Desktop Frontend"]
+    Desktop["Desktop Shell\nwindow/tray/log/proxy"]
+    UI["Product UI\nReact + Lit"]
+    Config["Local Config\nproviders/agents/mcp/hooks"]
+    Cache["SQLite UI Cache"]
+    Permission["Permission UI"]
+  end
 
-### 设计动机
+  subgraph Gateway["OpenClaw Gateway Authority"]
+    Chat["Chat Execution"]
+    History["History"]
+    Tools["Tools/Subagents"]
+    Skills["Skills Runtime"]
+    Cron["Cron Runtime"]
+  end
 
-1. **简化架构**: 避免 JustDo 和 OpenClaw 之间的上下文冲突
-2. **统一管理**: 历史、上下文由 OpenClaw Gateway 统一管理
-3. **原生兼容**: OpenClaw 原生 channel sessions（Telegram、Discord 等）与桌面 UI 共享同一套上下文
-4. **降低维护成本**: 减少 JustDo 的 prompt/policy 管理逻辑
-
-## 2. 架构概述
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     JustDo (纯前端)                          │
-│  ┌─────────────────┐  ┌─────────────┐  ┌─────────────────┐ │
-│  │   React UI      │  │ Config Sync │  │  Chat Rendering │ │
-│  │  + Lit <justdo  │  │ (API/model) │  │  (Lit custom    │ │
-│  │   -chat>        │  │             │  │   element)      │ │
-│  └─────────────────┘  └─────────────┘  └─────────────────┘ │
-│  ┌─────────────────┐  ┌─────────────┐                       │
-│  │  SQLite Cache   │  │ Permission  │                       │
-│  │  (UI 数据缓存)  │  │ Modal       │                       │
-│  └─────────────────┘  └─────────────┘                       │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ IPC / localhost
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  OpenClaw Gateway (唯一权威)                  │
-│                                                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │  AI Engine  │  │  History    │  │   Skills System     │ │
-│  │ (inference) │  │ (storage)   │  │  (17 built-in)      │ │
-│  └─────────────┘  └─────────────┘  └─────────────────────┘ │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │  Sessions   │  │  Subagents  │  │  Channel Adapters   │ │
-│  │ (lifecycle) │  │ (lifecycle) │  │  (Telegram/Discord) │ │
-│  └─────────────┘  └─────────────┘  └─────────────────────┘ │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  Cron Scheduler (定时任务引擎)                       │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+  UI --> Permission
+  Config --> Gateway
+  Cache -. "cache only" .-> History
+  Desktop --> Gateway
+  UI --> Gateway
+  Gateway --> Chat
+  Gateway --> History
+  Gateway --> Tools
+  Gateway --> Skills
+  Gateway --> Cron
 ```
 
-## 3. 保留的配置同步
+## JustDo 负责
 
-以下配置仍然同步到 OpenClaw（无 prompt 注入）：
+- Electron app lifecycle。
+- Main/preload/renderer 进程隔离。
+- UI 状态、设置、主题、i18n。
+- Cowork 会话列表、分组、pin、cwd、附件 UI。
+- Provider、Agent、MCP、Hooks、Skills 管理界面。
+- OpenClaw config sync。
+- Gateway runtime 下载、安装、启动、停止、状态展示。
+- Permission modal 和 ask-user interaction。
+- Local SQLite cache。
+- Packaging resources。
 
-| 配置项            | 说明              |
-| ----------------- | ----------------- |
-| Provider API keys | 环境变量形式注入  |
-| Default model     | 默认模型配置      |
-| Workspace path    | 工作目录配置      |
-| Sandbox mode      | sandbox 配置      |
-| Browser enabled   | browser 工具配置  |
-| Plugins entries   | MCP bridge 等插件 |
+## OpenClaw Gateway 负责
 
-## 4. Chat 渲染架构
+- Chat execution。
+- Chat history authority。
+- Tool execution protocol。
+- Subagent lifecycle。
+- Skills discovery/config/runtime。
+- Cron task execution。
+- Slash command runtime capability。
 
-### 5.1 Lit-based `<justdo-chat>` 自定义元素
+## 当前实现要点
 
-Chat 渲染已从 React `CoworkSessionDetail.tsx`（3800+ 行）重构为 Lit-based 自定义元素 `<justdo-chat>`：
+- `<justdo-chat>` 通过 Gateway WebSocket 渲染聊天内容。
+- `openclawRuntimeAdapter.ts` 是 Cowork facade 到 Gateway 的 adapter。
+- `OpenClawConfigSyncService` 把 JustDo 本地配置同步给 Gateway。
+- `CronJobService` 轮询/调用 Gateway cron runtime。
+- `OpenClawSkillService` 通过 Gateway skill RPC 管理 skills。
 
-**目录**: `src/renderer/libs/openclaw-chat/`
+## 不再做的事
 
+- 不维护第二套 Agent 状态机。
+- 不把 SQLite transcript 当成执行真相。
+- 不在 renderer 中直接调用 Gateway runtime 文件或 marketplace server。
+- 不长期 fork OpenClaw runtime 行为。
+
+## 验收标准
+
+- 删除 SQLite message cache 不应破坏 Gateway history。
+- Gateway restart 后 UI 能重新取得 engine status 和 session/history 信息。
+- Renderer bundle 不导入 Node.js/Electron-only 模块。
+- 新增 runtime 差异优先上游修复，JustDo patch 有明确删除条件。
+
+## 设计背景
+
+JustDo 早期承担了较多 runtime 适配和本地状态补偿逻辑。随着 OpenClaw Gateway 能力完善，架构目标已经从“本地重建一部分 Agent runtime”转为“桌面前端 + 本地控制面”。这个变化的价值是：
+
+- 降低 JustDo 和 OpenClaw 行为分叉。
+- 减少本地状态机和 Gateway 状态不一致。
+- 让 IM、WebChat、Desktop 等入口共享同一个 Gateway truth。
+- 让桌面端更专注于系统集成、权限和体验。
+
+## Thin Frontend 的含义
+
+Thin frontend 不等于“没有本地逻辑”。JustDo 仍然有很多本地职责：
+
+- 桌面窗口生命周期。
+- 本地缓存和配置。
+- 复杂 UI。
+- 安全确认。
+- Runtime 资源管理。
+- Gateway 配置生成。
+
+Thin 的含义是：不复制 Gateway 应该拥有的执行语义。
+
+## 典型边界案例
+
+### 会话标题
+
+JustDo 可以生成和保存 UI 标题，因为标题服务于本地列表体验；但标题不能决定 Gateway session identity。
+
+### 消息搜索
+
+JustDo 可以索引/缓存消息用于搜索；但搜索结果中的消息顺序和内容应能回到 Gateway history 校验。
+
+### Subagent 展示
+
+JustDo 可以做 drawer、badge、菜单；但 subagent 的 parent/child 关系和状态来自 Gateway。
+
+### Skills 页面
+
+JustDo 可以做 marketplace UI、启停按钮、导入目录；但 skill discovery、runtime config 和执行由 Gateway 管理。
+
+### Scheduled Task 页面
+
+JustDo 可以做任务表单、运行历史、手动执行按钮；但 cron trigger 和执行由 Gateway runtime 管理。
+
+## 反模式
+
+- 在 renderer 中根据文本猜测 tool/subagent 状态。
+- 为 Gateway message stream 再写一套长期状态机。
+- 在 SQLite 中保存“比 Gateway 更可信”的 execution status。
+- 为单个 UI 需求 patch 大段 runtime 逻辑。
+- 让 Main process 同时实现 Gateway 已经提供的 domain API。
+
+## 决策流程
+
+新增需求时按顺序判断：
+
+1. 这是 execution truth 还是 UI/product metadata？
+2. 如果是 execution truth，Gateway 是否已有 API？
+3. 如果 Gateway 没有 API，是否应该提 upstream issue/PR？
+4. 如果必须本地兼容，能否做小 patch，并写明删除条件？
+5. Renderer 是否只需要展示结果？
+6. SQLite 保存的是缓存、配置还是权威？
+
+```mermaid
+flowchart TD
+  Need["New requirement"] --> Truth{"Changes execution truth?"}
+  Truth -->|yes| API{"Gateway API exists?"}
+  API -->|yes| UseAPI["Use Gateway API via Main service/adapter"]
+  API -->|no| Upstream["Open upstream issue/PR"]
+  Upstream --> Patch{"Temporary compatibility required?"}
+  Patch -->|yes| SmallPatch["Small documented runtime patch"]
+  Patch -->|no| Wait["Wait/design against future API"]
+  Truth -->|no| Local{"Desktop/config/UI/cache?"}
+  Local -->|yes| JustDo["Implement in JustDo"]
+  Local -->|no| Recheck["Re-check ownership"]
+  JustDo --> SQLite{"Needs persistence?"}
+  SQLite -->|yes| Store["SQLite domain store"]
+  SQLite -->|no| ViewState["Renderer view state"]
 ```
-openclaw-chat/
-├── components/
-│   ├── justdo-chat.ts       # 主 Lit 元素
-│   ├── chat-avatar.ts       # 聊天头像
-│   ├── markdown.ts          # Markdown 渲染
-│   ├── tool-display.ts      # 工具调用展示
-│   └── grouped-render.ts    # 消息分组渲染
-├── pipeline/
-│   ├── build-chat-items.ts  # 消息构建管道
-│   ├── message-extract.ts   # 消息提取
-│   ├── message-normalizer.ts# 消息归一化
-│   ├── role-normalizer.ts   # 角色归一化
-│   ├── stream-text.ts       # 流式文本
-│   ├── tool-cards.ts        # 工具卡片
-│   ├── tool-helpers.ts      # 工具辅助函数
-│   ├── user-message-content.ts
-│   ├── text-direction.ts
-│   ├── heartbeat-display.ts
-│   ├── search-match.ts
-│   └── history-limits.ts
-├── gateway/
-│   ├── chat-controller.ts   # Chat 控制器（Gateway 连接）
-│   └── client.ts            # Gateway 客户端
-├── conversion/
-│   └── cowork-to-gateway.ts # 数据格式转换
-├── shims/
-│   ├── backend-helpers.ts
-│   ├── media-core.ts
-│   └── normalization-core.ts
-└── types.ts
-```
-
-### 5.2 React Wrapper
-
-**文件**: `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`
-
-React 组件将 Lit 元素封装，管理 `ChatController`（直连 Gateway）的创建和生命周期：
-
-- `ChatController` 直接连接 OpenClaw Gateway（与 WebChat 同方式）
-- 不再经过 Redux → CoworkMessage → Gateway 的转换链路
-- 身份验证、消息发送、流式接收均由 `ChatController` 处理
-
-## 6. 当前历史管理
-
-JustDo 不存储历史，历史完全由 OpenClaw Gateway 管理：
-
-- Session 历史通过 Gateway API (`chat.history`) 实时获取
-- UI 显示的历史来自 Gateway，而非本地存储
-- Context Bridge 功能已移除（不再写入 JustDo 本地历史到 Gateway）
-- SQLite `cowork_messages` 降级为 UI 缓存
-
-## 7. Subagent 管理
-
-Subagent 逻辑完全由 OpenClaw Gateway 负责：
-
-- Gateway 管理 Subagent 生命周期（创建、执行、完成）
-- Gateway 管理 Parent/Child session 关系
-- Gateway 决定 Parent 何时恢复
-- JustDo 不维护 Subagent 完成计数
-- JustDo 不通过 toolCallId/sessionKey 猜测 Subagent 状态
-
-## 8. 关键文件清单
-
-| 文件                                                         | 职责                                    |
-| ------------------------------------------------------------ | --------------------------------------- |
-| `src/main/engine/openclawRuntimeAdapter.ts`                  | Gateway 客户端 + 事件映射（瘦身版）     |
-| `src/main/engine/openclawConfigSync.ts`                      | 配置同步（仅同步配置，无注入）          |
-| `src/main/engine/rpc/skillRpc.ts`                            | Skill RPC + 标题生成（从 adapter 拆分） |
-| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`  | Lit-based chat 自定义元素               |
-| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts` | Chat 控制器（直连 Gateway）             |
-| `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`       | Lit chat 的 React 包装器                |
-
-## 9. 验证方法
-
-### 消息透传验证
-
-在 JustDo 中发送消息，通过 Gateway log 确认：
-
-- 消息内容是纯用户输入
-- 不包含 `[JustDo system instructions]` 或时间上下文
-
-### AGENTS.md 验证
-
-检查 OpenClaw workspace 的 AGENTS.md：
-
-- 不包含 JustDo managed section
-- 不包含 Web Search/Exec/Memory Policy
-
-### 配置同步验证
-
-检查 `openclaw.json`：
-
-- providers/model 配置正常同步
-- 无注入的额外 policy 或 system prompt
-
-### 历史管理验证
-
-- 删除或禁用 SQLite message cache 后，Agent Runtime 行为不受影响
-- Gateway `chat.history` 始终是 UI 历史展示的权威来源

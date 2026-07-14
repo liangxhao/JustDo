@@ -1,159 +1,197 @@
-# OpenClaw 前端边界与去自定义化实施规划
+# OpenClaw / JustDo 边界
 
-## 1. 背景
+本文档记录当前职责边界。Thin frontend 改造已经完成，本文不再作为迁移计划使用。
 
-> **当前状态**: JustDo 已收敛为 OpenClaw Gateway 的纯前端。本文档仅描述现行边界。
+## 职责矩阵
 
-JustDo 当前定位是 OpenClaw 的桌面前端：负责 Electron 桌面体验、配置管理、权限交互、本地 UI 数据和 Artifact 预览，不再实现 OpenClaw Runtime 的会话调度、Subagent 状态机或消息历史权威层。
+| 能力 | OpenClaw Gateway | JustDo |
+| --- | --- | --- |
+| Chat turn execution | 权威 | 发起请求、展示状态 |
+| Chat history | 权威 | UI cache、搜索、展示 |
+| Subagent lifecycle | 权威 | 展示、跳转、历史读取 |
+| Skills runtime | 权威 | 管理 UI、本地导入、marketplace adapter |
+| MCP runtime config | 读取/执行 | 本地 CRUD、配置同步、探测 |
+| Hooks runtime config | 读取/执行 | 本地 CRUD、配置同步 |
+| Cron execution | 权威 | 任务 UI、轮询、运行历史展示 |
+| Provider config | 使用配置 | 本地配置和同步 |
+| Desktop shell | 无 | 权威 |
+| SQLite | 无 | 本地产品数据和 UI cache |
+| Permissions UI | 请求能力 | 用户确认和响应 |
+| Runtime patches | 被 patch 目标 | 小型兼容 shim |
 
-## 2. 总目标
+```mermaid
+flowchart TB
+  subgraph JD["JustDo owns"]
+    Shell["Desktop shell"]
+    Settings["Settings and provider config"]
+    LocalDB["SQLite product data/cache"]
+    PluginUI["Plugin management UI"]
+    PermissionUI["Permission UI"]
+    RuntimeMgr["Runtime lifecycle manager"]
+  end
 
-目标一句话：
+  subgraph Sync["Boundary services"]
+    ConfigSync["OpenClawConfigSyncService"]
+    Adapter["OpenClawRuntimeAdapter"]
+    SkillSvc["OpenClawSkillService"]
+    CronSvc["CronJobService"]
+  end
 
-> JustDo 只做 OpenClaw 的桌面前端、配置壳、权限壳和本地 UI 数据层，不再做 OpenClaw Runtime 的二次状态机。
+  subgraph OC["OpenClaw owns"]
+    Exec["Execution truth"]
+    History["chat.history"]
+    Subagents["Subagent lifecycle"]
+    SkillRuntime["Skills runtime"]
+    CronRuntime["Cron execution"]
+  end
 
-当前达成状态：
+  Settings --> ConfigSync --> OC
+  PluginUI --> SkillSvc --> SkillRuntime
+  Shell --> RuntimeMgr --> OC
+  PermissionUI --> Adapter --> Exec
+  LocalDB -. "cache/metadata" .-> Adapter
+  CronSvc --> CronRuntime
+  Adapter --> History
+  Adapter --> Subagents
+```
 
-1. OpenClaw Gateway 是会话、消息历史、Subagent 生命周期、Parent/Child 关系的权威来源 -- **已完成**
-2. JustDo SQLite 只保存本地产品数据、UI 元数据、缓存和权限审计 -- **已完成**
-3. JustDo 不再通过自然语言 announce 内容、toolCallId 猜测、session key 猜测来判断 Subagent 状态 -- **已完成**
-4. `openclawRuntimeAdapter.ts` 从"运行时代理层"瘦身为"Gateway client + event mapper" -- **已完成**
-5. runtime patch 数量持续减少，仅保留 Electron/Windows/打包兼容所必需的补丁 -- **持续进行中**
+## Gateway 权威数据
 
-## 3. 架构边界
-
-### 3.1 OpenClaw Gateway 应负责 (已实现)
-
-- Agent 执行调度
-- Main/Subagent 生命周期
-- Parent/Child session 关系
-- Tool call 执行语义
-- Session 状态
-- Message history 权威存储
-- Thinking stream 原始事件
-- Completion/result 语义
-- `chat.send`
-- `chat.abort`
 - `chat.history`
-- `sessions.list`
-- session/event subscribe 能力
-- Cron 定时任务调度
-- Skills 运行时管理
-- Channel 适配 (Telegram/Discord/Webhook)
+- tool call stream
+- subagent parent/child relation
+- skills status/config
+- cron runtime state
+- slash command capability
 
-### 3.2 JustDo 应负责 (已收敛至边界内)
+## JustDo 本地权威数据
 
-- Electron 主进程和窗口管理
-- OpenClaw Gateway 启动、停止、连接状态展示
-- Provider、MCP、skills 等配置 UI
-- OpenClaw 配置同步（不含 prompt/policy 注入）
-- Tool approval 前端交互和本地审计
-- SQLite 本地 UI 缓存（非权威数据）
-- 会话分组、重命名、置顶、最近访问
-- `<justdo-chat>` Lit 自定义元素（聊天渲染）
-- 文件打开、通知、托盘、deep link
-- Renderer IPC 和 UI 状态
+- app settings
+- window/theme/language preferences
+- provider/API configuration
+- agents
+- MCP server definitions
+- hooks config
+- session groups
+- local UI list metadata
+- imported skill files
 
-### 3.3 JustDo 不应负责 (已全部移除)
+## 当前 Runtime Patches
 
-- 自己维护 Subagent 完成数量 -- **已移除**
-- 自己判断 Parent 是否该恢复 -- **已移除**
-- 自己维护 Parent/Child session 权威关系 -- **已移除**
-- 自己重建 OpenClaw transcript 真相 -- **已移除**
-- 自己从 toolCallId/session label 猜测 child session -- **已移除**
-- 长期 patch OpenClaw Runtime 行为 -- **持续减少中**
+当前 OpenClaw 版本 `v2026.6.11` 的 patch 位于 `scripts/patches/v2026.6.11/`：
 
-## 4. 已完成的架构精简
+- `001-thinking-stream.cjs`
+- `002-agent-announce-reasoning-stream.cjs`
+- `003-openai-content-reasoning-tags.cjs`
+- `004-windows-mcp-package-runner.cjs`
+- `005-history-thinking-and-subagent-yield.cjs`
+- `006-sessions-yield-active-guard.cjs`
 
-### 4.1 `openclawRuntimeAdapter.ts` 瘦身
+Patch 维护规则见 `scripts/patches/README.md`。
 
-已从大文件抽离出独立模块：
+## 新功能判断
 
-- **`openclawGatewayClient.ts`** -- Gateway HTTP/IPC 调用封装
-- **`openclawEventMapper.ts`** -- Gateway event 到 Cowork IPC event 的薄转换
-- **`src/main/engine/rpc/skillRpc.ts`** -- Skill RPC + 标题生成 (已提取)
-- `openclawRuntimeAdapter.ts` 保留 CoworkEngineRouter 兼容外观
+新增功能时先判断权威归属：
 
-### 4.2 SQLite transcript 降级为 UI Cache
+- 如果影响 execution truth，优先做 OpenClaw Gateway API 或 upstream change。
+- 如果影响桌面壳、配置 UI、权限 UI、本地缓存，可以在 JustDo 实现。
+- 如果只是弥补 runtime 兼容问题，patch 必须有 remove condition。
 
-- `cowork_messages` 定位为 cache，不再作为权威历史
-- 会话打开时优先读取 OpenClaw `chat.history`
-- Runtime 行为不依赖 SQLite transcript
+## 非目标
 
-### 4.3 Subagent 状态收敛
+- 不删除 SQLite。
+- 不删除 Skills/MCP/Hooks UI。
+- 不绕过 Gateway 直接实现工具执行。
+- 不让 Renderer 拥有本地系统能力。
 
-- `cowork_subagents` 降级为 UI cache
-- Subagent 状态展示来自 OpenClaw Gateway 事件
-- 不再维护 `subagentStatus`、`toolCallIdToSessionKey` 等本地状态映射
+## 边界判定细则
 
-### 4.4 Chat 渲染重构
+### Execution Truth
 
-- `CoworkSessionDetail.tsx` (3800+ 行) 替换为 Lit-based `<justdo-chat>` 自定义元素
-- `ChatController` 直连 Gateway，不再经过 Redux 转换链路
-- 架构与 OpenClaw WebChat 保持一致
+以下属于 execution truth，归 Gateway：
 
-### 4.5 所有注入点移除
+- 一次 chat turn 是否已经开始、暂停、完成或失败。
+- Tool call 的真实输入、输出和状态。
+- Subagent 是否存在、属于哪个 parent、当前状态是什么。
+- Cron run 是否触发、是否成功、关联哪个 Gateway session。
+- Skill runtime 是否成功加载以及运行时配置是否生效。
 
-- `buildOutboundPrompt` 简化为纯透传
-- `syncAgentsMd` 只移除 managed section，不写入内容
-- `syncPerAgentWorkspaces` 空实现
-- 无 `AGENTS.md` policy 注入
-- 无自定义 system prompt 注入
-- 无 per-agent workspace 注入
+JustDo 可以缓存和展示这些信息，但不能在本地创造一个与 Gateway 冲突的权威结果。
 
-## 5. Runtime Patches 现状
+### Product Metadata
 
-当前保留的 patches (`scripts/patches/v2026.6.11/`):
+以下属于 JustDo product metadata：
 
-| Patch                                         | 用途                                 | 分类         |
-| --------------------------------------------- | ------------------------------------ | ------------ |
-| `001-thinking-stream.cjs`                     | Thinking 流式输出                    | 临时修复     |
-| `002-agent-announce-reasoning-stream.cjs`     | Agent announce 推理流                | 临时修复     |
-| `003-openai-content-reasoning-tags.cjs`       | OpenAI reasoning 标签                | 临时修复     |
-| `004-windows-mcp-package-runner.cjs`          | Windows MCP stdio 启动               | Windows 兼容 |
-| `005-history-thinking-and-subagent-yield.cjs` | 历史 thinking 与 subagent yield 展示 | 临时修复     |
-| `006-sessions-yield-active-guard.cjs`         | 无活跃 subagent 时避免 yield 空等    | 临时修复     |
+- Sidebar 分组、排序、pin。
+- 本地主题、语言、窗口设置。
+- Provider/API 配置 UI。
+- Agent 描述、icon、默认技能组合。
+- MCP server 表单内容。
+- Hook 启用开关。
+- 用户导入 skill 文件。
 
-所有 patch 已在 `scripts/patches/README.md` 中记录用途、风险、删除条件。
+这些数据可以由 SQLite 权威保存，再同步给 Gateway 使用。
 
-## 6. 能力边界矩阵
+## Cross-boundary Flows
 
-| 能力              | OpenClaw Gateway | JustDo         | 备注                      |
-| ----------------- | ---------------- | -------------- | ------------------------- |
-| 会话生命周期      | 权威             | 展示           | `chat.send`, `chat.abort` |
-| 消息历史          | 权威             | 缓存           | `chat.history`            |
-| Subagent 生命周期 | 权威             | 无状态         | Parent/Child 关系         |
-| Tool 执行         | 权威             | 权限 UI        | `tool.approval`           |
-| Skills 管理       | 权威             | 管理 UI        | `skills.*` RPC            |
-| 定时任务          | 权威             | CRUD UI        | `cron.*` RPC              |
-| 配置存储          | 用户数据         | 同步至 Gateway | API Keys, model           |
-| UI 数据           | --               | SQLite cache   | 会话列表、搜索等          |
+### Cowork Turn
 
-## 7. 非目标
+```mermaid
+flowchart LR
+  Prompt["Prompt/cwd/agent/attachments\nJustDo"] --> Adapter["Cowork adapter"]
+  Adapter --> Turn["Turn execution\nGateway"]
+  Turn --> Tools["Tool calls\nGateway"]
+  Turn --> Stream["Stream\nGateway"]
+  Turn --> History["History\nGateway"]
+  Turn --> Subagents["Subagents\nGateway"]
+  History -. "reconcile" .-> Cache["Session/message cache\nJustDo"]
+  Cache --> Sidebar["title/group/pin\nJustDo UI"]
+```
 
-本规划不要求：
+### MCP Server
 
-- 替换 OpenClaw
-- 删除 SQLite
-- 删除权限系统
-- 删除 skills 系统
-- 立即删除所有 runtime patches
+```mermaid
+flowchart LR
+  Form["MCP form\nJustDo UI"] --> DB["mcp_servers\nSQLite"]
+  DB --> Sync["McpServices.syncConfig"]
+  Sync --> Config["OpenClaw MCP config"]
+  Config --> Gateway["Gateway loads MCP"]
+  Gateway --> Tools["MCP tool execution"]
+  DB --> Probe["MCP probe\nMain process"]
+  Probe --> Form
+```
 
-本规划要求已全部达成：
+### Scheduled Task
 
-- \[x] 明确 OpenClaw 是 Runtime 权威
-- \[x] 明确 JustDo 是前端和产品壳
-- \[x] 所有二次 Runtime 状态都有删除路线
-- \[x] 注入点全部移除
-- \[x] Chat 渲染直连 Gateway
-- \[x] subagent 状态收敛
+```text
+JustDo owns:
+  task editor, run history UI, manual run button
 
-## 8. 最终验收标准 (全部达成)
+Gateway owns:
+  schedule trigger, run execution, delivery behavior
 
-1. 普通会话、Subagent、history、abort、permission 都正常工作 -- **已验证**
-2. 多 Subagent 并发完成后 Parent 能稳定恢复 -- **已验证**
-3. JustDo 不再维护 Subagent 完成计数 -- **已验证**
-4. JustDo 不再通过猜测 toolCallId/session label 绑定 child history -- **已验证**
-5. SQLite transcript 损坏不会影响 OpenClaw Runtime 行为 -- **已验证**
-6. runtime patch 有清晰数量、用途和删除条件 -- **已完成**
-7. `openclawRuntimeAdapter.ts` 职责清晰，新增 OpenClaw API 不再继续堆入同一个大文件 -- **已完成**
+JustDo syncs:
+  status polling and session resolution
+```
+
+## Handling Missing Gateway Capability
+
+当 UI 需要 Gateway 尚未提供的能力时：
+
+1. 确认是否真的属于 Gateway authority。
+2. 搜索是否已有 Gateway API 或事件。
+3. 优先提交 OpenClaw upstream issue/PR。
+4. 如需临时支持，写 runtime patch。
+5. Patch 必须说明 purpose、risk、remove condition。
+6. JustDo adapter 只做最小映射，不扩大为长期本地实现。
+
+## Documentation Contract
+
+任何跨边界改动都至少更新一个文档：
+
+- Cowork 执行变化：`04-cowork-system.md`。
+- Gateway lifecycle/config：`05-agent-engine.md`。
+- Skills/MCP/Hooks：`07-skills-system.md` 或 marketplace 文档。
+- Scheduled tasks：`08-scheduled-tasks.md`。
+- Chat rendering/history：`15-chat-rendering.md`。
+- Runtime patch：`patches/openclaw-patch-guide.md`。

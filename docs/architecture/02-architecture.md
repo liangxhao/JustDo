@@ -1,641 +1,271 @@
-# JustDo 系统架构设计
+# 系统架构
 
-**Last Updated:** 2026-07-04
+JustDo 使用严格的 Electron 进程隔离架构：Renderer 只负责浏览器侧 UI，Preload 暴露受控 API，Main 进程负责本地能力、SQLite、IPC、OpenClaw Gateway 生命周期和插件服务。
 
-## 1. 架构概述
+## 分层图
 
-JustDo 采用 Electron 的严格进程隔离架构，所有跨进程通信通过 IPC 实现。系统分为三层：UI 层（Renderer）、服务层（IPC + Redux）、主进程层（Main + OpenClaw Gateway Runtime）。
+```mermaid
+flowchart TB
+  subgraph R["Renderer Process"]
+    App["React App Shell"]
+    Store["Redux Store\n7 slices"]
+    Chat["<justdo-chat>\nLit custom element"]
+    Features["Feature Services\ncowork/plugins/settings/tasks"]
+  end
 
-JustDo 是一个 **Thin Frontend** 客户端 —— 所有 Agent 执行逻辑、会话生命周期、消息历史、子 Agent 管理全部由 OpenClaw Gateway 负责。JustDo 的 SQLite 是 Gateway 数据的 UI 缓存，仅此而已。
+  subgraph P["Preload"]
+    Bridge["contextBridge\nwindow.electron"]
+  end
 
-### 1.1 分层架构
+  subgraph M["Main Process"]
+    IPC["IPC Handlers"]
+    SQLite["SQLite Stores\nkv/cowork/agents/mcp/hooks/groups"]
+    Engine["Cowork Engine Service\nRouter + Adapter"]
+    Runtime["OpenClaw Engine Manager"]
+    Plugins["Plugin Services\nSkills/MCP/Hooks/Extensions/Marketplace"]
+    Scheduler["CronJobService"]
+  end
 
-```
-+--------------------------------------------------------------------+
-|                      Renderer Process                                |
-|                      (React 18 + Redux + Lit)                        |
-|                                                                      |
-|  +-----------------+  +------------------+  +--------------------+   |
-|  |   CoworkView    |  |    Settings      |  | JustDoChatWrapper |   |
-|  |                 |  |  (无 IMSettings)  |  | <justdo-chat> Lit |   |
-|  +-----------------+  +------------------+  +--------------------+   |
-|                                                                      |
-|  +----------------------------------------------------------------+  |
-|  |                     Redux Store (8 slices)                      |  |
-|  | modelSlice | coworkSlice | skillSlice | mcpSlice | agentSlice  |  |
-|  | scheduledTaskSlice | quickActionSlice | coworkDeleteState      |  |
-|  +----------------------------------------------------------------+  |
-|                                                                      |
-|  +----------------------------------------------------------------+  |
-|  |                    Services                                     |  |
-|  | cowork.ts | skill.ts | mcp.ts | agent.ts | config.ts | i18n.ts |  |
-|  +----------------------------------------------------------------+  |
-+--------------------------------------------------------------------+
-                               |
-                               | IPC (contextBridge)
-                               v
-+--------------------------------------------------------------------+
-|                      Preload Script                                  |
-|                (contextBridge + window.electron)                     |
-|                                                                      |
-|  cowork.* | store.* | skills.* | mcp.* | permissions.* |           |
-|  api.* | dialog.* | shell.* | autoLaunch.* | preventSleep.* |    |
-|  preventSleep.* | appInfo.* | log.* | scheduledTasks.* |            |
-|  agents.* | openclaw.engine.*                                       |
-+--------------------------------------------------------------------+
-                               |
-                               | IPC Handlers
-                               v
-+--------------------------------------------------------------------+
-|                      Main Process                                    |
-|                      (Node.js + SQLite)                              |
-|                                                                      |
-|  +-----------------+  +---------------------------+                  |
-|  |   SQLiteStore   |  |      CoworkStore          |                  |
-|  |   (kv store)    |  |  (session/message DB)     |                  |
-|  +-----------------+  +---------------------------+                  |
-|                                                                      |
-|  +---------------------------------------------------------------+   |
-|  |              Agent Engine Router                                 |   |
-|  |  coworkEngineRouter.ts | openclawRuntimeAdapter.ts              |   |
-|  |  gateway/types.ts | history/historyReconciler.ts                |   |
-|  |  subagentGateway.ts | webchatToolStream.ts | skillRpc.ts        |   |
-|  +---------------------------------------------------------------+   |
-|                                                                      |
-|  +---------------------------------------------------------------+   |
-|  |              Core Library Modules                                |   |
-|  |  openclawEngineManager.ts (runtime lifecycle)                    |   |
-|  |  openclawConfigSync.ts (Gateway config sync)                     |   |
-|  |  openclawHistory.ts (history sync)                               |   |
-|  |  openclawAgentModels.ts (model config)                           |   |
-|  |  openclawAssistantText.ts (assistant text config)                |   |
-|  |  openclawChannelSessionSync.ts (channel sync)                    |   |
-|  |  openclawLocalExtensions.ts (local extensions)                   |   |
-|  |  openclawTokenProxy.ts (token proxy)                             |   |
-|  |  mcpServerManager.ts | mcpBridgeServer.ts                       |   |
-|  |  providerApiConfig.ts | coworkModelApi.ts                      |   |
-|  |  coworkConfigStore.ts | coworkLogger.ts                        |   |
-|  |  coworkUtil.ts | commandSafety.ts                               |   |
-|  |  logExport.ts | pythonRuntime.ts | systemProxy.ts                 |   |
-|  +---------------------------------------------------------------+   |
-+--------------------------------------------------------------------+
-                               |
-                               | HTTP/WS
-                               v
-+--------------------------------------------------------------------+
-|                  OpenClaw Gateway (Runtime)                          |
-|              (pre-built npm package, NOT cloned from git)            |
-|                                                                      |
-|  Tool Execution | Memory | Sandbox | WebSocket | Cron Engine        |
-|  Session Lifecycle | Subagent Management | Skill Hosting            |
-+--------------------------------------------------------------------+
+  subgraph G["OpenClaw Gateway"]
+    Exec["Chat Execution"]
+    History["chat.history"]
+    SkillRuntime["Skills Runtime"]
+    Cron["Cron Runtime"]
+    Slash["Slash Commands"]
+  end
+
+  App --> Store
+  App --> Features
+  App --> Chat
+  Features --> Bridge
+  Bridge --> IPC
+  IPC --> SQLite
+  IPC --> Engine
+  IPC --> Runtime
+  IPC --> Plugins
+  IPC --> Scheduler
+  Engine --> Runtime
+  Runtime --> G
+  Chat -. "WebSocket" .-> G
+  Scheduler --> G
+  Plugins --> G
+  G --> History
 ```
 
-### 1.2 数据流向
+## 核心边界
+
+| 层 | 路径 | 责任 |
+| --- | --- | --- |
+| Main | `src/main/` | Electron 生命周期、IPC、SQLite、Gateway、插件、定时任务 |
+| Preload | `src/main/preload.ts` | 暴露 `window.electron`，不放业务状态 |
+| Renderer | `src/renderer/` | React/Lit UI、Redux、用户交互 |
+| Shared | `src/shared/` | 跨进程类型、常量和纯函数 |
+| Resources | `resources/` | 内置 skills、tray 图标、runtime 辅助资源 |
+| Vendor | `vendor/openclaw-runtime/` | 下载并同步的 OpenClaw runtime |
+
+## Renderer 结构
+
+```text
+src/renderer/
+  app/
+    App.tsx
+    shell/
+  features/
+    agents/
+    cowork/
+    models/
+    plugins/
+    quick-actions/
+    scheduled-tasks/
+    settings/
+  libs/openclaw-chat/
+  services/
+  shared/
+  store/index.ts
+```
+
+Redux store 当前挂载：
+
+- `model`
+- `cowork`
+- `skill`
+- `mcp`
+- `quickAction`
+- `scheduledTask`
+- `agent`
+
+## Main 结构
+
+```text
+src/main/
+  core/
+  cowork/
+  data/
+  engine/
+  ipc/
+  openclaw/
+  plugins/
+  scheduler/
+  main.ts
+  preload.ts
+```
+
+关键入口：
+
+- `src/main/main.ts` 初始化应用、store、Gateway、IPC、窗口和托盘。
+- `src/main/openclaw/runtime/openclawEngineManager.ts` 管理 Gateway 下载、安装、启动、停止和状态。
+- `src/main/engine/coworkEngineService.ts` 和 `coworkEngineRouter.ts` 负责 Cowork 调度外观。
+- `src/main/plugins/index.ts` 汇总 skills、MCP、hooks、extensions 和 marketplace 服务。
+- `src/main/ipc/**` 注册 renderer 可调用的主进程 API。
+
+## 数据流
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant UI as React Component
+  participant Service as Renderer Service
+  participant Preload as window.electron
+  participant IPC as Main IPC Handler
+  participant Domain as Main Store/Service
+  participant Gateway as OpenClaw Gateway
+  participant Redux as Redux/Lit UI
+
+  User->>UI: Action
+  UI->>Service: Call feature method
+  Service->>Preload: Invoke narrow API
+  Preload->>IPC: ipcRenderer.invoke/send
+  IPC->>Domain: Validate and dispatch
+  alt Local metadata/config
+    Domain-->>IPC: SQLite result
+  else Runtime execution
+    Domain->>Gateway: RPC/WebSocket/config sync
+    Gateway-->>Domain: Result or stream event
+  end
+  IPC-->>Preload: Result/event
+  Preload-->>Service: Typed payload
+  Service-->>Redux: Update state
+  Redux-->>UI: Render
+```
+
+## 设计约束
+
+- Renderer 不导入 Node.js、Electron 或 main-process-only 代码。
+- Shared 不导入 Node.js、Electron 或 DOM-only API。
+- IPC channel、状态值、判别字符串优先放在 shared constants。
+- 用户可见字符串必须进入 i18n map。
+- SQLite 只保存本地产品数据、配置和 UI cache；Gateway history 是执行事实来源。
+
+## 详细模块设计
+
+### Renderer Layer
+
+Renderer 是产品交互层，而不是系统能力层。它可以持有用户正在看的列表、选中的会话、弹窗状态、临时输入内容和渲染缓存，但不能直接持有文件系统、SQLite、Gateway process 或 shell 权限。
+
+```text
+src/renderer/
+  app/
+    App.tsx                  应用根组件
+    shell/                   Sidebar、Toast、WindowTitleBar
+    constants/               renderer app constants
+
+  features/
+    cowork/                  会话、输入、附件、权限、搜索、子任务 UI
+    agents/                  Agent 列表、类型和 service
+    models/                  模型选择和 OpenClaw model ref 解析
+    plugins/                 Skills、MCP、Hooks、Extensions UI
+    quick-actions/           快捷 prompt 面板
+    scheduled-tasks/         定时任务 CRUD、运行历史、会话跳转
+    settings/                应用设置、模型设置、快捷键
+
+  libs/openclaw-chat/        Lit chat renderer 和 Gateway websocket client
+  services/                  i18n、theme、config、store、shortcuts
+  shared/                    renderer-only UI 基础组件和图标
+  store/index.ts             Redux root store
+```
+
+Renderer service 的职责是把 UI 事件变成 `window.electron` 调用，并把失败结果转换成 UI 可理解的错误状态。Renderer service 不应该绕过 preload 去 import main 文件，也不应该把 IPC channel 字符串散落在组件里。
+
+### Preload Layer
+
+Preload 是安全门面。它暴露的是面向业务的窄 API，而不是 `ipcRenderer` 的完整能力。历史上保留的 `ipcRenderer.send/on` 只适合少数旧的事件型场景，新功能应优先添加明确 namespace。
+
+设计要求：
+
+- 参数尽量使用对象，便于后续兼容扩展。
+- 事件 listener 必须返回 unsubscribe 函数。
+- 不在 preload 中保存复杂业务状态。
+- 不在 preload 中读取文件或执行网络请求，交给 Main process。
+
+### Main Layer
+
+Main process 是本地能力层，负责所有可能影响系统、文件、进程、网络、SQLite 和 Gateway 的操作。
+
+```text
+src/main/
+  main.ts                    bootstrap 和依赖装配
+  preload.ts                 contextBridge API
+  core/                      桌面基础设施
+  data/                      SQLite store
+  ipc/                       IPC handler 分域注册
+  engine/                    Cowork engine facade
+  openclaw/                  Gateway runtime/config/session/model/slash commands
+  plugins/                   skills/mcp/hooks/extensions/marketplace
+  scheduler/                 CronJobService 和执行 prompt
+```
+
+Main 中的服务通常由 `main.ts` 通过 getter 懒加载注入，例如 `getCoworkStore()`、`getOpenClawEngineManager()`、`getMcpServices()`。这种方式避免启动时循环依赖，也让 IPC handler 可以在 app ready 后访问实际资源。
+
+## 依赖方向
 
 ```mermaid
 flowchart LR
-  subgraph Renderer["Renderer Process"]
-    UI["UI Components<br/>(React + Lit <justdo-chat>)"]
-    Redux["Redux Store<br/>(8 slices)"]
-    Service["Services<br/>(IPC wrappers)"]
-  end
-
-  subgraph Preload["Preload Script"]
-    API["window.electron<br/>(contextBridge)"]
-  end
-
-  subgraph Main["Main Process"]
-    IPC["IPC Handlers<br/>(~50 handlers)"]
-    Store["SQLite Store<br/>(local cache)"]
-    Router["Engine Router<br/>(OpenClawRuntimeAdapter)"]
-    Manager["OpenClaw Engine<br/>Manager"]
-  end
-
-  subgraph Gateway["OpenClaw Gateway"]
-    WS["WebSocket"]
-    Agent["Agent Runtime"]
-    Cron["Cron Engine"]
-  end
-
-  UI --> Redux --> Service --> API --> IPC
-  IPC --> Store
-  IPC --> Router --> Manager --> Gateway
-  Gateway --> WS -->|real-time| UI
-
-  style Gateway fill:#e6f3ff,stroke:#3399ff
-  style UI fill:#f0f0f0
-  style Main fill:#f5f5dc
+  RF["Renderer Feature"] --> RS["Renderer Service"]
+  RS --> PL["Preload API"]
+  PL --> IPC["Main IPC"]
+  IPC --> MS["Main Service/Store"]
+  Shared["src/shared\nconstants/types/pure funcs"] --> RF
+  Shared --> IPC
+  Shared --> MS
+  MS --> Shared
 ```
 
-## 2. 核心模块
+禁止方向：
 
-### 2.1 Renderer Process（渲染进程）
-
-**职责**：所有 UI 展示和业务逻辑。JustDo 的 Renderer 不含任何 Agent 执行逻辑 —— 纯展示层。
-
-**关键目录**：
-
-```
-src/renderer/
-├── App.tsx                          # 根组件
-├── types/                           # TypeScript 类型定义
-│   ├── cowork.ts                    # Cowork 类型
-│   ├── agent.ts                     # Agent 类型
-│   ├── electron.d.ts                # window.electron 类型声明
-│   ├── skill.ts, mcp.ts, quickAction.ts
-├── store/slices/                    # Redux slices（8个）
-│   ├── modelSlice.ts                # 模型配置状态
-│   ├── coworkSlice.ts               # Cowork 会话状态
-│   ├── skillSlice.ts                # Skills 状态
-│   ├── mcpSlice.ts                  # MCP 服务器状态
-│   ├── agentSlice.ts                # Agent 配置状态
-│   ├── scheduledTaskSlice.ts        # 定时任务状态
-│   ├── quickActionSlice.ts          # 快捷操作状态
-│   └── coworkDeleteState.ts         # 会话删除状态（跨组件）
-├── services/                        # 业务服务
-│   ├── cowork.ts                    # Cowork IPC 服务
-│   ├── skill.ts                     # Skills IPC 服务
-│   ├── mcp.ts                       # MCP IPC 服务
-│   ├── agent.ts                     # Agent IPC 服务
-│   ├── config.ts                    # 配置服务
-│   ├── i18n.ts                      # 国际化（中文/英文）
-│   ├── store.ts                     # 存储服务
-│   ├── theme.ts                     # 主题服务
-│   ├── encryption.ts                # 加密服务
-│   ├── quickAction.ts              # 快捷操作服务
-│   ├── scheduledTask.ts            # 定时任务服务
-│   └── shortcuts.ts                # 快捷键服务
-├── components/                      # UI 组件
-│   ├── cowork/                      # Cowork 组件（20个）
-│   │   ├── CoworkView.tsx           # 主视图
-│   │   ├── CoworkSessionItem.tsx    # 会话列表项
-│   │   ├── CoworkSessionList.tsx    # 会话列表
-│   │   ├── CoworkPromptInput.tsx    # 输入框
-│   │   ├── CoworkPermissionModal.tsx # 权限审批弹窗
-│   │   ├── CoworkQuestionWizard.tsx # 提问向导
-│   │   ├── SessionGroupPanel.tsx    # 会话分组面板
-│   │   ├── SessionGroupHeader.tsx    # 分组标头
-│   │   ├── JustDoChatWrapper.tsx    # Lit <justdo-chat> 包装组件
-│   │   ├── ChatMessageDisplay.tsx   # 消息展示包装
-│   │   ├── DiffView.tsx             # Diff 视图
-│   │   ├── SubagentMenu.tsx         # 子 Agent 菜单
-│   │   ├── EngineStartupOverlay.tsx # 引擎启动覆盖层
-│   │   ├── FolderSelectorPopover.tsx # 目录选择器
-│   │   ├── CreateGroupModal.tsx     # 创建分组弹窗
-│   │   ├── AttachmentCard.tsx       # 附件卡片
-│   │   ├── agentModelSelection.tsx  # Agent 模型选择
-│   │   └── index.ts                # 组件导出
-│   └── artifacts/                   # Artifact 渲染器
-└── libs/                            # 核心库
-    └── openclaw-chat/               # Lit 聊天渲染管道
-        ├── components/              # 自定义元素
-        │   ├── justdo-chat.ts       # <justdo-chat> 主元素
-        │   ├── chat-avatar.ts       # 头像
-        │   ├── grouped-render.ts    # 分组渲染
-        │   ├── markdown.ts          # Markdown 渲染
-        │   └── tool-display.ts      # 工具调用展示
-        ├── conversion/              # 消息格式转换
-        │   └── cowork-to-gateway.ts # Cowork 消息 -> Gateway 格式
-        ├── gateway/                 # Gateway WebSocket 连接
-        │   ├── chat-controller.ts   # 聊天控制器
-        │   └── client.ts            # WebSocket 客户端
-        ├── pipeline/                # 渲染管道（13个模块）
-        │   ├── build-chat-items.ts  # 构建聊天项
-        │   ├── message-normalizer.ts# 消息标准化
-        │   ├── role-normalizer.ts   # 角色标准化
-        │   ├── stream-text.ts       # 流式文本
-        │   ├── tool-cards.ts        # 工具卡片
-        │   ├── heartbeat-display.ts # 心跳显示
-        │   └── ...                  # 其他管道模块
-        ├── shims/                   # 后端兼容层
-        └── types/                   # 类型定义
+```mermaid
+flowchart LR
+  Renderer["Renderer"] -. "forbidden" .-> Main["src/main/*"]
+  SharedBad["src/shared"] -. "forbidden" .-> Platform["electron/node/browser-only"]
+  MainBad["Main"] -. "forbidden" .-> RendererFiles["src/renderer/*"]
 ```
 
-### 2.2 Main Process（主进程）
-
-**职责**：所有系统级操作：窗口管理、SQLite 持久化、Gateway 引擎生命周期管理、系统能力暴露。
-
-**入口文件**：`src/main/main.ts`
-
-**关键目录**：
-
-```
-src/main/
-├── main.ts                          # 主入口
-├── preload.ts                       # contextBridge API 暴露
-├── core/                            # 核心应用工具、代理、运行时
-│   ├── appConstants.ts              # 应用常量
-│   ├── autoLaunchManager.ts         # 自动启动管理
-│   ├── i18n.ts                      # 主进程国际化
-│   ├── logger.ts                    # 日志系统
-│   └── trayManager.ts               # 系统托盘
-├── data/                            # 数据层
-│   ├── coworkStore.ts               # Cowork 数据存储
-│   ├── groupStore.ts                # 会话分组管理
-│   └── sqliteStore.ts               # SQLite 数据库封装
-├── ipc/                             # IPC 模块
-│   ├── app/                         # 应用级 IPC
-│   ├── cowork/                      # Cowork IPC
-│   ├── openclaw/                    # OpenClaw 与插件 IPC
-│   └── scheduledTask/               # 定时任务 IPC
-├── engine/                          # Agent 引擎路由层、OpenClaw 适配、命令安全
-│   ├── coworkEngineRouter.ts        # 引擎请求路由
-│   ├── openclawRuntimeAdapter.ts    # OpenClaw 运行时适配
-│   ├── gateway/                     # Gateway RPC 与类型
-│   └── openclaw/                    # 子 Agent Gateway 与工具流
-├── cowork/                          # Cowork 配置、日志、模型 API
-├── openclaw/                        # Gateway 引擎、配置、模型、会话辅助、Slash command
-├── plugins/                         # Skills、MCP、hooks、extensions、marketplace
-└── scheduler/                       # OpenClaw cron 任务适配
-```
-
-### 2.3 Preload Script
-
-**职责**：安全桥接，通过 `contextBridge` 暴露有限的 API 集合给 Renderer。
-
-**暴露的 API 命名空间**：
-
-```typescript
-window.electron = {
-  platform, arch,                    // 基本信息
-  store:                             // 键值存储
-    { get, set, remove },
-  skills:                            // Skills 管理
-    { list, setEnabled, install, import, importFolder,
-      search, detail, delete, getRoot, autoRoutingPrompt,
-      getConfig, setConfig, testEmailConnectivity, onChanged },
-  mcp:                               // MCP 服务器
-    { list, create, update, delete, setEnabled,
-      refreshBridge, onBridgeSyncStart, onBridgeSyncDone },
-  permissions:                       // 系统权限
-    { checkCalendar, requestCalendar },
-  api:                               // API 请求（含流式）
-    { fetch, stream, cancelStream,
-      onStreamData, onStreamDone, onStreamError, onStreamAbort },
-  ipcRenderer:                       // 通用 IPC（受限）
-    { send, on },
-  window:                            // 窗口控制
-    { minimize, toggleMaximize, close, isMaximized, showSystemMenu, onStateChanged },
-  getApiConfig, checkApiConfig, saveApiConfig,  // API 配置
-  generateSessionTitle, getRecentCwds,           // 工具函数
-  openclaw:                          // 引擎管理
-    { engine: { getStatus, restartGateway, getPort, getToken, setPort, onProgress } },
-  agents:                            // Agent 管理
-    { list, get, create, update, delete },
-  cowork:                            // Cowork 会话
-    { startSession, continueSession, stopSession,
-      deleteSession, deleteSessions, setSessionPinned, renameSession,
-      getSession, remoteManaged, patchSessionModel, listSessions,
-      getContextUsage,
-      deleteMessage, deleteMessagesFrom,
-      exportResultImage, captureImageChunk, saveResultImage, exportSessionText,
-      respondToPermission, getConfig, setConfig,
-      listMemoryEntries, createMemoryEntry, updateMemoryEntry, deleteMemoryEntry,
-      listPresetPrompts, getPresetPrompt, setPresetPrompt, deletePresetPrompt,
-      onStreamMessage, onStreamMessageUpdate, onStreamThinkingUpdate,
-      onStreamMessageMetadataUpdate, onStreamPermission,
-      onStreamComplete, onStreamError, onSessionsChanged },
-  dialog:                            // 文件对话框
-    { selectDirectory, selectFile, selectFiles,
-      saveInlineFile, readFileAsDataUrl },
-  shell:                             // Shell 操作
-    { openPath, showItemInFolder, openExternal },
-  autoLaunch:                        // 自动启动
-    { get, set },
-  preventSleep:                      // 防止睡眠
-    { get, set },
-  appInfo:                           // 应用信息
-    { getVersion, getSystemLocale },
-  log:                               // 日志管理
-    { getPath, openFolder, exportZip },
-  scheduledTasks:                    // 定时任务
-    { list, get, create, update, delete, toggle,
-      runManually, stop, listRuns, listChannels,
-      onStatusUpdate, onRunUpdate }
-};
-```
-
-## 3. IPC 通信设计
-
-### 3.1 IPC Channel 常量
-
-所有 IPC channel 名称定义在常量中，避免裸字符串：
-
-```typescript
-// src/shared/ipcChannels.ts
-export const IpcChannel = {
-  // Store
-  StoreGet: 'store:get',
-  StoreSet: 'store:set',
-  StoreDelete: 'store:delete',
-
-  // Cowork Session
-  CoworkSessionStart: 'cowork:session:start',
-  CoworkSessionContinue: 'cowork:session:continue',
-  CoworkSessionStop: 'cowork:session:stop',
-  CoworkSessionDelete: 'cowork:session:delete',
-  CoworkSessionGet: 'cowork:session:get',
-  CoworkSessionList: 'cowork:session:list',
-  CoworkSessionPin: 'cowork:session:pin',
-  CoworkSessionRename: 'cowork:session:rename',
-  CoworkSessionPatchModel: 'cowork:session:patchModel',
-  CoworkSessionExportResultImage: 'cowork:session:exportResultImage',
-  CoworkSessionCaptureImageChunk: 'cowork:session:captureImageChunk',
-  CoworkSessionSaveResultImage: 'cowork:session:saveResultImage',
-  CoworkSessionExportText: 'cowork:session:exportText',
-
-  // Cowork Permission
-  CoworkPermissionRespond: 'cowork:permission:respond',
-
-  // Cowork Config
-  CoworkConfigGet: 'cowork:config:get',
-  CoworkConfigSet: 'cowork:config:set',
-
-  // Cowork Memory
-  CoworkMemoryListEntries: 'cowork:memory:listEntries',
-  CoworkMemoryCreateEntry: 'cowork:memory:createEntry',
-  CoworkMemoryUpdateEntry: 'cowork:memory:updateEntry',
-  CoworkMemoryDeleteEntry: 'cowork:memory:deleteEntry',
-  CoworkMemoryGetStats: 'cowork:memory:getStats',
-
-  // Stream Events
-  CoworkStreamMessage: 'cowork:stream:message',
-  CoworkStreamMessageUpdate: 'cowork:stream:messageUpdate',
-  CoworkStreamThinkingUpdate: 'cowork:stream:thinkingUpdate',
-  CoworkStreamMessageMetadataUpdate: 'cowork:stream:messageMetadataUpdate',
-  CoworkStreamPermissionRequest: 'cowork:stream:permissionRequest',
-  CoworkStreamComplete: 'cowork:stream:complete',
-  CoworkStreamError: 'cowork:stream:error',
-
-  // OpenClaw Engine
-  OpenClawEngineGetStatus: 'openclaw:engine:getStatus',
-  OpenClawEngineRestartGateway: 'openclaw:engine:restartGateway',
-  OpenClawEngineGetPort: 'openclaw:engine:getPort',
-  OpenClawEngineGetToken: 'openclaw:engine:getToken',
-  OpenClawEngineSetPort: 'openclaw:engine:setPort',
-
-  // Skills
-  SkillsList: 'skills:list',
-  SkillsSetEnabled: 'skills:setEnabled',
-  SkillsInstall: 'skills:install',
-  SkillsSearch: 'skills:search',
-  SkillsDetail: 'skills:detail',
-  SkillsImport: 'skills:import',
-  SkillsImportFolder: 'skills:importFolder',
-  SkillsDelete: 'skills:delete',
-
-  // MCP
-  McpList: 'mcp:list',
-  McpCreate: 'mcp:create',
-  McpUpdate: 'mcp:update',
-  McpDelete: 'mcp:delete',
-  McpSetEnabled: 'mcp:setEnabled',
-  McpRefreshBridge: 'mcp:refreshBridge',
-
-  // Agents
-  AgentList: 'agents:list',
-  AgentGet: 'agents:get',
-  AgentCreate: 'agents:create',
-  AgentUpdate: 'agents:update',
-  AgentDelete: 'agents:delete',
-
-  // Scheduled Task
-  ScheduledTaskList: 'scheduledTask:list',
-  ScheduledTaskCreate: 'scheduledTask:create',
-  // ... (full list in shared/scheduledTask/constants.ts)
-} as const;
-
-export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel];
-```
-
-### 3.2 流式事件
-
-Cowork 使用 IPC 事件进行实时双向通信：
-
-| 事件                                  | 方向             | 用途           |
-| ------------------------------------- | ---------------- | -------------- |
-| `cowork:stream:message`               | Main -> Renderer | 新消息添加     |
-| `cowork:stream:messageUpdate`         | Main -> Renderer | 流式内容更新   |
-| `cowork:stream:thinkingUpdate`        | Main -> Renderer | 思考内容增量   |
-| `cowork:stream:messageMetadataUpdate` | Main -> Renderer | 消息元数据更新 |
-| `cowork:stream:permissionRequest`     | Main -> Renderer | 工具审批请求   |
-| `cowork:stream:complete`              | Main -> Renderer | 会话完成       |
-| `cowork:stream:error`                 | Main -> Renderer | 执行错误       |
-| `openclaw:engine:onProgress`          | Main -> Renderer | 安装进度       |
-
-### 3.3 Chat 渲染管道（Lit <justdo-chat>）
-
-v2026.6 引入的新的聊天渲染方式。`<justdo-chat>` 是一个 Lit 自定义元素，它不通过 Redux - IPC 路径渲染消息，而是直接连接 Gateway WebSocket：
-
-```
-JustDoChatWrapper (React)
-  -> ChatController (gateway/chat-controller.ts)
-    -> WebSocket Client (gateway/client.ts)
-      -> Gateway WS endpoint
-        -> pipeline/ (消息标准化、渲染数据构建)
-          -> <justdo-chat> Lit 元素渲染
-```
-
-此管道提供当前消息渲染能力。Redux 仅维护会话元数据，消息内容渲染交由 Lit 管道处理。
-
-### 3.4 请求-响应模式
-
-```typescript
-// Renderer 调用
-const session = await window.electron.cowork.startSession({
-  cwd: '/path/to/work',
-  prompt: '分析这份 Excel'
-});
-
-// Main 处理
-ipcMain.handle('cowork:session:start', async (event, params) => {
-  const sessionId = uuid();
-  // 1. 确保引擎运行
-  await openclawEngineManager.ensureRunning();
-  // 2. 创建会话（本地 SQLite）
-  coworkStore.createSession(sessionId, { ... });
-  // 3. 通过 Gateway 启动 Agent 执行
-  const router = new CoworkEngineRouter(coworkStore, openclawEngineManager);
-  router.startSession(sessionId, params.prompt, { ... });
-  return { sessionId, status: 'running' };
-});
-```
-
-## 4. 安全设计
-
-### 4.1 进程隔离
-
-- **Context Isolation**：启用，Renderer 无法直接访问 Node.js
-- **Node Integration**：禁用，Renderer 无 require 能力
-- **Sandbox**：启用，Renderer 运行在沙箱环境
-
-### 4.2 Preload 安全
-
-```typescript
-// preload.ts
-contextBridge.exposeInMainWorld('electron', {
-  cowork: {
-    startSession: params => ipcRenderer.invoke('cowork:session:start', params),
-    // 仅暴露必要的 API，不暴露 ipcRenderer 本身
-  },
-});
-```
-
-### 4.3 权限控制
-
-所有工具调用需要用户明确授权：
-
-```typescript
-// 权限请求事件
-{
-  type: 'permissionRequest',
-  sessionId: 'xxx',
-  toolName: 'write_file',
-  toolInput: { path: '/path/to/file', content: '...' },
-  riskLevel: 'medium' // low/medium/high
-}
-```
-
-### 4.4 工作目录边界
-
-文件操作限制在工作目录内：
-
-```typescript
-function isWithinWorkingDirectory(path: string, workingDir: string): boolean {
-  const resolved = resolve(path);
-  const workingResolved = resolve(workingDir);
-  return resolved.startsWith(workingResolved);
-}
-```
-
-## 5. 扩展机制
-
-### 5.1 Skills 技能扩展
-
-Skills 定义在 `resources/builtin-skills.json`，通过 OpenClaw Gateway 加载。技能目录位于 `resources/skills/`：
-
-```json
-{
-  "version": 1,
-  "description": "JustDo built-in skills configuration for OpenClaw runtime",
-  "skills": [
-    { "id": "data-analysis", "enabled": true },
-    { "id": "docx", "enabled": true },
-    { "id": "multi-search-engine", "enabled": true },
-    { "id": "playwright", "enabled": true }
-  ],
-  "disableOpenClawDefaults": true
-}
-```
-
-### 5.2 Agent 自定义
-
-用户可创建自定义 Agent，绑定特定的 Skills：
-
-```typescript
-interface AgentConfig {
-  id: string;
-  name: string;
-  systemPrompt: string;
-  skills: string[]; // 启用的 Skills
-  model?: string; // 模型选择
-  icon?: string; // 图标
-  identity?: string; // 身份设定
-}
-```
-
-### 5.3 MCP 服务器
-
-支持 Model Context Protocol 服务器扩展，通过 `mcpServerManager.ts` 和 `mcpBridgeServer.ts` 桥接：
-
-```typescript
-interface MCPServerConfig {
-  id: string;
-  name: string;
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-}
-```
-
-## 6. 配置管理
-
-### 6.1 配置存储
-
-| 配置类型      | 存储位置     | 表/Key                                |
-| ------------- | ------------ | ------------------------------------- |
-| 应用配置      | SQLite kv    | `kv.key = 'appConfig'`                |
-| Cowork 配置   | SQLite       | `cowork_config` 表                    |
-| Agent 配置    | SQLite       | `agents` 表                           |
-| Skills 配置   | 文件         | `resources/builtin-skills.json`       |
-| 会话分组      | SQLite       | `session_groups` 表                   |
-| 子 Agent      | SQLite       | `cowork_subagents` 表（Gateway 驱动） |
-| OpenClaw 版本 | package.json | `openclaw.version`                    |
-
-### 6.2 国际化
-
-支持中文（默认）和英文：
-
-```typescript
-const translations = {
-  zh: {
-    coworkTitle: '工作助手',
-    startSession: '开始会话',
-  },
-  en: {
-    coworkTitle: 'Work Assistant',
-    startSession: 'Start Session',
-  },
-};
-```
-
-语言自动检测系统 locale，用户可在设置中切换。
-
-## 7. 关键设计决策
-
-### 7.1 OpenClaw Gateway 为唯一引擎
-
-**决策**：JustDo 使用 OpenClaw Gateway 作为唯一的 Agent 引擎。
-
-**理由**：
-
-- OpenClaw 提供完整的 Agent 运行时能力（工具执行、记忆、WebSocket 实时通信）
-- Gateway 全权管理会话生命周期、消息历史、子 Agent —— JustDo 作为薄前端
-- 运行时作为预构建 npm 包分发，无需从 git 克隆和构建
-- Subagent 逻辑完全收缩至 Gateway，JustDo 不再维护本地子 Agent 状态
-
-当前架构仅保留 OpenClaw Gateway 作为唯一引擎。
-
-### 7.2 SQLite 本地存储（UI 缓存）
-
-**决策**：使用 SQLite 作为本地缓存存储，所有权威数据由 Gateway 持有。
-
-**理由**：
-
-- 单文件，易于备份和迁移
-- better-sqlite3 性能优秀
-- 无需额外服务
-- 注意：SQLite 中的数据是 Gateway 数据的子集缓存，UI 离线时可读取历史会话
-
-### 7.3 IPC 通道设计
-
-**决策**：所有 IPC 通道使用命名空间前缀组织。
-
-**理由**：
-
-- `cowork:*` 专注于会话业务
-- `openclaw:engine:*` 专注于引擎生命周期
-- `skills:*`、`mcp:*`、`agents:*` 等按模块划分
-- 前端无需感知底层引擎实现细节
-
-### 7.4 Lit <justdo-chat> 渲染管道
-
-**决策**：使用 Lit 自定义元素替代 React 组件渲染聊天消息。
-
-**理由**：
-
-- 与 OpenClaw WebChat 共享相同的渲染管道和 Gateway 连接逻辑
-- 减少 React 重渲染开销 —— Lit 原生 DOM 操作更高效
-- 直接 WebSocket 连接 Gateway，避免 IPC 中继延迟
-- 使用 CSS 自定义属性（`--justdo-chat-*`）实现主题集成
+## 启动序列
+
+1. `main.ts` 设置 `userData` 到 `JustDo` 专用目录。
+2. 初始化日志、Electron command line、异常处理。
+3. 注册 IPC handlers。
+4. `app.whenReady()` 后启动 outbound proxy、注册本地协议。
+5. 初始化 SQLite，执行 schema 兼容和旧数据迁移。
+6. 初始化 Cowork store、provider config getter、内置模型 provider。
+7. 绑定 Cowork runtime event forwarder 和 Gateway 状态 forwarder。
+8. 同步 OpenClaw config。
+9. 启动 Gateway，并在 ready 后启动 scheduled task polling。
+10. 创建 BrowserWindow、tray，并把 engine status 推给 renderer。
+
+## 错误处理策略
+
+- Main process 捕获未处理异常并写日志，但不把内部 stack 原样暴露给用户。
+- IPC handler 返回 typed failure result，renderer 负责转成用户可见文案。
+- Gateway 未就绪时返回 `ENGINE_NOT_READY` 和当前 engine status。
+- SQLite migration/cleanup 失败应记录 warning，不应阻止可恢复启动。
+- Proxy/Gateway restart 是异步流程，UI 通过 status event 得知变化。
+
+## 可扩展点
+
+| 扩展点 | 推荐落点 | 注意事项 |
+| --- | --- | --- |
+| 新设置项 | renderer settings + `kv` / domain store | 增加 i18n 和迁移默认值 |
+| 新 IPC 功能 | `src/main/ipc/<domain>/` + preload namespace | 使用 shared constants |
+| 新 Gateway 能力 | `src/main/openclaw/<domain>/` 或 adapter | 不把 execution truth 放进 SQLite |
+| 新 plugin 类型 | `src/main/plugins/` + `src/renderer/features/plugins/` | Main owns transport |
+| 新 UI 缓存 | SQLite domain store | 明确 authority |

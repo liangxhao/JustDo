@@ -1,29 +1,124 @@
 # OpenClaw Gateway Capability Matrix
 
-This matrix records the runtime boundary for JustDo as an OpenClaw desktop
-frontend. OpenClaw Gateway is the authoritative source for execution, history,
-session lifecycle, and Subagent lineage. JustDo stores local UI data, cache,
-permissions audit, and product metadata.
+This matrix records which layer owns each capability in the current JustDo architecture.
 
-| Capability | Gateway API/Event | Observed Fields In JustDo | Current JustDo Compensation | Target Boundary | Deletion Prerequisite |
-| --- | --- | --- | --- | --- | --- |
-| Send chat turn | `chat.send` | `sessionKey`, `runId`, prompt/options payload | Adapter maps Cowork session ids to managed OpenClaw session keys and tracks active turn UI state. | Gateway owns turn execution; adapter only maps UI events. | Keep only Cowork compatibility facade and event mapper. |
-| Abort chat turn | `chat.abort` | `sessionKey`, `runId` | Adapter stores per-session active turn to abort the current run. | Gateway owns cancellation semantics. | Gateway exposes enough run/session status for UI to avoid local runtime decisions. |
-| Chat history | `chat.history` | `messages[]` with roles/content/usage/tool blocks | `historyReconciler` keeps SQLite `cowork_messages` aligned with Gateway history. | Gateway history is authoritative; SQLite is cache only. | New sessions recover history from Gateway and local cache stays as a fast UI copy. |
-| List sessions | `sessions.list` | `sessions[]`, `key`, `label`/`displayName`, `status`, `spawnedBy`, optional run-state fields | Adapter merges Gateway sessions with `cowork_subagents` and in-memory maps. | Gateway sessions are authoritative for parent/child lineage and Subagent status. | Gateway consistently returns child session key, parent/spawnedBy key, label, and status. |
-| Delete session tree | `sessions.list`, `sessions.delete` | child `key` from `sessions.list` | Adapter recursively deletes children as best-effort cleanup. | JustDo may request cleanup, but does not own lineage truth. | None; keep as product cleanup helper. |
-| Gateway event stream | Gateway client event frames | `chat:*`, `agent:*`, tool events, approval events | `openclawRuntimeAdapter.ts` parses events and maintains UI/progress state. | Event mapper converts Gateway events to Cowork IPC without runtime state authority. | Extract stateless event mapper with fixtures. |
-| Permission request | approval events + approval response request | approval `id`, command/cwd/security/session metadata | JustDo presents approval UI and audits user choice. | JustDo owns approval UX and audit; Gateway owns tool execution. | None; this is a JustDo responsibility. |
-| Subagent completion | Gateway agent/session events and transcript entries | session/run identifiers, `subagent_completion` extracted from history/content | Adapter tracks status maps and a temporary runtime prompt patch changes announce guidance. | Gateway emits structured child completion/result and parent resume semantics. | Upstream structured completion event with child session id, parent session id, status, and final result. |
-| Parent/child lineage | `sessions.list(spawnedBy)` | child session `key`, `label`, `spawnedBy` | Fallbacks infer child from toolCallId, label, parent session id, and persisted rows. | Gateway lineage is canonical; UI details use child session id. | Normal Subagent UI path has `childSessionId` and fallback warn count is 0. |
-| Subagent history | `chat.history(childSessionId)` | child session `messages[]` | Existing fallback probes tool results, in-memory messages, and labels. | Child history is fetched directly by child session id. | Renderer/IPC always passes OpenClaw child session id for new Subagents. |
+| Capability | Gateway API / Runtime | JustDo Main | JustDo Renderer |
+| --- | --- | --- | --- |
+| Send chat turn | Owns execution | Maps Cowork session to Gateway session and forwards stream | Starts/continues session through preload |
+| Chat history | `chat.history` authority | Reconciles into SQLite cache | Displays/searches cache and Gateway-backed history |
+| Gateway process | Runtime binary/package | Downloads, installs, starts, stops, reports status | Shows status and restart action |
+| Provider config | Uses generated config | Stores config and syncs OpenClaw config | Settings UI |
+| Agent model binding | Uses model refs | Normalizes/backfills model refs | Agent/model selection UI |
+| Subagents | Owns lifecycle/history | Bridges status/history | Displays subagent menu/drawer |
+| Skills | Owns discovery/status/install runtime | Skill RPC, local file import/delete, marketplace adapter | Skills manager and marketplace |
+| MCP | Runs configured servers/tools | Stores definitions, probes, syncs config | MCP manager |
+| Hooks | Runs configured hooks | Stores definitions and syncs config | Hook manager |
+| Extensions | Extension host/runtime interactions | Lifecycle, callback server, ask-user routing | Extension manager/permission UI |
+| Scheduled tasks | Cron execution | CronJobService polling and IPC | Scheduled tasks UI |
+| Slash commands | Gateway capability + JustDo policy | Lists commands through Gateway client/policies | Slash command menu |
+| Local files | No direct ownership | Dialog/shell/localfile protocol | File picker and preview UI |
+| SQLite | No ownership | Local app data and UI cache | Access only via IPC |
 
 ## Notes
 
-- `cowork_messages` is a UI cache. It must not participate in runtime decisions.
-- `cowork_subagents` is UI cache or migration metadata. It must not decide
-  Subagent lifecycle, completion counts, or whether a parent resumes.
-- Missing Gateway structure should become an OpenClaw upstream issue or PR before
-  adding new local guessing logic.
-- Temporary fallback paths should log warnings so normal-path usage can be driven
-  to zero before deletion.
+- If a feature changes execution truth, prefer an OpenClaw upstream API/change.
+- If a feature changes desktop UX, local settings, or UI cache, implement it in JustDo.
+- Runtime patches must stay small and documented in `scripts/patches/README.md`.
+
+## Capability Details
+
+### Chat
+
+Gateway owns the canonical message sequence. JustDo can keep `cowork_messages` as a cache, but must reconcile from `chat.history` when opening a session or recovering after restart.
+
+```mermaid
+flowchart TB
+  subgraph JustDo["JustDo"]
+    UI["UI state"]
+    Cache["SQLite cache"]
+    Adapter["Adapter/services"]
+  end
+
+  subgraph Gateway["OpenClaw Gateway"]
+    Execution["Execution"]
+    History["chat.history"]
+    Runtime["Tools/Subagents/Cron/Skills"]
+  end
+
+  UI --> Adapter
+  Adapter --> Execution
+  Execution --> History
+  Execution --> Runtime
+  History --> Adapter
+  Adapter --> Cache
+  Cache -. "fast display only" .-> UI
+  History -. "authority" .-> UI
+```
+
+Expected behavior:
+
+- Live stream updates UI quickly.
+- History reload corrects stale cache.
+- Tool input/history lookup goes through Gateway/Main IPC.
+
+### Runtime
+
+Gateway process management is local desktop infrastructure, so JustDo owns the manager. The runtime behavior once Gateway is running remains Gateway-owned.
+
+This split means JustDo can:
+
+- download runtime
+- apply compatibility patches
+- start/stop process
+- expose status
+
+But JustDo should not:
+
+- replace Gateway session scheduler
+- rewrite Gateway history storage
+- execute Gateway tools directly in renderer
+
+### Plugins
+
+Skills, MCP, Hooks, and Extensions have a shared pattern:
+
+```text
+JustDo: configuration UI + local persistence + config sync
+Gateway: runtime loading + execution
+```
+
+If a plugin feature requires runtime semantics, it belongs in Gateway or a runtime extension. If it requires desktop UX, it belongs in JustDo.
+
+### Scheduled Tasks
+
+Gateway owns schedule triggers and run execution. JustDo's polling layer is an observation mechanism, not a scheduler replacement.
+
+If polling misses an update, the next poll should recover. If Gateway state and UI state disagree, Gateway wins.
+
+### Local Files
+
+Gateway tools may operate on files during execution, but renderer local file access is still gated by JustDo. File preview/open flows remain Main-process controlled.
+
+## Ownership Checklist
+
+Before implementing a feature, answer:
+
+| Question | If yes |
+| --- | --- |
+| Does it decide whether a tool/session/run actually happened? | Gateway-owned |
+| Does it change local UI organization or preference? | JustDo-owned |
+| Does it need OS APIs or filesystem access? | Main process-owned |
+| Does it only render existing state? | Renderer-owned |
+| Does it bridge Gateway and desktop UX? | Adapter/service-owned |
+
+## Drift Risks
+
+Common ways the boundary drifts:
+
+- Adding local fallback logic that silently becomes authoritative.
+- Keeping stale SQLite data after Gateway history changed.
+- Parsing human-readable tool output to derive IDs.
+- Making runtime patches permanent without upstream tracking.
+- Letting renderer call provider/marketplace/runtime endpoints directly.
+
+These should be caught in review.

@@ -1,335 +1,257 @@
-# JustDo 数据存储与 SQLite 设计
+# 数据存储
 
-## 1. 概述
+JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据。数据库文件名来自 `src/main/core/appConstants.ts`，当前为 `justdo.sqlite`，路径位于 Electron `userData/JustDo`。
 
-JustDo 使用本地 SQLite 数据库作为 **UI 缓存层**，文件名为 `justdo.sqlite`，位于用户数据目录。采用 better-sqlite3 作为 SQLite 库，支持高性能同步操作。
+## SQLite 初始化
 
-> **重要**：SQLite 是 UI 缓存，**不是**权威数据源。OpenClaw Gateway 的 `chat.history` 是消息历史的权威来源。`cowork_messages` 仅作为本地缓存存在，Gateway 是单⼀权责中心。
+入口：`src/main/data/sqliteStore.ts`
 
-### 1.1 数据库定位
+初始化行为：
 
-| 数据类别       | 权威来源                   | 本地 SQLite 职责                |
-| -------------- | -------------------------- | ------------------------------- |
-| 会话消息历史   | Gateway `chat.history` API | UI 缓存，加速本地渲染           |
-| 会话元数据     | JustDo 本地存储            | 会话列表、标题、状态            |
-| 配置           | JustDo 本地存储            | 应用设置、Cowork 配置、API 凭据 |
-| Agent 定义     | JustDo 本地存储            | 自定义 Agent 配置               |
-| MCP 服务器     | JustDo 本地存储            | MCP 服务器配置                  |
-| 定时任务元数据 | JustDo 本地存储            | 任务来源和绑定信息              |
-| 分组信息       | JustDo 本地存储            | 会话分组组织                    |
+- 打开 SQLite database。
+- 启用 `foreign_keys = ON`。
+- 启用 WAL：`journal_mode = WAL`。
+- 设置 `synchronous = NORMAL`。
+- 创建/迁移表和索引。
+- 检测旧 schema，必要时删除 legacy database 并重新创建。
+- 从旧 `config.json` 迁移 `electron-store` 数据到 `kv`。
+- 清理 orphaned cowork messages。
 
-### 1.2 数据库位置
+```mermaid
+flowchart TB
+  Start["SqliteStore.create(userDataPath)"] --> Path["Resolve justdo.sqlite path"]
+  Path --> Legacy["Inspect legacy schema"]
+  Legacy -->|legacy| Delete["Delete db/wal/shm"]
+  Legacy -->|current/missing| Open["Open better-sqlite3 database"]
+  Delete --> Open
+  Open --> Pragmas["Apply PRAGMA\nforeign_keys/WAL/synchronous/cache"]
+  Pragmas --> Tables["Create tables and indexes"]
+  Tables --> MainAgent["Ensure main agent"]
+  MainAgent --> MigrateMode["Migrate old execution_mode"]
+  MigrateMode --> Cleanup["Cleanup orphaned messages"]
+  Cleanup --> ElectronStore["Migrate config.json if kv empty"]
+  ElectronStore --> Ready["Store ready"]
+```
 
-| 平台    | 数据目录                                |
-| ------- | --------------------------------------- |
-| macOS   | `~/Library/Application Support/JustDo/` |
-| Windows | `%APPDATA%\JustDo\`                     |
-| Linux   | `~/.config/JustDo/`                     |
+## 当前核心表
 
-### 1.3 数据库特性
+| 表 | 用途 |
+| --- | --- |
+| `kv` | 通用 key/value 配置 |
+| `cowork_sessions` | Cowork 会话 UI 元数据和 Gateway session id 映射 |
+| `cowork_messages` | Cowork 消息 UI cache |
+| `cowork_config` | Cowork 配置 |
+| `agents` | Agent 定义、模型、技能绑定 |
+| `mcp_servers` | MCP server 配置 |
+| `openclaw_hooks` | OpenClaw hook 配置 |
+| `session_groups` | 会话分组 |
 
-- **单文件存储**：便于备份和恢复
-- **同步操作**：better-sqlite3 提供高性能同步 API
-- **WAL 模式**：启用 Write-Ahead Logging 提高并发性能
-- **完整 UTF-8**：支持中文等 Unicode 字符
+```mermaid
+erDiagram
+  cowork_sessions ||--o{ cowork_messages : contains
+  session_groups ||--o{ cowork_sessions : groups
+  agents ||--o{ cowork_sessions : owns
 
-## 2. 数据表结构
+  cowork_sessions {
+    text id PK
+    text title
+    text claude_session_id
+    text status
+    integer pinned
+    text cwd
+    text execution_mode
+    text active_skill_ids
+    text agent_id
+    text group_id
+    integer created_at
+    integer updated_at
+  }
 
-### 2.1 kv 表（键值存储）
+  cowork_messages {
+    text id PK
+    text session_id FK
+    text type
+    text content
+    text metadata
+    integer created_at
+    integer sequence
+    text thinking_content
+    text model_name
+    text usage
+  }
 
-应用级配置存储，通用键值对：
+  agents {
+    text id PK
+    text name
+    text model
+    text skill_ids
+    integer enabled
+    integer is_default
+  }
+
+  session_groups {
+    text id PK
+    text name
+    text color
+    integer sort_order
+  }
+```
+
+## 重要字段
+
+`cowork_sessions` 包含：
+
+- `id`
+- `title`
+- `claude_session_id`
+- `status`
+- `pinned`
+- `cwd`
+- `execution_mode`
+- `active_skill_ids`
+- `agent_id`
+- `group_id`
+- `created_at`
+- `updated_at`
+
+`cowork_messages` 包含：
+
+- `id`
+- `session_id`
+- `type`
+- `content`
+- `metadata`
+- `created_at`
+- `sequence`
+- `thinking_content`
+- `model_name`
+- `usage`
+
+## Store 层
+
+| 文件 | 作用 |
+| --- | --- |
+| `sqliteStore.ts` | DB 初始化、kv store、migration |
+| `coworkStore.ts` | Cowork sessions/messages/agents CRUD |
+| `groupStore.ts` | session group CRUD |
+| `plugins/mcp/mcpStore.ts` | MCP server store |
+| `plugins/hooks/openclawHookStore.ts` | hook store |
+
+## 权威边界
+
+SQLite 不是 OpenClaw execution history 的权威。Gateway `chat.history` 是消息事实来源，SQLite 的 `cowork_messages` 是 UI cache，用于列表、搜索、快速恢复和展示。
+
+## 迁移规则
+
+- 添加表或字段时，在 `sqliteStore.ts` 中加入兼容逻辑或迁移。
+- 添加跨进程共享数据类型时同步 `src/shared/`。
+- 修改 schema 后更新本文档并添加/更新 `*.test.ts`。
+- 不在 renderer 中直接读写 SQLite。
+
+## Schema 详细说明
+
+### `kv`
+
+通用配置表，存储 JSON 序列化值。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `key` | TEXT PRIMARY KEY | 配置键 |
+| `value` | TEXT | JSON string |
+| `updated_at` | INTEGER | 更新时间戳 |
+
+典型数据包括 app config、auto launch 初始化标记、防休眠设置等。`SqliteStore.get/set/delete` 会触发 in-process change event，供 Main 内部监听配置变化。
+
+### `cowork_sessions`
+
+Cowork 会话列表和 UI 元数据表。`claude_session_id` 是历史字段名，当前用于保存 Gateway session 映射。
+
+关键索引：
+
+- `idx_cowork_sessions_agent_order`
+- `idx_cowork_sessions_order`
+
+排序规则通常是 pinned 优先，再按 updated_at 倒序。
+
+### `cowork_messages`
+
+消息缓存表，外键指向 `cowork_sessions(id)`，并在 session 删除时 cascade delete。
+
+关键索引：
+
+- `idx_cowork_messages_session_id`
+- `idx_cowork_messages_session_sequence`
+
+`sequence` 优先用于 Gateway/history 顺序，缺失时可用 `created_at` 降级排序。
+
+### `agents`
+
+Agent 定义表。默认会确保存在 `main` agent。
+
+字段包括：
+
+- `id`
+- `name`
+- `description`
+- `system_prompt`
+- `identity`
+- `model`
+- `icon`
+- `skill_ids`
+- `enabled`
+- `is_default`
+- `created_at`
+- `updated_at`
+
+Agent model refs 在启动时会通过 `openclawAgentModels.ts` 做 backfill/qualification，避免同名模型歧义。
+
+### `mcp_servers`
+
+MCP server 本地定义表。`config_json` 保存 stdio/http 等 transport config。Main process 根据该表生成 Gateway 可读取的 MCP 配置，并可执行 probe。
+
+### `openclaw_hooks`
+
+OpenClaw hook 配置表。Main process 负责把 enabled hooks 同步到 Gateway 配置。
+
+### `session_groups`
+
+会话分组表，用于 Cowork sidebar 分组展示。删除 group 时应处理关联 session 的 `group_id`。
+
+## Legacy Recovery
+
+`SqliteStore.create()` 会检查已有数据库是否缺少关键字段。如果检测到 legacy schema，会删除旧 database、wal、shm 文件并创建新库。这是为了避免旧 schema 让主流程半启动、半损坏。
+
+删除 legacy database 是有损动作，因此判断条件必须保守，只针对已知关键表缺字段的旧版本。
+
+## WAL 策略
+
+当前配置：
 
 ```sql
-CREATE TABLE kv (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,          -- JSON 格式存储
-  updated_at INTEGER NOT NULL
-);
-
--- 示例数据
-INSERT INTO kv (key, value, updated_at) VALUES
-  ('appConfig', '{"language":"zh","theme":"dark"}', 1712851200000),
-  ('auth_tokens', '{"accessToken":"xxx","refreshToken":"yyy"}', 1712851200000),
-  ('skillsConfig', '{"skills":[{"id":"web-search","enabled":true}]}', 1712851200000);
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA cache_size = -8000;
+PRAGMA wal_autocheckpoint = 1000;
 ```
 
-### 2.2 cowork_config 表
+WAL 能改善桌面应用并发读写体验。退出时 `getStore().close()` 会关闭 database，释放 WAL/SHM 文件句柄。
 
-Cowork 系统配置（键值对形式）：
+## 数据访问规则
 
-```sql
-CREATE TABLE cowork_config (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,          -- JSON 格式
-  updated_at INTEGER NOT NULL
-);
+- Renderer 不直接访问 database。
+- Main IPC handler 不直接拼复杂 SQL，优先通过 store/service。
+- JSON 字段读写要在 store 层集中 parse/stringify。
+- 对用户可编辑字段做长度和类型校验。
+- 删除 session 时依赖外键清理 messages，但其他关联数据要按 domain 规则处理。
 
--- 示例数据
-INSERT INTO cowork_config (key, value, updated_at) VALUES
-  ('workingDirectory', '"/Users/username/work"', 1712851200000),
-  ('systemPrompt', '"You are a helpful assistant..."', 1712851200000),
-  ('executionMode', '"auto"', 1712851200000),
-  ('agentEngine', '"openclaw"', 1712851200000),
-  ('modelProvider', '"anthropic"', 1712851200000),
-  ('modelName', '"claude-sonnet-4-6"', 1712851200000);
-```
+## 备份与排障
 
-> **注意**：`api_key` 字段不在 cowork_config 中管理。API 密钥由 Provider 配置独立管理，通过 OpenClaw Gateway 的 provider 配置系统处理。
+日志导出功能应能帮助定位：
 
-### 2.3 cowork_sessions 表
+- database path。
+- migration warning。
+- orphan cleanup count。
+- Gateway history reconciliation failure。
 
-会话元数据：
-
-```sql
-CREATE TABLE cowork_sessions (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  claude_session_id TEXT,         -- OpenClaw Gateway session key
-  status TEXT NOT NULL DEFAULT 'idle',  -- 'idle' | 'running' | 'completed' | 'error' | 'stopped'
-  pinned INTEGER NOT NULL DEFAULT 0,
-  cwd TEXT NOT NULL,               -- working directory
-  execution_mode TEXT,             -- 'auto' | 'local'
-  agent_id TEXT NOT NULL DEFAULT 'main',
-  active_skill_ids TEXT,           -- JSON array of active skill IDs
-  group_id TEXT REFERENCES session_groups(id),
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-
--- 索引
-CREATE INDEX idx_sessions_created ON cowork_sessions(created_at DESC);
-CREATE INDEX idx_sessions_status ON cowork_sessions(status);
-```
-
-### 2.4 cowork_messages 表
-
-会话消息历史（UI 缓存，**非权威来源**）：
-
-```sql
-CREATE TABLE cowork_messages (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  type TEXT NOT NULL,              -- 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system'
-  content TEXT NOT NULL,
-  thinking_content TEXT,           -- 思考/推理内容（模型 thinking 流，可选）
-  metadata TEXT,                   -- JSON: { isStreaming, isThinking, toolName, toolInput, ... }
-  model_name TEXT,                 -- AI model used for this message
-  usage TEXT,                      -- JSON: token usage data
-  created_at INTEGER NOT NULL,
-  sequence INTEGER,                -- 消息顺序号
-
-  FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
-);
-
--- 索引
-CREATE INDEX idx_cowork_messages_session_id ON cowork_messages(session_id);
-```
-
-> **权威来源说明**：消息历史的权威数据源是 Gateway 的 `chat.history` RPC 调用。`cowork_messages` 表作为本地缓存存在，用于快速 UI 渲染。当 Gateway 返回更新后的历史时，本地缓存会被替换。
-
-### 2.5 session_groups 表
-
-会话分组组织：
-
-```sql
-CREATE TABLE session_groups (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  color TEXT DEFAULT '#6366f1',
-  sort_order INTEGER DEFAULT 0,
-  created_at INTEGER NOT NULL
-);
-```
-
-### 2.6 agents 表
-
-自定义 Agent 配置：
-
-```sql
-CREATE TABLE agents (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  system_prompt TEXT NOT NULL DEFAULT '',
-  identity TEXT NOT NULL DEFAULT '',
-  model TEXT NOT NULL DEFAULT '',
-  icon TEXT NOT NULL DEFAULT '',
-  skill_ids TEXT NOT NULL DEFAULT '[]',  -- JSON: ["web-search", "docx", ...]
-  enabled INTEGER NOT NULL DEFAULT 1,
-  is_default INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-```
-
-### 2.7 mcp_servers 表
-
-MCP 服务器配置：
-
-```sql
-CREATE TABLE mcp_servers (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  description TEXT NOT NULL DEFAULT '',
-  enabled INTEGER NOT NULL DEFAULT 1,
-  transport_type TEXT NOT NULL DEFAULT 'stdio',
-  config_json TEXT NOT NULL DEFAULT '{}',  -- JSON: command, args, env
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-```
-
-### 2.8 scheduled_task_meta 表
-
-定时任务元数据（本地持久化 OpenClaw cron 任务的自定义元数据）：
-
-```sql
-CREATE TABLE scheduled_task_meta (
-  task_id TEXT PRIMARY KEY,
-  origin TEXT NOT NULL,              -- JSON: TaskOrigin { type: 'conversation' | 'gui' | 'migration', sessionId, messageId }
-  binding TEXT NOT NULL              -- JSON: ExecutionBinding { agentId, imDelivery? }
-);
-```
-
-> OpenClaw Gateway 的 `cron.*` API 不支持自定义字段，因此将任务来源和绑定信息本地持久化在此表中。
-
-## 3. 文件级记忆系统
-
-除 SQLite 外，JustDo 通过 OpenClaw Gateway 管理一组文件级持久记忆文件，存储在 `~/.openclaw/` 目录中：
-
-| 文件                   | 用途                 |
-| ---------------------- | -------------------- |
-| `MEMORY.md`            | 持久化事实与偏好     |
-| `USER.md`              | 用户档案             |
-| `SOUL.md`              | Agent 个性与行为准则 |
-| `memory/YYYY-MM-DD.md` | 每日笔记             |
-
-记忆文件由 Gateway 自动管理，JustDo 不直接写入这些文件。
-
-## 4. SQLiteStore 实现
-
-### 4.1 核心类
-
-**文件**：`src/main/data/sqliteStore.ts`
-
-```typescript
-class SqliteStore {
-  private db: Database;
-  private dbPath: string;
-
-  static create(userDataPath?: string): SqliteStore {
-    // 初始化路径
-    const dbPath = path.join(basePath, 'justdo.sqlite');
-    const db = new Database(dbPath);
-
-    // 启用 WAL 模式
-    db.pragma('journal_mode = WAL');
-    db.pragma('synchronous = NORMAL');
-    db.pragma('cache_size = -8000'); // 8 MB
-    db.pragma('wal_autocheckpoint = 1000');
-
-    // 创建表
-    store.initializeTables(basePath);
-    return store;
-  }
-
-  // KV 操作
-  get<T>(key: string): T | undefined {
-    /* ... */
-  }
-  set<T>(key: string, value: T): void {
-    /* ... */
-  }
-  delete(key: string): void {
-    /* ... */
-  }
-
-  // 变更监听
-  onDidChange<T>(key: string, callback): () => void {
-    /* ... */
-  }
-
-  close(): void {
-    /* ... */
-  }
-}
-```
-
-### 4.2 WAL 模式
-
-启用 Write-Ahead Logging 提高性能：
-
-```typescript
-db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL');
-db.pragma('cache_size = -8000'); // 8 MB 缓存
-db.pragma('wal_autocheckpoint = 1000'); // 每 ~4 MB WAL 写入后 checkpoint
-```
-
-WAL 模式优势：
-
-- 读写不互斥
-- 更好的并发性能
-- 更少的数据损坏风险
-
-### 4.3 CoworkStore
-
-**文件**：`src/main/data/coworkStore.ts`
-
-CoworkStore 封装会话和消息的 CRUD 操作。消息缓存操作包括替换会话消息（从 Gateway 对账）：
-
-```typescript
-class CoworkStore {
-  private db: Database;
-
-  // 配置管理（通过 kv 表）
-  getConfig(): CoworkConfig {
-    /* ... */
-  }
-  setConfig(config: CoworkConfig): void {
-    /* ... */
-  }
-
-  // 会话管理
-  createSession(sessionId, meta): void {
-    /* ... */
-  }
-  getSession(sessionId): Session | null {
-    /* ... */
-  }
-  listSessions(): Session[] {
-    /* ... */
-  }
-  updateSessionStatus(sessionId, status): void {
-    /* ... */
-  }
-  deleteSession(sessionId): void {
-    /* ... */
-  }
-
-  // 消息管理（UI 缓存）
-  addMessage(sessionId, message): void {
-    /* ... */
-  }
-  getSessionMessages(sessionId): CoworkMessage[] {
-    /* ... */
-  }
-  replaceConversationMessages(sessionId, authoritative): void {
-    /* ... */
-  }
-}
-```
-
-## 5. 关键文件清单
-
-| 文件                                   | 职责                                         |
-| -------------------------------------- | -------------------------------------------- |
-| `src/main/data/sqliteStore.ts`         | SQLite 数据库管理（建表、KV 操作）           |
-| `src/main/data/coworkStore.ts`         | Cowork 会话和消息 CRUD                       |
-| `src/main/scheduler/cronJobService.ts` | OpenClaw Gateway cron 任务访问与运行记录映射 |
-
-## 6. 版本信息
-
-- **Last Updated**: 2026-07-04
-- **JustDo Version**: v2026.7.3
-- **OpenClaw Gateway**: v2026.6.11
+排障时要先判断问题在 Gateway authority 还是 SQLite cache。若 Gateway history 正常而 SQLite cache 异常，应优先重建 cache。

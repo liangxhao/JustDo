@@ -1,464 +1,176 @@
-# JustDo 安全模型与权限控制
+# 安全模型
 
-**版本**: v2026.7.3
+JustDo 的安全边界建立在 Electron 进程隔离、Preload 最小 API、Main 进程输入校验、本地文件协议限制、CSP、权限弹窗和 OpenClaw runtime 边界之上。
 
-## 1. 安全架构
+## 核心原则
 
-JustDo 采用多层安全防护，确保用户数据和系统安全。
+- Renderer 不直接访问 Node.js、Electron、SQLite 或文件系统。
+- 所有本地能力通过 `window.electron` 的窄 API 暴露。
+- Main 进程校验 IPC 输入后再访问文件、网络、Gateway、SQLite 或 marketplace。
+- 用户可见危险动作通过权限 UI 或系统对话框确认。
+- 不把 API key、token、password 写入源码。
 
-### 1.1 安全层次
+## 关键文件
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    应用层安全                                 │
-│                                                             │
-│  - API Key 环境变量管理                                       │
-│  - 安全配置存储 (Electron safeStorage)                        │
-│  - Gateway 配置同步安全                                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    进程层安全                                 │
-│                                                             │
-│  - Context Isolation 启用                                    │
-│  - Node Integration 禁用                                     │
-│  - Sandbox 启用                                               │
-│  - Preload 安全桥接                                           │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    权限控制层                                 │
-│                                                             │
-│  - 工具调用审批                                               │
-│  - 工作目录边界                                               │
-│  - 风险等级评估                                               │
-│  - 单次/会话级授权                                            │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    内容安全层                                 │
-│                                                             │
-│  - DOMPurify 净化 (HTML/SVG)                                 │
-│  - Mermaid Strict Mode                                       │
-│  - 隔离 iframe 渲染                                           │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    网络安全层                                 │
-│                                                             │
-│  - CORS 限制                                                  │
-│  - HTTPS 强制                                                 │
-│  - Gateway 通信本地回环                                        │
-└─────────────────────────────────────────────────────────────┘
-```
+| 文件 | 作用 |
+| --- | --- |
+| `src/main/preload.ts` | Renderer API surface |
+| `src/main/core/contentSecurityPolicy.ts` | CSP 注册 |
+| `src/main/core/localFileProtocol.ts` | `localfile://` 安全本地文件协议 |
+| `src/main/ipc/payloadSanitizer.ts` | IPC payload sanitizer |
+| `src/main/engine/commandSafety.ts` | 命令安全策略 |
+| `src/main/ipc/app/shell.ts` | shell/path 操作 |
+| `src/main/cowork/providerApiConfig.ts` | provider/API 配置读取 |
+| `src/renderer/features/cowork/components/CoworkPermissionModal.tsx` | 权限确认 UI |
 
----
+## Electron 安全
 
-## 2. 进程安全
+- Renderer 通过 contextBridge 获取受控 API。
+- Main process owns filesystem, shell, SQLite, Gateway process and OS integration.
+- CSP 在 app 启动时注册。
+- 本地文件预览使用自定义协议，不直接暴露任意文件 URL。
 
-### 2.1 BrowserWindow 配置
+Linux/Windows 当前会设置 Chromium `no-sandbox`，用于桌面应用兼容和 Windows 管理员启动场景。该设置应视为平台兼容决策，不能替代应用层权限校验。
 
-```typescript
-const mainWindow = new BrowserWindow({
-  webPreferences: {
-    preload: path.join(__dirname, 'preload.js'),
+## 权限与工具执行
 
-    // Context Isolation: 启用
-    // Renderer 无法直接访问 Node.js API
-    contextIsolation: true,
+Cowork/Gateway 运行中产生的权限请求通过 IPC 转发到 renderer。用户响应后，Main 再把结果交回 runtime/extension host。
 
-    // Node Integration: 禁用
-    // Renderer 无法使用 require()
-    nodeIntegration: false,
+需要谨慎处理的能力：
 
-    // Sandbox: 启用
-    // Renderer 运行在 Chromium 沙箱
-    sandbox: true,
+- shell open path / external URL
+- 本地文件读取和预览
+- MCP stdio process
+- extension callback
+- command execution
+- marketplace install
+- scheduled task execution
 
-    // Web Security: 启用
-    webSecurity: true,
+## 网络和代理
 
-    // 禁用远程模块
-    enableRemoteModule: false,
-  },
-});
-```
+Main 进程负责系统代理偏好、outbound header proxy 和 Gateway localhost proxy bypass。代理配置变化可能触发 Gateway restart 或 client reconnect。
 
-### 2.2 Preload 安全桥接
+## Secrets
 
-```typescript
-// preload.ts
-import { contextBridge, ipcRenderer } from 'electron';
+- 源码和文档中不能硬编码真实 secret。
+- Provider API key 通过应用配置保存和读取。
+- 日志中不要输出完整 token、API key 或认证 header。
 
-// 仅暴露必要的 API，不暴露 ipcRenderer 本身
-contextBridge.exposeInMainWorld('electron', {
-  cowork: {
-    startSession: params => ipcRenderer.invoke('cowork:startSession', params),
-    // 其他方法...
-  },
-  store: {
-    get: key => ipcRenderer.invoke('store:get', key),
-    set: (key, value) => ipcRenderer.invoke('store:set', key, value),
-  },
-  // ... 其他命名空间
+## 维护规则
 
-  // 不暴露：
-  // - ipcRenderer.send
-  // - ipcRenderer.sendSync
-  // - require
-  // - process
-});
+- 新增 preload API 时，先说明调用者、输入、输出和失败行为。
+- 新增文件系统能力时使用路径归一化和最小暴露。
+- 新增网络能力时避免 renderer 直连敏感服务。
+- 新增权限弹窗时添加 i18n 文案。
+
+## Threat Model
+
+JustDo 的主要风险来自四类边界：
+
+| 边界 | 风险 | 防护 |
+| --- | --- | --- |
+| Renderer -> Main | 恶意/损坏 UI 请求本地能力 | preload 窄 API、Main 校验 |
+| Model/Gateway -> Tools | 模型请求执行危险动作 | permission flow、command safety、Gateway policy |
+| Local files | 任意路径读取/打开/泄漏 | dialog 用户选择、localfile protocol、path normalization |
+| Plugins/MCP/Skills | 第三方能力执行 | 安装确认、配置同步、运行时权限、日志 |
+
+## Renderer Isolation
+
+Renderer 应被当作不可信 UI 层处理。即使当前代码由我们编写，模型输出、Markdown、外部链接、marketplace 内容都可能进入 renderer。
+
+要求：
+
+- `contextIsolation: true`。
+- `nodeIntegration: false`。
+- 不把 `require`、`process.env`、filesystem handle 暴露给 renderer。
+- Markdown/HTML 输出经过 DOMPurify。
+- 外部链接通过 Main 的 shell API 打开。
+
+## IPC Input Validation
+
+Main handler 对输入做三层处理：
+
+1. shape validation：字段存在、类型正确。
+2. semantic validation：id 是否存在、状态是否允许、路径/URL 是否合理。
+3. authority validation：这个操作是否应该由用户当前动作触发。
+
+例如 skill install：
+
+```text
+Renderer install click
+  -> skills.install({ id, version, force })
+  -> Main validates id/version
+  -> marketplace/Gateway service
+  -> result
 ```
 
-### 2.3 IPC 类型验证
-
-所有 IPC 调用进行参数验证：
-
-```typescript
-// main.ts - IPC handler
-ipcMain.handle('cowork:startSession', (event, params) => {
-  if (!params || typeof params !== 'object') {
-    throw new Error('Invalid params');
-  }
-
-  if (!params.prompt || typeof params.prompt !== 'string') {
-    throw new Error('Invalid prompt');
-  }
-
-  if (params.workingDirectory) {
-    if (!isAbsolutePath(params.workingDirectory)) {
-      throw new Error('Working directory must be absolute path');
-    }
-  }
-
-  return handleStartSession(params);
-});
-```
-
----
-
-## 3. 权限控制
-
-### 3.1 工具分类
-
-| 级别       | 工具类型 | 示例                              | 授权方式               |
-| ---------- | -------- | --------------------------------- | ---------------------- |
-| `low`      | 信息读取 | read_file, list_directory         | 可设置会话级授权       |
-| `medium`   | 文件修改 | write_file, create_directory      | 必须单次授权           |
-| `high`     | 系统操作 | execute_command, network_request  | 必须单次授权，显示警告 |
-| `critical` | 危险操作 | delete_recursive, install_package | 必须单次授权，双重确认 |
-
-### 3.2 权限请求流程
-
-```
-Agent → Engine Router: 调用工具 write_file
-Engine Router → Main Process: 发起权限请求
-Main Process → Renderer: permissionRequest event
-Renderer → User: 显示权限 Modal
-User → Renderer: 点击"允许"或"拒绝"
-Renderer → Main Process: respondToPermission
-Main Process → Engine Router: 权限响应
-
-  允许 → Engine Router → Agent: 执行工具
-  拒绝 → Engine Router → Agent: 工具被拒绝
-```
-
-### 3.3 权限请求结构
-
-```typescript
-interface PermissionRequest {
-  sessionId: string;
-  permissionId: string; // 请求 ID
-  toolName: string; // 工具名称
-  toolInput: Record<string, unknown>; // 工具输入
-  riskLevel: 'low' | 'medium' | 'high' | 'critical';
-  description: string; // 工具用途描述
-  warnings?: string[]; // 风险警告
-}
-
-interface PermissionResponse {
-  sessionId: string;
-  permissionId: string;
-  approved: boolean;
-  scope: 'single' | 'session'; // 单次或会话级
-}
-```
-
-### 3.4 风险评估
-
-```typescript
-function assessRiskLevel(toolName: string, toolInput: Record<string, unknown>): RiskLevel {
-  const toolRiskMap: Record<string, RiskLevel> = {
-    read_file: 'low',
-    list_directory: 'low',
-    write_file: 'medium',
-    create_directory: 'medium',
-    execute_command: 'high',
-    web_search: 'medium',
-    network_request: 'high',
-    delete_file: 'high',
-    delete_directory: 'critical',
-  };
-
-  let level = toolRiskMap[toolName] || 'medium';
-
-  // 根据输入动态调整风险级别
-  if (toolName === 'execute_command' && isDangerousCommand(toolInput.command)) {
-    level = 'critical';
-  }
-
-  if (toolName === 'write_file' && isSystemPath(toolInput.file_path)) {
-    level = 'critical';
-  }
-
-  return level;
-}
+不要让 renderer 传入“要调用哪个 provider method”这类动态能力。
 
-function isDangerousCommand(command: string): boolean {
-  const dangerousPatterns = [
-    /rm\s+-rf/,
-    /sudo/,
-    /chmod\s+777/,
-    /mkfs/,
-    /dd\s+if=/,
-    />\s*\/dev\/sd/,
-    /curl\s+.*\|\s*bash/,
-    /wget\s+.*\|\s*sh/,
-  ];
-  return dangerousPatterns.some(p => p.test(command));
-}
-```
+## File Access
 
-### 3.5 工作目录边界
+文件访问分三类：
 
-所有文件操作限制在工作目录内：
+| 类型 | 推荐入口 | 说明 |
+| --- | --- | --- |
+| 用户选择文件 | `dialog.selectFile/selectFiles` | 明确用户授权 |
+| 预览/打开文件 | `shell.readPreviewFile/openPath/showItemInFolder` | Main 检查路径和工作目录 |
+| 渲染本地资源 | `localfile://` | 自定义协议限制读取方式 |
 
-```typescript
-function isWithinWorkingDirectory(filePath: string, workingDir: string): boolean {
-  const resolvedPath = path.resolve(filePath);
-  const resolvedWorkingDir = path.resolve(workingDir);
-  return resolvedPath.startsWith(resolvedWorkingDir);
-}
+新增文件能力时要明确是否允许目录、是否递归、是否读取内容、最大大小，以及错误如何反馈。
 
-function validateFilePath(toolInput: Record<string, unknown>, workingDir: string): void {
-  const filePath = toolInput.file_path || toolInput.path;
-  if (filePath && !isWithinWorkingDirectory(filePath, workingDir)) {
-    throw new Error(`路径 ${filePath} 超出工作目录 ${workingDir}`);
-  }
-}
-```
+## Command And Tool Safety
 
-### 3.6 权限 Modal UI
+`src/main/engine/commandSafety.ts` 是命令安全策略落点。命令执行相关能力应考虑：
 
-**文件**: `src/renderer/features/cowork/components/CoworkPermissionModal.tsx`
+- 是否需要用户确认。
+- 是否会修改文件。
+- 是否会访问网络。
+- 是否会读取 secret。
+- 是否跨 workspace。
+- 是否长期运行或后台运行。
 
-显示工具调用请求，根据风险等级显示不同 UI，支持单次/会话级授权。
+Renderer 不应自己判断命令是否安全；它只展示 Main/Gateway 给出的权限请求。
 
----
+## Plugin Security
 
-## 4. 内容安全
+Skills、MCP、Hooks、Extensions 都可能扩展 runtime 能力。
 
-### 4.1 DOMPurify 净化
+安全要求：
 
-SVG 和用户输入 HTML 使用 DOMPurify 净化：
+- Marketplace 内容不直接信任。
+- MCP server config 存储在 SQLite，并由 Main 同步给 Gateway。
+- MCP probe 在 Main process/service 层执行，结果给 UI。
+- Hooks 默认不应静默启用危险行为。
+- Extension ask-user interaction 必须映射到具体 session/request id。
 
-```typescript
-import DOMPurify from 'dompurify';
+## Logging And Secrets
 
-// 净化 SVG
-const cleanSvg = DOMPurify.sanitize(svgContent, {
-  USE_PROFILES: { svg: true },
-  FORBID_TAGS: ['script', 'iframe'],
-  FORBID_ATTR: ['onload', 'onerror', 'onclick'],
-});
+日志用于排障，但不应成为 secret 泄漏面。
 
-// 净化 HTML
-const cleanHtml = DOMPurify.sanitize(htmlContent, {
-  ALLOWED_TAGS: ['p', 'div', 'span', 'a', 'img', 'h1', 'h2', 'h3', 'ul', 'li'],
-  ALLOWED_ATTR: ['href', 'src', 'class', 'id'],
-});
-```
+禁止记录：
 
-### 4.2 Mermaid Strict Mode
+- 完整 API key。
+- Gateway token。
+- Authorization header。
+- 用户文件完整内容，除非用户明确导出。
+- credential-bearing URL。
 
-Mermaid 图表使用严格安全模式：
+可以记录：
 
-```typescript
-mermaid.initialize({
-  securityLevel: 'strict', // 禁止点击事件和脚本
-  startOnLoad: false,
-});
-```
+- provider name。
+- model id。
+- sanitized base URL host。
+- request id/session id。
+- error code 和简短 message。
 
-### 4.3 iframe 隔离
+## Security Review Checklist
 
-用户生成内容在隔离 iframe 中渲染：
+新增能力合入前检查：
 
-```html
-<iframe
-  srcDoc={htmlContent}
-  sandbox="allow-scripts"
-  <!-- 不包含: allow-same-origin, allow-forms, allow-popups -->
-/>
-```
-
----
-
-## 5. Secrets 管理
-
-### 5.1 环境变量注入
-
-API Keys 和 Secrets 通过环境变量注入，不硬编码：
-
-```typescript
-// Gateway 环境变量
-const gatewayEnv = {
-  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-  // ... 其他 Provider API Keys
-};
-
-// 启动 Gateway
-spawn(gatewayPath, [], { env: { ...process.env, ...gatewayEnv } });
-```
-
-### 5.2 安全凭证存储
-
-敏感配置使用 Electron `safeStorage` 加密：
-
-```typescript
-// API Key 加密存储
-function encryptApiKey(key: string): string {
-  return safeStorage.encryptString(key).toString('base64');
-}
-
-function decryptApiKey(encrypted: string): string {
-  return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
-}
-```
-
-### 5.3 配置文件安全
-
-OpenClaw 配置不包含明文 Secrets：
-
-```yaml
-# managed.yaml - Secrets 通过环境变量引用
-channels:
-  dingtalk:
-    accounts:
-      acc1:
-        clientId: xxx
-        clientSecretEnv: JUSTDO_DINGTALK_CLIENT_SECRET # 环境变量名
-```
-
----
-
-## 6. 网络安全
-
-### 6.1 HTTPS 强制
-
-所有外部 API 调用使用 HTTPS：
-
-```typescript
-function validateApiUrl(url: string): void {
-  if (!url.startsWith('https://')) {
-    throw new Error('API URL 必须使用 HTTPS');
-  }
-}
-```
-
-### 6.2 Gateway 通信安全
-
-JustDo 与 OpenClaw Gateway 之间的通信通过本地 IPC 或 localhost HTTP 进行，不暴露到外部网络。
-
-### 6.3 Rate Limiting
-
-API 调用实施速率限制：
-
-```typescript
-class RateLimiter {
-  private requests: Map<string, number[]> = new Map();
-
-  check(key: string, maxRequests: number, windowMs: number): boolean {
-    const now = Date.now();
-    const requests = this.requests.get(key) || [];
-    const validRequests = requests.filter(t => t > now - windowMs);
-
-    if (validRequests.length >= maxRequests) {
-      return false; // 超过限制
-    }
-
-    validRequests.push(now);
-    this.requests.set(key, validRequests);
-    return true;
-  }
-}
-```
-
----
-
-## 7. 日志安全
-
-### 8.1 敏感信息过滤
-
-```typescript
-function sanitizeLogMessage(message: string): string {
-  message = message.replace(/api[_-]?key[=:]\s*\S+/gi, 'api_key=REDACTED');
-  message = message.replace(/secret[=:]\s*\S+/gi, 'secret=REDACTED');
-  message = message.replace(/token[=:]\s*\S+/gi, 'token=REDACTED');
-  message = message.replace(/password[=:]\s*\S+/gi, 'password=REDACTED');
-  return message;
-}
-```
-
-### 8.2 错误信息脱敏
-
-用户可见的错误信息不包含敏感细节：
-
-```typescript
-function sanitizeErrorMessage(error: Error): string {
-  let message = error.message.replace(/\/Users\/\w+/g, '/Users/xxx');
-  message = message.replace(/C:\\Users\\\w+/g, 'C:\\Users\\xxx');
-  message = message.replace(/https:\/\/[^\s]+/g, 'https://api.example.com');
-  return message;
-}
-```
-
----
-
-## 8. 安全清单
-
-### 9.1 提交前检查
-
-- [ ] 无硬编码密钥（API keys, passwords, tokens）
-- [ ] 所有用户输入已验证
-- [ ] SQL 注入防护（使用参数化查询）
-- [ ] XSS 防护（HTML/SVG 已净化）
-- [ ] CSRF 保护启用
-- [ ] 认证/授权已验证
-- [ ] 所有端点启用 Rate Limiting
-- [ ] 错误信息不泄露敏感数据
-
-### 9.2 代码审查重点
-
-- 文件路径操作：检查工作目录边界
-- 网络请求：检查 HTTPS 和域名限制
-- 子进程执行：检查命令危险度
-- 用户输入：检查净化和验证
-- Secrets 存储：检查加密和环境变量
-
----
-
-## 9. 关键文件清单
-
-| 文件                                                       | 职责                   |
-| ---------------------------------------------------------- | ---------------------- |
-| `src/main/main.ts`                                         | BrowserWindow 安全配置 |
-| `src/main/preload.ts`                                      | Preload 安全桥接       |
-| `src/main/engine/openclawRuntimeAdapter.ts`                | 权限请求处理           |
-| `src/main/engine/commandSafety.ts`                         | 危险命令检测           |
-| `src/renderer/features/cowork/components/CoworkPermissionModal.tsx` | 权限请求 UI            |
+- Renderer 是否能绕过 preload？
+- IPC 参数是否有类型和语义校验？
+- 是否涉及文件、shell、网络、进程、secret？
+- 是否需要权限弹窗或系统 dialog？
+- 是否需要 CSP/localfile/sanitizer 变化？
+- 是否会把 Gateway authority 复制到本地？
+- 是否有测试覆盖恶意或 malformed input？
