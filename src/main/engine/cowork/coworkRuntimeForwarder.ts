@@ -1,11 +1,11 @@
 import { BrowserWindow } from 'electron';
 
-import { resolveCurrentApiConfig } from '../cowork/providerApiConfig';
-import type { CoworkMessage, CoworkStore } from '../data/coworkStore';
+import { resolveCurrentApiConfig } from '../../cowork/providerApiConfig';
+import type { CoworkMessage, CoworkStore } from '../../data/coworkStore';
 import {
   sanitizeCoworkMessageForIpc,
   truncateIpcString,
-} from '../ipc/payloadSanitizer';
+} from '../../ipc/payloadSanitizer';
 import type { CoworkEngineRouter } from './coworkEngineRouter';
 
 const IPC_UPDATE_CONTENT_MAX_CHARS = 120_000;

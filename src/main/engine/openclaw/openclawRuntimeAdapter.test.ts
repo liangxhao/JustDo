@@ -11,11 +11,11 @@ vi.mock('electron', () => ({
   },
 }));
 
-vi.mock('../cowork/coworkLogger', () => ({
+vi.mock('../../cowork/coworkLogger', () => ({
   coworkLog: vi.fn(),
 }));
 
-import type { GatewayClientCtor, GatewayClientLike } from './gateway/types';
+import type { GatewayClientCtor, GatewayClientLike } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 function createEmptyStore() {

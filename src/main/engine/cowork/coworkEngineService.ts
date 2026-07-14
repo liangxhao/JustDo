@@ -1,7 +1,7 @@
-import type { CoworkStore } from '../data/coworkStore';
-import type { OpenClawEngineManager } from '../openclaw/runtime/openclawEngineManager';
+import type { CoworkStore } from '../../data/coworkStore';
+import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { OpenClawRuntimeAdapter } from '../openclaw/openclawRuntimeAdapter';
 import { CoworkEngineRouter } from './coworkEngineRouter';
-import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 type CoworkEngineServiceDeps = {
   getCoworkStore: () => CoworkStore;

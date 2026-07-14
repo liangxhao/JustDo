@@ -2,28 +2,36 @@ import { randomUUID } from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 
-import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../shared/cowork/attachments';
-import { coworkLog } from '../cowork/coworkLogger';
-import { resolveRawApiConfig } from '../cowork/providerApiConfig';
+import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
+import { coworkLog } from '../../cowork/coworkLogger';
+import { resolveRawApiConfig } from '../../cowork/providerApiConfig';
 import type {
   CoworkExecutionMode,
   CoworkMessage,
   CoworkSession,
   CoworkSessionStatus,
   CoworkStore,
-} from '../data/coworkStore';
-import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclaw/config/openclawConfigSync';
+} from '../../data/coworkStore';
+import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
 import {
   OpenClawEngineManager,
   type OpenClawGatewayConnectionInfo,
-} from '../openclaw/runtime/openclawEngineManager';
+} from '../../openclaw/runtime/openclawEngineManager';
 import {
   buildManagedSessionKey,
   type OpenClawChannelSessionSync,
-} from '../openclaw/sessions/openclawChannelSessionSync';
-import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
-import { SessionRpc } from './gateway/sessionRpc';
-import { GatewayTitleGenerator } from './gateway/titleGenerator';
+} from '../../openclaw/sessions/openclawChannelSessionSync';
+import { extractGatewayHistoryEntries } from '../../openclaw/sessions/openclawHistory';
+import {
+  CHANNEL_SESSION_DISCOVERY_LIMIT,
+  extractMessageText,
+  GATEWAY_READY_TIMEOUT_MS,
+  isRecord,
+  OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
+  waitWithTimeout,
+} from '../gateway/helpers';
+import { SessionRpc } from '../gateway/sessionRpc';
+import { GatewayTitleGenerator } from '../gateway/titleGenerator';
 import type {
   AgentEventPayload,
   ChatEventPayload,
@@ -32,31 +40,23 @@ import type {
   GatewayEventFrame,
   SessionTurn,
   ToolStreamEntry,
-} from './gateway/types';
-import {
-  CHANNEL_SESSION_DISCOVERY_LIMIT,
-  extractMessageText,
-  GATEWAY_READY_TIMEOUT_MS,
-  isRecord,
-  OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
-  waitWithTimeout,
-} from './gatewayHelpers';
-import { HistoryReconciler } from './historyReconciler';
-import {
-  type GatewaySubagent,
-  listGatewaySubagents,
-  type SubagentStatus,
-} from './openclaw/subagentGateway';
-import {
-  resetWebchatToolStream,
-  syncWebchatToolStreamMessages,
-} from './openclaw/webchatToolStream';
+} from '../gateway/types';
 import type {
   CoworkContinueOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
-} from './types';
+} from '../types';
+import { HistoryReconciler } from './historyReconciler';
+import {
+  type GatewaySubagent,
+  listGatewaySubagents,
+  type SubagentStatus,
+} from './subagentGateway';
+import {
+  resetWebchatToolStream,
+  syncWebchatToolStreamMessages,
+} from './webchatToolStream';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 

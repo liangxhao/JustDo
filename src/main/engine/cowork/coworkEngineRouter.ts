@@ -5,7 +5,7 @@ import type {
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
-} from './types';
+} from '../types';
 
 type RouterDeps = {
   openclawRuntime: CoworkRuntime;

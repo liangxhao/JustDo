@@ -4,7 +4,7 @@
 
 import { randomUUID } from 'crypto';
 
-import type { GatewayClientLike } from '../gateway/types';
+import type { GatewayClientLike } from './types';
 
 const SESSION_TITLE_MAX_CHARS = 50;
 const SESSION_TITLE_FALLBACK = 'New Session';

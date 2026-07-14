@@ -1,4 +1,4 @@
-export { CoworkEngineRouter } from './coworkEngineRouter';
-export { CoworkEngineService } from './coworkEngineService';
-export { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
+export { CoworkEngineRouter } from './cowork/coworkEngineRouter';
+export { CoworkEngineService } from './cowork/coworkEngineService';
+export { OpenClawRuntimeAdapter } from './openclaw/openclawRuntimeAdapter';
 export * from './types';

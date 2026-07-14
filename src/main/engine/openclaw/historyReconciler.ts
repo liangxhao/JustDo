@@ -9,16 +9,16 @@
 
 import { BrowserWindow } from 'electron';
 
-import type { CoworkMessage, CoworkStore } from '../data/coworkStore';
-import { isManagedSessionKey } from '../openclaw/sessions/openclawChannelSessionSync';
-import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
-import type { GatewayClientLike, SessionTurn } from './gateway/types';
+import type { CoworkMessage, CoworkStore } from '../../data/coworkStore';
+import { isManagedSessionKey } from '../../openclaw/sessions/openclawChannelSessionSync';
+import { extractGatewayHistoryEntries } from '../../openclaw/sessions/openclawHistory';
 import {
   extractMessageText,
   extractToolText,
   FINAL_HISTORY_SYNC_LIMIT,
   isRecord,
-} from './gatewayHelpers';
+} from '../gateway/helpers';
+import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 
 // Callback interface
 

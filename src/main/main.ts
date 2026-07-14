@@ -31,7 +31,7 @@ import { CoworkStore } from './data/coworkStore';
 import { GroupStore } from './data/groupStore';
 import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
-import { bindCoworkRuntimeForwarder } from './engine/coworkRuntimeForwarder';
+import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
 import {
   registerAppHandlers,
   registerCalendarPermissionHandlers,
