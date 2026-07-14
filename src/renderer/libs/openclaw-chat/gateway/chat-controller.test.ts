@@ -62,7 +62,7 @@ test('compacts the current session instead of sending /compact as chat', async (
   expect(request).toHaveBeenNthCalledWith(1, 'sessions.compact', {
     key: 'agent:main:justdo:session-1',
   });
-  expect(request).toHaveBeenNthCalledWith(2, 'chat.startup', {
+  expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
     limit: 1000,
   });
@@ -610,7 +610,7 @@ test('does not replay deferred session.message reload immediately after renderab
 
   await vi.runOnlyPendingTimersAsync();
 
-  expect(request).toHaveBeenCalledWith('chat.startup', {
+  expect(request).toHaveBeenCalledWith('chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
     limit: 1000,
   });
@@ -710,7 +710,7 @@ test('replays deferred session.message reload after silent final message', async
     },
   });
 
-  expect(request).toHaveBeenCalledWith('chat.startup', {
+  expect(request).toHaveBeenCalledWith('chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
     limit: 1000,
   });

@@ -789,7 +789,7 @@ export class ChatController {
     this.notify();
 
     if (this.state.connected) {
-      await this.loadHistory();
+      await this.loadHistory(false, { preferStartup: true });
     }
   }
 
@@ -821,8 +821,9 @@ export class ChatController {
         .catch(() => {});
     }
 
-    // Load history after connection
-    this.loadHistory();
+    // Load startup metadata once after connection. Later history refreshes use
+    // chat.history so post-run reconciliation does not touch startup surfaces.
+    this.loadHistory(false, { preferStartup: true });
   }
 
   private handleClose(): void {
@@ -1083,7 +1084,10 @@ export class ChatController {
 
   // ─── History Loading ──────────────────────────────────────────────────
 
-  async loadHistory(queueIfBusy = false): Promise<void> {
+  async loadHistory(
+    queueIfBusy = false,
+    options: { preferStartup?: boolean } = {},
+  ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) return;
 
@@ -1115,12 +1119,17 @@ export class ChatController {
     this.notify();
 
     try {
-      // Try chat.startup first (includes agent list), fall back to chat.history
+      // chat.startup includes metadata and agent list, but it is heavier than
+      // chat.history. Use it only for initial connection/session switches;
+      // ordinary post-run refreshes should stay read-only and lightweight.
       let result: { messages?: unknown[]; sessionId?: string } | undefined;
+      const primaryMethod = options.preferStartup ? 'chat.startup' : 'chat.history';
+      const fallbackMethod = options.preferStartup ? 'chat.history' : 'chat.startup';
       try {
-        result = await client.request('chat.startup', { sessionKey, limit: HISTORY_LIMIT });
-        debugLog('[ChatCtrl] loadHistory RPC startup OK', {
+        result = await client.request(primaryMethod, { sessionKey, limit: HISTORY_LIMIT });
+        debugLog('[ChatCtrl] loadHistory RPC OK', {
           seq: loadSeq,
+          method: primaryMethod,
           sessionKey,
           rpcCount: Array.isArray(result?.messages) ? result.messages.length : null,
           rpcSessionId: result?.sessionId ?? null,
@@ -1128,9 +1137,10 @@ export class ChatController {
         });
       } catch (err: unknown) {
         if (isUnknownMethodError(err)) {
-          result = await client.request('chat.history', { sessionKey, limit: HISTORY_LIMIT });
-          debugLog('[ChatCtrl] loadHistory RPC history fallback OK', {
+          result = await client.request(fallbackMethod, { sessionKey, limit: HISTORY_LIMIT });
+          debugLog('[ChatCtrl] loadHistory RPC fallback OK', {
             seq: loadSeq,
+            method: fallbackMethod,
             sessionKey,
             rpcCount: Array.isArray(result?.messages) ? result.messages.length : null,
             rpcSessionId: result?.sessionId ?? null,
@@ -1930,6 +1940,10 @@ export class ChatController {
       sessionKey: this.state.sessionKey,
       runId,
     });
+    this.clearPostFinalHistoryReload();
+    this.clearDeferredHistoryReload();
+    this.historyReloadRequested.delete(this.state.sessionKey);
+    this.pendingHistoryReload = false;
 
     // Optimistic: append user message immediately
     const attachmentBlocks = toAttachmentContentBlocks(attachments);
