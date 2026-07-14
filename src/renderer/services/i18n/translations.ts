@@ -16,6 +16,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     dismiss: '关闭',
     none: '无',
     user: '用户',
+    commonComingSoon: '即将上线，敬请期待',
 
     // 设置
     settings: '设置',
@@ -318,8 +319,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     'skillGroup.unknown.label': '其他技能',
     'skillGroup.unknown.description': '来源层级暂未识别的技能',
     skillMarketplace: '市场',
-    skillMarketplaceComingSoon: 'Coming Soon',
-    skillMarketplaceComingSoonDescription: '市场正在建设中，后续将支持在线安装技能。',
     skillMarketplaceSearchPlaceholder: '搜索市场',
     skillMarketplaceLoading: '正在加载市场...',
     skillMarketplaceEmpty: '没有找到匹配的技能',
@@ -402,7 +401,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // MCP 市场 & 注册表
     mcpInstalled: '已安装',
     mcpMarketplace: '市场',
-    mcpMarketplaceComingSoon: '即将上线，敬请期待',
     mcpCustom: '自定义',
     mcpInstall: '安装',
     mcpRequiredConfig: '必填配置',
@@ -477,24 +475,16 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasks: '定时任务',
     plugins: '插件',
     extensions: '扩展',
-    extensionsComingSoon: '扩展功能即将推出',
     extensionsDescription: '扩展是打包分发 Skill、MCP、Hook 等能力的插件模块',
     extensionInstalled: '已安装',
     extensionMarketplace: '市场',
-    extensionMarketplaceComingSoon: '扩展市场即将推出',
-    extensionMarketplaceComingSoonDescription: '扩展市场正在建设中，后续将支持在线发现、安装和更新扩展。',
     searchExtensions: '搜索扩展',
     customExtension: '自定义',
-    customExtensionComingSoonDescription: '自定义扩展功能正在建设中，后续可从本地目录添加扩展。',
-    noExtensionsAvailable: '暂无可用扩展',
     noExtensionsMatched: '没有匹配的扩展',
-    extensionsComingSoonDescription: '扩展功能正在建设中，后续可统一管理插件提供的技能、工具和自动化能力。',
     hooks: 'Hook',
     hooksDescription: 'Hook 是在命令、会话和 Gateway 生命周期事件中触发自动化的扩展点',
     hookInstalled: '已安装',
     hookMarketplace: '市场',
-    hookMarketplaceComingSoon: 'Hook 市场即将推出',
-    hookMarketplaceComingSoonDescription: 'Hook 市场正在建设中，后续将支持在线安装和更新 Hook。',
     searchHooks: '搜索 Hook',
     noHooksAvailable: '暂无可用 Hook',
     hookLoadFailed: '加载 Hook 失败',
@@ -635,6 +625,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     dismiss: 'Dismiss',
     none: 'None',
     user: 'User',
+    commonComingSoon: 'Coming Soon',
 
     // Settings
     settings: 'Settings',
@@ -948,9 +939,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     'skillGroup.unknown.label': 'Other skills',
     'skillGroup.unknown.description': 'Skills whose source layer is not recognized',
     skillMarketplace: 'Marketplace',
-    skillMarketplaceComingSoon: 'Coming Soon',
-    skillMarketplaceComingSoonDescription:
-      'The skill marketplace is under development. Online skill installation support is coming soon.',
     skillMarketplaceSearchPlaceholder: 'Search skill marketplace',
     skillMarketplaceLoading: 'Loading skill marketplace...',
     skillMarketplaceEmpty: 'No matching skills found',
@@ -1036,7 +1024,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // MCP Marketplace & Registry
     mcpInstalled: 'Installed',
     mcpMarketplace: 'Marketplace',
-    mcpMarketplaceComingSoon: 'Coming Soon',
     mcpCustom: 'Custom',
     mcpInstall: 'Install',
     mcpRequiredConfig: 'Required Configuration',
@@ -1111,30 +1098,18 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasks: 'Scheduled Tasks',
     plugins: 'Plugins',
     extensions: 'Extensions',
-    extensionsComingSoon: 'Extensions are coming soon',
     extensionsDescription:
       'Extensions are plugin modules that package capabilities such as Skills, MCP servers, and Hooks',
     extensionInstalled: 'Installed',
     extensionMarketplace: 'Marketplace',
-    extensionMarketplaceComingSoon: 'Extension marketplace is coming soon',
-    extensionMarketplaceComingSoonDescription:
-      'The extension marketplace is under development. Online discovery, installation, and updates will be supported later.',
     searchExtensions: 'Search extensions',
     customExtension: 'Custom',
-    customExtensionComingSoonDescription:
-      'Custom extensions are under development. Later, you will be able to add extensions from local folders.',
-    noExtensionsAvailable: 'No extensions available',
     noExtensionsMatched: 'No matching extensions',
-    extensionsComingSoonDescription:
-      'Extensions are under development. Later, you will be able to manage packaged skills, tools, and automation in one place.',
     hooks: 'Hooks',
     hooksDescription:
       'Hooks are extension points that trigger automation during command, session, and Gateway lifecycle events',
     hookInstalled: 'Installed',
     hookMarketplace: 'Marketplace',
-    hookMarketplaceComingSoon: 'Hook marketplace is coming soon',
-    hookMarketplaceComingSoonDescription:
-      'The hook marketplace is under development. Online hook installation and updates will be supported later.',
     searchHooks: 'Search hooks',
     noHooksAvailable: 'No hooks available',
     hookLoadFailed: 'Failed to load hooks',

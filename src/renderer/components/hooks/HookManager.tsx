@@ -314,11 +314,8 @@ const HookManager: React.FC = () => {
             <ConnectorIcon className="h-6 w-6 text-secondary" />
           </div>
           <h2 className="mt-4 text-base font-semibold text-foreground">
-            {i18nService.t('hookMarketplaceComingSoon')}
+            {i18nService.t('commonComingSoon')}
           </h2>
-          <p className="mt-2 max-w-md text-sm leading-6 text-secondary">
-            {i18nService.t('hookMarketplaceComingSoonDescription')}
-          </p>
         </div>
       )}
 

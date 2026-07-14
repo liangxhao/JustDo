@@ -66,7 +66,7 @@ const ExtensionsManager: React.FC = () => {
             <div className="w-full sm:ml-auto sm:w-auto">
               <Tooltip
                 className="w-full sm:w-auto"
-                content={i18nService.t('customExtensionComingSoonDescription')}
+                content={i18nService.t('commonComingSoon')}
                 position="bottom"
               >
                 <button
@@ -87,14 +87,11 @@ const ExtensionsManager: React.FC = () => {
                 <PuzzleIcon className="h-5 w-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-medium text-foreground">
+                <h3 className="text-base font-semibold text-foreground">
                   {searchQuery
                     ? i18nService.t('noExtensionsMatched')
-                    : i18nService.t('noExtensionsAvailable')}
+                    : i18nService.t('commonComingSoon')}
                 </h3>
-                <p className="text-sm text-secondary">
-                  {i18nService.t('extensionsComingSoonDescription')}
-                </p>
               </div>
             </div>
           </div>
@@ -108,12 +105,9 @@ const ExtensionsManager: React.FC = () => {
               <PuzzleIcon className="h-5 w-5" />
             </div>
             <div className="space-y-1">
-              <h3 className="text-sm font-medium text-foreground">
-                {i18nService.t('extensionMarketplaceComingSoon')}
+              <h3 className="text-base font-semibold text-foreground">
+                {i18nService.t('commonComingSoon')}
               </h3>
-              <p className="text-sm text-secondary">
-                {i18nService.t('extensionMarketplaceComingSoonDescription')}
-              </p>
             </div>
           </div>
         </div>

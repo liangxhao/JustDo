@@ -773,8 +773,8 @@ const McpManager: React.FC = () => {
             <div className="w-16 h-16 mb-4 rounded-2xl bg-surface flex items-center justify-center">
               <ConnectorIcon className="h-8 w-8 text-secondary" />
             </div>
-            <h3 className="text-lg font-medium text-foreground mb-2">
-              {i18nService.t('mcpMarketplaceComingSoon')}
+            <h3 className="text-base font-semibold text-foreground">
+              {i18nService.t('commonComingSoon')}
             </h3>
           </div>
         )}
