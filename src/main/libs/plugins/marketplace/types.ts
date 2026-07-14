@@ -5,7 +5,7 @@ import type {
   MarketplacePluginDetail,
   MarketplaceQuery,
   MarketplaceSource,
-} from '../../../../shared/pluginMarketplace';
+} from '../../../../shared/plugins/marketplace';
 
 export interface PluginMarketplaceProvider {
   readonly source: MarketplaceSource;

@@ -8,23 +8,23 @@ JustDo 使用本地 SQLite 数据库作为 **UI 缓存层**，文件名为 `just
 
 ### 1.1 数据库定位
 
-| 数据类别 | 权威来源 | 本地 SQLite 职责 |
-|----------|----------|----------------|
-| 会话消息历史 | Gateway `chat.history` API | UI 缓存，加速本地渲染 |
-| 会话元数据 | JustDo 本地存储 | 会话列表、标题、状态 |
-| 配置 | JustDo 本地存储 | 应用设置、Cowork 配置、API 凭据 |
-| Agent 定义 | JustDo 本地存储 | 自定义 Agent 配置 |
-| MCP 服务器 | JustDo 本地存储 | MCP 服务器配置 |
-| 定时任务元数据 | JustDo 本地存储 | 任务来源和绑定信息 |
-| 分组信息 | JustDo 本地存储 | 会话分组组织 |
+| 数据类别       | 权威来源                   | 本地 SQLite 职责                |
+| -------------- | -------------------------- | ------------------------------- |
+| 会话消息历史   | Gateway `chat.history` API | UI 缓存，加速本地渲染           |
+| 会话元数据     | JustDo 本地存储            | 会话列表、标题、状态            |
+| 配置           | JustDo 本地存储            | 应用设置、Cowork 配置、API 凭据 |
+| Agent 定义     | JustDo 本地存储            | 自定义 Agent 配置               |
+| MCP 服务器     | JustDo 本地存储            | MCP 服务器配置                  |
+| 定时任务元数据 | JustDo 本地存储            | 任务来源和绑定信息              |
+| 分组信息       | JustDo 本地存储            | 会话分组组织                    |
 
 ### 1.2 数据库位置
 
-| 平台 | 数据目录 |
-|------|----------|
-| macOS | `~/Library/Application Support/JustDo/` |
-| Windows | `%APPDATA%\JustDo\` |
-| Linux | `~/.config/JustDo/` |
+| 平台    | 数据目录                                |
+| ------- | --------------------------------------- |
+| macOS   | `~/Library/Application Support/JustDo/` |
+| Windows | `%APPDATA%\JustDo\`                     |
+| Linux   | `~/.config/JustDo/`                     |
 
 ### 1.3 数据库特性
 
@@ -47,7 +47,7 @@ CREATE TABLE kv (
 );
 
 -- 示例数据
-INSERT INTO kv (key, value, updated_at) VALUES 
+INSERT INTO kv (key, value, updated_at) VALUES
   ('appConfig', '{"language":"zh","theme":"dark"}', 1712851200000),
   ('auth_tokens', '{"accessToken":"xxx","refreshToken":"yyy"}', 1712851200000),
   ('skillsConfig', '{"skills":[{"id":"web-search","enabled":true}]}', 1712851200000);
@@ -197,12 +197,12 @@ CREATE TABLE scheduled_task_meta (
 
 除 SQLite 外，JustDo 通过 OpenClaw Gateway 管理一组文件级持久记忆文件，存储在 `~/.openclaw/` 目录中：
 
-| 文件 | 用途 |
-|------|------|
-| `MEMORY.md` | 持久化事实与偏好 |
-| `USER.md` | 用户档案 |
-| `SOUL.md` | Agent 个性与行为准则 |
-| `memory/YYYY-MM-DD.md` | 每日笔记 |
+| 文件                   | 用途                 |
+| ---------------------- | -------------------- |
+| `MEMORY.md`            | 持久化事实与偏好     |
+| `USER.md`              | 用户档案             |
+| `SOUL.md`              | Agent 个性与行为准则 |
+| `memory/YYYY-MM-DD.md` | 每日笔记             |
 
 记忆文件由 Gateway 自动管理，JustDo 不直接写入这些文件。
 
@@ -216,32 +216,42 @@ CREATE TABLE scheduled_task_meta (
 class SqliteStore {
   private db: Database;
   private dbPath: string;
-  
+
   static create(userDataPath?: string): SqliteStore {
     // 初始化路径
     const dbPath = path.join(basePath, 'justdo.sqlite');
     const db = new Database(dbPath);
-    
+
     // 启用 WAL 模式
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
     db.pragma('cache_size = -8000'); // 8 MB
     db.pragma('wal_autocheckpoint = 1000');
-    
+
     // 创建表
     store.initializeTables(basePath);
     return store;
   }
-  
+
   // KV 操作
-  get<T>(key: string): T | undefined { /* ... */ }
-  set<T>(key: string, value: T): void { /* ... */ }
-  delete(key: string): void { /* ... */ }
-  
+  get<T>(key: string): T | undefined {
+    /* ... */
+  }
+  set<T>(key: string, value: T): void {
+    /* ... */
+  }
+  delete(key: string): void {
+    /* ... */
+  }
+
   // 变更监听
-  onDidChange<T>(key: string, callback): () => void { /* ... */ }
-  
-  close(): void { /* ... */ }
+  onDidChange<T>(key: string, callback): () => void {
+    /* ... */
+  }
+
+  close(): void {
+    /* ... */
+  }
 }
 ```
 
@@ -252,11 +262,12 @@ class SqliteStore {
 ```typescript
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
-db.pragma('cache_size = -8000');    // 8 MB 缓存
+db.pragma('cache_size = -8000'); // 8 MB 缓存
 db.pragma('wal_autocheckpoint = 1000'); // 每 ~4 MB WAL 写入后 checkpoint
 ```
 
 WAL 模式优势：
+
 - 读写不互斥
 - 更好的并发性能
 - 更少的数据损坏风险
@@ -270,33 +281,52 @@ CoworkStore 封装会话和消息的 CRUD 操作。消息缓存操作包括替�
 ```typescript
 class CoworkStore {
   private db: Database;
-  
+
   // 配置管理（通过 kv 表）
-  getConfig(): CoworkConfig { /* ... */ }
-  setConfig(config: CoworkConfig): void { /* ... */ }
-  
+  getConfig(): CoworkConfig {
+    /* ... */
+  }
+  setConfig(config: CoworkConfig): void {
+    /* ... */
+  }
+
   // 会话管理
-  createSession(sessionId, meta): void { /* ... */ }
-  getSession(sessionId): Session | null { /* ... */ }
-  listSessions(): Session[] { /* ... */ }
-  updateSessionStatus(sessionId, status): void { /* ... */ }
-  deleteSession(sessionId): void { /* ... */ }
-  
+  createSession(sessionId, meta): void {
+    /* ... */
+  }
+  getSession(sessionId): Session | null {
+    /* ... */
+  }
+  listSessions(): Session[] {
+    /* ... */
+  }
+  updateSessionStatus(sessionId, status): void {
+    /* ... */
+  }
+  deleteSession(sessionId): void {
+    /* ... */
+  }
+
   // 消息管理（UI 缓存）
-  addMessage(sessionId, message): void { /* ... */ }
-  getSessionMessages(sessionId): CoworkMessage[] { /* ... */ }
-  replaceConversationMessages(sessionId, authoritative): void { /* ... */ }
+  addMessage(sessionId, message): void {
+    /* ... */
+  }
+  getSessionMessages(sessionId): CoworkMessage[] {
+    /* ... */
+  }
+  replaceConversationMessages(sessionId, authoritative): void {
+    /* ... */
+  }
 }
 ```
 
 ## 5. 关键文件清单
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/sqliteStore.ts` | SQLite 数据库管理（建表、KV 操作） |
-| `src/main/coworkStore.ts` | Cowork 会话和消息 CRUD |
-| `src/scheduledTask/metaStore.ts` | 定时任务元数据持久化 |
-| `src/main/scheduledTask/migrate.ts` | 定时任务兼容处理 |
+| 文件                                            | 职责                                         |
+| ----------------------------------------------- | -------------------------------------------- |
+| `src/main/sqliteStore.ts`                       | SQLite 数据库管理（建表、KV 操作）           |
+| `src/main/coworkStore.ts`                       | Cowork 会话和消息 CRUD                       |
+| `src/main/libs/scheduledTask/cronJobService.ts` | OpenClaw Gateway cron 任务访问与运行记录映射 |
 
 ## 6. 版本信息
 

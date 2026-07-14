@@ -16,6 +16,6 @@
       "*": ["node_modules/*"]
     }
   },
-  "include": ["src/main", "src/common", "src/shared"],
+  "include": ["src/main", "src/shared"],
   "exclude": ["src/**/*.test.*", "src/**/*.spec.*"]
 }

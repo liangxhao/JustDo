@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import { OpenClawHistoryIpc } from '../../../shared/openclawHistoryIpc';
+import { OpenClawHistoryIpc } from '../../../shared/openclaw/historyIpc';
 
 export type OpenClawToolInputLookup = Record<string, { name?: string; input: unknown }>;
 

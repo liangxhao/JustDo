@@ -1,4 +1,4 @@
-import type { ScheduledTaskChannelOption } from '../../../scheduledTask/types';
+import type { ScheduledTaskChannelOption } from '../../../shared/scheduledTask/types';
 
 export interface ScheduledTaskHelperDeps {
   getIMGatewayManager: () => {
@@ -22,5 +22,5 @@ const SCHEDULED_TASK_CHANNEL_OPTIONS: readonly ScheduledTaskChannelOption[] = [
 
 export function listScheduledTaskChannels(): ScheduledTaskChannelOption[] {
   void deps;
-  return SCHEDULED_TASK_CHANNEL_OPTIONS.map((option) => ({ ...option }));
+  return SCHEDULED_TASK_CHANNEL_OPTIONS.map(option => ({ ...option }));
 }

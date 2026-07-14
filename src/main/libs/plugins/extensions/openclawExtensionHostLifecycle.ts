@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 
-import { CoworkInteractionKind, OpenClawToolName } from '../../../../shared/openclawExtensions';
+import { CoworkInteractionKind, OpenClawToolName } from '../../../../shared/openclaw/extensions';
 import type { AskUserExtensionConfig } from '../../openclaw/config/openclawConfigSync';
 import { parseManagedSessionKey } from '../../openclaw/sessions/openclawChannelSessionSync';
 import { OpenClawExtensionHostController } from './openclawExtensionHostController';

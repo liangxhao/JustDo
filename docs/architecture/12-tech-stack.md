@@ -395,8 +395,16 @@ JustDo/
 │   │   ├── store/             # Redux store
 │   │   └── types/             # TypeScript 类型
 │   │
-│   ├── scheduledTask/         # 定时任务（cron 引擎、元数据）
-│   └── shared/                # 共享常量和类型
+│   └── shared/                # 按领域组织的跨进程契约
+│       ├── filePreview.ts     # 文件预览辅助
+│       ├── logIpc.ts          # 日志 IPC 通道常量
+│       ├── proxy.ts           # 代理设置契约
+│       ├── slashCommands.ts   # Slash command 契约
+│       ├── cowork/            # Cowork 附件与消息辅助
+│       ├── openclaw/          # OpenClaw 共享常量和契约
+│       ├── plugins/           # 插件市场契约
+│       ├── providers/         # Provider 元数据
+│       └── scheduledTask/     # 定时任务 IPC/领域契约
 │
 ├── resources/skills/          # 17 个内置技能定义（Gateway 管理）
 │

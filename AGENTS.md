@@ -46,6 +46,7 @@ npm run dist:linux         # Linux AppImage + deb
 ### Build Verification (CI)
 
 Before pushing, CI runs these stages (see `.github/workflows/ci.yml`):
+
 1. **lint** — ESLint on changed files
 2. **build-renderer** — `npm run build`
 3. **build-main** — Verify `dist-electron/` compiles
@@ -58,25 +59,23 @@ Run `npm run lint && npm run build && npm test` locally before pushing to catch 
 
 Strict process isolation: **Main** (IPC, SQLite, engine) ↔ **Preload** (contextBridge) ↔ **Renderer** (React + Redux + Lit).
 
-| Layer | Path | Purpose |
-|-------|------|---------|
-| Main process | `src/main/` | Electron main, IPC handlers, engine lifecycle, SQLite |
-| Preload | `src/main/preload.ts` | contextBridge — the ONLY API surface exposed to renderer |
-| Renderer | `src/renderer/` | React UI with Redux Toolkit (8 slices) |
-| Scheduled tasks | `src/scheduledTask/` | Cron engine, execution policies (shared by main + renderer) |
-| Shared | `src/shared/` | Platform & provider constants (usable from both processes) |
-| Common | `src/common/` | Pure utilities with zero process-specific imports |
+| Layer        | Path                  | Purpose                                                        |
+| ------------ | --------------------- | -------------------------------------------------------------- |
+| Main process | `src/main/`           | Electron main, IPC handlers, engine lifecycle, SQLite          |
+| Preload      | `src/main/preload.ts` | contextBridge — the ONLY API surface exposed to renderer       |
+| Renderer     | `src/renderer/`       | React UI with Redux Toolkit (8 slices)                         |
+| Shared       | `src/shared/`         | Domain-organized shared cross-process contracts |
 
 ### Main Process Organization
 
 `src/main/` is organized by function:
 
-| Directory | Purpose |
-|-----------|---------|
-| `core/` | App constants, logger, tray manager, auto-launch |
-| `data/` | SQLite database wrapper (`sqliteStore.ts`) |
-| `ipc/` | IPC modules (scheduled task handlers) |
-| `libs/` | Domain-organized business logic (see below) |
+| Directory | Purpose                                          |
+| --------- | ------------------------------------------------ |
+| `core/`   | App constants, logger, tray manager, auto-launch |
+| `data/`   | SQLite database wrapper (`sqliteStore.ts`)       |
+| `ipc/`    | IPC modules (scheduled task handlers)            |
+| `libs/`   | Domain-organized business logic (see below)      |
 
 Top-level files: `main.ts` (entry), `preload.ts` (contextBridge), `coworkStore.ts` (session CRUD), `groupStore.ts` (session groups), `mcpStore.ts` (MCP config), `i18n.ts` (main-process translations).
 
@@ -84,43 +83,44 @@ Top-level files: `main.ts` (entry), `preload.ts` (contextBridge), `coworkStore.t
 
 `src/main/libs/` is organized into 5 domain subdirectories:
 
-| Directory | Purpose | Key Files |
-|-----------|---------|-----------|
-| `agentEngine/` | Cowork engine routing & OpenClaw adapter | `coworkEngineRouter.ts`, `openclawRuntimeAdapter.ts`, `types.ts` |
-| `agentEngine/gateway/` | Gateway type definitions | `types.ts` |
-| `agentEngine/rpc/` | Gateway RPC clients | `skillRpc.ts` |
-| `agentEngine/history/` | Message history reconciliation | `historyReconciler.ts` |
-| `agentEngine/openclaw/` | Subagent gateway & tool streaming | `subagentGateway.ts`, `webchatToolStream.ts` |
-| `agentEngine/utils/` | Gateway helpers | `gatewayHelpers.ts` |
-| `cowork/` | Cowork config, logging, model API | `coworkConfigStore.ts`, `coworkLogger.ts`, `coworkModelApi.ts`, `coworkUtil.ts`, `providerApiConfig.ts` |
-| `infra/` | Infrastructure & safety utilities | `commandSafety.ts`, `logExport.ts`, `pythonRuntime.ts`, `systemProxy.ts` |
-| `mcp/` | MCP client process lifecycle and tool discovery | `mcpServerManager.ts` |
-| `openclaw/config/` | Managed Gateway configuration and workspace repair | `openclawConfigSync.ts`, `workspaceStateRepair.ts` |
-| `openclaw/extensions/` | Extension registry, host lifecycle, callbacks, and interactions | `openclawExtensionRegistry.ts`, `openclawExtensionHostController.ts`, `openclawExtensionCallbackServer.ts` |
-| `openclaw/models/` | Agent model resolution | `openclawAgentModels.ts` |
-| `openclaw/runtime/` | Gateway runtime and proxy lifecycle | `openclawEngineManager.ts`, `openclawTokenProxy.ts` |
-| `openclaw/sessions/` | Session keys, history, and assistant text | `openclawChannelSessionSync.ts`, `openclawHistory.ts`, `openclawAssistantText.ts` |
-| `openclaw/skills/` | Local skill file operations | `openclawSkillFiles.ts` |
+| Directory               | Purpose                                                         | Key Files                                                                                                  |
+| ----------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `agentEngine/`          | Cowork engine routing & OpenClaw adapter                        | `coworkEngineRouter.ts`, `openclawRuntimeAdapter.ts`, `types.ts`                                           |
+| `agentEngine/gateway/`  | Gateway type definitions                                        | `types.ts`                                                                                                 |
+| `agentEngine/rpc/`      | Gateway RPC clients                                             | `skillRpc.ts`                                                                                              |
+| `agentEngine/history/`  | Message history reconciliation                                  | `historyReconciler.ts`                                                                                     |
+| `agentEngine/openclaw/` | Subagent gateway & tool streaming                               | `subagentGateway.ts`, `webchatToolStream.ts`                                                               |
+| `agentEngine/utils/`    | Gateway helpers                                                 | `gatewayHelpers.ts`                                                                                        |
+| `cowork/`               | Cowork config, logging, model API                               | `coworkConfigStore.ts`, `coworkLogger.ts`, `coworkModelApi.ts`, `coworkUtil.ts`, `providerApiConfig.ts`    |
+| `infra/`                | Infrastructure & safety utilities                               | `commandSafety.ts`, `logExport.ts`, `pythonRuntime.ts`, `systemProxy.ts`                                   |
+| `mcp/`                  | MCP client process lifecycle and tool discovery                 | `mcpServerManager.ts`                                                                                      |
+| `openclaw/config/`      | Managed Gateway configuration and workspace repair              | `openclawConfigSync.ts`, `workspaceStateRepair.ts`                                                         |
+| `openclaw/extensions/`  | Extension registry, host lifecycle, callbacks, and interactions | `openclawExtensionRegistry.ts`, `openclawExtensionHostController.ts`, `openclawExtensionCallbackServer.ts` |
+| `openclaw/models/`      | Agent model resolution                                          | `openclawAgentModels.ts`                                                                                   |
+| `openclaw/runtime/`     | Gateway runtime and proxy lifecycle                             | `openclawEngineManager.ts`, `openclawTokenProxy.ts`                                                        |
+| `openclaw/sessions/`    | Session keys, history, and assistant text                       | `openclawChannelSessionSync.ts`, `openclawHistory.ts`, `openclawAssistantText.ts`                          |
+| `openclaw/skills/`      | Local skill file operations                                     | `openclawSkillFiles.ts`                                                                                    |
+| `scheduledTask/`        | Main-process scheduled task runtime and OpenClaw cron adapter   | `cronJobService.ts`, `enginePrompt.ts`                                                                     |
 
 ### Process Isolation Rules (CRITICAL)
 
 - **Main process** (`src/main/`): CommonJS module system. Uses `electron-log`. Can access Node.js APIs, filesystem, SQLite.
 - **Renderer** (`src/renderer/`): ESNext modules. Can NOT access Node.js directly — all system access goes through `window.electronAPI` (defined in preload).
-- **Shared code** (`src/shared/`, `src/common/`): Must work in BOTH module systems. Never import electron, node built-ins, or browser-only APIs.
+- **Shared code** (`src/shared/`): Must work in BOTH module systems. Never import electron, node built-ins, or browser-only APIs.
 - **TypeScript configs**: `tsconfig.json` (renderer, strict, ESNext), `electron-tsconfig.json` (main, CommonJS), `tsconfig.node.json` (vite config only).
 
 ### Redux Store (8 slices)
 
-| Slice | File | Purpose |
-|-------|------|---------|
-| `cowork` | `store/slices/coworkSlice.ts` | Chat sessions, messages, streaming, permissions, groups |
-| `coworkDeleteState` | `store/slices/coworkDeleteState.ts` | Deletion state tracking for cowork sessions |
-| `agent` | `store/slices/agentSlice.ts` | AI agent CRUD and selection |
-| `model` | `store/slices/modelSlice.ts` | Selected model, available models (OpenAI-compatible only) |
-| `skill` | `store/slices/skillSlice.ts` | Skills list and multi-select |
-| `mcp` | `store/slices/mcpSlice.ts` | MCP server list and toggle |
-| `scheduledTask` | `store/slices/scheduledTaskSlice.ts` | Cron tasks, runs, view mode |
-| `quickAction` | `store/slices/quickActionSlice.ts` | Quick action prompts |
+| Slice               | File                                 | Purpose                                                   |
+| ------------------- | ------------------------------------ | --------------------------------------------------------- |
+| `cowork`            | `store/slices/coworkSlice.ts`        | Chat sessions, messages, streaming, permissions, groups   |
+| `coworkDeleteState` | `store/slices/coworkDeleteState.ts`  | Deletion state tracking for cowork sessions               |
+| `agent`             | `store/slices/agentSlice.ts`         | AI agent CRUD and selection                               |
+| `model`             | `store/slices/modelSlice.ts`         | Selected model, available models (OpenAI-compatible only) |
+| `skill`             | `store/slices/skillSlice.ts`         | Skills list and multi-select                              |
+| `mcp`               | `store/slices/mcpSlice.ts`           | MCP server list and toggle                                |
+| `scheduledTask`     | `store/slices/scheduledTaskSlice.ts` | Cron tasks, runs, view mode                               |
+| `quickAction`       | `store/slices/quickActionSlice.ts`   | Quick action prompts                                      |
 
 Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state queries.
 
@@ -138,27 +138,27 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 
 ### Key Files by Area
 
-| Area | Path |
-|------|------|
-| App entry | `src/main/main.ts`, `src/main/preload.ts` |
-| Engine lifecycle | `src/main/libs/openclaw/runtime/openclawEngineManager.ts` |
-| Engine adapter | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` |
-| Cowork engine router | `src/main/libs/agentEngine/coworkEngineRouter.ts` |
-| Cowork CRUD | `src/main/coworkStore.ts` |
-| SQLite wrapper | `src/main/data/sqliteStore.ts` |
-| Config sync | `src/main/libs/openclaw/config/openclawConfigSync.ts` |
-| Chat rendering | `src/renderer/libs/openclaw-chat/` (pipeline architecture) |
-| Markdown renderer | `src/renderer/libs/openclaw-chat/components/markdown.ts` |
-| Settings UI | `src/renderer/components/Settings.tsx` |
-| Permission UI | `src/renderer/components/cowork/CoworkPermissionModal.tsx` |
-| Cowork model API | `src/main/libs/cowork/coworkModelApi.ts` |
-| Provider API config | `src/main/libs/cowork/providerApiConfig.ts` |
-| MCP server manager | `src/main/libs/mcp/mcpServerManager.ts` |
-| Command safety | `src/main/libs/infra/commandSafety.ts` |
-| Scheduled task engine | `src/scheduledTask/cronJobService.ts`, `src/scheduledTask/policies/`, `src/main/ipc/scheduledTask/cronJobServiceManager.ts` |
-| Local Skill file operations | `src/main/libs/openclaw/skills/openclawSkillFiles.ts` |
-| Session groups | `src/main/groupStore.ts` |
-| MCP store | `src/main/mcpStore.ts` |
+| Area                        | Path                                                                                                                                |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| App entry                   | `src/main/main.ts`, `src/main/preload.ts`                                                                                           |
+| Engine lifecycle            | `src/main/libs/openclaw/runtime/openclawEngineManager.ts`                                                                           |
+| Engine adapter              | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts`                                                                               |
+| Cowork engine router        | `src/main/libs/agentEngine/coworkEngineRouter.ts`                                                                                   |
+| Cowork CRUD                 | `src/main/coworkStore.ts`                                                                                                           |
+| SQLite wrapper              | `src/main/data/sqliteStore.ts`                                                                                                      |
+| Config sync                 | `src/main/libs/openclaw/config/openclawConfigSync.ts`                                                                               |
+| Chat rendering              | `src/renderer/libs/openclaw-chat/` (pipeline architecture)                                                                          |
+| Markdown renderer           | `src/renderer/libs/openclaw-chat/components/markdown.ts`                                                                            |
+| Settings UI                 | `src/renderer/components/Settings.tsx`                                                                                              |
+| Permission UI               | `src/renderer/components/cowork/CoworkPermissionModal.tsx`                                                                          |
+| Cowork model API            | `src/main/libs/cowork/coworkModelApi.ts`                                                                                            |
+| Provider API config         | `src/main/libs/cowork/providerApiConfig.ts`                                                                                         |
+| MCP server manager          | `src/main/libs/mcp/mcpServerManager.ts`                                                                                             |
+| Command safety              | `src/main/libs/infra/commandSafety.ts`                                                                                              |
+| Scheduled task engine       | `src/main/libs/scheduledTask/cronJobService.ts`, `src/shared/scheduledTask/`, `src/main/ipc/scheduledTask/cronJobServiceManager.ts` |
+| Local Skill file operations | `src/main/libs/openclaw/skills/openclawSkillFiles.ts`                                                                               |
+| Session groups              | `src/main/groupStore.ts`                                                                                                            |
+| MCP store                   | `src/main/mcpStore.ts`                                                                                                              |
 
 ## Coding Conventions
 
@@ -224,7 +224,7 @@ if (status === EngineStatus.RUNNING) { ... }
 - Organize by feature/domain, not by file type
 - 200-400 lines typical, 800 lines max per file
 - Co-locate tests (`.test.ts` next to source) for unit tests
-- Extract shared utilities to `src/common/` when used by both processes
+- Extract shared utilities to `src/shared/` when used by both processes
 
 ## Testing
 
@@ -311,19 +311,19 @@ Commitlint enforces this via `.commitlint.config.mjs` and the `.husky/commit-msg
 - **Never** hardcode API keys, tokens, passwords, or credentials in source code
 - All secrets go through environment variables or the app's encrypted config store
 
-
 ## Internationalization (i18n)
 
 Two separate i18n instances that share the same pattern:
 
-| Instance | File | Coverage |
-|----------|------|----------|
-| Main process | `src/main/i18n.ts` | Tray menu, subagent status, session titles, skill errors |
-| Renderer | `src/renderer/services/i18n.ts` | All UI: settings, models, skills, permissions, scheduled tasks, etc. |
+| Instance     | File                            | Coverage                                                             |
+| ------------ | ------------------------------- | -------------------------------------------------------------------- |
+| Main process | `src/main/i18n.ts`              | Tray menu, subagent status, session titles, skill errors             |
+| Renderer     | `src/renderer/services/i18n.ts` | All UI: settings, models, skills, permissions, scheduled tasks, etc. |
 
 Both export `t(key, params?)`, `setLanguage(lang)`, `getLanguage()`. Languages: `zh` and `en` only.
 
 **When adding UI text:**
+
 1. Add the key to the `zh` and `en` objects in the appropriate i18n file
 2. Use `t('your.key')` in the component — never hardcode strings
 3. Use `t('key', { param: 'value' })` for parameterized strings
@@ -367,9 +367,9 @@ Skills are Gateway-managed. To modify bundled skills, update `resources/skills/<
 
 ### Adding a New Scheduled Task Policy
 
-1. Create `src/scheduledTask/policies/yourPolicy.ts` implementing the `ScheduledTaskPolicy` interface
-2. Register in `src/scheduledTask/policies/registry.ts`
-3. Add comprehensive tests — policies MUST have tests
+1. Add shared task contracts to `src/shared/scheduledTask/` when both main and renderer need them
+2. Add main-process cron runtime changes to `src/main/libs/scheduledTask/`
+3. Add comprehensive tests for schedule parsing, mapping, and runtime behavior
 
 ## Documentation
 

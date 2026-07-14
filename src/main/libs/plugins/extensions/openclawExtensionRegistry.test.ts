@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { OpenClawExtensionId } from '../../../../shared/openclawExtensions';
+import { OpenClawExtensionId } from '../../../../shared/openclaw/extensions';
 import {
   buildBundledExtensionEntries,
   buildBundledExtensionToolContracts,

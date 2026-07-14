@@ -1,12 +1,11 @@
 import { BrowserWindow } from 'electron';
 
-import { isCronSessionKey } from '../main/libs/openclaw/sessions/openclawChannelSessionSync';
 import type {
   DeliveryMode as DeliveryModeType,
   GatewayStatus as GatewayStatusType,
   SessionTarget as SessionTargetType,
   WakeMode as WakeModeType,
-} from './constants';
+} from '../../../shared/scheduledTask/constants';
 import {
   DeliveryMode,
   GatewayStatus,
@@ -14,7 +13,7 @@ import {
   PayloadKind,
   ScheduleKind,
   TaskStatus,
-} from './constants';
+} from '../../../shared/scheduledTask/constants';
 import type {
   Schedule,
   ScheduledTask,
@@ -24,7 +23,8 @@ import type {
   ScheduledTaskRun,
   ScheduledTaskRunWithName,
   TaskState,
-} from './types';
+} from '../../../shared/scheduledTask/types';
+import { isCronSessionKey } from '../openclaw/sessions/openclawChannelSessionSync';
 
 type GatewayClientLike = {
   request: <T = Record<string, unknown>>(
@@ -693,5 +693,4 @@ export class CronJobService {
     });
     return Array.isArray(result.entries) ? result.entries.map(mapGatewayRun) : [];
   }
-
 }

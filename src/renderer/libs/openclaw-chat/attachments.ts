@@ -2,7 +2,7 @@ import {
   type CoworkAttachmentPayload,
   isImageMimeType,
   toAttachmentDataUrl,
-} from '@shared/coworkAttachment';
+} from '@shared/cowork/attachments';
 
 import type { GatewayContentBlock, MessageContentItem } from './types';
 

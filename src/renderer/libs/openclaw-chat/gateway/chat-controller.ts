@@ -16,7 +16,7 @@ import {
   type CoworkAttachmentPayload,
   isImageMimeType,
   toGatewayAttachment,
-} from '@shared/coworkAttachment';
+} from '@shared/cowork/attachments';
 
 import { i18nService } from '../../../services/i18n';
 import { getTranscriptMedia, toAttachmentContentBlocks } from '../attachments';

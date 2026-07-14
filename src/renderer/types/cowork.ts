@@ -1,7 +1,7 @@
-import type { CoworkAttachmentPayload } from '../../shared/coworkAttachment';
-import type { CoworkInteractionKind } from '../../shared/openclawExtensions';
+import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
+import type { CoworkInteractionKind } from '../../shared/openclaw/extensions';
 
-export type { CoworkAttachmentPayload } from '../../shared/coworkAttachment';
+export type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 
 // Cowork session status
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';

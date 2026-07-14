@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
 
-import { MarketplaceSourceId, PluginKind } from '../../../../shared/pluginMarketplace';
+import { MarketplaceSourceId, PluginKind } from '../../../../shared/plugins/marketplace';
 import type { OpenClawSkillService } from '../skills';
 import { OpenClawClawHubProvider } from './openClawClawHubProvider';
 

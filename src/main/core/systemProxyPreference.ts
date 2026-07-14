@@ -6,7 +6,7 @@ import {
   ProxyMode,
   ProxyProtocol,
   type ProxySettings,
-} from '../../common/proxy';
+} from '../../shared/proxy';
 import type { OutboundHeaderProxy } from '../libs/infra/outboundHeaderProxy';
 import {
   applySystemProxyEnv,

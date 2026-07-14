@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
-import { IpcChannel as ScheduledTaskIpc } from '../../../scheduledTask/constants';
-import type { CronJobService } from '../../../scheduledTask/cronJobService';
+import { IpcChannel as ScheduledTaskIpc } from '../../../shared/scheduledTask/constants';
+import type { CronJobService } from '../../libs/scheduledTask/cronJobService';
 import { listScheduledTaskChannels } from './helpers';
 
 export interface ScheduledTaskHandlerDeps {
@@ -153,5 +153,4 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
       };
     }
   });
-
 }

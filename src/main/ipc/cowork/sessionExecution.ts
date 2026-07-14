@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
-import type { CoworkAttachmentPayload } from '../../../shared/coworkAttachment';
+import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import { resolveTaskWorkingDirectory } from '../../core/taskWorkspace';
 import type { CoworkStore } from '../../coworkStore';
 import type { CoworkEngineRouter } from '../../libs/agentEngine';

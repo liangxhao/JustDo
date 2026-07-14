@@ -5,7 +5,7 @@ import { EventEmitter } from 'events';
 import {
   type CoworkAttachmentPayload,
   toGatewayAttachment,
-} from '../../../shared/coworkAttachment';
+} from '../../../shared/cowork/attachments';
 import type {
   CoworkExecutionMode,
   CoworkMessage,

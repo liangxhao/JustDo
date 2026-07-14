@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
-import type { ProxySettings } from '../common/proxy';
+import type { ProxySettings } from '../shared/proxy';
 import { APP_NAME } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';

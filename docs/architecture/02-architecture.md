@@ -135,6 +135,7 @@ flowchart LR
 **职责**：所有 UI 展示和业务逻辑。JustDo 的 Renderer 不含任何 Agent 执行逻辑 —— 纯展示层。
 
 **关键目录**：
+
 ```
 src/renderer/
 ├── App.tsx                          # 根组件
@@ -218,6 +219,7 @@ src/renderer/
 **入口文件**：`src/main/main.ts`
 
 **关键目录**：
+
 ```
 src/main/
 ├── main.ts                          # 主入口
@@ -283,6 +285,7 @@ src/main/
 **职责**：安全桥接，通过 `contextBridge` 暴露有限的 API 集合给 Renderer。
 
 **暴露的 API 命名空间**：
+
 ```typescript
 window.electron = {
   platform, arch,                    // 基本信息
@@ -430,26 +433,26 @@ export const IpcChannel = {
   // Scheduled Task
   ScheduledTaskList: 'scheduledTask:list',
   ScheduledTaskCreate: 'scheduledTask:create',
-  // ... (full list in scheduledTask/constants.ts)
+  // ... (full list in shared/scheduledTask/constants.ts)
 } as const;
 
-export type IpcChannelName = typeof IpcChannel[keyof typeof IpcChannel];
+export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel];
 ```
 
 ### 3.2 流式事件
 
 Cowork 使用 IPC 事件进行实时双向通信：
 
-| 事件 | 方向 | 用途 |
-|------|------|------|
-| `cowork:stream:message` | Main -> Renderer | 新消息添加 |
-| `cowork:stream:messageUpdate` | Main -> Renderer | 流式内容更新 |
-| `cowork:stream:thinkingUpdate` | Main -> Renderer | 思考内容增量 |
+| 事件                                  | 方向             | 用途           |
+| ------------------------------------- | ---------------- | -------------- |
+| `cowork:stream:message`               | Main -> Renderer | 新消息添加     |
+| `cowork:stream:messageUpdate`         | Main -> Renderer | 流式内容更新   |
+| `cowork:stream:thinkingUpdate`        | Main -> Renderer | 思考内容增量   |
 | `cowork:stream:messageMetadataUpdate` | Main -> Renderer | 消息元数据更新 |
-| `cowork:stream:permissionRequest` | Main -> Renderer | 工具审批请求 |
-| `cowork:stream:complete` | Main -> Renderer | 会话完成 |
-| `cowork:stream:error` | Main -> Renderer | 执行错误 |
-| `openclaw:engine:onProgress` | Main -> Renderer | 安装进度 |
+| `cowork:stream:permissionRequest`     | Main -> Renderer | 工具审批请求   |
+| `cowork:stream:complete`              | Main -> Renderer | 会话完成       |
+| `cowork:stream:error`                 | Main -> Renderer | 执行错误       |
+| `openclaw:engine:onProgress`          | Main -> Renderer | 安装进度       |
 
 ### 3.3 Chat 渲染管道（Lit <justdo-chat>）
 
@@ -503,9 +506,9 @@ ipcMain.handle('cowork:session:start', async (event, params) => {
 // preload.ts
 contextBridge.exposeInMainWorld('electron', {
   cowork: {
-    startSession: (params) => ipcRenderer.invoke('cowork:session:start', params),
+    startSession: params => ipcRenderer.invoke('cowork:session:start', params),
     // 仅暴露必要的 API，不暴露 ipcRenderer 本身
-  }
+  },
 });
 ```
 
@@ -565,10 +568,10 @@ interface AgentConfig {
   id: string;
   name: string;
   systemPrompt: string;
-  skills: string[];        // 启用的 Skills
-  model?: string;          // 模型选择
-  icon?: string;           // 图标
-  identity?: string;       // 身份设定
+  skills: string[]; // 启用的 Skills
+  model?: string; // 模型选择
+  icon?: string; // 图标
+  identity?: string; // 身份设定
 }
 ```
 
@@ -590,15 +593,15 @@ interface MCPServerConfig {
 
 ### 6.1 配置存储
 
-| 配置类型 | 存储位置 | 表/Key |
-|----------|----------|--------|
-| 应用配置 | SQLite kv | `kv.key = 'appConfig'` |
-| Cowork 配置 | SQLite | `cowork_config` 表 |
-| Agent 配置 | SQLite | `agents` 表 |
-| Skills 配置 | 文件 | `resources/builtin-skills.json` |
-| 会话分组 | SQLite | `session_groups` 表 |
-| 子 Agent | SQLite | `cowork_subagents` 表（Gateway 驱动） |
-| OpenClaw 版本 | package.json | `openclaw.version` |
+| 配置类型      | 存储位置     | 表/Key                                |
+| ------------- | ------------ | ------------------------------------- |
+| 应用配置      | SQLite kv    | `kv.key = 'appConfig'`                |
+| Cowork 配置   | SQLite       | `cowork_config` 表                    |
+| Agent 配置    | SQLite       | `agents` 表                           |
+| Skills 配置   | 文件         | `resources/builtin-skills.json`       |
+| 会话分组      | SQLite       | `session_groups` 表                   |
+| 子 Agent      | SQLite       | `cowork_subagents` 表（Gateway 驱动） |
+| OpenClaw 版本 | package.json | `openclaw.version`                    |
 
 ### 6.2 国际化
 
@@ -613,7 +616,7 @@ const translations = {
   en: {
     coworkTitle: 'Work Assistant',
     startSession: 'Start Session',
-  }
+  },
 };
 ```
 
@@ -626,6 +629,7 @@ const translations = {
 **决策**：JustDo 使用 OpenClaw Gateway 作为唯一的 Agent 引擎。
 
 **理由**：
+
 - OpenClaw 提供完整的 Agent 运行时能力（工具执行、记忆、WebSocket 实时通信）
 - Gateway 全权管理会话生命周期、消息历史、子 Agent —— JustDo 作为薄前端
 - 运行时作为预构建 npm 包分发，无需从 git 克隆和构建
@@ -638,6 +642,7 @@ const translations = {
 **决策**：使用 SQLite 作为本地缓存存储，所有权威数据由 Gateway 持有。
 
 **理由**：
+
 - 单文件，易于备份和迁移
 - better-sqlite3 性能优秀
 - 无需额外服务
@@ -648,6 +653,7 @@ const translations = {
 **决策**：所有 IPC 通道使用命名空间前缀组织。
 
 **理由**：
+
 - `cowork:*` 专注于会话业务
 - `openclaw:engine:*` 专注于引擎生命周期
 - `skills:*`、`mcp:*`、`agents:*` 等按模块划分
@@ -658,6 +664,7 @@ const translations = {
 **决策**：使用 Lit 自定义元素替代 React 组件渲染聊天消息。
 
 **理由**：
+
 - 与 OpenClaw WebChat 共享相同的渲染管道和 Gateway 连接逻辑
 - 减少 React 重渲染开销 —— Lit 原生 DOM 操作更高效
 - 直接 WebSocket 连接 Gateway，避免 IPC 中继延迟

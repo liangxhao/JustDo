@@ -4,7 +4,7 @@ import type {
   MarketplacePlugin,
   MarketplacePluginDetail,
   MarketplaceQuery,
-} from '../../../../shared/pluginMarketplace';
+} from '../../../../shared/plugins/marketplace';
 import type { PluginMarketplaceProvider } from './types';
 
 const DEFAULT_LIMIT = 20;

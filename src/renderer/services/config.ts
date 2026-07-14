@@ -1,4 +1,4 @@
-import { ProxyMode, ProxyProtocol } from '../../common/proxy';
+import { ProxyMode, ProxyProtocol } from '../../shared/proxy';
 import {
   AppConfig,
   CONFIG_KEYS,

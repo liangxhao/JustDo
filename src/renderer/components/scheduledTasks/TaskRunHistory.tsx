@@ -1,7 +1,7 @@
+import type { ScheduledTaskRun } from '@shared/scheduledTask/types';
 import React, { useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import type { ScheduledTaskRun } from '../../../scheduledTask/types';
 import { i18nService } from '../../services/i18n';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { RootState } from '../../store';
@@ -21,7 +21,9 @@ const statusIcons: Record<string, { icon: string; color: string }> = {
 };
 
 const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ taskId, runs }) => {
-  const hasMore = useSelector((state: RootState) => state.scheduledTask.runsHasMore[taskId] ?? false);
+  const hasMore = useSelector(
+    (state: RootState) => state.scheduledTask.runsHasMore[taskId] ?? false,
+  );
   const [viewingRun, setViewingRun] = useState<ScheduledTaskRun | null>(null);
 
   const handleLoadMore = async () => {
@@ -39,7 +41,7 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ taskId, runs }) => {
   return (
     <div>
       <div className="divide-y divide-border/50">
-        {runs.map((run) => {
+        {runs.map(run => {
           const statusInfo = statusIcons[run.status] || { icon: '?', color: '' };
           return (
             <div key={run.id} className="flex items-center justify-between py-2.5 px-1">
@@ -53,15 +55,10 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ taskId, runs }) => {
               </div>
               <div className="flex items-center gap-3 shrink-0 ml-2">
                 {run.durationMs !== null && (
-                  <span className="text-xs text-secondary">
-                    {formatDuration(run.durationMs)}
-                  </span>
+                  <span className="text-xs text-secondary">{formatDuration(run.durationMs)}</span>
                 )}
                 {run.status === 'error' && run.error && (
-                  <span
-                    className="text-xs text-red-500 max-w-[150px] truncate"
-                    title={run.error}
-                  >
+                  <span className="text-xs text-red-500 max-w-[150px] truncate" title={run.error}>
                     {run.error}
                   </span>
                 )}

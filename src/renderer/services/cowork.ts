@@ -1,4 +1,4 @@
-import { isGatewayToolFailureNotice } from '@shared/toolFailureNotice';
+import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import { flushSync } from 'react-dom';
 
 import { store } from '../store';

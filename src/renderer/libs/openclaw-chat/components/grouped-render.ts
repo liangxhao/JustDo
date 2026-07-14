@@ -3,7 +3,7 @@
  * Renders MessageGroups as Lit html templates with proper CSS classes,
  * markdown rendering, avatar support, and streaming boundary detection.
  */
-import { isImageMimeType } from '@shared/coworkAttachment';
+import { isImageMimeType } from '@shared/cowork/attachments';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 

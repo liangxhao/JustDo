@@ -136,7 +136,7 @@ export interface CoworkRuntimeEvents {
   sessionStopped: (sessionId: string) => void;
 }
 
-import type { CoworkAttachmentPayload } from '../../../shared/coworkAttachment';
+import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 
 export type CoworkStartOptions = {
   skipInitialUserMessage?: boolean;

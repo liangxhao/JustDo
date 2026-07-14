@@ -1,7 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import { IpcChannel as ScheduledTaskIpc } from '../../../scheduledTask/constants';
-import type { CronJobService } from '../../../scheduledTask/cronJobService';
+import { IpcChannel as ScheduledTaskIpc } from '../../../shared/scheduledTask/constants';
+import type { CronJobService } from '../../libs/scheduledTask/cronJobService';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -25,11 +25,10 @@ test('loads persisted tasks through the service while the gateway is still conne
 
   registerScheduledTaskHandlers({
     getCronJobService: () => ({ listJobs }) as unknown as CronJobService,
-    getOpenClawRuntimeAdapter: () =>
-      ({
-        getGatewayClient: () => null,
-        fetchSessionByKey: vi.fn(),
-      }),
+    getOpenClawRuntimeAdapter: () => ({
+      getGatewayClient: () => null,
+      fetchSessionByKey: vi.fn(),
+    }),
   });
 
   const listHandler = handlers.get(ScheduledTaskIpc.List);

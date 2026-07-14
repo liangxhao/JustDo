@@ -31,19 +31,19 @@ JustDo 是 [OpenClaw Gateway](https://github.com/openclaw/openclaw) 的**薄前�
 
 ## 核心特性
 
-| 特性 | 说明 |
-|------|------|
-| **OpenClaw Gateway 薄前端** | 所有 AI 执行、历史、子智能体生命周期委派给 OpenClaw。JustDo 是纯 UI 前端 |
-| **Cowork 模式 (Auto/Local)** | AI 工作会话系统，在本地或沙箱环境中自主完成复杂任务 |
-| **17 个内置技能** | Office 文档、Web 搜索、浏览器自动化、数据分析、图表生成、AI 艺术等 |
-| **定时任务** | 通过对话或 GUI 创建定时任务，使用 OpenClaw cron 引擎 |
-| **持久记忆** | 自动跨会话提取偏好与事实（MEMORY.md、USER.md、SOUL.md） |
-| **权限门控** | 所有敏感工具调用需用户明确批准 |
-| **14 套主题** | 内置主题系统，14 套精选主题，支持中英文界面 |
-| **Lit 聊天渲染** | 使用 `<justdo-chat>` Lit 自定义元素渲染消息，与 OpenClaw webchat 一致的渲染管线 |
-| **IM 集成** | 通过 IM 平台远程操控（Telegram、Discord）—— 开发中 |
-| **跨平台** | macOS（Intel + Apple Silicon）、Windows、Linux 桌面端 |
-| **数据本地化** | SQLite 作为 UI 缓存，配置和会话元数据保留在本地 |
+| 特性                         | 说明                                                                            |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| **OpenClaw Gateway 薄前端**  | 所有 AI 执行、历史、子智能体生命周期委派给 OpenClaw。JustDo 是纯 UI 前端        |
+| **Cowork 模式 (Auto/Local)** | AI 工作会话系统，在本地或沙箱环境中自主完成复杂任务                             |
+| **17 个内置技能**            | Office 文档、Web 搜索、浏览器自动化、数据分析、图表生成、AI 艺术等              |
+| **定时任务**                 | 通过对话或 GUI 创建定时任务，使用 OpenClaw cron 引擎                            |
+| **持久记忆**                 | 自动跨会话提取偏好与事实（MEMORY.md、USER.md、SOUL.md）                         |
+| **权限门控**                 | 所有敏感工具调用需用户明确批准                                                  |
+| **14 套主题**                | 内置主题系统，14 套精选主题，支持中英文界面                                     |
+| **Lit 聊天渲染**             | 使用 `<justdo-chat>` Lit 自定义元素渲染消息，与 OpenClaw webchat 一致的渲染管线 |
+| **IM 集成**                  | 通过 IM 平台远程操控（Telegram、Discord）—— 开发中                              |
+| **跨平台**                   | macOS（Intel + Apple Silicon）、Windows、Linux 桌面端                           |
+| **数据本地化**               | SQLite 作为 UI 缓存，配置和会话元数据保留在本地                                 |
 
 ## 架构概览
 
@@ -113,9 +113,9 @@ npm run electron:dev:openclaw
 <details>
 <summary>OpenClaw 环境变量</summary>
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | — |
+| 变量                     | 说明                     | 默认值 |
+| ------------------------ | ------------------------ | ------ |
+| `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | —      |
 
 </details>
 
@@ -139,10 +139,10 @@ npm run dist:linux      # Linux .AppImage & .deb
 
 以 OpenClaw Gateway 为引擎的 AI 工作会话系统，自主完成复杂任务。
 
-| 模式 | 说明 |
-|------|------|
-| `auto` | 自动根据上下文选择执行方式 |
-| `local` | 本地直接执行，全速运行 |
+| 模式    | 说明                       |
+| ------- | -------------------------- |
+| `auto`  | 自动根据上下文选择执行方式 |
+| `local` | 本地直接执行，全速运行     |
 
 所有涉及文件系统、终端、网络的工具调用需在 `CoworkPermissionModal` 中明确批准。
 
@@ -152,20 +152,20 @@ npm run dist:linux      # Linux .AppImage & .deb
 
 技能由 OpenClaw Gateway 管理。JustDo 将技能定义从 `resources/skills/` 同步到 Gateway 的状态目录。
 
-| 技能 | 类别 |
-|------|------|
-| `docx` / `xlsx` / `pptx` / `pdf` | Office 文档 |
-| `multi-search-engine` | 多引擎 Web 搜索 |
-| `playwright` / `agent-browser` | 浏览器自动化 |
-| `data-analysis` | 数据处理与可视化 |
-| `diagram-generator` | 图表与流程图 |
-| `algorithmic-art` | 生成式 AI 艺术 |
-| `taskflow` | 多步骤工作流 |
-| `mcp-builder` | MCP 服务器创建 |
-| `self-improvement` | 智能体自优化 |
-| `ontology` | 领域知识建模 |
-| `theme-factory` | UI 主题生成 |
-| `healthcheck` | 系统健康诊断 |
+| 技能                             | 类别             |
+| -------------------------------- | ---------------- |
+| `docx` / `xlsx` / `pptx` / `pdf` | Office 文档      |
+| `multi-search-engine`            | 多引擎 Web 搜索  |
+| `playwright` / `agent-browser`   | 浏览器自动化     |
+| `data-analysis`                  | 数据处理与可视化 |
+| `diagram-generator`              | 图表与流程图     |
+| `algorithmic-art`                | 生成式 AI 艺术   |
+| `taskflow`                       | 多步骤工作流     |
+| `mcp-builder`                    | MCP 服务器创建   |
+| `self-improvement`               | 智能体自优化     |
+| `ontology`                       | 领域知识建模     |
+| `theme-factory`                  | UI 主题生成      |
+| `healthcheck`                    | 系统健康诊断     |
 
 通过 `skill-creator` 可创建自定义技能并热加载。用户导入的技能存储在 `userData/openclaw/state/skills/`，内置技能在 ID 冲突时优先。
 
@@ -177,12 +177,12 @@ npm run dist:linux      # Linux .AppImage & .deb
 
 由 OpenClaw Gateway 管理的文件级记忆系统：
 
-| 文件 | 用途 |
-|------|------|
-| `MEMORY.md` | 持久化事实与偏好 |
-| `memory/YYYY-MM-DD.md` | 每日临时笔记 |
-| `USER.md` | 用户档案 |
-| `SOUL.md` | Agent 个性与行为准则 |
+| 文件                   | 用途                 |
+| ---------------------- | -------------------- |
+| `MEMORY.md`            | 持久化事实与偏好     |
+| `memory/YYYY-MM-DD.md` | 每日临时笔记         |
+| `USER.md`              | 用户档案             |
+| `SOUL.md`              | Agent 个性与行为准则 |
 
 ### 聊天渲染
 
@@ -193,6 +193,7 @@ Gateway WebSocket → GatewayClient → ChatController → <justdo-chat> Lit Ele
 ```
 
 关键优势：
+
 - 消除消息重复、截断、丢失问题
 - 直接 WebSocket 连接（无 IPC 往返）
 - 与 webchat 一致的渲染管线（行为一致）
@@ -204,11 +205,11 @@ Gateway WebSocket → GatewayClient → ChatController → <justdo-chat> Lit Ele
 
 Electron 严格进程隔离，通过 IPC 通信。
 
-| 进程 | 职责 |
-|------|------|
-| **Main** (`src/main/`) | 窗口生命周期、SQLite、OpenClaw Gateway 进程管理、IPC 处理 |
-| **Preload** (`src/main/preload.ts`) | `contextBridge` API、`cowork` 命名空间 |
-| **Renderer** (`src/renderer/`) | React 18 + Redux + Tailwind，所有 UI 逻辑，Lit 聊天渲染 |
+| 进程                                | 职责                                                      |
+| ----------------------------------- | --------------------------------------------------------- |
+| **Main** (`src/main/`)              | 窗口生命周期、SQLite、OpenClaw Gateway 进程管理、IPC 处理 |
+| **Preload** (`src/main/preload.ts`) | `contextBridge` API、`cowork` 命名空间                    |
+| **Renderer** (`src/renderer/`)      | React 18 + Redux + Tailwind，所有 UI 逻辑，Lit 聊天渲染   |
 
 ### 目录结构
 
@@ -244,8 +245,16 @@ src/
 │   ├── store/           # Redux slices
 │   └── types/           # TypeScript 类型
 │
-├── scheduledTask/      # Cron 引擎、任务元数据
-└── shared/             # 平台与 Provider 常量
+└── shared/             # 按领域组织的跨进程契约
+    ├── filePreview.ts  # 文件预览辅助
+    ├── logIpc.ts       # 日志 IPC 通道常量
+    ├── proxy.ts        # 代理设置契约
+    ├── slashCommands.ts # Slash command 契约
+    ├── cowork/         # Cowork 附件与消息辅助
+    ├── openclaw/       # OpenClaw 共享常量和契约
+    ├── plugins/        # 插件市场契约
+    ├── providers/      # Provider 元数据
+    └── scheduledTask/  # 定时任务 IPC/领域契约
 
 resources/skills/       # 17 个内置技能定义（Gateway 管理）
 openclaw-extensions/    # OpenClaw 本地扩展
@@ -260,25 +269,25 @@ Cowork 会话使用基于 Gateway 的生命周期（`idle → downloading → in
 
 本地 SQLite（`justdo.sqlite`）作为 **UI 缓存**，**不是**权威数据源：
 
-| 数据 | 权威来源 | SQLite 角色 |
-|------|----------|-------------|
-| 消息历史 | Gateway `chat.history` API | UI 缓存 |
-| 会话元数据 | JustDo 本地 | 主要存储 |
-| 应用配置 | JustDo 本地 | 主要存储 |
-| Agent 定义 | JustDo 本地 | 主要存储 |
-| MCP 服务器 | JustDo 本地 | 主要存储 |
+| 数据       | 权威来源                   | SQLite 角色 |
+| ---------- | -------------------------- | ----------- |
+| 消息历史   | Gateway `chat.history` API | UI 缓存     |
+| 会话元数据 | JustDo 本地                | 主要存储    |
+| 应用配置   | JustDo 本地                | 主要存储    |
+| Agent 定义 | JustDo 本地                | 主要存储    |
+| MCP 服务器 | JustDo 本地                | 主要存储    |
 
 ### 技术栈
 
-| 层 | 技术 |
-|----|----|
-| 框架 | Electron 42 |
-| 前端 | React 18 + TypeScript + Lit（聊天渲染） |
-| 构建 | Vite 8 |
-| 样式 | Tailwind CSS 3 |
-| 状态 | Redux Toolkit |
-| AI 引擎 | OpenClaw Gateway（预构建 npm 包） |
-| 存储 | better-sqlite3（UI 缓存） |
+| 层       | 技术                                       |
+| -------- | ------------------------------------------ |
+| 框架     | Electron 42                                |
+| 前端     | React 18 + TypeScript + Lit（聊天渲染）    |
+| 构建     | Vite 8                                     |
+| 样式     | Tailwind CSS 3                             |
+| 状态     | Redux Toolkit                              |
+| AI 引擎  | OpenClaw Gateway（预构建 npm 包）          |
+| 存储     | better-sqlite3（UI 缓存）                  |
 | 聊天渲染 | Lit 3 + markdown-it + highlight.js + katex |
 
 ### 安全模型

@@ -11,10 +11,10 @@ import type {
   AskUserQuestion,
   AskUserRequest,
   AskUserResponse,
-} from '../../../../shared/openclawExtensions';
+} from '../../../../shared/openclaw/extensions';
 import { AskUserRequestBroker } from './askUserRequestBroker';
 
-export type { AskUserRequest, AskUserResponse } from '../../../../shared/openclawExtensions';
+export type { AskUserRequest, AskUserResponse } from '../../../../shared/openclaw/extensions';
 
 const log = (level: string, msg: string) => {
   const formatted = `[OpenClawExtensionCallback][${level}] ${msg}`;

@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
 
-import { type MarketplacePlugin, PluginKind } from '../../../../shared/pluginMarketplace';
+import { type MarketplacePlugin, PluginKind } from '../../../../shared/plugins/marketplace';
 import { PluginMarketplaceService } from './pluginMarketplaceService';
 import type { PluginMarketplaceProvider } from './types';
 

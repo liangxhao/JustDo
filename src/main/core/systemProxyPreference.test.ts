@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { ProxyMode } from '../../common/proxy';
+import { ProxyMode } from '../../shared/proxy';
 import { isSystemProxyEnabled } from './systemProxyPreference';
 
 describe('isSystemProxyEnabled', () => {

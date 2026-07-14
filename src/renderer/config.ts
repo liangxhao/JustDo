@@ -1,6 +1,6 @@
 import { ProviderRegistry } from '@shared/providers';
 
-import { defaultProxySettings, type ProxySettings } from '../common/proxy';
+import { defaultProxySettings, type ProxySettings } from '../shared/proxy';
 
 const BUILTIN_MODELS_PROVIDER_KEY = 'builtin_models';
 

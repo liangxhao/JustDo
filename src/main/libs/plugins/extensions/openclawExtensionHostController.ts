@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-import type { AskUserRequest, AskUserResponse } from '../../../../shared/openclawExtensions';
+import type { AskUserRequest, AskUserResponse } from '../../../../shared/openclaw/extensions';
 import type { AskUserExtensionConfig } from '../../openclaw/config/openclawConfigSync';
 import {
   type ExtensionInteractionResponse,

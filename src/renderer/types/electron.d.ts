@@ -1,4 +1,4 @@
-type CoworkAttachmentPayload = import('../../shared/coworkAttachment').CoworkAttachmentPayload;
+type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 
 interface ApiResponse {
   ok: boolean;
@@ -91,7 +91,7 @@ interface CoworkPermissionRequest {
   toolInput: Record<string, unknown>;
   requestId: string;
   toolUseId?: string | null;
-  interactionKind?: import('../../shared/openclawExtensions').CoworkInteractionKind;
+  interactionKind?: import('../../shared/openclaw/extensions').CoworkInteractionKind;
 }
 
 interface CoworkApiConfig {
@@ -285,6 +285,15 @@ interface HookEntryIPC {
   managedByPlugin: boolean;
 }
 
+import type {
+  ScheduledTask,
+  ScheduledTaskChannelOption,
+  ScheduledTaskInput,
+  ScheduledTaskRun,
+  ScheduledTaskRunEvent,
+  ScheduledTaskStatusEvent,
+} from '@shared/scheduledTask/types';
+
 import type { Agent } from './agent';
 
 interface IElectronAPI {
@@ -342,10 +351,7 @@ interface IElectronAPI {
       error?: string;
       gatewayOffline?: boolean;
     }>;
-    setEnabled: (options: {
-      id: string;
-      enabled: boolean;
-    }) => Promise<{
+    setEnabled: (options: { id: string; enabled: boolean }) => Promise<{
       success: boolean;
       hooks?: HookEntryIPC[];
       workspaceDir?: string;
@@ -424,10 +430,7 @@ interface IElectronAPI {
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
     };
     history: {
-      getToolInputs: (params: {
-        sessionKey: string;
-        toolCallIds: string[];
-      }) => Promise<{
+      getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
         success: boolean;
         inputs?: Record<string, { name?: string; input: unknown }>;
         error?: string;
@@ -688,25 +691,25 @@ interface IElectronAPI {
   scheduledTasks: {
     list: () => Promise<{
       success: boolean;
-      tasks?: import('../../scheduledTask/types').ScheduledTask[];
+      tasks?: ScheduledTask[];
       error?: string;
     }>;
     get: (id: string) => Promise<{
       success: boolean;
-      task?: import('../../scheduledTask/types').ScheduledTask;
+      task?: ScheduledTask;
       error?: string;
     }>;
-    create: (input: import('../../scheduledTask/types').ScheduledTaskInput) => Promise<{
+    create: (input: ScheduledTaskInput) => Promise<{
       success: boolean;
-      task?: import('../../scheduledTask/types').ScheduledTask;
+      task?: ScheduledTask;
       error?: string;
     }>;
     update: (
       id: string,
-      input: Partial<import('../../scheduledTask/types').ScheduledTaskInput>,
+      input: Partial<ScheduledTaskInput>,
     ) => Promise<{
       success: boolean;
-      task?: import('../../scheduledTask/types').ScheduledTask;
+      task?: ScheduledTask;
       error?: string;
     }>;
     delete: (id: string) => Promise<{ success: boolean; error?: string }>;
@@ -715,7 +718,7 @@ interface IElectronAPI {
       enabled: boolean,
     ) => Promise<{
       success: boolean;
-      task?: import('../../scheduledTask/types').ScheduledTask;
+      task?: ScheduledTask;
       warning?: string;
       error?: string;
     }>;
@@ -726,7 +729,7 @@ interface IElectronAPI {
       offset?: number,
     ) => Promise<{
       success: boolean;
-      runs?: import('../../scheduledTask/types').ScheduledTaskRun[];
+      runs?: ScheduledTaskRun[];
       error?: string;
     }>;
     resolveSession: (sessionKey: string) => Promise<{
@@ -736,15 +739,11 @@ interface IElectronAPI {
     }>;
     listChannels: () => Promise<{
       success: boolean;
-      channels?: import('../../scheduledTask/types').ScheduledTaskChannelOption[];
+      channels?: ScheduledTaskChannelOption[];
       error?: string;
     }>;
-    onStatusUpdate: (
-      callback: (data: import('../../scheduledTask/types').ScheduledTaskStatusEvent) => void,
-    ) => () => void;
-    onRunUpdate: (
-      callback: (data: import('../../scheduledTask/types').ScheduledTaskRunEvent) => void,
-    ) => () => void;
+    onStatusUpdate: (callback: (data: ScheduledTaskStatusEvent) => void) => () => void;
+    onRunUpdate: (callback: (data: ScheduledTaskRunEvent) => void) => () => void;
     onRefresh: (callback: () => void) => () => void;
   };
   permissions: {

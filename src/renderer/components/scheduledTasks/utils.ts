@@ -1,5 +1,3 @@
-import cronstrue from 'cronstrue/i18n';
-
 import type {
   Schedule,
   ScheduleCron,
@@ -7,8 +5,9 @@ import type {
   ScheduledTaskDelivery,
   ScheduledTaskPayload,
   TaskLastStatus,
-} from '../../../scheduledTask/types';
-import { PlatformRegistry } from '../../../shared/platform';
+} from '@shared/scheduledTask/types';
+import cronstrue from 'cronstrue/i18n';
+
 import { i18nService } from '../../services/i18n';
 
 const WEEKDAY_KEYS = [
@@ -67,7 +66,7 @@ function parseField(field: string): ParsedField | null {
 function parseCommaSeparated(field: string): number[] | null {
   if (!/^\d+(,\d+)*$/.test(field)) return null;
   const values = field.split(',').map(Number);
-  if (values.some((v) => Number.isNaN(v))) return null;
+  if (values.some(v => Number.isNaN(v))) return null;
   return [...values].sort((a, b) => a - b);
 }
 
@@ -90,19 +89,37 @@ function formatCronExpr(schedule: ScheduleCron): string {
   if (!min || !hour || !dom || !mon) return fallbackCron(schedule);
 
   // --- Every N minutes: */n * * * * ---
-  if (min.type === 'step' && hour.type === 'any' && dom.type === 'any' && mon.type === 'any' && dow?.type === 'any') {
+  if (
+    min.type === 'step' &&
+    hour.type === 'any' &&
+    dom.type === 'any' &&
+    mon.type === 'any' &&
+    dow?.type === 'any'
+  ) {
     if (min.step === 1) return i18nService.t('scheduledTasksCronEveryMinute');
     return tpl(i18nService.t('scheduledTasksCronEveryNMinutes'), { n: String(min.step) });
   }
 
   // --- Every N hours: fixed-min */n * * * ---
-  if (min.type === 'value' && hour.type === 'step' && dom.type === 'any' && mon.type === 'any' && dow?.type === 'any') {
+  if (
+    min.type === 'value' &&
+    hour.type === 'step' &&
+    dom.type === 'any' &&
+    mon.type === 'any' &&
+    dow?.type === 'any'
+  ) {
     if (hour.step === 1) return i18nService.t('scheduledTasksCronEveryHour');
     return tpl(i18nService.t('scheduledTasksCronEveryNHours'), { n: String(hour.step) });
   }
 
   // --- Every hour at fixed minute: M * * * * (e.g. 25 * * * *) ---
-  if (min.type === 'value' && hour.type === 'any' && dom.type === 'any' && mon.type === 'any' && dow?.type === 'any') {
+  if (
+    min.type === 'value' &&
+    hour.type === 'any' &&
+    dom.type === 'any' &&
+    mon.type === 'any' &&
+    dow?.type === 'any'
+  ) {
     return tpl(i18nService.t('scheduledTasksCronEveryHourAtMinute'), { min: pad2(min.value) });
   }
 
@@ -129,7 +146,10 @@ function formatCronExpr(schedule: ScheduleCron): string {
         });
       }
       // Weekends 0,6 or 6-0
-      if (dow.type === 'range' && ((dow.from === 6 && dow.to === 0) || (dow.from === 0 && dow.to === 6))) {
+      if (
+        dow.type === 'range' &&
+        ((dow.from === 6 && dow.to === 0) || (dow.from === 0 && dow.to === 6))
+      ) {
         return tpl(i18nService.t('scheduledTasksCronAtTime'), {
           schedule: i18nService.t('scheduledTasksCronWeekends'),
           time,
@@ -155,7 +175,7 @@ function formatCronExpr(schedule: ScheduleCron): string {
     } else {
       // Comma-separated weekdays: M H * * 1,3,5
       const days = parseCommaSeparated(dowRaw);
-      if (days && days.length > 0 && days.every((d) => d >= 0 && d <= 6)) {
+      if (days && days.length > 0 && days.every(d => d >= 0 && d <= 6)) {
         if (days.join(',') === '1,2,3,4,5') {
           return tpl(i18nService.t('scheduledTasksCronAtTime'), {
             schedule: i18nService.t('scheduledTasksCronWeekdays'),
@@ -163,10 +183,9 @@ function formatCronExpr(schedule: ScheduleCron): string {
           });
         }
         const separator = i18nService.getLanguage() === 'zh' ? '、' : ', ';
-        const sortedDays = i18nService.getLanguage() === 'zh'
-          ? [...days].sort((a, b) => ((a || 7) - (b || 7)))
-          : days;
-        const dayNames = sortedDays.map((d) => i18nService.t(WEEKDAY_KEYS[d]));
+        const sortedDays =
+          i18nService.getLanguage() === 'zh' ? [...days].sort((a, b) => (a || 7) - (b || 7)) : days;
+        const dayNames = sortedDays.map(d => i18nService.t(WEEKDAY_KEYS[d]));
         return tpl(i18nService.t('scheduledTasksCronAtTime'), {
           schedule: `${i18nService.t('scheduledTasksCronEveryWeek')}${dayNames.join(separator)}`,
           time,
@@ -247,21 +266,12 @@ export function formatPayloadLabel(payload: ScheduledTaskPayload): string {
   if (payload.kind === 'systemEvent') {
     return `${i18nService.t('scheduledTasksFormPayloadKindSystemEvent')} · ${payload.text}`;
   }
-  const timeoutLabel = typeof payload.timeoutSeconds === 'number'
-    ? ` · ${payload.timeoutSeconds}s`
-    : '';
+  const timeoutLabel =
+    typeof payload.timeoutSeconds === 'number' ? ` · ${payload.timeoutSeconds}s` : '';
   return `${i18nService.t('scheduledTasksFormPayloadKindAgentTurn')} · ${payload.message}${timeoutLabel}`;
 }
 
-/**
- * Resolve a channel name to a user-friendly display name via i18n + PlatformRegistry.
- * e.g. 'telegram' → 'Telegram', 'discord' → 'Discord'
- */
 function resolveChannelDisplayName(channel: string): string {
-  const platform = PlatformRegistry.platformOfChannel(channel);
-  if (platform) {
-    return i18nService.t(platform) || PlatformRegistry.get(platform).label;
-  }
   return channel;
 }
 
@@ -371,14 +381,21 @@ export function scheduleToPlanInfo(schedule: Schedule): PlanInfo {
   }
 
   // Weekly: M H * * DOW (single value)
-  if (dom && dom.type === 'any' && dow && dow.type === 'value' && dow.value >= 0 && dow.value <= 6) {
+  if (
+    dom &&
+    dom.type === 'any' &&
+    dow &&
+    dow.type === 'value' &&
+    dow.value >= 0 &&
+    dow.value <= 6
+  ) {
     return { ...base, planType: 'weekly', weekday: dow.value, weekdays: [dow.value] };
   }
 
   // Weekly: M H * * DOW,DOW,... (comma-separated)
   if (dom && dom.type === 'any' && dow === null) {
     const days = parseCommaSeparated(dowRaw);
-    if (days && days.length > 0 && days.every((d) => d >= 0 && d <= 6)) {
+    if (days && days.length > 0 && days.every(d => d >= 0 && d <= 6)) {
       return { ...base, planType: 'weekly', weekday: days[0], weekdays: days };
     }
   }

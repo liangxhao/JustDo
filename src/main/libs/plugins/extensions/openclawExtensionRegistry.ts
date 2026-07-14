@@ -1,4 +1,4 @@
-import { OpenClawExtensionId } from '../../../../shared/openclawExtensions';
+import { OpenClawExtensionId } from '../../../../shared/openclaw/extensions';
 import type { AskUserExtensionConfig } from '../../openclaw/config/openclawConfigSync';
 
 export type OpenClawExtensionContext = {

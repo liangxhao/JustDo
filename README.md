@@ -31,19 +31,19 @@ JustDo is a **thin frontend** for the [OpenClaw Gateway](https://github.com/open
 
 ## Key Features
 
-| Feature | Description |
-|---------|-------------|
+| Feature                                | Description                                                                                           |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | **Thin Frontend for OpenClaw Gateway** | All AI execution, history, and subagent lifecycle delegated to OpenClaw. JustDo is a pure UI frontend |
-| **Cowork Mode (Auto/Local)** | AI working sessions that autonomously complete complex tasks in local or sandboxed environments |
-| **17 Built-in Skills** | Office documents, web search, browser automation, data analysis, diagram generation, AI art, and more |
-| **Scheduled Tasks** | Create recurring tasks via conversation or GUI using OpenClaw's cron engine |
-| **Persistent Memory** | Automatic extraction of preferences and facts across sessions (MEMORY.md, USER.md, SOUL.md) |
-| **Permission Gating** | All tool invocations require explicit user approval before execution |
-| **14 Themes** | Built-in theme system with 14 curated themes, i18n (Chinese + English) |
-| **Lit-based Chat Rendering** | Message rendering via `<justdo-chat>` Lit custom element, same pipeline as OpenClaw webchat |
-| **IM Integration** | Remote control via IM platforms (Telegram, Discord) — in development |
-| **Cross-Platform** | macOS (Intel + Apple Silicon), Windows, Linux desktop |
-| **Local Data** | SQLite as UI cache keeps your configuration and session metadata on your device |
+| **Cowork Mode (Auto/Local)**           | AI working sessions that autonomously complete complex tasks in local or sandboxed environments       |
+| **17 Built-in Skills**                 | Office documents, web search, browser automation, data analysis, diagram generation, AI art, and more |
+| **Scheduled Tasks**                    | Create recurring tasks via conversation or GUI using OpenClaw's cron engine                           |
+| **Persistent Memory**                  | Automatic extraction of preferences and facts across sessions (MEMORY.md, USER.md, SOUL.md)           |
+| **Permission Gating**                  | All tool invocations require explicit user approval before execution                                  |
+| **14 Themes**                          | Built-in theme system with 14 curated themes, i18n (Chinese + English)                                |
+| **Lit-based Chat Rendering**           | Message rendering via `<justdo-chat>` Lit custom element, same pipeline as OpenClaw webchat           |
+| **IM Integration**                     | Remote control via IM platforms (Telegram, Discord) — in development                                  |
+| **Cross-Platform**                     | macOS (Intel + Apple Silicon), Windows, Linux desktop                                                 |
+| **Local Data**                         | SQLite as UI cache keeps your configuration and session metadata on your device                       |
 
 ## Architecture Overview
 
@@ -113,9 +113,9 @@ Dev server runs at `http://localhost:5175` with HMR. OpenClaw runtime is downloa
 <details>
 <summary>OpenClaw Environment Variables</summary>
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OPENCLAW_FORCE_INSTALL` | Force reinstall of the pre-built runtime | — |
+| Variable                 | Description                              | Default |
+| ------------------------ | ---------------------------------------- | ------- |
+| `OPENCLAW_FORCE_INSTALL` | Force reinstall of the pre-built runtime | —       |
 
 </details>
 
@@ -139,10 +139,10 @@ Desktop packages bundle a prebuilt OpenClaw runtime — no manual setup needed.
 
 An AI working session system powered by OpenClaw Gateway, autonomously completing complex tasks.
 
-| Mode | Description |
-|------|-------------|
-| `auto` | Automatically selects execution context |
-| `local` | Direct local execution, full speed |
+| Mode    | Description                             |
+| ------- | --------------------------------------- |
+| `auto`  | Automatically selects execution context |
+| `local` | Direct local execution, full speed      |
 
 All tool invocations (filesystem, terminal, network) require explicit approval via `CoworkPermissionModal`.
 
@@ -152,20 +152,20 @@ Chat messages are rendered by a Lit-based pipeline (`<justdo-chat>` element) con
 
 Skills are managed by OpenClaw Gateway. JustDo syncs skill definitions from `resources/skills/` to the Gateway's state directory.
 
-| Skill | Category |
-|-------|----------|
-| `docx` / `xlsx` / `pptx` / `pdf` | Office documents |
-| `multi-search-engine` | Multi-engine web search |
-| `playwright` / `agent-browser` | Browser automation |
-| `data-analysis` | Data processing & visualization |
-| `diagram-generator` | Diagrams & flowcharts |
-| `algorithmic-art` | Generative AI art |
-| `taskflow` | Multi-step workflows |
-| `mcp-builder` | MCP server creation |
-| `self-improvement` | Agent self-optimization |
-| `ontology` | Domain knowledge modeling |
-| `theme-factory` | UI theme generation |
-| `healthcheck` | System diagnostics |
+| Skill                            | Category                        |
+| -------------------------------- | ------------------------------- |
+| `docx` / `xlsx` / `pptx` / `pdf` | Office documents                |
+| `multi-search-engine`            | Multi-engine web search         |
+| `playwright` / `agent-browser`   | Browser automation              |
+| `data-analysis`                  | Data processing & visualization |
+| `diagram-generator`              | Diagrams & flowcharts           |
+| `algorithmic-art`                | Generative AI art               |
+| `taskflow`                       | Multi-step workflows            |
+| `mcp-builder`                    | MCP server creation             |
+| `self-improvement`               | Agent self-optimization         |
+| `ontology`                       | Domain knowledge modeling       |
+| `theme-factory`                  | UI theme generation             |
+| `healthcheck`                    | System diagnostics              |
 
 Custom skills can be created via `skill-creator` and hot-loaded at runtime. User-imported skills stored in `userData/openclaw/state/skills/`. Bundled skills take priority on ID conflict.
 
@@ -177,12 +177,12 @@ Create recurring tasks via natural language or GUI using OpenClaw's cron engine.
 
 File-based memory system managed by OpenClaw Gateway:
 
-| File | Purpose |
-|------|---------|
-| `MEMORY.md` | Durable facts and preferences |
-| `memory/YYYY-MM-DD.md` | Daily notes |
-| `USER.md` | User profile |
-| `SOUL.md` | Agent personality |
+| File                   | Purpose                       |
+| ---------------------- | ----------------------------- |
+| `MEMORY.md`            | Durable facts and preferences |
+| `memory/YYYY-MM-DD.md` | Daily notes                   |
+| `USER.md`              | User profile                  |
+| `SOUL.md`              | Agent personality             |
 
 ### Chat Rendering
 
@@ -193,6 +193,7 @@ Gateway WebSocket → GatewayClient → ChatController → <justdo-chat> Lit Ele
 ```
 
 Key benefits:
+
 - Eliminates message duplication, truncation, and loss issues
 - Direct WebSocket connection (no IPC round-trip)
 - Same render pipeline as webchat (consistent behavior)
@@ -204,11 +205,11 @@ Key benefits:
 
 Electron strict process isolation with IPC communication.
 
-| Process | Responsibilities |
-|---------|------------------|
-| **Main** (`src/main/`) | Window lifecycle, SQLite, OpenClaw Gateway process management, IPC handlers |
-| **Preload** (`src/main/preload.ts`) | `contextBridge` API, `cowork` namespace |
-| **Renderer** (`src/renderer/`) | React 18 + Redux + Tailwind, all UI logic, Lit chat rendering |
+| Process                             | Responsibilities                                                            |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| **Main** (`src/main/`)              | Window lifecycle, SQLite, OpenClaw Gateway process management, IPC handlers |
+| **Preload** (`src/main/preload.ts`) | `contextBridge` API, `cowork` namespace                                     |
+| **Renderer** (`src/renderer/`)      | React 18 + Redux + Tailwind, all UI logic, Lit chat rendering               |
 
 ### Directory Structure
 
@@ -258,8 +259,16 @@ src/
 │   ├── store/             # Redux store & slices
 │   └── types/             # TypeScript types
 │
-├── scheduledTask/         # Cron engine, task metadata
-└── shared/                # Platform & provider constants
+└── shared/                # Domain-organized shared contracts
+    ├── filePreview.ts     # Shared file preview helpers
+    ├── logIpc.ts          # Log IPC channel constants
+    ├── proxy.ts           # Proxy settings contracts
+    ├── slashCommands.ts   # Slash command contracts
+    ├── cowork/            # Cowork attachment and message helpers
+    ├── openclaw/          # OpenClaw shared constants and contracts
+    ├── plugins/           # Plugin marketplace contracts
+    ├── providers/         # Provider registry metadata
+    └── scheduledTask/     # Scheduled task IPC/domain contracts
 
 resources/skills/          # 17 bundled skill definitions (Gateway-managed)
 scripts/                   # Build and tool scripts
@@ -273,26 +282,26 @@ Cowork sessions use a Gateway-based lifecycle (`idle → downloading → install
 
 Local SQLite (`justdo.sqlite`) serves as a **UI cache**, NOT the authoritative data source:
 
-| Data | Authority | SQLite Role |
-|------|-----------|-------------|
-| Message history | Gateway `chat.history` API | UI cache |
-| Session metadata | JustDo local | Primary storage |
-| App configuration | JustDo local | Primary storage |
-| Agent definitions | JustDo local | Primary storage |
-| MCP servers | JustDo local | Primary storage |
+| Data              | Authority                  | SQLite Role     |
+| ----------------- | -------------------------- | --------------- |
+| Message history   | Gateway `chat.history` API | UI cache        |
+| Session metadata  | JustDo local               | Primary storage |
+| App configuration | JustDo local               | Primary storage |
+| Agent definitions | JustDo local               | Primary storage |
+| MCP servers       | JustDo local               | Primary storage |
 
 ### Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | Electron 42 |
-| Frontend | React 18 + TypeScript + Lit (chat rendering) |
-| Build | Vite 8 |
-| Styling | Tailwind CSS 3 |
-| State | Redux Toolkit |
-| AI Engine | OpenClaw Gateway (pre-built npm package) |
-| Storage | better-sqlite3 (UI cache) |
-| Chat Render | Lit 3 + markdown-it + highlight.js + katex |
+| Layer       | Technology                                   |
+| ----------- | -------------------------------------------- |
+| Framework   | Electron 42                                  |
+| Frontend    | React 18 + TypeScript + Lit (chat rendering) |
+| Build       | Vite 8                                       |
+| Styling     | Tailwind CSS 3                               |
+| State       | Redux Toolkit                                |
+| AI Engine   | OpenClaw Gateway (pre-built npm package)     |
+| Storage     | better-sqlite3 (UI cache)                    |
+| Chat Render | Lit 3 + markdown-it + highlight.js + katex   |
 
 ### Security
 

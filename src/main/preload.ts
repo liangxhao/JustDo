@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
-import type { CoworkAttachmentPayload } from '../shared/coworkAttachment';
+import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { LogIpc } from '../shared/logIpc';
-import { OpenClawHistoryIpc } from '../shared/openclawHistoryIpc';
+import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
+import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
 import { SlashCommandIpc } from '../shared/slashCommands';
 
 // 暴露安全的 API 到渲染进程

@@ -6,7 +6,7 @@ import {
   type MarketplaceQuery,
   MarketplaceSourceId,
   PluginKind,
-} from '../../../../shared/pluginMarketplace';
+} from '../../../../shared/plugins/marketplace';
 import type { OpenClawSkillService } from '../skills';
 import { ClawHubSkillRpc } from './clawHubSkillRpc';
 import type { PluginMarketplaceProvider } from './types';

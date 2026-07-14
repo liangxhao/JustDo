@@ -9,13 +9,13 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch } from 'react-redux';
 
+import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
 import {
   type CustomProxyConfig,
   defaultCustomProxyConfig,
   ProxyMode,
   ProxyProtocol,
-} from '../../common/proxy';
-import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../shared/openclaw/constants';
+} from '../../shared/proxy';
 import {
   type AppConfig,
   defaultConfig,

@@ -13,15 +13,15 @@ import {
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSelector } from 'react-redux';
-
 import type {
   Schedule,
   ScheduledTask,
   ScheduledTaskChannelOption,
   ScheduledTaskInput,
-} from '../../../scheduledTask/types';
+} from '@shared/scheduledTask/types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
+
 import { i18nService } from '../../services/i18n';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { RootState } from '../../store';
@@ -1044,7 +1044,9 @@ export const CronView: React.FC<CronViewProps> = ({
                 className="flex min-h-[112px] flex-col items-center justify-between rounded-2xl border border-border-subtle bg-surface p-4 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-border hover:shadow-md"
               >
                 <div
-                  className={'h-11 w-11 rounded-full flex items-center justify-center ' + stat.color}
+                  className={
+                    'h-11 w-11 rounded-full flex items-center justify-center ' + stat.color
+                  }
                 >
                   <stat.Icon
                     className={stat.label === 'cronStatsTotal' ? 'h-10 w-10' : 'h-5 w-5'}

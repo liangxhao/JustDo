@@ -8,7 +8,7 @@
  *   { role: 'user'|'assistant'|'toolresult', content: string | ContentBlock[], timestamp }
  */
 
-import { parseCoworkAttachments } from '@shared/coworkAttachment';
+import { parseCoworkAttachments } from '@shared/cowork/attachments';
 
 import type { CoworkMessage } from '../../../types/cowork';
 import { toAttachmentContentBlocks } from '../attachments';

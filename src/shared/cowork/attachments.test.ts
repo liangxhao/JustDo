@@ -4,7 +4,7 @@ import {
   parseCoworkAttachments,
   toAttachmentDataUrl,
   toGatewayAttachment,
-} from './coworkAttachment';
+} from './attachments';
 
 describe('cowork attachment helpers', () => {
   test('maps images and files to their gateway attachment shapes', () => {

@@ -4,7 +4,7 @@ import type {
   AskUserQuestion,
   AskUserRequest,
   AskUserResponse,
-} from '../../../../shared/openclawExtensions';
+} from '../../../../shared/openclaw/extensions';
 
 const ASK_USER_TIMEOUT_MS = 120_000;
 
