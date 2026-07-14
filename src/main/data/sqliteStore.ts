@@ -191,6 +191,7 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
         enabled INTEGER NOT NULL DEFAULT 1,
         transport_type TEXT NOT NULL DEFAULT 'stdio',
         config_json TEXT NOT NULL DEFAULT '{}',
@@ -198,6 +199,7 @@ export class SqliteStore {
         updated_at INTEGER NOT NULL
       );
     `);
+    this.ensureColumn('mcp_servers', 'description', "TEXT NOT NULL DEFAULT ''");
 
     // Create OpenClaw hooks table
     this.db.exec(`
@@ -357,6 +359,12 @@ export class SqliteStore {
 
   getDatabase(): Database.Database {
     return this.db;
+  }
+
+  private ensureColumn(tableName: string, columnName: string, columnDefinition: string): void {
+    const columns = this.db.pragma(`table_info(${tableName})`) as Array<{ name: string }>;
+    if (columns.some(column => column.name === columnName)) return;
+    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
   }
 
   close(): void {

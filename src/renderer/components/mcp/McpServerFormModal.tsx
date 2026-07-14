@@ -25,6 +25,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
   const isRegistry = !!registryEntry && !isEdit;
 
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [transportType, setTransportType] = useState<'stdio' | 'sse' | 'http'>('stdio');
   const [command, setCommand] = useState('');
   const [argsText, setArgsText] = useState('');
@@ -39,6 +40,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
     if (server) {
       // Edit mode
       setName(server.name);
+      setDescription(server.description || '');
       setTransportType(server.transportType);
       setCommand(server.command || '');
       setArgsText((server.args || []).join('\n'));
@@ -61,6 +63,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
     } else if (registryEntry) {
       // Registry install mode — pre-fill from template
       setName(registryEntry.name);
+      setDescription('');
       setTransportType(registryEntry.transportType);
       setCommand(registryEntry.command);
       // defaultArgs + argPlaceholders
@@ -87,6 +90,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
     } else {
       // Create mode
       setName('');
+      setDescription('');
       setTransportType('stdio');
       setCommand('');
       setArgsText('');
@@ -153,6 +157,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
 
     const data: McpServerFormData = {
       name: trimmedName,
+      description: description.trim(),
       transportType,
     };
 
@@ -257,6 +262,18 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
               className={isRegistry ? readOnlyInputClass : inputClass}
               readOnly={isRegistry}
               autoFocus={!isRegistry}
+            />
+          </div>
+
+          {/* Description */}
+          <div className="space-y-1.5">
+            <label className={labelClass}>{i18nService.t('mcpServerDescription')}</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder={i18nService.t('mcpServerDescriptionPlaceholder')}
+              rows={3}
+              className={inputClass + ' resize-none'}
             />
           </div>
 

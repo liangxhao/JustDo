@@ -200,6 +200,7 @@ type CoworkPermissionResult =
 interface McpServerConfigIPC {
   id: string;
   name: string;
+  description: string;
   enabled: boolean;
   transportType: 'stdio' | 'sse' | 'http';
   command?: string;

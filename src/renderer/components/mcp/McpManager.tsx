@@ -181,32 +181,6 @@ const McpManager: React.FC = () => {
     );
   };
 
-  const getMcpJsonConfig = useCallback((server: McpServerConfig): string => {
-    const serverConfig =
-      server.transportType === 'stdio'
-        ? {
-            command: server.command || '',
-            ...(server.args && server.args.length > 0 ? { args: server.args } : {}),
-            ...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
-          }
-        : {
-            url: server.url || '',
-            ...(server.headers && Object.keys(server.headers).length > 0
-              ? { headers: server.headers }
-              : {}),
-          };
-
-    return JSON.stringify(
-      {
-        mcpServers: {
-          [server.name]: serverConfig,
-        },
-      },
-      null,
-      2,
-    );
-  }, []);
-
   const getConnectionDetail = (server: McpServerConfig): string => {
     if (server.transportType === 'stdio') {
       return [server.command, ...(server.args ?? [])].filter(Boolean).join(' ');
@@ -221,8 +195,8 @@ const McpManager: React.FC = () => {
   };
 
   const getInstalledDescription = useCallback((server: McpServerConfig): string => {
-    return getMcpJsonConfig(server);
-  }, [getMcpJsonConfig]);
+    return server.description?.trim() ?? '';
+  }, []);
 
   const getServerStatusLabel = (server: McpServerConfig): string | null => {
     const probeResult = probeResults[server.id];

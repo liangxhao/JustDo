@@ -4,6 +4,7 @@ export type McpTransportType = 'stdio' | 'sse' | 'http';
 export interface McpServerConfig {
   id: string;
   name: string;
+  description: string;
   enabled: boolean;
   transportType: McpTransportType;
   command?: string;              // stdio
@@ -20,6 +21,7 @@ export interface McpServerConfig {
 
 export interface McpServerFormData {
   name: string;
+  description?: string;
   transportType: McpTransportType;
   command?: string;
   args?: string[];
