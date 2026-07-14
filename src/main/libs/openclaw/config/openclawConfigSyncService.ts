@@ -1,10 +1,10 @@
 import type { CoworkStore } from '../../../coworkStore';
-import type { McpStore } from '../../mcp/mcpStore';
-import type { OpenClawHookStore } from '../hooks/openclawHookStore';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
-} from '../runtime/openclawEngineManager';
+} from '../../openclaw/runtime/openclawEngineManager';
+import type { OpenClawHookStore } from '../../plugins/hooks';
+import type { McpStore } from '../../plugins/mcp';
 import type { AskUserExtensionConfig } from './openclawConfigSync';
 import { OpenClawConfigSync } from './openclawConfigSync';
 

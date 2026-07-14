@@ -9,7 +9,7 @@ import path from 'path';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../../shared/openclaw/constants';
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../../cowork/coworkUtil';
 import { appendPythonRuntimeToEnv } from '../../infra/pythonRuntime';
-import { syncLocalOpenClawExtensionsIntoRuntime } from '../extensions/openclawLocalExtensions';
+import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
 type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;

@@ -13,13 +13,14 @@ import {
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
 } from '../../cowork/providerApiConfig';
-import type { McpServerRecord } from '../../mcp/mcpStore';
+import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   buildBundledExtensionEntries,
   buildBundledExtensionToolContracts,
-} from '../extensions/openclawExtensionRegistry';
-import { hasBundledOpenClawExtension } from '../extensions/openclawLocalExtensions';
-import type { OpenClawHookRecord } from '../hooks/openclawHookStore';
+  hasBundledOpenClawExtension,
+} from '../../plugins/extensions';
+import type { OpenClawHookRecord } from '../../plugins/hooks';
+import type { McpServerRecord } from '../../plugins/mcp';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
@@ -27,7 +28,6 @@ import {
   resolveManagedSessionModelTarget,
   resolveQualifiedAgentModelRef,
 } from '../models/openclawAgentModels';
-import type { OpenClawEngineManager } from '../runtime/openclawEngineManager';
 import { repairOpenClawWorkspaceState } from './workspaceStateRepair';
 
 export type AskUserExtensionConfig = {

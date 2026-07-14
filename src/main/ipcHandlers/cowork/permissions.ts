@@ -5,7 +5,7 @@ import { t } from '../../i18n';
 import { sanitizeCoworkMessageForIpc } from '../../ipcPayloadSanitizer';
 import type { CoworkEngineRouter } from '../../libs/agentEngine';
 import type { PermissionResult } from '../../libs/agentEngine/types';
-import type { OpenClawExtensionHostController } from '../../libs/openclaw/extensions/openclawExtensionHostController';
+import type { OpenClawExtensionHostController } from '../../libs/plugins/extensions';
 
 interface Dependencies {
   getCoworkStore: () => CoworkStore;

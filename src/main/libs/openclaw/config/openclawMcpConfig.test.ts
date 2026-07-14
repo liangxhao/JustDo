@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { McpServerRecord } from '../../mcp/mcpStore';
+import type { McpServerRecord } from '../../plugins/mcp';
 import { buildOpenClawMcpServers } from './openclawConfigSync';
 
 const record = (overrides: Partial<McpServerRecord>): McpServerRecord => ({

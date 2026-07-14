@@ -1,7 +1,11 @@
 import { ipcMain } from 'electron';
 
-import type { McpProbeResult, McpReadResourceResult } from '../../libs/mcp/mcpProbeService';
-import type { McpServerFormData, McpStore } from '../../libs/mcp/mcpStore';
+import type {
+  McpProbeResult,
+  McpReadResourceResult,
+  McpServerFormData,
+  McpStore,
+} from '../../libs/plugins/mcp';
 
 interface McpHandlerDependencies {
   getStore: () => McpStore;
@@ -10,9 +14,7 @@ interface McpHandlerDependencies {
   readResource: (id: string, uri: string) => Promise<McpReadResourceResult>;
 }
 
-const syncMcpConfigInBackground = (
-  syncConfig: McpHandlerDependencies['syncConfig'],
-): void => {
+const syncMcpConfigInBackground = (syncConfig: McpHandlerDependencies['syncConfig']): void => {
   void syncConfig().catch(error => {
     console.error('[OpenClawMcp] background configuration sync error:', error);
   });

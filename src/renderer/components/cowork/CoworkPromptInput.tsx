@@ -23,7 +23,7 @@ import { getCompactFolderName } from '../../utils/path';
 import PaperClipIcon from '../icons/PaperClipIcon';
 import XMarkIcon from '../icons/XMarkIcon';
 import ModelSelector from '../ModelSelector';
-import { ActiveSkillBadge } from '../skills';
+import { ActiveSkillBadge } from '../plugins/skills';
 import { resolveAgentModelSelection } from './agentModelSelection';
 import AttachmentCard from './AttachmentCard';
 import FolderSelectorPopover from './FolderSelectorPopover';

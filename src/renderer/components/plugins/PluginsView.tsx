@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
-import ExtensionsManager from '../extensions/ExtensionsManager';
-import HookManager from '../hooks/HookManager';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import McpManager from '../mcp/McpManager';
-import SkillsManager from '../skills/SkillsManager';
 import WindowTitleBar from '../window/WindowTitleBar';
+import ExtensionsManager from './extensions/ExtensionsManager';
+import HookManager from './hooks/HookManager';
+import McpManager from './mcp/McpManager';
+import SkillsManager from './skills/SkillsManager';
 
 type PluginTab = 'extensions' | 'skills' | 'mcp' | 'hooks';
 

@@ -68,20 +68,23 @@ import {
 } from './libs/cowork/providerApiConfig';
 import { OutboundHeaderProxy } from './libs/infra/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
-import { McpServices } from './libs/mcp/mcpServices';
 import type { AskUserExtensionConfig } from './libs/openclaw/config/openclawConfigSync';
 import { buildProviderSelection } from './libs/openclaw/config/openclawConfigSync';
 import { OpenClawConfigSyncService } from './libs/openclaw/config/openclawConfigSyncService';
-import { OpenClawExtensionHostLifecycle } from './libs/openclaw/extensions/openclawExtensionHostLifecycle';
-import { OpenClawHookServices } from './libs/openclaw/hooks/openclawHookServices';
 import { resolveQualifiedAgentModelRef } from './libs/openclaw/models/openclawAgentModels';
 import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
 } from './libs/openclaw/runtime/openclawEngineManager';
-import { OpenClawSkillFileService } from './libs/openclaw/skills/openclawSkillFileService';
-import { OpenClawSkillService } from './libs/openclaw/skills/openclawSkillService';
-import { createPluginMarketplaceService, PluginManager } from './libs/plugin';
+import {
+  createPluginMarketplaceService,
+  McpServices,
+  OpenClawExtensionHostLifecycle,
+  OpenClawHookServices,
+  OpenClawSkillFileService,
+  OpenClawSkillService,
+  PluginManager,
+} from './libs/plugins';
 import { justDoSlashCommandPolicy } from './libs/slashCommands/slashCommandPolicies';
 
 const outboundHeaderProxy = new OutboundHeaderProxy();
