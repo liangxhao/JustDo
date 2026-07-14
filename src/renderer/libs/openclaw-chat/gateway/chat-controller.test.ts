@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { ChatController } from './chat-controller';
+import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 
 afterEach(() => {
   vi.unstubAllGlobals();

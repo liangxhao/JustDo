@@ -1,10 +1,10 @@
 // Tool cards logic extracted from OpenClaw's tool-cards.ts.
 // Only data extraction functions - no Lit/web component rendering.
-import { extractCanvasFromText } from '../shims/backend-helpers';
-import type { ToolCard } from '../types';
-import { extractTextCached } from './message-extract';
-import { isToolResultMessage } from './role-normalizer';
-import { formatToolOutputForSidebar } from './tool-helpers';
+import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
+import { isToolResultMessage } from '@/libs/openclaw-chat/pipeline/role-normalizer';
+import { formatToolOutputForSidebar } from '@/libs/openclaw-chat/pipeline/tool-helpers';
+import { extractCanvasFromText } from '@/libs/openclaw-chat/shims/backend-helpers';
+import type { ToolCard } from '@/libs/openclaw-chat/types';
 
 export type ToolPreview = NonNullable<ToolCard['preview']>;
 

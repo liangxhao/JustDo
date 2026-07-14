@@ -185,13 +185,13 @@ WebSocket 客户端，实现 Gateway 协议：
 
 #### ChatMessageDisplay（React 包装）
 
-**文件**: `src/renderer/components/cowork/ChatMessageDisplay.tsx`
+**文件**: `src/renderer/features/cowork/components/ChatMessageDisplay.tsx`
 
 React 组件，包装 `<justdo-chat>` Lit 元素。接收 ChatController 引用或 CoworkMessage[]，提供 Shadow DOM 主题同步和滚动行为。
 
 #### JustDoChatWrapper
 
-**文件**: `src/renderer/components/cowork/JustDoChatWrapper.tsx`
+**文件**: `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`
 
 管理 `<justdo-chat>` Lit 元素的 React 组件。创建 ChatController 并传递给 Lit 元素。
 
@@ -377,7 +377,7 @@ interface CoworkPermissionResult {
 
 ### 5.4 CoworkPermissionModal
 
-**文件**：`src/renderer/components/cowork/CoworkPermissionModal.tsx`
+**文件**：`src/renderer/features/cowork/components/CoworkPermissionModal.tsx`
 
 支持两种模式：
 
@@ -576,12 +576,12 @@ sequenceDiagram
 
 | 文件                                                       | 职责                                  |
 | ---------------------------------------------------------- | ------------------------------------- |
-| `src/renderer/components/cowork/CoworkView.tsx`            | 主 Cowork 界面                        |
-| `src/renderer/components/cowork/JustDoChatWrapper.tsx`     | `<justdo-chat>` Lit 元素的 React 包装 |
-| `src/renderer/components/cowork/ChatMessageDisplay.tsx`    | 共享消息显示表面                      |
-| `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求对话框                        |
-| `src/renderer/components/cowork/CoworkPromptInput.tsx`     | 提示输入组件                          |
-| `src/renderer/components/cowork/SubagentMenu.tsx`          | 子代理菜单                            |
-| `src/renderer/components/cowork/RunSessionModal.tsx`       | 运行会话模态框                        |
+| `src/renderer/features/cowork/components/CoworkView.tsx`            | 主 Cowork 界面                        |
+| `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`     | `<justdo-chat>` Lit 元素的 React 包装 |
+| `src/renderer/features/cowork/components/ChatMessageDisplay.tsx`    | 共享消息显示表面                      |
+| `src/renderer/features/cowork/components/CoworkPermissionModal.tsx` | 权限请求对话框                        |
+| `src/renderer/features/cowork/components/CoworkPromptInput.tsx`     | 提示输入组件                          |
+| `src/renderer/features/cowork/components/SubagentMenu.tsx`          | 子代理菜单                            |
+| `src/renderer/features/cowork/components/RunSessionModal.tsx`       | 运行会话模态框                        |
 
 ---

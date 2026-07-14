@@ -1,4 +1,4 @@
-import type { ThemeDefinition } from '../themes/types';
+import type { ThemeDefinition } from '@/theme/themes/types';
 
 export interface ThemeStorage {
   get(key: string): string | null | Promise<string | null>;

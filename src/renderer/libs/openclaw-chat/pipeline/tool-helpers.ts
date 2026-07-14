@@ -2,7 +2,7 @@
  * Helper functions for tool card rendering.
  * Copied from OpenClaw ui/src/ui/chat/tool-helpers.ts
  */
-import { PREVIEW_MAX_CHARS, PREVIEW_MAX_LINES } from './constants';
+import { PREVIEW_MAX_CHARS, PREVIEW_MAX_LINES } from '@/libs/openclaw-chat/pipeline/constants';
 
 export function formatToolOutputForSidebar(text: string): string {
   const trimmed = text.trim();

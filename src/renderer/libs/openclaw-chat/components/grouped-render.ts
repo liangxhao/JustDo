@@ -4,32 +4,32 @@
  * markdown rendering, avatar support, and streaming boundary detection.
  */
 import { isImageMimeType } from '@shared/cowork/attachments';
+import { getPreviewableFileExtension } from '@shared/filePreview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
-import { getPreviewableFileExtension } from '../../../../shared/filePreview';
-import { i18nService } from '../../../services/i18n';
-import { getTranscriptMedia, type RenderableAttachment } from '../attachments';
+import { getTranscriptMedia, type RenderableAttachment } from '@/libs/openclaw-chat/attachments';
+import { renderChatAvatar } from '@/libs/openclaw-chat/components/chat-avatar';
+import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { resolveToolDisplay } from '@/libs/openclaw-chat/components/tool-display';
 import {
   extractTextCached,
   extractThinkingCached,
   formatReasoningMarkdown,
-} from '../pipeline/message-extract';
-import { normalizeMessage } from '../pipeline/message-normalizer';
-import { normalizeRoleForGrouping } from '../pipeline/role-normalizer';
-import { detectTextDirection } from '../pipeline/text-direction';
-import { extractToolCards, extractToolCardsCached } from '../pipeline/tool-cards';
-import { splitMediaFromOutput } from '../shims/backend-helpers';
+} from '@/libs/openclaw-chat/pipeline/message-extract';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
+import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
+import { extractToolCards, extractToolCardsCached } from '@/libs/openclaw-chat/pipeline/tool-cards';
+import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
 import type {
   ChatItem,
   MessageContentItem,
   MessageGroup,
   NormalizedMessage,
   ToolCard,
-} from '../types';
-import { renderChatAvatar } from './chat-avatar';
-import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from './markdown';
-import { resolveToolDisplay } from './tool-display';
+} from '@/libs/openclaw-chat/types';
+import { i18nService } from '@/services/i18n';
 
 const COPY_ICON = html`
   <svg

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { splitMediaFromOutput } from './backend-helpers';
+import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
 
 describe('splitMediaFromOutput', () => {
   test('extracts a delivered file whose path contains spaces', () => {

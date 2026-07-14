@@ -1,5 +1,5 @@
-import { SHARED_TOKENS } from '../tokens/shared';
-import type { ThemeDefinition } from './types';
+import type { ThemeDefinition } from '@/theme/themes/types';
+import { SHARED_TOKENS } from '@/theme/tokens/shared';
 
 export const mocha: ThemeDefinition = {
   meta: {

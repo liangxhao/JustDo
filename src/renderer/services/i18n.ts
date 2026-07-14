@@ -1,5 +1,5 @@
-import { configService } from './config';
-import { translations } from './i18n/translations';
+import { configService } from '@/services/config';
+import { translations } from '@/services/i18n/translations';
 
 export type LanguageType = 'zh' | 'en';
 

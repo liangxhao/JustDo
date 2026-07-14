@@ -11,12 +11,7 @@ import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from '
 import { customElement, property, state } from 'lit/decorators.js';
 import mermaid from 'mermaid';
 
-import { i18nService } from '../../../services/i18n';
-import type { ChatController } from '../gateway/chat-controller';
-import { buildChatItems } from '../pipeline/build-chat-items';
-import { extractTextCached } from '../pipeline/message-extract';
-import type { ChatItem, GatewayMessage, MessageGroup } from '../types';
-import { renderChatAvatar } from './chat-avatar';
+import { renderChatAvatar } from '@/libs/openclaw-chat/components/chat-avatar';
 import {
   getThinkingToolsGroupToolCount,
   renderMessageGroup,
@@ -25,7 +20,12 @@ import {
   renderStreamingThinkingGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
-} from './grouped-render';
+} from '@/libs/openclaw-chat/components/grouped-render';
+import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
+import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
+import type { ChatItem, GatewayMessage, MessageGroup } from '@/libs/openclaw-chat/types';
+import { i18nService } from '@/services/i18n';
 
 type ChatMinimapEntry = {
   index: number;

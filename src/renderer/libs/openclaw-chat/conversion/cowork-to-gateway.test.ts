@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
-import type { CoworkMessage } from '../../../types/cowork';
-import { coworkMessageToGateway } from './cowork-to-gateway';
+import type { CoworkMessage } from '@/features/cowork/coworkTypes';
+import { coworkMessageToGateway } from '@/libs/openclaw-chat/conversion/cowork-to-gateway';
 
 describe('coworkMessageToGateway', () => {
   test('converts user image metadata into renderable base64 attachments', () => {

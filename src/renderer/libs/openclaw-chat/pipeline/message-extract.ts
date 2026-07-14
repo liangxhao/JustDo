@@ -1,10 +1,10 @@
 // Control UI chat module implements message extract behavior.
-import { stripInternalRuntimeContext } from '../shims/backend-helpers';
-import { stripInboundMetadata } from '../shims/backend-helpers';
-import { stripEnvelope } from '../shims/backend-helpers';
-import { extractAssistantVisibleText as extractSharedAssistantVisibleText } from '../shims/backend-helpers';
-import { stripAssistantInternalScaffolding } from '../shims/backend-helpers';
-import { normalizeLowercaseStringOrEmpty, normalizeStringEntries } from '../shims/normalization-core';
+import { stripInternalRuntimeContext } from '@/libs/openclaw-chat/shims/backend-helpers';
+import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
+import { stripEnvelope } from '@/libs/openclaw-chat/shims/backend-helpers';
+import { extractAssistantVisibleText as extractSharedAssistantVisibleText } from '@/libs/openclaw-chat/shims/backend-helpers';
+import { stripAssistantInternalScaffolding } from '@/libs/openclaw-chat/shims/backend-helpers';
+import { normalizeLowercaseStringOrEmpty, normalizeStringEntries } from '@/libs/openclaw-chat/shims/normalization-core';
 
 const textCache = new WeakMap<object, string | null>();
 const thinkingCache = new WeakMap<object, string | null>();

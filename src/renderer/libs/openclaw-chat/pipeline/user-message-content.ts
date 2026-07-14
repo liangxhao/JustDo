@@ -1,4 +1,4 @@
-import type { ChatAttachment, GatewayContentBlock } from '../types';
+import type { ChatAttachment, GatewayContentBlock } from '@/libs/openclaw-chat/types';
 
 export function buildUserChatMessageContentBlocks(
   text: string,

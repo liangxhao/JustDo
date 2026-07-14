@@ -1,12 +1,13 @@
-import { ProxyMode, ProxyProtocol } from '../../shared/proxy';
+import { ProxyMode, ProxyProtocol } from '@shared/proxy';
+
 import {
   AppConfig,
   CONFIG_KEYS,
   defaultConfig,
   isBuiltinModelsProvider,
   isCustomProvider,
-} from '../config';
-import { localStore } from './store';
+} from '@/app/config';
+import { localStore } from '@/services/store';
 
 const SUPPORTED_BUILTIN_PROVIDERS = new Set(['builtin_models']);
 

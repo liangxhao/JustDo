@@ -254,7 +254,7 @@ function validateFilePath(toolInput: Record<string, unknown>, workingDir: string
 
 ### 3.6 权限 Modal UI
 
-**文件**: `src/renderer/components/cowork/CoworkPermissionModal.tsx`
+**文件**: `src/renderer/features/cowork/components/CoworkPermissionModal.tsx`
 
 显示工具调用请求，根据风险等级显示不同 UI，支持单次/会话级授权。
 
@@ -461,4 +461,4 @@ function sanitizeErrorMessage(error: Error): string {
 | `src/main/preload.ts`                                      | Preload 安全桥接       |
 | `src/main/engine/openclawRuntimeAdapter.ts`                | 权限请求处理           |
 | `src/main/engine/commandSafety.ts`                         | 危险命令检测           |
-| `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求 UI            |
+| `src/renderer/features/cowork/components/CoworkPermissionModal.tsx` | 权限请求 UI            |

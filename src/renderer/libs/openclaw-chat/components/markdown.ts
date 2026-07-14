@@ -24,7 +24,7 @@ import MarkdownIt from 'markdown-it';
 import markdownItTaskLists from 'markdown-it-task-lists';
 import markdownItTexMath from 'markdown-it-texmath';
 
-import { i18nService } from '../../../services/i18n';
+import { i18nService } from '@/services/i18n';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@
  */
 import { html, type TemplateResult } from 'lit';
 
-import { normalizeRoleForGrouping } from '../pipeline/role-normalizer';
+import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 
 const USER_SVG = html`
   <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">

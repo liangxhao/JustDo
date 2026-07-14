@@ -342,15 +342,13 @@ interface MarketplaceSkillDetail {
 
 | 组件               | 文件                                                  | 职责                                 |
 | ------------------ | ----------------------------------------------------- | ------------------------------------ |
-| `SkillsButton`     | `src/renderer/components/skills/SkillsButton.tsx`     | 触发 Skills 管理弹窗的按钮           |
-| `SkillsManager`    | `src/renderer/components/skills/SkillsManager.tsx`    | Skills 管理主面板（启用/禁用、配置） |
-| `SkillsPopover`    | `src/renderer/components/skills/SkillsPopover.tsx`    | Skills 快速操作弹出面板              |
-| `SkillsView`       | `src/renderer/components/skills/SkillsView.tsx`       | Skill 详情展示视图                   |
-| `ActiveSkillBadge` | `src/renderer/components/skills/ActiveSkillBadge.tsx` | 当前活跃 Skill 标记                  |
+| `PluginsView`      | `src/renderer/features/plugins/components/PluginsView.tsx`             | Plugins 页面入口，汇总 Skills/MCP/Hook/Extension 管理 |
+| `SkillsManager`    | `src/renderer/features/plugins/components/skills/SkillsManager.tsx`    | Skills 管理主面板（启用/禁用、配置） |
+| `ActiveSkillBadge` | `src/renderer/features/plugins/components/skills/ActiveSkillBadge.tsx` | 当前活跃 Skill 标记                  |
 
 UI 交互流程：
 
-1. 用户通过 `SkillsButton` 或 `SkillsPopover` 打开技能管理
+1. 用户通过侧边栏进入 `PluginsView` 的 Skills 管理页
 2. UI 通过 IPC 调用 `skillRpcHandler.getSkillsStatus()` 获取当前 Skills 状态
 3. 用户启用/禁用 Skill → `skillRpcHandler.updateSkillConfig()` → Gateway RPC `skills.update`
 4. 用户安装新 Skill → `skillRpcHandler.installSkill()` → Gateway RPC `skills.install`
@@ -367,11 +365,9 @@ UI 交互流程：
 | `resources/builtin-skills.json`                       | 构建时 Skills 配置清单          |
 | `resources/skills/*/SKILL.md`                         | Skill 定义文档                  |
 | `scripts/install-openclaw-runtime.cjs`                | 构建脚本（Skills 部署步骤）     |
-| `src/renderer/components/skills/SkillsButton.tsx`     | Skills 触发按钮                 |
-| `src/renderer/components/skills/SkillsManager.tsx`    | Skills 管理面板                 |
-| `src/renderer/components/skills/SkillsPopover.tsx`    | Skills 弹出面板                 |
-| `src/renderer/components/skills/SkillsView.tsx`       | Skill 详情视图                  |
-| `src/renderer/components/skills/ActiveSkillBadge.tsx` | 活跃 Skill 标记                 |
+| `src/renderer/features/plugins/components/PluginsView.tsx`             | Plugins 页面入口                |
+| `src/renderer/features/plugins/components/skills/SkillsManager.tsx`    | Skills 管理面板                 |
+| `src/renderer/features/plugins/components/skills/ActiveSkillBadge.tsx` | 活跃 Skill 标记                 |
 
 ---
 

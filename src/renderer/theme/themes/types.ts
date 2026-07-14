@@ -1,4 +1,4 @@
-import type { TokenName } from '../tokens/contract';
+import type { TokenName } from '@/theme/tokens/contract';
 
 export interface ThemeMeta {
   id: string;

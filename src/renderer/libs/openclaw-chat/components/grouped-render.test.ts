@@ -5,7 +5,6 @@ vi.mock('./markdown', () => ({
   toStreamingMarkdownHtml: (text: string) => text,
 }));
 
-import type { MessageGroup } from '../types';
 import {
   formatGroupTimestamp,
   getGroupFooterLabel,
@@ -13,7 +12,8 @@ import {
   renderMessageGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
-} from './grouped-render';
+} from '@/libs/openclaw-chat/components/grouped-render';
+import type { MessageGroup } from '@/libs/openclaw-chat/types';
 
 function createThinkingToolsGroup(
   toolCount: number,

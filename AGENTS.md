@@ -150,8 +150,8 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 | Config sync                 | `src/main/openclaw/config/openclawConfigSync.ts`                                                                           |
 | Chat rendering              | `src/renderer/libs/openclaw-chat/` (pipeline architecture)                                                                 |
 | Markdown renderer           | `src/renderer/libs/openclaw-chat/components/markdown.ts`                                                                   |
-| Settings UI                 | `src/renderer/components/Settings.tsx`                                                                                     |
-| Permission UI               | `src/renderer/components/cowork/CoworkPermissionModal.tsx`                                                                 |
+| Settings UI                 | `src/renderer/features/settings/Settings.tsx`                                                                                     |
+| Permission UI               | `src/renderer/features/cowork/components/CoworkPermissionModal.tsx`                                                                 |
 | Cowork model API            | `src/main/cowork/coworkModelApi.ts`                                                                                        |
 | Provider API config         | `src/main/cowork/providerApiConfig.ts`                                                                                     |
 | MCP services                | `src/main/plugins/mcp/`                                                                                                    |
@@ -354,7 +354,7 @@ Skills are Gateway-managed. To modify bundled skills, update `resources/skills/<
 
 ### Adding a New Redux Slice
 
-1. Create `src/renderer/store/slices/yourSlice.ts` using `createSlice` from `@reduxjs/toolkit`
+1. Create `src/renderer/features/<feature>/<feature>Slice.ts` using `createSlice` from `@reduxjs/toolkit`
 2. Add to `configureStore` in `src/renderer/store/index.ts`
 3. Export selectors and actions
 4. Use `useSelector` / `useDispatch` with the typed `RootState` and `AppDispatch` from the store

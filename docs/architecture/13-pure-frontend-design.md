@@ -108,7 +108,7 @@ openclaw-chat/
 
 ### 5.2 React Wrapper
 
-**文件**: `src/renderer/components/cowork/JustDoChatWrapper.tsx`
+**文件**: `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`
 
 React 组件将 Lit 元素封装，管理 `ChatController`（直连 Gateway）的创建和生命周期：
 
@@ -144,7 +144,7 @@ Subagent 逻辑完全由 OpenClaw Gateway 负责：
 | `src/main/engine/rpc/skillRpc.ts`                            | Skill RPC + 标题生成（从 adapter 拆分） |
 | `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`  | Lit-based chat 自定义元素               |
 | `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts` | Chat 控制器（直连 Gateway）             |
-| `src/renderer/components/cowork/JustDoChatWrapper.tsx`       | Lit chat 的 React 包装器                |
+| `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`       | Lit chat 的 React 包装器                |
 
 ## 9. 验证方法
 

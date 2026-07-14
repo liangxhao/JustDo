@@ -1,8 +1,8 @@
 import { expect, test } from 'vitest';
 
-import type { ChatItem, MessageGroup } from '../types';
-import { buildChatItems } from './build-chat-items';
-import { extractToolCards } from './tool-cards';
+import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
+import { extractToolCards } from '@/libs/openclaw-chat/pipeline/tool-cards';
+import type { ChatItem, MessageGroup } from '@/libs/openclaw-chat/types';
 
 function groups(items: ReturnType<typeof buildChatItems>): MessageGroup[] {
   return items.filter((item): item is MessageGroup => item.kind === 'group');

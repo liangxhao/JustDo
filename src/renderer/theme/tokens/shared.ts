@@ -3,7 +3,7 @@
  *
  * Individual themes spread these and override only what differs.
  */
-import type { ThemeTokens } from '../themes/types';
+import type { ThemeTokens } from '@/theme/themes/types';
 
 export const SHARED_TOKENS: Pick<
   ThemeTokens,

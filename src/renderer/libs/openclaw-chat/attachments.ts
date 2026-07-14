@@ -4,7 +4,7 @@ import {
   toAttachmentDataUrl,
 } from '@shared/cowork/attachments';
 
-import type { GatewayContentBlock, MessageContentItem } from './types';
+import type { GatewayContentBlock, MessageContentItem } from '@/libs/openclaw-chat/types';
 
 export type RenderableAttachment = Extract<
   MessageContentItem,

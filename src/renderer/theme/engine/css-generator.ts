@@ -1,5 +1,5 @@
-import type { ThemeDefinition } from '../themes/types';
-import { TOKEN_CONTRACT, TOKEN_NAMES } from '../tokens/contract';
+import type { ThemeDefinition } from '@/theme/themes/types';
+import { TOKEN_CONTRACT, TOKEN_NAMES } from '@/theme/tokens/contract';
 
 /** Generate a single [data-theme="id"] block */
 export function generateThemeCSS(theme: ThemeDefinition): string {

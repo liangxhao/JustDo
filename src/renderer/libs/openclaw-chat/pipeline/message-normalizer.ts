@@ -2,18 +2,18 @@
  * Message normalization utilities for chat rendering.
  */
 
-import { stripInboundMetadata } from '../shims/backend-helpers';
-import { extractCanvasShortcodes } from '../shims/backend-helpers';
+import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
+import { extractCanvasShortcodes } from '@/libs/openclaw-chat/shims/backend-helpers';
 import {
   isToolCallContentType,
   isToolResultContentType,
   resolveToolBlockArgs,
-} from '../shims/backend-helpers';
-import { splitMediaFromOutput } from '../shims/backend-helpers';
-import { parseInlineDirectives } from '../shims/backend-helpers';
-import { mediaKindFromMime } from '../shims/media-core';
-import type { MessageContentItem, NormalizedMessage } from '../types';
-export { isToolResultMessage, normalizeRoleForGrouping } from './role-normalizer';
+} from '@/libs/openclaw-chat/shims/backend-helpers';
+import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
+import { parseInlineDirectives } from '@/libs/openclaw-chat/shims/backend-helpers';
+import { mediaKindFromMime } from '@/libs/openclaw-chat/shims/media-core';
+import type { MessageContentItem, NormalizedMessage } from '@/libs/openclaw-chat/types';
+export { isToolResultMessage, normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)

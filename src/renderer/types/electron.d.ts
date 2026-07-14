@@ -294,7 +294,7 @@ import type {
   ScheduledTaskStatusEvent,
 } from '@shared/scheduledTask/types';
 
-import type { Agent } from './agent';
+import type { Agent } from '@/features/agents/agentTypes';
 
 interface IElectronAPI {
   platform: string;

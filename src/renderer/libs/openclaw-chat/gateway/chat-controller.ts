@@ -18,9 +18,9 @@ import {
   toGatewayAttachment,
 } from '@shared/cowork/attachments';
 
-import { i18nService } from '../../../services/i18n';
-import { getTranscriptMedia, toAttachmentContentBlocks } from '../attachments';
-import type { GatewayClient, GatewayEventFrame, GatewayHelloOk } from './client';
+import { getTranscriptMedia, toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
+import type { GatewayClient, GatewayEventFrame, GatewayHelloOk } from '@/libs/openclaw-chat/gateway/client';
+import { i18nService } from '@/services/i18n';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

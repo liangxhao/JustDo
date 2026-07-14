@@ -1,19 +1,19 @@
 // Control UI chat module implements build chat items behavior.
-import { i18nService } from '../../../services/i18n';
-import type { ChatItem, MessageGroup, NormalizedMessage, ToolCard } from '../types';
-import type { ChatQueueItem } from '../types';
 import {
   isAssistantHeartbeatAckForDisplay,
   stripHeartbeatTokenForDisplay,
-} from './heartbeat-display';
-import { CHAT_HISTORY_RENDER_CHAR_BUDGET, CHAT_HISTORY_RENDER_LIMIT } from './history-limits';
-import { extractTextCached, extractThinkingCached } from './message-extract';
-import { normalizeMessage, stripMessageDisplayMetadataText } from './message-normalizer';
-import { normalizeRoleForGrouping } from './role-normalizer';
-import { messageMatchesSearchQuery } from './search-match';
-import { trimAccumulatedStreamPrefix } from './stream-text';
-import { extractToolCardsCached, extractToolPreview } from './tool-cards';
-import { buildUserChatMessageContentBlocks } from './user-message-content';
+} from '@/libs/openclaw-chat/pipeline/heartbeat-display';
+import { CHAT_HISTORY_RENDER_CHAR_BUDGET, CHAT_HISTORY_RENDER_LIMIT } from '@/libs/openclaw-chat/pipeline/history-limits';
+import { extractTextCached, extractThinkingCached } from '@/libs/openclaw-chat/pipeline/message-extract';
+import { normalizeMessage, stripMessageDisplayMetadataText } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
+import { messageMatchesSearchQuery } from '@/libs/openclaw-chat/pipeline/search-match';
+import { trimAccumulatedStreamPrefix } from '@/libs/openclaw-chat/pipeline/stream-text';
+import { extractToolCardsCached, extractToolPreview } from '@/libs/openclaw-chat/pipeline/tool-cards';
+import { buildUserChatMessageContentBlocks } from '@/libs/openclaw-chat/pipeline/user-message-content';
+import type { ChatItem, MessageGroup, NormalizedMessage, ToolCard } from '@/libs/openclaw-chat/types';
+import type { ChatQueueItem } from '@/libs/openclaw-chat/types';
+import { i18nService } from '@/services/i18n';
 
 export type BuildChatItemsProps = {
   sessionKey: string;

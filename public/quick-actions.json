@@ -3,8 +3,6 @@
   "actions": [
     {
       "id": "pptx",
-      "icon": "PresentationChartBarIcon",
-      "color": "#F59E0B",
       "skillMapping": "pptx",
       "prompts": [
         {
@@ -23,8 +21,6 @@
     },
     {
       "id": "data-analysis",
-      "icon": "ChartBarIcon",
-      "color": "#8B5CF6",
       "skillMapping": "xlsx",
       "prompts": [
         {
@@ -43,8 +39,6 @@
     },
     {
       "id": "education",
-      "icon": "AcademicCapIcon",
-      "color": "#10B981",
       "skillMapping": "frontend-design",
       "prompts": [
         {
@@ -63,8 +57,6 @@
     },
     {
       "id": "website",
-      "icon": "GlobeAltIcon",
-      "color": "#3B82F6",
       "skillMapping": "frontend-design",
       "prompts": [
         {

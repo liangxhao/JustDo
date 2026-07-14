@@ -1,0 +1,553 @@
+import { useDraggable } from '@dnd-kit/core';
+import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+
+import type { CoworkSessionStatus, CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
+import { i18nService } from '@/services/i18n';
+import Modal from '@/shared/components/common/Modal';
+import ListChecksIcon from '@/shared/components/icons/ListChecksIcon';
+import PencilSquareIcon from '@/shared/components/icons/PencilSquareIcon';
+import TrashIcon from '@/shared/components/icons/TrashIcon';
+import Tooltip from '@/shared/components/ui/Tooltip';
+
+interface CoworkSessionItemProps {
+  session: CoworkSessionSummary;
+  hasUnread: boolean;
+  isActive: boolean;
+  isRuntimeRunning?: boolean;
+  isBatchMode: boolean;
+  isSelected: boolean;
+  showBatchOption?: boolean;
+  groups?: SessionGroup[];
+  onSelect: () => void;
+  onDelete: () => void;
+  onRename: (title: string) => void;
+  onToggleSelection: () => void;
+  onEnterBatchMode: () => void;
+  onMoveToGroup?: (groupId: string | null) => void;
+}
+
+const statusLabels: Record<CoworkSessionStatus, string> = {
+  idle: 'coworkStatusIdle',
+  running: 'coworkStatusRunning',
+  completed: 'coworkStatusCompleted',
+  error: 'coworkStatusError',
+};
+
+const formatRelativeTime = (timestamp: number): { compact: string; full: string } => {
+  const now = Date.now();
+  const diff = now - timestamp;
+
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) {
+    return {
+      compact: 'now',
+      full: i18nService.t('justNow'),
+    };
+  } else if (minutes < 60) {
+    return {
+      compact: `${minutes}m`,
+      full: `${minutes} ${i18nService.t('minutesAgo')}`,
+    };
+  } else if (hours < 24) {
+    return {
+      compact: `${hours}h`,
+      full: `${hours} ${i18nService.t('hoursAgo')}`,
+    };
+  } else if (days === 1) {
+    return {
+      compact: '1d',
+      full: i18nService.t('yesterday'),
+    };
+  } else {
+    return {
+      compact: `${days}d`,
+      full: `${days} ${i18nService.t('daysAgo')}`,
+    };
+  }
+};
+
+const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
+  session,
+  hasUnread,
+  isActive,
+  isRuntimeRunning = false,
+  isBatchMode,
+  isSelected,
+  showBatchOption = true,
+  groups = [],
+  onSelect,
+  onDelete,
+  onRename,
+  onToggleSelection,
+  onEnterBatchMode,
+  onMoveToGroup,
+}) => {
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(session.title);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [showGroupSubMenu, setShowGroupSubMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const ignoreNextBlurRef = useRef(false);
+  const closeSubMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const openSubMenu = () => {
+    if (closeSubMenuTimerRef.current) {
+      clearTimeout(closeSubMenuTimerRef.current);
+      closeSubMenuTimerRef.current = null;
+    }
+    setShowGroupSubMenu(true);
+  };
+
+  const closeSubMenu = () => {
+    closeSubMenuTimerRef.current = setTimeout(() => {
+      setShowGroupSubMenu(false);
+    }, 100);
+  };
+
+  // Draggable setup
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: session.id,
+    data: { session },
+  });
+
+  useEffect(() => {
+    if (!isRenaming) {
+      setRenameValue(session.title);
+      ignoreNextBlurRef.current = false;
+    }
+  }, [isRenaming, session.title]);
+
+  const calculateMenuPosition = (clickX: number, clickY: number, height: number) => {
+    const menuWidth = 180;
+    const padding = 8;
+    const x = Math.min(Math.max(padding, clickX), window.innerWidth - menuWidth - padding);
+    const y = Math.min(clickY + 4, window.innerHeight - height - padding);
+    return { x, y };
+  };
+
+  const openMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isRenaming) return;
+    if (menuPosition) {
+      closeMenu();
+      return;
+    }
+    const menuHeight = showBatchOption ? 120 : 92;
+    const position = calculateMenuPosition(e.clientX, e.clientY, menuHeight);
+    if (position) {
+      setMenuPosition(position);
+    }
+    setShowConfirmDelete(false);
+  };
+
+  const closeMenu = () => {
+    setMenuPosition(null);
+    setShowConfirmDelete(false);
+    setShowGroupSubMenu(false);
+    if (closeSubMenuTimerRef.current) {
+      clearTimeout(closeSubMenuTimerRef.current);
+      closeSubMenuTimerRef.current = null;
+    }
+  };
+
+  const handleRenameClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    ignoreNextBlurRef.current = false;
+    setIsRenaming(true);
+    setShowConfirmDelete(false);
+    setRenameValue(session.title);
+    setMenuPosition(null);
+  };
+
+  const handleRenameSave = (e?: React.SyntheticEvent) => {
+    e?.stopPropagation();
+    ignoreNextBlurRef.current = true;
+    const nextTitle = renameValue.trim();
+    if (nextTitle && nextTitle !== session.title) {
+      onRename(nextTitle);
+    }
+    setIsRenaming(false);
+  };
+
+  const handleRenameCancel = (e?: React.MouseEvent | React.KeyboardEvent) => {
+    e?.stopPropagation();
+    ignoreNextBlurRef.current = true;
+    setRenameValue(session.title);
+    setIsRenaming(false);
+  };
+
+  const handleRenameBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+    if (ignoreNextBlurRef.current) {
+      ignoreNextBlurRef.current = false;
+      return;
+    }
+    handleRenameSave(event);
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowConfirmDelete(true);
+    setMenuPosition(null);
+  };
+
+  const handleConfirmDelete = () => {
+    onDelete();
+    setShowConfirmDelete(false);
+  };
+
+  const handleCancelDelete = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setShowConfirmDelete(false);
+  };
+
+  const handleBatchClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    closeMenu();
+    onEnterBatchMode();
+  };
+
+  useEffect(() => {
+    if (!menuPosition) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target)) {
+        closeMenu();
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu();
+      }
+    };
+    const handleScroll = () => closeMenu();
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', handleScroll);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', handleScroll);
+    };
+  }, [menuPosition]);
+
+  useEffect(() => {
+    if (!menuPosition) return;
+    const menuHeight = showConfirmDelete ? 90 : showBatchOption ? 120 : 92;
+    // 仅在显示删除确认时调整位置
+    if (showConfirmDelete) {
+      const position = calculateMenuPosition(menuPosition.x, menuPosition.y - 4, menuHeight);
+      if (position && (position.x !== menuPosition.x || position.y !== menuPosition.y)) {
+        setMenuPosition(position);
+      }
+    }
+  }, [menuPosition, showConfirmDelete]);
+
+  useEffect(() => {
+    if (!isRenaming) return;
+    requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+  }, [isRenaming]);
+
+  const renameLabel = i18nService.t('renameConversation');
+  const deleteLabel = i18nService.t('deleteSession');
+  const relativeTime = formatRelativeTime(session.updatedAt);
+  const showRunningIndicator = isRuntimeRunning;
+  const showUnreadIndicator = !showRunningIndicator && hasUnread;
+  const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
+  const batchLabel = i18nService.t('batchOperations');
+  const moveToGroupLabel = i18nService.t('moveToGroup');
+
+  interface MenuItem {
+    key: string;
+    label: string;
+    onClick: (e: React.MouseEvent) => void;
+    onMouseEnter?: () => void;
+    tone: 'neutral' | 'danger';
+    isCheckbox?: boolean;
+    checked?: boolean;
+  }
+
+  const menuItems = useMemo(() => {
+    const items: MenuItem[] = [
+      { key: 'rename', label: renameLabel, onClick: handleRenameClick, tone: 'neutral' as const },
+      { key: 'delete', label: deleteLabel, onClick: handleDeleteClick, tone: 'danger' as const },
+    ];
+    if (showBatchOption) {
+      items.unshift({
+        key: 'batch',
+        label: batchLabel,
+        onClick: handleBatchClick,
+        tone: 'neutral' as const,
+      });
+    }
+    if (onMoveToGroup && groups.length > 0) {
+      items.push({
+        key: 'moveToGroup',
+        label: moveToGroupLabel,
+        onClick: (e: React.MouseEvent) => {
+          e.stopPropagation();
+        },
+        onMouseEnter: openSubMenu,
+        tone: 'neutral' as const,
+      });
+    }
+    return items;
+  }, [
+    batchLabel,
+    deleteLabel,
+    handleBatchClick,
+    handleDeleteClick,
+    handleRenameClick,
+    renameLabel,
+    showBatchOption,
+    onMoveToGroup,
+    groups.length,
+    moveToGroupLabel,
+  ]);
+
+  const handleMoveToGroup = (groupId: string | null) => {
+    if (onMoveToGroup) {
+      onMoveToGroup(groupId);
+    }
+    closeMenu();
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      style={{ opacity: isDragging ? 0.5 : 1 }}
+      onContextMenu={!isBatchMode && !isRenaming ? openMenu : undefined}
+      onClick={() => {
+        if (isRenaming) return;
+        closeMenu();
+        if (isBatchMode) {
+          onToggleSelection();
+          return;
+        }
+        onSelect();
+      }}
+      className={`group relative pl-5 pr-2 py-1 rounded-lg cursor-pointer transition-all duration-150 ${
+        isActive
+          ? 'bg-black/[0.06] dark:bg-white/[0.08]'
+          : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'
+      }`}
+    >
+      {/* Content area */}
+      <div className="flex items-start">
+        {isBatchMode && (
+          <div className="flex items-center mr-2 mt-0.5 flex-shrink-0">
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={e => {
+                e.stopPropagation();
+                onToggleSelection();
+              }}
+              onClick={e => e.stopPropagation()}
+              className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 accent-primary cursor-pointer"
+            />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className={`flex items-center mb-0.5 ${showStatusIndicator ? 'gap-2' : 'gap-0'}`}>
+            {/* Status indicator */}
+            {showStatusIndicator && (
+              <span
+                className={`block w-2 h-2 rounded-full flex-shrink-0 ${
+                  showRunningIndicator
+                    ? 'bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse'
+                    : 'bg-primary'
+                }`}
+                title={
+                  showRunningIndicator ? i18nService.t(statusLabels.running) : undefined
+                }
+              />
+            )}
+            {isRenaming ? (
+              <input
+                ref={renameInputRef}
+                value={renameValue}
+                onChange={event => setRenameValue(event.target.value)}
+                onClick={event => event.stopPropagation()}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    handleRenameSave(event);
+                  }
+                  if (event.key === 'Escape') {
+                    handleRenameCancel(event);
+                  }
+                }}
+                onBlur={handleRenameBlur}
+                className="flex-1 min-w-0 rounded-lg border border-border bg-background px-2 py-1 text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            ) : (
+              <div className="flex-1 min-w-0 flex items-center gap-1">
+                <Tooltip
+                  content={session.title}
+                  position="top"
+                  delay={500}
+                  className="flex-1 min-w-0"
+                >
+                  <h3 className="text-xs font-medium text-foreground truncate">{session.title}</h3>
+                </Tooltip>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center text-[9px] text-secondary">
+            <span className="whitespace-nowrap" title={relativeTime.full}>
+              {relativeTime.compact}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {menuPosition && (
+        <div
+          ref={menuRef}
+          className="fixed z-50 min-w-[160px] rounded-xl border border-border bg-surface shadow-lg overflow-hidden"
+          style={{ top: menuPosition.y, left: menuPosition.x }}
+          role="menu"
+        >
+          {menuItems.map(item => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={item.onClick}
+              onMouseEnter={item.onMouseEnter}
+              className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                item.tone === 'danger'
+                  ? 'text-red-500 hover:bg-red-500/10'
+                  : 'text-foreground hover:bg-surface-raised'
+              }`}
+            >
+              {item.key === 'batch' && <ListChecksIcon className="h-4 w-4" />}
+              {item.key === 'rename' && <PencilSquareIcon className="h-4 w-4" />}
+              {item.key === 'delete' && <TrashIcon className="h-4 w-4" />}
+              {item.key === 'moveToGroup' && (
+                <span className="h-4 w-4 flex items-center justify-center">→</span>
+              )}
+              {item.isCheckbox && (
+                <span className="h-4 w-4 flex items-center justify-center">
+                  {item.checked ? (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      className="h-4 w-4"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" className="fill-primary stroke-primary" />
+                      <path d="M9 12l2 2 4-4" stroke="white" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      className="h-4 w-4"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                    </svg>
+                  )}
+                </span>
+              )}
+              {item.label}
+              {item.key === 'moveToGroup' && (
+                <span className="ml-auto">{showGroupSubMenu ? '▼' : '▶'}</span>
+              )}
+            </button>
+          ))}
+          {/* Group submenu */}
+          {showGroupSubMenu && onMoveToGroup && (
+            <div
+              className="border-t border-border pl-5"
+              onMouseEnter={openSubMenu}
+              onMouseLeave={closeSubMenu}
+            >
+              {/* Ungrouped option */}
+              {session.groupId && (
+                <button
+                  type="button"
+                  onClick={() => handleMoveToGroup(null)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-surface-raised"
+                >
+                  {i18nService.t('ungrouped')}
+                </button>
+              )}
+              {groups.map(group => (
+                <button
+                  key={group.id}
+                  type="button"
+                  onClick={() => handleMoveToGroup(group.id)}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                    session.groupId === group.id
+                      ? 'bg-surface-raised text-secondary'
+                      : 'text-foreground hover:bg-surface-raised'
+                  }`}
+                >
+                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: group.color }} />
+                  {group.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showConfirmDelete && (
+        <Modal
+          onClose={handleCancelDelete}
+          className="w-full max-w-sm mx-4 bg-surface rounded-2xl shadow-xl overflow-hidden"
+        >
+          {/* Header */}
+          <div className="flex items-center gap-3 px-5 py-4">
+            <div className="p-2 rounded-full bg-red-100 dark:bg-red-900/30">
+              <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-500" />
+            </div>
+            <h2 className="text-base font-semibold text-foreground">
+              {i18nService.t('deleteTaskConfirmTitle')}
+            </h2>
+          </div>
+
+          {/* Content */}
+          <div className="px-5 pb-4">
+            <p className="text-sm text-secondary">{i18nService.t('deleteTaskConfirmMessage')}</p>
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-border">
+            <button
+              onClick={handleCancelDelete}
+              className="px-4 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+            >
+              {i18nService.t('cancel')}
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              className="px-4 py-2 text-sm font-medium rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors"
+            >
+              {i18nService.t('deleteSession')}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+export default CoworkSessionItem;

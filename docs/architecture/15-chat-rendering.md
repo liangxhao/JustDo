@@ -280,7 +280,7 @@ Gateway → tool permission request → IPC → React CoworkPermissionModal → 
 
 ### 7.1 JustDoChatWrapper
 
-**文件**：`src/renderer/components/cowork/JustDoChatWrapper.tsx`
+**文件**：`src/renderer/features/cowork/components/JustDoChatWrapper.tsx`
 
 React 与 Lit 之间的桥梁组件：
 
@@ -300,7 +300,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
 ### 7.2 ChatMessageDisplay
 
-**文件**：`src/renderer/components/cowork/ChatMessageDisplay.tsx`
+**文件**：`src/renderer/features/cowork/components/ChatMessageDisplay.tsx`
 
 纯 React 版本的聊天消息显示组件，作为 `<justdo-chat>` 不可用时的回退方案。
 
@@ -354,8 +354,8 @@ ChatController.handleEvent()
 | `src/renderer/libs/openclaw-chat/pipeline/text-direction.ts` | 文本方向检测 |
 | `src/renderer/libs/openclaw-chat/pipeline/user-message-content.ts` | 用户消息内容构建 |
 | `src/renderer/libs/openclaw-chat/types.ts` | Lit 聊天系统类型定义 |
-| `src/renderer/components/cowork/JustDoChatWrapper.tsx` | React ↔ Lit 桥接组件 |
-| `src/renderer/components/cowork/ChatMessageDisplay.tsx` | 回退 React 消息组件 |
+| `src/renderer/features/cowork/components/JustDoChatWrapper.tsx` | React ↔ Lit 桥接组件 |
+| `src/renderer/features/cowork/components/ChatMessageDisplay.tsx` | 回退 React 消息组件 |
 
 ## 10. 版本信息
 

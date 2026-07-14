@@ -1,5 +1,5 @@
-import { CONFIG_KEYS } from '../config';
-import { localStore } from './store';
+import { CONFIG_KEYS } from '@/app/config';
+import { localStore } from '@/services/store';
 
 const EXPORT_KEY_BYTES = 32;
 const AES_GCM_IV_BYTES = 12;

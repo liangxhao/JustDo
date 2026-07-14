@@ -930,7 +930,7 @@ function emitStreamMessageUpdate(sessionId: string, update: MessageUpdate) {
 ### 4.2 Renderer 监听
 
 ```typescript
-// src/renderer/services/cowork.ts
+// src/renderer/features/cowork/coworkService.ts
 export function setupStreamListeners(dispatch: Dispatch) {
   window.electron.cowork.onStreamMessage(msg => {
     dispatch(coworkSlice.actions.addMessage(msg));

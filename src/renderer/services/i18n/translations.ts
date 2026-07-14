@@ -1,4 +1,4 @@
-import type { LanguageType } from '../i18n';
+import type { LanguageType } from '@/services/i18n';
 
 // 语言文本映射
 export const translations: Record<LanguageType, Record<string, string>> = {

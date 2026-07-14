@@ -10,9 +10,9 @@
 
 import { parseCoworkAttachments } from '@shared/cowork/attachments';
 
-import type { CoworkMessage } from '../../../types/cowork';
-import { toAttachmentContentBlocks } from '../attachments';
-import type { GatewayContentBlock, GatewayMessage } from '../types';
+import type { CoworkMessage } from '@/features/cowork/coworkTypes';
+import { toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
+import type { GatewayContentBlock, GatewayMessage } from '@/libs/openclaw-chat/types';
 
 /**
  * Convert a single CoworkMessage to a GatewayMessage.

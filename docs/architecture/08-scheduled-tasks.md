@@ -685,11 +685,11 @@ Gateway → User: 投递提醒消息
 | `src/main/ipc/scheduledTask/helpers.ts`                      | 辅助函数 (通道列表)                                                  |
 | `src/main/ipc/scheduledTask/cronJobServiceManager.ts`        | CronJobService 管理器                                                |
 | `src/main/ipc/scheduledTask/index.ts`                        | Handler 导出入口                                                     |
-| `src/renderer/services/scheduledTask.ts`                     | Renderer IPC 封装                                                    |
-| `src/renderer/components/scheduledTasks/CronView.tsx`        | 任务主视图（含 TaskForm, TaskList）                                  |
-| `src/renderer/components/scheduledTasks/TaskRunHistory.tsx`  | 任务运行历史                                                         |
-| `src/renderer/components/scheduledTasks/RunSessionModal.tsx` | 运行结果会话 Modal                                                   |
-| `src/renderer/components/scheduledTasks/utils.ts`            | UI 工具函数                                                          |
+| `src/renderer/features/scheduled-tasks/scheduledTaskService.ts`                     | Renderer IPC 封装                                                    |
+| `src/renderer/features/scheduled-tasks/components/CronView.tsx`        | 任务主视图（含 TaskForm, TaskList）                                  |
+| `src/renderer/features/scheduled-tasks/components/TaskRunHistory.tsx`  | 任务运行历史                                                         |
+| `src/renderer/features/scheduled-tasks/components/RunSessionModal.tsx` | 运行结果会话 Modal                                                   |
+| `src/renderer/features/scheduled-tasks/components/utils.ts`            | UI 工具函数                                                          |
 
 ---
 

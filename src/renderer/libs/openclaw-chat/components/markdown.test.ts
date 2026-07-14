@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { md } from './markdown';
+import { md } from '@/libs/openclaw-chat/components/markdown';
 
 describe('LaTeX Markdown formulas', () => {
   test('renders inline formulas with KaTeX', () => {

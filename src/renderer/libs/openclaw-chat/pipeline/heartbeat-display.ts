@@ -2,7 +2,7 @@
  * Heartbeat display behavior.
  * Copied from OpenClaw ui/src/ui/chat/heartbeat-display.ts
  */
-import { normalizeLowercaseStringOrEmpty } from '../shims/normalization-core';
+import { normalizeLowercaseStringOrEmpty } from '@/libs/openclaw-chat/shims/normalization-core';
 
 const HEARTBEAT_TOKEN = 'HEARTBEAT_OK';
 const DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300;

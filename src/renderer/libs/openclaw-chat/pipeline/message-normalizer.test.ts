@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { normalizeMessage } from './message-normalizer';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 
 describe('normalizeMessage image content', () => {
   test('normalizes OpenClaw base64 image blocks in user messages', () => {

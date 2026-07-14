@@ -1,8 +1,8 @@
 import { writeFileSync } from 'fs';
 import { resolve } from 'path';
 
-import { generateAllThemesCSS } from '../engine/css-generator';
-import { allThemes } from '../themes/index';
+import { generateAllThemesCSS } from '@/theme/engine/css-generator';
+import { allThemes } from '@/theme/themes';
 
 const css = generateAllThemesCSS(allThemes);
 const outPath = resolve(__dirname, '..', 'css', 'themes.css');

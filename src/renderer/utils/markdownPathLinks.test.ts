@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 
-import { matchAutoLinkPathPrefix } from './markdownPathLinks';
+import { matchAutoLinkPathPrefix } from '@/utils/markdownPathLinks';
 
 test('does not treat URL authority and path as a local POSIX path', () => {
   expect(matchAutoLinkPathPrefix('//example.com/docs/start')).toBeNull();
