@@ -9,13 +9,6 @@ interface ApiResponse {
   error?: string;
 }
 
-interface ApiStreamResponse {
-  ok: boolean;
-  status: number;
-  statusText: string;
-  error?: string;
-}
-
 // Cowork types for IPC
 interface CoworkSession {
   id: string;
@@ -404,18 +397,6 @@ interface IElectronAPI {
       headers: Record<string, string>;
       body?: string;
     }) => Promise<ApiResponse>;
-    stream: (options: {
-      url: string;
-      method: string;
-      headers: Record<string, string>;
-      body?: string;
-      requestId: string;
-    }) => Promise<ApiStreamResponse>;
-    cancelStream: (requestId: string) => Promise<boolean>;
-    onStreamData: (requestId: string, callback: (chunk: string) => void) => () => void;
-    onStreamDone: (requestId: string, callback: () => void) => () => void;
-    onStreamError: (requestId: string, callback: (error: string) => void) => () => void;
-    onStreamAbort: (requestId: string, callback: () => void) => () => void;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;
   checkApiConfig: (options?: {

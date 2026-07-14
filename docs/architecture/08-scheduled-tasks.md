@@ -382,7 +382,7 @@ export class TaskModelMapper {
 
 ### 6.1 Handler 注册
 
-**文件**: `src/main/ipcHandlers/scheduledTask/handlers.ts`
+**文件**: `src/main/ipc/scheduledTask/handlers.ts`
 
 IPC Handlers 在 Main Process 启动时注册：
 
@@ -475,7 +475,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
 
 ### 6.2 Handler 管理
 
-**文件**: `src/main/ipcHandlers/scheduledTask/index.ts` — 导出入口
+**文件**: `src/main/ipc/scheduledTask/index.ts` — 导出入口
 
 ```typescript
 export type { CronJobServiceDeps } from './cronJobServiceManager';
@@ -673,10 +673,10 @@ Gateway → User: 投递提醒消息
 | `src/scheduledTask/policies/coworkPolicy.ts` | Cowork 创建策略 |
 | `src/scheduledTask/policies/legacyPolicy.ts` | 任务兼容策略 |
 | `src/scheduledTask/policies/registry.ts` | 策略注册表 |
-| `src/main/ipcHandlers/scheduledTask/handlers.ts` | IPC Handler 实现 |
-| `src/main/ipcHandlers/scheduledTask/helpers.ts` | 辅助函数 (通道列表) |
-| `src/main/ipcHandlers/scheduledTask/cronJobServiceManager.ts` | CronJobService 管理器 |
-| `src/main/ipcHandlers/scheduledTask/index.ts` | Handler 导出入口 |
+| `src/main/ipc/scheduledTask/handlers.ts` | IPC Handler 实现 |
+| `src/main/ipc/scheduledTask/helpers.ts` | 辅助函数 (通道列表) |
+| `src/main/ipc/scheduledTask/cronJobServiceManager.ts` | CronJobService 管理器 |
+| `src/main/ipc/scheduledTask/index.ts` | Handler 导出入口 |
 | `src/renderer/services/scheduledTask.ts` | Renderer IPC 封装 |
 | `src/renderer/components/scheduledTasks/CronView.tsx` | 任务主视图（含 TaskForm, TaskList） |
 | `src/renderer/components/scheduledTasks/TaskRunHistory.tsx` | 任务运行历史 |

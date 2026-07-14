@@ -32,7 +32,7 @@ import {
   registerShellHandlers,
   registerStoreHandlers,
   registerWindowHandlers,
-} from './ipcHandlers/app';
+} from './ipc/app';
 import {
   registerAgentHandlers,
   registerCoworkConfigHandlers,
@@ -44,20 +44,20 @@ import {
   registerCoworkUtilityHandlers,
   registerDefaultModelHandlers,
   registerSessionGroupHandlers,
-} from './ipcHandlers/cowork';
-import { registerApiProxyHandlers, registerMcpHandlers } from './ipcHandlers/integrations';
+} from './ipc/cowork';
 import {
   registerHookHandlers,
+  registerMcpHandlers,
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
   registerSkillHandlers,
   registerSlashCommandHandlers,
-} from './ipcHandlers/openclaw';
+} from './ipc/openclaw';
 import {
   getCronJobService,
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
-} from './ipcHandlers/scheduledTask';
+} from './ipc/scheduledTask';
 import { CoworkEngineService } from './libs/agentEngine';
 import { bindCoworkRuntimeForwarder } from './libs/agentEngine/coworkRuntimeForwarder';
 import { syncBuiltinModelProvider } from './libs/cowork/builtinModelProvider';
@@ -759,8 +759,6 @@ if (!gotTheLock) {
   registerLocalFileHandlers();
 
   registerShellHandlers();
-
-  registerApiProxyHandlers();
 
   // 创建主窗口
   const createWindow = () => {

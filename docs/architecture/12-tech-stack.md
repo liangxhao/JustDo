@@ -368,7 +368,7 @@ JustDo/
 │   │   ├── core/             # 核心应用工具
 │   │   ├── data/             # 数据层 (sqliteStore.ts)
 │   │   ├── features/         # 功能管理
-│   │   ├── ipcHandlers/      # IPC 处理模块
+│   │   ├── ipc/      # IPC 模块
 │   │   └── libs/             # 领域分组库 (agentEngine/cowork/infra/mcp/openclaw)
 │   │
 │   ├── renderer/             # React UI + Lit chat

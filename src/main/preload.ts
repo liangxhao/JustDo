@@ -72,46 +72,6 @@ contextBridge.exposeInMainWorld('electron', {
       headers: Record<string, string>;
       body?: string;
     }) => ipcRenderer.invoke('api:fetch', options),
-
-    // 流式 API 请求
-    stream: (options: {
-      url: string;
-      method: string;
-      headers: Record<string, string>;
-      body?: string;
-      requestId: string;
-    }) => ipcRenderer.invoke('api:stream', options),
-
-    // 取消流式请求
-    cancelStream: (requestId: string) => ipcRenderer.invoke('api:stream:cancel', requestId),
-
-    // 监听流式数据
-    onStreamData: (requestId: string, callback: (chunk: string) => void) => {
-      const handler = (_event: any, chunk: string) => callback(chunk);
-      ipcRenderer.on(`api:stream:${requestId}:data`, handler);
-      return () => ipcRenderer.removeListener(`api:stream:${requestId}:data`, handler);
-    },
-
-    // 监听流式完成
-    onStreamDone: (requestId: string, callback: () => void) => {
-      const handler = () => callback();
-      ipcRenderer.on(`api:stream:${requestId}:done`, handler);
-      return () => ipcRenderer.removeListener(`api:stream:${requestId}:done`, handler);
-    },
-
-    // 监听流式错误
-    onStreamError: (requestId: string, callback: (error: string) => void) => {
-      const handler = (_event: any, error: string) => callback(error);
-      ipcRenderer.on(`api:stream:${requestId}:error`, handler);
-      return () => ipcRenderer.removeListener(`api:stream:${requestId}:error`, handler);
-    },
-
-    // 监听流式取消
-    onStreamAbort: (requestId: string, callback: () => void) => {
-      const handler = () => callback();
-      ipcRenderer.on(`api:stream:${requestId}:abort`, handler);
-      return () => ipcRenderer.removeListener(`api:stream:${requestId}:abort`, handler);
-    },
   },
   ipcRenderer: {
     send: (channel: string, ...args: any[]) => {

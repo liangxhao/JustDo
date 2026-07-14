@@ -75,7 +75,7 @@ Strict process isolation: **Main** (IPC, SQLite, engine) ↔ **Preload** (contex
 |-----------|---------|
 | `core/` | App constants, logger, tray manager, auto-launch |
 | `data/` | SQLite database wrapper (`sqliteStore.ts`) |
-| `ipcHandlers/` | IPC handler modules (scheduled task handlers) |
+| `ipc/` | IPC modules (scheduled task handlers) |
 | `libs/` | Domain-organized business logic (see below) |
 
 Top-level files: `main.ts` (entry), `preload.ts` (contextBridge), `coworkStore.ts` (session CRUD), `groupStore.ts` (session groups), `mcpStore.ts` (MCP config), `i18n.ts` (main-process translations).
@@ -155,7 +155,7 @@ Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state querie
 | Provider API config | `src/main/libs/cowork/providerApiConfig.ts` |
 | MCP server manager | `src/main/libs/mcp/mcpServerManager.ts` |
 | Command safety | `src/main/libs/infra/commandSafety.ts` |
-| Scheduled task engine | `src/scheduledTask/cronJobService.ts`, `src/scheduledTask/policies/`, `src/main/ipcHandlers/scheduledTask/cronJobServiceManager.ts` |
+| Scheduled task engine | `src/scheduledTask/cronJobService.ts`, `src/scheduledTask/policies/`, `src/main/ipc/scheduledTask/cronJobServiceManager.ts` |
 | Local Skill file operations | `src/main/libs/openclaw/skills/openclawSkillFiles.ts` |
 | Session groups | `src/main/groupStore.ts` |
 | MCP store | `src/main/mcpStore.ts` |
@@ -347,7 +347,7 @@ Skills are Gateway-managed. To modify bundled skills, update `resources/skills/<
 ### Adding a New IPC Channel
 
 1. Define the channel name and parameter types
-2. Add handler in `src/main/` (register in `main.ts` or an `ipcHandlers/` submodule)
+2. Add handler in `src/main/` (register in `main.ts` or an `ipc/` submodule)
 3. Expose via `contextBridge` in `src/main/preload.ts`
 4. Call from renderer via `window.electronAPI.yourMethod()`
 

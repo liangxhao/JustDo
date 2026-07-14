@@ -234,7 +234,7 @@ src/main/
 ├── data/                            # 数据层
 │   └── sqliteStore.ts               # SQLite 数据库封装
 ├── features/                        # 功能管理
-├── ipcHandlers/                     # IPC 处理模块
+├── ipc/                     # IPC 模块
 │   └── scheduledTask/               # 定时任务 IPC
 └── libs/                            # 领域分组的业务逻辑库
     ├── agentEngine/                 # Agent 引擎路由层
