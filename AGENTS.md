@@ -1,379 +1,217 @@
 # AGENTS.md
 
-Guidance for AI coding agents working with this repository — a README for agents.
+Compact guidance for AI coding agents working in this repo. Keep this file
+accurate and dense; detailed design belongs in `docs/architecture/`.
 
-## Project Overview
+## Project Facts
 
-JustDo is a **24/7 personal AI assistant** desktop application. It's an Electron + React app where AI agents actually execute tasks (not just suggest them). Core capabilities: real task execution, local-first SQLite storage, 15 bundled skills, scheduled tasks via OpenClaw cron engine, and IM remote control.
+JustDo is a local-first Electron + React desktop assistant. Agents execute real
+tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 
-- **Version**: 2026.7.3 | **Electron**: 42.6.0 | **OpenClaw**: v2026.6.11
-- **Engine**: Node.js >=24 <25 (see `.nvmrc`)
-- **Package manager**: npm
-- **License**: MIT
+- App: `v2026.7.6`
+- Electron: `42.6.0`
+- OpenClaw: `v2026.6.11`
+- Node: `>=24 <25` (`.nvmrc`)
+- Package manager: npm
+- Dev server port: `4175`
+- License: MIT
 
-## Dev Environment Setup
-
-```bash
-# Prerequisites
-nvm use 24              # or Node.js >=24 <25
-npm install             # install all dependencies (engine-strict enabled)
-
-# Run the app in development
-npm run electron:dev              # Vite dev server + Electron (hot reload, port 5175)
-npm run electron:dev:openclaw     # Dev with OpenClaw engine enabled
-
-# Rebuild native modules after dependency changes
-npm run rebuild-native
-```
-
-Windows builds additionally require PortableGit and a Python runtime — see `scripts/setup-mingit.js` and `scripts/setup-python-runtime.js`. These are bundled automatically in production builds but must be set up manually for dev on Windows.
-
-## Build Commands
+## Commands
 
 ```bash
-npm run dev               # Vite dev server only (no Electron)
-npm run build             # Full build: tsc type-check + vite bundle
-npm run lint              # ESLint on src/ (flat config: eslint.config.mjs)
-npm run format            # Prettier write (single quotes, semicolons, trailing commas)
-npm test                  # Vitest run (rebuilds better-sqlite3 first via pretest)
-npm run pack              # Build + electron-builder --dir (unpacked, fast local verify)
-npm run dist              # Build + full platform installer
-npm run dist:win           # Windows installer (NSIS .exe)
-npm run dist:mac           # macOS DMG (signed + notarized)
-npm run dist:linux         # Linux AppImage + deb
+nvm use 24
+npm install
+npm run dev                    # Vite only
+npm run electron:dev           # Compile main + launch Electron
+npm run electron:dev:openclaw  # Prepare host OpenClaw runtime + launch
+npm run rebuild:electron-native
+
+npm run lint
+npm run build
+npm run compile:electron
+npm test                       # pretest rebuilds better-sqlite3
+npm run format:check
+npm run pack
+npm run dist
+npm run dist:win
+npm run dist:mac
+npm run dist:linux
 ```
 
-### Build Verification (CI)
+Before non-trivial pushes, prefer `npm run lint && npm run build && npm test`.
+For docs-only changes, run `git diff --check`.
 
-Before pushing, CI runs these stages (see `.github/workflows/ci.yml`):
-
-1. **lint** — ESLint on changed files
-2. **build-renderer** — `npm run build`
-3. **build-main** — Verify `dist-electron/` compiles
-4. **build-skills** — Verify skill assets
-5. **test** — Vitest suite
-
-Run `npm run lint && npm run build && npm test` locally before pushing to catch CI failures early.
+Windows packaging uses bundled PortableGit/Python runtime assets via
+`scripts/setup-mingit.js` and `scripts/setup-python-runtime.js`.
 
 ## Architecture
 
-Strict process isolation: **Main** (IPC, SQLite, engine) ↔ **Preload** (contextBridge) ↔ **Renderer** (React + Redux + Lit).
-
-| Layer        | Path                  | Purpose                                                  |
-| ------------ | --------------------- | -------------------------------------------------------- |
-| Main process | `src/main/`           | Electron main, IPC handlers, engine lifecycle, SQLite    |
-| Preload      | `src/main/preload.ts` | contextBridge — the ONLY API surface exposed to renderer |
-| Renderer     | `src/renderer/`       | React UI with Redux Toolkit (8 slices)                   |
-| Shared       | `src/shared/`         | Domain-organized shared cross-process contracts          |
-
-### Main Process Organization
-
-`src/main/` is organized by function:
-
-| Directory    | Purpose                                                                                       |
-| ------------ | --------------------------------------------------------------------------------------------- |
-| `core/`      | App constants, logger, tray manager, auto-launch, proxy/runtime helpers, main-process i18n    |
-| `data/`      | SQLite wrapper and SQLite-backed stores (`sqliteStore.ts`, `coworkStore.ts`, `groupStore.ts`) |
-| `ipc/`       | IPC modules and IPC payload utilities                                                         |
-| `engine/`    | Cowork engine routing, OpenClaw adapter, and command safety                                   |
-| `cowork/`    | Cowork config, logging, model API, and provider config                                        |
-| `openclaw/`  | OpenClaw runtime, config, models, and session helpers                                         |
-| `plugins/`   | Plugin capabilities: skills, MCP, hooks, extensions, and marketplace                          |
-| `scheduler/` | Main-process scheduled task runtime and OpenClaw cron adapter                                 |
-
-Top-level files: `main.ts` (entry) and `preload.ts` (contextBridge). Other main-process code lives under `core/`, `data/`, `ipc/`, or the domain directories listed above.
-
-### Main Domain Directories
-
-Main-process domain logic lives directly under `src/main/`:
-
-| Directory                 | Purpose                                                         | Key Files                                                                                                  |
-| ------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `engine/`                 | Cowork engine routing & OpenClaw adapter                        | `coworkEngineRouter.ts`, `openclawRuntimeAdapter.ts`, `types.ts`                                           |
-| `engine/gateway/`         | Gateway type definitions                                        | `types.ts`                                                                                                 |
-| `engine/openclaw/`        | Subagent gateway & tool streaming                               | `subagentGateway.ts`, `webchatToolStream.ts`                                                               |
-| `cowork/`                 | Cowork config, logging, model API                               | `coworkConfigStore.ts`, `coworkLogger.ts`, `coworkModelApi.ts`, `coworkUtil.ts`, `providerApiConfig.ts`    |
-| `openclaw/config/`        | Managed Gateway configuration and workspace repair              | `openclawConfigSync.ts`, `workspaceStateRepair.ts`                                                         |
-| `openclaw/models/`        | Agent model resolution                                          | `openclawAgentModels.ts`                                                                                   |
-| `openclaw/runtime/`       | Gateway runtime lifecycle                                       | `openclawEngineManager.ts`                                                                                 |
-| `openclaw/sessions/`      | Session keys, history, and assistant text                       | `openclawChannelSessionSync.ts`, `openclawHistory.ts`, `openclawAssistantText.ts`                          |
-| `openclaw/slashCommands/` | Gateway slash command policy and execution services             | `slashCommandPolicies.ts`, `slashCommandService.ts`                                                        |
-| `plugins/extensions/`     | Extension registry, host lifecycle, callbacks, and interactions | `openclawExtensionRegistry.ts`, `openclawExtensionHostController.ts`, `openclawExtensionCallbackServer.ts` |
-| `plugins/mcp/`            | MCP store, probing, and config sync                             | `mcpStore.ts`, `mcpProbeService.ts`, `mcpConfigSyncService.ts`                                             |
-| `plugins/skills/`         | Skill RPC service and local skill file operations               | `openclawSkillService.ts`, `openclawSkillFiles.ts`                                                         |
-| `scheduler/`              | Main-process scheduled task runtime and OpenClaw cron adapter   | `cronJobService.ts`, `enginePrompt.ts`                                                                     |
-
-### Process Isolation Rules (CRITICAL)
-
-- **Main process** (`src/main/`): CommonJS module system. Uses `electron-log`. Can access Node.js APIs, filesystem, SQLite.
-- **Renderer** (`src/renderer/`): ESNext modules. Can NOT access Node.js directly — all system access goes through `window.electronAPI` (defined in preload).
-- **Shared code** (`src/shared/`): Must work in BOTH module systems. Never import electron, node built-ins, or browser-only APIs.
-- **TypeScript configs**: `tsconfig.json` (renderer, strict, ESNext), `electron-tsconfig.json` (main, CommonJS), `tsconfig.node.json` (vite config only).
-
-### Redux Store (8 slices)
-
-| Slice               | File                                 | Purpose                                                   |
-| ------------------- | ------------------------------------ | --------------------------------------------------------- |
-| `cowork`            | `store/slices/coworkSlice.ts`        | Chat sessions, messages, streaming, permissions, groups   |
-| `coworkDeleteState` | `store/slices/coworkDeleteState.ts`  | Deletion state tracking for cowork sessions               |
-| `agent`             | `store/slices/agentSlice.ts`         | AI agent CRUD and selection                               |
-| `model`             | `store/slices/modelSlice.ts`         | Selected model, available models (OpenAI-compatible only) |
-| `skill`             | `store/slices/skillSlice.ts`         | Skills list and multi-select                              |
-| `mcp`               | `store/slices/mcpSlice.ts`           | MCP server list and toggle                                |
-| `scheduledTask`     | `store/slices/scheduledTaskSlice.ts` | Cron tasks, runs, view mode                               |
-| `quickAction`       | `store/slices/quickActionSlice.ts`   | Quick action prompts                                      |
-
-Selectors: `store/selectors/coworkSelectors.ts` for memoized cowork state queries.
-
-### Key Subsystems
-
-**OpenClaw Engine** (`src/main/openclaw/runtime/openclawEngineManager.ts`): Runtime download, install, version caching, and Gateway process lifecycle (idle → downloading → installing → ready → running).
-
-**Cowork System** (`src/main/engine/`): AI chat orchestration. Routes through `coworkEngineRouter.ts` → `openclawRuntimeAdapter.ts`. Supports streaming, thinking content, subagents (`openclaw/subagentGateway.ts`), and history reconciliation (`history/historyReconciler.ts`).
-
-**Skills**: OpenClaw is the authoritative source via plugin services. `plugins/skills/openclawSkillFiles.ts` only copies or removes user-imported files under `userData/openclaw/state/skills/`; it does not discover skills or maintain metadata/state. The bundled skill set is defined in `resources/builtin-skills.json`.
-
-**IM (Remote Control)**: In development. Types at `src/renderer/types/im.ts`.
-
-**Data Storage**: SQLite (`justdo.sqlite`) at platform data dir. Key tables: `kv`, `cowork_config`, `cowork_sessions`, `cowork_messages`, `cowork_subagents`, `session_groups`, `agents`, `mcp_servers`. Wrapper: `src/main/data/sqliteStore.ts`. Cowork CRUD: `src/main/data/coworkStore.ts`.
-
-### Key Files by Area
-
-| Area                        | Path                                                                                                                       |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| App entry                   | `src/main/main.ts`, `src/main/preload.ts`                                                                                  |
-| Engine lifecycle            | `src/main/openclaw/runtime/openclawEngineManager.ts`                                                                       |
-| Engine adapter              | `src/main/engine/openclawRuntimeAdapter.ts`                                                                                |
-| Cowork engine router        | `src/main/engine/coworkEngineRouter.ts`                                                                                    |
-| Cowork CRUD                 | `src/main/data/coworkStore.ts`                                                                                             |
-| SQLite wrapper              | `src/main/data/sqliteStore.ts`                                                                                             |
-| Config sync                 | `src/main/openclaw/config/openclawConfigSync.ts`                                                                           |
-| Chat rendering              | `src/renderer/libs/openclaw-chat/` (pipeline architecture)                                                                 |
-| Markdown renderer           | `src/renderer/libs/openclaw-chat/components/markdown.ts`                                                                   |
-| Settings UI                 | `src/renderer/features/settings/Settings.tsx`                                                                                     |
-| Permission UI               | `src/renderer/features/cowork/components/CoworkPermissionModal.tsx`                                                                 |
-| Cowork model API            | `src/main/cowork/coworkModelApi.ts`                                                                                        |
-| Provider API config         | `src/main/cowork/providerApiConfig.ts`                                                                                     |
-| MCP services                | `src/main/plugins/mcp/`                                                                                                    |
-| Command safety              | `src/main/engine/commandSafety.ts`                                                                                         |
-| Scheduled task engine       | `src/main/scheduler/cronJobService.ts`, `src/shared/scheduledTask/`, `src/main/ipc/scheduledTask/cronJobServiceManager.ts` |
-| Local Skill file operations | `src/main/plugins/skills/openclawSkillFiles.ts`                                                                            |
-| Session groups              | `src/main/data/groupStore.ts`                                                                                              |
-| MCP store                   | `src/main/plugins/mcp/mcpStore.ts`                                                                                         |
-
-## Coding Conventions
-
-### TypeScript
-
-- **Strict mode** — all compiler strict flags enabled
-- **Functional React** — no class components, prefer hooks
-- **2-space indent**, **single quotes**, **semicolons**, trailing commas (see `.prettierrc`)
-- `PascalCase` for components and types, `camelCase` for functions and variables
-- Path aliases: `@/` → `src/renderer/`, `@shared/` → `src/shared/`
-
-### Immutability (CRITICAL)
-
-Always create new objects/arrays. Never mutate existing state:
-
-```typescript
-// WRONG: mutates in place
-state.sessions.push(newSession);
-
-// CORRECT: returns new copy (Redux Toolkit immer or spread)
-[...sessions, newSession];
+```mermaid
+flowchart LR
+  Renderer[Renderer: React + Redux + Lit chat UI]
+  Preload[Preload: contextBridge]
+  Main[Main: IPC + SQLite + OpenClaw lifecycle]
+  Gateway[OpenClaw Gateway]
+  DB[(justdo.sqlite)]
+  Resources[resources/]
+  Renderer --> Preload --> Main
+  Main --> Gateway
+  Main --> DB
+  Main --> Resources
 ```
 
-### Internationalization (i18n) — CRITICAL
+- `src/main/`: Electron main process, IPC, SQLite, runtime/system access.
+- `src/main/preload.ts`: only renderer bridge; keep API explicit and small.
+- `src/renderer/`: browser-only React/Redux UI. No Node/Electron imports.
+- `src/shared/`: pure cross-process contracts/utilities only.
+- `resources/`: bundled skills, tray icons, runtime assets, manifests.
 
-**Never hardcode user-visible strings.** Always use the `t()` function:
+Main-process domains:
 
-```typescript
-// WRONG
-<span>Save</span>
+- `core/`: constants, logging, tray, auto-launch, proxy/runtime helpers, i18n.
+- `data/`: SQLite wrapper/stores (`sqliteStore.ts`, `coworkStore.ts`, `groupStore.ts`).
+- `ipc/`: app/openclaw/scheduled-task IPC handlers.
+- `engine/`: cowork router, OpenClaw adapter, command safety, gateway types.
+- `cowork/`: config, model API/readiness, provider config, logging.
+- `openclaw/`: config sync, runtime, models, sessions, slash commands.
+- `plugins/`: skills, MCP, hooks, extensions, marketplace.
+- `scheduler/`: cron runtime and OpenClaw prompt support.
 
-// CORRECT
-<span>{t('save')}</span>
-```
+Key files:
 
-- **Renderer**: import `t` from `src/renderer/services/i18n.ts`
-- **Main process**: import `t` from `src/main/core/i18n.ts`
-- When adding new strings, add keys to **both** `zh` and `en` translation maps
-- Supports `{param}` interpolation: `t('key', { param: value })`
+- App/preload: `src/main/main.ts`, `src/main/preload.ts`
+- Runtime: `src/main/openclaw/runtime/openclawEngineManager.ts`
+- Engine: `src/main/engine/coworkEngineRouter.ts`, `src/main/engine/openclawRuntimeAdapter.ts`
+- Safety: `src/main/engine/commandSafety.ts`
+- Data: `src/main/data/sqliteStore.ts`, `src/main/data/coworkStore.ts`
+- Config/history: `src/main/openclaw/config/openclawConfigSync.ts`, `src/main/openclaw/sessions/`
+- Chat rendering: `src/renderer/libs/openclaw-chat/`
+- Settings/permissions: `src/renderer/features/settings/Settings.tsx`, `src/renderer/features/cowork/components/CoworkPermissionModal.tsx`
+- Scheduled tasks: `src/main/scheduler/cronJobService.ts`, `src/main/ipc/scheduledTask/`, `src/shared/scheduledTask/`
+- Plugins: `src/main/plugins/skills/`, `src/main/plugins/mcp/`, `src/main/plugins/hooks/`, `src/main/plugins/extensions/`, `src/main/plugins/marketplace/`
 
-### Constants over Literals
+## Current State to Remember
 
-Never use bare string/number literals for discriminants, status values, or IPC channel names. Define `as const` objects in a `constants.ts` file:
+Redux store (`src/renderer/store/index.ts`) mounts **7 slices**:
+`model`, `cowork`, `skill`, `mcp`, `quickAction`, `scheduledTask`, `agent`.
+Do not document/use unmounted slices as active state.
 
-```typescript
-// WRONG
-if (status === 'running') { ... }
+SQLite core tables in `src/main/data/sqliteStore.ts`:
+`kv`, `cowork_sessions`, `cowork_messages`, `cowork_config`, `agents`,
+`mcp_servers`, `openclaw_hooks`, `session_groups`.
 
-// CORRECT
-export const EngineStatus = { RUNNING: 'running', IDLE: 'idle' } as const;
-if (status === EngineStatus.RUNNING) { ... }
-```
+Built-in skills are declared in `resources/builtin-skills.json`: **15 skills**,
+**14 enabled** by default, `agent-browser` disabled.
 
-### Logging
+OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
+`001-thinking-stream.cjs`, `002-agent-announce-reasoning-stream.cjs`,
+`003-openai-content-reasoning-tags.cjs`, `004-windows-mcp-package-runner.cjs`,
+`005-history-thinking-and-subagent-yield.cjs`,
+`006-sessions-yield-active-guard.cjs`.
 
-- **Main process**: `console.error` / `console.warn` / `console.log` / `console.debug` (intercepted by `electron-log`)
-- Format: `[ModuleName] plain English description of what happened`
-- Never use `console.log` in production-only paths without considering log levels
-- **Renderer**: avoid `console.log` in production code
+`docs/res/` was removed because no docs referenced its old image asset.
 
-### File Organization
+## Boundaries
 
-- Organize by feature/domain, not by file type
-- 200-400 lines typical, 800 lines max per file
-- Co-locate tests (`.test.ts` next to source) for unit tests
-- Extract shared utilities to `src/shared/` when used by both processes
+- Main may use Node, Electron main APIs, filesystem, SQLite, child processes.
+- Renderer must use the preload bridge only. No privileged imports.
+- Shared code must not import Electron, Node built-ins, DOM-only APIs, or process state.
+- JustDo owns UX, persistence, permissions, packaging, app shell, and product flows.
+- OpenClaw owns agent execution, Gateway capabilities, tool semantics, and skill runtime behavior.
+- `openclawSkillService.ts` talks to Gateway skill APIs.
+- `openclawSkillFiles.ts` only copies/removes user-imported local skill files; it is not skill metadata authority.
+
+## Coding Rules
+
+- Strict TypeScript; functional React; 2-space indent, single quotes, semicolons.
+- Renderer aliases: `@/` -> `src/renderer/`, `@shared/` -> `src/shared/`.
+- Organize by feature/domain, not file type.
+- Keep top-level `main.ts` and `preload.ts` thin.
+- Avoid mutation outside intentional Redux Toolkit Immer reducers.
+- Never hardcode user-visible strings; use i18n.
+- Add i18n keys to both `zh` and `en`.
+- Use constants for discriminants/statuses/IPC names.
+- Main logs should use module prefixes like `[CronJobService]`.
+- Avoid production-path renderer `console.log`.
+- Never log or hardcode secrets, tokens, passwords, raw auth headers, or credential objects.
+
+## Change Patterns
+
+IPC:
+
+1. Define channel constants and payload/return types.
+2. Add main handler in the owning `src/main/ipc/` domain.
+3. Expose the minimal preload method.
+4. Update `src/renderer/types/electron.d.ts`.
+5. Add tests when payload/risk is non-trivial.
+
+Redux:
+
+1. Create slice under the feature domain.
+2. Mount it in `src/renderer/store/index.ts`.
+3. Export typed selectors/actions.
+4. Document it here only after mounting.
+
+SQLite:
+
+1. Add schema/migration/compatibility logic.
+2. Add CRUD methods and indexes for real query patterns.
+3. Handle existing-user compatibility.
+4. Update `docs/architecture/10-data-storage.md`.
+5. Add focused tests.
+
+Bundled skills:
+
+1. Update `resources/skills/<skill-id>/`.
+2. Update `resources/builtin-skills.json`.
+3. If runtime behavior changes, update `docs/architecture/07-skills-system.md`.
+
+Scheduled tasks:
+
+- Touch `src/main/scheduler/`, `src/main/ipc/scheduledTask/`, and
+  `src/shared/scheduledTask/` consistently.
+- Test schedule parsing, persistence, manual runs, runtime mapping, and IPC payloads.
+
+## Docs
+
+Do not replace detailed design docs with file-path lists. Keep Mermaid diagrams
+when they clarify ownership, flow, or lifecycle.
+
+- Architecture docs: `docs/architecture/`
+- Feature notes: `docs/features/`
+- Patch docs: `docs/patches/`
+- User READMEs: `README.md`, `README_zh.md`
+
+When architecture/data flow changes, update the relevant doc in the same change:
+`02-architecture`, `03-process-model`, `04-cowork-system`, `05-agent-engine`,
+`07-skills-system`, `08-scheduled-tasks`, `10-data-storage`,
+`15-chat-rendering`, or `16-skill-marketplace-adapter`.
 
 ## Testing
 
-### Running Tests
+- Tests use Vitest.
+- Co-located unit tests: `src/**/*.test.ts`.
+- Integration/snapshot tests: `tests/**/*.test.mjs`.
+- Use behavior-focused names and Arrange -> Act -> Assert.
+- Use `vi.mock`, `vi.spyOn`, `vi.fn`.
 
-```bash
-npm test                    # Run all Vitest tests (pretest rebuilds native modules)
-npx vitest src/path/to/file.test.ts  # Run a single test file
-npx vitest --coverage       # With coverage report
-```
+## Git and PR
 
-### Test Locations
+Use English Conventional Commits:
 
-Two locations, both using Vitest:
-
-1. **Co-located unit tests**: `src/**/*.test.ts` — unit tests next to source
-2. **Integration/snapshot tests**: `tests/**/*.test.mjs` — larger integration tests using ES modules
-
-### Test Patterns
-
-```typescript
-import { test, expect } from 'vitest';
-
-test('descriptive name of what should happen', () => {
-  // Arrange
-  const input = ...;
-
-  // Act
-  const result = functionUnderTest(input);
-
-  // Assert
-  expect(result).toBe(expectedValue);
-});
-```
-
-- **Test naming**: describe the behavior, not the implementation ("returns empty array when no sessions match" not "test findSessions edge case")
-- **AAA pattern**: Arrange → Act → Assert
-- **Mocking**: use `vi.mock()`, `vi.spyOn()`, `vi.fn()` from vitest
-- **Test config**: `vitest.config.ts` — node environment, matches vite resolve aliases
-
-### CI Test Integration
-
-Tests run in CI via `.github/workflows/ci.yml`. Tests that depend on native modules (`better-sqlite3`) need the `pretest` rebuild step. If you add a new native dependency, ensure it's in the `externals` list in `vite.config.ts` and `electron-builder.json`.
-
-## PR and Commit Guidelines
-
-### Commit Format
-
-Conventional Commits (English only):
-
-```
+```text
 type(scope): imperative summary
-
-Optional detailed body explaining why.
 ```
 
-Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`, `style`
+Common types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`,
+`ci`, `style`.
 
-Scopes: `cowork`, `skills`, `scheduledTask`, `engine`, `ui`, `electron`, `build`, `config`, `security`, `i18n`
+Useful scopes: `cowork`, `skills`, `scheduledTask`, `engine`, `ui`, `electron`,
+`build`, `config`, `security`, `i18n`, `docs`.
 
-Commitlint enforces this via `.commitlint.config.mjs` and the `.husky/commit-msg` hook.
+Before PR:
 
-### PR Workflow
-
-1. Analyze full commit history (not just latest commit)
-2. Use `git diff release_20260625...HEAD` to see all changes against main branch
-3. Draft PR description using the template at `.github/PULL_REQUEST_TEMPLATE.md`
-4. Push with `-u` flag if new branch
-
-### Pre-PR Checklist
-
-- [ ] `npm run lint` passes
-- [ ] `npm run build` succeeds
-- [ ] `npm test` passes (all tests green)
-- [ ] i18n keys added to both `zh` and `en` if new strings added
-- [ ] No hardcoded secrets or credentials
-- [ ] New features have tests
-- [ ] No `console.log` left in renderer
-
-## Security Considerations
-
-### Secret Management (CRITICAL)
-
-- **Never** hardcode API keys, tokens, passwords, or credentials in source code
-- All secrets go through environment variables or the app's encrypted config store
-
-## Internationalization (i18n)
-
-Two separate i18n instances that share the same pattern:
-
-| Instance     | File                            | Coverage                                                             |
-| ------------ | ------------------------------- | -------------------------------------------------------------------- |
-| Main process | `src/main/core/i18n.ts`         | Tray menu, subagent status, session titles, skill errors             |
-| Renderer     | `src/renderer/services/i18n.ts` | All UI: settings, models, skills, permissions, scheduled tasks, etc. |
-
-Both export `t(key, params?)`, `setLanguage(lang)`, `getLanguage()`. Languages: `zh` and `en` only.
-
-**When adding UI text:**
-
-1. Add the key to the `zh` and `en` objects in the appropriate i18n file
-2. Use `t('your.key')` in the component — never hardcode strings
-3. Use `t('key', { param: 'value' })` for parameterized strings
-
-## Resources and Assets
-
-```
-resources/
-├── skills/          # 15 bundled skills (each has SKILL.md + assets)
-├── tray/            # System tray icons (png, ico, mac@2x)
-├── mingit/          # Portable Git for Windows (MinGit 2.47.1)
-├── node-runtime/    # Node.js runtime files
-├── python-win/      # Python runtime for Windows
-└── builtin-skills.json  # Skill manifest
-```
-
-Skills are Gateway-managed. To modify bundled skills, update `resources/skills/<skill-name>/` and the manifest. To add a new bundled skill, add the directory and update `resources/builtin-skills.json`.
-
-## Common Patterns
-
-### Adding a New IPC Channel
-
-1. Define the channel name and parameter types
-2. Add handler in `src/main/` (register in `main.ts` or an `ipc/` submodule)
-3. Expose via `contextBridge` in `src/main/preload.ts`
-4. Call from renderer via `window.electronAPI.yourMethod()`
-
-### Adding a New Redux Slice
-
-1. Create `src/renderer/features/<feature>/<feature>Slice.ts` using `createSlice` from `@reduxjs/toolkit`
-2. Add to `configureStore` in `src/renderer/store/index.ts`
-3. Export selectors and actions
-4. Use `useSelector` / `useDispatch` with the typed `RootState` and `AppDispatch` from the store
-
-### Adding a New Database Table
-
-1. Add migration or compatibility logic (check existing patterns in `src/main/data/sqliteStore.ts` and `src/main/openclaw/config/workspaceStateRepair.ts`)
-2. Add CRUD operations following existing naming: `getX`, `createX`, `updateX`, `deleteX`
-3. Document the schema in the architecture docs (`docs/architecture/`)
-4. Add tests
-
-### Adding a New Scheduled Task Policy
-
-1. Add shared task contracts to `src/shared/scheduledTask/` when both main and renderer need them
-2. Add main-process cron runtime changes to `src/main/scheduler/`
-3. Add comprehensive tests for schedule parsing, mapping, and runtime behavior
-
-## Documentation
-
-- Architecture docs: `docs/architecture/` (13+ documents covering architecture, process model, cowork, skills, security, etc.)
-- User-facing READMEs: `README.md` (English), `README_zh.md` (Chinese)
-- This file (`AGENTS.md`) is for AI coding agents — keep it focused on what agents need to know to work effectively in this codebase
+- Review full branch history.
+- Compare with release base when appropriate: `git diff release_20260625...HEAD`.
+- Use `.github/PULL_REQUEST_TEMPLATE.md`.
+- Push new branches with `-u`.
