@@ -22,8 +22,6 @@ contextBridge.exposeInMainWorld('electron', {
     // Marketplace-based skill management
     install: (params: { id: string; version?: string; force?: boolean }) =>
       ipcRenderer.invoke('skills:install', params),
-    // Offline import from local archive
-    import: (archivePath: string) => ipcRenderer.invoke('skills:import', archivePath),
     // Offline import from local folder
     importFolder: (folderPath: string) => ipcRenderer.invoke('skills:importFolder', folderPath),
     search: (options?: { query?: string; limit?: number }) =>

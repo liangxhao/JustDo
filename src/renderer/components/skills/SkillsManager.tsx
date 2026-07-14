@@ -1,4 +1,4 @@
-import { ArrowUpTrayIcon, FolderIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { FolderIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -91,76 +91,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       setSkillActionError(
         error instanceof Error ? error.message : i18nService.t('skillUpdateFailed'),
       );
-    }
-  };
-
-  const handleImportSkill = async () => {
-    if (readOnly || importing) return;
-
-    try {
-      setImporting(true);
-      setSkillActionError('');
-      setImportSuccess(null);
-      setImportErrors([]);
-
-      // Open file dialog for ZIP/TGZ archives (multi-select)
-      const result = await window.electron.dialog.selectFiles({
-        title: i18nService.t('selectSkillArchive'),
-        filters: [
-          { name: 'Skill Archives', extensions: ['zip', 'tgz', 'tar.gz'] },
-          { name: 'ZIP Files', extensions: ['zip'] },
-          { name: 'TGZ Files', extensions: ['tgz', 'tar.gz'] },
-        ],
-      });
-
-      if (!result.success || !result.paths || result.paths.length === 0) {
-        setImporting(false);
-        return;
-      }
-
-      // Import each skill
-      const results: { path: string; success: boolean; skillId?: string; error?: string }[] = [];
-      for (const archivePath of result.paths) {
-        const importResult = await skillService.importSkill(archivePath);
-        results.push({
-          path: archivePath,
-          success: importResult.success,
-          skillId: importResult.skillId,
-          error: importResult.error,
-        });
-      }
-
-      // Check results
-      const succeeded = results.filter(r => r.success);
-      const failed = results.filter(r => !r.success);
-
-      if (succeeded.length > 0) {
-        const skillIds = succeeded
-          .map(r => r.skillId)
-          .filter(Boolean)
-          .join(', ');
-        setImportSuccess(skillIds);
-        // Reload skills
-        const loadedSkills = await skillService.loadSkills();
-        dispatch(setSkills(loadedSkills));
-        // Clear success message after 5 seconds
-        setTimeout(() => setImportSuccess(null), 5000);
-      }
-
-      if (failed.length > 0) {
-        setImportErrors(
-          failed.map(r => ({
-            fileName: r.path.split(/[/\\]/).pop() || r.path,
-            error: r.error || i18nService.t('skillImportFailed'),
-          })),
-        );
-      }
-    } catch (error) {
-      setSkillActionError(
-        error instanceof Error ? error.message : i18nService.t('skillImportFailed'),
-      );
-    } finally {
-      setImporting(false);
     }
   };
 
@@ -317,10 +247,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
         </div>
       )}
 
-      <div>
-        <p className="text-sm text-secondary">{i18nService.t('skillsDescriptionGateway')}</p>
-      </div>
-
       {skillActionError && (
         <ErrorMessage message={skillActionError} onClose={() => setSkillActionError('')} />
       )}
@@ -359,111 +285,99 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
         </div>
       )}
 
-      {/* Sticky toolbar: Description + Search + Tabs */}
-      <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 space-y-4 shadow-sm">
-        {/* Search */}
-        <div className="flex items-center gap-3">
-          {activeTab === 'installed' && (
-            <div className="relative flex-1">
-              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
-              <input
-                type="text"
-                placeholder={i18nService.t('searchSkills')}
-                value={skillSearchQuery}
-                onChange={e => setSkillSearchQuery(e.target.value)}
-                disabled={gatewayOffline}
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </div>
-          )}
-          {/* Import buttons - only show in installed tab and when not readonly */}
-          {activeTab === 'installed' && !readOnly && !gatewayOffline && (
-            <>
-              <Tooltip content={i18nService.t('importSkillTooltip')} position="bottom">
-                <button
-                  type="button"
-                  onClick={handleImportSkill}
-                  disabled={importing}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl bg-surface border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors ${
-                    importing ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  <ArrowUpTrayIcon className="h-4 w-4" />
-                  <span>
-                    {importing
-                      ? i18nService.t('importSkillProgress')
-                      : i18nService.t('importSkill')}
-                  </span>
-                </button>
-              </Tooltip>
-              <Tooltip content={i18nService.t('importSkillFolderTooltip')} position="bottom">
-                <button
-                  type="button"
-                  onClick={handleImportSkillFromFolder}
-                  disabled={importing}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl bg-surface border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors ${
-                    importing ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  <FolderIcon className="h-4 w-4" />
-                  <span>
-                    {importing
-                      ? i18nService.t('importSkillFolderProgress')
-                      : i18nService.t('importSkillFolder')}
-                  </span>
-                </button>
-              </Tooltip>
-            </>
-          )}
-        </div>
-
+      {/* Sticky toolbar: Tabs */}
+      <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 shadow-sm">
         {/* Tabs */}
-        <div className="flex items-center border-b border-border">
-          <button
-            type="button"
-            onClick={() => setActiveTab('installed')}
-            disabled={gatewayOffline}
-            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-              activeTab === 'installed'
-                ? 'text-foreground'
-                : 'text-secondary hover:hover:text-foreground'
-            } ${gatewayOffline ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            {i18nService.t('skillInstalled')}
-            {skills.length > 0 && (
-              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-surface-raised">
-                {skills.length}
-              </span>
-            )}
-            <div
-              className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${
-                activeTab === 'installed' ? 'bg-primary' : 'bg-transparent'
-              }`}
-            />
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('marketplace')}
-            disabled={gatewayOffline}
-            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-              activeTab === 'marketplace'
-                ? 'text-foreground'
-                : 'text-secondary hover:hover:text-foreground'
-            } ${gatewayOffline ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            {i18nService.t('skillMarketplace')}
-            <div
-              className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${
-                activeTab === 'marketplace' ? 'bg-primary' : 'bg-transparent'
-              }`}
-            />
-          </button>
+        <div className="flex items-center justify-between gap-4 border-b border-border">
+          <div className="flex min-w-0 items-center">
+            <button
+              type="button"
+              onClick={() => setActiveTab('installed')}
+              disabled={gatewayOffline}
+              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                activeTab === 'installed'
+                  ? 'text-foreground'
+                  : 'text-secondary hover:hover:text-foreground'
+              } ${gatewayOffline ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {i18nService.t('skillInstalled')}
+              {skills.length > 0 && (
+                <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-surface-raised">
+                  {skills.length}
+                </span>
+              )}
+              <div
+                className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${
+                  activeTab === 'installed' ? 'bg-primary' : 'bg-transparent'
+                }`}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('marketplace')}
+              disabled={gatewayOffline}
+              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                activeTab === 'marketplace'
+                  ? 'text-foreground'
+                  : 'text-secondary hover:hover:text-foreground'
+              } ${gatewayOffline ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {i18nService.t('skillMarketplace')}
+              <div
+                className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${
+                  activeTab === 'marketplace' ? 'bg-primary' : 'bg-transparent'
+                }`}
+              />
+            </button>
+          </div>
+          <p className="min-w-0 truncate pb-2 text-right text-sm text-secondary">
+            {i18nService.t('skillsDescriptionGateway')}
+          </p>
         </div>
       </div>
 
       <div>
         {activeTab === 'installed' && (
-          <>
+          <div className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
+              <div className="relative min-w-0 flex-1 sm:max-w-md">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
+                <input
+                  type="text"
+                  placeholder={i18nService.t('searchSkills')}
+                  value={skillSearchQuery}
+                  onChange={e => setSkillSearchQuery(e.target.value)}
+                  disabled={gatewayOffline}
+                  className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+              {!readOnly && !gatewayOffline && (
+                <div className="w-full sm:ml-auto sm:w-auto">
+                  <Tooltip
+                    className="w-full sm:w-auto"
+                    content={i18nService.t('importSkillFolderTooltip')}
+                    position="bottom"
+                  >
+                    <button
+                      type="button"
+                      onClick={handleImportSkillFromFolder}
+                      disabled={importing}
+                      className={`flex w-full items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-xl bg-surface border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors sm:w-auto ${
+                        importing ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      <FolderIcon className="h-4 w-4" />
+                      <span>
+                        {importing
+                          ? i18nService.t('importSkillFolderProgress')
+                          : i18nService.t('importSkillFolder')}
+                      </span>
+                    </button>
+                  </Tooltip>
+                </div>
+              )}
+            </div>
+
             {filteredSkills.length === 0 ? (
               <div className="text-center py-8 text-sm text-secondary">
                 {gatewayOffline
@@ -476,24 +390,24 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                   <section key={group.id}>
                     <div className="mb-2.5 flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-semibold text-foreground">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <h3 className="shrink-0 text-sm font-semibold text-foreground">
                             {getGroupLabel(group.id)}
                           </h3>
-                          <span className="rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
+                          <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
                             {group.skills.length}
                           </span>
+                          <p className="min-w-0 truncate text-xs text-secondary">
+                            {getGroupDescription(group.id)}
+                          </p>
                           {group.priority && (
-                            <span className="text-[10px] text-secondary">
+                            <span className="shrink-0 text-[9px] text-secondary">
                               {i18nService
                                 .t('skillGroupPriority')
                                 .replace('{priority}', String(group.priority))}
                             </span>
                           )}
                         </div>
-                        <p className="mt-0.5 text-xs text-secondary">
-                          {getGroupDescription(group.id)}
-                        </p>
                       </div>
                     </div>
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(min(16rem,100%),1fr))] items-start gap-3">
@@ -575,7 +489,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                 ))}
               </div>
             )}
-          </>
+          </div>
         )}
 
         {activeTab === 'marketplace' && <SkillMarketplace />}

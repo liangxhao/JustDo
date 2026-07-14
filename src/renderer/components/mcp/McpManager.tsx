@@ -616,60 +616,57 @@ const McpManager: React.FC = () => {
         </div>
       )}
 
-      {/* Sticky toolbar: Description + Search + Tabs */}
-      <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 space-y-4 shadow-sm">
-        {/* Description */}
-        <p className="text-sm text-secondary">{i18nService.t('mcpDescription')}</p>
-
-        {/* Search */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
-            <input
-              type="text"
-              placeholder={i18nService.t('searchMcpServers')}
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
-            />
+      {/* Sticky toolbar: Tabs + description */}
+      <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 shadow-sm">
+        <div className="flex items-center justify-between gap-4 border-b border-border">
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={() => setActiveTab('installed')}
+              className={tabClass('installed')}
+            >
+              {i18nService.t('mcpInstalled')}
+              {servers.length > 0 && (
+                <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-surface-raised">
+                  {servers.length}
+                </span>
+              )}
+              <div className={tabIndicatorClass('installed')} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('marketplace')}
+              className={tabClass('marketplace')}
+            >
+              {i18nService.t('mcpMarketplace')}
+              <div className={tabIndicatorClass('marketplace')} />
+            </button>
           </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex items-center border-b border-border">
-          <button
-            type="button"
-            onClick={() => setActiveTab('installed')}
-            className={tabClass('installed')}
-          >
-            {i18nService.t('mcpInstalled')}
-            {servers.length > 0 && (
-              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-surface-raised">
-                {servers.length}
-              </span>
-            )}
-            <div className={tabIndicatorClass('installed')} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('marketplace')}
-            className={tabClass('marketplace')}
-          >
-            {i18nService.t('mcpMarketplace')}
-            <div className={tabIndicatorClass('marketplace')} />
-          </button>
+          <p className="min-w-0 truncate pb-2 text-right text-sm text-secondary">
+            {i18nService.t('mcpDescription')}
+          </p>
         </div>
       </div>
 
       <div>
         {/* ── Tab: Installed ──────────────────────────────── */}
         {activeTab === 'installed' && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
+          <div className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
+              <div className="relative min-w-0 flex-1 sm:max-w-md">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
+                <input
+                  type="text"
+                  placeholder={i18nService.t('searchMcpServers')}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
               <button
                 type="button"
                 onClick={handleOpenCreateForm}
-                className="rounded-lg border border-dashed border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:border-primary hover:text-primary dark:hover:border-primary dark:hover:text-primary"
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-foreground sm:ml-auto sm:w-auto"
               >
                 + {i18nService.t('addMcpServer')}
               </button>
@@ -677,7 +674,7 @@ const McpManager: React.FC = () => {
                 type="button"
                 onClick={handleOpenBulkProbe}
                 disabled={servers.length === 0 || isBulkProbing}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 <ClockIcon className="h-4 w-4" />
                 <span>{i18nService.t('mcpTestAll')}</span>
@@ -688,7 +685,7 @@ const McpManager: React.FC = () => {
                 {i18nService.t('mcpNoInstalledServers')}
               </div>
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-3">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(16rem,100%),1fr))] items-start gap-3">
                 {filteredInstalled.map(server => {
                   const registryEntry = getRegistryEntryForServer(server);
                   const installedDescription = getInstalledDescription(server);
@@ -697,7 +694,7 @@ const McpManager: React.FC = () => {
                   return (
                     <div
                       key={server.id}
-                      className="flex h-full flex-col rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
+                      className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
                     >
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2 min-w-0">
@@ -743,16 +740,16 @@ const McpManager: React.FC = () => {
                       <Tooltip
                         content={installedDescription}
                         position="bottom"
-                        maxWidth="560px"
+                        maxWidth="360px"
                         className="block w-full"
                       >
-                        <pre className="mb-3 max-h-32 overflow-hidden whitespace-pre-wrap break-words rounded-lg bg-surface-raised px-2 py-2 font-mono text-[10px] leading-4 text-secondary">
+                        <p className="line-clamp-2 text-xs text-secondary">
                           {installedDescription}
-                        </pre>
+                        </p>
                       </Tooltip>
 
-                      <div className="mt-auto flex items-center justify-between gap-3 text-[10px] text-secondary">
-                        <div className="flex min-w-0 items-center gap-1.5">
+                      <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-secondary">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                           <span
                             className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
                           >

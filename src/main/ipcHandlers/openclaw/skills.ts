@@ -168,16 +168,6 @@ export const registerSkillHandlers = ({
     }
   });
 
-  ipcMain.handle('skills:import', async (_event, archivePath: string) => {
-    try {
-      return getSkillFiles().importArchive(archivePath);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to import skill';
-      console.error('[Skills] skills:import error:', errorMsg);
-      return { success: false, error: errorMsg };
-    }
-  });
-
   ipcMain.handle('skills:importFolder', async (_event, folderPath: string) => {
     try {
       return getSkillFiles().importDirectory(folderPath);

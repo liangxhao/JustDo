@@ -300,7 +300,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     searchSkills: '搜索技能',
     manageSkills: '管理技能',
     noSkillsAvailable: '暂无可用技能',
-    skillsDescriptionGateway: '管理智能体可使用的技能与工具',
+    skillsDescriptionGateway: 'Skill 是一组可复用的任务能力，帮助智能体按特定流程完成工作',
     skillInstalled: '已安装',
     skillGroupPriority: '优先级 {priority}',
     'skillGroup.workspace.label': '工作区技能',
@@ -332,13 +332,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillMarketplaceInstallFailed: '安装技能失败',
     skillMarketplaceHomepage: '查看项目主页',
     // Offline skill import
-    importSkill: '导入',
-    importSkillProgress: '导入中',
-    importSkillTooltip: '从本地压缩包导入技能（支持 ZIP、TGZ 格式）',
     importSkillFolder: '导入文件夹',
     importSkillFolderProgress: '导入中',
-    importSkillFolderTooltip: '从本地文件夹导入技能（每个文件夹包含一个 SKILL.md）',
-    selectSkillArchive: '选择技能压缩包',
+    importSkillFolderTooltip:
+      '从本地文件夹导入技能；可一次选择多个文件夹，每个文件夹对应一个技能目录',
     selectSkillFolder: '选择技能文件夹',
     skillImportSuccess: '技能 {skillId} 导入成功',
     skillImportFailed: '技能导入失败',
@@ -366,7 +363,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // MCP 服务
     mcpServers: 'MCP',
-    mcpDescription: '配置和管理 MCP（Model Context Protocol）服务器，为您的智能体扩展工具能力',
+    mcpDescription: 'MCP 是连接智能体与外部工具、数据源的标准协议',
     searchMcpServers: '搜索 MCP 服务',
     addMcpServer: '自定义',
     editMcpServer: '编辑 MCP 服务',
@@ -479,9 +476,19 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     plugins: '插件',
     extensions: '扩展',
     extensionsComingSoon: '扩展功能即将推出',
+    extensionsDescription: '扩展是打包分发 Skill、MCP、Hook 等能力的插件模块',
+    extensionInstalled: '已安装',
+    extensionMarketplace: '市场',
+    extensionMarketplaceComingSoon: '扩展市场即将推出',
+    extensionMarketplaceComingSoonDescription: '扩展市场正在建设中，后续将支持在线发现、安装和更新扩展。',
+    searchExtensions: '搜索扩展',
+    customExtension: '自定义',
+    customExtensionComingSoonDescription: '自定义扩展功能正在建设中，后续可从本地目录添加扩展。',
+    noExtensionsAvailable: '暂无可用扩展',
+    noExtensionsMatched: '没有匹配的扩展',
+    extensionsComingSoonDescription: '扩展功能正在建设中，后续可统一管理插件提供的技能、工具和自动化能力。',
     hooks: 'Hook',
-    hooksDescription:
-      '管理 OpenClaw 事件 Hook，启用后可在命令、会话和 Gateway 生命周期中触发自动化。',
+    hooksDescription: 'Hook 是在命令、会话和 Gateway 生命周期事件中触发自动化的扩展点',
     hookInstalled: '已安装',
     hookMarketplace: '市场',
     hookMarketplaceComingSoon: 'Hook 市场即将推出',
@@ -917,7 +924,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     searchSkills: 'Search skills',
     manageSkills: 'Manage Skills',
     noSkillsAvailable: 'No skills available',
-    skillsDescriptionGateway: 'Manage the skills and tools available to your agents',
+    skillsDescriptionGateway:
+      'Skills are reusable task capabilities that help agents complete work through specific workflows',
     skillInstalled: 'Installed',
     skillGroupPriority: 'Priority {priority}',
     'skillGroup.workspace.label': 'Workspace skills',
@@ -953,13 +961,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillMarketplaceInstallFailed: 'Failed to install skill',
     skillMarketplaceHomepage: 'View project homepage',
     // Offline skill import
-    importSkill: 'Import',
-    importSkillProgress: 'Importing',
-    importSkillTooltip: 'Import skill from local archive (ZIP, TGZ formats supported)',
     importSkillFolder: 'Import Folder',
     importSkillFolderProgress: 'Importing',
-    importSkillFolderTooltip: 'Import skill from local folder (each folder contains a SKILL.md)',
-    selectSkillArchive: 'Select skill archive',
+    importSkillFolderTooltip:
+      'Import skills from local folders; select multiple folders at once, with each folder as one skill directory',
     selectSkillFolder: 'Select skill folder',
     skillImportSuccess: 'Skill {skillId} imported successfully',
     skillImportFailed: 'Skill import failed',
@@ -990,7 +995,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // MCP Servers
     mcpServers: 'MCP',
     mcpDescription:
-      "Configure and manage MCP (Model Context Protocol) servers to extend your agent's tool capabilities",
+      'MCP is a standard protocol that connects agents with external tools and data sources',
     searchMcpServers: 'Search MCP servers',
     addMcpServer: 'Custom',
     editMcpServer: 'Edit MCP Server',
@@ -1103,9 +1108,24 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     plugins: 'Plugins',
     extensions: 'Extensions',
     extensionsComingSoon: 'Extensions are coming soon',
+    extensionsDescription:
+      'Extensions are plugin modules that package capabilities such as Skills, MCP servers, and Hooks',
+    extensionInstalled: 'Installed',
+    extensionMarketplace: 'Marketplace',
+    extensionMarketplaceComingSoon: 'Extension marketplace is coming soon',
+    extensionMarketplaceComingSoonDescription:
+      'The extension marketplace is under development. Online discovery, installation, and updates will be supported later.',
+    searchExtensions: 'Search extensions',
+    customExtension: 'Custom',
+    customExtensionComingSoonDescription:
+      'Custom extensions are under development. Later, you will be able to add extensions from local folders.',
+    noExtensionsAvailable: 'No extensions available',
+    noExtensionsMatched: 'No matching extensions',
+    extensionsComingSoonDescription:
+      'Extensions are under development. Later, you will be able to manage packaged skills, tools, and automation in one place.',
     hooks: 'Hooks',
     hooksDescription:
-      'Manage OpenClaw event hooks that can run automation during command, session, and Gateway lifecycle events.',
+      'Hooks are extension points that trigger automation during command, session, and Gateway lifecycle events',
     hookInstalled: 'Installed',
     hookMarketplace: 'Marketplace',
     hookMarketplaceComingSoon: 'Hook marketplace is coming soon',

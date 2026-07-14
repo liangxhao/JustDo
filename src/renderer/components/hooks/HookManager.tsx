@@ -188,50 +188,52 @@ const HookManager: React.FC = () => {
         </div>
       )}
 
-      <div className="sticky top-0 z-10 space-y-4 bg-claude-bg pb-4 shadow-sm dark:bg-claude-darkBg">
-        <p className="text-sm text-secondary">{i18nService.t('hooksDescription')}</p>
-
-        {activeTab === 'installed' && (
-          <div className="relative">
-            <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-            <input
-              type="text"
-              placeholder={i18nService.t('searchHooks')}
-              value={searchQuery}
-              onChange={event => setSearchQuery(event.target.value)}
-              disabled={gatewayOffline}
-              className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
-            />
+      <div className="sticky top-0 z-10 bg-claude-bg pb-4 shadow-sm dark:bg-claude-darkBg">
+        <div className="flex items-center justify-between gap-4 border-b border-border">
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={() => setActiveTab('installed')}
+              className={tabClass('installed')}
+            >
+              {i18nService.t('hookInstalled')}
+              {hooks.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px]">
+                  {hooks.length}
+                </span>
+              )}
+              <div className={tabIndicatorClass('installed')} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('marketplace')}
+              className={tabClass('marketplace')}
+            >
+              {i18nService.t('hookMarketplace')}
+              <div className={tabIndicatorClass('marketplace')} />
+            </button>
           </div>
-        )}
-
-        <div className="flex items-center border-b border-border">
-          <button
-            type="button"
-            onClick={() => setActiveTab('installed')}
-            className={tabClass('installed')}
-          >
-            {i18nService.t('hookInstalled')}
-            {hooks.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px]">
-                {hooks.length}
-              </span>
-            )}
-            <div className={tabIndicatorClass('installed')} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('marketplace')}
-            className={tabClass('marketplace')}
-          >
-            {i18nService.t('hookMarketplace')}
-            <div className={tabIndicatorClass('marketplace')} />
-          </button>
+          <p className="min-w-0 truncate pb-2 text-right text-sm text-secondary">
+            {i18nService.t('hooksDescription')}
+          </p>
         </div>
       </div>
 
       {activeTab === 'installed' && (
-        <>
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
+            <div className="relative min-w-0 flex-1 sm:max-w-md">
+              <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+              <input
+                type="text"
+                placeholder={i18nService.t('searchHooks')}
+                value={searchQuery}
+                onChange={event => setSearchQuery(event.target.value)}
+                disabled={gatewayOffline}
+                className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
+          </div>
           {isLoading ? (
             <div className="py-8 text-center text-sm text-secondary">
               {i18nService.t('loading')}
@@ -303,7 +305,7 @@ const HookManager: React.FC = () => {
               })}
             </div>
           )}
-        </>
+        </div>
       )}
 
       {activeTab === 'marketplace' && (
