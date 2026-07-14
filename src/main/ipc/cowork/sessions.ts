@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
-import type { CoworkStore } from '../../coworkStore';
-import type { CoworkEngineRouter } from '../../libs/agentEngine';
+import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkEngineRouter } from '../../engine';
 
 interface SessionHandlerDependencies {
   getCoworkStore: () => CoworkStore;
@@ -17,7 +17,10 @@ export const registerCoworkSessionHandlers = ({
       getCoworkEngineRouter().stopSession(sessionId);
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to stop session' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to stop session',
+      };
     }
   });
 
@@ -34,7 +37,10 @@ export const registerCoworkSessionHandlers = ({
       }
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to delete session' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete session',
+      };
     }
   });
 
@@ -42,17 +48,26 @@ export const registerCoworkSessionHandlers = ({
     try {
       return { success: getCoworkStore().deleteMessage(sessionId, messageId) };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to delete message' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete message',
+      };
     }
   });
 
-  ipcMain.handle('cowork:message:deleteFrom', async (_event, sessionId: string, messageId: string) => {
-    try {
-      return { success: getCoworkStore().deleteMessagesFrom(sessionId, messageId) };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to delete messages' };
-    }
-  });
+  ipcMain.handle(
+    'cowork:message:deleteFrom',
+    async (_event, sessionId: string, messageId: string) => {
+      try {
+        return { success: getCoworkStore().deleteMessagesFrom(sessionId, messageId) };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to delete messages',
+        };
+      }
+    },
+  );
 
   ipcMain.handle('cowork:session:deleteBatch', async (_event, sessionIds: string[]) => {
     try {
@@ -72,35 +87,53 @@ export const registerCoworkSessionHandlers = ({
       });
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to batch delete sessions' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to batch delete sessions',
+      };
     }
   });
 
-  ipcMain.handle('cowork:session:pin', async (_event, options: { sessionId: string; pinned: boolean }) => {
-    try {
-      getCoworkStore().setSessionPinned(options.sessionId, options.pinned);
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to update session pin' };
-    }
-  });
+  ipcMain.handle(
+    'cowork:session:pin',
+    async (_event, options: { sessionId: string; pinned: boolean }) => {
+      try {
+        getCoworkStore().setSessionPinned(options.sessionId, options.pinned);
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to update session pin',
+        };
+      }
+    },
+  );
 
-  ipcMain.handle('cowork:session:rename', async (_event, options: { sessionId: string; title: string }) => {
-    try {
-      const title = options.title.trim();
-      if (!title) return { success: false, error: 'Title is required' };
-      getCoworkStore().updateSession(options.sessionId, { title });
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to rename session' };
-    }
-  });
+  ipcMain.handle(
+    'cowork:session:rename',
+    async (_event, options: { sessionId: string; title: string }) => {
+      try {
+        const title = options.title.trim();
+        if (!title) return { success: false, error: 'Title is required' };
+        getCoworkStore().updateSession(options.sessionId, { title });
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to rename session',
+        };
+      }
+    },
+  );
 
   ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
     try {
       return { success: true, session: getCoworkStore().getSession(sessionId) };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to get session' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get session',
+      };
     }
   });
 
@@ -108,7 +141,10 @@ export const registerCoworkSessionHandlers = ({
     try {
       return { success: true, sessions: getCoworkStore().listSessions(agentId) };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to list sessions' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to list sessions',
+      };
     }
   });
 

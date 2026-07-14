@@ -81,14 +81,14 @@ Runtime 是预构建的 npm 包，直接从 npm registry 下载（非从 git clo
 
 ### 2.1 状态机
 
-**文件**：`src/main/libs/openclaw/runtime/openclawEngineManager.ts`
+**文件**：`src/main/openclaw/runtime/openclawEngineManager.ts`
 
 ```typescript
-type OpenClawEnginePhase = 
-  | 'ready'           // Runtime 已就绪，Gateway 未启动
-  | 'starting'        // Gateway 启动中
-  | 'running'         // Gateway 运行中
-  | 'error';          // Gateway 出错
+type OpenClawEnginePhase =
+  | 'ready' // Runtime 已就绪，Gateway 未启动
+  | 'starting' // Gateway 启动中
+  | 'running' // Gateway 运行中
+  | 'error'; // Gateway 出错
 
 interface OpenClawEngineStatus {
   phase: OpenClawEnginePhase;
@@ -204,6 +204,7 @@ private buildGatewayEnv(token: string, port: number): Record<string, string> {
 OpenClaw Gateway 通过 WebSocket 提供实时通信，连接端口通过端口扫描自动确定（默认扫描端口范围，默认起始 42871）。
 
 连接握手协议：
+
 1. WebSocket 打开
 2. 等待服务端发送 `connect.challenge` 事件（750ms 超时）
 3. 发送 `connect` 请求（携带 auth token）
@@ -213,16 +214,16 @@ OpenClaw Gateway 通过 WebSocket 提供实时通信，连接端口通过端口�
 
 Gateway 通过 WebSocket 推送以下事件：
 
-| 事件 | 载荷 | 说明 |
-|------|------|------|
-| `tick` | 无 | 心跳 |
-| `chat` | `{ runId?, sessionKey, state: 'delta'|'final'|'aborted'|'error', message? }` | 聊天流事件 |
-| `agent` | `{ runId?, sessionKey?, stream?, data?, tool?, call? }` | 代理事件（推理、工具流） |
-| `exec.approval.requested` | `{ id?, request: { command?, ... } }` | 工具执行权限请求 |
-| `exec.approval.resolved` | `{ id? }` | 权限请求已处理 |
-| `session.tool` | 同 `agent` | 会话工具流事件 |
-| `session.message` | 消息内容 | 会话级系统消息 |
-| `sessions.changed` | 会话列表变更 | 跨进程会话通知 |
+| 事件                      | 载荷                                                    | 说明                     |
+| ------------------------- | ------------------------------------------------------- | ------------------------ |
+| `tick`                    | 无                                                      | 心跳                     |
+| `chat`                    | `{ runId?, sessionKey, state: 'delta'                   | 'final'                  | 'aborted' | 'error', message? }` | 聊天流事件 |
+| `agent`                   | `{ runId?, sessionKey?, stream?, data?, tool?, call? }` | 代理事件（推理、工具流） |
+| `exec.approval.requested` | `{ id?, request: { command?, ... } }`                   | 工具执行权限请求         |
+| `exec.approval.resolved`  | `{ id? }`                                               | 权限请求已处理           |
+| `session.tool`            | 同 `agent`                                              | 会话工具流事件           |
+| `session.message`         | 消息内容                                                | 会话级系统消息           |
+| `sessions.changed`        | 会话列表变更                                            | 跨进程会话通知           |
 
 ### 3.3 RPC 方法
 
@@ -247,46 +248,47 @@ interface GatewayResponse {
 
 #### Chat API
 
-| 方法 | 参数 | 说明 |
-|------|------|------|
-| `chat.send` | `{ sessionKey, message, deliver?, idempotencyKey?, attachments? }` | 发送用户消息 |
-| `chat.history` | `{ sessionKey, limit? }` | 获取权威历史消息 |
-| `chat.startup` | `{ sessionKey }` | 加载会话初始状态 |
-| `chat.abort` | `{ sessionKey, runId }` | 取消当前运行 |
-| `chat.list` | — | 列出活跃聊天 |
+| 方法           | 参数                                                               | 说明             |
+| -------------- | ------------------------------------------------------------------ | ---------------- |
+| `chat.send`    | `{ sessionKey, message, deliver?, idempotencyKey?, attachments? }` | 发送用户消息     |
+| `chat.history` | `{ sessionKey, limit? }`                                           | 获取权威历史消息 |
+| `chat.startup` | `{ sessionKey }`                                                   | 加载会话初始状态 |
+| `chat.abort`   | `{ sessionKey, runId }`                                            | 取消当前运行     |
+| `chat.list`    | —                                                                  | 列出活跃聊天     |
 
 #### Sessions API
 
-| 方法 | 参数 | 说明 |
-|------|------|------|
-| `sessions.subscribe` | `{}` | 注册会话事件监听 |
-| `sessions.list` | `{ activeMinutes?, limit? }` | 列出活跃会话 |
-| `sessions.delete` | `{ key, deleteTranscript? }` | 删除会话 |
+| 方法                 | 参数                         | 说明             |
+| -------------------- | ---------------------------- | ---------------- |
+| `sessions.subscribe` | `{}`                         | 注册会话事件监听 |
+| `sessions.list`      | `{ activeMinutes?, limit? }` | 列出活跃会话     |
+| `sessions.delete`    | `{ key, deleteTranscript? }` | 删除会话         |
 
 #### Approval API
 
-| 方法 | 参数 | 说明 |
-|------|------|------|
+| 方法                    | 参数               | 说明         |
+| ----------------------- | ------------------ | ------------ |
 | `exec.approval.resolve` | `{ id, decision }` | 响应权限请求 |
 
 #### Cron API
 
-| 方法 | 说明 |
-|------|------|
-| `cron.add` | 添加定时任务 |
-| `cron.update` | 更新定时任务 |
-| `cron.remove` | 删除定时任务 |
-| `cron.list` | 列出定时任务 |
-| `cron.run` | 手动触发定时任务 |
-| `cron.runs` | 查看任务运行历史 |
+| 方法          | 说明             |
+| ------------- | ---------------- |
+| `cron.add`    | 添加定时任务     |
+| `cron.update` | 更新定时任务     |
+| `cron.remove` | 删除定时任务     |
+| `cron.list`   | 列出定时任务     |
+| `cron.run`    | 手动触发定时任务 |
+| `cron.runs`   | 查看任务运行历史 |
 
 ## 4. Runtime Adapter
 
 ### 4.1 OpenClawRuntimeAdapter
 
-**文件**：`src/main/libs/agentEngine/openclawRuntimeAdapter.ts`
+**文件**：`src/main/engine/openclawRuntimeAdapter.ts`
 
 核心职责：
+
 1. **Gateway 客户端管理** — 管理 GatewayClient 生命周期和重连
 2. **会话映射** — Cowork sessionId → OpenClaw sessionKey
 3. **事件转换** — Gateway 事件 → Cowork 事件
@@ -298,16 +300,16 @@ Adapter 已不再是厚重的编排层 —— 它只是 Gateway 的轻量客户�
 
 ### 4.2 Session Key 格式
 
-| 类型 | 格式 | 示例 |
-|------|------|------|
-| GUI Cowork | `agent:main:justdo:{sessionId}` | `agent:main:justdo:abc123` |
-| IM Managed | `agent:{agentId}:{platform}:{conversationId}` | `agent:bot1:im:private:12345` |
+| 类型       | 格式                                                        | 示例                              |
+| ---------- | ----------------------------------------------------------- | --------------------------------- |
+| GUI Cowork | `agent:main:justdo:{sessionId}`                             | `agent:main:justdo:abc123`        |
+| IM Managed | `agent:{agentId}:{platform}:{conversationId}`               | `agent:bot1:im:private:12345`     |
 | IM Channel | `agent:{agentId}:{channel}:{accountId}:{peerKind}:{peerId}` | `agent:bot1:im:acc1:direct:user1` |
-| Cron | `cron:{jobId}` | `cron:task-001` |
+| Cron       | `cron:{jobId}`                                              | `cron:task-001`                   |
 
 ### 4.3 子代理网关
 
-**文件**：`src/main/libs/agentEngine/openclaw/subagentGateway.ts`
+**文件**：`src/main/engine/openclaw/subagentGateway.ts`
 
 Gateway 负责子代理的完整生命周期。JustDo 仅通过 Gateway 查询子代理状态：
 
@@ -336,7 +338,7 @@ export async function listGatewaySubagents(
 
 ### 4.4 历史对账
 
-**文件**：`src/main/libs/agentEngine/history/historyReconciler.ts`
+**文件**：`src/main/engine/history/historyReconciler.ts`
 
 Gateway 的 `chat.history` 是消息的权威来源。Adapter 在每次 turn 完成后触发对账：
 
@@ -374,7 +376,7 @@ class HistoryReconciler {
 
 ### 5.1 OpenClawConfigSync
 
-**文件**：`src/main/libs/openclaw/config/openclawConfigSync.ts`
+**文件**：`src/main/openclaw/config/openclawConfigSync.ts`
 
 将 JustDo 配置同步到 OpenClaw 的 `managed.yaml`：
 
@@ -397,9 +399,12 @@ class OpenClawConfigSync {
 
   mapExecutionMode(mode: ExecutionMode): string {
     switch (mode) {
-      case 'local': return 'off';
-      case 'auto': return 'non-main';
-      default: return 'off';
+      case 'local':
+        return 'off';
+      case 'auto':
+        return 'non-main';
+      default:
+        return 'off';
     }
   }
 
@@ -489,11 +494,11 @@ npm run electron:dev:openclaw
 
 打包后的 runtime 放置在应用资源目录：
 
-| 平台 | 位置 |
-|------|------|
-| macOS | `Contents/Resources/cfmind/` |
-| Windows | `resources/cfmind/` |
-| Linux | `resources/cfmind/` |
+| 平台    | 位置                         |
+| ------- | ---------------------------- |
+| macOS   | `Contents/Resources/cfmind/` |
+| Windows | `resources/cfmind/`          |
+| Linux   | `resources/cfmind/`          |
 
 ### 6.4 缓存机制
 
@@ -517,64 +522,64 @@ npm run electron:dev:openclaw
 
 ### 7.1 OpenClaw 相关
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | — |
-| `OPENCLAW_GATEWAY_TOKEN` | Gateway 认证令牌 | 自动生成 |
-| `OPENCLAW_GATEWAY_PORT` | Gateway 监听端口 | 42871（自动扫描） |
-| `JUSTDO_NODE_RUNTIME_PATH` | Electron Node.js 运行时路径 | 自动检测 |
-| `JUSTDO_NPM_BIN_DIR` | npm 二进制目录 | 自动检测 |
+| 变量                       | 说明                        | 默认值            |
+| -------------------------- | --------------------------- | ----------------- |
+| `OPENCLAW_FORCE_INSTALL`   | 强制重新安装预构建运行时    | —                 |
+| `OPENCLAW_GATEWAY_TOKEN`   | Gateway 认证令牌            | 自动生成          |
+| `OPENCLAW_GATEWAY_PORT`    | Gateway 监听端口            | 42871（自动扫描） |
+| `JUSTDO_NODE_RUNTIME_PATH` | Electron Node.js 运行时路径 | 自动检测          |
+| `JUSTDO_NPM_BIN_DIR`       | npm 二进制目录              | 自动检测          |
 
 ### 7.2 IM 集成
 
-| 变量 | 说明 |
-|------|------|
+| 变量                            | 说明                |
+| ------------------------------- | ------------------- |
 | `JUSTDO_INTERCOM_CLIENT_SECRET` | Intercom 客户端密钥 |
-| `JUSTDO_DISCORD_CLIENT_SECRET` | Discord 客户端密钥 |
+| `JUSTDO_DISCORD_CLIENT_SECRET`  | Discord 客户端密钥  |
 
 ## 8. 关键文件清单
 
 ### 引擎管理
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/libs/openclaw/runtime/openclawEngineManager.ts` | Gateway 进程生命周期管理 |
-| `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | Gateway 客户端 + 事件映射 |
-| `src/main/libs/agentEngine/coworkEngineRouter.ts` | 引擎路由层（透传委托） |
-| `src/main/libs/agentEngine/gateway/types.ts` | Gateway 类型定义 |
-| `src/main/libs/agentEngine/utils/gatewayHelpers.ts` | Gateway 辅助函数 |
+| 文件                                                 | 职责                      |
+| ---------------------------------------------------- | ------------------------- |
+| `src/main/openclaw/runtime/openclawEngineManager.ts` | Gateway 进程生命周期管理  |
+| `src/main/engine/openclawRuntimeAdapter.ts`          | Gateway 客户端 + 事件映射 |
+| `src/main/engine/coworkEngineRouter.ts`              | 引擎路由层（透传委托）    |
+| `src/main/engine/gateway/types.ts`                   | Gateway 类型定义          |
+| `src/main/engine/utils/gatewayHelpers.ts`            | Gateway 辅助函数          |
 
 ### 历史与子代理
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/libs/agentEngine/history/historyReconciler.ts` | 历史对账（Gateway 权威 → UI 缓存） |
-| `src/main/libs/agentEngine/openclaw/subagentGateway.ts` | 子代理状态查询 |
-| `src/main/libs/agentEngine/openclaw/webchatToolStream.ts` | Webchat 工具流同步 |
-| `src/main/libs/openclaw/sessions/openclawHistory.ts` | Gateway 历史条目提取 |
+| 文件                                            | 职责                               |
+| ----------------------------------------------- | ---------------------------------- |
+| `src/main/engine/history/historyReconciler.ts`  | 历史对账（Gateway 权威 → UI 缓存） |
+| `src/main/engine/openclaw/subagentGateway.ts`   | 子代理状态查询                     |
+| `src/main/engine/openclaw/webchatToolStream.ts` | Webchat 工具流同步                 |
+| `src/main/openclaw/sessions/openclawHistory.ts` | Gateway 历史条目提取               |
 
 ### 配置
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/libs/openclaw/config/openclawConfigSync.ts` | 配置同步到 managed.yaml |
-| `src/main/libs/openclaw/sessions/openclawChannelSessionSync.ts` | Channel 会话同步 |
-| `src/main/libs/openclaw/models/openclawAgentModels.ts` | Agent 模型配置解析 |
-| `src/main/libs/openclaw/extensions/openclawLocalExtensions.ts` | 本地扩展同步 |
+| 文件                                                       | 职责                    |
+| ---------------------------------------------------------- | ----------------------- |
+| `src/main/openclaw/config/openclawConfigSync.ts`           | 配置同步到 managed.yaml |
+| `src/main/openclaw/sessions/openclawChannelSessionSync.ts` | Channel 会话同步        |
+| `src/main/openclaw/models/openclawAgentModels.ts`          | Agent 模型配置解析      |
+| `src/main/openclaw/extensions/openclawLocalExtensions.ts`  | 本地扩展同步            |
 
 ### 打包脚本
 
-| 文件 | 职责 |
-|------|------|
-| `scripts/install-openclaw-runtime.cjs` | 下载预构建 npm 包 |
-| `scripts/sync-openclaw-runtime-current.cjs` | 同步 current 目录 |
-| `scripts/patch-openclaw-runtime.cjs` | 打补丁（JustDo 集成） |
-| `scripts/bundle-openclaw-gateway.cjs` | 打包 Gateway 配置 |
-| `scripts/ensure-openclaw-plugins.cjs` | 安装必需插件 |
+| 文件                                          | 职责                              |
+| --------------------------------------------- | --------------------------------- |
+| `scripts/install-openclaw-runtime.cjs`        | 下载预构建 npm 包                 |
+| `scripts/sync-openclaw-runtime-current.cjs`   | 同步 current 目录                 |
+| `scripts/patch-openclaw-runtime.cjs`          | 打补丁（JustDo 集成）             |
+| `scripts/bundle-openclaw-gateway.cjs`         | 打包 Gateway 配置                 |
+| `scripts/ensure-openclaw-plugins.cjs`         | 安装必需插件                      |
 | `scripts/sync-openclaw-runtime-resources.cjs` | 同步 docs、本地扩展并裁剪内置扩展 |
-| `scripts/precompile-openclaw-extensions.cjs` | 预编译扩展 |
-| `scripts/prune-openclaw-runtime.cjs` | 清理 runtime |
-| `scripts/pack-openclaw-tar.cjs` | 打包 tar 存档 |
-| `scripts/openclaw-runtime-host.cjs` | 开发模式 runtime host |
+| `scripts/precompile-openclaw-extensions.cjs`  | 预编译扩展                        |
+| `scripts/prune-openclaw-runtime.cjs`          | 清理 runtime                      |
+| `scripts/pack-openclaw-tar.cjs`               | 打包 tar 存档                     |
+| `scripts/openclaw-runtime-host.cjs`           | 开发模式 runtime host             |
 
 ---

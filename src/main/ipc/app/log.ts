@@ -3,8 +3,8 @@ import path from 'path';
 
 import { LogIpc } from '../../../shared/logIpc';
 import { getLogFilePath, getRecentMainLogEntries } from '../../core/logger';
-import { getCoworkLogPath } from '../../libs/cowork/coworkLogger';
-import { exportLogsZip } from '../../libs/infra/logExport';
+import { getCoworkLogPath } from '../../cowork/coworkLogger';
+import { exportLogsZip } from './logExport';
 
 const padTwoDigits = (value: number): string => value.toString().padStart(2, '0');
 

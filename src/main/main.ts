@@ -10,18 +10,28 @@ import { APP_NAME } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
 import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
+import { setLanguage } from './core/i18n';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
 import { createMainWindow } from './core/mainWindowFactory';
+import { OutboundHeaderProxy } from './core/outboundHeaderProxy';
+import { ensurePythonRuntimeReady } from './core/pythonRuntime';
 import {
   applySystemProxyPreference,
   getProxyPreferenceSignature,
 } from './core/systemProxyPreference';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
-import { CoworkStore } from './coworkStore';
+import { syncBuiltinModelProvider } from './cowork/builtinModelProvider';
+import {
+  resolveAllEnabledProviderConfigs,
+  resolveRawApiConfig,
+  setStoreGetter,
+} from './cowork/providerApiConfig';
+import { CoworkStore } from './data/coworkStore';
+import { GroupStore } from './data/groupStore';
 import { SqliteStore } from './data/sqliteStore';
-import { GroupStore } from './groupStore';
-import { setLanguage } from './i18n';
+import { CoworkEngineService } from './engine';
+import { bindCoworkRuntimeForwarder } from './engine/coworkRuntimeForwarder';
 import {
   registerAppHandlers,
   registerCalendarPermissionHandlers,
@@ -58,24 +68,15 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
-import { CoworkEngineService } from './libs/agentEngine';
-import { bindCoworkRuntimeForwarder } from './libs/agentEngine/coworkRuntimeForwarder';
-import { syncBuiltinModelProvider } from './libs/cowork/builtinModelProvider';
-import {
-  resolveAllEnabledProviderConfigs,
-  resolveRawApiConfig,
-  setStoreGetter,
-} from './libs/cowork/providerApiConfig';
-import { OutboundHeaderProxy } from './libs/infra/outboundHeaderProxy';
-import { ensurePythonRuntimeReady } from './libs/infra/pythonRuntime';
-import type { AskUserExtensionConfig } from './libs/openclaw/config/openclawConfigSync';
-import { buildProviderSelection } from './libs/openclaw/config/openclawConfigSync';
-import { OpenClawConfigSyncService } from './libs/openclaw/config/openclawConfigSyncService';
-import { resolveQualifiedAgentModelRef } from './libs/openclaw/models/openclawAgentModels';
+import type { AskUserExtensionConfig } from './openclaw/config/openclawConfigSync';
+import { buildProviderSelection } from './openclaw/config/openclawConfigSync';
+import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
+import { resolveQualifiedAgentModelRef } from './openclaw/models/openclawAgentModels';
 import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
-} from './libs/openclaw/runtime/openclawEngineManager';
+} from './openclaw/runtime/openclawEngineManager';
+import { justDoSlashCommandPolicy } from './openclaw/slashCommands/slashCommandPolicies';
 import {
   createPluginMarketplaceService,
   McpServices,
@@ -84,8 +85,7 @@ import {
   OpenClawSkillFileService,
   OpenClawSkillService,
   PluginManager,
-} from './libs/plugins';
-import { justDoSlashCommandPolicy } from './libs/slashCommands/slashCommandPolicies';
+} from './plugins';
 
 const outboundHeaderProxy = new OutboundHeaderProxy();
 

@@ -7,14 +7,14 @@ import {
   ProxyProtocol,
   type ProxySettings,
 } from '../../shared/proxy';
-import type { OutboundHeaderProxy } from '../libs/infra/outboundHeaderProxy';
+import type { OutboundHeaderProxy } from './outboundHeaderProxy';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrl,
   restoreOriginalProxyEnv,
   setFixedProxyUrl,
   setSystemProxyEnabled,
-} from '../libs/infra/systemProxy';
+} from './systemProxy';
 
 export type SystemProxySettings = {
   useSystemProxy?: boolean;

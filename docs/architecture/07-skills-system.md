@@ -6,34 +6,34 @@ Skills 是 JustDo 的扩展机制，每个 Skill 定义了一组特定场景下�
 
 ### 1.1 核心设计原则
 
-| 原则 | 说明 |
-|------|------|
-| **Gateway 管理** | Skills 完全由 OpenClaw Gateway 管理，JustDo 不维护本地 Skill 运行时状态 |
-| **构建时部署** | Skills 在 JustDo 构建时复制到 OpenClaw Runtime 内置目录，非运行时加载 |
-| **RPC 操作** | UI 通过 Gateway RPC (`skills.*`) 进行安装、搜索、配置等操作 |
-| **15 个内置 Skill** | 固定在构建时部署，不额外增加 |
+| 原则                | 说明                                                                    |
+| ------------------- | ----------------------------------------------------------------------- |
+| **Gateway 管理**    | Skills 完全由 OpenClaw Gateway 管理，JustDo 不维护本地 Skill 运行时状态 |
+| **构建时部署**      | Skills 在 JustDo 构建时复制到 OpenClaw Runtime 内置目录，非运行时加载   |
+| **RPC 操作**        | UI 通过 Gateway RPC (`skills.*`) 进行安装、搜索、配置等操作             |
+| **15 个内置 Skill** | 固定在构建时部署，不额外增加                                            |
 
 ### 1.2 15 个内置 Skill 列表
 
-| Skill ID | 说明 | 默认启用 |
-|----------|------|----------|
-| `agent-browser` | 浏览器自动化 | false |
-| `algorithmic-art` | 算法艺术生成 | true |
-| `data-analysis` | 数据分析 | true |
-| `diagram-generator` | 图表生成（Mermaid / PlantUML） | true |
-| `docx` | Word 文档生成 | true |
-| `mcp-builder` | MCP Server 构建 | true |
-| `multi-search-engine` | 多引擎网络搜索 | true |
-| `ontology` | 知识本体管理 | true |
-| `pdf` | PDF 处理与生成 | true |
-| `playwright` | 浏览器自动化（Playwright） | true |
-| `pptx` | PowerPoint 演示文稿生成 | true |
-| `self-improvement` | 自我改进 | true |
-| `skill-creator` | 自定义 Skill 创建 | true |
-| `taskflow` | 任务流管理 | true |
-| `theme-factory` | 主题工厂 | true |
-| `weather` | 天气查询 | true |
-| `xlsx` | Excel 表格生成 | true |
+| Skill ID              | 说明                           | 默认启用 |
+| --------------------- | ------------------------------ | -------- |
+| `agent-browser`       | 浏览器自动化                   | false    |
+| `algorithmic-art`     | 算法艺术生成                   | true     |
+| `data-analysis`       | 数据分析                       | true     |
+| `diagram-generator`   | 图表生成（Mermaid / PlantUML） | true     |
+| `docx`                | Word 文档生成                  | true     |
+| `mcp-builder`         | MCP Server 构建                | true     |
+| `multi-search-engine` | 多引擎网络搜索                 | true     |
+| `ontology`            | 知识本体管理                   | true     |
+| `pdf`                 | PDF 处理与生成                 | true     |
+| `playwright`          | 浏览器自动化（Playwright）     | true     |
+| `pptx`                | PowerPoint 演示文稿生成        | true     |
+| `self-improvement`    | 自我改进                       | true     |
+| `skill-creator`       | 自定义 Skill 创建              | true     |
+| `taskflow`            | 任务流管理                     | true     |
+| `theme-factory`       | 主题工厂                       | true     |
+| `weather`             | 天气查询                       | true     |
+| `xlsx`                | Excel 表格生成                 | true     |
 
 > 共 15 个 Skill 被配置，其中 14 个默认启用，`agent-browser` 默认禁用。
 
@@ -131,16 +131,16 @@ author: JustDo
 
 ## 4. Skill 类型分类
 
-| 类型 | 说明 | 示例 |
-|------|------|------|
-| **文档生成** | Office 文档生成 | docx, xlsx, pptx, pdf |
-| **图表可视化** | 图表和可视化生成 | diagram-generator, algorithmic-art |
-| **网络工具** | 网络搜索和自动化 | multi-search-engine, playwright, agent-browser |
-| **数据分析** | 数据处理和分析 | data-analysis |
-| **知识管理** | 知识组织和本體 | ontology |
-| **扩展管理** | Skill 和 MCP 扩展 | skill-creator, mcp-builder |
-| **工作流** | 任务和工作流管理 | taskflow |
-| **实用工具** | 其他实用功能 | weather, theme-factory, self-improvement |
+| 类型           | 说明              | 示例                                           |
+| -------------- | ----------------- | ---------------------------------------------- |
+| **文档生成**   | Office 文档生成   | docx, xlsx, pptx, pdf                          |
+| **图表可视化** | 图表和可视化生成  | diagram-generator, algorithmic-art             |
+| **网络工具**   | 网络搜索和自动化  | multi-search-engine, playwright, agent-browser |
+| **数据分析**   | 数据处理和分析    | data-analysis                                  |
+| **知识管理**   | 知识组织和本體    | ontology                                       |
+| **扩展管理**   | Skill 和 MCP 扩展 | skill-creator, mcp-builder                     |
+| **工作流**     | 任务和工作流管理  | taskflow                                       |
+| **实用工具**   | 其他实用功能      | weather, theme-factory, self-improvement       |
 
 ---
 
@@ -179,13 +179,13 @@ Skills 在 JustDo 构建时处理，直接写入 OpenClaw Runtime 内置目录�
 }
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `version` | 配置版本 |
-| `skills` | 要复制的 Skills 列表 |
-| `skills[].id` | Skill ID（对应 `resources/skills/` 目录下的子目录名） |
-| `skills[].enabled` | 是否复制该 Skill |
-| `disableOpenClawDefaults` | 是否删除 OpenClaw Runtime 默认 Skills |
+| 字段                      | 说明                                                  |
+| ------------------------- | ----------------------------------------------------- |
+| `version`                 | 配置版本                                              |
+| `skills`                  | 要复制的 Skills 列表                                  |
+| `skills[].id`             | Skill ID（对应 `resources/skills/` 目录下的子目录名） |
+| `skills[].enabled`        | 是否复制该 Skill                                      |
+| `disableOpenClawDefaults` | 是否删除 OpenClaw Runtime 默认 Skills                 |
 
 ### 5.2 构建流程
 
@@ -239,7 +239,7 @@ Skills 在 JustDo 构建时处理，直接写入 OpenClaw Runtime 内置目录�
 
 ### 6.1 SkillRpcHandler
 
-**文件**: `src/main/libs/agentEngine/rpc/skillRpc.ts`
+**文件**: `src/main/engine/rpc/skillRpc.ts`
 
 JustDo 不再使用本地文件系统管理 Skills。Skill 状态、安装、启用/禁用通过 Gateway RPC 完成；在线搜索和详情由插件市场层封装：
 
@@ -248,36 +248,40 @@ class SkillRpcHandler {
   constructor(private readonly callbacks: SkillRpcCallbacks) {}
 
   // 获取当前 Skills 状态（含启用状态、版本等）
-  async getSkillsStatus(agentId?: string): Promise<GatewaySkillStatus>
+  async getSkillsStatus(agentId?: string): Promise<GatewaySkillStatus>;
 
   // 执行 Gateway Skill 安装请求（具体市场参数由 plugin/marketplace 组装）
-  async installSkill(params: unknown): Promise<SkillRpcResult>
+  async installSkill(params: unknown): Promise<SkillRpcResult>;
 
   // 更新 Skill 配置（启用/禁用、设置）
-  async updateSkillConfig(params: SkillUpdateParams): Promise<SkillRpcResult>
+  async updateSkillConfig(params: SkillUpdateParams): Promise<SkillRpcResult>;
 
   // 会话标题生成
-  async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string>
+  async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string>;
 
   // 会话模型更新
-  async patchSessionModel(sessionId: string, model: string, agentId?: string): Promise<{ ok: boolean; error?: string }>
+  async patchSessionModel(
+    sessionId: string,
+    model: string,
+    agentId?: string,
+  ): Promise<{ ok: boolean; error?: string }>;
 }
 ```
 
 ### 6.2 Gateway RPC 方法映射
 
-| SkillRpcHandler 方法 | Gateway RPC | 说明 |
-|----------------------|------------|------|
-| `getSkillsStatus()` | `skills.status` | 获取所有 Skill 状态信息 |
-| `installSkill()` | `skills.install` | 执行 Skill 安装 |
-| `updateSkillConfig()` | `skills.update` | 更新 Skill 配置 |
+| SkillRpcHandler 方法  | Gateway RPC      | 说明                    |
+| --------------------- | ---------------- | ----------------------- |
+| `getSkillsStatus()`   | `skills.status`  | 获取所有 Skill 状态信息 |
+| `installSkill()`      | `skills.install` | 执行 Skill 安装         |
+| `updateSkillConfig()` | `skills.update`  | 更新 Skill 配置         |
 
-市场搜索和详情 RPC 由 `src/main/libs/plugin/marketplace/` 负责：
+市场搜索和详情 RPC 由 `src/main/plugin/marketplace/` 负责：
 
-| Marketplace 类 | Gateway RPC | 说明 |
-|----------------|------------|------|
+| Marketplace 类      | Gateway RPC     | 说明                  |
+| ------------------- | --------------- | --------------------- |
 | provider search RPC | `skills.search` | 搜索配置的 Skill 市场 |
-| provider detail RPC | `skills.detail` | 获取单个 Skill 详情 |
+| provider detail RPC | `skills.detail` | 获取单个 Skill 详情   |
 
 ### 6.3 类型定义
 
@@ -309,7 +313,7 @@ interface SkillRpcResult {
   error?: string;
 }
 
-// 市场搜索结果（定义在 src/main/libs/plugin/marketplace/）
+// 市场搜索结果（定义在 src/main/plugin/marketplace/）
 interface MarketplaceSkillSearchResult {
   id: string;
   name: string;
@@ -336,13 +340,13 @@ interface MarketplaceSkillDetail {
 
 使用 React 组件进行 Skill 管理的 UI 展示和交互：
 
-| 组件 | 文件 | 职责 |
-|------|------|------|
-| `SkillsButton` | `src/renderer/components/skills/SkillsButton.tsx` | 触发 Skills 管理弹窗的按钮 |
-| `SkillsManager` | `src/renderer/components/skills/SkillsManager.tsx` | Skills 管理主面板（启用/禁用、配置） |
-| `SkillsPopover` | `src/renderer/components/skills/SkillsPopover.tsx` | Skills 快速操作弹出面板 |
-| `SkillsView` | `src/renderer/components/skills/SkillsView.tsx` | Skill 详情展示视图 |
-| `ActiveSkillBadge` | `src/renderer/components/skills/ActiveSkillBadge.tsx` | 当前活跃 Skill 标记 |
+| 组件               | 文件                                                  | 职责                                 |
+| ------------------ | ----------------------------------------------------- | ------------------------------------ |
+| `SkillsButton`     | `src/renderer/components/skills/SkillsButton.tsx`     | 触发 Skills 管理弹窗的按钮           |
+| `SkillsManager`    | `src/renderer/components/skills/SkillsManager.tsx`    | Skills 管理主面板（启用/禁用、配置） |
+| `SkillsPopover`    | `src/renderer/components/skills/SkillsPopover.tsx`    | Skills 快速操作弹出面板              |
+| `SkillsView`       | `src/renderer/components/skills/SkillsView.tsx`       | Skill 详情展示视图                   |
+| `ActiveSkillBadge` | `src/renderer/components/skills/ActiveSkillBadge.tsx` | 当前活跃 Skill 标记                  |
 
 UI 交互流程：
 
@@ -355,19 +359,19 @@ UI 交互流程：
 
 ## 8. 关键文件清单
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/libs/agentEngine/rpc/skillRpc.ts` | Skill RPC 处理（Gateway 通信） |
-| `src/main/libs/agentEngine/types.ts` | Skill 相关类型定义 |
-| `src/main/libs/openclaw/skills/openclawSkillFiles.ts` | 仅处理本地 Skill 文件导入与删除 |
-| `resources/builtin-skills.json` | 构建时 Skills 配置清单 |
-| `resources/skills/*/SKILL.md` | Skill 定义文档 |
-| `scripts/install-openclaw-runtime.cjs` | 构建脚本（Skills 部署步骤） |
-| `src/renderer/components/skills/SkillsButton.tsx` | Skills 触发按钮 |
-| `src/renderer/components/skills/SkillsManager.tsx` | Skills 管理面板 |
-| `src/renderer/components/skills/SkillsPopover.tsx` | Skills 弹出面板 |
-| `src/renderer/components/skills/SkillsView.tsx` | Skill 详情视图 |
-| `src/renderer/components/skills/ActiveSkillBadge.tsx` | 活跃 Skill 标记 |
+| 文件                                                  | 职责                            |
+| ----------------------------------------------------- | ------------------------------- |
+| `src/main/engine/rpc/skillRpc.ts`                     | Skill RPC 处理（Gateway 通信）  |
+| `src/main/engine/types.ts`                            | Skill 相关类型定义              |
+| `src/main/openclaw/skills/openclawSkillFiles.ts`      | 仅处理本地 Skill 文件导入与删除 |
+| `resources/builtin-skills.json`                       | 构建时 Skills 配置清单          |
+| `resources/skills/*/SKILL.md`                         | Skill 定义文档                  |
+| `scripts/install-openclaw-runtime.cjs`                | 构建脚本（Skills 部署步骤）     |
+| `src/renderer/components/skills/SkillsButton.tsx`     | Skills 触发按钮                 |
+| `src/renderer/components/skills/SkillsManager.tsx`    | Skills 管理面板                 |
+| `src/renderer/components/skills/SkillsPopover.tsx`    | Skills 弹出面板                 |
+| `src/renderer/components/skills/SkillsView.tsx`       | Skill 详情视图                  |
+| `src/renderer/components/skills/ActiveSkillBadge.tsx` | 活跃 Skill 标记                 |
 
 ---
 

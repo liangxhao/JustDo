@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { getPreviewableFileExtension } from '../../../shared/filePreview';
-import { t } from '../../i18n';
+import { t } from '../../core/i18n';
 
 const AttachmentMenuAction = {
   OPEN: 'open',

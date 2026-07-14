@@ -218,23 +218,22 @@ src/
 ├── main/                  # Electron main process
 │   ├── main.ts            # Entry point
 │   ├── preload.ts         # contextBridge security layer
-│   ├── coworkStore.ts     # Cowork session & message CRUD
-│   ├── groupStore.ts      # Session group management
-│   ├── mcpStore.ts        # MCP server configuration
-│   ├── core/              # Core app utilities
+│   ├── core/              # Core app utilities, proxy/runtime helpers
 │   │   ├── appConstants.ts
 │   │   ├── autoLaunchManager.ts
+│   │   ├── i18n.ts
 │   │   ├── logger.ts
 │   │   └── trayManager.ts
 │   ├── data/              # Data layer
+│   │   ├── coworkStore.ts # Cowork session & message CRUD
+│   │   ├── groupStore.ts  # Session group management
 │   │   └── sqliteStore.ts # SQLite database management
-│   ├── ipcHandlers/       # IPC handler modules
-│   └── libs/              # Domain-organized libraries
-│       ├── agentEngine/   # Cowork engine routing & OpenClaw adapter
-│       ├── cowork/        # Cowork config, logging, model API
-│       ├── infra/         # Command safety, system proxy, Python runtime
-│       ├── mcp/           # MCP bridge server & manager
-│       └── openclaw/      # Gateway engine, config sync, history, token proxy
+│   ├── ipc/               # IPC handler modules
+│   ├── engine/            # Cowork engine routing, OpenClaw adapter, command safety
+│   ├── cowork/            # Cowork config, logging, model API
+│   ├── openclaw/          # Gateway engine, config sync, history, slash commands
+│   ├── plugins/           # Skills, MCP, hooks, extensions, marketplace
+│   └── scheduler/         # OpenClaw cron adapter
 │
 ├── renderer/              # React frontend + Lit chat
 │   ├── App.tsx            # Root component

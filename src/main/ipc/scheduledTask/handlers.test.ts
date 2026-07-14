@@ -1,7 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { IpcChannel as ScheduledTaskIpc } from '../../../shared/scheduledTask/constants';
-import type { CronJobService } from '../../libs/scheduledTask/cronJobService';
+import type { CronJobService } from '../../scheduler/cronJobService';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
 

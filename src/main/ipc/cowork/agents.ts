@@ -1,14 +1,12 @@
 import { ipcMain } from 'electron';
 
-import type { CoworkStore } from '../../coworkStore';
+import type { CoworkStore } from '../../data/coworkStore';
 
 interface AgentHandlerDependencies {
   getStore: () => CoworkStore;
 }
 
-export const registerAgentHandlers = ({
-  getStore,
-}: AgentHandlerDependencies): void => {
+export const registerAgentHandlers = ({ getStore }: AgentHandlerDependencies): void => {
   ipcMain.handle('agents:list', async () => {
     try {
       return { success: true, agents: getStore().listAgents() };

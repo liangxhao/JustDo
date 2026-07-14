@@ -84,7 +84,7 @@ const mainWindow = new BrowserWindow({
 
     // 禁用远程模块
     enableRemoteModule: false,
-  }
+  },
 });
 ```
 
@@ -97,11 +97,11 @@ import { contextBridge, ipcRenderer } from 'electron';
 // 仅暴露必要的 API，不暴露 ipcRenderer 本身
 contextBridge.exposeInMainWorld('electron', {
   cowork: {
-    startSession: (params) => ipcRenderer.invoke('cowork:startSession', params),
+    startSession: params => ipcRenderer.invoke('cowork:startSession', params),
     // 其他方法...
   },
   store: {
-    get: (key) => ipcRenderer.invoke('store:get', key),
+    get: key => ipcRenderer.invoke('store:get', key),
     set: (key, value) => ipcRenderer.invoke('store:set', key, value),
   },
   // ... 其他命名空间
@@ -145,11 +145,11 @@ ipcMain.handle('cowork:startSession', (event, params) => {
 
 ### 3.1 工具分类
 
-| 级别 | 工具类型 | 示例 | 授权方式 |
-|------|----------|------|----------|
-| `low` | 信息读取 | read_file, list_directory | 可设置会话级授权 |
-| `medium` | 文件修改 | write_file, create_directory | 必须单次授权 |
-| `high` | 系统操作 | execute_command, network_request | 必须单次授权，显示警告 |
+| 级别       | 工具类型 | 示例                              | 授权方式               |
+| ---------- | -------- | --------------------------------- | ---------------------- |
+| `low`      | 信息读取 | read_file, list_directory         | 可设置会话级授权       |
+| `medium`   | 文件修改 | write_file, create_directory      | 必须单次授权           |
+| `high`     | 系统操作 | execute_command, network_request  | 必须单次授权，显示警告 |
 | `critical` | 危险操作 | delete_recursive, install_package | 必须单次授权，双重确认 |
 
 ### 3.2 权限请求流程
@@ -172,19 +172,19 @@ Main Process → Engine Router: 权限响应
 ```typescript
 interface PermissionRequest {
   sessionId: string;
-  permissionId: string;         // 请求 ID
-  toolName: string;             // 工具名称
+  permissionId: string; // 请求 ID
+  toolName: string; // 工具名称
   toolInput: Record<string, unknown>; // 工具输入
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
-  description: string;          // 工具用途描述
-  warnings?: string[];          // 风险警告
+  description: string; // 工具用途描述
+  warnings?: string[]; // 风险警告
 }
 
 interface PermissionResponse {
   sessionId: string;
   permissionId: string;
   approved: boolean;
-  scope: 'single' | 'session';  // 单次或会话级
+  scope: 'single' | 'session'; // 单次或会话级
 }
 ```
 
@@ -193,15 +193,15 @@ interface PermissionResponse {
 ```typescript
 function assessRiskLevel(toolName: string, toolInput: Record<string, unknown>): RiskLevel {
   const toolRiskMap: Record<string, RiskLevel> = {
-    'read_file': 'low',
-    'list_directory': 'low',
-    'write_file': 'medium',
-    'create_directory': 'medium',
-    'execute_command': 'high',
-    'web_search': 'medium',
-    'network_request': 'high',
-    'delete_file': 'high',
-    'delete_directory': 'critical',
+    read_file: 'low',
+    list_directory: 'low',
+    write_file: 'medium',
+    create_directory: 'medium',
+    execute_command: 'high',
+    web_search: 'medium',
+    network_request: 'high',
+    delete_file: 'high',
+    delete_directory: 'critical',
   };
 
   let level = toolRiskMap[toolName] || 'medium';
@@ -289,7 +289,7 @@ Mermaid 图表使用严格安全模式：
 
 ```typescript
 mermaid.initialize({
-  securityLevel: 'strict',  // 禁止点击事件和脚本
+  securityLevel: 'strict', // 禁止点击事件和脚本
   startOnLoad: false,
 });
 ```
@@ -352,7 +352,7 @@ channels:
     accounts:
       acc1:
         clientId: xxx
-        clientSecretEnv: JUSTDO_DINGTALK_CLIENT_SECRET  # 环境变量名
+        clientSecretEnv: JUSTDO_DINGTALK_CLIENT_SECRET # 环境变量名
 ```
 
 ---
@@ -455,10 +455,10 @@ function sanitizeErrorMessage(error: Error): string {
 
 ## 9. 关键文件清单
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/main.ts` | BrowserWindow 安全配置 |
-| `src/main/preload.ts` | Preload 安全桥接 |
-| `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | 权限请求处理 |
-| `src/main/libs/infra/commandSafety.ts` | 危险命令检测 |
-| `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求 UI |
+| 文件                                                       | 职责                   |
+| ---------------------------------------------------------- | ---------------------- |
+| `src/main/main.ts`                                         | BrowserWindow 安全配置 |
+| `src/main/preload.ts`                                      | Preload 安全桥接       |
+| `src/main/engine/openclawRuntimeAdapter.ts`                | 权限请求处理           |
+| `src/main/engine/commandSafety.ts`                         | 危险命令检测           |
+| `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求 UI            |

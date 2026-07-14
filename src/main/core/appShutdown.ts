@@ -8,9 +8,7 @@ export type AppShutdownController = {
   isQuitting: () => boolean;
 };
 
-export const registerAppShutdown = ({
-  cleanup,
-}: AppShutdownOptions): AppShutdownController => {
+export const registerAppShutdown = ({ cleanup }: AppShutdownOptions): AppShutdownController => {
   let cleanupFinished = false;
   let cleanupInProgress = false;
   let quitting = false;

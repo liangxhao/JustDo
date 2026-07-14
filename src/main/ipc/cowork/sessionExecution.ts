@@ -2,9 +2,9 @@ import { BrowserWindow, ipcMain } from 'electron';
 
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import { resolveTaskWorkingDirectory } from '../../core/taskWorkspace';
-import type { CoworkStore } from '../../coworkStore';
-import type { CoworkEngineRouter } from '../../libs/agentEngine';
-import type { OpenClawEngineStatus } from '../../libs/openclaw/runtime/openclawEngineManager';
+import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkEngineRouter } from '../../engine';
+import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
 
 interface SessionExecutionHandlerDependencies {
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;

@@ -71,7 +71,7 @@ JustDo 当前定位是 OpenClaw 的桌面前端：负责 Electron 桌面体验�
 
 - **`openclawGatewayClient.ts`** -- Gateway HTTP/IPC 调用封装
 - **`openclawEventMapper.ts`** -- Gateway event 到 Cowork IPC event 的薄转换
-- **`src/main/libs/agentEngine/rpc/skillRpc.ts`** -- Skill RPC + 标题生成 (已提取)
+- **`src/main/engine/rpc/skillRpc.ts`** -- Skill RPC + 标题生成 (已提取)
 - `openclawRuntimeAdapter.ts` 保留 CoworkEngineRouter 兼容外观
 
 ### 4.2 SQLite transcript 降级为 UI Cache
@@ -105,29 +105,29 @@ JustDo 当前定位是 OpenClaw 的桌面前端：负责 Electron 桌面体验�
 
 当前保留的 patches (`scripts/patches/v2026.6.11/`):
 
-| Patch | 用途 | 分类 |
-|-------|------|------|
-| `001-thinking-stream.cjs` | Thinking 流式输出 | 临时修复 |
-| `002-agent-announce-reasoning-stream.cjs` | Agent announce 推理流 | 临时修复 |
-| `003-openai-content-reasoning-tags.cjs` | OpenAI reasoning 标签 | 临时修复 |
-| `004-windows-mcp-package-runner.cjs` | Windows MCP stdio 启动 | Windows 兼容 |
-| `005-history-thinking-and-subagent-yield.cjs` | 历史 thinking 与 subagent yield 展示 | 临时修复 |
-| `006-sessions-yield-active-guard.cjs` | 无活跃 subagent 时避免 yield 空等 | 临时修复 |
+| Patch                                         | 用途                                 | 分类         |
+| --------------------------------------------- | ------------------------------------ | ------------ |
+| `001-thinking-stream.cjs`                     | Thinking 流式输出                    | 临时修复     |
+| `002-agent-announce-reasoning-stream.cjs`     | Agent announce 推理流                | 临时修复     |
+| `003-openai-content-reasoning-tags.cjs`       | OpenAI reasoning 标签                | 临时修复     |
+| `004-windows-mcp-package-runner.cjs`          | Windows MCP stdio 启动               | Windows 兼容 |
+| `005-history-thinking-and-subagent-yield.cjs` | 历史 thinking 与 subagent yield 展示 | 临时修复     |
+| `006-sessions-yield-active-guard.cjs`         | 无活跃 subagent 时避免 yield 空等    | 临时修复     |
 
 所有 patch 已在 `scripts/patches/README.md` 中记录用途、风险、删除条件。
 
 ## 6. 能力边界矩阵
 
-| 能力 | OpenClaw Gateway | JustDo | 备注 |
-|------|-----------------|--------|------|
-| 会话生命周期 | 权威 | 展示 | `chat.send`, `chat.abort` |
-| 消息历史 | 权威 | 缓存 | `chat.history` |
-| Subagent 生命周期 | 权威 | 无状态 | Parent/Child 关系 |
-| Tool 执行 | 权威 | 权限 UI | `tool.approval` |
-| Skills 管理 | 权威 | 管理 UI | `skills.*` RPC |
-| 定时任务 | 权威 | CRUD UI | `cron.*` RPC |
-| 配置存储 | 用户数据 | 同步至 Gateway | API Keys, model |
-| UI 数据 | -- | SQLite cache | 会话列表、搜索等 |
+| 能力              | OpenClaw Gateway | JustDo         | 备注                      |
+| ----------------- | ---------------- | -------------- | ------------------------- |
+| 会话生命周期      | 权威             | 展示           | `chat.send`, `chat.abort` |
+| 消息历史          | 权威             | 缓存           | `chat.history`            |
+| Subagent 生命周期 | 权威             | 无状态         | Parent/Child 关系         |
+| Tool 执行         | 权威             | 权限 UI        | `tool.approval`           |
+| Skills 管理       | 权威             | 管理 UI        | `skills.*` RPC            |
+| 定时任务          | 权威             | CRUD UI        | `cron.*` RPC              |
+| 配置存储          | 用户数据         | 同步至 Gateway | API Keys, model           |
+| UI 数据           | --               | SQLite cache   | 会话列表、搜索等          |
 
 ## 7. 非目标
 

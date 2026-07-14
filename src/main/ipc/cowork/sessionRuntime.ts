@@ -1,11 +1,11 @@
 import { ipcMain } from 'electron';
 
-import type { CoworkStore } from '../../coworkStore';
-import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../libs/agentEngine';
+import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
-} from '../../libs/openclaw/sessions/openclawChannelSessionSync';
+} from '../../openclaw/sessions/openclawChannelSessionSync';
 
 interface Dependencies {
   getCoworkStore: () => CoworkStore;

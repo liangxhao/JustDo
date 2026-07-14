@@ -274,7 +274,7 @@ WAL 模式优势：
 
 ### 4.3 CoworkStore
 
-**文件**：`src/main/coworkStore.ts`
+**文件**：`src/main/data/coworkStore.ts`
 
 CoworkStore 封装会话和消息的 CRUD 操作。消息缓存操作包括替换会话消息（从 Gateway 对账）：
 
@@ -322,11 +322,11 @@ class CoworkStore {
 
 ## 5. 关键文件清单
 
-| 文件                                            | 职责                                         |
-| ----------------------------------------------- | -------------------------------------------- |
-| `src/main/sqliteStore.ts`                       | SQLite 数据库管理（建表、KV 操作）           |
-| `src/main/coworkStore.ts`                       | Cowork 会话和消息 CRUD                       |
-| `src/main/libs/scheduledTask/cronJobService.ts` | OpenClaw Gateway cron 任务访问与运行记录映射 |
+| 文件                                   | 职责                                         |
+| -------------------------------------- | -------------------------------------------- |
+| `src/main/data/sqliteStore.ts`         | SQLite 数据库管理（建表、KV 操作）           |
+| `src/main/data/coworkStore.ts`         | Cowork 会话和消息 CRUD                       |
+| `src/main/scheduler/cronJobService.ts` | OpenClaw Gateway cron 任务访问与运行记录映射 |
 
 ## 6. 版本信息
 

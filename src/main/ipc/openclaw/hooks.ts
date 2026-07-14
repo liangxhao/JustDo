@@ -2,8 +2,8 @@ import { ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import type { OpenClawEngineManager } from '../../libs/openclaw/runtime/openclawEngineManager';
-import type { OpenClawHookStore } from '../../libs/plugins/hooks';
+import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import type { OpenClawHookStore } from '../../plugins/hooks';
 
 interface HookHandlerDependencies {
   getManager: () => OpenClawEngineManager;

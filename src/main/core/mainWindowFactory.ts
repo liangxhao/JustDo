@@ -115,7 +115,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     mainWindow.webContents.on('before-input-event', (_event, input) => {
       const isDevtoolsShortcut =
         input.key === 'F12' ||
-        (input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i';
+        ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i');
 
       if (isDevtoolsShortcut) {
         mainWindow.webContents.toggleDevTools();

@@ -238,8 +238,7 @@ interface OpenClawEngineBridge {
 
 function getEngineBridge(): OpenClawEngineBridge | undefined {
   const electron = (window as unknown as Record<string, unknown>).electron as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const openclaw = electron?.openclaw as Record<string, unknown> | undefined;
   return openclaw?.engine as OpenClawEngineBridge | undefined;
 }

@@ -1,11 +1,11 @@
 import { ipcMain } from 'electron';
 
-import type { CoworkStore } from '../../coworkStore';
-import type { CoworkAgentEngine, CoworkEngineRouter } from '../../libs/agentEngine';
+import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
-} from '../../libs/openclaw/runtime/openclawEngineManager';
+} from '../../openclaw/runtime/openclawEngineManager';
 
 interface SyncResult {
   success: boolean;

@@ -214,7 +214,7 @@ export interface ScheduledTask {
 
 ### 3.1 TaskOrigin -- 任务来源
 
-当前代码库中没有独立的 `origin.ts` 文件；Cron 会话识别由 `src/main/libs/openclaw/sessions/openclawChannelSessionSync.ts` 承担，任务契约放在 `src/shared/scheduledTask/`。
+当前代码库中没有独立的 `origin.ts` 文件；Cron 会话识别由 `src/main/openclaw/sessions/openclawChannelSessionSync.ts` 承担，任务契约放在 `src/shared/scheduledTask/`。
 
 ```typescript
 export type TaskOrigin =
@@ -305,7 +305,7 @@ export function inferOriginAndBinding(task: InferableTask): {
 
 ### 4.1 TaskPolicy 接口
 
-当前代码库中没有独立的 `policies/` 目录；定时任务创建与映射逻辑由 `src/main/libs/scheduledTask/cronJobService.ts` 和 renderer 表单服务协同处理。
+当前代码库中没有独立的 `policies/` 目录；定时任务创建与映射逻辑由 `src/main/scheduler/cronJobService.ts` 和 renderer 表单服务协同处理。
 
 ```typescript
 export interface TaskPolicy {
@@ -369,7 +369,7 @@ export const taskPolicyRegistry = new TaskPolicyRegistry([
 
 ## 5. TaskModelMapper
 
-当前代码库中没有独立的 `modelMapper.ts` 文件；Gateway wire format 与 UI 领域模型的转换集中在 `src/main/libs/scheduledTask/cronJobService.ts` 的 mapper 函数中。
+当前代码库中没有独立的 `modelMapper.ts` 文件；Gateway wire format 与 UI 领域模型的转换集中在 `src/main/scheduler/cronJobService.ts` 的 mapper 函数中。
 
 负责 **线格式 (Wire Format)** 与 **领域模型 (Domain Model)** 之间的双向转换：
 
@@ -505,7 +505,7 @@ export { initScheduledTaskHelpers, listScheduledTaskChannels } from './helpers';
 
 ### 7.1 职责
 
-**文件**: `src/main/libs/scheduledTask/cronJobService.ts`
+**文件**: `src/main/scheduler/cronJobService.ts`
 
 `CronJobService` 是 JustDo 与 OpenClaw Gateway 之间的适配器层，封装所有 Cron RPC 调用：
 
@@ -604,7 +604,7 @@ interface GatewayJob {
 
 ## 9. Engine Prompt
 
-**文件**: `src/main/libs/scheduledTask/enginePrompt.ts`
+**文件**: `src/main/scheduler/enginePrompt.ts`
 
 定义 Agent 在 OpenClaw 引擎下如何处理定时任务请求：
 
@@ -678,8 +678,8 @@ Gateway → User: 投递提醒消息
 | ------------------------------------------------------------ | -------------------------------------------------------------------- |
 | `src/shared/scheduledTask/constants.ts`                      | 常量定义 (ScheduleKind, PayloadKind, DeliveryMode, IPC 通道等)       |
 | `src/shared/scheduledTask/types.ts`                          | 核心类型定义 (ScheduledTask, Schedule, Payload, Delivery, TaskState) |
-| `src/main/libs/scheduledTask/cronJobService.ts`              | Gateway 适配器 (RPC 封装 + 轮询)                                     |
-| `src/main/libs/scheduledTask/enginePrompt.ts`                | Agent 行为提示词                                                     |
+| `src/main/scheduler/cronJobService.ts`                       | Gateway 适配器 (RPC 封装 + 轮询)                                     |
+| `src/main/scheduler/enginePrompt.ts`                         | Agent 行为提示词                                                     |
 | `src/shared/scheduledTask/reminderText.ts`                   | 提醒消息文本格式化                                                   |
 | `src/main/ipc/scheduledTask/handlers.ts`                     | IPC Handler 实现                                                     |
 | `src/main/ipc/scheduledTask/helpers.ts`                      | 辅助函数 (通道列表)                                                  |

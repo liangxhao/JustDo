@@ -50,9 +50,7 @@ export const registerDialogHandlers = (): void => {
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     const options = {
       properties: ['openDirectory', 'multiSelections', 'createDirectory'] as (
-        | 'openDirectory'
-        | 'multiSelections'
-        | 'createDirectory'
+        'openDirectory' | 'multiSelections' | 'createDirectory'
       )[],
       title: input?.title,
     };

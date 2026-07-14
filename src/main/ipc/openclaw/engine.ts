@@ -7,7 +7,7 @@ import path from 'path';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
-} from '../../libs/openclaw/runtime/openclawEngineManager';
+} from '../../openclaw/runtime/openclawEngineManager';
 
 interface OpenClawEngineHandlerDependencies {
   getManager: () => OpenClawEngineManager;

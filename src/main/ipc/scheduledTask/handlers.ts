@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../../../shared/scheduledTask/constants';
-import type { CronJobService } from '../../libs/scheduledTask/cronJobService';
+import type { CronJobService } from '../../scheduler/cronJobService';
 import { listScheduledTaskChannels } from './helpers';
 
 export interface ScheduledTaskHandlerDeps {

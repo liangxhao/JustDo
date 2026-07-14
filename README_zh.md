@@ -218,9 +218,14 @@ src/
 ├── main/               # Electron 主进程
 │   ├── main.ts         # 入口
 │   ├── preload.ts      # contextBridge 安全层
-│   ├── sqliteStore.ts  # SQLite 数据库管理
-│   ├── coworkStore.ts  # Cowork 会话与消息 CRUD
-│   └── libs/           # 引擎管理、配置同步
+│   ├── core/           # 应用基础设施、日志、托盘、代理/运行时、主进程 i18n
+│   ├── data/           # SQLite、Cowork 会话、分组数据访问
+│   ├── ipc/            # IPC 模块
+│   ├── engine/         # Cowork 引擎路由、OpenClaw 适配、命令安全
+│   ├── cowork/         # Cowork 配置、日志、模型 API
+│   ├── openclaw/       # Gateway 引擎、配置同步、历史、Slash command
+│   ├── plugins/        # Skills、MCP、hooks、extensions、marketplace
+│   └── scheduler/      # OpenClaw cron 适配
 │
 ├── renderer/           # React 前端 + Lit 聊天
 │   ├── App.tsx         # 根组件

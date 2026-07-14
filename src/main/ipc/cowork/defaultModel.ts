@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import type { CoworkStore } from '../../coworkStore';
+import type { CoworkStore } from '../../data/coworkStore';
 import type { SqliteStore } from '../../data/sqliteStore';
 
 type AppConfigWithModel = {

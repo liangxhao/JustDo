@@ -1,9 +1,9 @@
 import { ipcMain } from 'electron';
 
 import { MarketplaceSourceId, PluginKind } from '../../../shared/plugins/marketplace';
-import type { GatewaySkillEntry } from '../../libs/agentEngine/types';
-import type { PluginManager } from '../../libs/plugins';
-import type { OpenClawSkillFiles, OpenClawSkillService } from '../../libs/plugins/skills';
+import type { GatewaySkillEntry } from '../../engine/types';
+import type { PluginManager } from '../../plugins';
+import type { OpenClawSkillFiles, OpenClawSkillService } from '../../plugins/skills';
 
 interface SkillHandlerDependencies {
   skillService: OpenClawSkillService;

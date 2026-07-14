@@ -5,7 +5,7 @@ import type {
   McpReadResourceResult,
   McpServerFormData,
   McpStore,
-} from '../../libs/plugins/mcp';
+} from '../../plugins/mcp';
 
 interface McpHandlerDependencies {
   getStore: () => McpStore;

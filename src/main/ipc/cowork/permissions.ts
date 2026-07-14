@@ -1,11 +1,11 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
-import type { CoworkStore } from '../../coworkStore';
-import { t } from '../../i18n';
-import { sanitizeCoworkMessageForIpc } from '../../ipcPayloadSanitizer';
-import type { CoworkEngineRouter } from '../../libs/agentEngine';
-import type { PermissionResult } from '../../libs/agentEngine/types';
-import type { OpenClawExtensionHostController } from '../../libs/plugins/extensions';
+import { t } from '../../core/i18n';
+import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkEngineRouter } from '../../engine';
+import type { PermissionResult } from '../../engine/types';
+import type { OpenClawExtensionHostController } from '../../plugins/extensions';
+import { sanitizeCoworkMessageForIpc } from '../payloadSanitizer';
 
 interface Dependencies {
   getCoworkStore: () => CoworkStore;

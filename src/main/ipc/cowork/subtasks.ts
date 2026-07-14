@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import type { OpenClawRuntimeAdapter } from '../../libs/agentEngine';
+import type { OpenClawRuntimeAdapter } from '../../engine';
 
 export const registerCoworkSubtaskHandlers = (
   getRuntime: () => OpenClawRuntimeAdapter | null,

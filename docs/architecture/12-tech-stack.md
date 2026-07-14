@@ -8,85 +8,85 @@ JustDo 基于 Electron + React 技术栈，采用 TypeScript 开发，使用 Vit
 
 ### 2.1 框架层
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| **Electron** | ^42.6.0 | 跨平台桌面应用框架 |
-| **React** | ^18.2.0 | UI 组件框架（状态管理、设置、布局） |
-| **React DOM** | ^18.2.0 | React DOM 渲染器 |
-| **TypeScript** | ^5.7.3 | 类型安全的 JavaScript |
-| **Vite** | ^5.1.4 | 前端构建工具 |
-| **Redux Toolkit** | ^2.2.1 | 状态管理 |
-| **Tailwind CSS** | ^3.4.1 | 样式框架 |
+| 技术              | 版本    | 用途                                |
+| ----------------- | ------- | ----------------------------------- |
+| **Electron**      | ^42.6.0 | 跨平台桌面应用框架                  |
+| **React**         | ^18.2.0 | UI 组件框架（状态管理、设置、布局） |
+| **React DOM**     | ^18.2.0 | React DOM 渲染器                    |
+| **TypeScript**    | ^5.7.3  | 类型安全的 JavaScript               |
+| **Vite**          | ^5.1.4  | 前端构建工具                        |
+| **Redux Toolkit** | ^2.2.1  | 状态管理                            |
+| **Tailwind CSS**  | ^3.4.1  | 样式框架                            |
 
 ### 2.2 Agent 层
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
+| 技术                 | 版本       | 用途                             |
+| -------------------- | ---------- | -------------------------------- |
 | **OpenClaw Gateway** | v2026.6.11 | 单一 Agent 引擎（预构建 npm 包） |
 
 > **注意**：`@anthropic-ai/claude-agent-sdk` 已弃用并移除。JustDo 仅使用 OpenClaw Gateway 作为唯一 Agent 引擎，不维护任何双引擎架构。
 
 ### 2.3 数据层
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
+| 技术               | 版本    | 用途                     |
+| ------------------ | ------- | ------------------------ |
 | **better-sqlite3** | ^12.8.0 | SQLite 数据库（UI 缓存） |
 
 ### 2.4 UI 层
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| **@dnd-kit/core** | ^6.3.1 | 拖放功能 |
-| **@heroicons/react** | ^2.1.1 | SVG 图标库 |
-| **@monaco-editor/react** | ^4.7.0 | Monaco 代码编辑器 |
-| **highlight.js** | ^11.11.1 | 代码语法高亮 |
-| **lit** | ^3.3.3 | Lit 自定义元素（`<justdo-chat>` 消息渲染） |
-| **markdown-it** | ^14.2.0 | Markdown 解析 |
-| **markdown-it-task-lists** | ^2.1.1 | 任务列表扩展 |
-| **mermaid** | ^10.9.5 | 流程图渲染 |
-| **dompurify** | ^3.3.1 | HTML/SVG 净化 |
+| 技术                       | 版本     | 用途                                       |
+| -------------------------- | -------- | ------------------------------------------ |
+| **@dnd-kit/core**          | ^6.3.1   | 拖放功能                                   |
+| **@heroicons/react**       | ^2.1.1   | SVG 图标库                                 |
+| **@monaco-editor/react**   | ^4.7.0   | Monaco 代码编辑器                          |
+| **highlight.js**           | ^11.11.1 | 代码语法高亮                               |
+| **lit**                    | ^3.3.3   | Lit 自定义元素（`<justdo-chat>` 消息渲染） |
+| **markdown-it**            | ^14.2.0  | Markdown 解析                              |
+| **markdown-it-task-lists** | ^2.1.1   | 任务列表扩展                               |
+| **mermaid**                | ^10.9.5  | 流程图渲染                                 |
+| **dompurify**              | ^3.3.1   | HTML/SVG 净化                              |
 
 ### 2.5 聊天渲染层
 
 消息渲染采用 Lit 自定义元素 `<justdo-chat>`，与 OpenClaw webchat 一致的渲染管线：
 
-| 组件 | 路径 | 用途 |
-|------|------|------|
-| `<justdo-chat>` Lit Element | `src/renderer/libs/openclaw-chat/components/justdo-chat.ts` | 消息列表渲染 |
-| GatewayClient | `src/renderer/libs/openclaw-chat/gateway/client.ts` | Gateway WebSocket 连接 |
-| ChatController | `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts` | 聊天状态与事件管理 |
-| buildChatItems | `src/renderer/libs/openclaw-chat/pipeline/build-chat-items.ts` | 消息管线处理 |
-| grouped-render | `src/renderer/libs/openclaw-chat/components/grouped-render.ts` | 消息组分段渲染 |
-| tool-display | `src/renderer/libs/openclaw-chat/components/tool-display.ts` | 工具调用显示 |
+| 组件                        | 路径                                                           | 用途                   |
+| --------------------------- | -------------------------------------------------------------- | ---------------------- |
+| `<justdo-chat>` Lit Element | `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`    | 消息列表渲染           |
+| GatewayClient               | `src/renderer/libs/openclaw-chat/gateway/client.ts`            | Gateway WebSocket 连接 |
+| ChatController              | `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts`   | 聊天状态与事件管理     |
+| buildChatItems              | `src/renderer/libs/openclaw-chat/pipeline/build-chat-items.ts` | 消息管线处理           |
+| grouped-render              | `src/renderer/libs/openclaw-chat/components/grouped-render.ts` | 消息组分段渲染         |
+| tool-display                | `src/renderer/libs/openclaw-chat/components/tool-display.ts`   | 工具调用显示           |
 
 ### 2.6 其他工具
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| **electron-log** | ^5.4.3 | 日志管理 |
-| **cronstrue** | ^3.14.0 | Cron 表达式人类可读化 |
-| **js-yaml** | ^4.1.1 | YAML 解析 |
-| **uuid** | ^11.1.0 | UUID 生成 |
+| 技术             | 版本    | 用途                  |
+| ---------------- | ------- | --------------------- |
+| **electron-log** | ^5.4.3  | 日志管理              |
+| **cronstrue**    | ^3.14.0 | Cron 表达式人类可读化 |
+| **js-yaml**      | ^4.1.1  | YAML 解析             |
+| **uuid**         | ^11.1.0 | UUID 生成             |
 
 ### 2.7 主题系统
 
 JustDo 内置 14 套完整主题，位于 `src/renderer/theme/themes/`：
 
-| 主题 | 说明 |
-|------|------|
+| 主题                             | 说明          |
+| -------------------------------- | ------------- |
 | `classic-light` / `classic-dark` | 经典浅色/深色 |
-| `cyber` | 赛博风格 |
-| `dawn` | 黎明 |
-| `daylight` | 日光 |
-| `emerald` | 翡翠绿 |
-| `midnight` | 午夜深色 |
-| `mocha` | 摩卡咖啡 |
-| `nord` | 北欧极简 |
-| `ocean` | 海洋蓝 |
-| `paper` | 纸张质感 |
-| `rose` | 玫瑰粉 |
-| `sakura` | 樱花 |
-| `sunset` | 日落 |
+| `cyber`                          | 赛博风格      |
+| `dawn`                           | 黎明          |
+| `daylight`                       | 日光          |
+| `emerald`                        | 翡翠绿        |
+| `midnight`                       | 午夜深色      |
+| `mocha`                          | 摩卡咖啡      |
+| `nord`                           | 北欧极简      |
+| `ocean`                          | 海洋蓝        |
+| `paper`                          | 纸张质感      |
+| `rose`                           | 玫瑰粉        |
+| `sakura`                         | 樱花          |
+| `sunset`                         | 日落          |
 
 主题引擎在 `src/renderer/theme/engine/`，通过 CSS 自定义属性和 Tailwind 配置实现。
 
@@ -94,27 +94,27 @@ JustDo 内置 14 套完整主题，位于 `src/renderer/theme/themes/`：
 
 ### 3.1 构建工具
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| **electron-builder** | ^24.12.0 | 打包分发 |
-| **esbuild** | ^0.21.5 | 快速打包 |
-| **vite-plugin-electron** | ^0.28.0 | Electron + Vite 集成 |
+| 技术                     | 版本     | 用途                 |
+| ------------------------ | -------- | -------------------- |
+| **electron-builder**     | ^24.12.0 | 打包分发             |
+| **esbuild**              | ^0.21.5  | 快速打包             |
+| **vite-plugin-electron** | ^0.28.0  | Electron + Vite 集成 |
 
 ### 3.2 测试工具
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| **vitest** | ^4.1.0 | 单元测试 |
+| 技术                      | 版本    | 用途            |
+| ------------------------- | ------- | --------------- |
+| **vitest**                | ^4.1.0  | 单元测试        |
 | **@types/better-sqlite3** | ^7.6.13 | SQLite 类型定义 |
 
 ### 3.3 代码质量
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| **eslint** | ^9.39.4 | 代码检查 |
-| **prettier** | ^3.8.1 | 代码格式化 |
-| **husky** | ^9.1.7 | Git hooks |
-| **lint-staged** | ^16.4.0 | 暂存区检查 |
+| 技术                | 版本    | 用途         |
+| ------------------- | ------- | ------------ |
+| **eslint**          | ^9.39.4 | 代码检查     |
+| **prettier**        | ^3.8.1  | 代码格式化   |
+| **husky**           | ^9.1.7  | Git hooks    |
+| **lint-staged**     | ^16.4.0 | 暂存区检查   |
 | **@commitlint/cli** | ^20.5.0 | 提交消息检查 |
 
 ## 4. TypeScript 配置
@@ -182,7 +182,9 @@ export default defineConfig({
     electron([
       {
         entry: 'src/main/main.ts',
-        onstart: (options) => { /* 启动 Electron */ },
+        onstart: options => {
+          /* 启动 Electron */
+        },
         vite: { build: { outDir: 'dist-electron' } },
       },
       {
@@ -302,9 +304,9 @@ npm run openclaw:prune                  # 清理运行时
 
 ### 8.1 OpenClaw 相关
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | — |
+| 变量                     | 说明                     | 默认值 |
+| ------------------------ | ------------------------ | ------ |
+| `OPENCLAW_FORCE_INSTALL` | 强制重新安装预构建运行时 | —      |
 
 ## 9. 版本管理
 
@@ -364,12 +366,14 @@ JustDo/
 │   ├── main/                 # Electron 主进程
 │   │   ├── main.ts           # 入口
 │   │   ├── preload.ts        # contextBridge 安全层
-│   │   ├── coworkStore.ts    # Cowork 数据 CRUD
-│   │   ├── core/             # 核心应用工具
-│   │   ├── data/             # 数据层 (sqliteStore.ts)
-│   │   ├── features/         # 功能管理
-│   │   ├── ipc/      # IPC 模块
-│   │   └── libs/             # 领域分组库 (agentEngine/cowork/infra/mcp/openclaw)
+│   │   ├── core/             # 核心应用工具、代理、运行时
+│   │   ├── data/             # 数据层 (sqliteStore/coworkStore/groupStore)
+│   │   ├── ipc/              # IPC 模块
+│   │   ├── engine/           # Cowork 引擎路由、OpenClaw 适配、命令安全
+│   │   ├── cowork/           # Cowork 配置、日志、模型 API
+│   │   ├── openclaw/         # Gateway 引擎、配置、会话辅助、Slash command
+│   │   ├── plugins/          # Skills、MCP、hooks、extensions、marketplace
+│   │   └── scheduler/        # OpenClaw cron 适配
 │   │
 │   ├── renderer/             # React UI + Lit chat
 │   │   ├── App.tsx           # 根组件
@@ -435,7 +439,9 @@ import { customElement } from 'lit/decorators.js';
 @customElement('justdo-chat')
 export class JustDoChatElement extends LitElement {
   // 通过 ChatController 连接 Gateway
-  set controller(ctrl: ChatController) { /* ... */ }
+  set controller(ctrl: ChatController) {
+    /* ... */
+  }
 }
 ```
 
@@ -466,7 +472,7 @@ const md = new MarkdownIt({
       return hljs.highlight(str, { language: lang }).value;
     }
     return '';
-  }
+  },
 });
 ```
 

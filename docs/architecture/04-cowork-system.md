@@ -14,29 +14,29 @@ Cowork 是 JustDo 的核心功能 —— 一个 AI 工作会话系统，JustDo �
 
 ### 1.2 执行模式
 
-| 模式 | 说明 |
-|------|------|
-| `auto` | 自动选择执行方式 |
-| `local` | 直接本地执行，全速运行 |
-| `sandbox` | 沙箱执行 |
+| 模式      | 说明                   |
+| --------- | ---------------------- |
+| `auto`    | 自动选择执行方式       |
+| `local`   | 直接本地执行，全速运行 |
+| `sandbox` | 沙箱执行               |
 
 ### 1.3 流式事件（Gateway 推送）
 
 ChatController 通过 Gateway WebSocket 接收事件，直接在渲染进程中处理：
 
-| Gateway 事件 | 说明 |
-|-------------|------|
-| `chat` (state=`delta`) | 流式内容增量 |
-| `chat` (state=`final`) | 消息完成 |
-| `chat` (state=`aborted`) | 会话被终止 |
-| `chat` (state=`error`) | 执行错误 |
-| `agent` | 子代理解析/工具流事件 |
-| `exec.approval.requested` | 工具执行需要用户授权 |
-| `exec.approval.resolved` | 权限请求已处理 |
-| `session.message` | 会话级消息（非 chat 上下文） |
-| `session.tool` | 会话级工具流 |
-| `sessions.changed` | 会话列表发生变化（跨进程通知） |
-| `tick` | 心跳 |
+| Gateway 事件              | 说明                           |
+| ------------------------- | ------------------------------ |
+| `chat` (state=`delta`)    | 流式内容增量                   |
+| `chat` (state=`final`)    | 消息完成                       |
+| `chat` (state=`aborted`)  | 会话被终止                     |
+| `chat` (state=`error`)    | 执行错误                       |
+| `agent`                   | 子代理解析/工具流事件          |
+| `exec.approval.requested` | 工具执行需要用户授权           |
+| `exec.approval.resolved`  | 权限请求已处理                 |
+| `session.message`         | 会话级消息（非 chat 上下文）   |
+| `session.tool`            | 会话级工具流                   |
+| `sessions.changed`        | 会话列表发生变化（跨进程通知） |
+| `tick`                    | 心跳                           |
 
 ## 2. 核心组件
 
@@ -44,7 +44,7 @@ ChatController 通过 Gateway WebSocket 接收事件，直接在渲染进程中�
 
 **职责**：简化的透传路由层，将所有调用委托给 OpenClaw runtime。不再有多引擎选择。
 
-**文件**：`src/main/libs/agentEngine/coworkEngineRouter.ts`
+**文件**：`src/main/engine/coworkEngineRouter.ts`
 
 ```typescript
 class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
@@ -75,7 +75,7 @@ class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
 
 **职责**：Gateway 客户端 + 事件映射层。不再是厚重编排层，而是 Gateway 的轻量代理。
 
-**文件**：`src/main/libs/agentEngine/openclawRuntimeAdapter.ts`
+**文件**：`src/main/engine/openclawRuntimeAdapter.ts`
 
 ```typescript
 class OpenClawRuntimeAdapter {
@@ -121,7 +121,7 @@ class OpenClawRuntimeAdapter {
 
 **职责**：会话和消息的 SQLite CRUD 操作。数据仅为 UI 缓存，Gateway 的 `chat.history` 才是权威来源。
 
-**文件**：`src/main/coworkStore.ts`
+**文件**：`src/main/data/coworkStore.ts`
 
 ```typescript
 class CoworkStore {
@@ -155,6 +155,7 @@ class CoworkStore {
 **文件**: `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`
 
 基于 Lit 的自定义元素，在 Shadow DOM 中渲染 OpenClaw 格式消息。可以通过以下两种方式接收消息：
+
 1. 直接通过属性（`messages`、`stream` 等）
 2. 通过 ChatController 引用（推荐，直连 Gateway）
 
@@ -163,6 +164,7 @@ class CoworkStore {
 **文件**: `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts`
 
 渲染进程内的 Gateway 客户端控制器。直接复制 OpenClaw webchat 的 chat 控制器模式：
+
 - 通过 `GatewayClient` 连接到 Gateway WebSocket
 - 通过 `chat.history` / `chat.startup` RPC 加载历史消息
 - 处理流式事件（delta、final、aborted、error）
@@ -175,6 +177,7 @@ class CoworkStore {
 **文件**: `src/renderer/libs/openclaw-chat/gateway/client.ts`
 
 WebSocket 客户端，实现 Gateway 协议：
+
 - 连接握手：`connect.challenge` → `connect`（带 token）→ `hello-ok`
 - 请求-响应模式：`{ type: "req", id, method, params }` → `{ type: "res", id, ok, payload }`
 - 事件推送：`{ type: "event", event, payload }`
@@ -203,6 +206,7 @@ React 组件，包装 `<justdo-chat>` Lit 元素。接收 ChatController 引用�
 **目录**: `src/renderer/libs/openclaw-chat/pipeline/`
 
 完整的消息变换和渲染管线，包含多个阶段：
+
 - `build-chat-items.ts` — 构建聊天项列表的主管道
 - `message-normalizer.ts` — 消息规范化
 - `role-normalizer.ts` — 角色分组规整化
@@ -218,6 +222,7 @@ React 组件，包装 `<justdo-chat>` Lit 元素。接收 ChatController 引用�
 #### 渲染组件
 
 **目录**: `src/renderer/libs/openclaw-chat/components/`
+
 - `justdo-chat.ts` — 主 `justdo-chat` 自定义元素
 - `chat-avatar.ts` — 头像组件
 - `markdown.ts` — Markdown 渲染
@@ -311,11 +316,11 @@ sequenceDiagram
 ### 4.1 会话状态
 
 ```typescript
-type CoworkSessionStatus = 
-  | 'idle'      // 空闲，等待输入
-  | 'running'   // 执行中
+type CoworkSessionStatus =
+  | 'idle' // 空闲，等待输入
+  | 'running' // 执行中
   | 'completed' // 已完成
-  | 'error'     // 出错
+  | 'error'; // 出错
 ```
 
 注意：这些状态反映 Gateway 端的状态，不是本地状态。JustDo 不再跟踪 `waiting_permission` 或 `stopped` 作为持久化状态 —— 这些是运行时状态，由 ChatController 管理。
@@ -340,10 +345,10 @@ idle ──────────────────> running
 
 ### 5.1 工具风险评估
 
-| 级别 | 工具类型 | 示例 |
-|------|----------|------|
-| `safe` | 信息获取 | read_file, list_directory |
-| `caution` | 修改操作 | write_file, create_directory, git push |
+| 级别          | 工具类型 | 示例                                       |
+| ------------- | -------- | ------------------------------------------ |
+| `safe`        | 信息获取 | read_file, list_directory                  |
+| `caution`     | 修改操作 | write_file, create_directory, git push     |
 | `destructive` | 危险操作 | rm -rf, git push --force, git reset --hard |
 
 ### 5.2 权限请求结构
@@ -375,10 +380,12 @@ interface CoworkPermissionResult {
 **文件**：`src/renderer/components/cowork/CoworkPermissionModal.tsx`
 
 支持两种模式：
+
 - **确认模式 (Confirm)**：当工具调用是 `AskUserQuestion` 时，显示问题选择界面
 - **标准模式 (Standard)**：普通工具执行请求，显示工具名称、输入和危险级别
 
 对于危险操作，根据命令内容自动检测危险等级：
+
 - `recursive-delete`：递归删除
 - `git-force-push`：强制推送
 - `git-reset-hard`：硬重置
@@ -458,7 +465,7 @@ CREATE TABLE session_groups (
 
 **职责**：将 JustDo 配置同步到 OpenClaw 的 `managed.yaml` 配置文件。
 
-**文件**：`src/main/libs/openclawConfigSync.ts`
+**文件**：`src/main/openclaw/config/openclawConfigSync.ts`
 
 ```typescript
 class OpenClawConfigSync {
@@ -472,15 +479,18 @@ class OpenClawConfigSync {
       session: { scope: 'per-account-channel-peer' },
       sandbox: { mode: this.mapExecutionMode(config.executionMode) },
       agents: buildManagedAgentEntries(agents),
-      channels: { /* IM 平台配置 */ },
+      channels: {/* IM 平台配置 */},
     };
   }
 
   mapExecutionMode(mode: ExecutionMode): string {
     switch (mode) {
-      case 'local': return 'off';
-      case 'auto': return 'non-main';
-      default: return 'off';
+      case 'local':
+        return 'off';
+      case 'auto':
+        return 'non-main';
+      default:
+        return 'off';
     }
   }
 
@@ -499,7 +509,7 @@ sequenceDiagram
   participant CC as ChatController
   participant GC as GatewayClient
   participant GW as OpenClaw Gateway
-  
+
   U->>CV: 导航到 Cowork 页面
   CV->>CV: 初始化 IPC 监听
   CV->>CC: 创建 ChatController（当选择会话时）
@@ -516,62 +526,62 @@ sequenceDiagram
 
 ### 主进程（Main Process）
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/libs/agentEngine/coworkEngineRouter.ts` | 引擎路由层（透传委托） |
-| `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | Gateway 客户端 + 事件映射（含流式处理） |
-| `src/main/libs/agentEngine/history/historyReconciler.ts` | 历史对账（Gateway 权威 → UI 缓存) |
-| `src/main/libs/agentEngine/openclaw/subagentGateway.ts` | 子代理网关（Gateway 为权威） |
-| `src/main/libs/agentEngine/openclaw/webchatToolStream.ts` | Webchat 工具流同步 |
-| `src/main/libs/agentEngine/gateway/types.ts` | Gateway 类型定义 |
-| `src/main/libs/agentEngine/utils/gatewayHelpers.ts` | Gateway 辅助函数 |
-| `src/main/libs/agentEngine/rpc/skillRpc.ts` | 技能 RPC 处理器 |
-| `src/main/coworkStore.ts` | SQLite CRUD（UI 缓存） |
-| `src/main/libs/openclawEngineManager.ts` | Gateway 进程生命周期管理 |
-| `src/main/libs/openclawConfigSync.ts` | 配置同步到 managed.yaml |
-| `src/main/libs/openclawChannelSessionSync.ts` | Channel 会话同步 |
-| `src/main/libs/openclawHistory.ts` | Gateway 历史提取工具 |
+| 文件                                                       | 职责                                    |
+| ---------------------------------------------------------- | --------------------------------------- |
+| `src/main/engine/coworkEngineRouter.ts`                    | 引擎路由层（透传委托）                  |
+| `src/main/engine/openclawRuntimeAdapter.ts`                | Gateway 客户端 + 事件映射（含流式处理） |
+| `src/main/engine/history/historyReconciler.ts`             | 历史对账（Gateway 权威 → UI 缓存)       |
+| `src/main/engine/openclaw/subagentGateway.ts`              | 子代理网关（Gateway 为权威）            |
+| `src/main/engine/openclaw/webchatToolStream.ts`            | Webchat 工具流同步                      |
+| `src/main/engine/gateway/types.ts`                         | Gateway 类型定义                        |
+| `src/main/engine/utils/gatewayHelpers.ts`                  | Gateway 辅助函数                        |
+| `src/main/engine/rpc/skillRpc.ts`                          | 技能 RPC 处理器                         |
+| `src/main/data/coworkStore.ts`                             | SQLite CRUD（UI 缓存）                  |
+| `src/main/openclaw/runtime/openclawEngineManager.ts`       | Gateway 进程生命周期管理                |
+| `src/main/openclaw/config/openclawConfigSync.ts`           | 配置同步到 managed.yaml                 |
+| `src/main/openclaw/sessions/openclawChannelSessionSync.ts` | Channel 会话同步                        |
+| `src/main/openclaw/sessions/openclawHistory.ts`            | Gateway 历史提取工具                    |
 
 ### 渲染进程（Renderer Process）— 聊天渲染管线
 
-| 文件 | 职责 |
-|------|------|
-| `src/renderer/libs/openclaw-chat/gateway/client.ts` | Gateway WebSocket 客户端 |
-| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts` | 会话控制器（直连 Gateway） |
-| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts` | `<justdo-chat>` Lit 自定义元素 |
-| `src/renderer/libs/openclaw-chat/components/chat-avatar.ts` | 头像组件 |
-| `src/renderer/libs/openclaw-chat/components/markdown.ts` | Markdown 渲染 |
-| `src/renderer/libs/openclaw-chat/components/tool-display.ts` | 工具调用显示 |
-| `src/renderer/libs/openclaw-chat/components/grouped-render.ts` | 分组消息渲染 |
-| `src/renderer/libs/openclaw-chat/conversion/cowork-to-gateway.ts` | CoworkMessage → Gateway 格式转换 |
-| `src/renderer/libs/openclaw-chat/pipeline/build-chat-items.ts` | 聊天项构建管道 |
-| `src/renderer/libs/openclaw-chat/pipeline/message-normalizer.ts` | 消息规范化 |
-| `src/renderer/libs/openclaw-chat/pipeline/role-normalizer.ts` | 角色分组规整化 |
-| `src/renderer/libs/openclaw-chat/pipeline/stream-text.ts` | 流文本处理 |
-| `src/renderer/libs/openclaw-chat/pipeline/tool-cards.ts` | 工具调用卡片提取 |
-| `src/renderer/libs/openclaw-chat/pipeline/tool-helpers.ts` | 工具辅助函数 |
-| `src/renderer/libs/openclaw-chat/pipeline/heartbeat-display.ts` | 心跳显示 |
-| `src/renderer/libs/openclaw-chat/pipeline/text-direction.ts` | RTL/LTR 文本方向 |
-| `src/renderer/libs/openclaw-chat/pipeline/search-match.ts` | 搜索匹配高亮 |
-| `src/renderer/libs/openclaw-chat/pipeline/user-message-content.ts` | 用户消息内容块 |
-| `src/renderer/libs/openclaw-chat/pipeline/history-limits.ts` | 历史消息渲染限制 |
-| `src/renderer/libs/openclaw-chat/pipeline/message-extract.ts` | 消息文本提取 |
-| `src/renderer/libs/openclaw-chat/pipeline/constants.ts` | 管道常量 |
-| `src/renderer/libs/openclaw-chat/types.ts` | 类型定义 |
-| `src/renderer/libs/openclaw-chat/shims/backend-helpers.ts` | 后端辅助 shim |
-| `src/renderer/libs/openclaw-chat/shims/media-core.ts` | 媒体核心 shim |
-| `src/renderer/libs/openclaw-chat/shims/normalization-core.ts` | 规范化核心 shim |
+| 文件                                                               | 职责                             |
+| ------------------------------------------------------------------ | -------------------------------- |
+| `src/renderer/libs/openclaw-chat/gateway/client.ts`                | Gateway WebSocket 客户端         |
+| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts`       | 会话控制器（直连 Gateway）       |
+| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`        | `<justdo-chat>` Lit 自定义元素   |
+| `src/renderer/libs/openclaw-chat/components/chat-avatar.ts`        | 头像组件                         |
+| `src/renderer/libs/openclaw-chat/components/markdown.ts`           | Markdown 渲染                    |
+| `src/renderer/libs/openclaw-chat/components/tool-display.ts`       | 工具调用显示                     |
+| `src/renderer/libs/openclaw-chat/components/grouped-render.ts`     | 分组消息渲染                     |
+| `src/renderer/libs/openclaw-chat/conversion/cowork-to-gateway.ts`  | CoworkMessage → Gateway 格式转换 |
+| `src/renderer/libs/openclaw-chat/pipeline/build-chat-items.ts`     | 聊天项构建管道                   |
+| `src/renderer/libs/openclaw-chat/pipeline/message-normalizer.ts`   | 消息规范化                       |
+| `src/renderer/libs/openclaw-chat/pipeline/role-normalizer.ts`      | 角色分组规整化                   |
+| `src/renderer/libs/openclaw-chat/pipeline/stream-text.ts`          | 流文本处理                       |
+| `src/renderer/libs/openclaw-chat/pipeline/tool-cards.ts`           | 工具调用卡片提取                 |
+| `src/renderer/libs/openclaw-chat/pipeline/tool-helpers.ts`         | 工具辅助函数                     |
+| `src/renderer/libs/openclaw-chat/pipeline/heartbeat-display.ts`    | 心跳显示                         |
+| `src/renderer/libs/openclaw-chat/pipeline/text-direction.ts`       | RTL/LTR 文本方向                 |
+| `src/renderer/libs/openclaw-chat/pipeline/search-match.ts`         | 搜索匹配高亮                     |
+| `src/renderer/libs/openclaw-chat/pipeline/user-message-content.ts` | 用户消息内容块                   |
+| `src/renderer/libs/openclaw-chat/pipeline/history-limits.ts`       | 历史消息渲染限制                 |
+| `src/renderer/libs/openclaw-chat/pipeline/message-extract.ts`      | 消息文本提取                     |
+| `src/renderer/libs/openclaw-chat/pipeline/constants.ts`            | 管道常量                         |
+| `src/renderer/libs/openclaw-chat/types.ts`                         | 类型定义                         |
+| `src/renderer/libs/openclaw-chat/shims/backend-helpers.ts`         | 后端辅助 shim                    |
+| `src/renderer/libs/openclaw-chat/shims/media-core.ts`              | 媒体核心 shim                    |
+| `src/renderer/libs/openclaw-chat/shims/normalization-core.ts`      | 规范化核心 shim                  |
 
 ### 渲染进程（Renderer Process）— React 组件
 
-| 文件 | 职责 |
-|------|------|
-| `src/renderer/components/cowork/CoworkView.tsx` | 主 Cowork 界面 |
-| `src/renderer/components/cowork/JustDoChatWrapper.tsx` | `<justdo-chat>` Lit 元素的 React 包装 |
-| `src/renderer/components/cowork/ChatMessageDisplay.tsx` | 共享消息显示表面 |
-| `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求对话框 |
-| `src/renderer/components/cowork/CoworkPromptInput.tsx` | 提示输入组件 |
-| `src/renderer/components/cowork/SubagentMenu.tsx` | 子代理菜单 |
-| `src/renderer/components/cowork/RunSessionModal.tsx` | 运行会话模态框 |
+| 文件                                                       | 职责                                  |
+| ---------------------------------------------------------- | ------------------------------------- |
+| `src/renderer/components/cowork/CoworkView.tsx`            | 主 Cowork 界面                        |
+| `src/renderer/components/cowork/JustDoChatWrapper.tsx`     | `<justdo-chat>` Lit 元素的 React 包装 |
+| `src/renderer/components/cowork/ChatMessageDisplay.tsx`    | 共享消息显示表面                      |
+| `src/renderer/components/cowork/CoworkPermissionModal.tsx` | 权限请求对话框                        |
+| `src/renderer/components/cowork/CoworkPromptInput.tsx`     | 提示输入组件                          |
+| `src/renderer/components/cowork/SubagentMenu.tsx`          | 子代理菜单                            |
+| `src/renderer/components/cowork/RunSessionModal.tsx`       | 运行会话模态框                        |
 
 ---

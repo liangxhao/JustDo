@@ -323,8 +323,7 @@ export class SqliteStore {
 
   get<T = unknown>(key: string): T | undefined {
     const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as
-      | { value: string }
-      | undefined;
+      { value: string } | undefined;
     if (!row) return undefined;
     try {
       return JSON.parse(row.value) as T;

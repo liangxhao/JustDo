@@ -224,60 +224,30 @@ src/renderer/
 src/main/
 ├── main.ts                          # 主入口
 ├── preload.ts                       # contextBridge API 暴露
-├── coworkStore.ts                   # Cowork 数据存储
-├── groupStore.ts                    # 会话分组管理
-├── mcpStore.ts                      # MCP 服务器配置
-├── i18n.ts                          # 主进程国际化
-├── core/                            # 核心应用工具
+├── core/                            # 核心应用工具、代理、运行时
 │   ├── appConstants.ts              # 应用常量
 │   ├── autoLaunchManager.ts         # 自动启动管理
+│   ├── i18n.ts                      # 主进程国际化
 │   ├── logger.ts                    # 日志系统
-│   └── trayManager.ts              # 系统托盘
+│   └── trayManager.ts               # 系统托盘
 ├── data/                            # 数据层
+│   ├── coworkStore.ts               # Cowork 数据存储
+│   ├── groupStore.ts                # 会话分组管理
 │   └── sqliteStore.ts               # SQLite 数据库封装
-├── features/                        # 功能管理
-├── ipc/                     # IPC 模块
+├── ipc/                             # IPC 模块
+│   ├── app/                         # 应用级 IPC
+│   ├── cowork/                      # Cowork IPC
+│   ├── openclaw/                    # OpenClaw 与插件 IPC
 │   └── scheduledTask/               # 定时任务 IPC
-└── libs/                            # 领域分组的业务逻辑库
-    ├── agentEngine/                 # Agent 引擎路由层
-    │   ├── coworkEngineRouter.ts    # 引擎请求路由
-    │   ├── openclawRuntimeAdapter.ts# OpenClaw 运行时适配
-    │   ├── types.ts                 # 类型定义
-    │   ├── gateway/                 # Gateway 集成
-    │   │   └── types.ts             # Gateway 类型
-    │   ├── history/                 # 历史记录同步
-    │   │   └── historyReconciler.ts # Gateway-本地历史协调
-    │   ├── rpc/                     # 工具调用 RPC
-    │   │   └── skillRpc.ts          # Skill RPC 处理
-    │   ├── utils/                   # 工具函数
-    │   │   └── gatewayHelpers.ts    # Gateway 辅助函数
-    │   ├── openclaw/                # OpenClaw 特定
-    │   │   ├── subagentGateway.ts   # 子 Agent Gateway 桥接
-    │   │   └── webchatToolStream.ts # WebChat 工具流处理
-    │   └── index.ts                 # 模块导出
-    ├── cowork/                      # Cowork 配置与模型
-    │   ├── coworkConfigStore.ts     # 配置存储
-    │   ├── coworkLogger.ts          # 日志系统
-    │   ├── coworkModelApi.ts        # 模型 API
-    │   ├── coworkUtil.ts            # 工具函数
-    │   └── providerApiConfig.ts     # Provider API 配置
-    ├── infra/                       # 基础设施工具
-    │   ├── commandSafety.ts         # 命令安全检查
-    │   ├── logExport.ts             # 日志导出
-    │   ├── pythonRuntime.ts         # Python 运行时
-    │   └── systemProxy.ts           # 系统代理
-    ├── mcp/                         # MCP 集成
-    │   ├── mcpBridgeServer.ts       # MCP 桥接服务器
-    │   └── mcpServerManager.ts      # MCP 服务器管理
-    └── openclaw/                    # OpenClaw GateWay 管理
-        ├── openclawEngineManager.ts  # Gateway 引擎生命周期
-        ├── openclawConfigSync.ts     # 配置同步
-        ├── openclawHistory.ts        # 历史同步
-        ├── openclawAgentModels.ts    # Agent 模型配置
-        ├── openclawAssistantText.ts  # 助理文本
-        ├── openclawChannelSessionSync.ts # Channel 会话同步
-        ├── openclawLocalExtensions.ts    # 本地扩展
-        └── openclawTokenProxy.ts     # Token 代理
+├── engine/                          # Agent 引擎路由层、OpenClaw 适配、命令安全
+│   ├── coworkEngineRouter.ts        # 引擎请求路由
+│   ├── openclawRuntimeAdapter.ts    # OpenClaw 运行时适配
+│   ├── gateway/                     # Gateway RPC 与类型
+│   └── openclaw/                    # 子 Agent Gateway 与工具流
+├── cowork/                          # Cowork 配置、日志、模型 API
+├── openclaw/                        # Gateway 引擎、配置、模型、会话辅助、Slash command
+├── plugins/                         # Skills、MCP、hooks、extensions、marketplace
+└── scheduler/                       # OpenClaw cron 任务适配
 ```
 
 ### 2.3 Preload Script

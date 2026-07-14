@@ -60,11 +60,11 @@ JustDo 采用 Electron 的严格进程隔离架构，所有跨进程通信通过
 const mainWindow = new BrowserWindow({
   webPreferences: {
     preload: path.join(__dirname, 'preload.js'),
-    contextIsolation: true,    // 启用：Renderer 无法直接访问 Node.js
-    nodeIntegration: false,    // 禁用：Renderer 无 require 能力
-    sandbox: true,             // 启用：Renderer 运行在沙箱
+    contextIsolation: true, // 启用：Renderer 无法直接访问 Node.js
+    nodeIntegration: false, // 禁用：Renderer 无 require 能力
+    sandbox: true, // 启用：Renderer 运行在沙箱
     webSecurity: true,
-  }
+  },
 });
 ```
 
@@ -139,11 +139,18 @@ contextBridge.exposeInMainWorld('electron', {
 
   // API 请求（含流式）
   api: {
-    fetch: (options: { url: string; method: string; headers: Record<string, string>; body?: string }) =>
-      ipcRenderer.invoke('api:fetch', options),
+    fetch: (options: {
+      url: string;
+      method: string;
+      headers: Record<string, string>;
+      body?: string;
+    }) => ipcRenderer.invoke('api:fetch', options),
     stream: (options: {
-      url: string; method: string; headers: Record<string, string>;
-      body?: string; requestId: string;
+      url: string;
+      method: string;
+      headers: Record<string, string>;
+      body?: string;
+      requestId: string;
     }) => ipcRenderer.invoke('api:stream', options),
     cancelStream: (requestId: string) => ipcRenderer.invoke('api:stream:cancel', requestId),
     onStreamData: (requestId: string, callback: (chunk: string) => void) => {
@@ -186,9 +193,13 @@ contextBridge.exposeInMainWorld('electron', {
     isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
     showSystemMenu: (position: { x: number; y: number }) =>
       ipcRenderer.send('window:showSystemMenu', position),
-    onStateChanged: (callback: (state: {
-      isMaximized: boolean; isFullscreen: boolean; isFocused: boolean;
-    }) => void) => {
+    onStateChanged: (
+      callback: (state: {
+        isMaximized: boolean;
+        isFullscreen: boolean;
+        isFocused: boolean;
+      }) => void,
+    ) => {
       const handler = (_event: any, state: any) => callback(state);
       ipcRenderer.on('window:state-changed', handler);
       return () => ipcRenderer.removeListener('window:state-changed', handler);
@@ -199,8 +210,12 @@ contextBridge.exposeInMainWorld('electron', {
   getApiConfig: () => ipcRenderer.invoke('get-api-config'),
   checkApiConfig: (options?: { probeModel?: boolean }) =>
     ipcRenderer.invoke('check-api-config', options),
-  saveApiConfig: (config: { apiKey: string; baseURL: string; model: string; apiType?: 'anthropic' | 'openai' }) =>
-    ipcRenderer.invoke('save-api-config', config),
+  saveApiConfig: (config: {
+    apiKey: string;
+    baseURL: string;
+    model: string;
+    apiType?: 'anthropic' | 'openai';
+  }) => ipcRenderer.invoke('save-api-config', config),
 
   // 工具函数
   generateSessionTitle: (userInput: string | null) =>
@@ -234,18 +249,31 @@ contextBridge.exposeInMainWorld('electron', {
       return result?.success ? result.agent : null;
     },
     create: async (request: {
-      id?: string; name: string; description?: string;
-      systemPrompt?: string; identity?: string; model?: string;
-      icon?: string; skillIds?: string[];
+      id?: string;
+      name: string;
+      description?: string;
+      systemPrompt?: string;
+      identity?: string;
+      model?: string;
+      icon?: string;
+      skillIds?: string[];
     }) => {
       const result = await ipcRenderer.invoke('agents:create', request);
       return result?.success ? result.agent : null;
     },
-    update: async (id: string, updates: {
-      name?: string; description?: string; systemPrompt?: string;
-      identity?: string; model?: string; icon?: string;
-      skillIds?: string[]; enabled?: boolean;
-    }) => {
+    update: async (
+      id: string,
+      updates: {
+        name?: string;
+        description?: string;
+        systemPrompt?: string;
+        identity?: string;
+        model?: string;
+        icon?: string;
+        skillIds?: string[];
+        enabled?: boolean;
+      },
+    ) => {
       const result = await ipcRenderer.invoke('agents:update', id, updates);
       return result?.success ? result.agent : null;
     },
@@ -259,18 +287,24 @@ contextBridge.exposeInMainWorld('electron', {
   cowork: {
     // 会话管理
     startSession: (options: {
-      prompt: string; cwd?: string; systemPrompt?: string;
-      activeSkillIds?: string[]; agentId?: string;
+      prompt: string;
+      cwd?: string;
+      systemPrompt?: string;
+      activeSkillIds?: string[];
+      agentId?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
     }) => ipcRenderer.invoke('cowork:session:start', options),
     continueSession: (options: {
-      sessionId: string; prompt: string; systemPrompt?: string;
+      sessionId: string;
+      prompt: string;
+      systemPrompt?: string;
       activeSkillIds?: string[];
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
     }) => ipcRenderer.invoke('cowork:session:continue', options),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
-    deleteSessions: (sessionIds: string[]) => ipcRenderer.invoke('cowork:session:deleteBatch', sessionIds),
+    deleteSessions: (sessionIds: string[]) =>
+      ipcRenderer.invoke('cowork:session:deleteBatch', sessionIds),
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>
       ipcRenderer.invoke('cowork:session:pin', options),
     renameSession: (options: { sessionId: string; title: string }) =>
@@ -297,7 +331,9 @@ contextBridge.exposeInMainWorld('electron', {
     saveResultImage: (options: { pngBase64: string; defaultFileName?: string }) =>
       ipcRenderer.invoke('cowork:session:saveResultImage', options),
     exportSessionText: (options: {
-      content: string; defaultFileName?: string; fileExtension?: string;
+      content: string;
+      defaultFileName?: string;
+      fileExtension?: string;
     }) => ipcRenderer.invoke('cowork:session:exportText', options),
 
     // 权限管理
@@ -306,9 +342,8 @@ contextBridge.exposeInMainWorld('electron', {
 
     // 配置
     getConfig: () => ipcRenderer.invoke('cowork:config:get'),
-    setConfig: (config: {
-      workingDirectory?: string; executionMode?: string;
-    }) => ipcRenderer.invoke('cowork:config:set', config),
+    setConfig: (config: { workingDirectory?: string; executionMode?: string }) =>
+      ipcRenderer.invoke('cowork:config:set', config),
 
     // 记忆管理
     listMemoryEntries: (input: { query?: string; status?: string }) =>
@@ -328,51 +363,49 @@ contextBridge.exposeInMainWorld('electron', {
     deletePresetPrompt: (id: string) => ipcRenderer.invoke('cowork:prompts:delete', id),
 
     // 流式事件监听
-    onStreamMessage: (callback: (data: {
-      sessionId: string; message: any;
-    }) => void) => {
+    onStreamMessage: (callback: (data: { sessionId: string; message: any }) => void) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('cowork:stream:message', handler);
       return () => ipcRenderer.removeListener('cowork:stream:message', handler);
     },
-    onStreamMessageUpdate: (callback: (data: {
-      sessionId: string; messageId: string; content: string;
-    }) => void) => {
+    onStreamMessageUpdate: (
+      callback: (data: { sessionId: string; messageId: string; content: string }) => void,
+    ) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('cowork:stream:messageUpdate', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageUpdate', handler);
     },
-    onStreamThinkingUpdate: (callback: (data: {
-      sessionId: string; messageId: string; thinkingDelta: string;
-    }) => void) => {
+    onStreamThinkingUpdate: (
+      callback: (data: { sessionId: string; messageId: string; thinkingDelta: string }) => void,
+    ) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('cowork:stream:thinkingUpdate', handler);
       return () => ipcRenderer.removeListener('cowork:stream:thinkingUpdate', handler);
     },
-    onStreamMessageMetadataUpdate: (callback: (data: {
-      sessionId: string; messageId: string; metadata: Record<string, unknown>;
-    }) => void) => {
+    onStreamMessageMetadataUpdate: (
+      callback: (data: {
+        sessionId: string;
+        messageId: string;
+        metadata: Record<string, unknown>;
+      }) => void,
+    ) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('cowork:stream:messageMetadataUpdate', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageMetadataUpdate', handler);
     },
-    onStreamPermission: (callback: (data: {
-      sessionId: string; request: any;
-    }) => void) => {
+    onStreamPermission: (callback: (data: { sessionId: string; request: any }) => void) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('cowork:stream:permissionRequest', handler);
       return () => ipcRenderer.removeListener('cowork:stream:permissionRequest', handler);
     },
-    onStreamComplete: (callback: (data: {
-      sessionId: string; claudeSessionId: string | null;
-    }) => void) => {
+    onStreamComplete: (
+      callback: (data: { sessionId: string; claudeSessionId: string | null }) => void,
+    ) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('cowork:stream:complete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:complete', handler);
     },
-    onStreamError: (callback: (data: {
-      sessionId: string; error: string;
-    }) => void) => {
+    onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('cowork:stream:error', handler);
       return () => ipcRenderer.removeListener('cowork:stream:error', handler);
@@ -388,14 +421,19 @@ contextBridge.exposeInMainWorld('electron', {
   dialog: {
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
     selectFile: (options?: {
-      title?: string; filters?: { name: string; extensions: string[] }[];
+      title?: string;
+      filters?: { name: string; extensions: string[] }[];
     }) => ipcRenderer.invoke('dialog:selectFile', options),
     selectFiles: (options?: {
-      title?: string; filters?: { name: string; extensions: string[] }[];
+      title?: string;
+      filters?: { name: string; extensions: string[] }[];
       multiSelections?: boolean;
     }) => ipcRenderer.invoke('dialog:selectFiles', options),
     saveInlineFile: (options: {
-      dataBase64: string; fileName?: string; mimeType?: string; cwd?: string;
+      dataBase64: string;
+      fileName?: string;
+      mimeType?: string;
+      cwd?: string;
     }) => ipcRenderer.invoke('dialog:saveInlineFile', options),
     readFileAsDataUrl: (filePath: string) =>
       ipcRenderer.invoke('dialog:readFileAsDataUrl', filePath),
@@ -440,7 +478,8 @@ contextBridge.exposeInMainWorld('electron', {
     create: (input: any) => ipcRenderer.invoke(ScheduledTaskIpc.Create, input),
     update: (id: string, input: any) => ipcRenderer.invoke(ScheduledTaskIpc.Update, id, input),
     delete: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.Delete, id),
-    toggle: (id: string, enabled: boolean) => ipcRenderer.invoke(ScheduledTaskIpc.Toggle, id, enabled),
+    toggle: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.Toggle, id, enabled),
     runManually: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.RunManually, id),
     stop: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.Stop, id),
     listRuns: (taskId: string, limit?: number, offset?: number) =>
@@ -567,7 +606,11 @@ interface ElectronAPI {
     renameSession: (options: { sessionId: string; title: string }) => Promise<void>;
     getSession: (sessionId: string) => Promise<Session | null>;
     remoteManaged: (sessionId: string) => Promise<void>;
-    patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) => Promise<void>;
+    patchSessionModel: (options: {
+      sessionId: string;
+      model: string;
+      agentId?: string;
+    }) => Promise<void>;
     listSessions: (agentId?: string) => Promise<Session[]>;
     getContextUsage: (sessionId: string) => Promise<ContextUsage | null>;
     deleteMessage: (sessionId: string, messageId: string) => Promise<void>;
@@ -585,7 +628,11 @@ interface ElectronAPI {
     deleteMemoryEntry: (input: { id: string }) => Promise<void>;
     listPresetPrompts: () => Promise<PresetPrompt[]>;
     getPresetPrompt: (id: string) => Promise<PresetPrompt | null>;
-    setPresetPrompt: (input: { id?: string; title: string; prompt: string }) => Promise<PresetPrompt>;
+    setPresetPrompt: (input: {
+      id?: string;
+      title: string;
+      prompt: string;
+    }) => Promise<PresetPrompt>;
     deletePresetPrompt: (id: string) => Promise<void>;
     onStreamMessage: (callback: StreamMessageCallback) => () => void;
     onStreamMessageUpdate: (callback: StreamMessageUpdateCallback) => () => void;
@@ -808,7 +855,7 @@ function registerIpcHandlers() {
 // Cowork Session Handler
 async function handleCoworkSessionStart(
   event: IpcMainInvokeEvent,
-  options: StartSessionOptions
+  options: StartSessionOptions,
 ): Promise<{ sessionId: string; status: string }> {
   // 1. 检查引擎状态
   const engineStatus = openclawEngineManager.getStatus();
@@ -856,7 +903,7 @@ async function handleCoworkSessionStart(
 主进程通过 `webContents.send` 推送事件：
 
 ```typescript
-// src/main/libs/agentEngine/openclawRuntimeAdapter.ts
+// src/main/engine/openclawRuntimeAdapter.ts
 function emitStreamMessage(sessionId: string, message: CoworkMessage) {
   const win = BrowserWindow.getAllWindows()[0];
   if (win && !win.isDestroyed()) {
@@ -885,29 +932,35 @@ function emitStreamMessageUpdate(sessionId: string, update: MessageUpdate) {
 ```typescript
 // src/renderer/services/cowork.ts
 export function setupStreamListeners(dispatch: Dispatch) {
-  window.electron.cowork.onStreamMessage((msg) => {
+  window.electron.cowork.onStreamMessage(msg => {
     dispatch(coworkSlice.actions.addMessage(msg));
   });
 
-  window.electron.cowork.onStreamMessageUpdate((update) => {
-    dispatch(coworkSlice.actions.updateMessageContent({
-      messageId: update.messageId,
-      content: update.content,
-    }));
+  window.electron.cowork.onStreamMessageUpdate(update => {
+    dispatch(
+      coworkSlice.actions.updateMessageContent({
+        messageId: update.messageId,
+        content: update.content,
+      }),
+    );
   });
 
-  window.electron.cowork.onStreamComplete((result) => {
-    dispatch(coworkSlice.actions.setSessionStatus({
-      sessionId: result.sessionId,
-      status: 'completed',
-    }));
+  window.electron.cowork.onStreamComplete(result => {
+    dispatch(
+      coworkSlice.actions.setSessionStatus({
+        sessionId: result.sessionId,
+        status: 'completed',
+      }),
+    );
   });
 
-  window.electron.cowork.onStreamError((error) => {
-    dispatch(coworkSlice.actions.setSessionError({
-      sessionId: error.sessionId,
-      error: error.message,
-    }));
+  window.electron.cowork.onStreamError(error => {
+    dispatch(
+      coworkSlice.actions.setSessionError({
+        sessionId: error.sessionId,
+        error: error.message,
+      }),
+    );
   });
 }
 ```
@@ -1069,7 +1122,7 @@ export const IpcChannel = {
   GetRecentCwds: 'get-recent-cwds',
 } as const;
 
-export type IpcChannelName = typeof IpcChannel[keyof typeof IpcChannel];
+export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel];
 ```
 
 ### 5.2 使用规范
@@ -1110,7 +1163,7 @@ async function handleStartSession(event, params) {
       error: {
         code: 'ENGINE_NOT_READY',
         message: error.message,
-      }
+      },
     };
   }
 }

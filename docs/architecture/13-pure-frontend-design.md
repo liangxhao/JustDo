@@ -2,7 +2,6 @@
 
 > **状态**: JustDo 采用薄前端边界。OpenClaw Gateway 负责会话、历史和 Subagent，JustDo 负责 UI、配置与权限。
 
-
 ## 1. 设计目标
 
 JustDo 作为 **OpenClaw Gateway 的纯前端**，不注入任何自己的上下文内容。所有 AI 推理、上下文管理、历史存储由 OpenClaw Gateway 处理，JustDo 仅负责：
@@ -57,14 +56,14 @@ JustDo 作为 **OpenClaw Gateway 的纯前端**，不注入任何自己的上下
 
 以下配置仍然同步到 OpenClaw（无 prompt 注入）：
 
-| 配置项 | 说明 |
-|--------|------|
-| Provider API keys | 环境变量形式注入 |
-| Default model | 默认模型配置 |
-| Workspace path | 工作目录配置 |
-| Sandbox mode | sandbox 配置 |
-| Browser enabled | browser 工具配置 |
-| Plugins entries | MCP bridge 等插件 |
+| 配置项            | 说明              |
+| ----------------- | ----------------- |
+| Provider API keys | 环境变量形式注入  |
+| Default model     | 默认模型配置      |
+| Workspace path    | 工作目录配置      |
+| Sandbox mode      | sandbox 配置      |
+| Browser enabled   | browser 工具配置  |
+| Plugins entries   | MCP bridge 等插件 |
 
 ## 4. Chat 渲染架构
 
@@ -138,32 +137,35 @@ Subagent 逻辑完全由 OpenClaw Gateway 负责：
 
 ## 8. 关键文件清单
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | Gateway 客户端 + 事件映射（瘦身版） |
-| `src/main/libs/agentEngine/openclawConfigSync.ts` | 配置同步（仅同步配置，无注入） |
-| `src/main/libs/agentEngine/rpc/skillRpc.ts` | Skill RPC + 标题生成（从 adapter 拆分） |
-| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts` | Lit-based chat 自定义元素 |
-| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts` | Chat 控制器（直连 Gateway） |
-| `src/renderer/components/cowork/JustDoChatWrapper.tsx` | Lit chat 的 React 包装器 |
+| 文件                                                         | 职责                                    |
+| ------------------------------------------------------------ | --------------------------------------- |
+| `src/main/engine/openclawRuntimeAdapter.ts`                  | Gateway 客户端 + 事件映射（瘦身版）     |
+| `src/main/engine/openclawConfigSync.ts`                      | 配置同步（仅同步配置，无注入）          |
+| `src/main/engine/rpc/skillRpc.ts`                            | Skill RPC + 标题生成（从 adapter 拆分） |
+| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`  | Lit-based chat 自定义元素               |
+| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts` | Chat 控制器（直连 Gateway）             |
+| `src/renderer/components/cowork/JustDoChatWrapper.tsx`       | Lit chat 的 React 包装器                |
 
 ## 9. 验证方法
 
 ### 消息透传验证
 
 在 JustDo 中发送消息，通过 Gateway log 确认：
+
 - 消息内容是纯用户输入
 - 不包含 `[JustDo system instructions]` 或时间上下文
 
 ### AGENTS.md 验证
 
 检查 OpenClaw workspace 的 AGENTS.md：
+
 - 不包含 JustDo managed section
 - 不包含 Web Search/Exec/Memory Policy
 
 ### 配置同步验证
 
 检查 `openclaw.json`：
+
 - providers/model 配置正常同步
 - 无注入的额外 policy 或 system prompt
 
