@@ -1,6 +1,6 @@
 # OpenClaw 桌面前端设计
 
-JustDo 当前定位是 OpenClaw Gateway 的桌面前端，而不是 Gateway 的替代实现。它负责桌面体验、本地配置、权限交互、UI 缓存和插件管理界面。
+JustDo 当前定位是 OpenClaw Gateway 的桌面前端，而不是 Gateway 的替代实现。它负责桌面体验、本地配置、ask-user 交互、UI 缓存和插件管理界面。
 
 ## 设计目标
 
@@ -16,7 +16,7 @@ flowchart LR
     UI["Product UI\nReact + Lit"]
     Config["Local Config\nproviders/agents/mcp/hooks"]
     Cache["SQLite UI Cache"]
-    Permission["Permission UI"]
+    Interaction["Ask-user Interaction UI"]
   end
 
   subgraph Gateway["OpenClaw Gateway Authority"]
@@ -27,7 +27,7 @@ flowchart LR
     Cron["Cron Runtime"]
   end
 
-  UI --> Permission
+  UI --> Interaction
   Config --> Gateway
   Cache -. "cache only" .-> History
   Desktop --> Gateway
@@ -48,7 +48,7 @@ flowchart LR
 - Provider、Agent、MCP、Hooks、Skills 管理界面。
 - OpenClaw config sync。
 - Gateway runtime 下载、安装、启动、停止、状态展示。
-- Permission modal 和 ask-user interaction。
+- Ask-user interaction UI。
 - Local SQLite cache。
 - Packaging resources。
 

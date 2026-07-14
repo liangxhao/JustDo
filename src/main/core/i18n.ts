@@ -22,11 +22,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     attachmentMenuOpen: '打开',
     attachmentMenuOpenWithSystem: '使用系统工具打开',
     attachmentMenuShowInFolder: '打开所在的文件夹',
-    // Exec approval continuation
-    execApprovalApproved: '用户已确认执行该命令，请检查执行结果并继续。',
-    execApprovalDenied: '用户已拒绝执行该命令。',
-    askUserApprovedMessage: '我已确认。',
-    askUserDeniedMessage: '我拒绝了请求。',
+    askUserSubmittedMessage: '我已提交。',
+    askUserCanceledMessage: '我取消了请求。',
     askUserAnswerLabel: '用户选择',
   },
   en: {
@@ -38,12 +35,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     attachmentMenuOpen: 'Open',
     attachmentMenuOpenWithSystem: 'Open with System Tool',
     attachmentMenuShowInFolder: 'Show in Folder',
-    // Exec approval continuation
-    execApprovalApproved:
-      'The user approved the command execution. Please check the result and continue.',
-    execApprovalDenied: 'The user denied the command execution.',
-    askUserApprovedMessage: 'I approved.',
-    askUserDeniedMessage: 'I denied the request.',
+    askUserSubmittedMessage: 'I submitted.',
+    askUserCanceledMessage: 'I canceled the request.',
     askUserAnswerLabel: 'User answer',
   },
 };

@@ -21,12 +21,12 @@ describe('justDoSlashCommandPolicy', () => {
     }
   });
 
-  test('keeps the user approval command visible', () => {
+  test('hides the exec approval command', () => {
     expect(
       justDoSlashCommandPolicy.include?.(createCommand('approve'), {
         options: {},
         source: {},
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

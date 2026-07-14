@@ -43,6 +43,7 @@ export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'debug',
   'restart',
   'allowlist',
+  'approve',
   'activation',
   'send',
   'focus',

@@ -26,7 +26,7 @@ JustDo 是 OpenClaw Gateway 的桌面前端和本地控制面：
 
 ## 用户可见模块
 
-- Cowork：AI 工作会话、附件、流式输出、权限请求、子任务状态。
+- Cowork：AI 工作会话、附件、流式输出、ask-user 交互、子任务状态。
 - Agents：Agent 列表、默认 Agent、模型绑定、技能绑定。
 - Models：OpenAI-compatible provider 和模型配置。
 - Plugins：Skills、MCP、Hooks、Extensions 和 marketplace 入口。

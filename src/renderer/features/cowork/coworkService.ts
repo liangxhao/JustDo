@@ -6,14 +6,14 @@ import {
   addMessage,
   addSession,
   clearCurrentSession,
-  clearPendingPermissions,
+  clearPendingInteractions,
   deleteGroup as deleteGroupAction,
   deleteMessage as deleteMessageAction,
   deleteMessagesFrom as deleteMessagesFromAction,
   deleteSession as deleteSessionAction,
   deleteSessions as deleteSessionsAction,
-  dequeuePendingPermission,
-  enqueuePendingPermission,
+  dequeuePendingInteraction,
+  enqueuePendingInteraction,
   moveSessionToGroup,
   setConfig,
   setCurrentSession,
@@ -37,7 +37,7 @@ import type {
   CoworkApiConfig,
   CoworkConfigUpdate,
   CoworkContinueOptions,
-  CoworkPermissionResult,
+  CoworkInteractionResult,
   CoworkSession,
   CoworkStartOptions,
   CreateGroupInput,
@@ -210,10 +210,10 @@ class CoworkService {
     });
     this.streamListenerCleanups.push(messageDeleteCleanup);
 
-    // Permission request listener
-    const permissionCleanup = cowork.onStreamPermission(({ sessionId, request }) => {
+    // Extension interaction request listener
+    const interactionCleanup = cowork.onStreamInteraction(({ sessionId, request }) => {
       store.dispatch(
-        enqueuePendingPermission({
+        enqueuePendingInteraction({
           sessionId,
           toolName: request.toolName,
           toolInput: request.toolInput,
@@ -223,13 +223,13 @@ class CoworkService {
         }),
       );
     });
-    this.streamListenerCleanups.push(permissionCleanup);
+    this.streamListenerCleanups.push(interactionCleanup);
 
-    // Permission dismiss listener (timeout or server-side resolution)
-    const permissionDismissCleanup = cowork.onStreamPermissionDismiss(({ requestId }) => {
-      store.dispatch(dequeuePendingPermission({ requestId }));
+    // Interaction dismiss listener (timeout or server-side resolution)
+    const interactionDismissCleanup = cowork.onStreamInteractionDismiss(({ requestId }) => {
+      store.dispatch(dequeuePendingInteraction({ requestId }));
     });
-    this.streamListenerCleanups.push(permissionDismissCleanup);
+    this.streamListenerCleanups.push(interactionDismissCleanup);
 
     // Complete listener
     const completeCleanup = cowork.onStreamComplete(({ sessionId, finalStatus }) => {
@@ -660,17 +660,17 @@ class CoworkService {
     return null;
   }
 
-  async respondToPermission(requestId: string, result: CoworkPermissionResult): Promise<boolean> {
+  async respondToInteraction(requestId: string, result: CoworkInteractionResult): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
 
-    const response = await cowork.respondToPermission({ requestId, result });
+    const response = await cowork.respondToInteraction({ requestId, result });
     if (response.success) {
-      store.dispatch(dequeuePendingPermission({ requestId }));
+      store.dispatch(dequeuePendingInteraction({ requestId }));
       return true;
     }
 
-    console.error('Failed to respond to permission:', response.error);
+    console.error('Failed to respond to interaction:', response.error);
     return false;
   }
 
@@ -685,7 +685,7 @@ class CoworkService {
     if (result.success) {
       store.dispatch(setConfig({ ...currentConfig, ...config }));
       if (engineChanged) {
-        store.dispatch(clearPendingPermissions());
+        store.dispatch(clearPendingInteractions());
         store.dispatch(setStreaming(false));
       }
       return true;

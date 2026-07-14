@@ -9,15 +9,15 @@ import Toast from '@/app/shell/Toast';
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { agentService } from '@/features/agents/agentService';
 import { CoworkView } from '@/features/cowork/components';
-import CoworkPermissionModal from '@/features/cowork/components/CoworkPermissionModal';
+import CoworkInteractionModal from '@/features/cowork/components/CoworkInteractionModal';
 import CoworkQuestionWizard from '@/features/cowork/components/CoworkQuestionWizard';
 import EngineStartupStatusBar from '@/features/cowork/components/EngineStartupStatusBar';
 import {
   selectCurrentSessionId,
-  selectFirstPendingPermission,
+  selectFirstPendingInteraction,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
-import type { CoworkPermissionResult } from '@/features/cowork/coworkTypes';
+import type { CoworkInteractionResult } from '@/features/cowork/coworkTypes';
 import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
 import PluginsView from '@/features/plugins/components/PluginsView';
 import { clearSelection } from '@/features/quick-actions/quickActionSlice';
@@ -44,7 +44,7 @@ const App: React.FC = () => {
   const dispatch = useDispatch();
   const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const currentSessionId = useSelector(selectCurrentSessionId);
-  const pendingPermission = useSelector(selectFirstPendingPermission);
+  const pendingInteraction = useSelector(selectFirstPendingInteraction);
   const isWindows = window.electron.platform === 'win32';
 
   const waitWithTimeout = useCallback(
@@ -280,12 +280,12 @@ const App: React.FC = () => {
     }, 2200);
   }, []);
 
-  const handlePermissionResponse = useCallback(
-    async (result: CoworkPermissionResult) => {
-      if (!pendingPermission) return;
-      await coworkService.respondToPermission(pendingPermission.requestId, result);
+  const handleInteractionResponse = useCallback(
+    async (result: CoworkInteractionResult) => {
+      if (!pendingInteraction) return;
+      await coworkService.respondToInteraction(pendingInteraction.requestId, result);
     },
-    [pendingPermission],
+    [pendingInteraction],
   );
 
   const handleCloseSettings = () => {
@@ -406,33 +406,34 @@ const App: React.FC = () => {
     return unsubscribe;
   }, [handleNewChat]);
 
-  // 根据场景选择使用哪个权限组件
-  const permissionModal = useMemo(() => {
-    if (!pendingPermission) return null;
+  const interactionModal = useMemo(() => {
+    if (!pendingInteraction) return null;
 
     const isQuestionTool =
-      pendingPermission.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION;
-    if (isQuestionTool && pendingPermission.toolInput) {
-      const rawQuestions = (pendingPermission.toolInput as Record<string, unknown>).questions;
+      pendingInteraction.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION;
+    if (isQuestionTool && pendingInteraction.toolInput) {
+      const rawQuestions = (pendingInteraction.toolInput as Record<string, unknown>).questions;
       const hasMultipleQuestions = Array.isArray(rawQuestions) && rawQuestions.length > 1;
 
       if (hasMultipleQuestions) {
         return (
           <CoworkQuestionWizard
-            permission={pendingPermission}
-            onRespond={handlePermissionResponse}
+            interaction={pendingInteraction}
+            onRespond={handleInteractionResponse}
           />
         );
       }
     }
 
-    // 其他情况使用原有的权限模态框
     return (
-      <CoworkPermissionModal permission={pendingPermission} onRespond={handlePermissionResponse} />
+      <CoworkInteractionModal
+        interaction={pendingInteraction}
+        onRespond={handleInteractionResponse}
+      />
     );
-  }, [pendingPermission, handlePermissionResponse]);
+  }, [pendingInteraction, handleInteractionResponse]);
 
-  const isOverlayActive = showSettings || pendingPermission !== null;
+  const isOverlayActive = showSettings || pendingInteraction !== null;
   const windowsStandaloneTitleBar = isWindows ? (
     <div className="draggable relative h-9 shrink-0 bg-surface-raised">
       <WindowTitleBar isOverlayActive={isOverlayActive} />
@@ -536,7 +537,7 @@ const App: React.FC = () => {
           notice={settingsOptions.notice}
         />
       )}
-      {permissionModal}
+      {interactionModal}
     </div>
   );
 };

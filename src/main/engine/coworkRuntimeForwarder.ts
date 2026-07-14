@@ -4,7 +4,6 @@ import { resolveCurrentApiConfig } from '../cowork/providerApiConfig';
 import type { CoworkMessage, CoworkStore } from '../data/coworkStore';
 import {
   sanitizeCoworkMessageForIpc,
-  sanitizePermissionRequestForIpc,
   truncateIpcString,
 } from '../ipc/payloadSanitizer';
 import type { CoworkEngineRouter } from './coworkEngineRouter';
@@ -109,14 +108,6 @@ export const bindCoworkRuntimeForwarder = (
 
   runtime.on('messageDelete', (sessionId: string, messageId: string) => {
     broadcast('cowork:stream:messageDelete', { sessionId, messageId });
-  });
-
-  runtime.on('permissionRequest', (sessionId: string, request: unknown) => {
-    if (runtime.getSessionConfirmationMode(sessionId) === 'text') return;
-    broadcast('cowork:stream:permission', {
-      sessionId,
-      request: sanitizePermissionRequestForIpc(request),
-    });
   });
 
   runtime.on(

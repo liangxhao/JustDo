@@ -5,7 +5,7 @@ JustDo has completed the thin-frontend refactor. This document records the curre
 ## Completed Boundary
 
 - OpenClaw Gateway owns chat execution, history, subagents, skills runtime, cron runtime, and slash command capability.
-- JustDo owns Electron desktop UX, local configuration, SQLite UI cache, permissions UI, plugin management UI, and runtime lifecycle controls.
+- JustDo owns Electron desktop UX, local configuration, SQLite UI cache, ask-user interaction UI, plugin management UI, and runtime lifecycle controls.
 - Renderer accesses local capabilities only through `window.electron`.
 - Chat rendering uses the Lit `<justdo-chat>` element and Gateway WebSocket.
 - SQLite is not an execution-history authority.

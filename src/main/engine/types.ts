@@ -1,20 +1,3 @@
-/**
- * Permission result type for tool permission responses.
- * Matches the structure used by OpenClaw runtime.
- */
-export type PermissionResult =
-  | {
-      behavior: 'allow';
-      updatedInput?: Record<string, unknown>;
-      updatedPermissions?: Record<string, unknown>;
-      toolUseID?: string;
-    }
-  | {
-      behavior: 'deny';
-      message: string;
-      interrupt?: boolean;
-    };
-
 import type { CoworkMessage } from '../data/coworkStore';
 
 export type CoworkAgentEngine = 'openclaw';
@@ -109,13 +92,6 @@ export interface SkillRpcResult {
 // End Gateway Skill Types
 // ============================================================
 
-export interface PermissionRequest {
-  requestId: string;
-  toolName: string;
-  toolInput: Record<string, unknown>;
-  toolUseId?: string | null;
-}
-
 export interface CoworkRuntimeEvents {
   message: (sessionId: string, message: CoworkMessage) => void;
   messageUpdate: (sessionId: string, messageId: string, content: string) => void;
@@ -126,7 +102,6 @@ export interface CoworkRuntimeEvents {
   ) => void;
   messageDelete: (sessionId: string, messageId: string) => void;
   thinkingUpdate: (sessionId: string, messageId: string, thinkingDelta: string) => void;
-  permissionRequest: (sessionId: string, request: PermissionRequest) => void;
   complete: (
     sessionId: string,
     claudeSessionId: string | null,
@@ -164,7 +139,6 @@ export interface CoworkRuntime {
   ): Promise<void>;
   stopSession(sessionId: string): void;
   stopAllSessions(): void;
-  respondToPermission(requestId: string, result: PermissionResult): void;
   isSessionActive(sessionId: string): boolean;
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null;
   onSessionDeleted?(sessionId: string, agentId?: string): void;

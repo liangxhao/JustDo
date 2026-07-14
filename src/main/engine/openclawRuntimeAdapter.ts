@@ -3,7 +3,6 @@ import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../shared/cowork/attachments';
-import { t } from '../core/i18n';
 import { coworkLog } from '../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../cowork/providerApiConfig';
 import type {
@@ -23,14 +22,11 @@ import {
   type OpenClawChannelSessionSync,
 } from '../openclaw/sessions/openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
-import { getCommandDangerLevel, isDeleteCommand } from './commandSafety';
 import { SessionRpc } from './gateway/sessionRpc';
 import { GatewayTitleGenerator } from './gateway/titleGenerator';
 import type {
   AgentEventPayload,
   ChatEventPayload,
-  ExecApprovalRequestedPayload,
-  ExecApprovalResolvedPayload,
   GatewayClientCtor,
   GatewayClientLike,
   GatewayEventFrame,
@@ -55,13 +51,11 @@ import {
   resetWebchatToolStream,
   syncWebchatToolStreamMessages,
 } from './openclaw/webchatToolStream';
-import type { PermissionResult } from './types';
 import type {
   CoworkContinueOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
-  PermissionRequest,
 } from './types';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -103,12 +97,6 @@ const extractAssistantText = (message: unknown): string => {
 
 // ─── Adapter ────────────────────────────────────────────────────────────────
 
-type PendingApprovalEntryLocal = {
-  requestId: string;
-  sessionId: string;
-  allowAlways?: boolean;
-};
-
 type VisibleRunStreamState = {
   sessionId: string;
   sessionKey: string;
@@ -145,9 +133,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly pendingSessionModelPatches = new Map<string, PendingSessionModelPatch>();
   private readonly visibleRunStreams = new Map<string, VisibleRunStreamState>();
   private readonly terminalLifecycleSessionIds = new Set<string>();
-
-  // Approval
-  private readonly pendingApprovals = new Map<string, PendingApprovalEntryLocal>();
 
   // Gateway connection
   private gatewayClient: GatewayClientLike | null = null;
@@ -310,7 +295,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.set(sessionId, Date.now());
     this.terminalLifecycleSessionIds.delete(sessionId);
     this.cleanupSessionTurn(sessionId);
-    this.clearPendingApprovalsBySession(sessionId);
     this.store.updateSession(sessionId, { status: 'idle' });
     this.emit('sessionStopped', sessionId);
     this.resolveTurn(sessionId);
@@ -320,48 +304,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     for (const sessionId of this.activeTurns.keys()) {
       this.stopSession(sessionId);
     }
-  }
-
-  respondToPermission(requestId: string, result: PermissionResult): void {
-    const pending = this.pendingApprovals.get(requestId);
-    if (!pending) return;
-
-    const decision =
-      result.behavior !== 'allow' ? 'deny' : pending.allowAlways ? 'allow-always' : 'allow-once';
-    const client = this.gatewayClient;
-    if (!client) {
-      this.pendingApprovals.delete(requestId);
-      return;
-    }
-
-    const sessionId = pending.sessionId;
-    const needsContinuation = !pending.allowAlways;
-
-    void client
-      .request('exec.approval.resolve', { id: requestId, decision })
-      .then(() => {
-        if (!needsContinuation) return;
-        const prompt = decision !== 'deny' ? t('execApprovalApproved') : t('execApprovalDenied');
-        const tryContinue = (retries: number) => {
-          if (!this.store.getSession(sessionId)) return;
-          if (!this.isSessionActive(sessionId)) {
-            void this.continueSession(sessionId, prompt).catch(error =>
-              coworkLog('WARN', 'OpenClawRuntime', 'Failed to continue session after approval', {
-                error: String(error),
-                sessionId,
-              }),
-            );
-            return;
-          }
-          if (retries > 0) setTimeout(() => tryContinue(retries - 1), 1000);
-        };
-        tryContinue(10);
-      })
-      .catch(error => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.emit('error', sessionId, `Failed to resolve OpenClaw approval: ${message}`);
-      })
-      .finally(() => this.pendingApprovals.delete(requestId));
   }
 
   isSessionActive(sessionId: string): boolean {
@@ -538,16 +480,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (event.event === 'agent') {
       this.lastAgentActivityTimestamp = Date.now();
       this.handleAgentEvent(event.payload, event.seq);
-      return;
-    }
-
-    if (event.event === 'exec.approval.requested') {
-      this.handleApprovalRequested(event.payload);
-      return;
-    }
-
-    if (event.event === 'exec.approval.resolved') {
-      this.handleApprovalResolved(event.payload);
       return;
     }
 
@@ -1756,72 +1688,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // ─── Approval ───────────────────────────────────────────────────────────
 
-  private handleApprovalRequested(payload: unknown): void {
-    if (!isRecord(payload)) return;
-    const typedPayload = payload as ExecApprovalRequestedPayload;
-    const requestId = typeof typedPayload.id === 'string' ? typedPayload.id.trim() : '';
-    if (!requestId || !typedPayload.request || !isRecord(typedPayload.request)) return;
-
-    const request = typedPayload.request;
-    const sessionKey = typeof request.sessionKey === 'string' ? request.sessionKey.trim() : '';
-    let sessionId = sessionKey
-      ? (this.resolveSessionIdBySessionKey(sessionKey) ?? undefined)
-      : undefined;
-
-    if (!sessionId && sessionKey && this.channelSessionSync) {
-      const channelSessionId =
-        this.channelSessionSync.resolveOrCreateSession(sessionKey) ||
-        this.channelSessionSync.resolveOrCreateMainAgentSession(sessionKey) ||
-        this.channelSessionSync.resolveOrCreateCronSession(sessionKey) ||
-        null;
-      if (channelSessionId) {
-        this.rememberSessionKey(channelSessionId, sessionKey);
-        sessionId = channelSessionId;
-      }
-    }
-    if (!sessionId) return;
-
-    const command = typeof request.command === 'string' ? request.command : '';
-    const isChannelSession = this.channelSessionSync?.isChannelSessionKey(sessionKey) ?? false;
-
-    // Auto-approve for channel sessions and non-delete commands
-    if (isChannelSession || !isDeleteCommand(command)) {
-      this.pendingApprovals.set(requestId, { requestId, sessionId, allowAlways: true });
-      this.respondToPermission(requestId, { behavior: 'allow', updatedInput: {} });
-      return;
-    }
-    if (this.isSessionInStopCooldown(sessionId)) return;
-
-    this.pendingApprovals.set(requestId, { requestId, sessionId });
-    const { level: dangerLevel, reason: dangerReason } = getCommandDangerLevel(command);
-
-    const permissionRequest: PermissionRequest = {
-      requestId,
-      toolName: 'Bash',
-      toolInput: {
-        command,
-        dangerLevel,
-        dangerReason,
-        cwd: request.cwd ?? null,
-        host: request.host ?? null,
-        security: request.security ?? null,
-        ask: request.ask ?? null,
-        resolvedPath: request.resolvedPath ?? null,
-        sessionKey: request.sessionKey ?? null,
-        agentId: request.agentId ?? null,
-      },
-      toolUseId: requestId,
-    };
-    this.emit('permissionRequest', sessionId, permissionRequest);
-  }
-
-  private handleApprovalResolved(payload: unknown): void {
-    if (!isRecord(payload)) return;
-    const typedPayload = payload as ExecApprovalResolvedPayload;
-    const requestId = typeof typedPayload.id === 'string' ? typedPayload.id.trim() : '';
-    if (requestId) this.pendingApprovals.delete(requestId);
-  }
-
   // ─── Turn Lifecycle Helpers ─────────────────────────────────────────────
 
   private cleanupSessionTurn(sessionId: string): void {
@@ -2479,12 +2345,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  private clearPendingApprovalsBySession(sessionId: string): void {
-    for (const [requestId, pending] of this.pendingApprovals.entries()) {
-      if (pending.sessionId === sessionId) this.pendingApprovals.delete(requestId);
-    }
-  }
-
   // ─── Session Deletion ───────────────────────────────────────────────────
 
   onSessionDeleted(sessionId: string, agentId?: string): void {
@@ -2510,7 +2370,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.delete(sessionId);
     this.pendingSessionModelPatches.delete(sessionId);
     this.cleanupSessionTurn(sessionId);
-    this.clearPendingApprovalsBySession(sessionId);
     this.confirmationModeBySession.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
     this.terminalLifecycleSessionIds.delete(sessionId);

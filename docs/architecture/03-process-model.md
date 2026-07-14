@@ -57,7 +57,7 @@ flowchart TB
 | `openclaw.engine` | Gateway 状态、端口、token、重启、打开终端、进度事件 |
 | `openclaw.history` | 工具输入和分页历史读取 |
 | `agents` | Agent 列表 |
-| `cowork` | session CRUD、执行、权限响应、流式事件、子任务状态 |
+| `cowork` | session CRUD、执行、ask-user 响应、流式事件、子任务状态 |
 | `sessionGroup` | 会话分组 CRUD、排序、移动会话 |
 | `dialog` | 文件/目录选择、保存 inline file、本地文件 data URL |
 | `shell` | 打开路径、预览文件、定位文件、外部链接 |
@@ -74,7 +74,7 @@ flowchart TB
 | 领域 | Main handler 路径 |
 | --- | --- |
 | app/window/dialog/shell/log/network/store | `src/main/ipc/app/` |
-| cowork sessions/config/permissions/agents/subtasks/groups | `src/main/ipc/cowork/` |
+| cowork sessions/config/ask-user/agents/subtasks/groups | `src/main/ipc/cowork/` |
 | OpenClaw engine/history/skills/mcp/hooks/slash commands | `src/main/ipc/openclaw/` |
 | scheduled tasks | `src/main/ipc/scheduledTask/` |
 
@@ -94,7 +94,7 @@ Streaming Cowork events use IPC event listeners such as:
 - `cowork:stream:message`
 - `cowork:stream:messageUpdate`
 - `cowork:stream:thinkingUpdate`
-- `cowork:stream:permission`
+- `cowork:stream:interaction`
 - `cowork:stream:complete`
 - `cowork:sessions:changed`
 
@@ -188,8 +188,8 @@ Renderer component 必须在 `useEffect` cleanup 中调用 unsubscribe，避免�
 - session create/continue/stop/delete/list/get
 - pin/rename/model patch
 - runtime status/context usage
-- permissions response
-- stream message/thinking/permission/complete/error events
+- ask-user interaction response
+- stream message/thinking/interaction/complete/error events
 - subtask status/session lookup
 
 设计重点是区分“用户请求”和“runtime event”。用户请求走 `invoke`，runtime event 走 listener。不要在 renderer 中根据 event 自行推断 Gateway truth；必要时通过 `getSessionRuntimeStatus()` 或 Gateway history 再查询一次。

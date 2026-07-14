@@ -194,7 +194,7 @@ Skills UI 位于 Plugins 页面。推荐的 UI 状态拆分：
 Skill 可能带来文件、网络、浏览器、命令执行等能力。JustDo 的边界是：
 
 - 安装和启用由用户显式触发。
-- 运行时权限仍通过 Gateway/JustDo permission flow 控制。
+- 运行时工具策略由 Gateway/OpenClaw 控制；JustDo 不实现命令审批。
 - Renderer 不执行 skill 代码。
 - 用户导入目录只作为文件复制来源，不在 renderer 中解析执行。
 - Marketplace 返回内容不应直接渲染为可信 HTML。

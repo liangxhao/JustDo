@@ -1,6 +1,6 @@
 # Cowork 系统
 
-Cowork 是 JustDo 的 AI 工作会话系统。用户在 renderer 中创建或继续会话，Main 进程通过 OpenClaw Gateway 执行任务，并把流式消息、权限请求、完成状态和缓存更新转回 UI。
+Cowork 是 JustDo 的 AI 工作会话系统。用户在 renderer 中创建或继续会话，Main 进程通过 OpenClaw Gateway 执行任务，并把流式消息、用户交互请求、完成状态和缓存更新转回 UI。
 
 ## 关键文件
 
@@ -37,7 +37,7 @@ sequenceDiagram
   GW-->>Adapter: stream events
   Adapter-->>Router: normalized runtime events
   Router-->>IPC: forward stream
-  IPC-->>UI: message/thinking/permission events
+  IPC-->>UI: message/thinking/interaction events
   GW-->>Adapter: final status/history available
   Adapter->>Store: reconcile history cache
   Store-->>UI: sessions changed
@@ -49,21 +49,21 @@ sequenceDiagram
 | --- | --- | --- |
 | 执行历史 | OpenClaw Gateway `chat.history` | 缓存、搜索、列表展示 |
 | 会话列表元数据 | JustDo SQLite + Gateway session key | UI 列表、标题、pin、group、cwd |
-| 权限请求 | Gateway/extension host event | 弹窗和用户响应 |
+| 用户交互请求 | extension host event | 弹窗和用户响应 |
 | Subagent 状态 | Gateway event/history | UI 展示和跳转 |
 | Agent 配置 | JustDo SQLite | Gateway 配置同步输入 |
 
 ## Renderer 状态
 
-`src/renderer/features/cowork/coworkSlice.ts` 保存 Cowork UI 需要的 session、message、streaming、permission 等状态。删除状态不再作为独立 Redux root slice 挂载，相关逻辑留在 cowork feature 内。
+`src/renderer/features/cowork/coworkSlice.ts` 保存 Cowork UI 需要的 session、message、streaming、ask-user 交互等状态。删除状态不再作为独立 Redux root slice 挂载，相关逻辑留在 cowork feature 内。
 
 ## Attachments
 
 附件契约位于 `src/shared/cowork/attachments.ts`。Renderer 通过 dialog/shell API 选择和预览文件，Main 进程负责把附件 payload 安全传入 Cowork 执行链路。
 
-## 权限交互
+## 用户交互
 
-Gateway 或 extension host 产生权限请求后，Main 进程通过 `cowork:stream:permission` 发给 renderer。用户在 `CoworkPermissionModal` 中选择后，renderer 调用 `cowork.respondToPermission()`，Main 再把结果交回执行中的 Gateway/extension 流程。
+JustDo 不实现 OpenClaw 命令审批。Extension host 的 ask-user 请求通过 `cowork:stream:interaction` 发给 renderer；用户在交互弹窗中选择后，renderer 调用 `cowork.respondToInteraction()`，Main 把结果交回 extension host。
 
 ## 历史同步
 
@@ -147,34 +147,34 @@ Stop 是用户意图，不保证 Gateway 已经立即停止所有下游工具。
 | `thinkingUpdate` | reasoning delta | 更新 thinking 区域 |
 | `messageMetadataUpdate` | usage/tool metadata | 更新附加信息 |
 | `messageDelete` | runtime 删除消息 | 从 UI cache 移除 |
-| `permission` | 需要用户确认 | 打开权限弹窗 |
-| `permissionDismiss` | 请求失效 | 关闭弹窗 |
+| `interaction` | ask-user 交互请求 | 打开用户交互弹窗 |
+| `interactionDismiss` | 请求失效 | 关闭弹窗 |
 | `complete` | turn 完成 | 刷新 session/history |
 | `error` | turn 失败 | 展示错误并标记状态 |
 
-## Permission Flow
+## Ask-User Flow
 
 ```mermaid
 sequenceDiagram
-  participant Tool as Gateway Tool/Extension
-  participant Main as Main Permission Broker
-  participant UI as CoworkPermissionModal
+  participant Tool as Extension
+  participant Main as Main Interaction Broker
+  participant UI as Ask-User Dialog
   participant User
 
   Tool->>Main: ask user request
   Main->>Main: map requestId to sessionId
-  Main-->>UI: cowork:stream:permission
-  UI->>User: show approval dialog
-  User-->>UI: approve/deny
-  UI->>Main: cowork.respondToPermission
+  Main-->>UI: cowork:stream:interaction
+  UI->>User: show question dialog
+  User-->>UI: answer/deny
+  UI->>Main: cowork.respondToInteraction
   Main-->>Tool: route decision
   alt request expires
     Tool-->>Main: dismiss
-    Main-->>UI: cowork:stream:permissionDismiss
+    Main-->>UI: cowork:stream:interactionDismiss
   end
 ```
 
-权限弹窗要能处理过期请求。`permissionDismiss` 到达后，如果弹窗仍打开，应禁用确认动作并提示用户请求已失效。
+用户交互弹窗要能处理过期请求。`interactionDismiss` 到达后，如果弹窗仍打开，应禁用确认动作并提示用户请求已失效。
 
 ## Subagent Flow
 
@@ -203,5 +203,5 @@ Subagent 状态由 Gateway 提供，JustDo 只负责桥接和展示：
 | Gateway 未就绪 | 返回 `ENGINE_NOT_READY`，UI 显示启动状态 |
 | Gateway stream 中断 | 标记 session error，保留可恢复 cache |
 | SQLite cache 损坏 | 重建 cache，优先从 Gateway history 恢复 |
-| Permission 请求过期 | dismiss 弹窗，阻止继续响应 |
+| Interaction 请求过期 | dismiss 弹窗，阻止继续响应 |
 | Provider config 无效 | 阻止执行并引导设置模型/API |

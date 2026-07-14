@@ -2,17 +2,27 @@ import { BrowserWindow, ipcMain } from 'electron';
 
 import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
-import type { CoworkEngineRouter } from '../../engine';
-import type { PermissionResult } from '../../engine/types';
 import type { OpenClawExtensionHostController } from '../../plugins/extensions';
 import { sanitizeCoworkMessageForIpc } from '../payloadSanitizer';
 
 interface Dependencies {
   getCoworkStore: () => CoworkStore;
-  getCoworkEngineRouter: () => CoworkEngineRouter;
   getExtensionHostController: () => OpenClawExtensionHostController | null;
   askUserSessionByRequestId: Map<string, string>;
 }
+
+type CoworkInteractionResult =
+  | {
+      behavior: 'submit';
+      updatedInput?: Record<string, unknown>;
+      toolUseID?: string;
+    }
+  | {
+      behavior: 'cancel';
+      message: string;
+      interrupt?: boolean;
+      toolUseID?: string;
+    };
 
 const formatAnswer = (value: string): string =>
   value
@@ -21,27 +31,27 @@ const formatAnswer = (value: string): string =>
     .filter(Boolean)
     .join(', ');
 
-export const registerCoworkPermissionHandlers = ({
+export const registerCoworkInteractionHandlers = ({
   getCoworkStore,
-  getCoworkEngineRouter,
   getExtensionHostController,
   askUserSessionByRequestId,
 }: Dependencies): void => {
   ipcMain.handle(
-    'cowork:permission:respond',
-    async (_event, options: { requestId: string; result: PermissionResult }) => {
+    'cowork:interaction:respond',
+    async (_event, options: { requestId: string; result: CoworkInteractionResult }) => {
       try {
         const extensionHost = getExtensionHostController();
         if (extensionHost && options.requestId) {
           const result = options.result;
           const updatedInput =
-            result.behavior === 'allow' &&
+            result.behavior === 'submit' &&
             result.updatedInput &&
             typeof result.updatedInput === 'object'
               ? (result.updatedInput as Record<string, unknown>)
               : undefined;
+          // The extension callback protocol still uses allow/deny for ask-user responses.
           const response = extensionHost.respondToInteraction(options.requestId, {
-            behavior: result.behavior === 'allow' ? 'allow' : 'deny',
+            behavior: result.behavior === 'submit' ? 'allow' : 'deny',
             updatedInput,
           });
           const sessionId = response.handled
@@ -51,7 +61,7 @@ export const registerCoworkPermissionHandlers = ({
             : '';
           if (sessionId && sessionId !== '__askuser__') {
             const content =
-              result.behavior === 'allow' &&
+              result.behavior === 'submit' &&
               response.answers &&
               Object.keys(response.answers).length > 0
                 ? Object.entries(response.answers)
@@ -61,7 +71,7 @@ export const registerCoworkPermissionHandlers = ({
                     )
                     .join('\n\n')
                 : t(
-                    result.behavior === 'allow' ? 'askUserApprovedMessage' : 'askUserDeniedMessage',
+                    result.behavior === 'submit' ? 'askUserSubmittedMessage' : 'askUserCanceledMessage',
                   );
             const message = getCoworkStore().addMessage(sessionId, {
               type: 'user',
@@ -84,12 +94,11 @@ export const registerCoworkPermissionHandlers = ({
           askUserSessionByRequestId.delete(options.requestId);
         }
 
-        getCoworkEngineRouter().respondToPermission(options.requestId, options.result);
         return { success: true };
       } catch (error) {
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to respond to permission',
+          error: error instanceof Error ? error.message : 'Failed to respond to interaction',
         };
       }
     },

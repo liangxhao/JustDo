@@ -1,13 +1,13 @@
 # 安全模型
 
-JustDo 的安全边界建立在 Electron 进程隔离、Preload 最小 API、Main 进程输入校验、本地文件协议限制、CSP、权限弹窗和 OpenClaw runtime 边界之上。
+JustDo 的安全边界建立在 Electron 进程隔离、Preload 最小 API、Main 进程输入校验、本地文件协议限制、CSP、系统对话框和 OpenClaw runtime 边界之上。
 
 ## 核心原则
 
 - Renderer 不直接访问 Node.js、Electron、SQLite 或文件系统。
 - 所有本地能力通过 `window.electron` 的窄 API 暴露。
 - Main 进程校验 IPC 输入后再访问文件、网络、Gateway、SQLite 或 marketplace。
-- 用户可见危险动作通过权限 UI 或系统对话框确认。
+- 用户可见本地系统动作通过明确 UI 或系统对话框触发。
 - 不把 API key、token、password 写入源码。
 
 ## 关键文件
@@ -18,10 +18,9 @@ JustDo 的安全边界建立在 Electron 进程隔离、Preload 最小 API、Mai
 | `src/main/core/contentSecurityPolicy.ts` | CSP 注册 |
 | `src/main/core/localFileProtocol.ts` | `localfile://` 安全本地文件协议 |
 | `src/main/ipc/payloadSanitizer.ts` | IPC payload sanitizer |
-| `src/main/engine/commandSafety.ts` | 命令安全策略 |
 | `src/main/ipc/app/shell.ts` | shell/path 操作 |
 | `src/main/cowork/providerApiConfig.ts` | provider/API 配置读取 |
-| `src/renderer/features/cowork/components/CoworkPermissionModal.tsx` | 权限确认 UI |
+| `src/renderer/features/cowork/components/CoworkInteractionModal.tsx` | ask-user 交互 UI |
 
 ## Electron 安全
 
@@ -32,9 +31,9 @@ JustDo 的安全边界建立在 Electron 进程隔离、Preload 最小 API、Mai
 
 Linux/Windows 当前会设置 Chromium `no-sandbox`，用于桌面应用兼容和 Windows 管理员启动场景。该设置应视为平台兼容决策，不能替代应用层权限校验。
 
-## 权限与工具执行
+## 工具执行
 
-Cowork/Gateway 运行中产生的权限请求通过 IPC 转发到 renderer。用户响应后，Main 再把结果交回 runtime/extension host。
+JustDo 不实现 OpenClaw 命令审批和工具权限管理。OpenClaw/Gateway owns tool execution policy；JustDo 仅保留 extension ask-user 交互桥接。
 
 需要谨慎处理的能力：
 
@@ -61,7 +60,7 @@ Main 进程负责系统代理偏好、outbound header proxy 和 Gateway localhos
 - 新增 preload API 时，先说明调用者、输入、输出和失败行为。
 - 新增文件系统能力时使用路径归一化和最小暴露。
 - 新增网络能力时避免 renderer 直连敏感服务。
-- 新增权限弹窗时添加 i18n 文案。
+- 新增系统对话框或 ask-user 交互时添加 i18n 文案。
 
 ## Threat Model
 
@@ -70,7 +69,7 @@ JustDo 的主要风险来自四类边界：
 | 边界 | 风险 | 防护 |
 | --- | --- | --- |
 | Renderer -> Main | 恶意/损坏 UI 请求本地能力 | preload 窄 API、Main 校验 |
-| Model/Gateway -> Tools | 模型请求执行危险动作 | permission flow、command safety、Gateway policy |
+| Model/Gateway -> Tools | 模型请求执行危险动作 | Gateway/OpenClaw policy |
 | Local files | 任意路径读取/打开/泄漏 | dialog 用户选择、localfile protocol、path normalization |
 | Plugins/MCP/Skills | 第三方能力执行 | 安装确认、配置同步、运行时权限、日志 |
 
@@ -120,7 +119,7 @@ Renderer install click
 
 ## Command And Tool Safety
 
-`src/main/engine/commandSafety.ts` 是命令安全策略落点。命令执行相关能力应考虑：
+命令安全策略属于 OpenClaw/Gateway。JustDo 不维护命令危险性规则，也不根据命令文本自行放行或升级风险。策略侧应考虑：
 
 - 是否需要用户确认。
 - 是否会修改文件。
@@ -129,7 +128,7 @@ Renderer install click
 - 是否跨 workspace。
 - 是否长期运行或后台运行。
 
-Renderer 不应自己判断命令是否安全；它只展示 Main/Gateway 给出的权限请求。
+Renderer 不应自己判断命令是否安全。JustDo 配置 OpenClaw exec approvals 为关闭状态，避免桌面端承担命令审批职责。
 
 ## Plugin Security
 
@@ -170,7 +169,7 @@ Skills、MCP、Hooks、Extensions 都可能扩展 runtime 能力。
 - Renderer 是否能绕过 preload？
 - IPC 参数是否有类型和语义校验？
 - 是否涉及文件、shell、网络、进程、secret？
-- 是否需要权限弹窗或系统 dialog？
+- 是否需要系统 dialog 或 ask-user 交互？
 - 是否需要 CSP/localfile/sanitizer 变化？
 - 是否会把 Gateway authority 复制到本地？
 - 是否有测试覆盖恶意或 malformed input？

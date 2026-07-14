@@ -15,7 +15,7 @@ export const selectIsCoworkActive = (state: RootState) => state.cowork.isCoworkA
 export const selectRemoteManaged = (state: RootState) => state.cowork.remoteManaged;
 export const selectCoworkConfig = (state: RootState) => state.cowork.config;
 export const selectDraftPrompts = (state: RootState) => state.cowork.draftPrompts;
-export const selectPendingPermissions = (state: RootState) => state.cowork.pendingPermissions;
+export const selectPendingInteractions = (state: RootState) => state.cowork.pendingInteractions;
 export const selectUnreadSessionIds = (state: RootState) => state.cowork.unreadSessionIds;
 export const selectThinkingExpanded = (state: RootState) => state.cowork.thinkingExpanded;
 export const selectToolExpanded = (state: RootState) => state.cowork.toolExpanded;
@@ -45,9 +45,9 @@ export const selectLastMessageContent = createSelector(selectCurrentMessages, me
   return messages[messages.length - 1]?.content;
 });
 
-export const selectFirstPendingPermission = createSelector(
-  selectPendingPermissions,
-  permissions => permissions[0] ?? null,
+export const selectFirstPendingInteraction = createSelector(
+  selectPendingInteractions,
+  interactions => interactions[0] ?? null,
 );
 
 // Stable empty array reference to avoid unnecessary re-renders

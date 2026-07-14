@@ -16,7 +16,7 @@
 | Provider config | 使用配置 | 本地配置和同步 |
 | Desktop shell | 无 | 权威 |
 | SQLite | 无 | 本地产品数据和 UI cache |
-| Permissions UI | 请求能力 | 用户确认和响应 |
+| Ask-user interaction UI | 发起交互请求 | 用户回答和响应 |
 | Runtime patches | 被 patch 目标 | 小型兼容 shim |
 
 ```mermaid
@@ -26,7 +26,7 @@ flowchart TB
     Settings["Settings and provider config"]
     LocalDB["SQLite product data/cache"]
     PluginUI["Plugin management UI"]
-    PermissionUI["Permission UI"]
+    InteractionUI["Ask-user interaction UI"]
     RuntimeMgr["Runtime lifecycle manager"]
   end
 
@@ -48,7 +48,7 @@ flowchart TB
   Settings --> ConfigSync --> OC
   PluginUI --> SkillSvc --> SkillRuntime
   Shell --> RuntimeMgr --> OC
-  PermissionUI --> Adapter --> Exec
+  InteractionUI --> Adapter
   LocalDB -. "cache/metadata" .-> Adapter
   CronSvc --> CronRuntime
   Adapter --> History
@@ -94,7 +94,7 @@ Patch 维护规则见 `scripts/patches/README.md`。
 新增功能时先判断权威归属：
 
 - 如果影响 execution truth，优先做 OpenClaw Gateway API 或 upstream change。
-- 如果影响桌面壳、配置 UI、权限 UI、本地缓存，可以在 JustDo 实现。
+- 如果影响桌面壳、配置 UI、ask-user 交互 UI、本地缓存，可以在 JustDo 实现。
 - 如果只是弥补 runtime 兼容问题，patch 必须有 remove condition。
 
 ## 非目标

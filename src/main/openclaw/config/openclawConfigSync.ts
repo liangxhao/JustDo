@@ -636,8 +636,8 @@ export class OpenClawConfigSync {
       ? this.syncManagedSessionStore(providerSelection, allProvidersMap)
       : false;
 
-    // Ensure exec-approvals.json has security=full + ask=off so the gateway
-    // never triggers approval-pending for any command.
+    // JustDo does not implement command approval UI. Keep OpenClaw exec
+    // approvals disabled so command execution policy stays inside OpenClaw.
     this.ensureExecApprovalDefaults();
 
     // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
@@ -745,9 +745,8 @@ export class OpenClawConfigSync {
   }
 
   /**
-   * Ensures ~/.openclaw/exec-approvals.json has security=full + ask=off
-   * so the gateway never triggers approval-pending for any command.
-   * Delete-command protection is handled via the system prompt instead.
+   * Ensures ~/.openclaw/exec-approvals.json has security=full + ask=off.
+   * JustDo does not consume exec approval events.
    */
   private ensureExecApprovalDefaults(): void {
     const filePath = path.join(app.getPath('home'), '.openclaw', 'exec-approvals.json');

@@ -46,7 +46,7 @@ import {
 import {
   registerAgentHandlers,
   registerCoworkConfigHandlers,
-  registerCoworkPermissionHandlers,
+  registerCoworkInteractionHandlers,
   registerCoworkSessionExecutionHandlers,
   registerCoworkSessionHandlers,
   registerCoworkSessionRuntimeHandlers,
@@ -716,9 +716,8 @@ if (!gotTheLock) {
     getStore: getCoworkStore,
   });
 
-  registerCoworkPermissionHandlers({
+  registerCoworkInteractionHandlers({
     getCoworkStore,
-    getCoworkEngineRouter,
     getExtensionHostController: () => extensionHostLifecycle.currentController,
     askUserSessionByRequestId,
   });

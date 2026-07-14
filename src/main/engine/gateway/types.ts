@@ -53,26 +53,6 @@ export type AgentEventPayload = {
   err?: boolean;
 };
 
-// ─── Approval Events ────────────────────────────────────────────────────────
-
-export type ExecApprovalRequestedPayload = {
-  id?: string;
-  request?: {
-    command?: string;
-    cwd?: string | null;
-    host?: string | null;
-    security?: string | null;
-    ask?: string | null;
-    resolvedPath?: string | null;
-    sessionKey?: string | null;
-    agentId?: string | null;
-  };
-};
-
-export type ExecApprovalResolvedPayload = {
-  id?: string;
-};
-
 // ─── Tool Stream (aligned with openclaw webchat app-tool-stream.ts) ─────────
 
 export type ToolStreamEntry = {

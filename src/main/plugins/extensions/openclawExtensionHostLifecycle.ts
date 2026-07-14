@@ -34,7 +34,7 @@ export class OpenClawExtensionHostLifecycle {
           this.deps.askUserSessionByRequestId.set(request.requestId, requestSessionId);
           BrowserWindow.getAllWindows().forEach(win => {
             if (win.isDestroyed()) return;
-            win.webContents.send('cowork:stream:permission', {
+            win.webContents.send('cowork:stream:interaction', {
               sessionId: requestSessionId,
               request: {
                 requestId: request.requestId,
@@ -53,7 +53,7 @@ export class OpenClawExtensionHostLifecycle {
           this.deps.askUserSessionByRequestId.delete(requestId);
           BrowserWindow.getAllWindows().forEach(win => {
             if (!win.isDestroyed()) {
-              win.webContents.send('cowork:stream:permissionDismiss', { requestId });
+              win.webContents.send('cowork:stream:interactionDismiss', { requestId });
             }
           });
         },

@@ -1,7 +1,7 @@
 export { registerAgentHandlers } from './agents';
 export { registerCoworkConfigHandlers } from './config';
 export { registerDefaultModelHandlers } from './defaultModel';
-export { registerCoworkPermissionHandlers } from './permissions';
+export { registerCoworkInteractionHandlers } from './interactions';
 export { registerCoworkSessionExecutionHandlers } from './sessionExecution';
 export { registerSessionGroupHandlers } from './sessionGroups';
 export { registerCoworkSessionRuntimeHandlers } from './sessionRuntime';

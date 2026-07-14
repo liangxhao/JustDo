@@ -94,20 +94,6 @@ const ALL_SLASH_COMMANDS: SlashCommandDef[] = [
     tier: 'standard',
   },
   {
-    key: 'allowlist',
-    name: 'allowlist',
-    description: 'List/add/remove allowlist entries.',
-    category: 'tools',
-    tier: 'power',
-  },
-  {
-    key: 'approve',
-    name: 'approve',
-    description: 'Approve or deny exec requests.',
-    category: 'tools',
-    tier: 'power',
-  },
-  {
     key: 'context',
     name: 'context',
     description: 'Explain how context is built and used.',
@@ -192,7 +178,6 @@ const ALL_SLASH_COMMANDS: SlashCommandDef[] = [
       'set-mode',
       'set',
       'cwd',
-      'permissions',
       'timeout',
       'model',
       'reset-options',

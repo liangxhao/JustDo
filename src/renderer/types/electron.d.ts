@@ -85,7 +85,7 @@ type CoworkConfigUpdate = Partial<
   Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine'>
 >;
 
-interface CoworkPermissionRequest {
+interface CoworkInteractionRequest {
   sessionId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -176,15 +176,14 @@ interface MarketplaceSkillDetail extends MarketplaceSkill {
   };
 }
 
-type CoworkPermissionResult =
+type CoworkInteractionResult =
   | {
-      behavior: 'allow';
+      behavior: 'submit';
       updatedInput?: Record<string, unknown>;
-      updatedPermissions?: Record<string, unknown>[];
       toolUseID?: string;
     }
   | {
-      behavior: 'deny';
+      behavior: 'cancel';
       message: string;
       interrupt?: boolean;
       toolUseID?: string;
@@ -531,9 +530,9 @@ interface IElectronAPI {
       sessionId: string,
       messageId: string,
     ) => Promise<{ success: boolean; error?: string }>;
-    respondToPermission: (options: {
+    respondToInteraction: (options: {
       requestId: string;
-      result: CoworkPermissionResult;
+      result: CoworkInteractionResult;
     }) => Promise<{ success: boolean; error?: string }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
     setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;
@@ -562,10 +561,12 @@ interface IElectronAPI {
     onStreamMessageDelete: (
       callback: (data: { sessionId: string; messageId: string }) => void,
     ) => () => void;
-    onStreamPermission: (
-      callback: (data: { sessionId: string; request: CoworkPermissionRequest }) => void,
+    onStreamInteraction: (
+      callback: (data: { sessionId: string; request: CoworkInteractionRequest }) => void,
     ) => () => void;
-    onStreamPermissionDismiss: (callback: (data: { requestId: string }) => void) => () => void;
+    onStreamInteractionDismiss: (
+      callback: (data: { requestId: string }) => void,
+    ) => () => void;
     onStreamComplete: (
       callback: (data: {
         sessionId: string;

@@ -142,8 +142,8 @@ export interface OpenClawEngineStatus {
   canRetry: boolean;
 }
 
-// Cowork pending permission request
-export interface CoworkPermissionRequest {
+// Cowork pending extension interaction request
+export interface CoworkInteractionRequest {
   sessionId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -152,24 +152,23 @@ export interface CoworkPermissionRequest {
   interactionKind?: CoworkInteractionKind;
 }
 
-export type CoworkPermissionResult =
+export type CoworkInteractionResult =
   | {
-      behavior: 'allow';
+      behavior: 'submit';
       updatedInput?: Record<string, unknown>;
-      updatedPermissions?: Record<string, unknown>[];
       toolUseID?: string;
     }
   | {
-      behavior: 'deny';
+      behavior: 'cancel';
       message: string;
       interrupt?: boolean;
       toolUseID?: string;
     };
 
-// Cowork permission response
-export interface CoworkPermissionResponse {
+// Cowork extension interaction response
+export interface CoworkInteractionResponse {
   requestId: string;
-  result: CoworkPermissionResult;
+  result: CoworkInteractionResult;
 }
 
 // Session summary for list display (without full messages)
@@ -226,7 +225,7 @@ export type CoworkStreamEventType =
   | 'message'
   | 'tool_use'
   | 'tool_result'
-  | 'permission_request'
+  | 'interaction_request'
   | 'complete'
   | 'error';
 
@@ -235,7 +234,7 @@ export interface CoworkStreamEvent {
   sessionId: string;
   data: {
     message?: CoworkMessage;
-    permission?: CoworkPermissionRequest;
+    interaction?: CoworkInteractionRequest;
     error?: string;
     claudeSessionId?: string;
   };

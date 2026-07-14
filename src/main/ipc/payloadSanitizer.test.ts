@@ -2,8 +2,8 @@ import { describe, expect, test } from 'vitest';
 
 import {
   sanitizeCoworkMessageForIpc,
+  sanitizeInteractionRequestForIpc,
   sanitizeIpcPayload,
-  sanitizePermissionRequestForIpc,
 } from './payloadSanitizer';
 
 describe('sanitizeIpcPayload', () => {
@@ -35,8 +35,8 @@ describe('sanitizeIpcPayload', () => {
     expect(result.metadata.label.length).toBeLessThan(5_000);
   });
 
-  test('sanitizes permission tool input', () => {
-    const result = sanitizePermissionRequestForIpc({
+  test('sanitizes interaction tool input', () => {
+    const result = sanitizeInteractionRequestForIpc({
       toolInput: { command: 'x'.repeat(5_000) },
     }) as { toolInput: { command: string } };
 

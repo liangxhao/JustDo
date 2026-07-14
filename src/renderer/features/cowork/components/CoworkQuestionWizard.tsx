@@ -2,12 +2,12 @@ import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon } from '@heroicons/react/2
 import { CoworkInteractionKind } from '@shared/openclaw/extensions';
 import React, { useEffect, useMemo, useState } from 'react';
 
-import type { CoworkPermissionRequest, CoworkPermissionResult } from '@/features/cowork/coworkTypes';
+import type { CoworkInteractionRequest, CoworkInteractionResult } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 
 interface CoworkQuestionWizardProps {
-  permission: CoworkPermissionRequest;
-  onRespond: (result: CoworkPermissionResult) => void;
+  interaction: CoworkInteractionRequest;
+  onRespond: (result: CoworkInteractionResult) => void;
 }
 
 type QuestionOption = {
@@ -23,13 +23,13 @@ type QuestionItem = {
 };
 
 const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
-  permission,
+  interaction,
   onRespond,
 }) => {
-  const toolInput = useMemo(() => permission.toolInput ?? {}, [permission.toolInput]);
+  const toolInput = useMemo(() => interaction.toolInput ?? {}, [interaction.toolInput]);
 
   const questions = useMemo<QuestionItem[]>(() => {
-    if (permission.interactionKind !== CoworkInteractionKind.STRUCTURED_QUESTION) return [];
+    if (interaction.interactionKind !== CoworkInteractionKind.STRUCTURED_QUESTION) return [];
     if (!toolInput || typeof toolInput !== 'object') return [];
     const rawQuestions = (toolInput as Record<string, unknown>).questions;
     if (!Array.isArray(rawQuestions)) return [];
@@ -66,7 +66,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         } as QuestionItem;
       })
       .filter(Boolean) as QuestionItem[];
-  }, [permission.interactionKind, toolInput]);
+  }, [interaction.interactionKind, toolInput]);
 
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -88,7 +88,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
     }
     setOtherInputs({});
     setOtherActive({});
-  }, [permission.requestId, toolInput]);
+  }, [interaction.requestId, toolInput]);
 
   if (questions.length === 0) {
     return null;
@@ -257,7 +257,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
     });
 
     onRespond({
-      behavior: 'allow',
+      behavior: 'submit',
       updatedInput: {
         ...(toolInput && typeof toolInput === 'object' ? toolInput : {}),
         answers: finalAnswers,
@@ -265,10 +265,10 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
     });
   };
 
-  const handleDeny = () => {
+  const handleCancel = () => {
     onRespond({
-      behavior: 'deny',
-      message: 'Permission denied',
+      behavior: 'cancel',
+      message: 'Interaction canceled',
     });
   };
 
@@ -292,7 +292,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
             </h2>
           </div>
           <button
-            onClick={handleDeny}
+            onClick={handleCancel}
             className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
             aria-label="Close"
           >

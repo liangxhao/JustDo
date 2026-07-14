@@ -3,8 +3,8 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { removeSessionFromState, removeSessionsFromState } from '@/features/cowork/coworkDeleteState';
 import type {
   CoworkConfig,
+  CoworkInteractionRequest,
   CoworkMessage,
-  CoworkPermissionRequest,
   CoworkSession,
   CoworkSessionStatus,
   CoworkSessionSummary,
@@ -33,7 +33,7 @@ interface CoworkState {
   sessionMainRuntimeActivity: Record<string, boolean>;
   sessionRuntimeActivity: Record<string, boolean>;
   remoteManaged: boolean;
-  pendingPermissions: CoworkPermissionRequest[];
+  pendingInteractions: CoworkInteractionRequest[];
   config: CoworkConfig;
   /** Global toggle for thinking content visibility - true = expanded, false = collapsed */
   thinkingExpanded: boolean;
@@ -55,7 +55,7 @@ const initialState: CoworkState = {
   sessionMainRuntimeActivity: {},
   sessionRuntimeActivity: {},
   remoteManaged: false,
-  pendingPermissions: [],
+  pendingInteractions: [],
   config: {
     workingDirectory: '',
     executionMode: 'local',
@@ -411,27 +411,27 @@ const coworkSlice = createSlice({
       }
     },
 
-    enqueuePendingPermission(state, action: PayloadAction<CoworkPermissionRequest>) {
-      const alreadyQueued = state.pendingPermissions.some(
-        permission => permission.requestId === action.payload.requestId,
+    enqueuePendingInteraction(state, action: PayloadAction<CoworkInteractionRequest>) {
+      const alreadyQueued = state.pendingInteractions.some(
+        interaction => interaction.requestId === action.payload.requestId,
       );
       if (alreadyQueued) return;
-      state.pendingPermissions.push(action.payload);
+      state.pendingInteractions.push(action.payload);
     },
 
-    dequeuePendingPermission(state, action: PayloadAction<{ requestId?: string } | undefined>) {
+    dequeuePendingInteraction(state, action: PayloadAction<{ requestId?: string } | undefined>) {
       const requestId = action.payload?.requestId;
       if (!requestId) {
-        state.pendingPermissions.shift();
+        state.pendingInteractions.shift();
         return;
       }
-      state.pendingPermissions = state.pendingPermissions.filter(
-        permission => permission.requestId !== requestId,
+      state.pendingInteractions = state.pendingInteractions.filter(
+        interaction => interaction.requestId !== requestId,
       );
     },
 
-    clearPendingPermissions(state) {
-      state.pendingPermissions = [];
+    clearPendingInteractions(state) {
+      state.pendingInteractions = [];
     },
 
     setConfig(state, action: PayloadAction<CoworkConfig>) {
@@ -567,9 +567,9 @@ export const {
   setRemoteManaged,
   updateSessionPinned,
   updateSessionTitle,
-  enqueuePendingPermission,
-  dequeuePendingPermission,
-  clearPendingPermissions,
+  enqueuePendingInteraction,
+  dequeuePendingInteraction,
+  clearPendingInteractions,
   setConfig,
   updateConfig,
   clearCurrentSession,

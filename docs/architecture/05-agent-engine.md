@@ -145,7 +145,7 @@ Config sync service 把 JustDo 本地配置转换为 Gateway 可读配置。它�
 
 ### `OpenClawRuntimeAdapter`
 
-Adapter 是 Cowork domain 与 Gateway domain 的边界。它负责把 JustDo 的 session、agent、attachment、permission、stream 概念映射到 Gateway 请求和事件。
+Adapter 是 Cowork domain 与 Gateway domain 的边界。它负责把 JustDo 的 session、agent、attachment、stream 概念映射到 Gateway 请求和事件。
 
 Adapter 不应该变成大而全 service。新增 Gateway API 时优先：
 

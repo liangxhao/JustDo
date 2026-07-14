@@ -179,9 +179,9 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:message:delete', sessionId, messageId),
     deleteMessagesFrom: (sessionId: string, messageId: string) =>
       ipcRenderer.invoke('cowork:message:deleteFrom', sessionId, messageId),
-    // Permission handling
-    respondToPermission: (options: { requestId: string; result: any }) =>
-      ipcRenderer.invoke('cowork:permission:respond', options),
+    // Extension interaction handling
+    respondToInteraction: (options: { requestId: string; result: any }) =>
+      ipcRenderer.invoke('cowork:interaction:respond', options),
 
     // Configuration
     getConfig: () => ipcRenderer.invoke('cowork:config:get'),
@@ -238,15 +238,15 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:stream:messageDelete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageDelete', handler);
     },
-    onStreamPermission: (callback: (data: { sessionId: string; request: any }) => void) => {
+    onStreamInteraction: (callback: (data: { sessionId: string; request: any }) => void) => {
       const handler = (_event: any, data: { sessionId: string; request: any }) => callback(data);
-      ipcRenderer.on('cowork:stream:permission', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:permission', handler);
+      ipcRenderer.on('cowork:stream:interaction', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:interaction', handler);
     },
-    onStreamPermissionDismiss: (callback: (data: { requestId: string }) => void) => {
+    onStreamInteractionDismiss: (callback: (data: { requestId: string }) => void) => {
       const handler = (_event: any, data: { requestId: string }) => callback(data);
-      ipcRenderer.on('cowork:stream:permissionDismiss', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:permissionDismiss', handler);
+      ipcRenderer.on('cowork:stream:interactionDismiss', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:interactionDismiss', handler);
     },
     onStreamComplete: (
       callback: (data: {

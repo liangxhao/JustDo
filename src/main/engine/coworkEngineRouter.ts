@@ -1,6 +1,5 @@
 import { EventEmitter } from 'events';
 
-import type { PermissionResult } from './types';
 import type {
   CoworkContinueOptions,
   CoworkRuntime,
@@ -62,10 +61,6 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
 
   stopAllSessions(): void {
     this.runtime.stopAllSessions();
-  }
-
-  respondToPermission(requestId: string, result: PermissionResult): void {
-    this.runtime.respondToPermission(requestId, result);
   }
 
   isSessionActive(sessionId: string): boolean {
@@ -152,10 +147,6 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
 
     runtime.on('messageDelete', (sessionId, messageId) => {
       this.emit('messageDelete', sessionId, messageId);
-    });
-
-    runtime.on('permissionRequest', (sessionId, request) => {
-      this.emit('permissionRequest', sessionId, request);
     });
 
     runtime.on('complete', (sessionId, claudeSessionId, finalStatus) => {

@@ -96,7 +96,7 @@ export const sanitizeCoworkMessageForIpc = (message: unknown): unknown => {
   };
 };
 
-export const sanitizePermissionRequestForIpc = (request: unknown): unknown => {
+export const sanitizeInteractionRequestForIpc = (request: unknown): unknown => {
   if (!request || typeof request !== 'object') {
     return request;
   }
