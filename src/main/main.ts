@@ -21,6 +21,7 @@ import {
   getProxyPreferenceSignature,
 } from './core/systemProxyPreference';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
+import { enableSystemCaForCurrentProcess } from './core/trustedCertificates';
 import { syncBuiltinModelProvider } from './cowork/builtinModelProvider';
 import {
   resolveAllEnabledProviderConfigs,
@@ -191,6 +192,7 @@ const configureUserDataPath = (): void => {
 
 configureUserDataPath();
 initLogger();
+enableSystemCaForCurrentProcess();
 
 const isDev = process.env.NODE_ENV === 'development';
 const isLinux = process.platform === 'linux';

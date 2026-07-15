@@ -8,6 +8,10 @@ import path from 'path';
 
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
 import { appendPythonRuntimeToEnv } from '../../core/pythonRuntime';
+import {
+  applyTrustedCertificateEnv,
+  buildTrustedCaBundle,
+} from '../../core/trustedCertificates';
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../../cowork/coworkUtil';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
 
@@ -411,6 +415,10 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
+    applyTrustedCertificateEnv(
+      env,
+      env.NODE_EXTRA_CA_CERTS || buildTrustedCaBundle(app.getPath('userData')),
+    );
 
     const npmBinDir = app.isPackaged
       ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')

@@ -236,6 +236,7 @@ test('configures common Node, Python, and curl proxy environment variables for a
     {
       proxyUrl: 'http://127.0.0.1:1234',
       caCertificatePath: '/tmp/ca.pem',
+      caBundlePath: '/tmp/trusted-ca-bundle.pem',
     },
     {
       enabled: true,
@@ -248,11 +249,13 @@ test('configures common Node, Python, and curl proxy environment variables for a
   expect(env).toMatchObject({
     HTTP_PROXY: 'http://127.0.0.1:1234',
     HTTPS_PROXY: 'http://127.0.0.1:1234',
-    NODE_EXTRA_CA_CERTS: '/tmp/ca.pem',
+    NODE_EXTRA_CA_CERTS: '/tmp/trusted-ca-bundle.pem',
+    NODE_OPTIONS: expect.stringContaining('--use-system-ca'),
     NODE_USE_ENV_PROXY: '1',
-    REQUESTS_CA_BUNDLE: '/tmp/ca.pem',
-    CURL_CA_BUNDLE: '/tmp/ca.pem',
-    SSL_CERT_FILE: '/tmp/ca.pem',
+    REQUESTS_CA_BUNDLE: '/tmp/trusted-ca-bundle.pem',
+    CURL_CA_BUNDLE: '/tmp/trusted-ca-bundle.pem',
+    SSL_CERT_FILE: '/tmp/trusted-ca-bundle.pem',
+    PIP_CERT: '/tmp/trusted-ca-bundle.pem',
     NO_PROXY: 'internal.example,legacy.example,127.0.0.1:4321',
     no_proxy: 'internal.example,legacy.example,127.0.0.1:4321',
   });
@@ -269,6 +272,7 @@ test('routes local LiteLLM through the proxy when no explicit bypass entries are
     {
       proxyUrl: 'http://127.0.0.1:1234',
       caCertificatePath: '/tmp/ca.pem',
+      caBundlePath: '/tmp/trusted-ca-bundle.pem',
     },
     {
       enabled: true,
@@ -288,6 +292,7 @@ test('replaces a stale Gateway bypass when its port changes', () => {
   const proxyInfo = {
     proxyUrl: 'http://127.0.0.1:1234',
     caCertificatePath: '/tmp/ca.pem',
+    caBundlePath: '/tmp/trusted-ca-bundle.pem',
   };
   const config = {
     enabled: true,
@@ -313,6 +318,7 @@ test('does not configure proxy environment variables when disabled or whitelist 
   const proxyInfo = {
     proxyUrl: 'http://127.0.0.1:1234',
     caCertificatePath: '/tmp/ca.pem',
+    caBundlePath: '/tmp/trusted-ca-bundle.pem',
   };
 
   applyOutboundProxyEnv(disabledEnv, proxyInfo, {
@@ -338,10 +344,12 @@ test('does not configure proxy environment variables when disabled or whitelist 
 test('restores outbound-header-specific environment variables', () => {
   const keys = [
     'NODE_EXTRA_CA_CERTS',
+    'NODE_OPTIONS',
     'NODE_USE_ENV_PROXY',
     'REQUESTS_CA_BUNDLE',
     'CURL_CA_BUNDLE',
     'SSL_CERT_FILE',
+    'PIP_CERT',
   ] as const;
   const expected = Object.fromEntries(
     keys
@@ -350,10 +358,12 @@ test('restores outbound-header-specific environment variables', () => {
   );
   const env: NodeJS.ProcessEnv = {
     NODE_EXTRA_CA_CERTS: '/tmp/ca.pem',
+    NODE_OPTIONS: '--use-system-ca',
     NODE_USE_ENV_PROXY: '1',
     REQUESTS_CA_BUNDLE: '/tmp/ca.pem',
     CURL_CA_BUNDLE: '/tmp/ca.pem',
     SSL_CERT_FILE: '/tmp/ca.pem',
+    PIP_CERT: '/tmp/ca.pem',
   };
 
   restoreOutboundProxyEnv(env);

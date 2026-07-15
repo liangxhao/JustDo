@@ -17,6 +17,11 @@ import {
   resolveSystemProxyUrl,
   restoreOriginalProxyEnv,
 } from './systemProxy';
+import {
+  applyTrustedCertificateEnv,
+  buildTrustedCaBundle,
+  restoreTrustedCertificateEnv,
+} from './trustedCertificates';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const CA_DIRECTORY_NAME = 'outbound-header-proxy';
@@ -24,11 +29,7 @@ const CA_CERTIFICATE_PATH = path.join('certs', 'ca.pem');
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const HTTP_HEADER_VALUE_PATTERN = /^[\u0020-\u007e\u0080-\u00ff]*$/;
 const OUTBOUND_HEADER_PROXY_ENV_KEYS = [
-  'NODE_EXTRA_CA_CERTS',
   'NODE_USE_ENV_PROXY',
-  'REQUESTS_CA_BUNDLE',
-  'CURL_CA_BUNDLE',
-  'SSL_CERT_FILE',
 ] as const;
 const originalOutboundHeaderProxyEnv = OUTBOUND_HEADER_PROXY_ENV_KEYS.reduce(
   (acc, key) => {
@@ -47,6 +48,7 @@ export type OutboundHeaderProxyConfig = {
 export type OutboundHeaderProxyInfo = {
   proxyUrl: string;
   caCertificatePath: string;
+  caBundlePath: string;
 };
 
 const normalizeBaseUrl = (value: string): string | null => {
@@ -135,11 +137,8 @@ export const applyOutboundProxyEnv = (
   env.https_proxy = info.proxyUrl;
   env.HTTP_PROXY = info.proxyUrl;
   env.HTTPS_PROXY = info.proxyUrl;
-  env.NODE_EXTRA_CA_CERTS = info.caCertificatePath;
   env.NODE_USE_ENV_PROXY = '1';
-  env.REQUESTS_CA_BUNDLE = info.caCertificatePath;
-  env.CURL_CA_BUNDLE = info.caCertificatePath;
-  env.SSL_CERT_FILE = info.caCertificatePath;
+  applyTrustedCertificateEnv(env, info.caBundlePath || info.caCertificatePath);
   // Only bypass the specific loopback endpoints that must stay direct.
   // We intentionally avoid broad loopback bypasses here so local services like
   // LiteLLM can still be reached through the local MITM proxy and receive
@@ -156,6 +155,7 @@ export const restoreOutboundProxyEnv = (env: NodeJS.ProcessEnv): void => {
       delete env[key];
     }
   }
+  restoreTrustedCertificateEnv(env);
 };
 
 export const isIgnorableProxyClientError = (error: unknown): boolean => {
@@ -409,6 +409,7 @@ export class OutboundHeaderProxy {
     this.info = {
       proxyUrl: `http://${LOOPBACK_HOST}:${proxy.httpPort}`,
       caCertificatePath,
+      caBundlePath: buildTrustedCaBundle(app.getPath('userData'), [caCertificatePath]) ?? caCertificatePath,
     };
     applyOutboundProxyEnv(process.env, this.info, this.getConfig(), this.bypassEntries);
     this.registerGlobalFetchInjection();
