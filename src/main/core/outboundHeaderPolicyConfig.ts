@@ -5,6 +5,13 @@ import path from 'path';
 
 export type OutboundHeaderPolicyConfig = {
   /**
+   * Whether startup should rewrite this file with the bundled defaults.
+   *
+   * Only `false` preserves user edits. Missing or any other value is treated
+   * as `true`.
+   */
+  overwrite: boolean;
+  /**
    * Whether outbound header injection is enabled.
    */
   enabled: boolean;
@@ -51,6 +58,7 @@ export type OutboundHeaderPolicyConfig = {
 };
 
 export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig = Object.freeze({
+  overwrite: true,
   enabled: true,
   baseUrlWhitelist: [],
   headerNames: ['X-User-Account', 'X-Cookie'],
@@ -66,6 +74,7 @@ const POLICY_CONFIG_README_CONTENT = `# config.json
 This file controls outbound header injection.
 
 - \`enabled\`: Enables or disables outbound header injection.
+- \`overwrite\`: Rewrites this file with defaults on startup unless set to \`false\`.
 - \`headerNames\`: Header names to read from \`user_info.json\` and inject.
 - \`baseUrlWhitelist\`: Only matching request URLs receive the configured headers.
 
@@ -95,6 +104,7 @@ Example:
 
 \`\`\`json
 {
+  "overwrite": false,
   "enabled": true,
   "baseUrlWhitelist": ["https://api.example.com/v1/"],
   "headerNames": ["X-User-Account", "X-Cookie"]
@@ -135,6 +145,14 @@ export const resolveOutboundHeaderPolicyConfigPath = (): string =>
 const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHeaderPolicyConfig => {
   const configDirectory = path.dirname(configPath);
   const readmePath = path.join(configDirectory, POLICY_CONFIG_README_FILE_NAME);
+  const writeDefaultConfig = (): void => {
+    fs.mkdirSync(configDirectory, { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      `${JSON.stringify(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG, null, 2)}\n`,
+      'utf8',
+    );
+  };
   try {
     fs.mkdirSync(configDirectory, { recursive: true });
     if (!fs.existsSync(readmePath)) {
@@ -146,16 +164,25 @@ const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHeaderPolic
 
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const config = parsed as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      console.warn('[OutboundHeaderPolicy] Invalid outbound header policy config; using defaults');
+      writeDefaultConfig();
+      return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
+    }
+
+    if (config.overwrite !== false) {
+      writeDefaultConfig();
+      return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
+    }
+
     if (
-      parsed &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      typeof (parsed as Record<string, unknown>).enabled === 'boolean' &&
-      Array.isArray((parsed as Record<string, unknown>).baseUrlWhitelist) &&
-      Array.isArray((parsed as Record<string, unknown>).headerNames)
+      typeof config.enabled === 'boolean' &&
+      Array.isArray(config.baseUrlWhitelist) &&
+      Array.isArray(config.headerNames)
     ) {
-      const config = parsed as Record<string, unknown>;
       return Object.freeze({
+        overwrite: false,
         enabled: config.enabled as boolean,
         baseUrlWhitelist: Object.freeze(
           (config.baseUrlWhitelist as unknown[]).filter(
@@ -173,14 +200,10 @@ const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHeaderPolic
   } catch (error) {
     const errorCode = (error as NodeJS.ErrnoException).code;
     if (errorCode === 'ENOENT') {
-      fs.mkdirSync(configDirectory, { recursive: true });
-      fs.writeFileSync(
-        configPath,
-        `${JSON.stringify(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG, null, 2)}\n`,
-        'utf8',
-      );
+      writeDefaultConfig();
     } else {
       console.warn('[OutboundHeaderPolicy] Failed to read policy config:', error);
+      writeDefaultConfig();
     }
   }
   return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;

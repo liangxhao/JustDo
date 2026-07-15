@@ -4,6 +4,7 @@ import path from 'path';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import {
+  DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
   updateOutboundHeaderUserInfoCache,
@@ -161,6 +162,7 @@ test('reuses cached user info until the update function is called', () => {
 test('reloads the outbound header policy together with user info', () => {
   const userInfoPath = writeUserInfo(JSON.stringify({ account_id: 'account-123' }));
   const configPath = writePolicyConfig({
+    overwrite: false,
     enabled: false,
     baseUrlWhitelist: ['https://example.com/api/'],
     headerNames: ['account_id'],
@@ -170,10 +172,48 @@ test('reloads the outbound header policy together with user info', () => {
     account_id: 'account-123',
   });
   expect(getOutboundHeaderPolicyConfig()).toEqual({
+    overwrite: false,
     enabled: false,
     baseUrlWhitelist: ['https://example.com/api/'],
     headerNames: ['account_id'],
   });
+});
+
+test('rewrites policy config with defaults when overwrite is missing', () => {
+  const userInfoPath = writeUserInfo(JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
+  const configPath = writePolicyConfig({
+    enabled: false,
+    baseUrlWhitelist: ['https://example.com/api/'],
+    headerNames: [HEADER_NAMES.USER_ACCOUNT],
+  });
+
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
+    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+    [HEADER_NAMES.COOKIE]: '',
+  });
+  expect(getOutboundHeaderPolicyConfig()).toEqual(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG);
+  expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(
+    DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
+  );
+});
+
+test('rewrites policy config with defaults when overwrite is true', () => {
+  const userInfoPath = writeUserInfo(JSON.stringify({ custom_header: 'custom-value' }));
+  const configPath = writePolicyConfig({
+    overwrite: true,
+    enabled: false,
+    baseUrlWhitelist: ['https://example.com/api/'],
+    headerNames: ['custom_header'],
+  });
+
+  expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
+    [HEADER_NAMES.USER_ACCOUNT]: '',
+    [HEADER_NAMES.COOKIE]: '',
+  });
+  expect(getOutboundHeaderPolicyConfig()).toEqual(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG);
+  expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(
+    DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
+  );
 });
 
 test('adds only configured header values and replaces names case-insensitively', () => {
