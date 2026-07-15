@@ -77,14 +77,20 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     return { action: 'deny' };
   });
 
-  const loadTimeout = setTimeout(() => {
-    if (!mainWindow.isDestroyed() && mainWindow.webContents.isLoadingMainFrame()) {
-      console.log('[MainWindow] Load timed out, attempting to reload.');
-      options.scheduleReload('load-timeout');
-    }
-  }, LOAD_TIMEOUT_MS);
+  const loadTimeout = options.isDev
+    ? undefined
+    : setTimeout(() => {
+        if (!mainWindow.isDestroyed() && mainWindow.webContents.isLoadingMainFrame()) {
+          console.log('[MainWindow] Load timed out, attempting to reload.');
+          options.scheduleReload('load-timeout');
+        }
+      }, LOAD_TIMEOUT_MS);
 
-  mainWindow.webContents.once('did-finish-load', () => clearTimeout(loadTimeout));
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (loadTimeout) {
+      clearTimeout(loadTimeout);
+    }
+  });
   mainWindow.webContents.on('did-finish-load', () => options.onDidFinishLoad(mainWindow));
 
   mainWindow.on('close', event => {

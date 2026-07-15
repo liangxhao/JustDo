@@ -86,6 +86,7 @@ flowchart TB
 - `004-windows-mcp-package-runner.cjs`
 - `005-history-thinking-and-subagent-yield.cjs`
 - `006-sessions-yield-active-guard.cjs`
+- `007-allow-managed-pip-config-env.cjs`
 
 Patch 维护规则见 `scripts/patches/README.md`。
 

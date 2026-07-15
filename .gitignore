@@ -55,3 +55,4 @@ run_log.ps1
 openspec/
 .superpowers/*.tsbuildinfo
 .husky/_/
+.tmp/

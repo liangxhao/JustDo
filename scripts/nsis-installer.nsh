@@ -205,16 +205,15 @@
   ; Copy optional npm/pip config templates into %APPDATA%\JustDo during install.
   ; Each file is independent: if a resource file is absent, that manager is left
   ; unconfigured and the app will not inject the corresponding env var.
-  CreateDirectory "$APPDATA\JustDo"
+  CreateDirectory "$APPDATA\JustDo\dependency-config"
   ${If} ${FileExists} "$INSTDIR\resources\dependency-config\.npmrc"
-    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\.npmrc" "$APPDATA\JustDo\.npmrc"
+    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\.npmrc" "$APPDATA\JustDo\dependency-config\.npmrc"
     FileWrite $2 "dependency-config-npmrc: copied$\r$\n"
   ${Else}
     FileWrite $2 "dependency-config-npmrc: missing$\r$\n"
   ${EndIf}
   ${If} ${FileExists} "$INSTDIR\resources\dependency-config\pip.ini"
-    CreateDirectory "$APPDATA\JustDo\pip"
-    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\pip.ini" "$APPDATA\JustDo\pip\pip.ini"
+    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\pip.ini" "$APPDATA\JustDo\dependency-config\pip.ini"
     FileWrite $2 "dependency-config-pip-ini: copied$\r$\n"
   ${Else}
     FileWrite $2 "dependency-config-pip-ini: missing$\r$\n"

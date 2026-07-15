@@ -13,8 +13,8 @@ export interface DependencyManagerConfigPaths {
 export const resolveDependencyManagerConfigPaths = (
   userDataPath: string,
 ): Required<DependencyManagerConfigPaths> => ({
-  npmUserConfigPath: path.join(userDataPath, '.npmrc'),
-  pipConfigPath: path.join(userDataPath, 'pip', 'pip.ini'),
+  npmUserConfigPath: path.join(userDataPath, DEPENDENCY_CONFIG_DIR_NAME, '.npmrc'),
+  pipConfigPath: path.join(userDataPath, DEPENDENCY_CONFIG_DIR_NAME, 'pip.ini'),
 });
 
 const resolveDefaultResourceDir = (): string | null => {
@@ -22,8 +22,14 @@ const resolveDefaultResourceDir = (): string | null => {
     process.resourcesPath
       ? path.join(process.resourcesPath, DEPENDENCY_CONFIG_DIR_NAME)
       : null,
+    path.join(process.cwd(), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
     path.join(path.resolve(__dirname, '..', '..'), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
     path.join(path.resolve(__dirname, '..', '..', '..'), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
+    path.join(
+      path.resolve(__dirname, '..', '..', '..', '..'),
+      'resources',
+      DEPENDENCY_CONFIG_DIR_NAME,
+    ),
   ].filter((value): value is string => Boolean(value));
 
   for (const candidate of candidates) {

@@ -42,8 +42,8 @@ test('writes npm and pip mirror config under userData', () => {
   );
   const paths = ensureDependencyManagerConfig(userDataPath, resourceDir);
 
-  expect(paths.npmUserConfigPath).toBe(path.join(userDataPath, '.npmrc'));
-  expect(paths.pipConfigPath).toBe(path.join(userDataPath, 'pip', 'pip.ini'));
+  expect(paths.npmUserConfigPath).toBe(path.join(userDataPath, 'dependency-config', '.npmrc'));
+  expect(paths.pipConfigPath).toBe(path.join(userDataPath, 'dependency-config', 'pip.ini'));
   expect(fs.readFileSync(paths.npmUserConfigPath, 'utf8')).toBe(
     'strict-ssl=false\nregistry=http://mirrors.tools.huawei.com/npm\n',
   );
@@ -80,10 +80,34 @@ test('skips missing resource files without setting their environment variables',
   const paths = applyDependencyManagerConfigEnv(env, userDataPath, resourceDir);
 
   expect(paths.npmUserConfigPath).toBeUndefined();
-  expect(paths.pipConfigPath).toBe(path.join(userDataPath, 'pip', 'pip.ini'));
-  expect(fs.existsSync(path.join(userDataPath, '.npmrc'))).toBe(false);
+  expect(paths.pipConfigPath).toBe(path.join(userDataPath, 'dependency-config', 'pip.ini'));
+  expect(fs.existsSync(path.join(userDataPath, 'dependency-config', '.npmrc'))).toBe(false);
   expect(fs.readFileSync(paths.pipConfigPath, 'utf8')).toBe('[global]\n');
   expect(env.NPM_CONFIG_USERCONFIG).toBeUndefined();
   expect(env.npm_config_userconfig).toBeUndefined();
   expect(env.PIP_CONFIG_FILE).toBe(paths.pipConfigPath);
+});
+
+test('discovers dependency config under current working directory resources', () => {
+  const originalCwd = process.cwd();
+  const projectRoot = createTempDir();
+  const userDataPath = createTempDir();
+  const resourceDir = path.join(projectRoot, 'resources', 'dependency-config');
+  fs.mkdirSync(resourceDir, { recursive: true });
+  fs.writeFileSync(path.join(resourceDir, '.npmrc'), 'registry=https://example.invalid/npm\n');
+  fs.writeFileSync(path.join(resourceDir, 'pip.ini'), '[global]\n');
+  const env: Record<string, string | undefined> = {};
+
+  try {
+    process.chdir(projectRoot);
+    const paths = applyDependencyManagerConfigEnv(env, userDataPath);
+
+    expect(paths.npmUserConfigPath).toBe(path.join(userDataPath, 'dependency-config', '.npmrc'));
+    expect(paths.pipConfigPath).toBe(path.join(userDataPath, 'dependency-config', 'pip.ini'));
+    expect(env.NPM_CONFIG_USERCONFIG).toBe(paths.npmUserConfigPath);
+    expect(env.npm_config_userconfig).toBe(paths.npmUserConfigPath);
+    expect(env.PIP_CONFIG_FILE).toBe(paths.pipConfigPath);
+  } finally {
+    process.chdir(originalCwd);
+  }
 });

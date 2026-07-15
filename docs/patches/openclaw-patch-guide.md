@@ -30,6 +30,7 @@ scripts/patches/v2026.6.11/
 | `004-windows-mcp-package-runner.cjs` | Windows MCP stdio/package runner compatibility |
 | `005-history-thinking-and-subagent-yield.cjs` | History thinking content and subagent yield compatibility |
 | `006-sessions-yield-active-guard.cjs` | Session yield active guard |
+| `007-allow-managed-pip-config-env.cjs` | JustDo-managed pip config env passthrough |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -131,6 +132,7 @@ Patch removal is a real change:
 | `004-windows-mcp-package-runner.cjs` | Windows process compatibility | Remove when upstream MCP package runner handles Windows stdio launch reliably |
 | `005-history-thinking-and-subagent-yield.cjs` | History/subagent compatibility | Remove when upstream history includes thinking and subagent yield data |
 | `006-sessions-yield-active-guard.cjs` | Runtime race guard | Remove when upstream session yield state is guarded |
+| `007-allow-managed-pip-config-env.cjs` | Managed dependency config passthrough | Remove when upstream supports scoped dependency manager env passthrough |
 
 ## Version Upgrade Process
 
