@@ -19,6 +19,8 @@ export const selectPendingInteractions = (state: RootState) => state.cowork.pend
 export const selectUnreadSessionIds = (state: RootState) => state.cowork.unreadSessionIds;
 export const selectThinkingExpanded = (state: RootState) => state.cowork.thinkingExpanded;
 export const selectToolExpanded = (state: RootState) => state.cowork.toolExpanded;
+export const selectSessionRuntimeActivity = (state: RootState) =>
+  state.cowork.sessionRuntimeActivity;
 
 // Session Group selectors
 export const selectGroups = (state: RootState) => state.cowork.groups;

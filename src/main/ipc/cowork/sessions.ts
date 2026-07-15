@@ -172,10 +172,29 @@ export const registerCoworkSessionHandlers = ({
       } catch (error) {
         return {
           success: false,
+          known: false,
           mainRunning: false,
           subagentRunning: false,
           running: false,
           error: error instanceof Error ? error.message : 'Failed to get session runtime status',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'cowork:sessions:runtimeStatus',
+    async (_event, sessionIds: string[], options?: { includeSubagents?: boolean }) => {
+      try {
+        return {
+          success: true,
+          statuses: await getCoworkEngineRouter().getSessionRuntimeStatuses(sessionIds, options),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          statuses: {},
+          error: error instanceof Error ? error.message : 'Failed to get session runtime statuses',
         };
       }
     },

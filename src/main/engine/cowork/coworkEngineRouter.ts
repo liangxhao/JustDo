@@ -105,6 +105,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     sessionId: string,
     options?: { includeSubagents?: boolean },
   ): Promise<{
+    known: boolean;
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
@@ -112,7 +113,33 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     if (this.runtime.getSessionRuntimeStatus) {
       return this.runtime.getSessionRuntimeStatus(sessionId, options);
     }
-    return { mainRunning: false, subagentRunning: false, running: false };
+    return { known: false, mainRunning: false, subagentRunning: false, running: false };
+  }
+
+  async getSessionRuntimeStatuses(
+    sessionIds: string[],
+    options?: { includeSubagents?: boolean },
+  ): Promise<
+    Record<
+      string,
+      {
+        known: boolean;
+        mainRunning: boolean;
+        subagentRunning: boolean;
+        running: boolean;
+      }
+    >
+  > {
+    if (this.runtime.getSessionRuntimeStatuses) {
+      return this.runtime.getSessionRuntimeStatuses(sessionIds, options);
+    }
+    const entries = await Promise.all(
+      sessionIds.map(
+        async sessionId =>
+          [sessionId, await this.getSessionRuntimeStatus(sessionId, options)] as const,
+      ),
+    );
+    return Object.fromEntries(entries);
   }
 
   /** No-op: only 'openclaw' engine exists, engine switching is not applicable. */

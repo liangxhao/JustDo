@@ -51,6 +51,7 @@ import { HistoryReconciler } from './historyReconciler';
 import {
   type GatewaySubagent,
   listGatewaySubagents,
+  SUBAGENT_STATUSES,
   type SubagentStatus,
 } from './subagentGateway';
 import {
@@ -73,6 +74,8 @@ const GATEWAY_RECONNECT_MAX_ATTEMPTS = 10;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
+const RUNTIME_SESSION_SNAPSHOT_TTL_MS = 2_000;
+const RUNTIME_STATUS_WARNING_INTERVAL_MS = 30_000;
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -113,6 +116,18 @@ type VisibleRunStreamState = {
 type PendingSessionModelPatch = {
   model: string;
   agentId?: string;
+};
+
+type SessionRuntimeStatus = {
+  known: boolean;
+  mainRunning: boolean;
+  subagentRunning: boolean;
+  running: boolean;
+};
+
+type RuntimeSessionSnapshot = {
+  known: boolean;
+  sessions: Array<Record<string, unknown>>;
 };
 
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {
@@ -174,6 +189,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       subagents: GatewaySubagent[];
     }
   >();
+  private runtimeSessionSnapshot: (RuntimeSessionSnapshot & { expiresAt: number }) | null = null;
+  private runtimeSessionSnapshotPromise: Promise<RuntimeSessionSnapshot> | null = null;
+  private lastRuntimeStatusWarningAt = 0;
 
   // Collaborators
   private historyReconciler!: HistoryReconciler;
@@ -2480,73 +2498,150 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     sessionId: string,
     options?: { includeSubagents?: boolean },
   ): Promise<{
+    known: boolean;
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
   }> {
     if (!sessionId) {
-      return { mainRunning: false, subagentRunning: false, running: false };
+      return { known: true, mainRunning: false, subagentRunning: false, running: false };
     }
-    if (this.isSessionActive(sessionId)) {
-      return { mainRunning: true, subagentRunning: false, running: true };
-    }
-    const client = this.gatewayClient;
-    if (!client) {
-      return { mainRunning: false, subagentRunning: false, running: false };
+    const statuses = await this.getSessionRuntimeStatuses([sessionId], options);
+    return statuses[sessionId] ?? {
+      known: false,
+      mainRunning: false,
+      subagentRunning: false,
+      running: false,
+    };
+  }
+
+  async getSessionRuntimeStatuses(
+    sessionIds: string[],
+    options?: { includeSubagents?: boolean },
+  ): Promise<Record<string, SessionRuntimeStatus>> {
+    const uniqueSessionIds = [...new Set(sessionIds.filter(Boolean))];
+    const localMainRunning = new Map(
+      uniqueSessionIds.map(sessionId => [
+        sessionId,
+        this.isSessionActive(sessionId) || this.hasVisibleRunForSession(sessionId),
+      ]),
+    );
+    const statuses: Record<string, SessionRuntimeStatus> = {};
+    if (uniqueSessionIds.every(sessionId => localMainRunning.get(sessionId) === true)) {
+      for (const sessionId of uniqueSessionIds) {
+        statuses[sessionId] = {
+          known: true,
+          mainRunning: true,
+          subagentRunning: false,
+          running: true,
+        };
+      }
+      return statuses;
     }
 
-    const sessionKeys = this.getSessionKeysForSession(sessionId);
-    const keySet = new Set(sessionKeys);
-    let mainRunning = false;
-    try {
-      const result = await client.request<{
-        sessions?: Array<Record<string, unknown>>;
-      }>('sessions.list', {
-        limit: 100,
-        includeDerivedTitles: true,
-      });
-      mainRunning = (result.sessions ?? []).some(row => {
-        const key = typeof row.key === 'string' ? row.key.trim() : '';
-        if (!keySet.has(key)) return false;
-        return row.hasActiveRun === true || row.status === 'running' || row.runState === 'active';
-      });
-    } catch (error) {
-      console.warn('[OpenClawRuntime] Failed to query main session runtime status', {
-        sessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    const snapshot = await this.getRuntimeSessionSnapshot();
+    const parentByKey = new Map<string, string>();
+    for (const row of snapshot.sessions) {
+      const key = this.runtimeRowString(row.key);
+      const parent = this.runtimeRowString(row.spawnedBy) || this.runtimeRowString(row.parentSessionKey);
+      if (key && parent) parentByKey.set(key, parent);
     }
-    if (!options?.includeSubagents || mainRunning) {
-      return {
+
+    for (const sessionId of uniqueSessionIds) {
+      const localRunning = localMainRunning.get(sessionId) === true;
+      if (!snapshot.known && !localRunning) {
+        statuses[sessionId] = {
+          known: false,
+          mainRunning: false,
+          subagentRunning: false,
+          running: false,
+        };
+        continue;
+      }
+
+      const sessionKeys = new Set(this.getSessionKeysForSession(sessionId));
+      const mainRunning =
+        localRunning ||
+        snapshot.sessions.some(row => {
+          const key = this.runtimeRowString(row.key);
+          return sessionKeys.has(key) && this.isRuntimeSessionRowActive(row);
+        });
+      let subagentRunning = false;
+      if (options?.includeSubagents && !mainRunning) {
+        subagentRunning = snapshot.sessions.some(row => {
+          if (!this.isRuntimeSessionRowActive(row)) return false;
+          let parent = parentByKey.get(this.runtimeRowString(row.key));
+          const visited = new Set<string>();
+          while (parent && !visited.has(parent)) {
+            if (sessionKeys.has(parent)) return true;
+            visited.add(parent);
+            parent = parentByKey.get(parent);
+          }
+          return false;
+        });
+        const cachedSubagents = this.subagentStatusCache.get(sessionId);
+        if (cachedSubagents && cachedSubagents.expiresAt > Date.now()) {
+          subagentRunning ||= cachedSubagents.subagents.some(
+            subagent => subagent.status === SUBAGENT_STATUSES.RUNNING,
+          );
+        }
+      }
+      statuses[sessionId] = {
+        known: true,
         mainRunning,
-        subagentRunning: false,
-        running: mainRunning,
+        subagentRunning,
+        running: mainRunning || subagentRunning,
       };
     }
+    return statuses;
+  }
 
-    const cachedSubagents = this.subagentStatusCache.get(sessionId);
-    const subagents =
-      cachedSubagents && cachedSubagents.expiresAt > Date.now()
-        ? cachedSubagents.subagents
-        : await listGatewaySubagents({
-            client,
-            parentKeys: sessionKeys,
-            includePersistedHistory: false,
-            includeStructuredTool: false,
-          }).catch((error): GatewaySubagent[] => {
-            console.warn('[OpenClawRuntime] Failed to query subagent runtime status', {
-              sessionId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-            return [];
+  private runtimeRowString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private isRuntimeSessionRowActive(row: Record<string, unknown>): boolean {
+    return (
+      row.hasActiveRun === true ||
+      row.hasActiveSubagentRun === true ||
+      row.status === 'running' ||
+      row.runState === 'active' ||
+      row.subagentRunState === 'active'
+    );
+  }
+
+  private async getRuntimeSessionSnapshot(): Promise<RuntimeSessionSnapshot> {
+    const now = Date.now();
+    if (this.runtimeSessionSnapshot && this.runtimeSessionSnapshot.expiresAt > now) {
+      return this.runtimeSessionSnapshot;
+    }
+    if (this.runtimeSessionSnapshotPromise) return this.runtimeSessionSnapshotPromise;
+    const client = this.gatewayClient;
+    if (!client) return { known: false, sessions: [] };
+
+    this.runtimeSessionSnapshotPromise = client
+      .request<{ sessions?: Array<Record<string, unknown>> }>('sessions.list', { limit: 500 })
+      .then(result => ({ known: true, sessions: result.sessions ?? [] }))
+      .catch((error): RuntimeSessionSnapshot => {
+        if (now - this.lastRuntimeStatusWarningAt >= RUNTIME_STATUS_WARNING_INTERVAL_MS) {
+          this.lastRuntimeStatusWarningAt = now;
+          console.warn('[OpenClawRuntime] Failed to query session runtime snapshot', {
+            error: error instanceof Error ? error.message : String(error),
           });
-    const subagentRunning = subagents.some(subagent => subagent.status === 'running');
-
-    return {
-      mainRunning,
-      subagentRunning,
-      running: subagentRunning,
-    };
+        }
+        return { known: false, sessions: [] };
+      })
+      .then(snapshot => {
+        this.runtimeSessionSnapshot = {
+          ...snapshot,
+          expiresAt: Date.now() + RUNTIME_SESSION_SNAPSHOT_TTL_MS,
+        };
+        return snapshot;
+      })
+      .finally(() => {
+        this.runtimeSessionSnapshotPromise = null;
+      });
+    return this.runtimeSessionSnapshotPromise;
   }
 
   async fetchSessionByKey(sessionKey: string): Promise<CoworkSession | null> {

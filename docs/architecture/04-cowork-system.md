@@ -95,6 +95,12 @@ Gateway history 是权威。`historyReconciler` 和 `src/main/openclaw/sessions/
 
 这些字段可以驱动 UI，但不能替代 Gateway 的真实运行状态。运行中状态应优先从 Gateway runtime status 和 stream event 获取。
 
+### Runtime Status Polling
+
+Renderer 对当前会话每 3 秒查询一次聚合运行态，空闲时放宽到 10 秒；不可见的后台会话每 30 秒批量查询一次，窗口隐藏时统一放宽到 60 秒。查询经由 `cowork:sessions:runtimeStatus` 到 Main，Main 使用一个 2 秒 TTL 的 single-flight `sessions.list` 快照，同时计算主会话、announce 可见运行和整个 subagent 后代树的状态。
+
+运行态使用 `sessionRuntimeActivity` 作为 UI 的唯一聚合来源：消息输入区的 `In Progress...` 和会话列表蓝色呼吸灯必须读取同一个值。用户提交或收到新 user turn 时立即置为 running；Gateway 返回 running 时立即确认。只有连续两次可信的 idle 快照才清除运行态；超时、断连等未知结果保留上次状态，不能按 idle 处理。主 turn 的 `complete` 事件也不能直接清除聚合状态，因为此时 subagent 或 announce run 可能仍在执行。
+
 ### Message Cache
 
 `cowork_messages` 是消息缓存，服务于：

@@ -173,14 +173,14 @@ test('getSessionRuntimeStatus only treats the main session as running', async ()
   } as unknown as GatewayClientLike;
 
   await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toEqual({
+    known: true,
     mainRunning: false,
     subagentRunning: false,
     running: false,
   });
   expect(request).toHaveBeenCalledTimes(1);
   expect(request).toHaveBeenCalledWith('sessions.list', {
-    limit: 100,
-    includeDerivedTitles: true,
+    limit: 500,
   });
 });
 
@@ -213,15 +213,72 @@ test('getSessionRuntimeStatus can include subagent running state on request', as
   await expect(
     adapter.getSessionRuntimeStatus('session-1', { includeSubagents: true }),
   ).resolves.toEqual({
+    known: true,
     mainRunning: false,
     subagentRunning: true,
     running: true,
   });
-  expect(request).toHaveBeenCalledTimes(2);
-  expect(request).toHaveBeenLastCalledWith('sessions.list', {
-    spawnedBy: 'agent:main:justdo:session-1',
-    limit: 100,
-    includeDerivedTitles: true,
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500 });
+});
+
+test('getSessionRuntimeStatuses shares one Gateway snapshot across concurrent callers', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let resolveRequest: ((value: { sessions: [] }) => void) | undefined;
+  const request = vi.fn(
+    () =>
+      new Promise<{ sessions: [] }>(resolve => {
+        resolveRequest = resolve;
+      }),
+  );
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  const first = adapter.getSessionRuntimeStatus('session-1', { includeSubagents: true });
+  const second = adapter.getSessionRuntimeStatus('session-2', { includeSubagents: true });
+  expect(request).toHaveBeenCalledTimes(1);
+  resolveRequest?.({ sessions: [] });
+
+  await expect(Promise.all([first, second])).resolves.toEqual([
+    { known: true, mainRunning: false, subagentRunning: false, running: false },
+    { known: true, mainRunning: false, subagentRunning: false, running: false },
+  ]);
+});
+
+test('getSessionRuntimeStatus reports unknown when the Gateway snapshot fails', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockRejectedValue(new Error('request timeout'));
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toEqual({
+    known: false,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test('getSessionRuntimeStatus treats a visible announce stream as locally running', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const visibleRunStreams = (
+    adapter as unknown as {
+      visibleRunStreams: Map<string, { sessionId: string }>;
+    }
+  ).visibleRunStreams;
+  visibleRunStreams.set('announce:v1:child-run', { sessionId: 'session-1' });
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toEqual({
+    known: true,
+    mainRunning: true,
+    subagentRunning: false,
+    running: true,
   });
 });
 

@@ -3,16 +3,24 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
-import CoworkPromptInput, { type CoworkPromptInputRef } from '@/features/cowork/components/CoworkPromptInput';
-import FilePreviewDrawer, { type FilePreview } from '@/features/cowork/components/FilePreviewDrawer';
-import JustDoChatWrapper, { type JustDoChatWrapperRef } from '@/features/cowork/components/JustDoChatWrapper';
+import CoworkPromptInput, {
+  type CoworkPromptInputRef,
+} from '@/features/cowork/components/CoworkPromptInput';
+import FilePreviewDrawer, {
+  type FilePreview,
+} from '@/features/cowork/components/FilePreviewDrawer';
+import JustDoChatWrapper, {
+  type JustDoChatWrapperRef,
+} from '@/features/cowork/components/JustDoChatWrapper';
 import SubagentMenu, { type Subagent } from '@/features/cowork/components/SubagentMenu';
 import SubagentMessageDrawer from '@/features/cowork/components/SubagentMessageDrawer';
 import {
   selectCoworkConfig,
+  selectCoworkSessions,
   selectCurrentSession,
   selectIsOpenClawEngine,
   selectIsStreaming,
+  selectSessionRuntimeActivity,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import {
@@ -43,10 +51,10 @@ import { getCompactFolderName } from '@/utils/path';
 const DEBUG_COWORK_VIEW =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_COWORK_VIEW === 'true';
 
-const SESSION_MAIN_RUNNING_POLL_MS = 2000;
-const SESSION_SUBAGENT_POLL_MS = 15000;
-const SESSION_IDLE_MAIN_POLL_MS = 30000;
-const SESSION_SUBAGENT_POLL_WINDOW_MS = 60 * 60 * 1000;
+const CURRENT_SESSION_RUNNING_POLL_MS = 3_000;
+const CURRENT_SESSION_IDLE_POLL_MS = 10_000;
+const BACKGROUND_SESSION_POLL_MS = 30_000;
+const HIDDEN_WINDOW_POLL_MS = 60_000;
 
 function debugLog(...args: unknown[]): void {
   if (DEBUG_COWORK_VIEW) {
@@ -104,9 +112,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
   const isStreaming = useSelector(selectIsStreaming);
-  const sessionMainRuntimeActivity = useSelector(
-    (state: RootState) => state.cowork.sessionMainRuntimeActivity,
-  );
+  const sessions = useSelector(selectCoworkSessions);
+  const sessionRuntimeActivity = useSelector(selectSessionRuntimeActivity);
   const config = useSelector(selectCoworkConfig);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
   const agentState = useSelector((state: RootState) => state.agent);
@@ -120,15 +127,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const currentSessionRuntimeRunning = currentSession
     ? currentSession.id.startsWith('temp-')
       ? currentSession.status === 'running'
-      : sessionMainRuntimeActivity[currentSession.id] === true
+      : sessionRuntimeActivity[currentSession.id] === true
     : isStreaming;
-  const previousRuntimeStateRef = useRef<{
-    sessionId: string | null;
-    running: boolean;
-  }>({
-    sessionId: currentSessionId,
-    running: currentSessionRuntimeRunning,
-  });
+  const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
+  currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
+  const backgroundSessionIdsKey = sessions
+    .map(session => session.id)
+    .filter(sessionId => sessionId !== currentSessionId && !sessionId.startsWith('temp-'))
+    .join('\n');
   const currentSessionAgent = currentSession
     ? (agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null)
     : null;
@@ -438,50 +444,82 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   useEffect(() => {
     if (!currentSessionId || currentSessionId.startsWith('temp-')) return;
-    const currentSessionUpdatedAt = currentSession?.updatedAt ?? 0;
-    const previousRuntimeState = previousRuntimeStateRef.current;
-    const isSameRuntimeSession = previousRuntimeState.sessionId === currentSessionId;
-    const skippedBecauseJustStopped =
-      isSameRuntimeSession && previousRuntimeState.running && !currentSessionRuntimeRunning;
-    previousRuntimeStateRef.current = {
-      sessionId: currentSessionId,
-      running: currentSessionRuntimeRunning,
-    };
     let isCancelled = false;
     let timeoutId: number | null = null;
-    const shouldPollSubagents = () =>
-      !currentSessionRuntimeRunning &&
-      currentSessionUpdatedAt > 0 &&
-      Date.now() - currentSessionUpdatedAt < SESSION_SUBAGENT_POLL_WINDOW_MS;
+    let refreshInFlight = false;
     const getNextDelay = () => {
-      if (currentSessionRuntimeRunning) return SESSION_MAIN_RUNNING_POLL_MS;
-      if (shouldPollSubagents()) return SESSION_SUBAGENT_POLL_MS;
-      return SESSION_IDLE_MAIN_POLL_MS;
+      if (document.hidden) return HIDDEN_WINDOW_POLL_MS;
+      return currentSessionRuntimeRunningRef.current
+        ? CURRENT_SESSION_RUNNING_POLL_MS
+        : CURRENT_SESSION_IDLE_POLL_MS;
     };
     const scheduleNextRefresh = () => {
       if (isCancelled) return;
       timeoutId = window.setTimeout(refresh, getNextDelay());
     };
     const refresh = () => {
-      if (isCancelled) return;
+      if (isCancelled || refreshInFlight) return;
+      refreshInFlight = true;
       void coworkService
         .refreshSessionRuntimeActivity(currentSessionId, {
-          includeSubagents: shouldPollSubagents(),
+          includeSubagents: true,
         })
-        .finally(scheduleNextRefresh);
+        .finally(() => {
+          refreshInFlight = false;
+          scheduleNextRefresh();
+        });
     };
-    if (!skippedBecauseJustStopped) {
-      refresh();
-    } else {
-      scheduleNextRefresh();
-    }
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        timeoutId = null;
+        refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    refresh();
     return () => {
       isCancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (timeoutId !== null) {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [currentSession?.updatedAt, currentSessionId, currentSessionRuntimeRunning]);
+  }, [currentSessionId]);
+
+  useEffect(() => {
+    const sessionIds = backgroundSessionIdsKey ? backgroundSessionIdsKey.split('\n') : [];
+    if (sessionIds.length === 0) return;
+    let isCancelled = false;
+    let timeoutId: number | null = null;
+    let refreshInFlight = false;
+    const refresh = () => {
+      if (isCancelled || refreshInFlight) return;
+      refreshInFlight = true;
+      void coworkService.refreshSessionRuntimeActivities(sessionIds).finally(() => {
+        refreshInFlight = false;
+        if (isCancelled) return;
+        timeoutId = window.setTimeout(
+          refresh,
+          document.hidden ? HIDDEN_WINDOW_POLL_MS : BACKGROUND_SESSION_POLL_MS,
+        );
+      });
+    };
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        timeoutId = null;
+        refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    refresh();
+    return () => {
+      isCancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+  }, [backgroundSessionIdsKey]);
 
   useEffect(() => {
     setSelectedSubagent(null);
@@ -656,9 +694,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   // When there's a current session, show the session detail view
   if (currentSession) {
     const handleSendMessage = async (prompt: string, attachments?: CoworkAttachmentPayload[]) => {
+      coworkService.markSessionInProgress(currentSession.id);
       try {
-        await chatWrapperRef.current?.sendMessage(prompt, attachments);
+        const chatWrapper = chatWrapperRef.current;
+        if (!chatWrapper) throw new Error('Chat controller is not ready');
+        await chatWrapper.sendMessage(prompt, attachments);
       } catch (err) {
+        coworkService.clearSessionInProgress(currentSession.id);
         const message = err instanceof Error ? err.message : String(err);
         window.dispatchEvent(
           new CustomEvent('app:showToast', {

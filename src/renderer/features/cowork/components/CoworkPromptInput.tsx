@@ -1514,6 +1514,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   {!remoteManaged && <ActiveSkillBadge />}
                 </div>
                 <div className="flex items-center gap-2">
+                  {isStreaming && (
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-primary">
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                      {i18nService.t('coworkInProgress')}
+                    </span>
+                  )}
                   {isStreaming ? (
                     <button
                       type="button"
@@ -1579,6 +1585,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 </div>
               )}
 
+              {isStreaming && (
+                <span className="inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-primary">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                  {i18nService.t('coworkInProgress')}
+                </span>
+              )}
               {isStreaming ? (
                 <button
                   type="button"

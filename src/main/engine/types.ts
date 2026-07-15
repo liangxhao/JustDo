@@ -169,8 +169,23 @@ export interface CoworkRuntime {
     sessionId: string,
     options?: { includeSubagents?: boolean },
   ): Promise<{
+    known: boolean;
     mainRunning: boolean;
     subagentRunning: boolean;
     running: boolean;
   }>;
+  getSessionRuntimeStatuses?(
+    sessionIds: string[],
+    options?: { includeSubagents?: boolean },
+  ): Promise<
+    Record<
+      string,
+      {
+        known: boolean;
+        mainRunning: boolean;
+        subagentRunning: boolean;
+        running: boolean;
+      }
+    >
+  >;
 }

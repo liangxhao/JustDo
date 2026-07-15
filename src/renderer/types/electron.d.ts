@@ -502,9 +502,26 @@ interface IElectronAPI {
       options?: { includeSubagents?: boolean },
     ) => Promise<{
       success: boolean;
+      known: boolean;
       mainRunning: boolean;
       subagentRunning: boolean;
       running: boolean;
+      error?: string;
+    }>;
+    getSessionRuntimeStatuses: (
+      sessionIds: string[],
+      options?: { includeSubagents?: boolean },
+    ) => Promise<{
+      success: boolean;
+      statuses: Record<
+        string,
+        {
+          known: boolean;
+          mainRunning: boolean;
+          subagentRunning: boolean;
+          running: boolean;
+        }
+      >;
       error?: string;
     }>;
     patchSessionModel: (options: {
@@ -564,9 +581,7 @@ interface IElectronAPI {
     onStreamInteraction: (
       callback: (data: { sessionId: string; request: CoworkInteractionRequest }) => void,
     ) => () => void;
-    onStreamInteractionDismiss: (
-      callback: (data: { requestId: string }) => void,
-    ) => () => void;
+    onStreamInteractionDismiss: (callback: (data: { requestId: string }) => void) => () => void;
     onStreamComplete: (
       callback: (data: {
         sessionId: string;
