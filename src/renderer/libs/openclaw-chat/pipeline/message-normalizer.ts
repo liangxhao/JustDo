@@ -380,6 +380,46 @@ function expandTextContent(text: string): {
   };
 }
 
+function expandUserTextMediaContent(
+  text: string,
+  includeLegacyTextFields = false,
+): MessageContentItem[] {
+  const parsed = splitMediaFromOutput(text);
+  if (!parsed.mediaUrls || parsed.mediaUrls.length === 0) {
+    return [
+      includeLegacyTextFields
+        ? { type: 'text', text, name: undefined, args: undefined }
+        : { type: 'text', text },
+    ];
+  }
+
+  const segments = parsed.segments ?? [{ type: 'text' as const, text: parsed.text }];
+  return segments.flatMap(segment => {
+    if (segment.type === 'text') {
+      return segment.text.trim()
+        ? [
+            includeLegacyTextFields
+              ? { type: 'text' as const, text: segment.text, name: undefined, args: undefined }
+              : { type: 'text' as const, text: segment.text },
+          ]
+        : [];
+    }
+
+    const inferred = inferAttachmentKind(segment.url);
+    return [
+      {
+        type: 'attachment' as const,
+        attachment: {
+          url: segment.url,
+          kind: inferred.kind,
+          label: inferred.label,
+          mimeType: inferred.mimeType,
+        },
+      },
+    ];
+  });
+}
+
 /**
  * Normalize a raw message object into a consistent structure.
  */
@@ -418,7 +458,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
       audioAsVoice = expanded.audioAsVoice;
       replyTarget = expanded.replyTarget;
     } else {
-      content = [{ type: 'text', text: m.content }];
+      content = expandUserTextMediaContent(m.content);
     }
   } else if (Array.isArray(m.content)) {
     content = m.content.flatMap((item: Record<string, unknown>) => {
@@ -498,6 +538,9 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
         }
         return expanded.content;
       }
+      if (item.type === 'text' && typeof item.text === 'string') {
+        return expandUserTextMediaContent(item.text, true);
+      }
       return [
         {
           type:
@@ -518,7 +561,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
       audioAsVoice = expanded.audioAsVoice;
       replyTarget = expanded.replyTarget;
     } else {
-      content = [{ type: 'text', text: m.text }];
+      content = expandUserTextMediaContent(m.text);
     }
   }
 

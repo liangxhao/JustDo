@@ -101,6 +101,48 @@ describe('normalizeMessage assistant media', () => {
   });
 });
 
+describe('normalizeMessage user media', () => {
+  test('normalizes a MEDIA path in user text content', () => {
+    const message = normalizeMessage({
+      role: 'user',
+      content: '帮我看这个文件\nMEDIA:C:\\workspace\\reports\\brief.pdf',
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: '帮我看这个文件' },
+      {
+        type: 'attachment',
+        attachment: {
+          url: 'C:\\workspace\\reports\\brief.pdf',
+          kind: 'document',
+          label: 'brief.pdf',
+          mimeType: 'application/pdf',
+        },
+      },
+    ]);
+  });
+
+  test('normalizes a MEDIA path in user text blocks', () => {
+    const message = normalizeMessage({
+      role: 'user',
+      content: [{ type: 'text', text: '参考图片\nMEDIA:/tmp/screen.png' }],
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: '参考图片', name: undefined, args: undefined },
+      {
+        type: 'attachment',
+        attachment: {
+          url: '/tmp/screen.png',
+          kind: 'image',
+          label: 'screen.png',
+          mimeType: 'image/png',
+        },
+      },
+    ]);
+  });
+});
+
 describe('normalizeMessage assistant model label', () => {
   test('uses OpenClaw provider and model fields for assistant messages', () => {
     const message = normalizeMessage({

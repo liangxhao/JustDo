@@ -238,6 +238,33 @@ describe('group footer helpers', () => {
 });
 
 describe('renderMessageGroup', () => {
+  test('renders a MEDIA file attachment from user message content', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'user-media-group',
+        role: 'user',
+        messages: [
+          {
+            key: 'user-media-msg',
+            message: {
+              role: 'user',
+              content: 'Review this file\nMEDIA:C:\\openclaw\\media\\brief.pdf',
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('message-attachment');
+    expect(rendered).toContain('brief.pdf');
+    expect(rendered).toContain('C:\\openclaw\\media\\brief.pdf');
+    expect(rendered).not.toContain('MEDIA:');
+  });
+
   test('renders a persisted transcript file attachment from MediaPath fields', () => {
     const rendered = stringifyTemplate(
       renderMessageGroup({

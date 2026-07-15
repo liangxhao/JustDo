@@ -76,6 +76,19 @@ const extractBase64FromDataUrl = (
   return { mimeType: match[1], base64Data: match[2] };
 };
 
+const toMediaDirectivePath = (filePath: string): string => {
+  return filePath.replace(/[\r\n]+/g, ' ').trim();
+};
+
+const appendMediaDirectiveLines = (prompt: string, filePaths: string[]): string => {
+  const mediaLines = filePaths
+    .map(toMediaDirectivePath)
+    .filter(Boolean)
+    .map(filePath => `MEDIA:${filePath}`);
+  if (mediaLines.length === 0) return prompt;
+  return prompt ? `${prompt}\n\n${mediaLines.join('\n')}` : mediaLines.join('\n');
+};
+
 const getFileNameFromPath = (path: string): string => {
   const parts = path.split(/[/\\]/);
   return parts[parts.length - 1] || path;
@@ -404,39 +417,31 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
         const promptValue = promptOverride ?? value;
         const trimmedValue = promptValue.trim();
+        // Require user text even when attachments exist; empty prompts produce poor session titles.
         if (!trimmedValue || isStreaming || disabled) return;
         setShowFolderRequiredWarning(false);
 
         const attachmentPayloads: CoworkAttachmentPayload[] = [];
+        const mediaDirectivePaths: string[] = [];
         for (const attachment of attachments) {
-          let dataUrl = attachment.dataUrl;
-          if (!dataUrl && !attachment.path.startsWith('inline:')) {
-            const result = await window.electron.dialog.readFileAsDataUrl(attachment.path);
-            if (!result.success || !result.dataUrl) {
-              window.dispatchEvent(
-                new CustomEvent('app:showToast', {
-                  detail: i18nService
-                    .t('coworkAttachmentReadFailed')
-                    .replace('{name}', attachment.name),
-                }),
-              );
-              return;
+          if (!attachment.dataUrl) {
+            if (!attachment.path.startsWith('inline:')) {
+              mediaDirectivePaths.push(attachment.path);
             }
-            dataUrl = result.dataUrl;
+            continue;
           }
-          if (dataUrl) {
-            const extracted = extractBase64FromDataUrl(dataUrl);
-            if (extracted) {
-              attachmentPayloads.push({
-                name: attachment.name,
-                mimeType: extracted.mimeType,
-                base64Data: extracted.base64Data,
-              });
-            }
+
+          const extracted = extractBase64FromDataUrl(attachment.dataUrl);
+          if (extracted) {
+            attachmentPayloads.push({
+              name: attachment.name,
+              mimeType: extracted.mimeType,
+              base64Data: extracted.base64Data,
+            });
           }
         }
 
-        const finalPrompt = trimmedValue;
+        const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
 
         const clearSubmittedInput = () => {
           setValue('');
