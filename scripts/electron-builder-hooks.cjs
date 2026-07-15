@@ -674,6 +674,11 @@ async function beforePack(context) {
         dir: mingitRoot,
         prefix: 'mingit',
       },
+      {
+        label: 'Dependency manager config',
+        dir: path.join(__dirname, '..', 'resources', 'dependency-config'),
+        prefix: 'dependency-config',
+      },
     ];
 
     console.log(`[electron-builder-hooks] Packing combined Windows tar: ${outputTar}`);
@@ -694,7 +699,7 @@ async function beforePack(context) {
     // Verify that each expected prefix actually has content in the archive.
     // This catches build misconfigurations early instead of at install time.
     const requiredPrefixes = ['cfmind/', 'skills/', 'python-win/', 'mingit/'];
-    const optionalPrefixes = [];
+    const optionalPrefixes = ['dependency-config/'];
     const tarEntries = [];
     const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
     const normalizedTarPath = outputTar.replace(/\\/g, '/');

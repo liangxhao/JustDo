@@ -7,6 +7,7 @@ import net from 'net';
 import path from 'path';
 
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
+import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
 import { appendPythonRuntimeToEnv } from '../../core/pythonRuntime';
 import {
   applyTrustedCertificateEnv,
@@ -415,6 +416,7 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
+    applyDependencyManagerConfigEnv(env, app.getPath('userData'));
     applyTrustedCertificateEnv(
       env,
       env.NODE_EXTRA_CA_CERTS || buildTrustedCaBundle(app.getPath('userData')),

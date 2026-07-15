@@ -3,6 +3,7 @@ import { app } from 'electron';
 import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 
+import { applyDependencyManagerConfigEnv } from '../core/dependencyManagerConfig';
 import { appendPythonRuntimeToEnv } from '../core/pythonRuntime';
 import {
   addLoopbackProxyBypass,
@@ -1082,6 +1083,8 @@ function ensureWindowsBashUtf8InitScript(): string | null {
 }
 
 function applyPackagedEnvOverrides(env: Record<string, string | undefined>): void {
+  applyDependencyManagerConfigEnv(env, app.getPath('userData'));
+
   const electronNodeRuntimePath = getElectronNodeRuntimePath();
 
   if (app.isPackaged && !env.JUSTDO_ELECTRON_PATH) {

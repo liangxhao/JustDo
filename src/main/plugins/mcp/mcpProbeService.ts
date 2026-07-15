@@ -7,7 +7,9 @@ import {
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { app } from 'electron';
 
+import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
 import type { McpServerRecord } from './mcpStore';
 
 const MCP_PROBE_TIMEOUT_MS = 8_000;
@@ -135,13 +137,13 @@ const createTransport = (server: McpServerRecord): Transport => {
     if (!server.command) {
       throw new Error('stdio MCP server command is required');
     }
+    const env = { ...getDefaultEnvironment() };
+    applyDependencyManagerConfigEnv(env, app.getPath('userData'));
+    Object.assign(env, server.env ?? {});
     return new StdioClientTransport({
       command: server.command,
       args: server.args ?? [],
-      env: {
-        ...getDefaultEnvironment(),
-        ...(server.env ?? {}),
-      },
+      env,
       stderr: 'pipe',
     });
   }

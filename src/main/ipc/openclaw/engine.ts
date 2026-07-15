@@ -46,6 +46,9 @@ const isOpenClawTerminalEnvKey = (key: string): boolean =>
   key === 'OPENCLAW_BUNDLED_PLUGINS_DIR' ||
   key === 'OPENCLAW_LOG_LEVEL' ||
   key === 'NODE_COMPILE_CACHE' ||
+  key === 'NPM_CONFIG_USERCONFIG' ||
+  key === 'npm_config_userconfig' ||
+  key === 'PIP_CONFIG_FILE' ||
   key === 'JUSTDO_ELECTRON_PATH' ||
   key === 'JUSTDO_OPENCLAW_ENTRY' ||
   key === 'JUSTDO_NPM_BIN_DIR' ||

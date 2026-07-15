@@ -10,6 +10,7 @@ import { APP_NAME } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
 import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
+import { applyDependencyManagerConfigEnv } from './core/dependencyManagerConfig';
 import { setLanguage } from './core/i18n';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
@@ -191,6 +192,7 @@ const configureUserDataPath = (): void => {
 };
 
 configureUserDataPath();
+applyDependencyManagerConfigEnv(process.env, app.getPath('userData'));
 initLogger();
 enableSystemCaForCurrentProcess();
 

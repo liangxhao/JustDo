@@ -25,6 +25,9 @@ resources/MinGit-*.zip
 resources/PortableGit-*.7z.exe
 resources/python-win/
 resources/python-*.zip
+resources/dependency-config/.npmrc
+resources/dependency-config/pip.ini
+!resources/dependency-config/README.md
 
 package-lock.json
 

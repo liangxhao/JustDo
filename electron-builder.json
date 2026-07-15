@@ -47,6 +47,11 @@
       "from": "resources/tray",
       "to": "tray",
       "filter": ["**/*"]
+    },
+    {
+      "from": "resources/dependency-config",
+      "to": "dependency-config",
+      "filter": ["**/*"]
     }
   ],
   "protocols": [
