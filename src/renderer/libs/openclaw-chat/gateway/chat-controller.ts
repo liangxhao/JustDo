@@ -102,6 +102,24 @@ function getOpenClawHistoryBridge(): OpenClawHistoryBridge | undefined {
   ).electron?.openclaw?.history;
 }
 
+function getContentImageUrl(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const block = value as Record<string, unknown>;
+  if (block.type === 'image' && typeof block.url === 'string') return block.url;
+  if (
+    block.type === 'attachment' &&
+    block.attachment &&
+    typeof block.attachment === 'object' &&
+    !Array.isArray(block.attachment)
+  ) {
+    const attachment = block.attachment as Record<string, unknown>;
+    if (attachment.kind === 'image' && typeof attachment.url === 'string') {
+      return attachment.url;
+    }
+  }
+  return null;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const HISTORY_LIMIT = 1000;
@@ -1057,8 +1075,22 @@ export class ChatController {
         const imageBlocks = transcriptImages.filter(
           (value): value is NonNullable<typeof value> => value !== null,
         );
-        if (imageBlocks.length === 0 && !Array.isArray(record.content)) return message;
-        return { ...record, content: [...content, ...imageBlocks] };
+        const existingImageUrlCounts = new Map<string, number>();
+        for (const url of content
+          .map(getContentImageUrl)
+          .filter((value): value is string => value !== null)) {
+          existingImageUrlCounts.set(url, (existingImageUrlCounts.get(url) ?? 0) + 1);
+        }
+        const uniqueImageBlocks = imageBlocks.filter(block => {
+          const existingCount = existingImageUrlCounts.get(block.url) ?? 0;
+          if (existingCount > 0) {
+            existingImageUrlCounts.set(block.url, existingCount - 1);
+            return false;
+          }
+          return true;
+        });
+        if (uniqueImageBlocks.length === 0 && !Array.isArray(record.content)) return message;
+        return { ...record, content: [...content, ...uniqueImageBlocks] };
       }),
     );
   }

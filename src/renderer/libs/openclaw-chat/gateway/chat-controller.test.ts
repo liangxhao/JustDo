@@ -1119,8 +1119,27 @@ test('notifies listeners when an active run makes a history load stop early', as
 });
 
 test('preserves optimistic attachment blocks after managed image resolution', async () => {
+  const readFileAsDataUrl = vi.fn().mockResolvedValue({
+    success: true,
+    dataUrl: 'data:image/png;base64,YWJj',
+  });
+  vi.stubGlobal('window', {
+    electron: {
+      dialog: {
+        readFileAsDataUrl,
+      },
+    },
+  });
   const request = vi.fn().mockResolvedValue({
-    messages: [{ role: 'user', content: 'image prompt', timestamp: Date.now() }],
+    messages: [
+      {
+        role: 'user',
+        content: 'image prompt',
+        timestamp: Date.now(),
+        MediaPaths: ['C:\\media\\prompt.png'],
+        MediaTypes: ['image/png'],
+      },
+    ],
   });
   const controller = new ChatController();
   controller.state.client = { request } as never;
@@ -1155,6 +1174,7 @@ test('preserves optimistic attachment blocks after managed image resolution', as
       ],
     }),
   ]);
+  expect(readFileAsDataUrl).toHaveBeenCalledTimes(1);
 });
 
 test('does not apply a shorter post-run history snapshot over a newer visible final tail', async () => {
