@@ -2534,6 +2534,18 @@ function appendTerminalMessage(messages: unknown[], terminal: unknown): unknown[
     result.push(msg);
   }
 
+  const terminalDisplay = messageRoleAndText(terminal);
+  const last = result[result.length - 1];
+  const lastDisplay = messageRoleAndText(last);
+  if (
+    terminalDisplay &&
+    lastDisplay &&
+    terminalDisplay.role === lastDisplay.role &&
+    hasSimilarDisplayText(terminalDisplay.text, lastDisplay.text)
+  ) {
+    return [...result.slice(0, -1), terminal];
+  }
+
   result.push(terminal);
   return result;
 }

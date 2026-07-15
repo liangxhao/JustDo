@@ -1034,6 +1034,65 @@ test('clears stream overlays and completes live tools after a renderable final',
   expect(controller.state.chatStreamSegments).toHaveLength(0);
 });
 
+test('dedupes a final message already present at the history tail', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  controller.state.chatMessages = [
+    {
+      role: 'user',
+      content: '生成介绍文档',
+      timestamp: 1000,
+    },
+    {
+      role: 'assistant',
+      content: '已生成介绍文档：文件包含了思源笔记的基本信息。',
+      timestamp: 1400,
+    },
+  ];
+  controller.state.chatThinkingMessages = [
+    {
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '确认文件已经写入，然后汇报结果。' }],
+      timestamp: 1300,
+      __openclawLiveThinking: true,
+    },
+  ];
+
+  (
+    controller as unknown as {
+      handleFinal(payload: {
+        sessionKey: string;
+        state: 'final';
+        runId: string;
+        message: unknown;
+      }): void;
+    }
+  ).handleFinal({
+    sessionKey: 'agent:main:justdo:session-1',
+    state: 'final',
+    runId: 'run-1',
+    message: {
+      role: 'assistant',
+      content: '已生成介绍文档：文件包含了思源笔记的基本信息。',
+      timestamp: 1500,
+    },
+  });
+
+  expect(controller.state.chatMessages).toHaveLength(2);
+  expect(controller.state.chatMessages[1]).toEqual(
+    expect.objectContaining({
+      role: 'assistant',
+      __justdoOptimisticHistoryTail: true,
+    }),
+  );
+  expect((controller.state.chatMessages[1] as { content?: unknown }).content).toEqual([
+    { type: 'thinking', thinking: '确认文件已经写入，然后汇报结果。' },
+    { type: 'text', text: '已生成介绍文档：文件包含了思源笔记的基本信息。' },
+  ]);
+});
+
 test('backfills live thinking from history while preserving an active run display', async () => {
   const visibleMessage = {
     role: 'assistant',
