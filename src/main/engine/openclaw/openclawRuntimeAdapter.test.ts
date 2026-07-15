@@ -16,7 +16,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 }));
 
 import type { GatewayClientCtor, GatewayClientLike } from '../gateway/types';
-import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
+import { ensureGoalCommandSession, OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 function createEmptyStore() {
   const session = {
@@ -71,6 +71,42 @@ function createEmptyStore() {
     },
   };
 }
+
+test('creates or reuses the OpenClaw session before a goal command', async () => {
+  const request = vi.fn().mockResolvedValue({
+    sessionId: ' backing-session-1 ',
+  });
+  const client = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  } as GatewayClientLike;
+
+  await expect(
+    ensureGoalCommandSession(
+      client,
+      'agent:main:justdo:session-1',
+      '/goal build a release dashboard',
+    ),
+  ).resolves.toBe('backing-session-1');
+  expect(request).toHaveBeenCalledWith('sessions.create', {
+    key: 'agent:main:justdo:session-1',
+  });
+});
+
+test('does not prepare an OpenClaw session for an ordinary prompt', async () => {
+  const request = vi.fn();
+  const client = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  } as GatewayClientLike;
+
+  await expect(
+    ensureGoalCommandSession(client, 'agent:main:justdo:session-1', 'hello'),
+  ).resolves.toBeUndefined();
+  expect(request).not.toHaveBeenCalled();
+});
 
 test('an intentionally stopped gateway client cannot reclaim the active connection', async () => {
   const { store } = createEmptyStore();

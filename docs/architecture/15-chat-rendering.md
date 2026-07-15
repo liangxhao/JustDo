@@ -4,16 +4,16 @@ JustDo 的聊天渲染由 React 容器和 Lit 自定义元素共同完成。Reac
 
 ## 关键文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `src/renderer/features/cowork/components/JustDoChatWrapper.tsx` | React wrapper |
-| `src/renderer/features/cowork/components/ChatMessageDisplay.tsx` | Cowork message display integration |
-| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts` | Lit custom element |
-| `src/renderer/libs/openclaw-chat/gateway/client.ts` | Gateway WebSocket client |
-| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts` | chat controller |
-| `src/renderer/libs/openclaw-chat/pipeline/` | message normalization/build/render helpers |
-| `src/renderer/libs/openclaw-chat/components/markdown.ts` | Markdown renderer |
-| `src/renderer/libs/openclaw-chat/components/tool-display.ts` | tool display |
+| 文件                                                             | 作用                                       |
+| ---------------------------------------------------------------- | ------------------------------------------ |
+| `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`  | React wrapper                              |
+| `src/renderer/features/cowork/components/ChatMessageDisplay.tsx` | Cowork message display integration         |
+| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`      | Lit custom element                         |
+| `src/renderer/libs/openclaw-chat/gateway/client.ts`              | Gateway WebSocket client                   |
+| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts`     | chat controller                            |
+| `src/renderer/libs/openclaw-chat/pipeline/`                      | message normalization/build/render helpers |
+| `src/renderer/libs/openclaw-chat/components/markdown.ts`         | Markdown renderer                          |
+| `src/renderer/libs/openclaw-chat/components/tool-display.ts`     | tool display                               |
 
 ## 渲染流程
 
@@ -62,6 +62,19 @@ Markdown renderer 使用：
 Thinking/reasoning 内容通过 Gateway stream 和 runtime patch 支持。Renderer 不维护独立 thinking 状态机；它把 stream delta 交给 chat pipeline 展示。
 
 相关文档：`docs/features/thinking-stream-implementation.md`。
+
+## Goal 状态展示
+
+`/goal` 的生命周期由 OpenClaw 持有，JustDo 不从命令回复文本反向解析状态。主进程通过现有 `sessions.list` 会话状态查询读取并校验 `goal`，再随 context usage IPC 返回 renderer。`CoworkPromptInput` 在输入区上方展示独立的 `GoalStatusCard`：
+
+- 覆盖 `active`、`paused`、`blocked`、`usage_limited`、`budget_limited`、`complete` 全部状态。
+- 展示 objective、最后状态备注、token 使用量及预算进度。
+- OpenClaw 在缺少 fresh token baseline 时会把首个 Goal 回合结束后的快照作为基线，此时自动回复可能产生不可靠的 `Tokens used: 0`；JustDo 会隐藏该零值及零进度，取得正数用量后再展示。
+- 根据当前状态提供 pause、resume、complete 或 clear 快捷操作；操作仍以 `/goal` 命令交给 Gateway 执行。
+- Gateway 查询暂时失败时保留最后一次有效状态，切换 session 时立即清空，避免跨会话串状态。
+- `/goal` 的两条发送路径都会先通过幂等的 `sessions.create` 建立或复用 OpenClaw 会话记录并取得 `sessionId`，再调用 `chat.send`：首页首轮由主进程 `OpenClawRuntimeAdapter` 处理，已有会话的后续消息由 renderer `ChatController` 处理。预建失败时停止发送，避免命令作为普通文本进入模型；不能仅凭 `chat.startup/history` 返回的候选 ID 判断持久化记录已经存在。
+
+Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产生的历史消息仍由正常聊天渲染链路处理。
 
 ## 工具显示
 
@@ -142,16 +155,16 @@ flowchart LR
 
 各层职责：
 
-| 模块 | 职责 |
-| --- | --- |
-| `message-extract.ts` | 从 Gateway payload 中抽取文本、工具、metadata |
-| `message-normalizer.ts` | 统一字段形态，处理缺省值 |
-| `role-normalizer.ts` | 标准化 user/assistant/system/tool 等 role |
-| `stream-text.ts` | 处理流式文本片段和增量展示 |
-| `tool-cards.ts` | 生成工具调用展示模型 |
-| `heartbeat-display.ts` | 处理 Gateway heartbeat/活动提示 |
-| `build-chat-items.ts` | 生成最终 render item 列表 |
-| `grouped-render.ts` | 把连续消息分组渲染 |
+| 模块                    | 职责                                          |
+| ----------------------- | --------------------------------------------- |
+| `message-extract.ts`    | 从 Gateway payload 中抽取文本、工具、metadata |
+| `message-normalizer.ts` | 统一字段形态，处理缺省值                      |
+| `role-normalizer.ts`    | 标准化 user/assistant/system/tool 等 role     |
+| `stream-text.ts`        | 处理流式文本片段和增量展示                    |
+| `tool-cards.ts`         | 生成工具调用展示模型                          |
+| `heartbeat-display.ts`  | 处理 Gateway heartbeat/活动提示               |
+| `build-chat-items.ts`   | 生成最终 render item 列表                     |
+| `grouped-render.ts`     | 把连续消息分组渲染                            |
 
 ## History Loading
 

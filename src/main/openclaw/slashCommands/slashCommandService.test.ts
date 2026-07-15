@@ -35,6 +35,10 @@ describe('mapGatewaySlashCommand', () => {
   test('returns null when an entry has no usable name', () => {
     expect(mapGatewaySlashCommand({ textAliases: [null, 1] })).toBeNull();
   });
+
+  test('places goal controls in the session category', () => {
+    expect(mapGatewaySlashCommand({ key: 'goal', name: 'goal' })?.category).toBe('session');
+  });
 });
 
 describe('SlashCommandService', () => {

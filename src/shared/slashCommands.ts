@@ -2,6 +2,11 @@ export const SlashCommandIpc = {
   List: 'slashCommands:list',
 } as const;
 
+const GOAL_COMMAND_PATTERN = /^\/goal(?:\s|$)/i;
+
+export const isGoalSlashCommand = (value: string): boolean =>
+  GOAL_COMMAND_PATTERN.test(value.trim());
+
 export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'help',
   'commands',
@@ -58,8 +63,7 @@ export const SlashCommandCategory = {
   Tools: 'tools',
 } as const;
 
-export type SlashCommandCategory =
-  (typeof SlashCommandCategory)[keyof typeof SlashCommandCategory];
+export type SlashCommandCategory = (typeof SlashCommandCategory)[keyof typeof SlashCommandCategory];
 
 export const SlashCommandTier = {
   Essential: 'essential',

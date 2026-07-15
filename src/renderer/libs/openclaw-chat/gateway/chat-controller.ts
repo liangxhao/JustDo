@@ -17,6 +17,7 @@ import {
   isImageMimeType,
   toGatewayAttachment,
 } from '@shared/cowork/attachments';
+import { isGoalSlashCommand } from '@shared/slashCommands';
 
 import { getTranscriptMedia, toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
 import type {
@@ -32,6 +33,8 @@ export interface ChatState {
   client: GatewayClient | null;
   connected: boolean;
   sessionKey: string;
+  /** Backing OpenClaw session id returned by chat.startup/chat.history. */
+  currentSessionId: string | null;
   chatLoading: boolean;
   chatMessages: unknown[];
   chatThinkingMessages: unknown[];
@@ -114,6 +117,10 @@ const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
 const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
 const DEBUG_CHAT_CONTROLLER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
+
+function normalizeSessionId(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
 
 function isHistoryNotFoundError(value: unknown): boolean {
   return typeof value === 'string' && /\bhistory REST returned 404\b/i.test(value);
@@ -343,6 +350,7 @@ export class ChatController {
       client: null,
       connected: false,
       sessionKey: '',
+      currentSessionId: null,
       chatLoading: false,
       chatMessages: [],
       chatThinkingMessages: [],
@@ -459,10 +467,7 @@ export class ChatController {
     }
   }
 
-  private acceptRunId(
-    runId: string | undefined | null,
-    allowProvisionalBinding = true,
-  ): boolean {
+  private acceptRunId(runId: string | undefined | null, allowProvisionalBinding = true): boolean {
     if (!runId || !this.state.chatRunId || runId === this.state.chatRunId) return true;
     if (
       allowProvisionalBinding &&
@@ -799,6 +804,7 @@ export class ChatController {
     this.subscribedMessageSessionKey = null;
 
     this.state.sessionKey = sessionKey;
+    this.state.currentSessionId = null;
     this.state.chatLoading = true;
     this.state.chatMessages = this.chatMessagesBySession.get(sessionKey) ?? [];
     this.state.chatThinkingMessages = [];
@@ -837,6 +843,7 @@ export class ChatController {
       isTempSessionPromotion,
     });
     this.state.sessionKey = sessionKey;
+    this.state.currentSessionId = null;
     // Only preserve the optimistic prompt while replacing the temporary UI
     // session with the persisted JustDo session. For normal user-initiated
     // switches, clear the active run state so the target session can load its
@@ -1193,7 +1200,9 @@ export class ChatController {
       // chat.startup includes metadata and agent list, but it is heavier than
       // chat.history. Use it only for initial connection/session switches;
       // ordinary post-run refreshes should stay read-only and lightweight.
-      let result: { messages?: unknown[]; sessionId?: string } | undefined;
+      let result:
+        | { messages?: unknown[]; sessionId?: string; sessionInfo?: { sessionId?: string } }
+        | undefined;
       const primaryMethod = options.preferStartup ? 'chat.startup' : 'chat.history';
       const fallbackMethod = options.preferStartup ? 'chat.history' : 'chat.startup';
       try {
@@ -1230,6 +1239,10 @@ export class ChatController {
         });
         return;
       }
+
+      this.state.currentSessionId = normalizeSessionId(
+        result?.sessionInfo?.sessionId ?? result?.sessionId,
+      );
 
       const pagedMessages = await this.loadPagedHistoryFromRest(sessionKey).catch(error => {
         debugLog('[ChatCtrl] paged history unavailable, using RPC history', {
@@ -2029,6 +2042,35 @@ export class ChatController {
     }
 
     const sessionKey = this.state.sessionKey;
+
+    // OpenClaw's goal command persists state against an existing session entry.
+    // chat.startup/history can expose a candidate session id even before that
+    // entry exists, so currentSessionId alone cannot distinguish a new session.
+    // sessions.create is idempotent for an existing key: always call it before
+    // /goal, reusing an existing entry or creating the missing one as needed.
+    if (isGoalSlashCommand(message)) {
+      try {
+        const created = await client.request<{
+          sessionId?: string;
+          entry?: { sessionId?: string };
+        }>('sessions.create', { key: sessionKey });
+        const createdSessionId = normalizeSessionId(
+          created?.sessionId ?? created?.entry?.sessionId,
+        );
+        if (!createdSessionId) {
+          throw new Error(i18nService.t('coworkGoalSessionCreateFailed'));
+        }
+        if (this.state.sessionKey !== sessionKey) return;
+        this.state.currentSessionId = createdSessionId;
+      } catch (error) {
+        if (this.state.sessionKey !== sessionKey) return;
+        const sessionError = error instanceof Error ? error : new Error(String(error));
+        this.state.lastError = sessionError.message;
+        this.notify();
+        throw sessionError;
+      }
+    }
+
     const runId = `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     debugLog('[ChatCtrl] sendMessage:', message.slice(0, 60), {
       sessionKey,
@@ -2067,6 +2109,7 @@ export class ChatController {
         .map(toGatewayAttachment);
       const ack = await client.request<{ runId?: string; status?: string }>('chat.send', {
         sessionKey,
+        ...(this.state.currentSessionId ? { sessionId: this.state.currentSessionId } : {}),
         message,
         deliver: false,
         idempotencyKey: runId,
@@ -2081,11 +2124,7 @@ export class ChatController {
       const ackMatchesActiveRun =
         this.state.chatRunId === runId ||
         (typeof ack?.runId === 'string' && this.state.chatRunId === ack.runId);
-      if (
-        ack?.status === 'ok' &&
-        this.state.sessionKey === sessionKey &&
-        ackMatchesActiveRun
-      ) {
+      if (ack?.status === 'ok' && this.state.sessionKey === sessionKey && ackMatchesActiveRun) {
         this.state.chatSending = false;
         this.state.chatRunId = null;
         this.resetAssistantSnapshotSource();
@@ -2213,9 +2252,7 @@ export class ChatController {
     );
   }
 
-  private async loadCompactionCheckpoints(
-    sessionKey = this.state.sessionKey,
-  ): Promise<
+  private async loadCompactionCheckpoints(sessionKey = this.state.sessionKey): Promise<
     Array<{
       checkpointId?: string;
       summary?: string;

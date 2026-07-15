@@ -13,7 +13,10 @@ import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers
 import { parseInlineDirectives } from '@/libs/openclaw-chat/shims/backend-helpers';
 import { mediaKindFromMime } from '@/libs/openclaw-chat/shims/media-core';
 import type { MessageContentItem, NormalizedMessage } from '@/libs/openclaw-chat/types';
-export { isToolResultMessage, normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
+export {
+  isToolResultMessage,
+  normalizeRoleForGrouping,
+} from '@/libs/openclaw-chat/pipeline/role-normalizer';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -60,8 +63,7 @@ function resolveMessageModelName(message: Record<string, unknown>): string | nul
 function coerceCanvasPreview(
   value: unknown,
 ):
-  | Extract<NonNullable<NormalizedMessage['content'][number]>, { type: 'canvas' }>['preview']
-  | null {
+  Extract<NonNullable<NormalizedMessage['content'][number]>, { type: 'canvas' }>['preview'] | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
   }
@@ -218,7 +220,8 @@ function coerceAudioContentBlock(
 function coerceImageContentBlock(
   item: Record<string, unknown>,
 ): Extract<MessageContentItem, { type: 'attachment' }> | null {
-  if (item.type !== 'image' && item.type !== 'image_url' && item.type !== 'input_image') return null;
+  if (item.type !== 'image' && item.type !== 'image_url' && item.type !== 'input_image')
+    return null;
 
   const source =
     item.source && typeof item.source === 'object' && !Array.isArray(item.source)
@@ -271,10 +274,8 @@ function coerceImageContentBlock(
     return null;
   }
 
-  const url =
-    data.startsWith('data:image/') ? data : `data:${mimeType};base64,${data}`;
-  const label =
-    typeof item.label === 'string' && item.label.trim() ? item.label.trim() : 'Image';
+  const url = data.startsWith('data:image/') ? data : `data:${mimeType};base64,${data}`;
+  const label = typeof item.label === 'string' && item.label.trim() ? item.label.trim() : 'Image';
   return {
     type: 'attachment',
     attachment: {
@@ -380,6 +381,23 @@ function expandTextContent(text: string): {
   };
 }
 
+const stripUnreliableGoalZeroUsage = (content: MessageContentItem[]): MessageContentItem[] => {
+  const textContent = content
+    .map(item => (item.type === 'text' ? (item.text ?? '') : ''))
+    .join('\n');
+  if (!/(?:^|\n)Goal(?: complete:|\s*$)/m.test(textContent)) return content;
+
+  return content.flatMap(item => {
+    if (item.type !== 'text' || typeof item.text !== 'string') return [item];
+    const text = item.text
+      .split(/\r?\n/)
+      .filter(line => !/^Tokens used:\s*0\s*$/i.test(line))
+      .join('\n')
+      .trim();
+    return text ? [{ ...item, text }] : [];
+  });
+};
+
 function expandUserTextMediaContent(
   text: string,
   includeLegacyTextFields = false,
@@ -394,30 +412,31 @@ function expandUserTextMediaContent(
   }
 
   const segments = parsed.segments ?? [{ type: 'text' as const, text: parsed.text }];
-  return segments.flatMap(segment => {
+  const content: MessageContentItem[] = [];
+  for (const segment of segments) {
     if (segment.type === 'text') {
-      return segment.text.trim()
-        ? [
-            includeLegacyTextFields
-              ? { type: 'text' as const, text: segment.text, name: undefined, args: undefined }
-              : { type: 'text' as const, text: segment.text },
-          ]
-        : [];
+      if (segment.text.trim()) {
+        content.push(
+          includeLegacyTextFields
+            ? { type: 'text', text: segment.text, name: undefined, args: undefined }
+            : { type: 'text', text: segment.text },
+        );
+      }
+      continue;
     }
 
     const inferred = inferAttachmentKind(segment.url);
-    return [
-      {
-        type: 'attachment' as const,
-        attachment: {
-          url: segment.url,
-          kind: inferred.kind,
-          label: inferred.label,
-          mimeType: inferred.mimeType,
-        },
+    content.push({
+      type: 'attachment',
+      attachment: {
+        url: segment.url,
+        kind: inferred.kind,
+        label: inferred.label,
+        mimeType: inferred.mimeType,
       },
-    ];
-  });
+    });
+  }
+  return content;
 }
 
 /**
@@ -572,6 +591,9 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
   const modelName = isAssistantMessage ? resolveMessageModelName(m) : null;
 
   content = stripMessageDisplayMetadata(content);
+  if (isAssistantMessage && m.provider === 'openclaw' && m.model === 'gateway-injected') {
+    content = stripUnreliableGoalZeroUsage(content);
+  }
 
   return {
     role,

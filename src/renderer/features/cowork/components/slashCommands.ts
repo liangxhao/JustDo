@@ -1,7 +1,4 @@
-import type {
-  SlashCommandCategory,
-  SlashCommandTier,
-} from '@shared/slashCommands';
+import type { SlashCommandCategory, SlashCommandTier } from '@shared/slashCommands';
 import { SlashCommandBlacklist } from '@shared/slashCommands';
 
 export type { SlashCommandCategory, SlashCommandTier };
@@ -67,7 +64,7 @@ const ALL_SLASH_COMMANDS: SlashCommandDef[] = [
     name: 'goal',
     description: 'Show or control the current goal.',
     args: '[action] [text]',
-    category: 'tools',
+    category: 'session',
     argOptions: ['status', 'start', 'pause', 'resume', 'complete', 'block', 'clear'],
     tier: 'standard',
   },

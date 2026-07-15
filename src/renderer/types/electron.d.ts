@@ -537,6 +537,7 @@ interface IElectronAPI {
       totalTokens?: number;
       contextTokens?: number;
       totalTokensFresh?: boolean;
+      goal?: import('@shared/sessionGoal').SessionGoal;
       error?: string;
     }>;
     deleteMessage: (

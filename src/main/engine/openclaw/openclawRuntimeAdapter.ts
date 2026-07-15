@@ -3,6 +3,7 @@ import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
+import { isGoalSlashCommand } from '../../../shared/slashCommands';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../../cowork/providerApiConfig';
 import type {
@@ -80,6 +81,24 @@ const RUNTIME_STATUS_WARNING_INTERVAL_MS = 30_000;
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
 const isNoReply = (text: string): boolean => NO_REPLY_PATTERN.test(text);
+
+export const ensureGoalCommandSession = async (
+  client: GatewayClientLike,
+  sessionKey: string,
+  prompt: string,
+): Promise<string | undefined> => {
+  if (!isGoalSlashCommand(prompt)) return undefined;
+
+  const created = await client.request<{
+    sessionId?: string;
+    entry?: { sessionId?: string };
+  }>('sessions.create', { key: sessionKey });
+  const sessionId = created?.sessionId ?? created?.entry?.sessionId;
+  if (typeof sessionId !== 'string' || !sessionId.trim()) {
+    throw new Error('OpenClaw sessions.create returned no sessionId');
+  }
+  return sessionId.trim();
+};
 
 const extractAssistantText = (message: unknown): string => {
   if (!isRecord(message)) return '';
@@ -443,8 +462,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const attachments = options.attachments?.length
         ? options.attachments.map(toGatewayAttachment)
         : undefined;
+      const goalSessionId = await ensureGoalCommandSession(client, sessionKey, prompt);
       await client.request('chat.send', {
         sessionKey,
+        ...(goalSessionId ? { sessionId: goalSessionId } : {}),
         message: prompt.trim(),
         deliver: false,
         timeoutMs: this.agentTimeoutSeconds * 1000,

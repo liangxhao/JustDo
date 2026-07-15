@@ -52,6 +52,7 @@ const CATEGORY_OVERRIDES: Readonly<Record<string, SlashCommandCategoryValue>> = 
   subagents: SlashCommandCategory.Agents,
   steer: SlashCommandCategory.Agents,
   redirect: SlashCommandCategory.Agents,
+  goal: SlashCommandCategory.Session,
   session: SlashCommandCategory.Session,
   stop: SlashCommandCategory.Session,
   reset: SlashCommandCategory.Session,

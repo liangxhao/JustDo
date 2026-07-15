@@ -10,14 +10,103 @@ afterEach(() => {
 test('clears active sending state when switching between existing sessions', async () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:running-session';
+  controller.state.currentSessionId = 'backing-session-1';
   controller.setPendingUserMessage('keep working');
 
   await controller.switchSession('agent:main:justdo:other-session');
 
   expect(controller.state.sessionKey).toBe('agent:main:justdo:other-session');
+  expect(controller.state.currentSessionId).toBeNull();
   expect(controller.state.chatSending).toBe(false);
   expect(controller.state.pendingUserMessage).toBeNull();
   expect(controller.state.chatLoading).toBe(true);
+});
+
+test('sends the backing session id returned by chat history', async () => {
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({ messages: [], sessionId: ' backing-session-1 ' });
+    }
+    if (method === 'sessions.compaction.list') {
+      return Promise.resolve({ checkpoints: [] });
+    }
+    if (method === 'chat.send') {
+      return Promise.resolve({ runId: 'run-1', status: 'started' });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+  await controller.sendMessage('continue with stable session identity');
+
+  expect(controller.state.currentSessionId).toBe('backing-session-1');
+  expect(request).toHaveBeenCalledWith(
+    'chat.send',
+    expect.objectContaining({
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'backing-session-1',
+      message: 'continue with stable session identity',
+    }),
+  );
+});
+
+test('creates a backing session before the first goal command', async () => {
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'sessions.create') {
+      return Promise.resolve({
+        key: 'agent:main:justdo:new-session',
+        sessionId: ' new-backing-session ',
+      });
+    }
+    if (method === 'chat.send') {
+      return Promise.resolve({ runId: 'run-1', status: 'started' });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:new-session';
+
+  await controller.sendMessage('/goal build a release dashboard');
+
+  expect(controller.state.currentSessionId).toBe('new-backing-session');
+  expect(request).toHaveBeenNthCalledWith(1, 'sessions.create', {
+    key: 'agent:main:justdo:new-session',
+  });
+  expect(request).toHaveBeenNthCalledWith(
+    2,
+    'chat.send',
+    expect.objectContaining({
+      sessionKey: 'agent:main:justdo:new-session',
+      sessionId: 'new-backing-session',
+      message: '/goal build a release dashboard',
+    }),
+  );
+});
+
+test('does not send a first goal command when backing session creation fails', async () => {
+  const request = vi.fn().mockRejectedValue(new Error('session create failed'));
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:new-session';
+
+  await expect(controller.sendMessage('/goal build a release dashboard')).rejects.toThrow(
+    'session create failed',
+  );
+
+  expect(request).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledWith('sessions.create', {
+    key: 'agent:main:justdo:new-session',
+  });
+  expect(controller.state.lastError).toBe('session create failed');
+  expect(controller.state.chatMessages).toEqual([]);
+  expect(controller.state.chatSending).toBe(false);
 });
 
 test('preserves optimistic prompt when promoting a temp session to a persisted session', async () => {

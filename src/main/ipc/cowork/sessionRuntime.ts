@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 
+import { isSessionGoalStatus, type SessionGoal } from '../../../shared/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
 import {
@@ -13,8 +14,51 @@ interface Dependencies {
   getRuntime: () => OpenClawRuntimeAdapter | null;
 }
 
-const numberValue = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+const nonNegativeNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+export const readSessionGoal = (value: unknown): SessionGoal | undefined => {
+  if (!value || typeof value !== 'object') return undefined;
+  const source = value as Record<string, unknown>;
+  const objective = typeof source.objective === 'string' ? source.objective.trim() : '';
+  const id = typeof source.id === 'string' ? source.id.trim() : '';
+  if (source.schemaVersion !== 1 || !isSessionGoalStatus(source.status) || !objective || !id) {
+    return undefined;
+  }
+
+  const numeric = (key: string, fallback = 0) => nonNegativeNumber(source[key]) ?? fallback;
+  const optionalNumeric = (key: string) => {
+    const result = nonNegativeNumber(source[key]);
+    return result === undefined ? {} : { [key]: result };
+  };
+  const tokenBudget = nonNegativeNumber(source.tokenBudget);
+  const lastStatusNote =
+    typeof source.lastStatusNote === 'string' && source.lastStatusNote.trim()
+      ? source.lastStatusNote.trim()
+      : undefined;
+
+  return {
+    schemaVersion: 1,
+    id,
+    objective,
+    status: source.status,
+    createdAt: numeric('createdAt'),
+    updatedAt: numeric('updatedAt'),
+    tokenStart: numeric('tokenStart'),
+    ...(typeof source.tokenStartFresh === 'boolean'
+      ? { tokenStartFresh: source.tokenStartFresh }
+      : {}),
+    tokensUsed: numeric('tokensUsed'),
+    ...(tokenBudget === undefined ? {} : { tokenBudget }),
+    continuationTurns: numeric('continuationTurns'),
+    ...(lastStatusNote ? { lastStatusNote } : {}),
+    ...optionalNumeric('pausedAt'),
+    ...optionalNumeric('blockedAt'),
+    ...optionalNumeric('completedAt'),
+    ...optionalNumeric('usageLimitedAt'),
+    ...optionalNumeric('budgetLimitedAt'),
+  };
+};
 
 const readUsage = (session: Record<string, unknown>) => {
   const budget =
@@ -23,23 +67,23 @@ const readUsage = (session: Record<string, unknown>) => {
       : undefined;
   return {
     totalTokens:
-      numberValue(session.totalTokens) ??
-      numberValue(session.usedTokens) ??
-      numberValue(session.contextUsedTokens) ??
-      numberValue(session.currentTokens) ??
-      numberValue(budget?.estimatedPromptTokens) ??
+      nonNegativeNumber(session.totalTokens) ??
+      nonNegativeNumber(session.usedTokens) ??
+      nonNegativeNumber(session.contextUsedTokens) ??
+      nonNegativeNumber(session.currentTokens) ??
+      nonNegativeNumber(budget?.estimatedPromptTokens) ??
       0,
     contextTokens:
-      numberValue(session.contextTokens) ??
-      numberValue(session.contextWindow) ??
-      numberValue(session.contextLength) ??
-      numberValue(session.maxContextTokens) ??
-      numberValue(session.totalContextTokens) ??
-      numberValue(budget?.contextTokenBudget) ??
+      nonNegativeNumber(session.contextTokens) ??
+      nonNegativeNumber(session.contextWindow) ??
+      nonNegativeNumber(session.contextLength) ??
+      nonNegativeNumber(session.maxContextTokens) ??
+      nonNegativeNumber(session.totalContextTokens) ??
+      nonNegativeNumber(budget?.contextTokenBudget) ??
       0,
     totalTokensFresh:
       typeof session.totalTokensFresh === 'boolean'
-        ? session.totalTokensFresh || numberValue(budget?.estimatedPromptTokens) !== undefined
+        ? session.totalTokensFresh || nonNegativeNumber(budget?.estimatedPromptTokens) !== undefined
         : true,
   };
 };
@@ -84,13 +128,15 @@ export const registerCoworkSessionRuntimeHandlers = ({
         return { success: false, error: 'Session not found in gateway' };
       }
       const usage = readUsage(session);
+      const goal = readSessionGoal(session.goal);
       if (usage.totalTokens <= 0 || usage.contextTokens <= 0) {
+        if (goal) return { success: true, goal };
         return {
           success: false,
           error: 'Context usage is not available from OpenClaw session state',
         };
       }
-      return { success: true, ...usage };
+      return { success: true, ...usage, ...(goal ? { goal } : {}) };
     } catch (error) {
       return {
         success: false,

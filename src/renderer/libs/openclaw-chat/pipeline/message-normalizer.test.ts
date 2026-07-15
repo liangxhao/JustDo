@@ -167,3 +167,30 @@ describe('normalizeMessage assistant model label', () => {
     expect(message.modelName).toBe('gpt-4.1');
   });
 });
+
+describe('normalizeMessage goal token usage', () => {
+  test('hides an unreliable zero token count from an OpenClaw goal reply', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'Goal complete: Write a poem\nTokens used: 0',
+      api: 'openai-responses',
+      provider: 'openclaw',
+      model: 'gateway-injected',
+    });
+
+    expect(message.content).toEqual([{ type: 'text', text: 'Goal complete: Write a poem' }]);
+  });
+
+  test('keeps a non-zero goal token count', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'Goal complete: Write a poem\nTokens used: 1200',
+      provider: 'openclaw',
+      model: 'gateway-injected',
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: 'Goal complete: Write a poem\nTokens used: 1200' },
+    ]);
+  });
+});

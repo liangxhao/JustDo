@@ -1,5 +1,6 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
+import type { SessionGoal } from '@shared/sessionGoal';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -7,6 +8,7 @@ import { updateAgent } from '@/features/agents/agentSlice';
 import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
 import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
+import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
 import {
   getHiddenCommandCount,
   getSlashCommandByName,
@@ -202,6 +204,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       contextTokens: number;
       totalTokensFresh: boolean;
     } | null>(null);
+    const [sessionGoal, setSessionGoal] = useState<SessionGoal | null>(null);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
@@ -216,6 +219,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     useEffect(() => {
       setOptimisticSessionModel(null);
+      setContextUsage(null);
+      setSessionGoal(null);
     }, [sessionId, currentAgentId]);
 
     const resetSlashMenuState = useCallback(() => {
@@ -1183,24 +1188,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     // A newly created local session does not exist in Gateway until its first turn starts.
     // Wait for an assistant message so context usage is only queried for persisted sessions.
     useEffect(() => {
-      if (!sessionId || isStreaming || !hasAssistantMessage) {
-        setContextUsage(null);
-        return;
-      }
+      if (!sessionId || isStreaming || !hasAssistantMessage) return;
       let cancelled = false;
       const fetchUsage = async () => {
-        setContextUsage(null);
         try {
           const result = await window.electron.cowork.getContextUsage(sessionId);
-          if (!cancelled && result.success && result.totalTokens != null) {
-            setContextUsage({
-              totalTokens: result.totalTokens,
-              contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
-              totalTokensFresh: result.totalTokensFresh ?? true,
-            });
-          }
+          if (cancelled || !result.success) return;
+          setSessionGoal(result.goal ?? null);
+          setContextUsage(
+            result.totalTokens == null
+              ? null
+              : {
+                  totalTokens: result.totalTokens,
+                  contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
+                  totalTokensFresh: result.totalTokensFresh ?? true,
+                },
+          );
         } catch {
-          // silently fail — context usage is a nice-to-have
+          // Runtime details are supplementary; keep the last known state on transient failures.
         }
       };
       void fetchUsage();
@@ -1208,6 +1213,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         cancelled = true;
       };
     }, [sessionId, isStreaming, hasAssistantMessage, effectiveSelectedModel?.contextLength]);
+
+    const handleGoalCommand = useCallback(
+      (command: string) => {
+        if (disabled || isStreaming) return;
+        void onSubmit(command);
+      },
+      [disabled, isStreaming, onSubmit],
+    );
 
     const slashMenuVisible =
       slashMenuOpen &&
@@ -1231,6 +1244,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     return (
       <div className="relative">
+        {sessionGoal && (
+          <GoalStatusCard
+            goal={sessionGoal}
+            disabled={disabled || isStreaming}
+            onCommand={handleGoalCommand}
+          />
+        )}
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {attachments.map(attachment => (
