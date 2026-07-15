@@ -115,6 +115,14 @@ Controller 是 Gateway event 到 Lit state 的协调层。它不应该知道 Rea
 - 调用 pipeline 构建 render items。
 - 处理 history load 和 incremental update。
 
+状态协调必须遵守以下约束：
+
+- 切换 session 时先取消上一 session 的 message subscription，再订阅目标 session。
+- optimistic user message、live final 和 history apply 都要同步更新对应 session 的内存缓存。
+- active run 拥有实时展示状态；并发 history 结果不能回退 stream、thinking、tool 或可见消息。
+- history 的附件合并先于异步图片解析，异步结果只允许提交到发起时的 session 和消息版本。
+- `chat.send` ack 前使用本地临时 runId；首个同 session Gateway event 可以将其绑定为真实 runId。
+
 ## Message Pipeline 详细设计
 
 Pipeline 的目标是把 Gateway/raw/cached message 统一成可渲染 chat item。

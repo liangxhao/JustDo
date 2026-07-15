@@ -19,7 +19,11 @@ import {
 } from '@shared/cowork/attachments';
 
 import { getTranscriptMedia, toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
-import type { GatewayClient, GatewayEventFrame, GatewayHelloOk } from '@/libs/openclaw-chat/gateway/client';
+import type {
+  GatewayClient,
+  GatewayEventFrame,
+  GatewayHelloOk,
+} from '@/libs/openclaw-chat/gateway/client';
 import { i18nService } from '@/services/i18n';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -304,6 +308,8 @@ export class ChatController {
   private assistantSnapshotRunId: string | null = null;
   private ignoredDeltaAfterAssistantSnapshotCount = 0;
   private historyLoadSeq = 0;
+  private subscribedMessageSessionKey: string | null = null;
+  private messageSubscriptionSeq = 0;
 
   /** Compact state snapshot for diagnostic logging */
   private _snap(): Record<string, unknown> {
@@ -402,6 +408,73 @@ export class ChatController {
     for (const listener of this.streamListeners) listener();
   }
 
+  private cacheSessionMessages(sessionKey: string, messages: unknown[]): void {
+    if (!sessionKey) return;
+    this.chatMessagesBySession.delete(sessionKey);
+    this.chatMessagesBySession.set(sessionKey, messages);
+    if (this.chatMessagesBySession.size > 20) {
+      const oldestKey = this.chatMessagesBySession.keys().next().value;
+      if (typeof oldestKey === 'string') this.chatMessagesBySession.delete(oldestKey);
+    }
+  }
+
+  private setCurrentSessionMessages(messages: unknown[]): void {
+    this.state.chatMessages = messages;
+    this.cacheSessionMessages(this.state.sessionKey, messages);
+  }
+
+  private async syncMessageSessionSubscription(sessionKey: string): Promise<void> {
+    const client = this.state.client;
+    if (!client || !this.state.connected || !sessionKey) return;
+
+    const previousSessionKey = this.subscribedMessageSessionKey;
+    if (previousSessionKey === sessionKey) return;
+    const subscriptionSeq = ++this.messageSubscriptionSeq;
+
+    if (previousSessionKey) {
+      await client
+        .request('sessions.messages.unsubscribe', { key: previousSessionKey })
+        .catch(() => {});
+    }
+    if (
+      this.state.client !== client ||
+      !this.state.connected ||
+      subscriptionSeq !== this.messageSubscriptionSeq
+    ) {
+      return;
+    }
+    try {
+      await client.request('sessions.messages.subscribe', { key: sessionKey });
+      if (
+        this.state.client === client &&
+        this.state.connected &&
+        subscriptionSeq === this.messageSubscriptionSeq
+      ) {
+        this.subscribedMessageSessionKey = sessionKey;
+      }
+    } catch {
+      if (subscriptionSeq === this.messageSubscriptionSeq) {
+        this.subscribedMessageSessionKey = null;
+      }
+    }
+  }
+
+  private acceptRunId(
+    runId: string | undefined | null,
+    allowProvisionalBinding = true,
+  ): boolean {
+    if (!runId || !this.state.chatRunId || runId === this.state.chatRunId) return true;
+    if (
+      allowProvisionalBinding &&
+      this.state.chatSending &&
+      this.state.chatRunId.startsWith('justdo-')
+    ) {
+      this.state.chatRunId = runId;
+      return true;
+    }
+    return false;
+  }
+
   private clearLifecycleEndFallback(): void {
     if (!this.lifecycleEndFallbackTimer) return;
     clearTimeout(this.lifecycleEndFallbackTimer);
@@ -483,11 +556,7 @@ export class ChatController {
     this.clearPostFinalHistoryReload();
     this.postFinalHistoryReloadTimer = setTimeout(() => {
       this.postFinalHistoryReloadTimer = null;
-      if (
-        this.state.sessionKey !== sessionKey ||
-        !this.state.connected ||
-        this.state.chatSending
-      ) {
+      if (this.state.sessionKey !== sessionKey || !this.state.connected || this.state.chatSending) {
         debugLog('[ChatCtrl] post-final history reload skipped', {
           sessionKey,
           ...this._snap(),
@@ -726,6 +795,8 @@ export class ChatController {
     this.gatewayToken = token;
     // Stop existing client
     this.state.client?.stop();
+    this.messageSubscriptionSeq += 1;
+    this.subscribedMessageSessionKey = null;
 
     this.state.sessionKey = sessionKey;
     this.state.chatLoading = true;
@@ -789,6 +860,7 @@ export class ChatController {
     this.notify();
 
     if (this.state.connected) {
+      await this.syncMessageSessionSubscription(sessionKey);
       await this.loadHistory(false, { preferStartup: true });
     }
   }
@@ -801,6 +873,8 @@ export class ChatController {
     this.state.client?.stop();
     this.state.client = null;
     this.state.connected = false;
+    this.messageSubscriptionSeq += 1;
+    this.subscribedMessageSessionKey = null;
     this.notify();
   }
 
@@ -809,17 +883,15 @@ export class ChatController {
   private handleHello(hello: GatewayHelloOk): void {
     debugLog('[ChatCtrl] handleHello — connected, sessionKey:', this.state.sessionKey);
     this.state.connected = true;
+    this.messageSubscriptionSeq += 1;
+    this.subscribedMessageSessionKey = null;
     this.state.hello = hello;
     this.state.lastError = null;
     this.notify();
 
     // Subscribe to session events (matches webchat: subscribeSessions + syncSelectedSessionMessageSubscription)
     this.state.client?.request('sessions.subscribe', {}).catch(() => {});
-    if (this.state.sessionKey) {
-      this.state.client
-        ?.request('sessions.messages.subscribe', { key: this.state.sessionKey })
-        .catch(() => {});
-    }
+    void this.syncMessageSessionSubscription(this.state.sessionKey);
 
     // Load startup metadata once after connection. Later history refreshes use
     // chat.history so post-run reconciliation does not touch startup surfaces.
@@ -829,6 +901,8 @@ export class ChatController {
   private handleClose(): void {
     this.state.connected = false;
     this.state.chatSending = false;
+    this.messageSubscriptionSeq += 1;
+    this.subscribedMessageSessionKey = null;
     this.notify();
   }
 
@@ -864,7 +938,7 @@ export class ChatController {
           eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
           ...this._snap(),
         });
-        this.loadHistory(true);
+        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-message');
       }
     }
   }
@@ -1084,10 +1158,7 @@ export class ChatController {
 
   // ─── History Loading ──────────────────────────────────────────────────
 
-  async loadHistory(
-    queueIfBusy = false,
-    options: { preferStartup?: boolean } = {},
-  ): Promise<void> {
+  async loadHistory(queueIfBusy = false, options: { preferStartup?: boolean } = {}): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) return;
 
@@ -1191,11 +1262,22 @@ export class ChatController {
         hiddenCount: rawMessages.length - projectedMessages.length,
         projectedSummary: summarizeHistoryForDebug(projectedMessages),
       });
-      const messagesWithCompactionDetails = await this.enrichCompactionMarkers(projectedMessages);
+      const messagesWithCompactionDetails = await this.enrichCompactionMarkers(
+        projectedMessages,
+        sessionKey,
+      );
       const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
         sessionKey,
         messagesWithCompactionDetails,
       );
+      if (this.state.sessionKey !== sessionKey) {
+        debugLog('[ChatCtrl] loadHistory ABORT session changed during normalization', {
+          seq: loadSeq,
+          requestedSessionKey: sessionKey,
+          currentSessionKey: this.state.sessionKey,
+        });
+        return;
+      }
       let messages = hydratedMessages.map(message =>
         normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
       );
@@ -1254,6 +1336,7 @@ export class ChatController {
           currentSummary: summarizeHistoryForDebug(this.state.chatMessages),
         });
         this.state.chatLoading = false;
+        this.notify();
         if (backfilledThinking) this.notifyStream();
         return;
       }
@@ -1276,6 +1359,7 @@ export class ChatController {
         });
         this.scheduleDeferredHistoryReload(sessionKey, 'stale-history');
         this.state.chatLoading = false;
+        this.notify();
         return;
       }
 
@@ -1294,6 +1378,7 @@ export class ChatController {
         });
         this.scheduleDeferredHistoryReload(sessionKey, 'regressive-history');
         this.state.chatLoading = false;
+        this.notify();
         return;
       }
 
@@ -1308,21 +1393,9 @@ export class ChatController {
       this.state.chatToolMessages = [];
       this.state.chatThinkingMessages = [];
       this.state.chatStreamSegments = [];
-      this.state.chatMessages = messages;
-      this.chatMessagesBySession.delete(sessionKey);
-      this.chatMessagesBySession.set(sessionKey, messages);
-      if (this.chatMessagesBySession.size > 20) {
-        const oldestKey = this.chatMessagesBySession.keys().next().value;
-        if (typeof oldestKey === 'string') this.chatMessagesBySession.delete(oldestKey);
-      }
       this.state.chatLoading = false;
       this.state.chatStream = null;
       this.state.chatThinkingStream = null;
-      void this.resolveManagedHistoryImages(messages).then(resolvedMessages => {
-        if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
-        this.state.chatMessages = resolvedMessages;
-        this.notify();
-      });
 
       // Only clear pendingUserMessage if the user message is actually in the
       // loaded history.  For brand-new sessions the gateway may not have
@@ -1341,10 +1414,14 @@ export class ChatController {
         });
         if (foundIndex >= 0) {
           if (Array.isArray(p.content)) {
-            messages[foundIndex] = {
-              ...(messages[foundIndex] as Record<string, unknown>),
-              content: p.content,
-            };
+            messages = messages.map((historyMessage, index) =>
+              index === foundIndex
+                ? {
+                    ...(historyMessage as Record<string, unknown>),
+                    content: p.content,
+                  }
+                : historyMessage,
+            );
           }
           debugLog('[ChatCtrl] loadHistory OK — pendingUserMessage found in history, clearing', {
             seq: loadSeq,
@@ -1378,6 +1455,12 @@ export class ChatController {
         });
       }
 
+      this.setCurrentSessionMessages(messages);
+      void this.resolveManagedHistoryImages(messages).then(resolvedMessages => {
+        if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
+        this.setCurrentSessionMessages(resolvedMessages);
+        this.notify();
+      });
       this.notify();
     } catch (err) {
       if (this.state.sessionKey !== sessionKey) return;
@@ -1416,6 +1499,14 @@ export class ChatController {
   private handleChatEvent(payload: ChatEventPayload): void {
     // Only handle events for our session
     if (payload.sessionKey !== this.state.sessionKey) return;
+    if (!this.acceptRunId(payload.runId)) {
+      debugLog('[ChatCtrl] chat event ignored (run mismatch)', {
+        eventRunId: payload.runId ?? null,
+        chatRunId: this.state.chatRunId,
+        state: payload.state,
+      });
+      return;
+    }
 
     switch (payload.state) {
       case 'delta':
@@ -1508,7 +1599,9 @@ export class ChatController {
       const terminalMessage = markOptimisticHistoryTail(
         liveThinkingText ? withThinkingContent(message, liveThinkingText) : message,
       );
-      this.state.chatMessages = appendTerminalMessage(this.state.chatMessages, terminalMessage);
+      this.setCurrentSessionMessages(
+        appendTerminalMessage(this.state.chatMessages, terminalMessage),
+      );
       this.state.chatStreamSegments = [];
       debugLog('[ChatCtrl] ▶ chat.final appended terminal', {
         terminalMessage: summarizeMessageForDebug(terminalMessage),
@@ -1549,7 +1642,7 @@ export class ChatController {
     const message = payload.message;
     debugLog('[ChatCtrl] ▶ chat.aborted', { hasMessage: !!message, ...this._snap() });
     if (message && !shouldHideMessage(message)) {
-      this.state.chatMessages = [...this.state.chatMessages, message];
+      this.setCurrentSessionMessages([...this.state.chatMessages, message]);
     }
     this.state.chatStream = null;
     this.state.chatStreamStartedAt = null;
@@ -1640,7 +1733,7 @@ export class ChatController {
       });
       return;
     }
-    if (runId && this.state.chatRunId && runId !== this.state.chatRunId) {
+    if (!this.acceptRunId(runId, Boolean(eventSession))) {
       debugLog('[ChatCtrl] ▶ event ignored (run mismatch)', {
         sourceEvent,
         stream,
@@ -1935,14 +2028,15 @@ export class ChatController {
       return;
     }
 
+    const sessionKey = this.state.sessionKey;
     const runId = `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     debugLog('[ChatCtrl] sendMessage:', message.slice(0, 60), {
-      sessionKey: this.state.sessionKey,
+      sessionKey,
       runId,
     });
     this.clearPostFinalHistoryReload();
     this.clearDeferredHistoryReload();
-    this.historyReloadRequested.delete(this.state.sessionKey);
+    this.historyReloadRequested.delete(sessionKey);
     this.pendingHistoryReload = false;
 
     // Optimistic: append user message immediately
@@ -1955,7 +2049,7 @@ export class ChatController {
           : message,
       timestamp: Date.now(),
     };
-    this.state.chatMessages = [...this.state.chatMessages, userMessage];
+    this.setCurrentSessionMessages([...this.state.chatMessages, userMessage]);
     this.state.chatThinkingMessages = [];
     this.state.chatToolMessages = [];
     this.state.chatStreamSegments = [];
@@ -1972,19 +2066,26 @@ export class ChatController {
         .filter(attachment => attachment.base64Data)
         .map(toGatewayAttachment);
       const ack = await client.request<{ runId?: string; status?: string }>('chat.send', {
-        sessionKey: this.state.sessionKey,
+        sessionKey,
         message,
         deliver: false,
         idempotencyKey: runId,
         ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
       });
 
-      if (ack?.runId) {
+      if (ack?.runId && this.state.sessionKey === sessionKey && this.state.chatRunId === runId) {
         this.state.chatRunId = ack.runId;
       }
 
       // If status is "ok", the run already completed
-      if (ack?.status === 'ok') {
+      const ackMatchesActiveRun =
+        this.state.chatRunId === runId ||
+        (typeof ack?.runId === 'string' && this.state.chatRunId === ack.runId);
+      if (
+        ack?.status === 'ok' &&
+        this.state.sessionKey === sessionKey &&
+        ackMatchesActiveRun
+      ) {
         this.state.chatSending = false;
         this.state.chatRunId = null;
         this.resetAssistantSnapshotSource();
@@ -1992,16 +2093,17 @@ export class ChatController {
         this.notify();
       }
     } catch (err) {
+      if (this.state.sessionKey !== sessionKey || this.state.chatRunId !== runId) return;
       this.state.chatSending = false;
       this.state.chatRunId = null;
       this.resetAssistantSnapshotSource();
       this.state.chatStream = null;
       this.state.lastError = (err as Error).message;
       // Add error as assistant message
-      this.state.chatMessages = [
+      this.setCurrentSessionMessages([
         ...this.state.chatMessages,
         { role: 'assistant', content: `Error: ${(err as Error).message}`, timestamp: Date.now() },
-      ];
+      ]);
       this.notify();
     }
   }
@@ -2009,6 +2111,7 @@ export class ChatController {
   private async compactSession(): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
+    const sessionKey = this.state.sessionKey;
 
     this.state.chatSending = true;
     this.state.lastError = null;
@@ -2019,13 +2122,16 @@ export class ChatController {
         compacted?: boolean;
         reason?: string;
         result?: { tokensBefore?: number; tokensAfter?: number };
-      }>('sessions.compact', { key: this.state.sessionKey });
+      }>('sessions.compact', { key: sessionKey });
+      if (this.state.sessionKey !== sessionKey) return;
       this.state.chatSending = false;
       const before = result?.result?.tokensBefore;
       const after = result?.result?.tokensAfter;
       if (result?.compacted) {
         await this.loadHistory();
-        const checkpoint = await this.loadLatestCompactionCheckpoint();
+        if (this.state.sessionKey !== sessionKey) return;
+        const checkpoint = await this.loadLatestCompactionCheckpoint(sessionKey);
+        if (this.state.sessionKey !== sessionKey) return;
         const marker = {
           kind: 'compaction',
           id: checkpoint?.checkpointId,
@@ -2043,7 +2149,7 @@ export class ChatController {
               return metadata.id === checkpoint.checkpointId;
             })
           : -1;
-        this.state.chatMessages =
+        this.setCurrentSessionMessages(
           existingMarkerIndex >= 0
             ? this.state.chatMessages.map((message, index) =>
                 index === existingMarkerIndex
@@ -2060,11 +2166,12 @@ export class ChatController {
                   timestamp: Date.now(),
                   __openclaw: marker,
                 },
-              ];
+              ],
+        );
         this.notify();
         return;
       }
-      this.state.chatMessages = [
+      this.setCurrentSessionMessages([
         ...this.state.chatMessages,
         {
           role: 'system',
@@ -2074,38 +2181,41 @@ export class ChatController {
             reason: result?.reason,
           },
         },
-      ];
+      ]);
       this.notify();
     } catch (err) {
+      if (this.state.sessionKey !== sessionKey) return;
       this.state.chatSending = false;
       this.state.lastError = (err as Error).message;
-      this.state.chatMessages = [
+      this.setCurrentSessionMessages([
         ...this.state.chatMessages,
         {
           role: 'system',
           content: formatI18n('coworkCompactFailed', { error: (err as Error).message }),
           timestamp: Date.now(),
         },
-      ];
+      ]);
       this.notify();
     }
   }
 
-  private async loadLatestCompactionCheckpoint(): Promise<{
+  private async loadLatestCompactionCheckpoint(sessionKey = this.state.sessionKey): Promise<{
     checkpointId?: string;
     summary?: string;
     tokensBefore?: number;
     tokensAfter?: number;
     createdAt?: number;
   } | null> {
-    const checkpoints = await this.loadCompactionCheckpoints();
+    const checkpoints = await this.loadCompactionCheckpoints(sessionKey);
     return (
       [...checkpoints].sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))[0] ??
       null
     );
   }
 
-  private async loadCompactionCheckpoints(): Promise<
+  private async loadCompactionCheckpoints(
+    sessionKey = this.state.sessionKey,
+  ): Promise<
     Array<{
       checkpointId?: string;
       summary?: string;
@@ -2125,7 +2235,7 @@ export class ChatController {
           tokensAfter?: number;
           createdAt?: number;
         }>;
-      }>('sessions.compaction.list', { key: this.state.sessionKey });
+      }>('sessions.compaction.list', { key: sessionKey });
       return response?.checkpoints ?? [];
     } catch (err) {
       console.warn(
@@ -2136,11 +2246,14 @@ export class ChatController {
     }
   }
 
-  private async enrichCompactionMarkers(messages: unknown[]): Promise<unknown[]> {
+  private async enrichCompactionMarkers(
+    messages: unknown[],
+    sessionKey = this.state.sessionKey,
+  ): Promise<unknown[]> {
     const markers = messages.filter(message => isCompactionMarker(message));
     if (markers.length === 0) return messages;
 
-    const checkpoints = await this.loadCompactionCheckpoints();
+    const checkpoints = await this.loadCompactionCheckpoints(sessionKey);
     if (checkpoints.length === 0) return messages;
     const checkpointsById = new Map(
       checkpoints
@@ -2624,7 +2737,9 @@ function hasSimilarDisplayText(left: string, right: string): boolean {
     (char, index) => normalizedRight[index] !== char,
   );
   const prefixLength =
-    commonPrefixLength >= 0 ? commonPrefixLength : Math.min(normalizedLeft.length, normalizedRight.length);
+    commonPrefixLength >= 0
+      ? commonPrefixLength
+      : Math.min(normalizedLeft.length, normalizedRight.length);
   return prefixLength / shorterLength >= 0.8 || prefixLength >= 160;
 }
 
@@ -2653,14 +2768,17 @@ function historyHasSameOrNewerDisplayMessage(
     if (historyTimestamp != null && historyTimestamp >= timestamp - toleranceMs) {
       return true;
     }
-    return isLocallyOptimisticHistoryTail(message) && isLikelyPersistedOptimisticReplacement(
-      historyMessage,
-      message,
+    return (
+      isLocallyOptimisticHistoryTail(message) &&
+      isLikelyPersistedOptimisticReplacement(historyMessage, message)
     );
   });
 }
 
-function isLikelyPersistedOptimisticReplacement(historyMessage: unknown, localMessage: unknown): boolean {
+function isLikelyPersistedOptimisticReplacement(
+  historyMessage: unknown,
+  localMessage: unknown,
+): boolean {
   const historyDisplay = messageRoleAndText(historyMessage);
   const localDisplay = messageRoleAndText(localMessage);
   if (!historyDisplay || !localDisplay || historyDisplay.role !== localDisplay.role) return false;
@@ -2791,20 +2909,20 @@ function isDisplayPrefixOfCurrent(historyMessages: unknown[], currentMessages: u
     const currentDisplay = messageRoleAndText(currentMessage);
     return Boolean(
       historyDisplay &&
-        currentDisplay &&
-        historyDisplay.role === currentDisplay.role &&
-        hasSimilarDisplayText(historyDisplay.text, currentDisplay.text),
+      currentDisplay &&
+      historyDisplay.role === currentDisplay.role &&
+      hasSimilarDisplayText(historyDisplay.text, currentDisplay.text),
     );
   });
 }
 
-function hasMissingProtectableTail(historyMessages: unknown[], currentMessages: unknown[]): boolean {
+function hasMissingProtectableTail(
+  historyMessages: unknown[],
+  currentMessages: unknown[],
+): boolean {
   return currentMessages.slice(historyMessages.length).some(message => {
     if (shouldHideMessage(message)) return false;
-    if (
-      !isLocallyOptimisticHistoryTail(message) &&
-      !asRecord(message)?.__openclawStreamFallback
-    ) {
+    if (!isLocallyOptimisticHistoryTail(message) && !asRecord(message)?.__openclawStreamFallback) {
       return false;
     }
     const signature = messageDisplaySignature(message);

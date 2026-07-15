@@ -33,6 +33,116 @@ test('preserves optimistic prompt when promoting a temp session to a persisted s
   expect(controller.state.chatLoading).toBe(true);
 });
 
+test('moves the message subscription when switching connected sessions', async () => {
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.startup') return Promise.resolve({ messages: [] });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  (
+    controller as unknown as { subscribedMessageSessionKey: string | null }
+  ).subscribedMessageSessionKey = 'agent:main:justdo:session-1';
+
+  await controller.switchSession('agent:main:justdo:session-2');
+
+  expect(request).toHaveBeenNthCalledWith(1, 'sessions.messages.unsubscribe', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(request).toHaveBeenNthCalledWith(2, 'sessions.messages.subscribe', {
+    key: 'agent:main:justdo:session-2',
+  });
+  expect(request).toHaveBeenNthCalledWith(3, 'chat.startup', {
+    sessionKey: 'agent:main:justdo:session-2',
+    limit: 1000,
+  });
+});
+
+test('binds the real run id when an agent event arrives before chat.send acknowledges', async () => {
+  let resolveSend: ((value: { runId: string }) => void) | undefined;
+  const request = vi.fn().mockImplementation(
+    () =>
+      new Promise<{ runId: string }>(resolve => {
+        resolveSend = resolve;
+      }),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  const sending = controller.sendMessage('hello');
+  (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent({
+    runId: 'gateway-run-1',
+    stream: 'assistant',
+    session: 'agent:main:justdo:session-1',
+    data: { text: 'first response chunk' },
+  });
+
+  expect(controller.state.chatRunId).toBe('gateway-run-1');
+  expect(controller.state.chatStream).toBe('first response chunk');
+
+  resolveSend?.({ runId: 'gateway-run-1' });
+  await sending;
+  expect(controller.state.chatRunId).toBe('gateway-run-1');
+});
+
+test('keeps a real run active when chat.send rejects after streaming has started', async () => {
+  let rejectSend: ((error: Error) => void) | undefined;
+  const request = vi.fn().mockImplementation(
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        rejectSend = reject;
+      }),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  const sending = controller.sendMessage('hello');
+  (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent({
+    runId: 'gateway-run-1',
+    stream: 'assistant',
+    session: 'agent:main:justdo:session-1',
+    data: { text: 'still running' },
+  });
+  rejectSend?.(new Error('request timeout: chat.send'));
+  await sending;
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('gateway-run-1');
+  expect(controller.state.chatStream).toBe('still running');
+  expect(controller.state.lastError).toBeNull();
+});
+
+test('keeps optimistic messages in the per-session cache', async () => {
+  const request = vi.fn().mockResolvedValue({ runId: 'run-1' });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('cached prompt');
+  controller.state.connected = false;
+  await controller.switchSession('agent:main:justdo:session-2');
+  await controller.switchSession('agent:main:justdo:session-1');
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'user', content: 'cached prompt' }),
+  ]);
+});
+
 test('compacts the current session instead of sending /compact as chat', async () => {
   const request = vi
     .fn()
@@ -223,6 +333,49 @@ test('enriches compaction markers again after history refreshes', async () => {
       },
     }),
   ]);
+});
+
+test('does not apply history when the session changes during async normalization', async () => {
+  let resolveCheckpoints:
+    | ((value: { checkpoints: Array<{ checkpointId: string; summary: string }> }) => void)
+    | undefined;
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'system',
+            timestamp: 1000,
+            __openclaw: { kind: 'compaction', id: 'checkpoint-1' },
+          },
+        ],
+      });
+    }
+    return new Promise(resolve => {
+      resolveCheckpoints = resolve;
+    });
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  const load = controller.loadHistory();
+  await vi.waitFor(() => {
+    expect(request).toHaveBeenCalledWith('sessions.compaction.list', {
+      key: 'agent:main:justdo:session-1',
+    });
+  });
+  const nextSessionMessages = [{ role: 'assistant', content: 'session 2 content' }];
+  controller.state.sessionKey = 'agent:main:justdo:session-2';
+  controller.state.chatMessages = nextSessionMessages;
+  controller.state.chatLoading = false;
+  resolveCheckpoints?.({
+    checkpoints: [{ checkpointId: 'checkpoint-1', summary: 'session 1 summary' }],
+  });
+
+  await load;
+  expect(controller.state.chatMessages).toBe(nextSessionMessages);
 });
 
 test('uses the latest checkpoint when the history marker id differs', async () => {
@@ -484,8 +637,7 @@ test('does not duplicate optimistic terminal content when persisted timestamp is
       { type: 'thinking', thinking: '我需要确认所有子代理已完成，然后汇总最终文件路径。' },
       {
         type: 'text',
-        text:
-          '全部完成！以下是执行摘要：\n\n---\n\n## 任务完成：15 个技能示例 → Excel 汇总\n\n### 执行过程\n1. 读取了所有 15 个技能的 SKILL.md 文档\n2. 通过 5 个并行 subagent 分别生成示例（每组 3 个技能）\n3. 等待全部完成后，汇总写入 Excel\n\n### 生成文件\n- OpenClaw_技能使用示例汇总.xlsx\n\n### Excel 表格结构\n| 列 | 内容 |\n|---|---|\n| 序号 | 1-15 |\n| 技能名称 | 含英文名+中文说明 |\n| 典型场景 | 每个技能的一个实际应用场景 |\n| 具体示例 | 可直接执行的示例说明 |\n\n文件路径：E:\\workspace\\JustDo\\project\\OpenClaw_技能使用示例汇总.xlsx',
+        text: '全部完成！以下是执行摘要：\n\n---\n\n## 任务完成：15 个技能示例 → Excel 汇总\n\n### 执行过程\n1. 读取了所有 15 个技能的 SKILL.md 文档\n2. 通过 5 个并行 subagent 分别生成示例（每组 3 个技能）\n3. 等待全部完成后，汇总写入 Excel\n\n### 生成文件\n- OpenClaw_技能使用示例汇总.xlsx\n\n### Excel 表格结构\n| 列 | 内容 |\n|---|---|\n| 序号 | 1-15 |\n| 技能名称 | 含英文名+中文说明 |\n| 典型场景 | 每个技能的一个实际应用场景 |\n| 具体示例 | 可直接执行的示例说明 |\n\n文件路径：E:\\workspace\\JustDo\\project\\OpenClaw_技能使用示例汇总.xlsx',
       },
     ],
     timestamp: 100_000,
@@ -681,6 +833,31 @@ test('keeps live tool messages until delayed post-final history catches up', asy
   expect(controller.state.chatMessages).toEqual([persistedFinal]);
 });
 
+test('coalesces idle session.message events before refreshing history', async () => {
+  vi.useFakeTimers();
+  const request = vi.fn().mockResolvedValue({ messages: [] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  handleEvent({ event: 'session.message', payload: {} });
+  handleEvent({ event: 'session.message', payload: {} });
+
+  expect(request).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1300);
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey: 'agent:main:justdo:session-1',
+    limit: 1000,
+  });
+});
+
 test('replays deferred session.message reload after silent final message', async () => {
   vi.useFakeTimers();
   const request = vi.fn().mockResolvedValue({ messages: [] });
@@ -832,6 +1009,63 @@ test('does not let a stale history refresh overwrite newer visible messages', as
   });
   expect(request).toHaveBeenCalledTimes(2);
   expect(controller.state.chatMessages).toEqual([waitingMessage, finalMessage]);
+});
+
+test('notifies listeners when an active run makes a history load stop early', async () => {
+  const request = vi.fn().mockResolvedValue({
+    messages: [{ role: 'assistant', content: 'persisted content', timestamp: 1000 }],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  const loadingStates: boolean[] = [];
+  controller.subscribe(state => loadingStates.push(state.chatLoading));
+
+  await controller.loadHistory();
+
+  expect(loadingStates).toEqual([true, false]);
+  expect(controller.state.chatLoading).toBe(false);
+});
+
+test('preserves optimistic attachment blocks after managed image resolution', async () => {
+  const request = vi.fn().mockResolvedValue({
+    messages: [{ role: 'user', content: 'image prompt', timestamp: Date.now() }],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.setPendingUserMessage('image prompt', [
+    {
+      name: 'prompt.png',
+      mimeType: 'image/png',
+      base64Data: 'YWJj',
+    },
+  ]);
+  controller.state.chatSending = false;
+
+  await controller.loadHistory();
+  await Promise.resolve();
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'image prompt' },
+        {
+          type: 'attachment',
+          attachment: {
+            url: 'data:image/png;base64,YWJj',
+            kind: 'image',
+            label: 'prompt.png',
+            mimeType: 'image/png',
+          },
+        },
+      ],
+    }),
+  ]);
 });
 
 test('does not apply a shorter post-run history snapshot over a newer visible final tail', async () => {

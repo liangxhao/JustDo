@@ -1881,8 +1881,7 @@ export class JustDoChatElement extends LitElement {
     streamSegments?: Array<{ text: string; ts: number }>,
     stream?: string | null,
   ): Array<ChatItem | MessageGroup> {
-    const msgs = messages ?? this.messages;
-    if (!msgs || msgs.length === 0) return [];
+    const msgs = messages ?? this.messages ?? [];
 
     try {
       const result = buildChatItems({
