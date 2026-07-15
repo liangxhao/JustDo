@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import tls from 'tls';
 
-const TRUST_DIRECTORY_NAME = 'network-trust';
+const TRUST_DIRECTORY_RELATIVE_PATH = path.join('outbound-header-proxy', 'certs');
+const LEGACY_TRUST_DIRECTORY_NAME = 'network-trust';
 const TRUSTED_CA_BUNDLE_NAME = 'trusted-ca-bundle.pem';
 const USE_SYSTEM_CA_OPTION = '--use-system-ca';
 
@@ -49,6 +50,24 @@ const appendNodeOption = (value: string | undefined, option: string): string => 
   return tokens.includes(option) ? tokens.join(' ') : [...tokens, option].join(' ');
 };
 
+const cleanupLegacyTrustedCaBundle = (userDataPath: string, currentBundlePath: string): void => {
+  const legacyBundlePath = path.join(
+    userDataPath,
+    LEGACY_TRUST_DIRECTORY_NAME,
+    TRUSTED_CA_BUNDLE_NAME,
+  );
+  if (legacyBundlePath === currentBundlePath || !fs.existsSync(legacyBundlePath)) {
+    return;
+  }
+
+  try {
+    fs.rmSync(legacyBundlePath, { force: true });
+    fs.rmdirSync(path.dirname(legacyBundlePath));
+  } catch {
+    // Best-effort cleanup only. Leave any user-added files in the legacy directory alone.
+  }
+};
+
 export const enableSystemCaForCurrentProcess = (): void => {
   if (typeof tls.getCACertificates !== 'function' || typeof tls.setDefaultCACertificates !== 'function') {
     return;
@@ -87,13 +106,14 @@ export const buildTrustedCaBundle = (
       return null;
     }
 
-    const trustDir = path.join(userDataPath, TRUST_DIRECTORY_NAME);
+    const trustDir = path.join(userDataPath, TRUST_DIRECTORY_RELATIVE_PATH);
     fs.mkdirSync(trustDir, { recursive: true });
     const bundlePath = path.join(trustDir, TRUSTED_CA_BUNDLE_NAME);
     const content = `${certs.join('\n')}\n`;
     if (!fs.existsSync(bundlePath) || fs.readFileSync(bundlePath, 'utf8') !== content) {
       fs.writeFileSync(bundlePath, content, 'utf8');
     }
+    cleanupLegacyTrustedCaBundle(userDataPath, bundlePath);
     return bundlePath;
   } catch (error) {
     console.warn('[NetworkTrust] Failed to build trusted CA bundle:', error);
