@@ -184,6 +184,7 @@ const MITM_DISCONNECT_ERROR_KINDS = new Set([
 type MitmErrorHandler = (context: unknown, error: Error, kind: string) => void;
 type MitmProxyWithInternalErrorHook = Proxy & {
   _onError?: (kind: string, context: unknown, error: Error) => void;
+  _onSocketError?: (socketDescription: string, error: NodeJS.ErrnoException) => void;
   onErrorHandlers?: MitmErrorHandler[];
 };
 
@@ -219,6 +220,17 @@ export const shouldSuppressMitmProxyErrorLog = (
 export const suppressNoisyMitmDisconnectLogs = (proxy: Proxy): void => {
   const mitmProxy = proxy as MitmProxyWithInternalErrorHook;
   const originalOnError = mitmProxy._onError?.bind(proxy);
+  const originalOnSocketError = mitmProxy._onSocketError?.bind(proxy);
+
+  if (originalOnSocketError) {
+    mitmProxy._onSocketError = (socketDescription, error) => {
+      if (isIgnorableProxyClientError(error)) {
+        return;
+      }
+      originalOnSocketError(socketDescription, error);
+    };
+  }
+
   if (!originalOnError) {
     return;
   }
@@ -236,6 +248,81 @@ export const suppressNoisyMitmDisconnectLogs = (proxy: Proxy): void => {
       handler(context, error, kind);
     }
   };
+};
+
+const isMitmSocketResetDebugMessage = (args: readonly unknown[]): boolean =>
+  typeof args[0] === 'string' &&
+  /^Got ECONNRESET on [A-Z_]+, ignoring\.$/.test(args[0]);
+
+const isMitmSocketErrorHeader = (args: readonly unknown[]): boolean =>
+  args.length === 1 && args[0] === 'Socket error:';
+
+let mitmConsoleFilterRefCount = 0;
+let originalConsoleDebug: typeof console.debug | null = null;
+let originalConsoleError: typeof console.error | null = null;
+let pendingMitmSocketErrorHeader: Parameters<typeof console.error> | null = null;
+
+const flushPendingMitmSocketErrorHeader = (): void => {
+  if (!pendingMitmSocketErrorHeader || !originalConsoleError) {
+    return;
+  }
+  originalConsoleError(...pendingMitmSocketErrorHeader);
+  pendingMitmSocketErrorHeader = null;
+};
+
+export const installNoisyMitmConsoleFilter = (): void => {
+  mitmConsoleFilterRefCount += 1;
+  if (mitmConsoleFilterRefCount > 1) {
+    return;
+  }
+
+  originalConsoleDebug = console.debug.bind(console);
+  originalConsoleError = console.error.bind(console);
+
+  console.debug = (...args: Parameters<typeof console.debug>) => {
+    if (isMitmSocketResetDebugMessage(args)) {
+      return;
+    }
+    originalConsoleDebug?.(...args);
+  };
+
+  console.error = (...args: Parameters<typeof console.error>) => {
+    if (pendingMitmSocketErrorHeader) {
+      if (args.length === 1 && isIgnorableProxyClientError(args[0])) {
+        pendingMitmSocketErrorHeader = null;
+        return;
+      }
+      flushPendingMitmSocketErrorHeader();
+    }
+
+    if (isMitmSocketErrorHeader(args)) {
+      pendingMitmSocketErrorHeader = args;
+      return;
+    }
+
+    originalConsoleError?.(...args);
+  };
+};
+
+export const uninstallNoisyMitmConsoleFilter = (): void => {
+  if (mitmConsoleFilterRefCount === 0) {
+    return;
+  }
+
+  mitmConsoleFilterRefCount -= 1;
+  if (mitmConsoleFilterRefCount > 0) {
+    return;
+  }
+
+  flushPendingMitmSocketErrorHeader();
+  if (originalConsoleDebug) {
+    console.debug = originalConsoleDebug;
+  }
+  if (originalConsoleError) {
+    console.error = originalConsoleError;
+  }
+  originalConsoleDebug = null;
+  originalConsoleError = null;
 };
 
 const getDefaultPort = (protocol: string): number =>
@@ -355,6 +442,7 @@ export class OutboundHeaderProxy {
 
     const proxy = new Proxy();
     suppressNoisyMitmDisconnectLogs(proxy);
+    installNoisyMitmConsoleFilter();
     proxy.onRequest((context, callback) => {
       void (async () => {
         const requestContext = context as ProxyRequestContext;
@@ -388,20 +476,27 @@ export class OutboundHeaderProxy {
       console.warn(`[OutboundHeaderProxy] ${errorKind || 'proxy error'}:`, error);
     });
 
-    await new Promise<void>((resolve, reject) => {
-      proxy.listen(
-        {
-          host: LOOPBACK_HOST,
-          port: 0,
-          sslCaDir: caDirectory,
-        },
-        error => (error ? reject(error) : resolve()),
-      );
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        proxy.listen(
+          {
+            host: LOOPBACK_HOST,
+            port: 0,
+            sslCaDir: caDirectory,
+          },
+          error => (error ? reject(error) : resolve()),
+        );
+      });
+    } catch (error) {
+      proxy.close();
+      uninstallNoisyMitmConsoleFilter();
+      throw error;
+    }
 
     const caCertificatePath = path.join(caDirectory, CA_CERTIFICATE_PATH);
     if (!fs.existsSync(caCertificatePath)) {
       proxy.close();
+      uninstallNoisyMitmConsoleFilter();
       throw new Error(`Proxy CA certificate was not created: ${caCertificatePath}`);
     }
 
@@ -422,6 +517,7 @@ export class OutboundHeaderProxy {
     this.proxy?.close();
     this.proxy = null;
     this.info = null;
+    uninstallNoisyMitmConsoleFilter();
     restoreOriginalProxyEnv();
     restoreOutboundProxyEnv(process.env);
     if (this.originalFetch) {

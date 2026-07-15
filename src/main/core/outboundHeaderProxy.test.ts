@@ -12,6 +12,7 @@ import {
 import {
   applyOutboundHeaders,
   applyOutboundProxyEnv,
+  installNoisyMitmConsoleFilter,
   isIgnorableProxyClientError,
   isOutboundHeaderProxyActive,
   OutboundHeaderProxy,
@@ -21,6 +22,7 @@ import {
   shouldInjectOutboundHeaders,
   shouldSuppressMitmProxyErrorLog,
   suppressNoisyMitmDisconnectLogs,
+  uninstallNoisyMitmConsoleFilter,
 } from './outboundHeaderProxy';
 
 const temporaryDirectories: string[] = [];
@@ -31,6 +33,7 @@ const HEADER_NAMES = {
 const CONFIGURED_HEADER_NAMES = [HEADER_NAMES.USER_ACCOUNT, HEADER_NAMES.COOKIE] as const;
 
 afterEach(() => {
+  uninstallNoisyMitmConsoleFilter();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -451,8 +454,10 @@ test('keeps MITM error handlers while skipping raw disconnect logging', () => {
   const originalOnError = vi.fn();
   const proxyHandler = vi.fn();
   const contextHandler = vi.fn();
+  const originalOnSocketError = vi.fn();
   const proxy = {
     _onError: originalOnError,
+    _onSocketError: originalOnSocketError,
     onErrorHandlers: [proxyHandler],
   };
   const context = {
@@ -463,8 +468,10 @@ test('keeps MITM error handlers while skipping raw disconnect logging', () => {
   });
 
   suppressNoisyMitmDisconnectLogs(proxy as never);
+  proxy._onSocketError('CLIENT_TO_PROXY_SOCKET', resetError);
   proxy._onError('SERVER_TO_PROXY_RESPONSE_ERROR', context, resetError);
 
+  expect(originalOnSocketError).not.toHaveBeenCalled();
   expect(originalOnError).not.toHaveBeenCalled();
   expect(proxyHandler).toHaveBeenCalledWith(context, resetError, 'SERVER_TO_PROXY_RESPONSE_ERROR');
   expect(contextHandler).toHaveBeenCalledWith(
@@ -474,13 +481,54 @@ test('keeps MITM error handlers while skipping raw disconnect logging', () => {
   );
 
   const timeoutError = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+  proxy._onSocketError('CLIENT_TO_PROXY_SOCKET', timeoutError);
   proxy._onError('SERVER_TO_PROXY_RESPONSE_ERROR', context, timeoutError);
 
+  expect(originalOnSocketError).toHaveBeenCalledWith('CLIENT_TO_PROXY_SOCKET', timeoutError);
   expect(originalOnError).toHaveBeenCalledWith(
     'SERVER_TO_PROXY_RESPONSE_ERROR',
     context,
     timeoutError,
   );
+});
+
+test('filters http-mitm-proxy console noise for ignorable socket resets', () => {
+  const originalDebug = console.debug;
+  const originalError = console.error;
+  const debugCalls: unknown[][] = [];
+  const errorCalls: unknown[][] = [];
+  const resetError = Object.assign(new Error('read ECONNRESET'), {
+    code: 'ECONNRESET',
+  });
+  const timeoutError = Object.assign(new Error('timeout'), {
+    code: 'ETIMEDOUT',
+  });
+
+  console.debug = (...args: unknown[]) => {
+    debugCalls.push(args);
+  };
+  console.error = (...args: unknown[]) => {
+    errorCalls.push(args);
+  };
+
+  try {
+    installNoisyMitmConsoleFilter();
+
+    console.debug('Got ECONNRESET on CLIENT_TO_PROXY_SOCKET, ignoring.');
+    console.debug('useful debug');
+    console.error('Socket error:');
+    console.error(resetError);
+    console.error('Socket error:');
+    console.error(timeoutError);
+    console.error('real error');
+
+    expect(debugCalls).toEqual([['useful debug']]);
+    expect(errorCalls).toEqual([['Socket error:'], [timeoutError], ['real error']]);
+  } finally {
+    uninstallNoisyMitmConsoleFilter();
+    console.debug = originalDebug;
+    console.error = originalError;
+  }
 });
 
 test('accepts a dynamic upstream proxy resolver and user info path', () => {
