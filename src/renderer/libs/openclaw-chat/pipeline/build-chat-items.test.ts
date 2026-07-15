@@ -580,6 +580,59 @@ test('collapses a live tool timeline as soon as that tool result arrives', () =>
   expect(toolTimelineIsOpen(completedMessage)).toBe(false);
 });
 
+test('keeps an existing collapsed tool timeline closed when a new live tool is appended', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'tool-1',
+            name: 'Read',
+            arguments: { file_path: 'README.md' },
+          },
+          {
+            type: 'toolCall',
+            id: 'tool-2',
+            name: 'Write',
+            arguments: { file_path: 'out.txt', content: 'ok' },
+          },
+        ],
+        timestamp: 1000,
+      },
+    ],
+    toolMessages: [
+      {
+        role: 'assistant',
+        toolCallId: 'tool-3',
+        toolName: 'Bash',
+        timestamp: 1100,
+        __justdoToolActive: true,
+        content: [
+          {
+            type: 'toolcall',
+            toolCallId: 'tool-3',
+            name: 'Bash',
+            arguments: { command: 'npm test' },
+          },
+        ],
+      },
+    ],
+    streamSegments: [],
+    stream: null,
+    streamStartedAt: null,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  const assistantMessage = groups(items).find(group => group.role === 'assistant')?.messages[0]
+    ?.message;
+  expect(attachedToolMessages(assistantMessage).length).toBeGreaterThan(0);
+  expect(toolTimelineIsOpen(assistantMessage)).toBe(false);
+});
+
 test('keeps split history tool start and result attached consistently after full refresh', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',

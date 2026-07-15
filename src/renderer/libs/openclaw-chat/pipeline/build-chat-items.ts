@@ -318,16 +318,38 @@ function hasActiveToolTimeline(toolMessages: unknown[]): boolean {
   return anonymousActive || [...activeByToolId.values()].some(Boolean);
 }
 
+function hasToolTimelineContent(message: unknown): boolean {
+  const raw = asRecord(message);
+  if (!raw) {
+    return false;
+  }
+  if (getAttachedToolMessages(raw).length > 0) {
+    return true;
+  }
+  const content = Array.isArray(raw.content) ? raw.content : [];
+  return content.some(block => {
+    const item = asRecord(block);
+    if (!item) return false;
+    const type = typeof item.type === 'string' ? item.type.toLowerCase() : '';
+    return ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(
+      type,
+    );
+  });
+}
+
 function withAttachedToolMessage(
   message: unknown,
   toolMessage: unknown,
   options: { keepTimelineOpen?: boolean } = {},
 ): unknown {
   const raw = asRecord(message) ?? {};
+  const wasTimelineOpen = raw.__justdoToolTimelineOpen === true;
+  const hadToolTimelineContent = hasToolTimelineContent(raw);
   const { __justdoToolTimelineOpen: _ignoredTimelineOpen, ...rest } = raw;
   const attachedToolMessages = [...getAttachedToolMessages(raw), toolMessage];
   const keepTimelineOpen =
-    options.keepTimelineOpen === true || hasActiveToolTimeline(attachedToolMessages);
+    (wasTimelineOpen && hasActiveToolTimeline(attachedToolMessages)) ||
+    (options.keepTimelineOpen === true && !hadToolTimelineContent);
   return {
     ...rest,
     __justdoAttachedToolMessages: attachedToolMessages,
