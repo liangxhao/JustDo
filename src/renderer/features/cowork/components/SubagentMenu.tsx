@@ -182,7 +182,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
             </span>
             <span className="text-xs text-secondary">{subagents.length}</span>
           </div>
-          <div className="max-h-80 overflow-y-auto p-1.5">
+          <div className="max-h-[calc(100vh-7rem)] overflow-y-auto p-1.5">
             {subagents.length === 0 ? (
               <div className="px-3 py-8 text-center text-sm text-secondary">
                 {isLoading ? i18nService.t('loading') : i18nService.t('subagentEmpty')}
