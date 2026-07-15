@@ -181,6 +181,27 @@ describe('normalizeMessage goal token usage', () => {
     expect(message.content).toEqual([{ type: 'text', text: 'Goal complete: Write a poem' }]);
   });
 
+  test('hides zero usage when a projected goal reply has no model metadata', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Goal complete: Write a poem\nTokens used: 0' }],
+    });
+
+    expect(message.content).toEqual([{ type: 'text', text: 'Goal complete: Write a poem' }]);
+  });
+
+  test('hides zero usage when the goal footer is split across text blocks', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Goal complete: Write a poem' },
+        { type: 'text', text: 'Tokens used: 0' },
+      ],
+    });
+
+    expect(message.content).toEqual([{ type: 'text', text: 'Goal complete: Write a poem' }]);
+  });
+
   test('keeps a non-zero goal token count', () => {
     const message = normalizeMessage({
       role: 'assistant',

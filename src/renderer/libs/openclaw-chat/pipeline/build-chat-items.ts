@@ -5,7 +5,11 @@ import {
 } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import { CHAT_HISTORY_RENDER_CHAR_BUDGET, CHAT_HISTORY_RENDER_LIMIT } from '@/libs/openclaw-chat/pipeline/history-limits';
 import { extractTextCached, extractThinkingCached } from '@/libs/openclaw-chat/pipeline/message-extract';
-import { normalizeMessage, stripMessageDisplayMetadataText } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import {
+  normalizeMessage,
+  stripMessageDisplayMetadataText,
+  stripUnreliableGoalZeroUsageText,
+} from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { messageMatchesSearchQuery } from '@/libs/openclaw-chat/pipeline/search-match';
 import { trimAccumulatedStreamPrefix } from '@/libs/openclaw-chat/pipeline/stream-text';
@@ -865,7 +869,7 @@ function hasRenderableNormalizedMessage(message: unknown): boolean {
 }
 
 function sanitizeStreamText(text: string): string {
-  const stripped = stripMessageDisplayMetadataText(text);
+  const stripped = stripUnreliableGoalZeroUsageText(stripMessageDisplayMetadataText(text));
   return stripped.trim().length > 0 ? stripped : '';
 }
 

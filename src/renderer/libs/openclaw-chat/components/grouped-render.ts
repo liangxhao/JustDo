@@ -17,7 +17,10 @@ import {
   extractThinkingCached,
   formatReasoningMarkdown,
 } from '@/libs/openclaw-chat/pipeline/message-extract';
-import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import {
+  normalizeMessage,
+  stripUnreliableGoalZeroUsageText,
+} from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
 import { extractToolCards, extractToolCardsCached } from '@/libs/openclaw-chat/pipeline/tool-cards';
@@ -423,6 +426,12 @@ function renderAssistantMessageInContentOrder(
   const raw = asRecord(rawMessage);
   const content = Array.isArray(raw?.content) ? raw.content : null;
   if (!content) return null;
+  const goalReplyContext = content
+    .map(block => {
+      const record = asRecord(block);
+      return record?.type === 'text' && typeof record.text === 'string' ? record.text : '';
+    })
+    .join('\n');
 
   const attachedByToolId = new Map<string, unknown[]>();
   for (const attached of getAttachedToolMessages(rawMessage)) {
@@ -462,7 +471,13 @@ function renderAssistantMessageInContentOrder(
 
     if (type === 'text') {
       flushPendingToolCards();
-      const text = typeof block.text === 'string' ? stripDeliveredAttachmentLines(block.text) : '';
+      const text =
+        typeof block.text === 'string'
+          ? stripUnreliableGoalZeroUsageText(
+              stripDeliveredAttachmentLines(block.text),
+              goalReplyContext,
+            )
+          : '';
       ordered.push(renderAssistantTextBlock(text));
       continue;
     }

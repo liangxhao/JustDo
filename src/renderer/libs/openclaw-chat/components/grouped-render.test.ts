@@ -238,6 +238,66 @@ describe('group footer helpers', () => {
 });
 
 describe('renderMessageGroup', () => {
+  test('hides zero usage from an ordered OpenClaw goal reply', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'goal-complete-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'goal-complete-message',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'text',
+                  text: 'Goal complete: Write a poem\nTokens used: 0',
+                },
+              ],
+              provider: 'openclaw',
+              model: 'gateway-injected',
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('Goal complete: Write a poem');
+    expect(rendered).not.toContain('Tokens used: 0');
+  });
+
+  test('hides zero usage from split ordered Goal text blocks', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'split-goal-complete-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'split-goal-complete-message',
+            message: {
+              role: 'assistant',
+              content: [
+                { type: 'text', text: 'Goal complete: Write a poem' },
+                { type: 'text', text: 'Tokens used: 0' },
+              ],
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('Goal complete: Write a poem');
+    expect(rendered).not.toContain('Tokens used: 0');
+  });
+
   test('renders a MEDIA file attachment from user message content', () => {
     const rendered = stringifyTemplate(
       renderMessageGroup({

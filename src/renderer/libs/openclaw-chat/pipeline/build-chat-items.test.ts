@@ -401,6 +401,21 @@ test('keeps the waiting indicator and first content delta on the same stream ite
   expect(waitingItems.some(item => item.kind === 'reading-indicator')).toBe(false);
 });
 
+test('hides unreliable zero goal usage from the live assistant stream', () => {
+  const items = buildChatItems({
+    sessionKey: 'session-1',
+    messages: [],
+    toolMessages: [],
+    streamSegments: [],
+    stream: 'Goal complete: Write a poem\nTokens used: 0',
+    streamStartedAt: 1100,
+    queue: [],
+    showToolCalls: true,
+  });
+
+  expect(streamItems(items)[0]?.text).toBe('Goal complete: Write a poem');
+});
+
 test('groups committed stream segments as assistant content during incremental updates', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',

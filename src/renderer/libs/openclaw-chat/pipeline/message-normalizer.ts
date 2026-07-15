@@ -381,19 +381,32 @@ function expandTextContent(text: string): {
   };
 }
 
+const GOAL_REPLY_PATTERN = /(?:^|\n)Goal(?: complete:|\s*$)/m;
+
+const stripZeroTokenUsageLine = (text: string): string =>
+  text
+    .split(/\r?\n/)
+    .filter(line => !/^Tokens used:\s*0\s*$/i.test(line))
+    .join('\n')
+    .trim();
+
+export const stripUnreliableGoalZeroUsageText = (
+  text: string,
+  goalReplyContext = text,
+): string => {
+  if (!GOAL_REPLY_PATTERN.test(goalReplyContext)) return text;
+  return stripZeroTokenUsageLine(text);
+};
+
 const stripUnreliableGoalZeroUsage = (content: MessageContentItem[]): MessageContentItem[] => {
   const textContent = content
     .map(item => (item.type === 'text' ? (item.text ?? '') : ''))
     .join('\n');
-  if (!/(?:^|\n)Goal(?: complete:|\s*$)/m.test(textContent)) return content;
+  if (!GOAL_REPLY_PATTERN.test(textContent)) return content;
 
   return content.flatMap(item => {
     if (item.type !== 'text' || typeof item.text !== 'string') return [item];
-    const text = item.text
-      .split(/\r?\n/)
-      .filter(line => !/^Tokens used:\s*0\s*$/i.test(line))
-      .join('\n')
-      .trim();
+    const text = stripUnreliableGoalZeroUsageText(item.text, textContent);
     return text ? [{ ...item, text }] : [];
   });
 };
@@ -591,7 +604,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
   const modelName = isAssistantMessage ? resolveMessageModelName(m) : null;
 
   content = stripMessageDisplayMetadata(content);
-  if (isAssistantMessage && m.provider === 'openclaw' && m.model === 'gateway-injected') {
+  if (isAssistantMessage) {
     content = stripUnreliableGoalZeroUsage(content);
   }
 
