@@ -54,11 +54,58 @@ const resolveLabel = (row: Record<string, unknown>, sessionKey: string): string 
   return sessionKey.split(':').at(-1) || 'Subagent';
 };
 
+const resolveSessionTitle = (row: Record<string, unknown>): string | undefined => {
+  for (const value of [row.derivedTitle, row.title, row.displayName, row.taskName]) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+};
+
 const optionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
 const optionalNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const looksLikeInternalFallbackLabel = (
+  subagent: GatewaySubagent,
+  row: Record<string, unknown>,
+): boolean => {
+  const label = subagent.label.trim();
+  const sessionSuffix = subagent.sessionKey.split(':').at(-1);
+  const sessionId = optionalString(row.sessionId) || optionalString(row.id);
+  const task = subagent.task?.trim();
+
+  return (
+    label === '' ||
+    label === sessionSuffix ||
+    label === subagent.sessionKey ||
+    (task !== undefined && label === task) ||
+    /^[0-9a-f]{8}(?:-[0-9a-f-]{27})?(?: \(\d{4}-\d{2}-\d{2}\))?$/i.test(label) ||
+    (sessionId !== undefined && label.startsWith(sessionId.slice(0, 8)))
+  );
+};
+
+const mergeSessionProjection = (
+  target: Map<string, GatewaySubagent>,
+  sessionKey: string,
+  row: Record<string, unknown>,
+): boolean => {
+  const existing = target.get(sessionKey);
+  if (!existing) return false;
+
+  const title = resolveSessionTitle(row);
+  if (title && looksLikeInternalFallbackLabel(existing, row)) {
+    existing.label = title;
+  }
+  existing.model ??= optionalString(row.model);
+  existing.startedAt ??= optionalNumber(row.startedAt);
+  existing.endedAt ??= optionalNumber(row.endedAt);
+  existing.runtimeMs ??= optionalNumber(row.runtimeMs);
+  existing.totalTokens ??= optionalNumber(row.totalTokens);
+  existing.task ??= optionalString(row.task);
+  return true;
+};
 
 const rowBelongsToParent = (row: Record<string, unknown>, parentKeys: Set<string>): boolean => {
   const spawnedBy = optionalString(row.spawnedBy);
@@ -188,7 +235,7 @@ export const listGatewaySubagents = async (options: {
     for (const row of result.sessions ?? []) {
       const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
       if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
-      if (bySessionKey.has(sessionKey)) continue;
+      if (mergeSessionProjection(bySessionKey, sessionKey, row)) continue;
       bySessionKey.set(sessionKey, {
         id: sessionKey,
         sessionKey,
@@ -214,7 +261,7 @@ export const listGatewaySubagents = async (options: {
         const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
         if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
         if (!rowBelongsToParent(row, parentKeySet)) continue;
-        if (bySessionKey.has(sessionKey)) continue;
+        if (mergeSessionProjection(bySessionKey, sessionKey, row)) continue;
         bySessionKey.set(sessionKey, {
           id: sessionKey,
           sessionKey,

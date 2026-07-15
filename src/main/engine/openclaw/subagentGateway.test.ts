@@ -99,6 +99,103 @@ test('lists subagents from the registry-backed sessions projection', async () =>
   ]);
 });
 
+test('replaces internal fallback labels with the persisted session title', async () => {
+  const client = {
+    request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'tools.invoke') {
+        return {
+          ok: true,
+          output: {
+            details: {
+              status: 'ok',
+              active: [],
+              recent: [
+                {
+                  sessionKey: 'agent:main:subagent:child-20',
+                  label: '93624b49 (2026-07-15)',
+                  task: '请写一句中文祝福语，主题是"万事如意"。',
+                  status: 'done',
+                },
+              ],
+            },
+          },
+        };
+      }
+      return {
+        sessions: params?.spawnedBy
+          ? [
+              {
+                key: 'agent:main:subagent:child-20',
+                sessionId: '93624b49-cad5-41de-944f-8cbae6a70108',
+                derivedTitle: 'blessing_20',
+                status: 'done',
+              },
+            ]
+          : [],
+      };
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
+  ).resolves.toMatchObject([
+    {
+      sessionKey: 'agent:main:subagent:child-20',
+      label: 'blessing_20',
+      task: '请写一句中文祝福语，主题是"万事如意"。',
+      status: 'done',
+    },
+  ]);
+});
+
+test('keeps explicit structured task names when the session projection also has a title', async () => {
+  const client = {
+    request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'tools.invoke') {
+        return {
+          ok: true,
+          output: {
+            details: {
+              status: 'ok',
+              active: [],
+              recent: [
+                {
+                  sessionKey: 'agent:main:subagent:named-task',
+                  taskName: 'research-task',
+                  label: 'Research instructions',
+                  task: 'Research the topic',
+                  status: 'done',
+                },
+              ],
+            },
+          },
+        };
+      }
+      return {
+        sessions: params?.spawnedBy
+          ? [
+              {
+                key: 'agent:main:subagent:named-task',
+                derivedTitle: 'Changing title',
+                status: 'done',
+              },
+            ]
+          : [],
+      };
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
+  ).resolves.toMatchObject([
+    {
+      sessionKey: 'agent:main:subagent:named-task',
+      label: 'research-task',
+      task: 'Research the topic',
+    },
+  ]);
+});
+
 test('keeps persisted subagents after OpenClaw child links age out', async () => {
   const firstPage = Array.from({ length: 500 }, (_, index) => ({
     key: `agent:main:cowork:filler-${index}`,
