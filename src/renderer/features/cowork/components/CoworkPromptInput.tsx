@@ -149,6 +149,20 @@ const formatContextLength = (tokens: number): string => {
   return `${tokens}`;
 };
 
+const InProgressBadge = () => (
+  <span
+    role="status"
+    aria-live="polite"
+    className="mr-1.5 inline-flex flex-shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary/90 shadow-subtle"
+  >
+    <span className="relative flex h-2 w-2" aria-hidden="true">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/30 motion-reduce:animate-none" />
+      <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+    </span>
+    {i18nService.t('coworkInProgress')}
+  </span>
+);
+
 const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInputProps>(
   (props, ref) => {
     const {
@@ -1535,10 +1549,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 </div>
                 <div className="flex items-center gap-2">
                   {isStreaming && (
-                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-primary">
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-                      {i18nService.t('coworkInProgress')}
-                    </span>
+                    <InProgressBadge />
                   )}
                   {isStreaming ? (
                     <button
@@ -1606,10 +1617,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               )}
 
               {isStreaming && (
-                <span className="inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-primary">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-                  {i18nService.t('coworkInProgress')}
-                </span>
+                <InProgressBadge />
               )}
               {isStreaming ? (
                 <button
