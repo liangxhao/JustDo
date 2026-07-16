@@ -79,6 +79,15 @@ Thinking/reasoning 内容通过 Gateway stream 和 runtime patch 支持。Render
 
 Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产生的历史消息仍由正常聊天渲染链路处理。
 
+## Slash command 执行边界
+
+`src/shared/slashCommands.ts` 统一解析命令并描述 JustDo 侧的特殊执行行为。未登记特殊行为的新命令默认作为普通 `chat.send` 消息交给 Gateway，因此新增 Gateway 原生命令不需要修改 renderer 分支。
+
+- 仅本地执行、发送前置条件、提交前清空输入框等 transport/UI 差异在共享行为表中声明。
+- `ChatController` 分别通过 local handler 和 before-send hook 表执行行为；新增特殊命令时注册对应 handler/hook，不新增命令名判断链。
+- 主进程首页首轮发送也读取同一 before-send hook，确保两条发送路径的 session 前置条件一致。
+- 命令特有的展示语义（例如 `/goal` optimistic objective）可以保留独立解析器，但必须复用统一命令解析结果。
+
 ## 工具显示
 
 工具调用通过 pipeline 归一化为 tool cards/activity groups。工具输入等敏感历史数据通过 Main IPC 从 Gateway state/history 读取，不由 renderer 直接访问 runtime 文件。

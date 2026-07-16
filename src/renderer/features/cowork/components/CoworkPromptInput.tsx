@@ -1,7 +1,10 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
 import type { SessionGoal } from '@shared/sessionGoal';
-import { parseGoalStartObjective } from '@shared/slashCommands';
+import {
+  parseGoalStartObjective,
+  shouldClearSlashCommandComposerBeforeExecution,
+} from '@shared/slashCommands';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -41,8 +44,6 @@ import PaperClipIcon from '@/shared/components/icons/PaperClipIcon';
 import XMarkIcon from '@/shared/components/icons/XMarkIcon';
 import { RootState } from '@/store';
 import { getCompactFolderName } from '@/utils/path';
-
-const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s.*)?$/i;
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
@@ -493,7 +494,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           dispatch(clearDraftAttachments(draftKey));
           setImageVisionHint(false);
         };
-        const clearBeforeSubmit = COMPACT_COMMAND_PATTERN.test(trimmedValue);
+        const clearBeforeSubmit = shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
         if (clearBeforeSubmit) {
           clearSubmittedInput();
         }
@@ -1653,9 +1654,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   {!remoteManaged && <ActiveSkillBadge />}
                 </div>
                 <div className="flex items-center gap-2">
-                  {isStreaming && (
-                    <InProgressBadge />
-                  )}
+                  {isStreaming && <InProgressBadge />}
                   {isStreaming ? (
                     <button
                       type="button"
@@ -1721,9 +1720,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 </div>
               )}
 
-              {isStreaming && (
-                <InProgressBadge />
-              )}
+              {isStreaming && <InProgressBadge />}
               {isStreaming ? (
                 <button
                   type="button"

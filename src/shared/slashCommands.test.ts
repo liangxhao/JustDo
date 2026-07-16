@@ -1,6 +1,38 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseGoalStartObjective } from './slashCommands';
+import {
+  hasSlashCommandBeforeSendHook,
+  parseGoalStartObjective,
+  parseSlashCommand,
+  resolveSlashCommandBehavior,
+  shouldClearSlashCommandComposerBeforeExecution,
+  SlashCommandBeforeSendHook,
+} from './slashCommands';
+
+describe('slash command behavior', () => {
+  it('parses command names and arguments consistently', () => {
+    expect(parseSlashCommand('  /GOAL start a release  ')).toEqual({
+      name: 'goal',
+      argumentsText: 'start a release',
+    });
+    expect(parseSlashCommand('not a command')).toBeNull();
+  });
+
+  it('defaults new commands to Gateway delivery', () => {
+    expect(resolveSlashCommandBehavior('/future-command value')).toMatchObject({
+      name: 'future-command',
+      argumentsText: 'value',
+      execution: 'gateway',
+    });
+  });
+
+  it('describes special command behavior centrally', () => {
+    expect(shouldClearSlashCommandComposerBeforeExecution('/compact')).toBe(true);
+    expect(
+      hasSlashCommandBeforeSendHook('/goal ship it', SlashCommandBeforeSendHook.EnsureSessionEntry),
+    ).toBe(true);
+  });
+});
 
 describe('parseGoalStartObjective', () => {
   it('extracts bare and explicit goal objectives', () => {

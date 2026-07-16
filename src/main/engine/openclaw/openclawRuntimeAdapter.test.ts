@@ -16,7 +16,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 }));
 
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
-import { ensureGoalCommandSession, OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
+import { ensureSlashCommandSession, OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 function createEmptyStore() {
   const session = {
@@ -200,7 +200,7 @@ test('creates or reuses the OpenClaw session before a goal command', async () =>
   } as GatewayClientLike;
 
   await expect(
-    ensureGoalCommandSession(
+    ensureSlashCommandSession(
       client,
       'agent:main:justdo:session-1',
       '/goal build a release dashboard',
@@ -220,7 +220,7 @@ test('does not prepare an OpenClaw session for an ordinary prompt', async () => 
   } as GatewayClientLike;
 
   await expect(
-    ensureGoalCommandSession(client, 'agent:main:justdo:session-1', 'hello'),
+    ensureSlashCommandSession(client, 'agent:main:justdo:session-1', 'hello'),
   ).resolves.toBeUndefined();
   expect(request).not.toHaveBeenCalled();
 });

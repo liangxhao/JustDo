@@ -17,7 +17,11 @@ import {
   isImageMimeType,
   toGatewayAttachment,
 } from '@shared/cowork/attachments';
-import { isGoalSlashCommand } from '@shared/slashCommands';
+import {
+  resolveSlashCommandBehavior,
+  SlashCommandBeforeSendHook,
+  SlashCommandExecution,
+} from '@shared/slashCommands';
 
 import { getTranscriptMedia, toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
 import type {
@@ -126,7 +130,6 @@ const HISTORY_LIMIT = 1000;
 const HISTORY_PAGE_LIMIT = 1000;
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
-const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s.*)?$/i;
 const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
 const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const LOCAL_OPTIMISTIC_MESSAGE_FLAG = '__justdoOptimisticHistoryTail';
@@ -317,6 +320,20 @@ function shouldPreferNextToolCall(existingToolCall: unknown, nextToolCall: unkno
 // ─── ChatController ─────────────────────────────────────────────────────────
 
 export class ChatController {
+  private readonly localSlashCommandHandlers = new Map<string, () => Promise<void>>([
+    ['compact', () => this.compactSession()],
+  ]);
+
+  private readonly slashCommandBeforeSendHandlers = new Map<
+    string,
+    (sessionKey: string) => Promise<void>
+  >([
+    [
+      SlashCommandBeforeSendHook.EnsureSessionEntry,
+      sessionKey => this.ensureSessionEntry(sessionKey),
+    ],
+  ]);
+
   private gatewayHttpBase = '';
   private gatewayToken = '';
   private chatMessagesBySession = new Map<string, unknown[]>();
@@ -2068,39 +2085,31 @@ export class ChatController {
     if (!client || !this.state.connected) throw new Error('not connected');
     if (this.state.chatSending) return;
 
-    if (COMPACT_COMMAND_PATTERN.test(message.trim())) {
-      await this.compactSession();
+    const slashCommand = resolveSlashCommandBehavior(message);
+    if (slashCommand?.execution === SlashCommandExecution.Local) {
+      const handler = this.localSlashCommandHandlers.get(slashCommand.name);
+      if (!handler) {
+        throw new Error(`No local handler registered for /${slashCommand.name}`);
+      }
+      await handler();
       return;
     }
 
     const sessionKey = this.state.sessionKey;
 
-    // OpenClaw's goal command persists state against an existing session entry.
-    // chat.startup/history can expose a candidate session id even before that
-    // entry exists, so currentSessionId alone cannot distinguish a new session.
-    // sessions.create is idempotent for an existing key: always call it before
-    // /goal, reusing an existing entry or creating the missing one as needed.
-    if (isGoalSlashCommand(message)) {
-      try {
-        const created = await client.request<{
-          sessionId?: string;
-          entry?: { sessionId?: string };
-        }>('sessions.create', { key: sessionKey });
-        const createdSessionId = normalizeSessionId(
-          created?.sessionId ?? created?.entry?.sessionId,
-        );
-        if (!createdSessionId) {
-          throw new Error(i18nService.t('coworkGoalSessionCreateFailed'));
-        }
+    try {
+      for (const hook of slashCommand?.beforeSend ?? []) {
+        const handler = this.slashCommandBeforeSendHandlers.get(hook);
+        if (!handler) throw new Error(`No slash command hook registered for ${hook}`);
+        await handler(sessionKey);
         if (this.state.sessionKey !== sessionKey) return;
-        this.state.currentSessionId = createdSessionId;
-      } catch (error) {
-        if (this.state.sessionKey !== sessionKey) return;
-        const sessionError = error instanceof Error ? error : new Error(String(error));
-        this.state.lastError = sessionError.message;
-        this.notify();
-        throw sessionError;
       }
+    } catch (error) {
+      if (this.state.sessionKey !== sessionKey) return;
+      const sessionError = error instanceof Error ? error : new Error(String(error));
+      this.state.lastError = sessionError.message;
+      this.notify();
+      throw sessionError;
     }
 
     const runId = `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2177,6 +2186,21 @@ export class ChatController {
       ]);
       this.notify();
     }
+  }
+
+  private async ensureSessionEntry(sessionKey: string): Promise<void> {
+    const client = this.state.client;
+    if (!client || !this.state.connected) throw new Error('not connected');
+
+    // Some Gateway commands persist state against an existing session entry.
+    // sessions.create is idempotent, so it safely creates or reuses that entry.
+    const created = await client.request<{
+      sessionId?: string;
+      entry?: { sessionId?: string };
+    }>('sessions.create', { key: sessionKey });
+    const sessionId = normalizeSessionId(created?.sessionId ?? created?.entry?.sessionId);
+    if (!sessionId) throw new Error(i18nService.t('coworkGoalSessionCreateFailed'));
+    if (this.state.sessionKey === sessionKey) this.state.currentSessionId = sessionId;
   }
 
   private async compactSession(): Promise<void> {
