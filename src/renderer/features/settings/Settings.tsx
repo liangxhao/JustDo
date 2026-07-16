@@ -3,10 +3,16 @@ import {
   CheckCircleIcon,
   Cog6ToothIcon,
   CubeIcon,
+  PencilSquareIcon,
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '@shared/openclaw/constants';
+import {
+  GatewayPortSetErrorCode,
+  GatewayPortValidationCode,
+  parseGatewayPortInput,
+} from '@shared/openclaw/gatewayPort';
 import {
   type CustomProxyConfig,
   defaultCustomProxyConfig,
@@ -431,17 +437,26 @@ const Settings: React.FC<SettingsProps> = ({
     String(DEFAULT_OPENCLAW_GATEWAY_PORT),
   );
   const [openClawGatewayPortSaving, setOpenClawGatewayPortSaving] = useState<boolean>(false);
+  const [openClawGatewayPortError, setOpenClawGatewayPortError] = useState<string | null>(null);
+  const [openClawGatewayPortRestartRequired, setOpenClawGatewayPortRestartRequired] =
+    useState<boolean>(false);
   const [isRestartingOpenClawGateway, setIsRestartingOpenClawGateway] = useState<boolean>(false);
   const openClawGatewayPortInputRef = useRef<HTMLInputElement>(null);
 
   // Load OpenClaw gateway port
   useEffect(() => {
-    window.electron.openclaw.engine.getPort().then(result => {
-      if (result.success && result.port) {
-        setOpenClawGatewayPort(result.port);
-        setOpenClawGatewayPortInput(String(result.port));
-      }
-    });
+    window.electron.openclaw.engine
+      .getPort()
+      .then(result => {
+        if (result.success && result.port) {
+          setOpenClawGatewayPort(result.port);
+          setOpenClawGatewayPortInput(String(result.port));
+          setOpenClawGatewayPortRestartRequired(Boolean(result.requiresRestart));
+          return;
+        }
+        setOpenClawGatewayPortError(i18nService.t('openclawGatewayPortLoadFailed'));
+      })
+      .catch(() => setOpenClawGatewayPortError(i18nService.t('openclawGatewayPortLoadFailed')));
   }, []);
 
   useEffect(() => {
@@ -452,18 +467,62 @@ const Settings: React.FC<SettingsProps> = ({
     openClawGatewayPortInputRef.current?.select();
   }, [openClawGatewayPortEditing]);
 
+  const openClawGatewayPortValidation = useMemo(
+    () => parseGatewayPortInput(openClawGatewayPortInput),
+    [openClawGatewayPortInput],
+  );
+
+  const openClawGatewayPortValidationError = (() => {
+    if (openClawGatewayPortValidation.valid) return null;
+    const keyByCode = {
+      [GatewayPortValidationCode.Required]: 'openclawGatewayPortRequired',
+      [GatewayPortValidationCode.Integer]: 'openclawGatewayPortInteger',
+      [GatewayPortValidationCode.Privileged]: 'openclawGatewayPortPrivileged',
+      [GatewayPortValidationCode.OutOfRange]: 'openclawGatewayPortOutOfRange',
+    } as const;
+    return i18nService.t(keyByCode[openClawGatewayPortValidation.code]);
+  })();
+
+  const cancelOpenClawGatewayPortEditing = () => {
+    setOpenClawGatewayPortEditing(false);
+    setOpenClawGatewayPortInput(String(openClawGatewayPort));
+    setOpenClawGatewayPortError(null);
+  };
+
   const handleSaveOpenClawGatewayPort = async () => {
-    const port = parseInt(openClawGatewayPortInput, 10);
-    if (isNaN(port) || port < 1 || port > 65535) {
+    if (!openClawGatewayPortValidation.valid) {
       return;
     }
+    const { port } = openClawGatewayPortValidation;
     setOpenClawGatewayPortSaving(true);
+    setOpenClawGatewayPortError(null);
     try {
       const result = await window.electron.openclaw.engine.setPort(port);
       if (result.success) {
         setOpenClawGatewayPort(port);
+        setOpenClawGatewayPortInput(String(port));
         setOpenClawGatewayPortEditing(false);
+        setOpenClawGatewayPortRestartRequired(Boolean(result.requiresRestart));
+        setNoticeMessage(
+          i18nService.t(
+            result.requiresRestart
+              ? 'openclawGatewayPortSavedRestartRequired'
+              : 'openclawGatewayPortSaved',
+          ),
+        );
+        return;
       }
+      const errorKey =
+        result.errorCode === GatewayPortSetErrorCode.Unavailable
+          ? 'openclawGatewayPortUnavailable'
+          : result.errorCode === GatewayPortSetErrorCode.Busy
+            ? 'openclawGatewayPortBusy'
+            : result.errorCode === GatewayPortSetErrorCode.Invalid
+              ? 'openclawGatewayPortInvalid'
+              : 'openclawGatewayPortSaveFailed';
+      setOpenClawGatewayPortError(i18nService.t(errorKey));
+    } catch {
+      setOpenClawGatewayPortError(i18nService.t('openclawGatewayPortSaveFailed'));
     } finally {
       setOpenClawGatewayPortSaving(false);
     }
@@ -483,6 +542,14 @@ const Settings: React.FC<SettingsProps> = ({
       }
       if (result.status) {
         setNoticeMessage(i18nService.t('openclawGatewayRestarted'));
+        const portResult = await window.electron.openclaw.engine.getPort();
+        if (portResult.success && portResult.port) {
+          setOpenClawGatewayPort(portResult.port);
+          setOpenClawGatewayPortInput(String(portResult.port));
+          setOpenClawGatewayPortRestartRequired(Boolean(portResult.requiresRestart));
+        } else {
+          setOpenClawGatewayPortError(i18nService.t('openclawGatewayPortLoadFailed'));
+        }
       }
     } catch (error) {
       setError(
@@ -1714,14 +1781,37 @@ const Settings: React.FC<SettingsProps> = ({
                       </div>
                       <input
                         ref={openClawGatewayPortInputRef}
-                        type="number"
-                        min={1}
-                        max={65535}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         value={openClawGatewayPortInput}
                         readOnly={!openClawGatewayPortEditing}
-                        onDoubleClick={() => setOpenClawGatewayPortEditing(true)}
-                        onChange={e => setOpenClawGatewayPortInput(e.target.value)}
-                        className={`w-32 rounded-lg border px-3 py-1.5 text-center text-sm font-mono border-border bg-surface ${
+                        onDoubleClick={() => {
+                          setOpenClawGatewayPortEditing(true);
+                          setOpenClawGatewayPortError(null);
+                        }}
+                        onChange={e => {
+                          setOpenClawGatewayPortInput(e.target.value);
+                          setOpenClawGatewayPortError(null);
+                        }}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' && openClawGatewayPortValidation.valid) {
+                            event.preventDefault();
+                            void handleSaveOpenClawGatewayPort();
+                          } else if (event.key === 'Escape') {
+                            event.preventDefault();
+                            cancelOpenClawGatewayPortEditing();
+                          }
+                        }}
+                        aria-invalid={
+                          openClawGatewayPortEditing && Boolean(openClawGatewayPortValidationError)
+                        }
+                        aria-describedby="openclaw-gateway-port-help"
+                        className={`w-32 rounded-lg border px-3 py-1.5 text-center text-sm font-mono bg-surface ${
+                          openClawGatewayPortEditing && openClawGatewayPortValidationError
+                            ? 'border-danger text-foreground'
+                            : 'border-border'
+                        } ${
                           openClawGatewayPortEditing
                             ? 'text-foreground'
                             : 'cursor-default text-secondary'
@@ -1734,10 +1824,7 @@ const Settings: React.FC<SettingsProps> = ({
                             type="button"
                             onClick={() => void handleSaveOpenClawGatewayPort()}
                             disabled={
-                              openClawGatewayPortSaving ||
-                              isNaN(parseInt(openClawGatewayPortInput, 10)) ||
-                              parseInt(openClawGatewayPortInput, 10) < 1 ||
-                              parseInt(openClawGatewayPortInput, 10) > 65535
+                              openClawGatewayPortSaving || !openClawGatewayPortValidation.valid
                             }
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
                             aria-label={i18nService.t('save')}
@@ -1746,10 +1833,7 @@ const Settings: React.FC<SettingsProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              setOpenClawGatewayPortEditing(false);
-                              setOpenClawGatewayPortInput(String(openClawGatewayPort));
-                            }}
+                            onClick={cancelOpenClawGatewayPortEditing}
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
                             aria-label={i18nService.t('cancel')}
                           >
@@ -1757,11 +1841,29 @@ const Settings: React.FC<SettingsProps> = ({
                           </button>
                         </div>
                       )}
+                      {!openClawGatewayPortEditing && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenClawGatewayPortEditing(true);
+                            setOpenClawGatewayPortError(null);
+                          }}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                          aria-label={i18nService.t('openclawGatewayPortEdit')}
+                          title={i18nService.t('openclawGatewayPortEdit')}
+                        >
+                          <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      )}
                     </div>
                     <button
                       type="button"
                       onClick={() => void handleRestartOpenClawGateway()}
-                      disabled={isRestartingOpenClawGateway}
+                      disabled={
+                        isRestartingOpenClawGateway ||
+                        openClawGatewayPortEditing ||
+                        openClawGatewayPortSaving
+                      }
                       className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium border-border text-secondary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
                       title={i18nService.t('openclawGatewayRestartHint')}
                     >
@@ -1773,6 +1875,31 @@ const Settings: React.FC<SettingsProps> = ({
                         ? i18nService.t('openclawGatewayRestarting')
                         : i18nService.t('coworkOpenClawRestartGateway')}
                     </button>
+                  </div>
+                  <div id="openclaw-gateway-port-help" className="space-y-1 text-xs">
+                    <p className="text-secondary">{i18nService.t('openclawGatewayPortHint')}</p>
+                    {openClawGatewayPortEditing && openClawGatewayPortValidationError && (
+                      <p className="text-danger" role="alert">
+                        {openClawGatewayPortValidationError}
+                      </p>
+                    )}
+                    {openClawGatewayPortEditing &&
+                      openClawGatewayPortValidation.valid &&
+                      openClawGatewayPortValidation.usesEphemeralRange && (
+                        <p className="text-warning">
+                          {i18nService.t('openclawGatewayPortEphemeralWarning')}
+                        </p>
+                      )}
+                    {openClawGatewayPortError && (
+                      <p className="text-danger" role="alert">
+                        {openClawGatewayPortError}
+                      </p>
+                    )}
+                    {openClawGatewayPortRestartRequired && (
+                      <p className="text-warning" role="status">
+                        {i18nService.t('openclawGatewayPortRestartRequired')}
+                      </p>
+                    )}
                   </div>
                 </div>
               </>

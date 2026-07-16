@@ -233,7 +233,10 @@ export const registerOpenClawEngineHandlers = ({
 
   ipcMain.handle('openclaw:engine:getPort', () => {
     try {
-      return { success: true, port: getManager().getGatewayPort() };
+      const manager = getManager();
+      const port = manager.getConfiguredGatewayPort();
+      const activePort = manager.getStatus().phase === 'running' ? manager.getGatewayPort() : undefined;
+      return { success: true, port, activePort, requiresRestart: activePort !== undefined && activePort !== port };
     } catch (error) {
       return {
         success: false,
@@ -271,9 +274,9 @@ export const registerOpenClawEngineHandlers = ({
     }
   });
 
-  ipcMain.handle('openclaw:engine:setPort', (_event, port: number) => {
+  ipcMain.handle('openclaw:engine:setPort', async (_event, port: number) => {
     try {
-      return getManager().setGatewayPort(port);
+      return await getManager().setGatewayPort(port);
     } catch (error) {
       return {
         success: false,

@@ -7,6 +7,10 @@ import net from 'net';
 import path from 'path';
 
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
+import {
+  GatewayPortSetErrorCode,
+  validateGatewayPortNumber,
+} from '../../../shared/openclaw/gatewayPort';
 import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
 import { appendPythonRuntimeToEnv } from '../../core/pythonRuntime';
 import {
@@ -15,6 +19,7 @@ import {
 } from '../../core/trustedCertificates';
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../../cowork/coworkUtil';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
+import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
 type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;
@@ -84,17 +89,6 @@ const findPath = (candidates: string[]): string | null => {
     }
   }
   return null;
-};
-
-const isPortAvailable = async (port: number): Promise<boolean> => {
-  return await new Promise(resolve => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => {
-      server.close(() => resolve(true));
-    });
-    server.listen(port, '127.0.0.1');
-  });
 };
 
 const isPortReachable = (host: string, port: number, timeoutMs = 1200): Promise<boolean> => {
@@ -1167,17 +1161,54 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.gatewayPort ?? this.readGatewayPort() ?? DEFAULT_OPENCLAW_GATEWAY_PORT;
   }
 
-  setGatewayPort(port: number): { success: boolean; error?: string } {
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-      return { success: false, error: 'Invalid port number. Must be between 1 and 65535.' };
+  getConfiguredGatewayPort(): number {
+    return this.readGatewayPort() ?? this.gatewayPort ?? DEFAULT_OPENCLAW_GATEWAY_PORT;
+  }
+
+  async setGatewayPort(port: number): Promise<{
+    success: boolean;
+    error?: string;
+    errorCode?: GatewayPortSetErrorCode;
+    requiresRestart?: boolean;
+  }> {
+    const validation = validateGatewayPortNumber(port);
+    if (validation.valid === false) {
+      return {
+        success: false,
+        errorCode: GatewayPortSetErrorCode.Invalid,
+        error: validation.code,
+      };
     }
+    if (this.status.phase === 'starting') {
+      return {
+        success: false,
+        errorCode: GatewayPortSetErrorCode.Busy,
+        error: 'The gateway is starting. Try again after startup completes.',
+      };
+    }
+
+    const activePort = this.gatewayPort;
+    const isCurrentRunningPort = this.status.phase === 'running' && port === activePort;
+    if (!isCurrentRunningPort && !(await isLoopbackPortAvailable(port))) {
+      return {
+        success: false,
+        errorCode: GatewayPortSetErrorCode.Unavailable,
+        error: `Loopback port ${port} is already in use or reserved.`,
+      };
+    }
+
     try {
       this.writeGatewayPort(port);
-      this.gatewayPort = port;
-      return { success: true };
+      const requiresRestart = this.status.phase === 'running' && port !== activePort;
+      if (!requiresRestart) {
+        this.gatewayPort = port;
+        this.gatewayPortListener?.(port);
+      }
+      return { success: true, requiresRestart };
     } catch (err) {
       return {
         success: false,
+        errorCode: GatewayPortSetErrorCode.SaveFailed,
         error: err instanceof Error ? err.message : 'Failed to save port setting',
       };
     }
@@ -1252,47 +1283,27 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private readGatewayPort(): number | null {
     const payload = parseJsonFile<{ port?: number }>(this.gatewayPortPath);
-    if (!payload || typeof payload.port !== 'number' || !Number.isInteger(payload.port)) {
-      return null;
-    }
-    if (payload.port <= 0 || payload.port > 65535) {
-      return null;
-    }
-    return payload.port;
+    if (!payload) return null;
+    const validation = validateGatewayPortNumber(payload.port);
+    return validation.valid === true ? validation.port : null;
   }
 
   private async resolveGatewayPort(): Promise<number> {
-    const candidates: number[] = [];
+    const preferredPorts: number[] = [];
 
-    if (this.gatewayPort) candidates.push(this.gatewayPort);
     const persisted = this.readGatewayPort();
-    if (persisted) candidates.push(persisted);
-    candidates.push(DEFAULT_OPENCLAW_GATEWAY_PORT);
+    if (persisted) preferredPorts.push(persisted);
+    if (this.gatewayPort) preferredPorts.push(this.gatewayPort);
+    preferredPorts.push(DEFAULT_OPENCLAW_GATEWAY_PORT);
+    preferredPorts.push(
+      ...Array.from(
+        { length: GATEWAY_PORT_SCAN_LIMIT },
+        (_, index) => DEFAULT_OPENCLAW_GATEWAY_PORT + index + 1,
+      ),
+    );
 
-    const uniqCandidates = Array.from(new Set(candidates));
-    for (const candidate of uniqCandidates) {
-      if (await isPortAvailable(candidate)) {
-        return candidate;
-      }
-    }
-
-    // Scan ports in parallel batches of 10 for faster resolution.
-    const BATCH_SIZE = 10;
-    for (let batch = 0; batch * BATCH_SIZE < GATEWAY_PORT_SCAN_LIMIT; batch += 1) {
-      const batchStart = DEFAULT_OPENCLAW_GATEWAY_PORT + batch * BATCH_SIZE + 1;
-      const batchEnd = Math.min(
-        batchStart + BATCH_SIZE,
-        DEFAULT_OPENCLAW_GATEWAY_PORT + GATEWAY_PORT_SCAN_LIMIT + 1,
-      );
-      const portBatch = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i);
-      const results = await Promise.all(
-        portBatch.map(async p => ((await isPortAvailable(p)) ? p : null)),
-      );
-      const available = results.find(p => p !== null);
-      if (available != null) {
-        return available;
-      }
-    }
+    const availablePort = await findAvailableLoopbackPort(preferredPorts);
+    if (availablePort !== null) return availablePort;
 
     throw new Error('No available loopback port for OpenClaw gateway.');
   }

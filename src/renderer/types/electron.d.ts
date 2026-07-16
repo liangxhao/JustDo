@@ -284,6 +284,7 @@ interface HookEntryIPC {
   managedByPlugin: boolean;
 }
 
+import type { GatewayPortSetErrorCode } from '@shared/openclaw/gatewayPort';
 import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
@@ -418,9 +419,20 @@ interface IElectronAPI {
         status?: OpenClawEngineStatus;
         error?: string;
       }>;
-      getPort: () => Promise<{ success: boolean; port?: number; error?: string }>;
+      getPort: () => Promise<{
+        success: boolean;
+        port?: number;
+        activePort?: number;
+        requiresRestart?: boolean;
+        error?: string;
+      }>;
       getToken: () => Promise<{ success: boolean; token?: string; error?: string }>;
-      setPort: (port: number) => Promise<{ success: boolean; error?: string }>;
+      setPort: (port: number) => Promise<{
+        success: boolean;
+        error?: string;
+        errorCode?: GatewayPortSetErrorCode;
+        requiresRestart?: boolean;
+      }>;
       openTerminal: () => Promise<{
         success: boolean;
         error?: string;
