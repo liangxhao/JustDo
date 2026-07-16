@@ -1,3 +1,5 @@
+import { stripVTControlCharacters } from 'node:util';
+
 type BufferedAgentStream = 'assistant' | 'thinking';
 
 type BufferedStreamState = {
@@ -74,18 +76,23 @@ export class GatewayStdoutLogFilter {
   }
 
   private processLine(line: string): string {
-    if (isDiscardedTransportEvent(line)) return '';
+    // OpenClaw normally disables colors when stdout is piped, but inherited
+    // FORCE_COLOR settings can still insert ANSI sequences between tokens.
+    // Classify and persist the visible text so terminal capabilities cannot
+    // change which high-volume transport events the filter recognizes.
+    const visibleLine = stripVTControlCharacters(line);
+    if (isDiscardedTransportEvent(visibleLine)) return '';
 
-    const agentEvent = parseAgentEvent(line);
-    if (!agentEvent) return line;
+    const agentEvent = parseAgentEvent(visibleLine);
+    if (!agentEvent) return visibleLine;
 
     const bufferedStream = getBufferedAgentStream(agentEvent.stream);
     if (!bufferedStream) {
-      return this.flushRunStreams(agentEvent.runId) + line;
+      return this.flushRunStreams(agentEvent.runId) + visibleLine;
     }
 
     const key = `${agentEvent.runId}:${bufferedStream}`;
-    const summarizedLine = summarizeStreamText(line);
+    const summarizedLine = summarizeStreamText(visibleLine);
     const activeState = this.bufferedStreams.get(key);
     if (activeState) {
       activeState.tail = summarizedLine;

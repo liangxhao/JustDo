@@ -42,6 +42,34 @@ describe('GatewayStdoutLogFilter', () => {
     expect(filter.push(line.slice(25))).toBe(line);
   });
 
+  it('filters timestamped transport events containing ANSI color sequences', () => {
+    const filter = new GatewayStdoutLogFilter();
+    const timestamp = '2026-07-16T17:21:42.895+08:00 ';
+    const first =
+      `${timestamp}\u001b[35m[ws]\u001b[0m → event agent seq=per-client clients=3 ` +
+      'run=run-1 agent=main session=justdo:session-1 stream=assistant aseq=344 text=All\n';
+    const middle =
+      `${timestamp}\u001b[35m[ws]\u001b[0m → event agent seq=per-client clients=3 ` +
+      'run=run-1 agent=main session=justdo:session-1 stream=assistant aseq=352 text=All tools\n';
+    const chat =
+      `${timestamp}\u001b[35m[ws]\u001b[0m → event chat seq=per-client clients=3 ` +
+      'dropIfSlow=true\n';
+    const lifecycle =
+      `${timestamp}[ws] → event agent run=run-1 stream=lifecycle phase=end\n`;
+
+    expect(filter.push(first + middle + chat)).toBe(
+      `${timestamp}[ws] → event agent seq=per-client clients=3 ` +
+        'run=run-1 agent=main session=justdo:session-1 stream=assistant aseq=344 ' +
+        'textChars=3 preview="All"\n',
+    );
+    expect(filter.push(lifecycle)).toBe(
+      `${timestamp}[ws] → event agent seq=per-client clients=3 ` +
+        'run=run-1 agent=main session=justdo:session-1 stream=assistant aseq=352 ' +
+        'textChars=9 preview="All tools"\n' +
+        lifecycle,
+    );
+  });
+
   it('keeps a bounded assistant text preview', () => {
     const filter = new GatewayStdoutLogFilter();
     const first = '[ws] → event agent run=run-1 stream=assistant aseq=71 text=好\n';

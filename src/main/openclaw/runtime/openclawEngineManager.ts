@@ -518,6 +518,13 @@ export class OpenClawEngineManager extends EventEmitter {
     const token = cliEnvironment.token;
     const port = cliEnvironment.port;
     const env = cliEnvironment.env;
+    const gatewayEnv = {
+      ...env,
+      // Keep Gateway stdout stable across terminals and developer machines.
+      // The log filter also strips control sequences as a defensive fallback.
+      NO_COLOR: '1',
+      FORCE_COLOR: '0',
+    };
     console.log(`[OpenClaw] startGateway: pre-fork setup done (${elapsed()})`);
 
     this.setStatus({
@@ -559,14 +566,14 @@ export class OpenClawEngineManager extends EventEmitter {
     if (process.platform === 'win32') {
       child = spawn(process.execPath, [openclawEntry, ...forkArgs], {
         cwd: runtime.root,
-        env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
+        env: { ...gatewayEnv, ELECTRON_RUN_AS_NODE: '1' },
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       });
     } else {
       child = utilityProcess.fork(openclawEntry, forkArgs, {
         cwd: runtime.root,
-        env,
+        env: gatewayEnv,
         stdio: 'pipe',
         serviceName: 'OpenClaw Gateway',
       });
