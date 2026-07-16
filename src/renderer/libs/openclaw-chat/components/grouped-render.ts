@@ -19,12 +19,22 @@ import {
 } from '@/libs/openclaw-chat/pipeline/message-extract';
 import {
   normalizeMessage,
+  stripMessageDisplayMetadataText,
   stripUnreliableGoalZeroUsageText,
 } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
-import { extractToolCards, extractToolCardsCached } from '@/libs/openclaw-chat/pipeline/tool-cards';
-import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
+import {
+  extractToolCards,
+  extractToolCardsCached,
+  isToolCardError,
+  isToolErrorOutput,
+} from '@/libs/openclaw-chat/pipeline/tool-cards';
+import {
+  extractCanvasShortcodes,
+  parseInlineDirectives,
+  splitMediaFromOutput,
+} from '@/libs/openclaw-chat/shims/backend-helpers';
 import type {
   ChatItem,
   MessageContentItem,
@@ -33,6 +43,16 @@ import type {
   ToolCard,
 } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
+
+type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
+
+type MessageGroupRenderOptions = {
+  searchQuery?: string;
+  showFooter?: boolean;
+  showAvatar?: boolean;
+  assistantName?: string;
+  workingDirectory?: string;
+};
 
 const COPY_ICON = html`
   <svg
@@ -155,12 +175,54 @@ function dedupeToolCards(cards: ToolCard[]): ToolCard[] {
   return result;
 }
 
-export function getThinkingToolsGroupToolCount(group: MessageGroup): number | null {
+export type ThinkingToolsGroupCollapse = {
+  toolCount: number;
+  collapsedGroup: MessageGroup;
+  contentGroup: MessageGroup | null;
+};
+
+const THINKING_CONTENT_TYPES = new Set(['thinking', 'reasoning']);
+const TOOL_CONTENT_TYPES = new Set([
+  'toolcall',
+  'tool_call',
+  'tooluse',
+  'tool_use',
+  'toolresult',
+  'tool_result',
+]);
+
+function contentBlockType(value: unknown): string {
+  const block = asRecord(value);
+  return typeof block?.type === 'string' ? block.type.toLowerCase() : '';
+}
+
+function isThinkingContentBlock(value: unknown): boolean {
+  return THINKING_CONTENT_TYPES.has(contentBlockType(value));
+}
+
+function isToolContentBlock(value: unknown): boolean {
+  return TOOL_CONTENT_TYPES.has(contentBlockType(value));
+}
+
+function isCollapsibleProcessBlock(value: unknown): boolean {
+  return isThinkingContentBlock(value) || isToolContentBlock(value);
+}
+
+function isVisibleContentBlock(value: unknown): boolean {
+  if (isCollapsibleProcessBlock(value)) return false;
+  const block = asRecord(value);
+  if (!block) return true;
+  const type = contentBlockType(block);
+  return type !== 'text' || typeof block.text !== 'string' || Boolean(block.text.trim());
+}
+
+export function splitThinkingToolsGroup(group: MessageGroup): ThinkingToolsGroupCollapse | null {
   if (normalizeRoleForGrouping(group.role) !== 'assistant' || group.messages.length === 0) {
     return null;
   }
 
   let hasThinking = false;
+  let hasVisibleContent = false;
   const cards: ToolCard[] = [];
   for (const entry of group.messages) {
     const raw = asRecord(entry.message);
@@ -172,13 +234,12 @@ export function getThinkingToolsGroupToolCount(group: MessageGroup): number | nu
     for (const value of content) {
       const block = asRecord(value);
       if (!block) continue;
-      const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
-      if (type === 'thinking') {
+      if (isThinkingContentBlock(block)) {
         hasThinking = true;
         continue;
       }
-      if (type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-        return null;
+      if (isVisibleContentBlock(block)) {
+        hasVisibleContent = true;
       }
     }
     cards.push(
@@ -188,7 +249,54 @@ export function getThinkingToolsGroupToolCount(group: MessageGroup): number | nu
   }
 
   const toolCount = dedupeToolCards(cards).length;
-  return hasThinking && toolCount > 0 ? toolCount : null;
+  if (!hasThinking || toolCount === 0) return null;
+
+  if (!hasVisibleContent) {
+    return { toolCount, collapsedGroup: group, contentGroup: null };
+  }
+
+  const collapsedMessages = group.messages.flatMap(entry => {
+    const raw = asRecord(entry.message);
+    if (!raw || !Array.isArray(raw.content)) return [entry];
+    const content = raw.content.filter(isCollapsibleProcessBlock);
+    if (content.length === 0 && getAttachedToolMessages(raw).length === 0) return [];
+    return [
+      {
+        ...entry,
+        message: {
+          ...raw,
+          content,
+        },
+      },
+    ];
+  });
+  const contentMessages = group.messages.flatMap(entry => {
+    const raw = asRecord(entry.message);
+    if (!raw || !Array.isArray(raw.content)) return [];
+    const content = raw.content.filter(isVisibleContentBlock);
+    if (content.length === 0) return [];
+    const {
+      __justdoAttachedToolMessages: _attachedTools,
+      __justdoToolActive: _toolActive,
+      __justdoToolTimelineOpen: _toolTimelineOpen,
+      ...contentMessage
+    } = raw;
+    return [{ ...entry, message: { ...contentMessage, content } }];
+  });
+
+  return {
+    toolCount,
+    collapsedGroup: { ...group, key: `${group.key}:thinking-tools`, messages: collapsedMessages },
+    contentGroup: {
+      ...group,
+      key: `${group.key}:content`,
+      messages: contentMessages,
+    },
+  };
+}
+
+export function getThinkingToolsGroupToolCount(group: MessageGroup): number | null {
+  return splitThinkingToolsGroup(group)?.toolCount ?? null;
 }
 
 function shouldOpenToolTimeline(rawMessage: unknown): boolean {
@@ -255,6 +363,72 @@ function renderAssistantTextBlock(text: string): TemplateResult | typeof nothing
       </div>
     </div>
   `;
+}
+
+function safeCanvasUrl(value: string | undefined): string | null {
+  const url = value?.trim();
+  return url && /^https?:\/\//i.test(url) ? url : null;
+}
+
+function renderAssistantCanvas(item: AssistantCanvasItem): TemplateResult {
+  const title = item.preview.title?.trim() || i18nService.t('coworkCanvasTitle');
+  const url = safeCanvasUrl(item.preview.url);
+  const preferredHeight = item.preview.preferredHeight;
+  const height =
+    typeof preferredHeight === 'number' && Number.isFinite(preferredHeight)
+      ? Math.min(800, Math.max(160, preferredHeight))
+      : 360;
+
+  return html`
+    <section class="assistant-canvas" aria-label=${title}>
+      <div class="assistant-canvas__title">${title}</div>
+      ${
+        url
+          ? html`<iframe
+              class="assistant-canvas__frame"
+              src=${url}
+              title=${title}
+              style=${`height: ${height}px`}
+              loading="lazy"
+              referrerpolicy="no-referrer"
+              sandbox="allow-downloads allow-forms allow-modals allow-popups allow-scripts"
+            ></iframe>`
+          : html`<div class="assistant-canvas__unavailable">
+              ${i18nService.t('coworkCanvasUnavailable')}
+            </div>`
+      }
+    </section>
+  `;
+}
+
+function extractCanvasItem(block: Record<string, unknown>): AssistantCanvasItem | null {
+  if (contentBlockType(block) !== 'canvas') return null;
+  const normalized = normalizeMessage({ role: 'assistant', content: [block], timestamp: 0 });
+  return (
+    normalized.content.find((item): item is AssistantCanvasItem => item.type === 'canvas') ?? null
+  );
+}
+
+function cleanOrderedAssistantText(
+  text: string,
+  goalReplyContext: string,
+): {
+  text: string;
+  canvases: AssistantCanvasItem[];
+} {
+  const extracted = extractCanvasShortcodes(text);
+  const directives = parseInlineDirectives(stripDeliveredAttachmentLines(extracted.text), {
+    stripAudioTag: true,
+    stripReplyTags: true,
+  });
+  const visibleText = stripUnreliableGoalZeroUsageText(
+    stripMessageDisplayMetadataText(directives.text),
+    goalReplyContext,
+  );
+  return {
+    text: visibleText,
+    canvases: extracted.previews.map(preview => ({ type: 'canvas', preview, rawText: null })),
+  };
 }
 
 function stripDeliveredAttachmentLines(text: string): string {
@@ -471,14 +645,19 @@ function renderAssistantMessageInContentOrder(
 
     if (type === 'text') {
       flushPendingToolCards();
-      const text =
-        typeof block.text === 'string'
-          ? stripUnreliableGoalZeroUsageText(
-              stripDeliveredAttachmentLines(block.text),
-              goalReplyContext,
-            )
-          : '';
-      ordered.push(renderAssistantTextBlock(text));
+      const cleaned = cleanOrderedAssistantText(
+        typeof block.text === 'string' ? block.text : '',
+        goalReplyContext,
+      );
+      ordered.push(renderAssistantTextBlock(cleaned.text));
+      ordered.push(...cleaned.canvases.map(renderAssistantCanvas));
+      continue;
+    }
+
+    if (type === 'canvas') {
+      flushPendingToolCards();
+      const canvas = extractCanvasItem(block);
+      if (canvas) ordered.push(renderAssistantCanvas(canvas));
       continue;
     }
 
@@ -511,13 +690,7 @@ function renderAssistantMessageInContentOrder(
 
 export function renderMessageGroup(
   group: MessageGroup,
-  opts?: {
-    searchQuery?: string;
-    showFooter?: boolean;
-    showAvatar?: boolean;
-    assistantName?: string;
-    workingDirectory?: string;
-  },
+  opts?: MessageGroupRenderOptions,
 ): TemplateResult | typeof nothing {
   if (!group.messages || group.messages.length === 0) return nothing;
 
@@ -538,7 +711,7 @@ export function renderMessageGroup(
       <div class="chat-group__avatar">${(opts?.showAvatar ?? true) ? avatar : nothing}</div>
       <div class="chat-group__content">
         ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
-        ${renderGroupFooter(group, opts?.showFooter ?? true)}
+        ${renderGroupFooter(group, opts?.showFooter ?? true, opts?.assistantName)}
       </div>
     </div>
   `;
@@ -549,7 +722,7 @@ export function renderMessageGroupWithTrailingStream(
   streamText: string,
   toolMessages: unknown[] = [],
   thinkingText: string | null = null,
-  opts?: { searchQuery?: string; showAvatar?: boolean; workingDirectory?: string },
+  opts?: MessageGroupRenderOptions,
 ): TemplateResult | typeof nothing {
   if (!group.messages || group.messages.length === 0) return nothing;
 
@@ -596,7 +769,7 @@ export function renderMessageGroupWithTrailingStream(
 function renderSingleMessage(
   message: unknown,
   role: string,
-  opts?: { searchQuery?: string; workingDirectory?: string },
+  opts?: MessageGroupRenderOptions,
 ): TemplateResult {
   const normalized = normalizeMessage(message) as NormalizedMessage | null;
   if (!normalized) return html`<div class="chat-bubble chat-bubble--empty"></div>`;
@@ -684,6 +857,9 @@ function renderAssistantMessage(
         item.type === 'attachment',
     )
     .map(item => item.attachment);
+  const canvases = msg.content.filter(
+    (item): item is AssistantCanvasItem => item.type === 'canvas',
+  );
   if (orderedBlocks) {
     return html`${orderedBlocks}${renderAssistantAttachments(attachments, workingDirectory)}`;
   }
@@ -705,7 +881,8 @@ function renderAssistantMessage(
         ? renderToolTimeline(toolCards, !shouldOpenToolTimeline(rawMessage))
         : nothing
     }
-    ${renderAssistantTextBlock(text)} ${renderAssistantAttachments(attachments, workingDirectory)}
+    ${renderAssistantTextBlock(text)} ${canvases.map(renderAssistantCanvas)}
+    ${renderAssistantAttachments(attachments, workingDirectory)}
   `;
 }
 
@@ -715,7 +892,7 @@ function renderThinkingBlock(thinking: string): TemplateResult {
   const reasoning = formatReasoningMarkdown(thinking);
   return html`
     <details class="chat-thinking">
-      <summary class="chat-thinking__summary">Thinking</summary>
+      <summary class="chat-thinking__summary">${i18nService.t('coworkThinkingLabel')}</summary>
       <div class="chat-thinking__content">${unsafeHTML(toSanitizedMarkdownHtml(reasoning))}</div>
     </details>
   `;
@@ -728,7 +905,8 @@ function renderToolMessage(message: unknown): TemplateResult {
   const toolName = (m.toolName ?? m.tool_name ?? 'tool') as string;
   const text = extractTextCached(message) ?? '';
   const input = m.args ?? m.arguments ?? m.input ?? m.toolInput ?? m.tool_input;
-  const isError = Boolean(m.isError) || text.toLowerCase().includes('error');
+  const explicitError = m.isError ?? m.is_error;
+  const isError = typeof explicitError === 'boolean' ? explicitError : isToolErrorOutput(text);
   const display = resolveToolDisplay(toolName);
 
   return html`
@@ -768,7 +946,9 @@ function renderToolMessage(message: unknown): TemplateResult {
 // ─── Tool Timeline ──────────────────────────────────────────────────────────
 
 function renderToolTimeline(cards: ToolCard[], collapsed: boolean): TemplateResult {
-  const toolNames = cards.map(card => resolveToolDisplay(card.name).title).join('、');
+  const toolNames = cards
+    .map(card => resolveToolDisplay(card.name).title)
+    .join(i18nService.t('coworkToolTimelineNameSeparator'));
   const summary = `${cards.length} ${i18nService.t('coworkToolTimelineSummaryLabel')}: ${toolNames}`;
   return html`
     <details class="tool-timeline" ?open=${!collapsed}>
@@ -794,11 +974,14 @@ function formatToolTimelineSummaryInput(card: ToolCard): string {
 
 function renderToolTimelineItem(card: ToolCard): TemplateResult {
   const display = resolveToolDisplay(card.name);
-  const resultText = card.outputText ?? i18nService.t('coworkToolRunning');
+  const isCompleted = card.outputText !== undefined;
+  const resultText = isCompleted
+    ? card.outputText || i18nService.t('coworkToolNoOutput')
+    : i18nService.t('coworkToolRunning');
   const summaryInput = formatToolTimelineSummaryInput(card);
-  const statusClass = card.isError
+  const statusClass = isToolCardError(card)
     ? 'tool-timeline__item--error'
-    : card.outputText
+    : isCompleted
       ? 'tool-timeline__item--completed'
       : 'tool-timeline__item--running';
   return html`
@@ -829,13 +1012,14 @@ function renderToolTimelineItem(card: ToolCard): TemplateResult {
 function renderGroupFooter(
   group: MessageGroup,
   showFooter: boolean,
+  assistantName?: string,
 ): TemplateResult | typeof nothing {
   if (!showFooter) return nothing;
   const ts = group.timestamp;
   if (!ts) return nothing;
   const date = new Date(ts);
   const time = formatGroupTimestamp(date);
-  const roleName = getGroupFooterLabel(group);
+  const roleName = getGroupFooterLabel(group, assistantName);
   return html`
     <div class="chat-group__footer">
       ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
@@ -844,14 +1028,16 @@ function renderGroupFooter(
   `;
 }
 
-export function getGroupFooterLabel(group: MessageGroup): string {
+export function getGroupFooterLabel(group: MessageGroup, assistantName?: string): string {
   if (group.role === 'assistant') {
     const modelName = group.modelName?.trim() ?? '';
     const senderLabel = group.senderLabel?.trim() ?? '';
-    return modelName || senderLabel || 'Assistant';
+    return (
+      modelName || assistantName?.trim() || senderLabel || i18nService.t('coworkAssistantLabel')
+    );
   }
   if (group.role === 'user') {
-    return 'You';
+    return i18nService.t('coworkYouLabel');
   }
   return group.senderLabel?.trim() ?? '';
 }
@@ -883,6 +1069,19 @@ export function shouldRenderGroupFooterByNextItem(
   }
 
   return true;
+}
+
+export function renderThinkingToolsContentGroup(
+  contentGroup: MessageGroup,
+  sourceGroup: MessageGroup,
+  nextItem: ChatItem | MessageGroup | null | undefined,
+  opts?: Omit<MessageGroupRenderOptions, 'showFooter' | 'showAvatar'>,
+): TemplateResult | typeof nothing {
+  return renderMessageGroup(contentGroup, {
+    ...opts,
+    showFooter: shouldRenderGroupFooterByNextItem(sourceGroup, nextItem),
+    showAvatar: false,
+  });
 }
 
 export function shouldRenderGroupAvatarByPrevItem(
@@ -982,7 +1181,7 @@ function renderStreamingThinkingBlock(text: string): TemplateResult {
     <div class="chat-thinking chat-thinking--streaming">
       <div class="chat-thinking__header">
         <span class="chat-thinking__indicator"></span>
-        <span class="chat-thinking__label">Thinking</span>
+        <span class="chat-thinking__label">${i18nService.t('coworkThinkingLabel')}</span>
       </div>
       <div class="chat-thinking__content">${unsafeHTML(toStreamingMarkdownHtml(text))}</div>
     </div>

@@ -13,13 +13,14 @@ import mermaid from 'mermaid';
 
 import { renderChatAvatar } from '@/libs/openclaw-chat/components/chat-avatar';
 import {
-  getThinkingToolsGroupToolCount,
   renderMessageGroup,
   renderMessageGroupWithTrailingStream,
   renderStreamingGroup,
   renderStreamingThinkingGroup,
+  renderThinkingToolsContentGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
+  splitThinkingToolsGroup,
 } from '@/libs/openclaw-chat/components/grouped-render';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
@@ -757,6 +758,41 @@ export class JustDoChatElement extends LitElement {
     .code-block-copy:hover {
       background: rgba(255, 255, 255, 0.1);
       color: #fff;
+    }
+
+    .assistant-canvas {
+      width: min(760px, 100%);
+      margin-top: 8px;
+      overflow: hidden;
+      background: var(--justdo-chat-assistant-bg, #ffffff);
+      border: 1px solid var(--justdo-chat-border, #e5e7eb);
+      border-radius: 10px;
+    }
+
+    .assistant-canvas__title {
+      padding: 7px 10px;
+      overflow: hidden;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      font-size: 12px;
+      font-weight: 500;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--justdo-chat-border, #e5e7eb);
+    }
+
+    .assistant-canvas__frame {
+      display: block;
+      width: 100%;
+      min-height: 160px;
+      background: #fff;
+      border: 0;
+    }
+
+    .assistant-canvas__unavailable {
+      padding: 18px;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      font-size: 13px;
+      text-align: center;
     }
 
     .message-attachments {
@@ -2013,18 +2049,26 @@ export class JustDoChatElement extends LitElement {
       if (item?.kind === 'group') {
         const clusters: MessageGroup[] = [];
         const toolCounts: number[] = [];
+        let visibleContentGroup: MessageGroup | null = null;
+        let visibleContentSourceGroup: MessageGroup | null = null;
         let cursor = index;
         for (; cursor < items.length; cursor += 1) {
           const candidate = items[cursor];
           if (candidate?.kind !== 'group') break;
-          const toolCount = getThinkingToolsGroupToolCount(candidate);
-          if (toolCount == null) break;
-          clusters.push(candidate);
-          toolCounts.push(toolCount);
+          const collapse = splitThinkingToolsGroup(candidate);
+          if (!collapse) break;
+          clusters.push(collapse.collapsedGroup);
+          toolCounts.push(collapse.toolCount);
+          if (collapse.contentGroup) {
+            visibleContentGroup = collapse.contentGroup;
+            visibleContentSourceGroup = candidate;
+            cursor += 1;
+            break;
+          }
         }
-        const hasLaterMessageGroup = items
-          .slice(cursor)
-          .some(candidate => candidate?.kind === 'group');
+        const hasLaterMessageGroup =
+          visibleContentGroup !== null ||
+          items.slice(cursor).some(candidate => candidate?.kind === 'group');
         if (isStreaming && !hasLaterMessageGroup && clusters.length > 0) {
           clusters.pop();
           toolCounts.pop();
@@ -2063,6 +2107,21 @@ export class JustDoChatElement extends LitElement {
               </div>
             </details>
           `);
+          if (visibleContentGroup) {
+            const nextAfterCluster = items[index + clusters.length];
+            rendered.push(
+              renderThinkingToolsContentGroup(
+                visibleContentGroup,
+                visibleContentSourceGroup ?? visibleContentGroup,
+                nextAfterCluster,
+                {
+                  searchQuery: this.searchQuery,
+                  assistantName: this.assistantName,
+                  workingDirectory: this.workingDirectory,
+                },
+              ),
+            );
+          }
           index += clusters.length - 1;
           continue;
         }

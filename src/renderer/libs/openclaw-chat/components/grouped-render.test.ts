@@ -10,10 +10,13 @@ import {
   getGroupFooterLabel,
   getThinkingToolsGroupToolCount,
   renderMessageGroup,
+  renderThinkingToolsContentGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
+  splitThinkingToolsGroup,
 } from '@/libs/openclaw-chat/components/grouped-render';
 import type { MessageGroup } from '@/libs/openclaw-chat/types';
+import { i18nService } from '@/services/i18n';
 
 function createThinkingToolsGroup(
   toolCount: number,
@@ -53,8 +56,73 @@ describe('getThinkingToolsGroupToolCount', () => {
     expect(getThinkingToolsGroupToolCount(createThinkingToolsGroup(3))).toBe(3);
   });
 
-  test('does not match a group that also contains Content', () => {
-    expect(getThinkingToolsGroupToolCount(createThinkingToolsGroup(2, true))).toBeNull();
+  test('counts tools when the group also contains Content', () => {
+    expect(getThinkingToolsGroupToolCount(createThinkingToolsGroup(2, true))).toBe(2);
+  });
+
+  test('treats reasoning blocks as Thinking for collapsing', () => {
+    const group = createThinkingToolsGroup(1);
+    const message = group.messages[0]?.message as { content: Array<Record<string, unknown>> };
+    message.content[0] = { type: 'reasoning', text: 'reasoning content' };
+
+    expect(getThinkingToolsGroupToolCount(group)).toBe(1);
+  });
+
+  test.each([
+    ['Thinking, Tools, Content', ['thinking', 'tool_use', 'tool_use', 'text']],
+    ['Thinking, Content, Tools', ['thinking', 'text', 'tool_use', 'tool_use']],
+  ])('keeps Content outside the collapsed group for %s', (_label, blockOrder) => {
+    const blocks = blockOrder.map((type, index) => {
+      if (type === 'thinking') return { type, thinking: 'reasoning' };
+      if (type === 'text') return { type, text: 'answer for the user' };
+      return { type, id: `tool-${index}`, name: `Tool${index}`, input: {} };
+    });
+    const group = createThinkingToolsGroup(0);
+    group.messages[0] = {
+      ...group.messages[0],
+      message: { role: 'assistant', content: blocks },
+    };
+
+    const collapse = splitThinkingToolsGroup(group);
+
+    expect(collapse?.toolCount).toBe(2);
+    expect(
+      (
+        collapse?.collapsedGroup.messages[0]?.message as { content: Array<{ type: string }> }
+      ).content.map(block => block.type),
+    ).toEqual(blockOrder.filter(type => type !== 'text'));
+    expect(
+      (collapse?.contentGroup?.messages[0]?.message as { content: Array<Record<string, unknown>> })
+        .content,
+    ).toEqual([{ type: 'text', text: 'answer for the user' }]);
+  });
+
+  test('keeps every user-visible block outside the collapsed process group', () => {
+    const group = createThinkingToolsGroup(1);
+    const message = group.messages[0]?.message as { content: Array<Record<string, unknown>> };
+    message.content.push(
+      { type: 'image', url: 'https://example.com/image.png' },
+      {
+        type: 'canvas',
+        preview: {
+          kind: 'canvas',
+          surface: 'assistant_message',
+          render: 'url',
+          url: 'https://example.com/preview',
+        },
+      },
+    );
+
+    const collapse = splitThinkingToolsGroup(group);
+    const collapsedContent = (
+      collapse?.collapsedGroup.messages[0]?.message as { content: Array<{ type: string }> }
+    ).content;
+    const visibleContent = (
+      collapse?.contentGroup?.messages[0]?.message as { content: Array<{ type: string }> }
+    ).content;
+
+    expect(collapsedContent.map(block => block.type)).toEqual(['thinking', 'tool_use']);
+    expect(visibleContent.map(block => block.type)).toEqual(['image', 'canvas']);
   });
 
   test('does not match a Thinking and Tools group until its tool completes', () => {
@@ -180,6 +248,26 @@ describe('shouldRenderGroupFooter', () => {
       true,
     );
   });
+
+  test('renders a split Content footer only at the end of the assistant sequence', () => {
+    const sourceGroup = createThinkingToolsGroup(1, true);
+    const contentGroup = splitThinkingToolsGroup(sourceGroup)?.contentGroup;
+    expect(contentGroup).not.toBeNull();
+
+    const continued = stringifyTemplate(
+      renderThinkingToolsContentGroup(
+        contentGroup as MessageGroup,
+        sourceGroup,
+        createGroup('assistant'),
+      ),
+    );
+    const completed = stringifyTemplate(
+      renderThinkingToolsContentGroup(contentGroup as MessageGroup, sourceGroup, null),
+    );
+
+    expect(continued).not.toContain('chat-group__footer');
+    expect(completed).toContain('chat-group__footer');
+  });
 });
 
 describe('shouldRenderGroupAvatarByPrevItem', () => {
@@ -219,7 +307,9 @@ describe('group footer helpers', () => {
   });
 
   test('falls back to assistant label when model name is missing', () => {
-    expect(getGroupFooterLabel(createGroup('assistant'))).toBe('Assistant');
+    expect(getGroupFooterLabel(createGroup('assistant'))).toBe(
+      i18nService.t('coworkAssistantLabel'),
+    );
   });
 
   test('ignores empty string model names and still falls back', () => {
@@ -228,7 +318,11 @@ describe('group footer helpers', () => {
         ...createGroup('assistant'),
         modelName: '   ',
       }),
-    ).toBe('Assistant');
+    ).toBe(i18nService.t('coworkAssistantLabel'));
+  });
+
+  test('uses the configured assistant name when model metadata is unavailable', () => {
+    expect(getGroupFooterLabel(createGroup('assistant'), 'Research Agent')).toBe('Research Agent');
   });
 
   test('formats timestamps as yyyy-mm-dd hh:mm', () => {
@@ -316,6 +410,38 @@ describe('renderMessageGroup', () => {
 
     expect(rendered).toContain('Goal complete: Write a poem');
     expect(rendered).not.toContain('Tokens used: 0');
+  });
+
+  test('renders Canvas content and removes its embed directive from visible text', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-canvas-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-canvas-message',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'text',
+                  text: 'Preview below\n[embed url="https://example.com/view" title="Report" height="420" /]',
+                },
+              ],
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('class="assistant-canvas__frame"');
+    expect(rendered).toContain('https://example.com/view');
+    expect(rendered).toContain('height: 420px');
+    expect(rendered).not.toContain('[embed');
   });
 
   test('renders a MEDIA file attachment from user message content', () => {
@@ -603,6 +729,85 @@ describe('renderMessageGroup', () => {
     expect(rendered.match(/class="tool-timeline"/g)).toHaveLength(1);
     expect(rendered).toContain('3 tools: Read、Write、Bash');
     expect(rendered.match(/tool-timeline__item /g)).toHaveLength(3);
+  });
+
+  test('marks an empty tool result as completed instead of running', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-empty-tool-result',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-empty-tool-result-message',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'toolresult', id: 'call-empty', name: 'exec', text: '' }],
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('tool-timeline__item--completed');
+    expect(rendered).not.toContain('tool-timeline__item--running');
+    expect(rendered).toContain(i18nService.t('coworkToolNoOutput'));
+  });
+
+  test('detects structured error tool output in a timeline', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-error-tool-result',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-error-tool-result-message',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'toolresult',
+                  id: 'call-error',
+                  name: 'exec',
+                  text: '{"error":"permission denied"}',
+                },
+              ],
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('tool-timeline__item--error');
+  });
+
+  test('does not treat benign text containing the word errors as a tool failure', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'standalone-tool-success',
+        role: 'tool',
+        messages: [
+          {
+            key: 'standalone-tool-success-message',
+            message: {
+              role: 'tool',
+              toolName: 'test',
+              content: [{ type: 'text', text: 'Completed with 0 errors' }],
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).not.toContain('tool-message--error');
   });
 
   test('keeps tool input and result details collapsed even when the tools timeline is open', () => {
