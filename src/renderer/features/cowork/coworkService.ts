@@ -590,16 +590,21 @@ class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
 
-    const result = await cowork.stopSession(sessionId);
-    if (result.success) {
-      store.dispatch(setStreaming(false));
-      this.clearSessionInProgress(sessionId);
-      store.dispatch(updateSessionStatus({ sessionId, status: 'idle' }));
-      return true;
-    }
+    try {
+      const result = await cowork.stopSession(sessionId);
+      if (result.success) {
+        store.dispatch(setStreaming(false));
+        this.clearSessionInProgress(sessionId);
+        store.dispatch(updateSessionStatus({ sessionId, status: 'idle' }));
+        return true;
+      }
 
-    console.error('Failed to stop session:', result.error);
-    return false;
+      console.error('Failed to stop session:', result.error);
+      return false;
+    } catch (error) {
+      console.error('Failed to stop session:', error);
+      return false;
+    }
   }
 
   async deleteSession(sessionId: string): Promise<boolean> {

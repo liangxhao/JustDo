@@ -5,6 +5,7 @@ import type {
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
+  CoworkStopOptions,
 } from '../types';
 
 type RouterDeps = {
@@ -55,12 +56,12 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     await this.runtime.continueSession(sessionId, prompt, options);
   }
 
-  stopSession(sessionId: string): void {
-    this.runtime.stopSession(sessionId);
+  async stopSession(sessionId: string, options?: CoworkStopOptions): Promise<void> {
+    await this.runtime.stopSession(sessionId, options);
   }
 
-  stopAllSessions(): void {
-    this.runtime.stopAllSessions();
+  async stopAllSessions(): Promise<void> {
+    await this.runtime.stopAllSessions();
   }
 
   isSessionActive(sessionId: string): boolean {

@@ -47,6 +47,7 @@ import type {
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
+  CoworkStopOptions,
 } from '../types';
 import { HistoryReconciler } from './historyReconciler';
 import {
@@ -76,6 +77,12 @@ const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
 const RUNTIME_SESSION_SNAPSHOT_TTL_MS = 2_000;
+
+type SessionAbortResponse = {
+  ok?: boolean;
+  abortedRunId?: string | null;
+  status?: 'aborted' | 'no-active-run';
+};
 const RUNTIME_STATUS_WARNING_INTERVAL_MS = 30_000;
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
@@ -313,22 +320,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     });
   }
 
-  stopSession(sessionId: string): void {
+  async stopSession(sessionId: string, options: CoworkStopOptions = {}): Promise<void> {
     const turn = this.activeTurns.get(sessionId);
     if (turn) {
       turn.stopRequested = true;
-      this.manuallyStoppedSessions.add(sessionId);
-      const client = this.gatewayClient;
-      if (client) {
-        void client
-          .request('chat.abort', { sessionKey: turn.sessionKey, runId: turn.runId })
-          .catch(error =>
-            coworkLog('WARN', 'OpenClawRuntime', 'Failed to abort chat run', {
-              error: String(error),
-            }),
-          );
-      }
     }
+    this.manuallyStoppedSessions.add(sessionId);
+
+    try {
+      await this.abortSessionAndSubagents(sessionId, turn);
+    } catch (error) {
+      if (turn && this.activeTurns.get(sessionId) === turn) {
+        turn.stopRequested = false;
+      }
+      this.manuallyStoppedSessions.delete(sessionId);
+      if (!options.bestEffort) throw error;
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to confirm session stop', {
+        error: String(error),
+        sessionId,
+      });
+    }
+
     this.stoppedSessions.set(sessionId, Date.now());
     this.terminalLifecycleSessionIds.delete(sessionId);
     this.cleanupSessionTurn(sessionId);
@@ -337,10 +349,88 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.resolveTurn(sessionId);
   }
 
-  stopAllSessions(): void {
-    for (const sessionId of this.activeTurns.keys()) {
-      this.stopSession(sessionId);
+  async stopAllSessions(): Promise<void> {
+    const sessionIds = [...this.activeTurns.keys()];
+    await Promise.all(
+      sessionIds.map(sessionId => this.stopSession(sessionId, { bestEffort: true })),
+    );
+  }
+
+  private async abortSessionAndSubagents(
+    sessionId: string,
+    turn?: SessionTurn,
+  ): Promise<void> {
+    const client = this.gatewayClient;
+    if (!client) {
+      if (!turn && !this.store.getSession(sessionId)) return;
+      throw new Error('OpenClaw Gateway is not connected; the session stop was not confirmed.');
     }
+
+    const parentKeys = [...new Set([
+      ...(turn ? [turn.sessionKey] : []),
+      ...this.getSessionKeysForSession(sessionId),
+    ])];
+    let subagentKeys: string[] = [];
+    let subagentDiscoveryError: unknown;
+    try {
+      subagentKeys = await this.collectRunningSubagentSessionKeys(client, parentKeys);
+    } catch (error) {
+      subagentDiscoveryError = error;
+    }
+    const abortTargets: Array<{ key: string; runId?: string }> = [
+      ...(turn ? [{ key: turn.sessionKey, runId: turn.runId }] : parentKeys.map(key => ({ key }))),
+      ...subagentKeys.map(key => ({ key })),
+    ];
+    const uniqueTargets = [
+      ...new Map(abortTargets.map(target => [`${target.key}\0${target.runId ?? ''}`, target])).values(),
+    ];
+    const results = await Promise.allSettled(
+      uniqueTargets.map(async target => {
+        const response = await client.request<SessionAbortResponse>('sessions.abort', target);
+        if (
+          response.ok !== true ||
+          (response.status !== 'aborted' && response.status !== 'no-active-run')
+        ) {
+          throw new Error(`Gateway did not confirm abort for session ${target.key}.`);
+        }
+      }),
+    );
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (failure) throw failure.reason;
+    if (subagentDiscoveryError) throw subagentDiscoveryError;
+    this.subagentStatusCache.delete(sessionId);
+  }
+
+  private async collectRunningSubagentSessionKeys(
+    client: GatewayClientLike,
+    parentKeys: string[],
+  ): Promise<string[]> {
+    const pendingParentKeys = [...parentKeys];
+    const visitedParentKeys = new Set<string>();
+    const runningKeys = new Set<string>();
+
+    while (pendingParentKeys.length > 0) {
+      const parentKey = pendingParentKeys.shift();
+      if (!parentKey || visitedParentKeys.has(parentKey)) continue;
+      visitedParentKeys.add(parentKey);
+      const subagents = await listGatewaySubagents({
+        client,
+        parentKeys: [parentKey],
+        includePersistedHistory: false,
+        includeStructuredTool: false,
+      });
+      for (const subagent of subagents) {
+        if (subagent.status !== SUBAGENT_STATUSES.RUNNING) continue;
+        if (!runningKeys.has(subagent.sessionKey)) {
+          runningKeys.add(subagent.sessionKey);
+          pendingParentKeys.push(subagent.sessionKey);
+        }
+      }
+    }
+
+    return [...runningKeys];
   }
 
   isSessionActive(sessionId: string): boolean {
@@ -1831,7 +1921,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     await new Promise(resolve => setTimeout(resolve, RACE_RESOLUTION_MS));
     if (!this.activeTurns.has(sessionId)) return;
-    this.stopSession(sessionId);
+    await this.stopSession(sessionId);
   }
 
   private startTurnTimeoutWatchdog(sessionId: string): void {

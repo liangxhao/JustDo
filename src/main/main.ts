@@ -818,11 +818,11 @@ if (!gotTheLock) {
     outboundHeaderProxy.stop();
     console.log('[Main] App is quitting, starting cleanup...');
     destroyTray();
-    // Stop Cowork sessions without blocking shutdown.
+    // Stop Cowork sessions before the Gateway and database are closed.
     const coworkRouter = coworkEngineService?.getCurrentRouter();
     if (coworkRouter) {
       console.log('[Main] Stopping cowork sessions...');
-      coworkRouter.stopAllSessions();
+      await coworkRouter.stopAllSessions();
     }
 
     if (openClawEngineManager) {

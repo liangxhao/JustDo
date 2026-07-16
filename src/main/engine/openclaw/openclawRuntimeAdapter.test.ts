@@ -15,7 +15,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
   coworkLog: vi.fn(),
 }));
 
-import type { GatewayClientCtor, GatewayClientLike } from '../gateway/types';
+import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { ensureGoalCommandSession, OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 function createEmptyStore() {
@@ -70,6 +70,124 @@ function createEmptyStore() {
     },
   };
 }
+
+const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn => ({
+  sessionId: 'session-1',
+  sessionKey: 'agent:main:justdo:session-1',
+  runId: 'run-1',
+  turnToken: 1,
+  chatStream: '',
+  agentAssistantStreamSeen: false,
+  committedAssistantSegments: [],
+  toolStreamById: new Map(),
+  toolStreamOrder: [],
+  chatToolMessages: [],
+  chatStreamSegments: [],
+  thinkingContent: '',
+  thinkingMessageId: null,
+  stopRequested: false,
+  assistantMessageId: null,
+  modelName: 'test-model',
+  knownRunIds: new Set(['run-1']),
+  ...overrides,
+});
+
+type StopTestAdapter = {
+  activeTurns: Map<string, SessionTurn>;
+  gatewayClient: GatewayClientLike | null;
+};
+
+test('waits for Gateway confirmation before clearing a stopped session', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter;
+  const turn = createSessionTurn();
+  internals.activeTurns.set(turn.sessionId, turn);
+
+  let confirmAbort: ((value: Record<string, unknown>) => void) | undefined;
+  const abortResponse = new Promise<Record<string, unknown>>(resolve => {
+    confirmAbort = resolve;
+  });
+  const request = vi.fn((method: string) => {
+    if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'sessions.abort') return abortResponse;
+    return Promise.resolve({});
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  const stopping = adapter.stopSession(turn.sessionId);
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('sessions.abort', {
+    key: turn.sessionKey,
+    runId: turn.runId,
+  }));
+  expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
+
+  confirmAbort?.({ ok: true, status: 'aborted', abortedRunId: turn.runId });
+  await stopping;
+
+  expect(internals.activeTurns.has(turn.sessionId)).toBe(false);
+});
+
+test('preserves local running state when Gateway does not confirm the stop', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter;
+  const turn = createSessionTurn();
+  internals.activeTurns.set(turn.sessionId, turn);
+  internals.gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn((method: string) => {
+      if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+      return Promise.reject(new Error('abort unavailable'));
+    }),
+  };
+  const stopped = vi.fn();
+  adapter.on('sessionStopped', stopped);
+
+  await expect(adapter.stopSession(turn.sessionId)).rejects.toThrow('abort unavailable');
+
+  expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
+  expect(turn.stopRequested).toBe(false);
+  expect(stopped).not.toHaveBeenCalled();
+});
+
+test('stops running child and descendant subagents when the parent turn is idle', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter;
+  const parentKey = 'agent:main:justdo:session-1';
+  const childKey = `${parentKey}:subagent:child`;
+  const grandchildKey = `${childKey}:subagent:grandchild`;
+  const request = vi.fn((method: string, params?: unknown) => {
+    const input = params as { spawnedBy?: string };
+    if (method === 'sessions.list') {
+      if (input.spawnedBy === parentKey) {
+        return Promise.resolve({
+          sessions: [{ key: childKey, hasActiveSubagentRun: true }],
+        });
+      }
+      if (input.spawnedBy === childKey) {
+        return Promise.resolve({
+          sessions: [{ key: grandchildKey, hasActiveSubagentRun: true }],
+        });
+      }
+      return Promise.resolve({ sessions: [] });
+    }
+    if (method === 'sessions.abort') {
+      return Promise.resolve({ ok: true, status: 'aborted', abortedRunId: 'remote-run' });
+    }
+    return Promise.resolve({});
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await adapter.stopSession('session-1');
+
+  const abortedKeys = request.mock.calls
+    .filter(([method]) => method === 'sessions.abort')
+    .map(([, params]) => (params as { key: string }).key);
+  expect(abortedKeys).toEqual(expect.arrayContaining([parentKey, childKey, grandchildKey]));
+});
 
 test('creates or reuses the OpenClaw session before a goal command', async () => {
   const request = vi.fn().mockResolvedValue({

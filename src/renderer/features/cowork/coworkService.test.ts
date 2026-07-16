@@ -58,4 +58,39 @@ describe('cowork runtime activity reconciliation', () => {
     await coworkService.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBeUndefined();
   });
+
+  test('clears running state only after a confirmed session stop', async () => {
+    const sessionId = 'confirmed-stop-session';
+    store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          stopSession: vi.fn().mockResolvedValue({ success: true }),
+        },
+      },
+    });
+
+    await expect(coworkService.stopSession(sessionId)).resolves.toBe(true);
+
+    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBeUndefined();
+  });
+
+  test('keeps running state when a session stop is rejected', async () => {
+    const sessionId = 'rejected-stop-session';
+    store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          stopSession: vi.fn().mockResolvedValue({
+            success: false,
+            error: 'Gateway did not confirm abort',
+          }),
+        },
+      },
+    });
+
+    await expect(coworkService.stopSession(sessionId)).resolves.toBe(false);
+
+    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
+  });
 });

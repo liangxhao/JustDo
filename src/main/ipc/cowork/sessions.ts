@@ -14,7 +14,7 @@ export const registerCoworkSessionHandlers = ({
 }: SessionHandlerDependencies): void => {
   ipcMain.handle('cowork:session:stop', async (_event, sessionId: string) => {
     try {
-      getCoworkEngineRouter().stopSession(sessionId);
+      await getCoworkEngineRouter().stopSession(sessionId);
       return { success: true };
     } catch (error) {
       return {
@@ -26,7 +26,7 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle('cowork:session:delete', async (_event, sessionId: string) => {
     try {
-      getCoworkEngineRouter().stopSession(sessionId);
+      await getCoworkEngineRouter().stopSession(sessionId, { bestEffort: true });
       const store = getCoworkStore();
       const agentId = store.getSession(sessionId)?.agentId || 'main';
       store.deleteSession(sessionId);
@@ -76,7 +76,9 @@ export const registerCoworkSessionHandlers = ({
       const agentIds = new Map(
         sessionIds.map(sessionId => [sessionId, store.getSession(sessionId)?.agentId || 'main']),
       );
-      sessionIds.forEach(sessionId => router.stopSession(sessionId));
+      await Promise.all(
+        sessionIds.map(sessionId => router.stopSession(sessionId, { bestEffort: true })),
+      );
       store.deleteSessions(sessionIds);
       sessionIds.forEach(sessionId => {
         try {

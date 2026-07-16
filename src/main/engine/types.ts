@@ -105,10 +105,7 @@ export interface CoworkRuntimeEvents {
   ) => void;
   messageDelete: (sessionId: string, messageId: string) => void;
   thinkingUpdate: (sessionId: string, messageId: string, thinkingDelta: string) => void;
-  complete: (
-    sessionId: string,
-    finalStatus?: 'idle' | 'running' | 'completed' | 'error',
-  ) => void;
+  complete: (sessionId: string, finalStatus?: 'idle' | 'running' | 'completed' | 'error') => void;
   error: (sessionId: string, error: string) => void;
   sessionStopped: (sessionId: string) => void;
 }
@@ -130,6 +127,11 @@ export type CoworkContinueOptions = {
   attachments?: CoworkAttachmentPayload[];
 };
 
+export type CoworkStopOptions = {
+  /** Continue local cleanup when Gateway confirmation is unavailable. */
+  bestEffort?: boolean;
+};
+
 export interface CoworkRuntime {
   on<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   off<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
@@ -139,8 +141,8 @@ export interface CoworkRuntime {
     prompt: string,
     options?: CoworkContinueOptions,
   ): Promise<void>;
-  stopSession(sessionId: string): void;
-  stopAllSessions(): void;
+  stopSession(sessionId: string, options?: CoworkStopOptions): Promise<void>;
+  stopAllSessions(): Promise<void>;
   isSessionActive(sessionId: string): boolean;
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null;
   onSessionDeleted?(sessionId: string, agentId?: string): void;
