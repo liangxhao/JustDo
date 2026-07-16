@@ -112,8 +112,8 @@ export const bindCoworkRuntimeForwarder = (
 
   runtime.on(
     'complete',
-    (sessionId: string, claudeSessionId: string | null, finalStatus?: string) => {
-      broadcast('cowork:stream:complete', { sessionId, claudeSessionId, finalStatus });
+    (sessionId: string, finalStatus?: string) => {
+      broadcast('cowork:stream:complete', { sessionId, finalStatus });
       try {
         if (resolveCurrentApiConfig().providerMetadata?.providerName === 'justdo-server') {
           broadcast('auth:quotaChanged', undefined);

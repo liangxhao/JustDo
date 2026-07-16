@@ -253,13 +253,12 @@ contextBridge.exposeInMainWorld('electron', {
     onStreamComplete: (
       callback: (data: {
         sessionId: string;
-        claudeSessionId: string | null;
         finalStatus?: string;
       }) => void,
     ) => {
       const handler = (
         _event: any,
-        data: { sessionId: string; claudeSessionId: string | null; finalStatus?: string },
+        data: { sessionId: string; finalStatus?: string },
       ) => callback(data);
       ipcRenderer.on('cowork:stream:complete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:complete', handler);

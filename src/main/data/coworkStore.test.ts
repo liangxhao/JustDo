@@ -37,7 +37,6 @@ function setupDb(): void {
     CREATE TABLE IF NOT EXISTS cowork_sessions (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
-      claude_session_id TEXT,
       status TEXT NOT NULL DEFAULT 'idle',
       pinned INTEGER NOT NULL DEFAULT 0,
       cwd TEXT NOT NULL,
@@ -98,8 +97,8 @@ function setupDb(): void {
 function insertSession(id: string): void {
   const now = Date.now();
   db.prepare(
-    `INSERT INTO cowork_sessions (id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, created_at, updated_at)
-     VALUES (?, 'test', NULL, 'idle', 0, '/tmp', '', 'local', '[]', 'main', ?, ?)`,
+    `INSERT INTO cowork_sessions (id, title, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, created_at, updated_at)
+     VALUES (?, 'test', 'idle', 0, '/tmp', '', 'local', '[]', 'main', ?, ?)`,
   ).run(id, now, now);
 }
 

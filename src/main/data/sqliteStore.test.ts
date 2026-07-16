@@ -36,7 +36,6 @@ test('deletes legacy schema database and creates a fresh database', () => {
     CREATE TABLE cowork_sessions (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
-      claude_session_id TEXT,
       status TEXT NOT NULL DEFAULT 'idle',
       cwd TEXT NOT NULL,
       created_at INTEGER NOT NULL,
@@ -70,6 +69,7 @@ test('deletes legacy schema database and creates a fresh database', () => {
   expect(columns.map(column => column.name)).toEqual(
     expect.arrayContaining(['agent_id', 'group_id', 'pinned', 'active_skill_ids']),
   );
+  expect(columns.map(column => column.name)).not.toContain('claude_session_id');
   expect(indexes.map(index => index.name)).toContain('idx_cowork_sessions_agent_order');
   expect(legacyRow).toBeUndefined();
 

@@ -176,8 +176,8 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
       this.emit('messageDelete', sessionId, messageId);
     });
 
-    runtime.on('complete', (sessionId, claudeSessionId, finalStatus) => {
-      this.emit('complete', sessionId, claudeSessionId, finalStatus);
+    runtime.on('complete', (sessionId, finalStatus) => {
+      this.emit('complete', sessionId, finalStatus);
     });
 
     runtime.on('error', (sessionId, error) => {

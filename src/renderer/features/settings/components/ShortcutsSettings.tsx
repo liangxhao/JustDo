@@ -104,11 +104,11 @@ const ShortcutRecorder: React.FC<{ value: string; onChange: (v: string) => void 
       onClick={() => setRecording(true)}
       onBlur={() => setRecording(false)}
       className={`w-36 rounded-xl border px-3 py-1.5 text-sm cursor-pointer select-none text-center outline-none transition-colors
-        dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset dark:text-claude-darkText text-claude-text
+        bg-surface-raised text-foreground
         ${
           recording
-            ? 'border-claude-accent ring-1 ring-claude-accent/30 dark:text-claude-darkTextSecondary text-claude-textSecondary'
-            : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50'
+            ? 'border-primary ring-1 ring-primary/30 text-secondary'
+            : 'border-border hover:border-primary/50'
         }`}
     >
       {value || i18nService.t('shortcutNotSet')}
@@ -143,17 +143,17 @@ const SendShortcutSelect: React.FC<{ value: string; onChange: (v: string) => voi
       <div
         onClick={() => setOpen(!open)}
         className={`w-36 rounded-xl border px-3 py-1.5 text-sm cursor-pointer select-none text-center outline-none transition-colors
-          dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset dark:text-claude-darkText text-claude-text
+          bg-surface-raised text-foreground
           ${
             open
-              ? 'border-claude-accent ring-1 ring-claude-accent/30'
-              : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50'
+              ? 'border-primary ring-1 ring-primary/30'
+              : 'border-border hover:border-primary/50'
           }`}
       >
         {currentLabel}
       </div>
       {open && (
-        <div className="absolute right-0 mt-1 z-50 min-w-[160px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset shadow-elevated py-1">
+        <div className="absolute right-0 mt-1 z-50 min-w-[160px] rounded-xl border border-border bg-surface-raised shadow-elevated py-1">
           {SEND_SHORTCUT_OPTIONS.map(option => {
             const label = isMacPlatform ? option.labelMac : option.label;
             const isActive = value === option.value;
@@ -168,12 +168,12 @@ const SendShortcutSelect: React.FC<{ value: string; onChange: (v: string) => voi
                 className={`flex items-center justify-between w-full px-3 py-1.5 text-sm transition-colors
                   ${
                     isActive
-                      ? 'dark:text-claude-accent text-claude-accent font-medium'
-                      : 'dark:text-claude-darkText text-claude-text'
-                  } hover:bg-claude-accent/10`}
+                      ? 'text-primary font-medium'
+                      : 'text-foreground'
+                  } hover:bg-primary/10`}
               >
                 <span>{label}</span>
-                {isActive && <span className="text-claude-accent">✓</span>}
+                {isActive && <span className="text-primary">✓</span>}
               </button>
             );
           })}

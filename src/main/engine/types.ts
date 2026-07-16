@@ -107,7 +107,6 @@ export interface CoworkRuntimeEvents {
   thinkingUpdate: (sessionId: string, messageId: string, thinkingDelta: string) => void;
   complete: (
     sessionId: string,
-    claudeSessionId: string | null,
     finalStatus?: 'idle' | 'running' | 'completed' | 'error',
   ) => void;
   error: (sessionId: string, error: string) => void;

@@ -16,7 +16,6 @@ const REQUIRED_TABLE_COLUMNS: Record<string, string[]> = {
   cowork_sessions: [
     'id',
     'title',
-    'claude_session_id',
     'status',
     'pinned',
     'cwd',
@@ -127,7 +126,6 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS cowork_sessions (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
-        claude_session_id TEXT,
         status TEXT NOT NULL DEFAULT 'idle',
         pinned INTEGER NOT NULL DEFAULT 0,
         cwd TEXT NOT NULL,

@@ -13,7 +13,6 @@ interface ApiResponse {
 interface CoworkSession {
   id: string;
   title: string;
-  claudeSessionId: string | null;
   status: 'idle' | 'running' | 'completed' | 'error';
   pinned: boolean;
   cwd: string;
@@ -598,7 +597,6 @@ interface IElectronAPI {
     onStreamComplete: (
       callback: (data: {
         sessionId: string;
-        claudeSessionId: string | null;
         finalStatus?: 'idle' | 'running' | 'completed' | 'error';
       }) => void,
     ) => () => void;

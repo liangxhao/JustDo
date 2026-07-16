@@ -180,7 +180,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                 type="button"
                 onClick={() => importInputRef.current?.click()}
                 disabled={isImporting || isExporting}
-                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
               >
                 {i18nService.t('import')}
               </button>
@@ -188,7 +188,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                 type="button"
                 onClick={handleExport}
                 disabled={isImporting || isExporting}
-                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
               >
                 {i18nService.t('export')}
               </button>
@@ -290,7 +290,7 @@ const ModelSettingsTab: React.FC<Props> = ({
         <div className="flex flex-1 min-h-0 flex-col space-y-4">
           {!isBuiltinModelsProvider(activeProvider) && (
             <div>
-              <label htmlFor={`${activeProvider}-displayName`} className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1">
+              <label htmlFor={`${activeProvider}-displayName`} className="block text-xs font-medium text-foreground mb-1">
                 {i18nService.t('customDisplayName')}
               </label>
               <input
@@ -305,7 +305,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                     handleProviderConfigChange(activeProvider, 'displayName', value);
                   }
                 }}
-                className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
+                className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
                 placeholder={i18nService.t('customDisplayNamePlaceholder')}
               />
               {displayNameError && <p className="mt-1 text-xs text-red-500">{displayNameError}</p>}
@@ -324,7 +324,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                   value={activeConfig.baseUrl}
                   onChange={e => handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)}
                   disabled={isBaseUrlLocked}
-                  className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
                   placeholder={getProviderDefaultBaseUrl(activeProvider) || defaultConfig.providers?.[activeProvider]?.baseUrl || i18nService.t('baseUrlPlaceholder')}
                 />
               </div>
@@ -339,7 +339,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                     id={`${activeProvider}-apiKey`}
                     value={activeConfig.apiKey}
                     onChange={e => handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)}
-                    className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                    className="block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
                     placeholder={i18nService.t('apiKeyPlaceholder')}
                   />
                 </div>
@@ -353,7 +353,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                 type="button"
                 onClick={handleTestConnection}
                 disabled={isTesting || (providerRequiresApiKey(activeProvider) && !activeConfig.apiKey)}
-                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
               >
                 <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                 {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}

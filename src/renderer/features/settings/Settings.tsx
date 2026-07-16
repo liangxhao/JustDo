@@ -2504,16 +2504,16 @@ const Settings: React.FC<SettingsProps> = ({
               aria-modal="true"
               onClick={e => e.stopPropagation()}
               onMouseDown={e => e.stopPropagation()}
-              className="w-full max-w-sm rounded-2xl dark:bg-claude-darkSurface bg-claude-bg dark:border-claude-darkBorder border-claude-border border shadow-modal p-4"
+              className="w-full max-w-sm rounded-2xl bg-surface border-border border shadow-modal p-4"
             >
-              <p className="text-sm dark:text-claude-darkText text-claude-text">
+              <p className="text-sm text-foreground">
                 {i18nService.t('confirmDeleteCustomProvider')}
               </p>
               <div className="mt-4 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setPendingDeleteProvider(null)}
-                  className="px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                  className="px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised transition-colors active:scale-[0.98]"
                 >
                   {i18nService.t('cancel')}
                 </button>

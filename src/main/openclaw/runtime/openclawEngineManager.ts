@@ -17,8 +17,8 @@ import {
   applyTrustedCertificateEnv,
   buildTrustedCaBundle,
 } from '../../core/trustedCertificates';
-import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../../cowork/coworkUtil';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
+import { ensureElectronNodeShim, getElectronNodeRuntimePath } from './electronNodeRuntime';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 

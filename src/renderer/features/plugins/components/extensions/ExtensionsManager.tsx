@@ -24,7 +24,7 @@ const ExtensionsManager: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 z-10 bg-claude-bg pb-4 shadow-sm dark:bg-claude-darkBg">
+      <div className="sticky top-0 z-10 bg-background pb-4 shadow-sm">
         <div className="flex items-center justify-between gap-4 border-b border-border">
           <div className="flex min-w-0 items-center">
             <button

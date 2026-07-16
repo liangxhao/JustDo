@@ -61,7 +61,7 @@ const ImageCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove }) => {
 
   return (
     <div
-      className="group relative h-16 w-16 flex-shrink-0 rounded-lg border dark:border-claude-darkBorder border-claude-border overflow-hidden bg-claude-surface dark:bg-claude-darkSurface"
+      className="group relative h-16 w-16 flex-shrink-0 rounded-lg border border-border overflow-hidden bg-surface"
       title={attachment.path}
     >
       {/* Thumbnail or fallback */}
@@ -111,7 +111,7 @@ const FileCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove }) => {
 
   return (
     <div
-      className="group relative flex h-16 w-40 flex-shrink-0 items-center gap-2 rounded-lg border dark:border-claude-darkBorder border-claude-border bg-claude-surface dark:bg-claude-darkSurface px-2"
+      className="group relative flex h-16 w-40 flex-shrink-0 items-center gap-2 rounded-lg border border-border bg-surface px-2"
       title={attachment.path}
     >
       {/* File type icon */}
@@ -119,10 +119,10 @@ const FileCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove }) => {
 
       {/* File name + type label */}
       <div className="flex min-w-0 flex-1 flex-col justify-center">
-        <span className="truncate text-xs font-medium dark:text-claude-darkText text-claude-text">
+        <span className="truncate text-xs font-medium text-foreground">
           {attachment.name}
         </span>
-        <span className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        <span className="text-[10px] text-secondary">
           {label}
         </span>
       </div>
@@ -131,7 +131,7 @@ const FileCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove }) => {
       <button
         type="button"
         onClick={() => onRemove(attachment.path)}
-        className="absolute top-1 right-1 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-claude-surfaceHover dark:bg-claude-darkSurfaceHover text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-text dark:hover:text-claude-darkText"
+        className="absolute top-1 right-1 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-surface-raised text-secondary hover:text-foreground"
         aria-label={i18nService.t('coworkAttachmentRemove')}
         title={i18nService.t('coworkAttachmentRemove')}
       >

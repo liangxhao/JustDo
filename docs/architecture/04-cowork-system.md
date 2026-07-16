@@ -83,7 +83,6 @@ Gateway history 是权威。`historyReconciler` 和 `src/main/openclaw/sessions/
 本地 `cowork_sessions` 存的是 UI 和产品元数据：
 
 - `id`：JustDo UI session id。
-- `claude_session_id`：历史命名保留字段，实际用于保存 Gateway session key/id 映射。
 - `title`：本地显示标题，可由标题生成服务更新。
 - `status`：UI 状态，例如 idle/running/error。
 - `cwd`：会话工作目录。

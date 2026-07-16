@@ -131,7 +131,6 @@ export interface CoworkMessage {
 export interface CoworkSession {
   id: string;
   title: string;
-  claudeSessionId: string | null;
   status: CoworkSessionStatus;
   pinned: boolean;
   cwd: string;
@@ -213,8 +212,8 @@ export class CoworkStore {
     this.db
       .prepare(
         `
-      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, execution_mode, active_skill_ids, agent_id, pinned, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, 0, ?, ?)
+      INSERT INTO cowork_sessions (id, title, status, cwd, execution_mode, active_skill_ids, agent_id, pinned, created_at, updated_at)
+      VALUES (?, ?, 'idle', ?, ?, ?, ?, 0, ?, ?)
     `,
       )
       .run(id, title, cwd, executionMode, JSON.stringify(activeSkillIds), agentId, now, now);
@@ -222,7 +221,6 @@ export class CoworkStore {
     return {
       id,
       title,
-      claudeSessionId: null,
       status: 'idle',
       pinned: false,
       cwd,
@@ -239,7 +237,6 @@ export class CoworkStore {
     interface SessionRow {
       id: string;
       title: string;
-      claude_session_id: string | null;
       status: string;
       pinned?: number | null;
       cwd: string;
@@ -252,7 +249,7 @@ export class CoworkStore {
 
     const row = this.getOne<SessionRow>(
       `
-      SELECT id, title, claude_session_id, status, pinned, cwd, execution_mode, active_skill_ids, agent_id, created_at, updated_at
+      SELECT id, title, status, pinned, cwd, execution_mode, active_skill_ids, agent_id, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `,
@@ -276,7 +273,6 @@ export class CoworkStore {
     return {
       id: row.id,
       title: row.title,
-      claudeSessionId: row.claude_session_id,
       status: row.status as CoworkSessionStatus,
       pinned: Boolean(row.pinned),
       cwd: row.cwd,
@@ -292,7 +288,7 @@ export class CoworkStore {
   updateSession(
     id: string,
     updates: Partial<
-      Pick<CoworkSession, 'title' | 'claudeSessionId' | 'status' | 'cwd' | 'executionMode'>
+      Pick<CoworkSession, 'title' | 'status' | 'cwd' | 'executionMode'>
     >,
   ): void {
     const now = Date.now();
@@ -302,10 +298,6 @@ export class CoworkStore {
     if (updates.title !== undefined) {
       setClauses.push('title = ?');
       values.push(updates.title);
-    }
-    if (updates.claudeSessionId !== undefined) {
-      setClauses.push('claude_session_id = ?');
-      values.push(updates.claudeSessionId);
     }
     if (updates.status !== undefined) {
       setClauses.push('status = ?');

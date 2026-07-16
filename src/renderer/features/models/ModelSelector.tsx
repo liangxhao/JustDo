@@ -88,8 +88,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       type="button"
       key={getModelIdentityKey(model)}
       onClick={() => handleModelSelect(model)}
-      className={`w-full px-4 py-2.5 text-left dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center justify-between transition-colors ${
-        isSelected(model) ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''
+      className={`w-full px-4 py-2.5 text-left text-foreground hover:bg-surface-raised flex items-center justify-between transition-colors ${
+        isSelected(model) ? 'bg-surface-raised/50' : ''
       }`}
     >
       <div className="flex flex-col">
@@ -106,7 +106,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         )}
       </div>
       {isSelected(model) && (
-        <CheckIcon className="h-4 w-4 text-claude-accent" />
+        <CheckIcon className="h-4 w-4 text-primary" />
       )}
     </button>
   );
@@ -125,7 +125,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl hover:bg-surface-raised text-foreground transition-colors cursor-pointer ${isOpen ? 'bg-surface-raised' : ''}`}
       >
         <span className="font-medium text-sm">{selectedModel?.name ?? defaultLabel ?? ''}</span>
-        <ChevronDownIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+        <ChevronDownIcon className="h-4 w-4 text-secondary" />
       </button>
 
       {isOpen && (
@@ -135,12 +135,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
               <button
                 type="button"
                 onClick={() => handleModelSelect(null)}
-                className={`w-full px-4 py-2.5 text-left dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center justify-between transition-colors ${
-                  !selectedModel ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''
+                className={`w-full px-4 py-2.5 text-left text-foreground hover:bg-surface-raised flex items-center justify-between transition-colors ${
+                  !selectedModel ? 'bg-surface-raised/50' : ''
                 }`}
               >
                 <span className="text-sm">{defaultLabel}</span>
-                {!selectedModel && <CheckIcon className="h-4 w-4 text-claude-accent" />}
+                {!selectedModel && <CheckIcon className="h-4 w-4 text-primary" />}
               </button>
             )}
             {hasBothGroups ? (

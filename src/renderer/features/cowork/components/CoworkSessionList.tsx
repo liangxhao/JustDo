@@ -284,7 +284,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     return (
       <div className="flex items-center justify-center py-10">
         <svg
-          className="animate-spin h-6 w-6 dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60"
+          className="animate-spin h-6 w-6 text-secondary/60"
           xmlns="http://www.w3.org/2000/svg"
           fill="none"
           viewBox="0 0 24 24"
@@ -380,8 +380,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
         {sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 px-4">
-            <ChatBubbleLeftRightIcon className="h-10 w-10 dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40 mb-3" />
-            <p className="text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+            <ChatBubbleLeftRightIcon className="h-10 w-10 text-secondary/40 mb-3" />
+            <p className="text-sm font-medium text-secondary mb-1">
               {i18nService.t('coworkNoSessions')}
             </p>
           </div>

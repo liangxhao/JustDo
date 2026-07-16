@@ -633,8 +633,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.resolveTurn(sessionId!);
       this.replayDeferredSessionMessageReload(sessionId!);
       // Notify renderer of turn completion
-      const session = this.store.getSession(sessionId!);
-      this.emit('complete', sessionId!, session?.claudeSessionId ?? null, sessionStatus);
+      this.emit('complete', sessionId!, sessionStatus);
       // OpenClaw Gateway history is authoritative; local messages are only a UI cache.
       if (sessionKey) {
         void this.historyReconciler
@@ -2708,7 +2707,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return {
         id: `transient-${sessionKey}`,
         title: sessionKey.split(':').pop() || 'Cron Session',
-        claudeSessionId: null,
         status: 'completed' as CoworkSessionStatus,
         pinned: false,
         cwd: '',

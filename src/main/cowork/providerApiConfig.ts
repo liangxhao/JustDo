@@ -197,12 +197,12 @@ export function getCurrentApiConfig(): CoworkApiConfig | null {
 export function resolveRawApiConfig(): ApiConfigResolution {
   const sqliteStore = getStore();
   if (!sqliteStore) {
-    console.debug('[ClaudeSettings] resolveRawApiConfig: store is null, storeGetter not set yet');
+    console.debug('[ProviderApiConfig] resolveRawApiConfig: store is not initialized');
     return { config: null, error: 'Store is not initialized.' };
   }
   const appConfig = sqliteStore.get<AppConfig>('app_config');
   if (!appConfig) {
-    console.debug('[ClaudeSettings] resolveRawApiConfig: app_config not found in store');
+    console.debug('[ProviderApiConfig] resolveRawApiConfig: app_config not found in store');
     return { config: null, error: 'Application config not found.' };
   }
 
@@ -212,7 +212,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
     const defaultModel = appConfig.model?.defaultModel;
     const defaultProvider = appConfig.model?.defaultModelProvider;
     console.debug(
-      `[ClaudeSettings] resolveRawApiConfig: no matched provider, error=${error}, providers=[${providerKeys.join(',')}], defaultModel=${defaultModel}, defaultProvider=${defaultProvider}`,
+      `[ProviderApiConfig] resolveRawApiConfig: no matched provider, error=${error}, providers=[${providerKeys.join(',')}], defaultModel=${defaultModel}, defaultProvider=${defaultProvider}`,
     );
     return { config: null, error };
   }
@@ -262,16 +262,6 @@ export function resolveAllProviderApiKeys(): Record<string, string> {
   }
 
   return result;
-}
-
-export function buildEnvForConfig(config: CoworkApiConfig): Record<string, string> {
-  const baseEnv = { ...process.env } as Record<string, string>;
-
-  baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-  baseEnv.ANTHROPIC_API_KEY = config.apiKey;
-  baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
-  baseEnv.ANTHROPIC_MODEL = config.model;
-  return baseEnv;
 }
 
 export type ProviderRawConfig = {

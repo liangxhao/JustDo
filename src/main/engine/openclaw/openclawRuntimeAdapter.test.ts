@@ -22,7 +22,6 @@ function createEmptyStore() {
   const session = {
     id: 'session-1',
     title: 'Test Session',
-    claudeSessionId: null,
     status: 'completed',
     pinned: false,
     cwd: '',
@@ -322,7 +321,6 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
   const session = {
     id: 'session-1',
     title: 'Announce Session',
-    claudeSessionId: null,
     status: 'running',
     pinned: false,
     cwd: '',
@@ -478,7 +476,6 @@ test('announce item and command_output events render tool messages', () => {
   const session = {
     id: 'session-1',
     title: 'Announce Session',
-    claudeSessionId: null,
     status: 'running',
     pinned: false,
     cwd: '',
@@ -560,7 +557,6 @@ test('announce events after parent turn cleanup do not render assistant deltas',
   const session = {
     id: 'session-1',
     title: 'Announce Session',
-    claudeSessionId: null,
     status: 'idle',
     pinned: false,
     cwd: '',
@@ -686,7 +682,6 @@ test('detached announce final does not append composite assistant snapshot', () 
   const session = {
     id: 'session-1',
     title: 'Announce Session',
-    claudeSessionId: null,
     status: 'idle',
     pinned: false,
     cwd: '',
@@ -943,7 +938,6 @@ test('chat delta without run id is ignored while a turn is active', () => {
   const session = {
     id: 'session-1',
     title: 'Session',
-    claudeSessionId: null,
     status: 'running',
     pinned: false,
     cwd: '',
@@ -988,7 +982,6 @@ test('session.message reload is deferred until sessions.changed clears active ru
   const session = {
     id: 'session-1',
     title: 'Session',
-    claudeSessionId: null,
     status: 'running',
     pinned: false,
     cwd: '',
@@ -1045,7 +1038,6 @@ test('patchSessionModel defers gateway patch while session is active', async () 
   const session = {
     id: 'session-1',
     title: 'Session',
-    claudeSessionId: null,
     status: 'running',
     pinned: false,
     cwd: '',

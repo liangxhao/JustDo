@@ -188,7 +188,7 @@ const HookManager: React.FC = () => {
         </div>
       )}
 
-      <div className="sticky top-0 z-10 bg-claude-bg pb-4 shadow-sm dark:bg-claude-darkBg">
+      <div className="sticky top-0 z-10 bg-background pb-4 shadow-sm">
         <div className="flex items-center justify-between gap-4 border-b border-border">
           <div className="flex items-center">
             <button

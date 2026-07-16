@@ -16,7 +16,6 @@ function createSync() {
       createSession: () => ({
         id: 'test-session-id',
         title: 'Test Session',
-        claudeSessionId: null,
         status: 'active',
         pinned: false,
         workingDirectory: '/tmp',

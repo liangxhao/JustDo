@@ -55,7 +55,6 @@ erDiagram
   cowork_sessions {
     text id PK
     text title
-    text claude_session_id
     text status
     integer pinned
     text cwd
@@ -103,7 +102,6 @@ erDiagram
 
 - `id`
 - `title`
-- `claude_session_id`
 - `status`
 - `pinned`
 - `cwd`
@@ -164,7 +162,9 @@ SQLite 不是 OpenClaw execution history 的权威。Gateway `chat.history` 是�
 
 ### `cowork_sessions`
 
-Cowork 会话列表和 UI 元数据表。`claude_session_id` 是历史字段名，当前用于保存 Gateway session 映射。
+Cowork 会话列表和 UI 元数据表。OpenClaw session key 由运行时根据本地 session 和 agent 计算，
+不在该表重复持久化。旧版本数据库中可能仍存在未使用的 `claude_session_id` 列；为避免重建用户
+数据库，该冗余列会被忽略，新数据库不再创建。
 
 关键索引：
 

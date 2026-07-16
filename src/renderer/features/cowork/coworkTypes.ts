@@ -98,7 +98,6 @@ export interface CoworkMessage {
 export interface CoworkSession {
   id: string;
   title: string;
-  claudeSessionId: string | null;
   status: CoworkSessionStatus;
   pinned: boolean;
   cwd: string;
@@ -236,6 +235,5 @@ export interface CoworkStreamEvent {
     message?: CoworkMessage;
     interaction?: CoworkInteractionRequest;
     error?: string;
-    claudeSessionId?: string;
   };
 }

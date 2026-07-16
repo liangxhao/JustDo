@@ -286,7 +286,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       )}
 
       {/* Sticky toolbar: Tabs */}
-      <div className="sticky top-0 z-10 bg-claude-bg dark:bg-claude-darkBg pb-4 shadow-sm">
+      <div className="sticky top-0 z-10 bg-background pb-4 shadow-sm">
         {/* Tabs */}
         <div className="flex items-center justify-between gap-4 border-b border-border">
           <div className="flex min-w-0 items-center">
