@@ -20,7 +20,6 @@ import { coworkService } from '@/features/cowork/coworkService';
 import type { CoworkInteractionResult } from '@/features/cowork/coworkTypes';
 import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
 import PluginsView from '@/features/plugins/components/PluginsView';
-import { clearSelection } from '@/features/quick-actions/quickActionSlice';
 import { CronView } from '@/features/scheduled-tasks/components';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
 import Settings, { type SettingsOpenOptions } from '@/features/settings/Settings';
@@ -258,7 +257,6 @@ const App: React.FC = () => {
   const handleNewChat = useCallback(() => {
     const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
     coworkService.clearSession();
-    dispatch(clearSelection());
     setMainView('cowork');
     window.setTimeout(() => {
       window.dispatchEvent(
@@ -267,7 +265,7 @@ const App: React.FC = () => {
         }),
       );
     }, 0);
-  }, [dispatch, mainView, currentSessionId]);
+  }, [mainView, currentSessionId]);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);

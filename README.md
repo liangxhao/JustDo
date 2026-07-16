@@ -101,13 +101,12 @@ Windows packaging prepares MinGit and a Python runtime through the scripts in
 
 ## State Model
 
-The renderer Redux store currently has 7 slices:
+The renderer Redux store currently has 6 slices:
 
 - `model`
 - `cowork`
 - `skill`
 - `mcp`
-- `quickAction`
 - `scheduledTask`
 - `agent`
 

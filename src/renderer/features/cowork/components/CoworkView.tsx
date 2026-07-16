@@ -36,9 +36,6 @@ import type {
   OpenClawEngineStatus,
 } from '@/features/cowork/coworkTypes';
 import { clearActiveSkills } from '@/features/plugins/slices/skillSlice';
-import { PromptPanel } from '@/features/quick-actions/components';
-import { quickActionService } from '@/features/quick-actions/quickActionService';
-import { clearSelection, setActions } from '@/features/quick-actions/quickActionSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
@@ -47,6 +44,8 @@ import SearchIcon from '@/shared/components/icons/SearchIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 import { RootState } from '@/store';
 import { getCompactFolderName } from '@/utils/path';
+
+import logoUrl from '../../../../../resources/logo.png';
 
 const DEBUG_COWORK_VIEW =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_COWORK_VIEW === 'true';
@@ -121,8 +120,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
 
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
-  const quickActions = useSelector((state: RootState) => state.quickAction.actions);
-  const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const currentSessionRuntimeRunning = currentSession
     ? currentSession.id.startsWith('temp-')
@@ -178,14 +175,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       if (initialEngineStatus) {
         setOpenClawStatus(initialEngineStatus);
       }
-      // Load quick actions with localization
-      try {
-        quickActionService.initialize();
-        const actions = await quickActionService.getLocalizedActions();
-        dispatch(setActions(actions));
-      } catch (error) {
-        console.error('Failed to load quick actions:', error);
-      }
       setIsInitialized(true);
     };
     init();
@@ -194,18 +183,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       setOpenClawStatus(status);
     });
 
-    // Subscribe to language changes to reload quick actions
-    const unsubscribe = quickActionService.subscribe(async () => {
-      try {
-        const actions = await quickActionService.getLocalizedActions();
-        dispatch(setActions(actions));
-      } catch (error) {
-        console.error('Failed to reload quick actions:', error);
-      }
-    });
-
     return () => {
-      unsubscribe();
       unsubscribeOpenClawStatus();
     };
   }, [dispatch]);
@@ -305,10 +283,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       });
       wrapperSet?.setPendingUserMessage(prompt, attachments);
 
-      // Clear active skills and quick action selection after starting session
-      // so they don't persist to next session
+      // Clear active skills after starting so they don't persist to the next session.
       dispatch(clearActiveSkills());
-      dispatch(clearSelection());
 
       // Start the actual session immediately with fallback title
       const { session: startedSession, error: startError } = await coworkService.startSession({
@@ -386,34 +362,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     });
   }, []);
 
-  // Get selected quick action
-  const selectedAction = React.useMemo(() => {
-    return quickActions.find(action => action.id === selectedActionId);
-  }, [quickActions, selectedActionId]);
-
-  // When the mapped skill is deactivated from input area, restore the prompt shortcuts.
-  useEffect(() => {
-    if (!selectedActionId) return;
-    const action = quickActions.find(a => a.id === selectedActionId);
-    if (action) {
-      const skillStillActive = activeSkillIds.includes(action.skillMapping);
-      if (!skillStillActive) {
-        dispatch(clearSelection());
-      }
-    }
-  }, [activeSkillIds, dispatch, quickActions, selectedActionId]);
-
-  // Handle prompt selection from QuickAction
-  const handleQuickActionPromptSelect = (prompt: string) => {
-    // Fill the prompt into input
-    promptInputRef.current?.setValue(prompt);
-    promptInputRef.current?.focus();
-  };
-
   useEffect(() => {
     const handleNewSession = () => {
       dispatch(clearCurrentSession());
-      dispatch(clearSelection());
       window.dispatchEvent(
         new CustomEvent('cowork:focus-input', {
           detail: { clear: true },
@@ -890,7 +841,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           <div className="space-y-12">
             {/* Welcome Section */}
             <div className="text-center space-y-5">
-              <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto" />
+              <img src={logoUrl} alt="logo" className="w-16 h-16 mx-auto" />
               <h2 className="text-3xl font-bold tracking-tight text-foreground">
                 {i18nService.t('coworkWelcome')}
               </h2>
@@ -920,15 +871,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
               </div>
             </div>
 
-            {/* Quick Actions - temporarily hidden */}
-            <div className="space-y-4">
-              {selectedAction ? (
-                <PromptPanel
-                  action={selectedAction}
-                  onPromptSelect={handleQuickActionPromptSelect}
-                />
-              ) : null}
-            </div>
           </div>
         </div>
       </div>

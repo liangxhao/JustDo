@@ -5,7 +5,6 @@ import coworkReducer from '@/features/cowork/coworkSlice';
 import modelReducer from '@/features/models/modelSlice';
 import mcpReducer from '@/features/plugins/slices/mcpSlice';
 import skillReducer from '@/features/plugins/slices/skillSlice';
-import quickActionReducer from '@/features/quick-actions/quickActionSlice';
 import scheduledTaskReducer from '@/features/scheduled-tasks/scheduledTaskSlice';
 
 export const store = configureStore({
@@ -14,7 +13,6 @@ export const store = configureStore({
     cowork: coworkReducer,
     skill: skillReducer,
     mcp: mcpReducer,
-    quickAction: quickActionReducer,
     scheduledTask: scheduledTaskReducer,
     agent: agentReducer,
   },

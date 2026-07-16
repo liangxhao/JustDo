@@ -97,13 +97,12 @@ Windows 打包会通过 `scripts/` 下的脚本准备 MinGit 和 Python runtime�
 
 ## 状态模型
 
-Renderer Redux store 当前有 7 个 slice：
+Renderer Redux store 当前有 6 个 slice：
 
 - `model`
 - `cowork`
 - `skill`
 - `mcp`
-- `quickAction`
 - `scheduledTask`
 - `agent`
 

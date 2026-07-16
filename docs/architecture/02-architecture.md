@@ -75,7 +75,6 @@ src/renderer/
     cowork/
     models/
     plugins/
-    quick-actions/
     scheduled-tasks/
     settings/
   libs/openclaw-chat/
@@ -90,7 +89,6 @@ Redux store 当前挂载：
 - `cowork`
 - `skill`
 - `mcp`
-- `quickAction`
 - `scheduledTask`
 - `agent`
 
@@ -174,7 +172,6 @@ src/renderer/
     agents/                  Agent 列表、类型和 service
     models/                  模型选择和 OpenClaw model ref 解析
     plugins/                 Skills、MCP、Hooks、Extensions UI
-    quick-actions/           快捷 prompt 面板
     scheduled-tasks/         定时任务 CRUD、运行历史、会话跳转
     settings/                应用设置、模型设置、快捷键
 

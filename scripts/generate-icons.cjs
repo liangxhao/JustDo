@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Generate all app icons from public/logo.png.
+ * Generate all app icons from resources/logo.png.
  *
  * Modes:
  *   node scripts/generate-icons.cjs png          — PNG sizes (build/icons/png/)
@@ -22,7 +22,7 @@ const path = require('path');
 const { execSync, spawnSync } = require('child_process');
 
 const projectRoot = path.resolve(__dirname, '..');
-const sourcePng = path.join(projectRoot, 'public', 'logo.png');
+const sourcePng = path.join(projectRoot, 'resources', 'logo.png');
 const mode = (process.argv[2] || 'all').toLowerCase();
 
 // ── shared helpers ──────────────────────────────────────────────────────────

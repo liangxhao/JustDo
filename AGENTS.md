@@ -92,8 +92,8 @@ Key files:
 
 ## Current State to Remember
 
-Redux store (`src/renderer/store/index.ts`) mounts **7 slices**:
-`model`, `cowork`, `skill`, `mcp`, `quickAction`, `scheduledTask`, `agent`.
+Redux store (`src/renderer/store/index.ts`) mounts **6 slices**:
+`model`, `cowork`, `skill`, `mcp`, `scheduledTask`, `agent`.
 Do not document/use unmounted slices as active state.
 
 SQLite core tables in `src/main/data/sqliteStore.ts`:
