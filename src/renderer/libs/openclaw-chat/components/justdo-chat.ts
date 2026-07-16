@@ -42,6 +42,8 @@ const MERMAID_BUBBLE_HORIZONTAL_PADDING = 64;
 
 @customElement('justdo-chat')
 export class JustDoChatElement extends LitElement {
+  private readonly streamingThinkingScrollHeights = new WeakMap<HTMLElement, number>();
+
   // ─── Properties ─────────────────────────────────────────────────────────
 
   /** Direct message input (when not using controller) */
@@ -1653,6 +1655,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
+    this.scrollStreamingThinkingToBottom();
     requestAnimationFrame(() => this.updateCurrentMinimapIndex());
     if (
       changedProperties?.has('searchQuery') ||
@@ -1663,6 +1666,19 @@ export class JustDoChatElement extends LitElement {
     }
     requestAnimationFrame(() => this.emitSearchMatchCount());
     requestAnimationFrame(() => void this.renderMermaidDiagrams());
+  }
+
+  private scrollStreamingThinkingToBottom(): void {
+    const contents = this.renderRoot.querySelectorAll<HTMLElement>(
+      '.chat-thinking--streaming .chat-thinking__content',
+    );
+    for (const content of contents) {
+      const previousScrollHeight = this.streamingThinkingScrollHeights.get(content);
+      if (previousScrollHeight !== content.scrollHeight) {
+        content.scrollTop = content.scrollHeight;
+        this.streamingThinkingScrollHeights.set(content, content.scrollHeight);
+      }
+    }
   }
 
   private readonly handleMarkdownClick = (event: Event): void => {
