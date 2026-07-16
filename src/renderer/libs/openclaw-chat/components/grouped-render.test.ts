@@ -238,6 +238,26 @@ describe('group footer helpers', () => {
 });
 
 describe('renderMessageGroup', () => {
+  test('applies Markdown styles to user message content', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'user-code-group',
+        role: 'user',
+        messages: [
+          {
+            key: 'user-code-message',
+            message: { role: 'user', content: '```python\nprint("hello")\n```', timestamp: 1 },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('class="chat-bubble__text markdown-content"');
+  });
+
   test('hides zero usage from an ordered OpenClaw goal reply', () => {
     const rendered = stringifyTemplate(
       renderMessageGroup({

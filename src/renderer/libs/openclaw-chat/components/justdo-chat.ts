@@ -559,6 +559,8 @@ export class JustDoChatElement extends LitElement {
     }
 
     .chat-bubble__text {
+      min-width: 0;
+      max-width: 100%;
       white-space: pre-wrap;
     }
 
@@ -567,7 +569,11 @@ export class JustDoChatElement extends LitElement {
     }
 
     .markdown-content {
+      --code-block-bg: var(--justdo-chat-code-light-bg, #f0f2f5);
+      --code-block-header-bg: var(--justdo-chat-code-light-bg, #f0f2f5);
+      --code-block-text: var(--justdo-chat-code-text, #24292e);
       min-width: 0;
+      max-width: 100%;
       overflow-wrap: anywhere;
     }
 
@@ -658,13 +664,19 @@ export class JustDoChatElement extends LitElement {
     /* ── Code Blocks ────────────────────────────────────────────────── */
 
     .markdown-content pre {
-      background: var(--justdo-chat-code-light-bg, #f0f2f5);
-      color: var(--justdo-chat-code-text, #24292e);
+      width: 100%;
+      min-width: 0;
+      background: var(--code-block-bg);
+      color: var(--code-block-text);
       padding: 12px;
       border-radius: 8px;
       max-width: 100%;
       box-sizing: border-box;
       overflow-x: auto;
+      overflow-y: hidden;
+      white-space: pre;
+      overflow-wrap: normal;
+      word-break: normal;
       font-size: 13px;
       line-height: 1.5;
       margin: 4px 0;
@@ -683,7 +695,14 @@ export class JustDoChatElement extends LitElement {
 
     .code-block-wrapper {
       position: relative;
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
       margin: 4px 0;
+      overflow: hidden;
+      background: var(--code-block-bg);
+      border-radius: 8px;
+      box-sizing: border-box;
     }
 
     .code-block-header {
@@ -693,30 +712,25 @@ export class JustDoChatElement extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 6px 12px;
-      background: var(--justdo-chat-code-light-bg, #f0f2f5);
+      min-width: 0;
+      background: var(--code-block-header-bg);
       border-radius: 8px 8px 0 0;
       font-size: 12px;
     }
 
     .code-block-wrapper pre {
+      width: 100%;
       margin-top: 0;
+      margin-bottom: 0;
+      border: 0;
       border-radius: 0 0 8px 8px;
     }
 
-    .code-block-wrapper--markdown .code-block-header {
-      background: #eef2f7;
-    }
-
-    .code-block-wrapper--markdown pre {
-      background: #f8fafc;
-    }
-
-    .chat-bubble--user .code-block-wrapper--markdown .code-block-header {
-      background: #edf2f7;
-    }
-
-    .chat-bubble--user .code-block-wrapper--markdown pre {
-      background: #f8fafc;
+    .code-block-wrapper pre > code {
+      display: block;
+      width: max-content;
+      min-width: 100%;
+      box-sizing: border-box;
     }
 
     .code-block-lang {
@@ -732,6 +746,8 @@ export class JustDoChatElement extends LitElement {
       border: 1px solid var(--justdo-chat-border, rgba(255, 255, 255, 0.15));
       color: var(--justdo-chat-text-secondary, #9ca3af);
       cursor: pointer;
+      flex: 0 0 auto;
+      margin-left: auto;
       padding: 2px 8px;
       border-radius: 4px;
       font-size: 11px;
@@ -1011,6 +1027,13 @@ export class JustDoChatElement extends LitElement {
     :host([data-theme='dark']) .hljs {
       color: #e1e4e8;
     }
+
+    :host(.dark) .markdown-content,
+    :host([data-theme='dark']) .markdown-content {
+      --code-block-bg: #161b22;
+      --code-block-header-bg: #161b22;
+      --code-block-text: #d4d4d4;
+    }
     :host(.dark) .hljs-comment,
     :host([data-theme='dark']) .hljs-comment {
       color: #6a737d;
@@ -1065,15 +1088,6 @@ export class JustDoChatElement extends LitElement {
     :host(.dark) .hljs-attr {
       color: #79c0ff;
     }
-    :host(.dark) .code-block-header {
-      background: #161b22;
-    }
-    :host(.dark) .code-block-wrapper--markdown .code-block-header {
-      background: #1f2937;
-    }
-    :host(.dark) .code-block-wrapper--markdown pre {
-      background: #111827;
-    }
     :host(.dark) .mermaid-block {
       border-color: rgba(255, 255, 255, 0.1);
       background: #282c34;
@@ -1114,8 +1128,8 @@ export class JustDoChatElement extends LitElement {
       background: rgba(255, 255, 255, 0.1);
     }
     :host(.dark) .markdown-content pre {
-      background: #161b22;
-      color: #d4d4d4;
+      background: var(--code-block-bg);
+      color: var(--code-block-text);
     }
 
     /* ── Thinking Block ─────────────────────────────────────────────── */

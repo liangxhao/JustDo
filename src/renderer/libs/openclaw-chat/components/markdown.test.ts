@@ -59,6 +59,7 @@ describe('Nested Markdown fences', () => {
     expect(html).toContain('code-block-wrapper--markdown');
     expect(html).toContain('language-markdown');
     expect(html).toContain('code-language-markdown');
+    expect(html).toContain('class="hljs');
     expect(html).toContain('# 技能名称 - 使用示例');
     expect(html).toContain('## 示例');
     expect(html).toContain('```');
@@ -78,5 +79,27 @@ describe('Nested Markdown fences', () => {
 
     expect(html).toContain('```');
     expect(html).not.toContain('\\\\`');
+  });
+});
+
+describe('Code fence syntax highlighting', () => {
+  test.each([
+    ['python', 'def greet(name):', 'hljs-keyword'],
+    ['typescript', 'const answer: number = 42;', 'hljs-keyword'],
+    ['c++', 'std::vector<int> values;', 'hljs-type'],
+    ['powershell', 'Get-ChildItem | Where-Object { $_.Length -gt 0 }', 'hljs-built_in'],
+  ])('highlights an explicitly labelled %s fence', (language, source, highlightClass) => {
+    const html = md.render(`\`\`\`${language}\n${source}\n\`\`\``);
+
+    expect(html).toContain(`class="hljs language-${language === 'c++' ? 'cpp' : language}`);
+    expect(html).toContain(highlightClass);
+  });
+
+  test('keeps unknown languages escaped and unhighlighted', () => {
+    const html = md.render('```custom-lang\n<script>alert(1)</script>\n```');
+
+    expect(html).toContain('language-custom-lang');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('class="hljs language-custom-lang');
   });
 });

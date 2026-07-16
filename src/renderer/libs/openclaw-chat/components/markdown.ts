@@ -7,15 +7,25 @@
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/core';
 import bash from 'highlight.js/lib/languages/bash';
+import c from 'highlight.js/lib/languages/c';
+import cpp from 'highlight.js/lib/languages/cpp';
+import csharp from 'highlight.js/lib/languages/csharp';
 import css from 'highlight.js/lib/languages/css';
 import diff from 'highlight.js/lib/languages/diff';
+import dockerfile from 'highlight.js/lib/languages/dockerfile';
 import go from 'highlight.js/lib/languages/go';
 import java from 'highlight.js/lib/languages/java';
 import javascript from 'highlight.js/lib/languages/javascript';
 import json from 'highlight.js/lib/languages/json';
+import kotlin from 'highlight.js/lib/languages/kotlin';
 import markdown from 'highlight.js/lib/languages/markdown';
+import php from 'highlight.js/lib/languages/php';
+import powershell from 'highlight.js/lib/languages/powershell';
 import python from 'highlight.js/lib/languages/python';
+import ruby from 'highlight.js/lib/languages/ruby';
 import rust from 'highlight.js/lib/languages/rust';
+import sql from 'highlight.js/lib/languages/sql';
+import swift from 'highlight.js/lib/languages/swift';
 import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
@@ -32,7 +42,7 @@ const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v4';
+const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v5';
 const INLINE_DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CONTAINER_PREFIX_RE = /^[ \t]{0,3}(?:(?:>\s?)|(?:(?:[-+*]|\d{1,9}[.)])[ \t]+))/;
@@ -59,15 +69,25 @@ const sanitizeOptions = {
 
 for (const [language, definition, aliases] of [
   ['bash', bash, ['sh', 'shell']],
+  ['c', c, []],
+  ['cpp', cpp, ['c++', 'cxx']],
+  ['csharp', csharp, ['cs', 'c#']],
   ['css', css, []],
   ['diff', diff, ['patch']],
+  ['dockerfile', dockerfile, ['docker']],
   ['go', go, ['golang']],
   ['java', java, []],
   ['javascript', javascript, ['js', 'jsx']],
   ['json', json, []],
+  ['kotlin', kotlin, ['kt', 'kts']],
   ['markdown', markdown, ['md']],
+  ['php', php, []],
+  ['powershell', powershell, ['ps1', 'pwsh']],
   ['python', python, ['py']],
+  ['ruby', ruby, ['rb']],
   ['rust', rust, ['rs']],
+  ['sql', sql, []],
+  ['swift', swift, []],
   ['typescript', typescript, ['ts', 'tsx']],
   ['xml', xml, ['html', 'svg']],
   ['yaml', yaml, ['yml']],
@@ -109,13 +129,16 @@ hljs.registerLanguage('mermaid', () => ({
 }));
 
 const autoHighlightLanguages = [
-  'bash', 'css', 'diff', 'go', 'java', 'javascript', 'json',
-  'markdown', 'mermaid', 'python', 'rust', 'typescript', 'xml', 'yaml',
+  'bash', 'c', 'cpp', 'csharp', 'css', 'diff', 'dockerfile', 'go', 'java',
+  'javascript', 'json', 'kotlin', 'markdown', 'mermaid', 'php', 'powershell',
+  'python', 'ruby', 'rust', 'sql', 'swift', 'typescript', 'xml', 'yaml',
 ];
 
 const HIGHLIGHT_ALIASES: Record<string, string> = {
-  'c++': 'cpp', cxx: 'cpp', js: 'javascript', jsx: 'javascript',
-  md: 'markdown', sh: 'bash', shell: 'bash', ts: 'typescript', tsx: 'typescript',
+  'c#': 'csharp', 'c++': 'cpp', cs: 'csharp', cxx: 'cpp', docker: 'dockerfile',
+  js: 'javascript', jsx: 'javascript', kt: 'kotlin', kts: 'kotlin', md: 'markdown',
+  ps1: 'powershell', pwsh: 'powershell', rb: 'ruby', sh: 'bash', shell: 'bash',
+  ts: 'typescript', tsx: 'typescript',
 };
 
 // ── Utility functions ───────────────────────────────────────────────────────
@@ -151,10 +174,11 @@ function highlightCode(text: string, lang: string): string {
 }
 
 function codeClassAttribute(lang: string, highlighted: string): string {
-  const language = lang.trim().toLowerCase();
+  const requestedLanguage = lang.trim().toLowerCase();
+  const language = HIGHLIGHT_ALIASES[requestedLanguage] ?? requestedLanguage;
   const classes = [
     highlighted.includes('hljs-') ? 'hljs' : '',
-    lang ? `language-${lang}` : '',
+    language ? `language-${language}` : '',
     language === 'markdown' || language === 'md' ? 'code-language-markdown' : '',
   ].filter(Boolean);
   return classes.length > 0 ? ` class="${escapeHtml(classes.join(' '))}"` : '';
@@ -169,11 +193,6 @@ function normalizeMarkdownFenceContent(text: string, lang: string): string {
     const fenceLength = escapedFence.match(/`/g)?.length ?? 0;
     return `${indent}${'`'.repeat(fenceLength)}${suffix}`;
   });
-}
-
-function shouldSkipSyntaxHighlight(lang: string): boolean {
-  const language = lang.trim().toLowerCase();
-  return language === 'markdown' || language === 'md';
 }
 
 // ── DOMPurify hooks ─────────────────────────────────────────────────────────
@@ -329,7 +348,7 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
   const lang = token.info.trim().split(/\s+/)[0] || '';
   const isMarkdownCodeBlock = ['markdown', 'md'].includes(lang.trim().toLowerCase());
   const text = normalizeMarkdownFenceContent(token.content, lang);
-  const highlighted = shouldSkipSyntaxHighlight(lang) ? escapeHtml(text) : highlightCode(text, lang);
+  const highlighted = highlightCode(text, lang);
   const classAttr = codeClassAttribute(lang, highlighted);
   const codeBlock = `<pre><code${classAttr}>${highlighted}</code></pre>`;
 
@@ -345,7 +364,10 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
 
   const langLabel = lang ? `<span class="code-block-lang">${escapeHtml(lang)}</span>` : '';
   const attrSafe = escapeHtml(text);
-  const copyBtn = `<button type="button" class="code-block-copy" data-code="${attrSafe}" aria-label="Copy code"><span class="code-block-copy__idle">Copy</span><span class="code-block-copy__done">Copied</span></button>`;
+  const copyLabel = escapeHtml(i18nService.t('copy'));
+  const copiedLabel = escapeHtml(i18nService.t('copied'));
+  const copyAriaLabel = escapeHtml(i18nService.t('copyToClipboard'));
+  const copyBtn = `<button type="button" class="code-block-copy" data-code="${attrSafe}" aria-label="${copyAriaLabel}"><span class="code-block-copy__idle">${copyLabel}</span><span class="code-block-copy__done">${copiedLabel}</span></button>`;
   const header = `<div class="code-block-header">${langLabel}${copyBtn}</div>`;
 
   const trimmed = text.trim();
@@ -376,7 +398,10 @@ md.renderer.rules.code_block = (tokens, idx, _options, env) => {
   if (envChrome === 'none') return codeBlock;
 
   const attrSafe = escapeHtml(text);
-  const copyBtn = `<button type="button" class="code-block-copy" data-code="${attrSafe}" aria-label="Copy code"><span class="code-block-copy__idle">Copy</span><span class="code-block-copy__done">Copied</span></button>`;
+  const copyLabel = escapeHtml(i18nService.t('copy'));
+  const copiedLabel = escapeHtml(i18nService.t('copied'));
+  const copyAriaLabel = escapeHtml(i18nService.t('copyToClipboard'));
+  const copyBtn = `<button type="button" class="code-block-copy" data-code="${attrSafe}" aria-label="${copyAriaLabel}"><span class="code-block-copy__idle">${copyLabel}</span><span class="code-block-copy__done">${copiedLabel}</span></button>`;
   const header = `<div class="code-block-header">${copyBtn}</div>`;
   return `<div class="code-block-wrapper">${header}${codeBlock}</div>`;
 };
@@ -397,7 +422,7 @@ export function toSanitizedMarkdownHtml(text: string): string {
   const input = text.trim().replace(/\r\n?/g, '\n');
   if (!input) return '';
 
-  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${input}`;
+  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${i18nService.getLanguage()}:${input}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;

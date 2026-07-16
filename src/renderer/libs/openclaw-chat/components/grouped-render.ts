@@ -663,7 +663,9 @@ function renderUserMessage(
           : nothing
       }
       ${renderAssistantAttachments(visibleAttachments, workingDirectory)}
-      ${text ? html`<div class="chat-bubble__text">${unsafeHTML(htmlContent)}</div>` : nothing}
+      ${text
+        ? html`<div class="chat-bubble__text markdown-content">${unsafeHTML(htmlContent)}</div>`
+        : nothing}
     </div>
   `;
 }
