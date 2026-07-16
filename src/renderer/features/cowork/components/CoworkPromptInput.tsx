@@ -1237,7 +1237,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => window.removeEventListener('config-updated', syncFromConfig);
     }, []);
 
-    // Goal state is useful while the run is active, so query immediately and keep refreshing.
+    // Goal state is useful while the run is active, so query it independently from context usage.
     // The optimistic objective covers the short window before sessions.create persists the goal.
     useEffect(() => {
       if (!sessionId || sessionId.startsWith('temp-')) return;
@@ -1257,7 +1257,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         requestInFlight = true;
         let refreshedGoal = sessionGoalRef.current ?? undefined;
         try {
-          const result = await window.electron.cowork.getContextUsage(sessionId);
+          const result = await window.electron.cowork.getSessionGoal(sessionId);
           if (cancelled) return;
           if (!result.success) {
             schedule();
@@ -1271,15 +1271,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           } else if (!isRunActive) {
             setPendingGoalObjective(null);
           }
-          setContextUsage(
-            result.totalTokens == null
-              ? null
-              : {
-                  totalTokens: result.totalTokens,
-                  contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
-                  totalTokensFresh: result.totalTokensFresh ?? true,
-                },
-          );
         } catch {
           // Runtime details are supplementary; keep the last known state on transient failures.
         } finally {
@@ -1291,6 +1282,45 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => {
         cancelled = true;
         if (timeoutId !== null) window.clearTimeout(timeoutId);
+      };
+    }, [sessionId, isStreaming, goalRunProgress]);
+
+    // Usage is only meaningful after Gateway has completed at least one turn.
+    useEffect(() => {
+      const isRunActive = isStreaming || goalRunProgress !== null;
+      if (!sessionId || sessionId.startsWith('temp-') || !hasAssistantMessage || isRunActive) {
+        return;
+      }
+      let cancelled = false;
+      let retryTimeoutId: number | null = null;
+      let retriesRemaining = 2;
+      const scheduleRetry = () => {
+        if (cancelled || retriesRemaining <= 0) return;
+        retriesRemaining -= 1;
+        retryTimeoutId = window.setTimeout(fetchUsage, 500);
+      };
+      const fetchUsage = async () => {
+        try {
+          const result = await window.electron.cowork.getContextUsage(sessionId);
+          if (cancelled) return;
+          if (!result.success || result.totalTokens == null) {
+            scheduleRetry();
+            return;
+          }
+          setContextUsage({
+            totalTokens: result.totalTokens,
+            contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
+            totalTokensFresh: result.totalTokensFresh ?? true,
+          });
+        } catch {
+          // Runtime details are supplementary; keep the last known state on transient failures.
+          scheduleRetry();
+        }
+      };
+      void fetchUsage();
+      return () => {
+        cancelled = true;
+        if (retryTimeoutId !== null) window.clearTimeout(retryTimeoutId);
       };
     }, [
       sessionId,

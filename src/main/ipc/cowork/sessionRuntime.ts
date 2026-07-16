@@ -88,52 +88,69 @@ const readUsage = (session: Record<string, unknown>) => {
   };
 };
 
+type GatewaySession = { key: string } & Record<string, unknown>;
+
+const findGatewaySession = async (
+  dependencies: Pick<Dependencies, 'getCoworkStore' | 'getRuntime'>,
+  sessionId: string,
+): Promise<{ session?: GatewaySession; error?: string }> => {
+  const runtime = dependencies.getRuntime();
+  if (!runtime) return { error: 'OpenClaw runtime adapter not available' };
+  const client = runtime.getGatewayClient();
+  if (!client) return { error: 'Gateway client not connected' };
+  const agentId =
+    dependencies.getCoworkStore().getSession(sessionId)?.agentId || DEFAULT_MANAGED_AGENT_ID;
+  const keys = new Set([
+    ...runtime.getSessionKeysForSession(sessionId),
+    buildManagedSessionKey(sessionId, agentId),
+    buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
+  ]);
+  const result = await client.request<{ sessions?: GatewaySession[] }>('sessions.list', {
+    agentId,
+    limit: 100,
+  });
+  let session = result.sessions?.find(item => keys.has(item.key));
+  if (!session && agentId !== DEFAULT_MANAGED_AGENT_ID) {
+    const fallback = await client.request<{ sessions?: GatewaySession[] }>('sessions.list', {
+      limit: 100,
+    });
+    session = fallback.sessions?.find(item => keys.has(item.key));
+  }
+  return session ? { session } : { error: 'Session not found in gateway' };
+};
+
 export const registerCoworkSessionRuntimeHandlers = ({
   getCoworkStore,
   getCoworkEngineRouter,
   getRuntime,
 }: Dependencies): void => {
+  const sessionDependencies = { getCoworkStore, getRuntime };
+
+  ipcMain.handle('cowork:session:goal', async (_event, sessionId: string) => {
+    try {
+      const result = await findGatewaySession(sessionDependencies, sessionId);
+      if (!result.session) return { success: false, error: result.error };
+      return { success: true, goal: readSessionGoal(result.session.goal) };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get session goal',
+      };
+    }
+  });
+
   ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
     try {
-      const runtime = getRuntime();
-      if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
-      const client = runtime.getGatewayClient();
-      if (!client) return { success: false, error: 'Gateway client not connected' };
-      const agentId = getCoworkStore().getSession(sessionId)?.agentId || DEFAULT_MANAGED_AGENT_ID;
-      const keys = new Set([
-        ...runtime.getSessionKeysForSession(sessionId),
-        buildManagedSessionKey(sessionId, agentId),
-        buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
-      ]);
-      const result = await client.request<{
-        sessions?: Array<{ key: string } & Record<string, unknown>>;
-      }>('sessions.list', { agentId, limit: 100 });
-      let session = result.sessions?.find(item => keys.has(item.key));
-      if (!session && agentId !== DEFAULT_MANAGED_AGENT_ID) {
-        const fallback = await client.request<{
-          sessions?: Array<{ key: string } & Record<string, unknown>>;
-        }>('sessions.list', { limit: 100 });
-        session = fallback.sessions?.find(item => keys.has(item.key));
-      }
-      if (!session) {
-        console.debug('[CoworkContextUsage] session is not available in gateway yet', {
-          sessionId,
-          effectiveAgentId: agentId,
-          sessionKeys: Array.from(keys),
-          returnedKeys: result.sessions?.map(item => item.key).slice(0, 10) ?? [],
-        });
-        return { success: false, error: 'Session not found in gateway' };
-      }
-      const usage = readUsage(session);
-      const goal = readSessionGoal(session.goal);
+      const result = await findGatewaySession(sessionDependencies, sessionId);
+      if (!result.session) return { success: false, error: result.error };
+      const usage = readUsage(result.session);
       if (usage.totalTokens <= 0 || usage.contextTokens <= 0) {
-        if (goal) return { success: true, goal };
         return {
           success: false,
           error: 'Context usage is not available from OpenClaw session state',
         };
       }
-      return { success: true, ...usage, ...(goal ? { goal } : {}) };
+      return { success: true, ...usage };
     } catch (error) {
       return {
         success: false,

@@ -543,12 +543,16 @@ interface IElectronAPI {
     listSessions: (
       agentId?: string,
     ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    getSessionGoal: (sessionId: string) => Promise<{
+      success: boolean;
+      goal?: import('@shared/sessionGoal').SessionGoal;
+      error?: string;
+    }>;
     getContextUsage: (sessionId: string) => Promise<{
       success: boolean;
       totalTokens?: number;
       contextTokens?: number;
       totalTokensFresh?: boolean;
-      goal?: import('@shared/sessionGoal').SessionGoal;
       error?: string;
     }>;
     deleteMessage: (

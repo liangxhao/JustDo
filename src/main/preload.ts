@@ -175,6 +175,7 @@ contextBridge.exposeInMainWorld('electron', {
     patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:session:patchModel', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
+    getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),
     getContextUsage: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
     deleteMessage: (sessionId: string, messageId: string) =>
