@@ -112,6 +112,29 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 
 `docs/res/` was removed because no docs referenced its old image asset.
 
+## Runtime Log Triage
+
+- Start with the daily main log (`%APPDATA%/JustDo/logs/main-YYYY-MM-DD.log`
+  on Windows) and `%APPDATA%/JustDo/openclaw/logs/gateway.log`.
+  A user-supplied redirected development-terminal log is only a capture of
+  console output, regardless of its filename, and is not the authoritative
+  OpenClaw event log.
+- Gateway stdout is intentionally condensed by
+  `src/main/openclaw/runtime/gatewayLogFilter.ts`: thinking and assistant
+  streams keep only the first and last event per run/stream segment, with
+  previews capped at 80 characters. Successful `sessions.list` and `cron.list`
+  polling responses remain visible for frequency and latency diagnosis.
+- The condensed logs omit per-plugin `loading` lines, sensitive-schema walk
+  notices, droppable chat delta notices, and periodic WebSocket tick/health
+  broadcasts. Absence from the main/gateway log does not prove the underlying
+  Gateway event did not occur.
+- For complete WebSocket event sequences or omitted transport diagnostics,
+  inspect the OpenClaw native JSON log shown by the `[gateway] log file:` line
+  (typically `%TEMP%/openclaw/openclaw-YYYY-MM-DD.log` on Windows), then
+  correlate by timestamp, run id, and session id.
+- Do not paste or add raw native logs to commits. Check previews and surrounding
+  records for credentials or sensitive user content before sharing excerpts.
+
 ## Boundaries
 
 - Main may use Node, Electron main APIs, filesystem, SQLite, child processes.

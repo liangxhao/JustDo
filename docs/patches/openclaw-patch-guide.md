@@ -24,7 +24,7 @@ scripts/patches/v2026.6.11/
 
 | Patch | Purpose |
 | --- | --- |
-| `001-thinking-stream.cjs` | Thinking stream compatibility |
+| `001-thinking-stream.cjs` | Thinking stream compatibility and bounded diagnostic previews |
 | `002-agent-announce-reasoning-stream.cjs` | Agent reasoning announcement stream |
 | `003-openai-content-reasoning-tags.cjs` | OpenAI content reasoning tag handling |
 | `004-windows-mcp-package-runner.cjs` | Windows MCP stdio/package runner compatibility |
@@ -127,7 +127,7 @@ Patch removal is a real change:
 
 | Patch | Category | Removal direction |
 | --- | --- | --- |
-| `001-thinking-stream.cjs` | Reasoning stream compatibility | Remove when Gateway emits stable thinking stream/history |
+| `001-thinking-stream.cjs` | Reasoning stream compatibility | Remove when Gateway emits stable thinking stream/history and bounded thinking diagnostics |
 | `002-agent-announce-reasoning-stream.cjs` | Reasoning event compatibility | Remove when upstream agent announcements include reasoning stream |
 | `003-openai-content-reasoning-tags.cjs` | Provider content parsing | Remove when upstream provider parser preserves reasoning tags |
 | `004-windows-mcp-package-runner.cjs` | Windows process compatibility | Remove when upstream MCP package runner handles Windows stdio launch reliably |

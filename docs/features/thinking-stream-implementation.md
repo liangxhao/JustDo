@@ -5,6 +5,8 @@ Thinking/reasoning stream display is currently implemented through OpenClaw Gate
 ## Current Behavior
 
 - Thinking deltas are forwarded through Cowork stream events.
+- Gateway websocket diagnostics include at most 80 characters of thinking text;
+  JustDo keeps only the first and last preview for each run and stream.
 - Renderer does not maintain a separate thinking state machine.
 - The Lit chat pipeline renders thinking content as part of Gateway-backed message rendering.
 - Cached message fields include `thinking_content` for UI recovery.

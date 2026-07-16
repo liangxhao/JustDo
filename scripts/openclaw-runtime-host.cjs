@@ -26,13 +26,17 @@ function resolveHostTargetId() {
 
 const targetId = resolveHostTargetId();
 const rootDir = path.resolve(__dirname, '..');
-const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npmScript = `openclaw:runtime:${targetId}`;
+const npmCliPath = process.env.npm_execpath;
+if (!npmCliPath) {
+  throw new Error('openclaw-runtime-host must be launched through npm');
+}
 
-const result = spawnSync(npmBin, ['run', `openclaw:runtime:${targetId}`], {
+const result = spawnSync(process.execPath, [npmCliPath, 'run', npmScript], {
   cwd: rootDir,
   env: process.env,
   stdio: 'inherit',
-  shell: true,
+  windowsHide: true,
 });
 
 if (typeof result.status === 'number') {

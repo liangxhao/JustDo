@@ -40,6 +40,7 @@ export type ApiConfigResolution = {
 };
 
 let storeGetter: (() => SqliteStore | null) | null = null;
+let lastLoggedProviderSignature: string | null = null;
 
 export function setStoreGetter(getter: () => SqliteStore | null): void {
   storeGetter = getter;
@@ -219,13 +220,13 @@ export function resolveRawApiConfig(): ApiConfigResolution {
   const apiKey = matched.providerConfig.apiKey?.trim() || '';
   const effectiveApiKey =
     apiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-justdo-local' : '');
-  console.log(
-    '[ClaudeSettings] resolved raw API config:',
-    JSON.stringify({
-      ...matched,
-      providerConfig: { ...matched.providerConfig, apiKey: apiKey ? '***' : '' },
-    }),
-  );
+  const providerSignature = `${matched.providerName}:${matched.modelId}:${matched.providerConfig.apiFormat ?? 'unknown'}`;
+  if (providerSignature !== lastLoggedProviderSignature) {
+    lastLoggedProviderSignature = providerSignature;
+    console.debug(
+      `[ProviderApiConfig] resolved provider=${matched.providerName} model=${matched.modelId} apiFormat=${matched.providerConfig.apiFormat ?? 'unknown'}`,
+    );
+  }
 
   return {
     config: {

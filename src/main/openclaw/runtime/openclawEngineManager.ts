@@ -19,6 +19,7 @@ import {
 } from '../../core/trustedCertificates';
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../../cowork/coworkUtil';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
+import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
@@ -1472,6 +1473,8 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private attachGatewayProcessLogs(child: GatewayProcess): void {
     ensureDir(path.dirname(this.gatewayLogPath));
+    const stdoutLogFilter = new GatewayStdoutLogFilter();
+    let stderrPartialLine = '';
     const appendLog = (chunk: Buffer | string, stream: 'stdout' | 'stderr') => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString();
       const line = `[${new Date().toISOString()}] [${stream}] ${text}`;
@@ -1479,21 +1482,53 @@ export class OpenClawEngineManager extends EventEmitter {
         // best-effort log append
       });
     };
+    const emitLines = (text: string, stream: 'stdout' | 'stderr') => {
+      for (const line of text.split(/\r?\n/)) {
+        if (!line) continue;
+        appendLog(`${line}\n`, stream);
+        const renderedLine = OpenClawEngineManager.rewriteUtcTimestamps(line);
+        if (stream === 'stdout') {
+          console.log(`[OpenClaw stdout] ${renderedLine}`);
+        } else {
+          console.error(`[OpenClaw stderr] ${renderedLine}`);
+        }
+      }
+    };
 
     child.stdout?.on('data', chunk => {
-      appendLog(chunk, 'stdout');
       const text = typeof chunk === 'string' ? chunk : chunk.toString();
       // OpenClaw's config.get schema walk logs one debug line for every path
       // whose name looks sensitive. These are schema classifications, not
       // leaked values or actionable warnings, and can produce hundreds of
-      // lines whenever the Control UI connects.
-      if (text.includes('possibly sensitive key found:')) return;
-      console.log(`[OpenClaw stdout] ${OpenClawEngineManager.rewriteUtcTimestamps(text)}`);
+      // lines whenever the Control UI connects. Thinking and assistant stream
+      // websocket events are similarly high-volume transport metadata, so
+      // retain only the first and last event for each run and stream.
+      // The filter also removes individual plugin loading lines while
+      // preserving load summaries and websocket polling diagnostics.
+      const filteredText = stdoutLogFilter.push(text);
+      if (!filteredText) return;
+      emitLines(filteredText, 'stdout');
+    });
+    child.stdout?.on('end', () => {
+      const tail = stdoutLogFilter.flush();
+      if (!tail) return;
+      emitLines(tail, 'stdout');
     });
     child.stderr?.on('data', chunk => {
-      appendLog(chunk, 'stderr');
       const text = typeof chunk === 'string' ? chunk : chunk.toString();
-      console.error(`[OpenClaw stderr] ${OpenClawEngineManager.rewriteUtcTimestamps(text)}`);
+      const combined = stderrPartialLine + text;
+      const lastNewlineIndex = combined.lastIndexOf('\n');
+      if (lastNewlineIndex < 0) {
+        stderrPartialLine = combined;
+        return;
+      }
+      emitLines(combined.slice(0, lastNewlineIndex + 1), 'stderr');
+      stderrPartialLine = combined.slice(lastNewlineIndex + 1);
+    });
+    child.stderr?.on('end', () => {
+      if (!stderrPartialLine) return;
+      emitLines(stderrPartialLine, 'stderr');
+      stderrPartialLine = '';
     });
   }
 

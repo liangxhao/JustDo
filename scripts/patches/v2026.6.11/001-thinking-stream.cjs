@@ -1,9 +1,11 @@
 'use strict';
 
 // Purpose: Keep reasoning stream emission enabled even when the caller has no
-// onReasoningStream callback, while still guarding optional callback calls.
+// onReasoningStream callback, while still guarding optional callback calls,
+// and include a bounded thinking preview in Gateway websocket diagnostics.
 // Affected OpenClaw version: v2026.6.11.
-// Risk: Diverges from upstream reasoning-stream gating semantics.
+// Risk: Diverges from upstream reasoning-stream gating and diagnostic summary
+// semantics; thinking previews can expose up to 80 characters in debug logs.
 // Remove when: OpenClaw exposes thinking stream events without requiring a
 // callback gate, or JustDo consumes the upstream event shape directly.
 // Upstream tracking: TODO(openclaw): file issue/PR with reasoning stream fixture.
@@ -49,6 +51,49 @@ function patchFile(filePath) {
     'if (params.onReasoningStream) params.onReasoningStream({ text: trimmed });',
   );
 
+  const wsSummaryMarker = 'function summarizeAgentEventForWsLog(payload) {';
+  const wsSummaryVariants = [
+    {
+      existingMarker: '  if (stream3 === "thinking") {',
+      toolMarker: '  if (stream3 === "tool") {',
+      thinkingPreviewBlock: `  if (stream3 === "thinking") {
+    const text2 = readStringValue(data.text);
+    if (text2?.trim()) extra.text = compactPreview(text2, 80);
+    return extra;
+  }
+`,
+    },
+    {
+      existingMarker: '\tif (stream === "thinking") {',
+      toolMarker: '\tif (stream === "tool") {',
+      thinkingPreviewBlock: `\tif (stream === "thinking") {
+\t\tconst text = readStringValue(data.text);
+\t\tif (text?.trim()) extra.text = compactPreview(text, 80);
+\t\treturn extra;
+\t}
+`,
+    },
+  ];
+  const wsSummaryIndex = content.indexOf(wsSummaryMarker);
+  if (wsSummaryIndex >= 0) {
+    const prefix = content.slice(0, wsSummaryIndex);
+    let suffix = content.slice(wsSummaryIndex);
+    const alreadyPatched = wsSummaryVariants.some(variant =>
+      suffix.includes(variant.existingMarker),
+    );
+    if (!alreadyPatched) {
+      const variant = wsSummaryVariants.find(candidate => suffix.includes(candidate.toolMarker));
+      if (!variant) {
+        throw new Error(`Thinking WS log preview target not found in ${filePath}`);
+      }
+      suffix = suffix.replace(
+        variant.toolMarker,
+        `${variant.thinkingPreviewBlock}${variant.toolMarker}`,
+      );
+      content = prefix + suffix;
+    }
+  }
+
   if (content === original) return false;
   fs.writeFileSync(filePath, content, 'utf8');
   return true;
@@ -69,7 +114,7 @@ function applyPatch(runtimeDir, options = {}) {
 
   const label = options.label || 'patch-openclaw-thinking-stream';
   if (patched.length > 0) {
-    console.log(`[${label}] Patched reasoning stream gate: ${patched.join(', ')}`);
+    console.log(`[${label}] Patched reasoning stream and log preview: ${patched.join(', ')}`);
   } else if (options.verbose) {
     console.log(`[${label}] No reasoning stream patch needed.`);
   }
