@@ -8,6 +8,8 @@ import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
+import { reconcileSubagentLabel } from './subagentLabel';
+
 const DRAWER_DEFAULT_WIDTH = 672;
 const DRAWER_MIN_WIDTH = 360;
 const DRAWER_MAX_WIDTH = 960;
@@ -91,10 +93,14 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
         if (cancelled || !result.success) return;
         const latest = result.subagents?.find(item => item.sessionKey === subagent.sessionKey);
         if (latest) {
-          setDisplaySubagent(current => ({
-            ...(current ?? subagent),
-            ...latest,
-          }));
+          setDisplaySubagent(current => {
+            const previous = current ?? subagent;
+            return {
+              ...previous,
+              ...latest,
+              label: reconcileSubagentLabel(latest, previous.label, latest.label),
+            };
+          });
         }
       } catch {
         // Preserve the last known drawer status and retry on the next interval.

@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
+import { reconcileSubagentLabel } from './subagentLabel';
+
 export const SUBAGENT_STATUSES = {
   RUNNING: 'running',
   DONE: 'done',
@@ -67,7 +69,11 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
         const nextSubagents = (result.subagents as Subagent[] | undefined) ?? [];
         const normalizedSubagents = nextSubagents.map(subagent => ({
           ...subagent,
-          label: subagentLabelsRef.current.get(subagent.id) || subagent.label,
+          label: reconcileSubagentLabel(
+            subagent,
+            subagentLabelsRef.current.get(subagent.id),
+            subagent.label,
+          ),
         }));
         subagentLabelsRef.current = new Map(
           normalizedSubagents.map(subagent => [subagent.id, subagent.label]),
@@ -215,9 +221,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
                   >
                     <InformationCircleIcon className="h-4 w-4" />
                   </button>
-                  <span className="shrink-0 text-xs text-secondary">
-                    {subagent.status}
-                  </span>
+                  <span className="shrink-0 text-xs text-secondary">{subagent.status}</span>
                 </div>
               ))
             )}
