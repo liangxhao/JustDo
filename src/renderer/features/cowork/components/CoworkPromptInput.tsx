@@ -1,6 +1,7 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
 import type { SessionGoal } from '@shared/sessionGoal';
+import { parseGoalStartObjective } from '@shared/slashCommands';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -8,6 +9,8 @@ import { updateAgent } from '@/features/agents/agentSlice';
 import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
 import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
+import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
+import { getGoalRefreshDelay } from '@/features/cowork/components/goalRuntimeRefresh';
 import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
 import {
   getHiddenCommandCount,
@@ -135,6 +138,10 @@ interface CoworkPromptInputProps {
   sessionId?: string;
   /** Whether the session has completed at least one Gateway-backed turn. */
   hasAssistantMessage?: boolean;
+  /** Objective inferred from the optimistic first message while the real session is being created. */
+  initialGoalObjective?: string | null;
+  /** Live execution phase projected from the Gateway chat stream. */
+  goalRunProgress?: GoalRunProgress | null;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
 }
@@ -178,6 +185,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       showModelSelector = false,
       sessionId,
       hasAssistantMessage = false,
+      initialGoalObjective = null,
+      goalRunProgress = null,
       remoteManaged = false,
     } = props;
     const dispatch = useDispatch();
@@ -219,6 +228,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       totalTokensFresh: boolean;
     } | null>(null);
     const [sessionGoal, setSessionGoal] = useState<SessionGoal | null>(null);
+    const sessionGoalRef = useRef<SessionGoal | null>(null);
+    const [pendingGoalObjective, setPendingGoalObjective] = useState<string | null>(
+      initialGoalObjective,
+    );
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
@@ -235,7 +248,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setOptimisticSessionModel(null);
       setContextUsage(null);
       setSessionGoal(null);
+      sessionGoalRef.current = null;
+      setPendingGoalObjective(null);
     }, [sessionId, currentAgentId]);
+
+    useEffect(() => {
+      if (initialGoalObjective && !sessionGoal) {
+        setPendingGoalObjective(initialGoalObjective);
+      }
+    }, [initialGoalObjective, sessionGoal]);
 
     const resetSlashMenuState = useCallback(() => {
       setSlashMenuOpen(false);
@@ -461,6 +482,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         }
 
         const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
+        const goalObjective = parseGoalStartObjective(trimmedValue);
+        if (goalObjective) {
+          setPendingGoalObjective(goalObjective);
+        }
 
         const clearSubmittedInput = () => {
           setValue('');
@@ -472,11 +497,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         if (clearBeforeSubmit) {
           clearSubmittedInput();
         }
-        const result = await onSubmit(
-          finalPrompt,
-          attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
-        );
-        if (result === false) return;
+        let result: boolean | void;
+        try {
+          result = await onSubmit(
+            finalPrompt,
+            attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
+          );
+        } catch (error) {
+          if (goalObjective) {
+            setPendingGoalObjective(current => (current === goalObjective ? null : current));
+          }
+          throw error;
+        }
+        if (result === false) {
+          if (goalObjective) {
+            setPendingGoalObjective(current => (current === goalObjective ? null : current));
+          }
+          return;
+        }
         if (!clearBeforeSubmit) {
           clearSubmittedInput();
         }
@@ -1199,16 +1237,40 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => window.removeEventListener('config-updated', syncFromConfig);
     }, []);
 
-    // A newly created local session does not exist in Gateway until its first turn starts.
-    // Wait for an assistant message so context usage is only queried for persisted sessions.
+    // Goal state is useful while the run is active, so query immediately and keep refreshing.
+    // The optimistic objective covers the short window before sessions.create persists the goal.
     useEffect(() => {
-      if (!sessionId || isStreaming || !hasAssistantMessage) return;
+      if (!sessionId || sessionId.startsWith('temp-')) return;
       let cancelled = false;
+      let timeoutId: number | null = null;
+      let requestInFlight = false;
+      const isRunActive = isStreaming || goalRunProgress !== null;
+      const schedule = (goal?: SessionGoal) => {
+        if (cancelled) return;
+        const delay = getGoalRefreshDelay(isRunActive, goal?.status);
+        if (delay !== null) {
+          timeoutId = window.setTimeout(fetchUsage, delay);
+        }
+      };
       const fetchUsage = async () => {
+        if (cancelled || requestInFlight) return;
+        requestInFlight = true;
+        let refreshedGoal = sessionGoalRef.current ?? undefined;
         try {
           const result = await window.electron.cowork.getContextUsage(sessionId);
-          if (cancelled || !result.success) return;
+          if (cancelled) return;
+          if (!result.success) {
+            schedule();
+            return;
+          }
+          refreshedGoal = result.goal;
+          sessionGoalRef.current = result.goal ?? null;
           setSessionGoal(result.goal ?? null);
+          if (result.goal) {
+            setPendingGoalObjective(null);
+          } else if (!isRunActive) {
+            setPendingGoalObjective(null);
+          }
           setContextUsage(
             result.totalTokens == null
               ? null
@@ -1220,13 +1282,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           );
         } catch {
           // Runtime details are supplementary; keep the last known state on transient failures.
+        } finally {
+          requestInFlight = false;
         }
+        schedule(refreshedGoal);
       };
       void fetchUsage();
       return () => {
         cancelled = true;
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
       };
-    }, [sessionId, isStreaming, hasAssistantMessage, effectiveSelectedModel?.contextLength]);
+    }, [
+      sessionId,
+      isStreaming,
+      goalRunProgress,
+      hasAssistantMessage,
+      effectiveSelectedModel?.contextLength,
+    ]);
 
     const handleGoalCommand = useCallback(
       (command: string) => {
@@ -1258,10 +1330,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     return (
       <div className="relative">
-        {sessionGoal && (
+        {(sessionGoal || pendingGoalObjective) && (
           <GoalStatusCard
             goal={sessionGoal}
-            disabled={disabled || isStreaming}
+            pendingObjective={pendingGoalObjective}
+            progress={goalRunProgress}
+            isRunning={isStreaming || goalRunProgress !== null}
+            disabled={disabled || isStreaming || goalRunProgress !== null}
             onCommand={handleGoalCommand}
           />
         )}

@@ -11,6 +11,11 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import { useSelector } from 'react-redux';
 
 import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
+import {
+  buildGoalRunProgress,
+  type GoalRunProgress,
+  goalRunProgressKey,
+} from '@/features/cowork/components/goalRunProgress';
 import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
@@ -33,6 +38,7 @@ interface JustDoChatWrapperProps {
   searchNavigationToken?: number;
   searchNavigationDirection?: 1 | -1;
   onSearchMatchCountChange?: (total: number, index: number) => void;
+  onActivityChange?: (progress: GoalRunProgress | null) => void;
 }
 
 export interface JustDoChatWrapperRef {
@@ -54,19 +60,27 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       searchNavigationToken,
       searchNavigationDirection,
       onSearchMatchCountChange,
+      onActivityChange,
     },
     ref,
   ) => {
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
+    const initialSessionRef = useRef(currentSession);
     const controllerRef = useRef<ChatController | null>(null);
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
+    const onActivityChangeRef = useRef(onActivityChange);
+    const lastActivityKeyRef = useRef('');
     const [connectionError, setConnectionError] = useState<string | null>(null);
     // Buffer for pending user message when the controller is not yet created
     const pendingUserMessageRef = useRef<{
       text: string;
       attachments: CoworkAttachmentPayload[];
     } | null>(null);
+
+    useEffect(() => {
+      onActivityChangeRef.current = onActivityChange;
+    }, [onActivityChange]);
 
     // Expose sendMessage and setPendingUserMessage to parent via ref
     useImperativeHandle(
@@ -105,6 +119,16 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       controllerRef.current = controller;
       setController(controller);
 
+      const publishActivity = () => {
+        const progress = buildGoalRunProgress(controller.state);
+        const key = goalRunProgressKey(progress);
+        if (key === lastActivityKeyRef.current) return;
+        lastActivityKeyRef.current = key;
+        onActivityChangeRef.current?.(progress);
+      };
+      const unsubscribeState = controller.subscribe(publishActivity);
+      const unsubscribeStream = controller.onStream(publishActivity);
+
       // Apply any buffered pending user message (set before controller existed)
       if (pendingUserMessageRef.current) {
         debugLog('[JustDoChatWrapper] applying buffered pendingUserMessage on mount');
@@ -117,9 +141,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
       // Set initial sessionKey from current session BEFORE connecting
       // (avoids race with the session-switch effect)
-      if (currentSession) {
-        const agentId = currentSession.agentId?.trim() || 'main';
-        controller.state.sessionKey = `agent:${agentId}:justdo:${currentSession.id}`;
+      const initialSession = initialSessionRef.current;
+      if (initialSession) {
+        const agentId = initialSession.agentId?.trim() || 'main';
+        controller.state.sessionKey = `agent:${agentId}:justdo:${initialSession.id}`;
       }
 
       // Cancellation flag: React StrictMode double-fires mount effects.
@@ -151,6 +176,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
       return () => {
         cancelled = true;
+        unsubscribeState();
+        unsubscribeStream();
+        lastActivityKeyRef.current = '';
+        onActivityChangeRef.current?.(null);
         debugLog('[JustDoChatWrapper] cleanup — disconnecting controller');
         try {
           controller.disconnect();

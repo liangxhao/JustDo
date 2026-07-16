@@ -226,6 +226,18 @@ select::-ms-expand {
   100% { left: 100%; }
 }
 
+@keyframes goal-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  50% {
+    transform: translateX(110%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
 /* Sub-task drawer slide-in animation */
 @keyframes slide-in-right {
   from { transform: translateX(100%); }

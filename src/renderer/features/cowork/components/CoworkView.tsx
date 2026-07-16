@@ -1,3 +1,4 @@
+import { parseGoalStartObjective } from '@shared/slashCommands';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -9,6 +10,7 @@ import CoworkPromptInput, {
 import FilePreviewDrawer, {
   type FilePreview,
 } from '@/features/cowork/components/FilePreviewDrawer';
+import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/JustDoChatWrapper';
@@ -80,6 +82,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const [openClawStatus, setOpenClawStatus] = useState<OpenClawEngineStatus | null>(null);
   const [selectedSubagent, setSelectedSubagent] = useState<Subagent | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSearchIgnoreCase, setSessionSearchIgnoreCase] = useState(true);
@@ -128,6 +131,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     : isStreaming;
   const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
+  const latestUserMessage = [...(currentSession?.messages ?? [])]
+    .reverse()
+    .find(message => message.type === 'user');
+  const initialGoalObjective = currentSessionRuntimeRunning
+    ? parseGoalStartObjective(latestUserMessage?.content ?? '')
+    : null;
   const backgroundSessionIdsKey = sessions
     .map(session => session.id)
     .filter(sessionId => sessionId !== currentSessionId && !sessionId.startsWith('temp-'))
@@ -474,6 +483,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   useEffect(() => {
     setSelectedSubagent(null);
     setFilePreview(null);
+    setGoalRunProgress(null);
   }, [currentSession?.id]);
 
   useEffect(() => {
@@ -789,6 +799,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             searchNavigationToken={sessionSearchNavigation.token}
             searchNavigationDirection={sessionSearchNavigation.direction}
             onSearchMatchCountChange={handleSessionSearchMatchCountChange}
+            onActivityChange={setGoalRunProgress}
           />
           {/* Input */}
           <div className="shrink-0 pb-4 pt-2">
@@ -809,6 +820,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                   hasAssistantMessage={currentSession.messages.some(
                     message => message.type === 'assistant',
                   )}
+                  initialGoalObjective={initialGoalObjective}
+                  goalRunProgress={goalRunProgress}
                 />
               </div>
               <p className="px-1 text-center text-[11px] font-light leading-4 text-muted">

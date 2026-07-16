@@ -3,9 +3,36 @@ export const SlashCommandIpc = {
 } as const;
 
 const GOAL_COMMAND_PATTERN = /^\/goal(?:\s|$)/i;
+const GOAL_CONTROL_ACTIONS = new Set([
+  'block',
+  'blocked',
+  'clear',
+  'complete',
+  'done',
+  'pause',
+  'resume',
+  'status',
+]);
+const GOAL_CREATE_ACTIONS = new Set(['create', 'set', 'start']);
+const GOAL_TOKEN_BUDGET_PATTERN = /^--tokens(?:=|\s+)\S+\s*/i;
 
 export const isGoalSlashCommand = (value: string): boolean =>
   GOAL_COMMAND_PATTERN.test(value.trim());
+
+/** Returns the objective only when the command starts a new goal. */
+export const parseGoalStartObjective = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!GOAL_COMMAND_PATTERN.test(trimmed)) return null;
+  const argumentsText = trimmed.replace(/^\/goal(?:\s+|$)/i, '').trim();
+  if (!argumentsText) return null;
+
+  const [first = '', ...rest] = argumentsText.split(/\s+/);
+  const action = first.toLowerCase();
+  if (GOAL_CONTROL_ACTIONS.has(action)) return null;
+  const objectiveText = GOAL_CREATE_ACTIONS.has(action) ? rest.join(' ') : argumentsText;
+  const objective = objectiveText.replace(GOAL_TOKEN_BUDGET_PATTERN, '').trim();
+  return objective || null;
+};
 
 export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'help',

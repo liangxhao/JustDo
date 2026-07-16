@@ -97,9 +97,6 @@ export const registerCoworkSessionRuntimeHandlers = ({
     try {
       const runtime = getRuntime();
       if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
-      if (runtime.isSessionActive(sessionId)) {
-        return { success: false, error: 'Context usage is unavailable while a session is running' };
-      }
       const client = runtime.getGatewayClient();
       if (!client) return { success: false, error: 'Gateway client not connected' };
       const agentId = getCoworkStore().getSession(sessionId)?.agentId || DEFAULT_MANAGED_AGENT_ID;

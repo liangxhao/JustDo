@@ -1,11 +1,14 @@
 import {
+  ArrowPathIcon,
   CheckCircleIcon,
+  ClockIcon,
   ExclamationTriangleIcon,
   PauseCircleIcon,
+  WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
 import { FlagIcon } from '@heroicons/react/24/solid';
 import { type SessionGoal, SessionGoalStatus } from '@shared/sessionGoal';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 import {
   formatGoalTokenCount,
@@ -13,10 +16,14 @@ import {
   getGoalPresentation,
   type GoalTone,
 } from '@/features/cowork/components/goalPresentation';
+import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import { i18nService } from '@/services/i18n';
 
 interface GoalStatusCardProps {
-  goal: SessionGoal;
+  goal: SessionGoal | null;
+  pendingObjective?: string | null;
+  progress?: GoalRunProgress | null;
+  isRunning?: boolean;
   disabled?: boolean;
   onCommand: (command: string) => void;
 }
@@ -82,48 +89,139 @@ const getPrimaryAction = (status: SessionGoal['status']) => {
   }
 };
 
-const GoalStatusCard: React.FC<GoalStatusCardProps> = ({ goal, disabled = false, onCommand }) => {
-  const presentation = getGoalPresentation(goal.status);
+const getProgressLabel = (progress: GoalRunProgress | null): string => {
+  switch (progress?.phase) {
+    case 'thinking':
+      return i18nService.t('coworkGoalPhaseThinking');
+    case 'tool':
+      return progress.toolName
+        ? i18nService.t('coworkGoalPhaseToolNamed').replace('{tool}', progress.toolName)
+        : i18nService.t('coworkGoalPhaseTool');
+    case 'responding':
+      return i18nService.t('coworkGoalPhaseResponding');
+    default:
+      return i18nService.t('coworkGoalPhaseStarting');
+  }
+};
+
+const formatElapsed = (startedAt: number | undefined, now: number): string => {
+  if (!startedAt) return '00:00';
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+};
+
+const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
+  goal,
+  pendingObjective,
+  progress = null,
+  isRunning = false,
+  disabled = false,
+  onCommand,
+}) => {
+  const status = goal?.status ?? SessionGoalStatus.Active;
+  const objective = goal?.objective ?? pendingObjective ?? '';
+  const presentation = getGoalPresentation(status);
   const tone = TONE_CLASSES[presentation.tone];
-  const percentage = getGoalBudgetPercentage(goal);
-  const primaryAction = getPrimaryAction(goal.status);
+  const percentage = goal ? getGoalBudgetPercentage(goal) : null;
+  const primaryAction = goal ? getPrimaryAction(goal.status) : null;
   const usage =
-    goal.tokensUsed <= 0
+    !goal || goal.tokensUsed <= 0
       ? null
       : goal.tokenBudget === undefined
         ? i18nService
             .t('coworkGoalTokensUsed')
             .replace('{count}', formatGoalTokenCount(goal.tokensUsed))
         : `${formatGoalTokenCount(goal.tokensUsed)} / ${formatGoalTokenCount(goal.tokenBudget)}`;
+  const [now, setNow] = useState(Date.now());
+  const live = isRunning && status === SessionGoalStatus.Active;
+  const activityLabel = getProgressLabel(progress);
+
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [live]);
 
   return (
     <section
-      className={`mb-2 overflow-hidden rounded-xl border px-3 py-2.5 shadow-subtle ${tone.card}`}
+      className={`mb-2 overflow-hidden rounded-2xl border shadow-subtle ${tone.card}`}
       aria-label={i18nService.t('coworkGoalTitle')}
     >
-      <div className="flex items-start gap-2.5">
-        <div className={`mt-0.5 rounded-md p-1.5 ${tone.badge}`}>
-          <GoalStatusIcon status={goal.status} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className={`text-[11px] font-semibold ${tone.label}`}>
-              {i18nService.t(presentation.labelKey)}
-            </span>
-            {usage && (
-              <span className="ml-auto text-[10px] tabular-nums text-secondary">{usage}</span>
+      <div className={`h-0.5 w-full ${tone.bar} ${live ? 'animate-pulse' : ''}`} />
+      <div className="px-3.5 py-3">
+        <div className="flex items-start gap-3">
+          <div className={`relative mt-0.5 rounded-xl p-2 ${tone.badge}`}>
+            {live && (
+              <span className="absolute inset-0 animate-ping rounded-xl bg-primary/15 motion-reduce:animate-none" />
             )}
-          </div>
-          <div
-            className="mt-0.5 truncate text-sm font-medium text-foreground"
-            title={goal.objective}
-          >
-            {goal.objective}
-          </div>
-          <div className="mt-0.5 flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-[11px] text-secondary">
-              {goal.lastStatusNote || i18nService.t(presentation.hintKey)}
+            <span className="relative block">
+              <GoalStatusIcon status={status} />
             </span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                role="status"
+                aria-live="polite"
+                className={`text-[11px] font-semibold ${tone.label}`}
+              >
+                {goal
+                  ? i18nService.t(presentation.labelKey)
+                  : i18nService.t('coworkGoalCreating')}
+              </span>
+              {live && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-primary/15 bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                  {i18nService.t('coworkGoalLive')}
+                </span>
+              )}
+              {usage && (
+                <span className="ml-auto text-[10px] tabular-nums text-secondary">{usage}</span>
+              )}
+            </div>
+            <div className="mt-1 line-clamp-2 break-words text-sm font-semibold leading-5 text-foreground">
+              {objective}
+            </div>
+          </div>
+        </div>
+
+        {live ? (
+          <div className="mt-3 rounded-xl border border-primary/15 bg-surface/65 px-3 py-2.5">
+            <div className="flex items-center gap-2 text-xs">
+              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin text-primary motion-reduce:animate-none" />
+              <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                {activityLabel}
+              </span>
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] tabular-nums text-secondary">
+                <ClockIcon className="h-3 w-3" />
+                {formatElapsed(progress?.startedAt, now)}
+              </span>
+              {(progress?.toolCount ?? 0) > 0 && (
+                <span className="inline-flex items-center gap-1 text-[10px] tabular-nums text-secondary">
+                  <WrenchScrewdriverIcon className="h-3 w-3" />
+                  {i18nService
+                    .t('coworkGoalToolCount')
+                    .replace('{count}', String(progress?.toolCount ?? 0))}
+                </span>
+              )}
+            </div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-primary/10">
+              <div className="h-full w-1/3 animate-[goal-progress_1.4s_ease-in-out_infinite] rounded-full bg-primary motion-reduce:animate-pulse" />
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2.5 flex items-center gap-2 text-[11px] text-secondary">
+            <span className={`h-1.5 w-1.5 rounded-full ${tone.bar}`} />
+            <span className="min-w-0 flex-1 truncate">
+              {goal?.lastStatusNote || i18nService.t(presentation.hintKey)}
+            </span>
+          </div>
+        )}
+
+        {primaryAction && (
+          <div className="mt-3 flex justify-end gap-2 border-t border-border/50 pt-2.5">
             <button
               type="button"
               disabled={disabled}
@@ -132,7 +230,7 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({ goal, disabled = false,
             >
               {primaryAction.label}
             </button>
-            {goal.status === SessionGoalStatus.Active && (
+            {goal?.status === SessionGoalStatus.Active && (
               <button
                 type="button"
                 disabled={disabled}
@@ -143,16 +241,16 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({ goal, disabled = false,
               </button>
             )}
           </div>
-        </div>
+        )}
+        {percentage !== null && (
+          <div className="mt-3 h-1 overflow-hidden rounded-full bg-border/50">
+            <div
+              className={`h-full rounded-full transition-[width] duration-300 ${tone.bar}`}
+              style={{ width: `${percentage}%` }}
+            />
+          </div>
+        )}
       </div>
-      {percentage !== null && (
-        <div className="mt-2 h-1 overflow-hidden rounded-full bg-border/50">
-          <div
-            className={`h-full rounded-full transition-[width] duration-300 ${tone.bar}`}
-            style={{ width: `${percentage}%` }}
-          />
-        </div>
-      )}
     </section>
   );
 };
