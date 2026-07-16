@@ -32,6 +32,7 @@ scripts/patches/v2026.6.11/
 | `006-sessions-yield-active-guard.cjs` | Session yield active guard |
 | `007-allow-managed-pip-config-env.cjs` | JustDo-managed pip config env passthrough |
 | `008-dedupe-visible-subagent-announces.cjs` | Deduplicate sibling completion announces already visible in parent history |
+| `009-reply-session-init-conflict-retry.cjs` | Bounded retry for transient reply session initialization conflicts |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -135,6 +136,7 @@ Patch removal is a real change:
 | `006-sessions-yield-active-guard.cjs` | Runtime race guard | Remove when upstream session yield state is guarded |
 | `007-allow-managed-pip-config-env.cjs` | Managed dependency config passthrough | Remove when upstream supports scoped dependency manager env passthrough |
 | `008-dedupe-visible-subagent-announces.cjs` | Subagent completion delivery compatibility | Remove when upstream coalesces sibling announces or credits results already visible in parent history |
+| `009-reply-session-init-conflict-retry.cjs` | Runtime session concurrency guard | Remove when upstream retries initialization conflicts or serializes transcript persistence with initialization |
 
 ## Version Upgrade Process
 

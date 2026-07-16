@@ -108,7 +108,8 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 `003-openai-content-reasoning-tags.cjs`, `004-windows-mcp-package-runner.cjs`,
 `005-history-thinking-and-subagent-yield.cjs`,
 `006-sessions-yield-active-guard.cjs`, `007-allow-managed-pip-config-env.cjs`,
-`008-dedupe-visible-subagent-announces.cjs`.
+`008-dedupe-visible-subagent-announces.cjs`,
+`009-reply-session-init-conflict-retry.cjs`.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 
