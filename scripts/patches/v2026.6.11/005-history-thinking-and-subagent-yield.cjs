@@ -4,8 +4,9 @@
 // keep reasoning-only display turns visible, treat sessions_yield completion
 // handoffs as committed outbound delivery evidence for session-only subagent
 // completion announcements, accept intentional silent completion turns that
-// reply NO_REPLY, and retry zero/missing-usage visible stop turns that are
-// usually provider-aborted partial assistant snapshots.
+// reply NO_REPLY, and accept visible stop turns regardless of usage metadata.
+// OpenAI-compatible providers may omit usage or report zero usage for complete
+// streamed responses, so usage alone cannot prove that a turn was truncated.
 // Affected OpenClaw version: v2026.6.11.
 // Risk: Chat history may show thinking blocks that upstream currently projects
 // out; subagent completion delivery may accept a sessions_yield side effect as
@@ -13,8 +14,8 @@
 // Remove when: OpenClaw preserves display thinking in chat.history, treats
 // reasoning-only assistant turns as visible display content, records
 // sessions_yield handoffs as committed delivery evidence natively, accepts
-// intentional silent completion turns for subagent announcements, and retries
-// zero/missing-token visible stop turns after provider stream aborts.
+// intentional silent completion turns for subagent announcements, and no
+// longer uses token usage metadata to retry visible stop turns.
 // Upstream tracking: TODO(openclaw): file issue/PR with JustDo long-task
 // thinking refresh and subagent sessions_yield announce reproductions.
 // Temporary: yes.
@@ -174,7 +175,15 @@ function patchFile(filePath) {
   result = replaceOnce(
     content,
     'function isZeroUsageEmptyStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && message2.content.length === 0 && hasZeroTokenUsageSnapshot(message2.usage));\n}',
+    'function isZeroUsageEmptyStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && (message2.content.length === 0 || hasOnlyAssistantReasoningContent(message2)) && hasZeroTokenUsageSnapshot(message2.usage));\n}\nfunction isZeroUsageVisibleStopAssistantTurn(message2) {\n  return false;\n}',
+  );
+  content = result.content;
+  changed ||= result.changed;
+
+  result = replaceOnce(
+    content,
     'function isZeroOrMissingUsageSnapshot(usage) {\n  return usage == null || hasZeroTokenUsageSnapshot(usage);\n}\nfunction isZeroUsageEmptyStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && (message2.content.length === 0 || hasOnlyAssistantReasoningContent(message2)) && hasZeroTokenUsageSnapshot(message2.usage));\n}\nfunction isZeroUsageVisibleStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && message2.content.some((block3) => block3 && typeof block3 === "object" && isAssistantTextContentType(block3.type) && typeof block3.text === "string" && block3.text.trim()) && isZeroOrMissingUsageSnapshot(message2.usage));\n}',
+    'function isZeroUsageEmptyStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && (message2.content.length === 0 || hasOnlyAssistantReasoningContent(message2)) && hasZeroTokenUsageSnapshot(message2.usage));\n}\nfunction isZeroUsageVisibleStopAssistantTurn(message2) {\n  return false;\n}',
   );
   content = result.content;
   changed ||= result.changed;
@@ -182,18 +191,20 @@ function patchFile(filePath) {
   result = replaceOnce(
     content,
     'function isZeroUsageEmptyStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && (message2.content.length === 0 || hasOnlyAssistantReasoningContent(message2)) && hasZeroTokenUsageSnapshot(message2.usage));\n}\nfunction isZeroUsageVisibleStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && message2.content.some((block3) => block3 && typeof block3 === "object" && isAssistantTextContentType(block3.type) && typeof block3.text === "string" && block3.text.trim()) && hasZeroTokenUsageSnapshot(message2.usage));\n}',
-    'function isZeroOrMissingUsageSnapshot(usage) {\n  return usage == null || hasZeroTokenUsageSnapshot(usage);\n}\nfunction isZeroUsageEmptyStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && (message2.content.length === 0 || hasOnlyAssistantReasoningContent(message2)) && hasZeroTokenUsageSnapshot(message2.usage));\n}\nfunction isZeroUsageVisibleStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && message2.content.some((block3) => block3 && typeof block3 === "object" && isAssistantTextContentType(block3.type) && typeof block3.text === "string" && block3.text.trim()) && isZeroOrMissingUsageSnapshot(message2.usage));\n}',
+    'function isZeroUsageEmptyStopAssistantTurn(message2) {\n  return Boolean(message2 && message2.stopReason === "stop" && Array.isArray(message2.content) && (message2.content.length === 0 || hasOnlyAssistantReasoningContent(message2)) && hasZeroTokenUsageSnapshot(message2.usage));\n}\nfunction isZeroUsageVisibleStopAssistantTurn(message2) {\n  return false;\n}',
   );
   content = result.content;
   changed ||= result.changed;
 
-  result = replaceOnce(
-    content,
-    'function resolveEmptyResponseRetryInstruction(params) {\n  if (shouldSkipNonVisibleTurnRetry(params)) return null;\n  if (!isEmptyResponseAssistantTurn({\n    payloadCount: params.payloadCount,\n    attempt: params.attempt\n  })) return null;\n  const assistant = params.attempt.currentAttemptAssistant ?? params.attempt.lastAssistant ?? null;\n  if (assistant?.stopReason === "stop" && OLLAMA_INCOMPLETE_TURN_PROVIDER_ID_PATTERN.test(normalizeLowercaseStringOrEmpty(params.provider ?? "")) && !hasPositiveOutputTokenUsage(assistant)) return null;\n  if (shouldApplyNonVisibleTurnRetryGuard({\n    provider: params.provider,\n    modelId: params.modelId,\n    modelApi: params.modelApi,\n    executionContract: params.executionContract\n  }) || isZeroUsageEmptyStopAssistantTurn(assistant)) return EMPTY_RESPONSE_RETRY_INSTRUCTION;\n  return null;\n}',
-    'function resolveEmptyResponseRetryInstruction(params) {\n  if (shouldSkipNonVisibleTurnRetry(params)) return null;\n  if (!isEmptyResponseAssistantTurn({\n    payloadCount: params.payloadCount,\n    attempt: params.attempt\n  })) return null;\n  const assistant = params.attempt.currentAttemptAssistant ?? params.attempt.lastAssistant ?? null;\n  if (assistant?.stopReason === "stop" && OLLAMA_INCOMPLETE_TURN_PROVIDER_ID_PATTERN.test(normalizeLowercaseStringOrEmpty(params.provider ?? "")) && !hasPositiveOutputTokenUsage(assistant)) return null;\n  if (shouldApplyNonVisibleTurnRetryGuard({\n    provider: params.provider,\n    modelId: params.modelId,\n    modelApi: params.modelApi,\n    executionContract: params.executionContract\n  }) || isZeroUsageEmptyStopAssistantTurn(assistant)) return EMPTY_RESPONSE_RETRY_INSTRUCTION;\n  return null;\n}\nfunction resolveZeroUsageVisibleStopRetryInstruction(params) {\n  if (params.timedOut) return null;\n  const assistant = params.attempt.currentAttemptAssistant ?? params.attempt.lastAssistant ?? null;\n  if (!isZeroUsageVisibleStopAssistantTurn(assistant)) return null;\n  if (hasOnlySilentAssistantReply(params.attempt.assistantTexts)) return null;\n  if (hasCommittedMessagingToolDeliveryEvidence(params.attempt)) return null;\n  if (hasAcceptedSessionSpawn(params.attempt.acceptedSessionSpawns)) return null;\n  if (params.attempt.clientToolCalls || params.attempt.yieldDetected || params.attempt.didSendDeterministicApprovalPrompt || params.attempt.lastToolError || resolveAttemptReplayMetadata(params.attempt).hadPotentialSideEffects) return null;\n  if (!shouldApplyNonVisibleTurnRetryGuard({\n    provider: params.provider,\n    modelId: params.modelId,\n    modelApi: params.modelApi,\n    executionContract: params.executionContract\n  })) return null;\n  return "The previous attempt recorded a partial assistant sentence with zero or missing model token usage before taking the next action. Continue from the current state and perform the promised next action now. Do not restart from scratch, repeat completed work, or summarize instead of acting.";\n}',
-  );
-  content = result.content;
-  changed ||= result.changed;
+  if (!content.includes('function resolveZeroUsageVisibleStopRetryInstruction(params) {')) {
+    result = replaceOnce(
+      content,
+      'function resolveEmptyResponseRetryInstruction(params) {\n  if (shouldSkipNonVisibleTurnRetry(params)) return null;\n  if (!isEmptyResponseAssistantTurn({\n    payloadCount: params.payloadCount,\n    attempt: params.attempt\n  })) return null;\n  const assistant = params.attempt.currentAttemptAssistant ?? params.attempt.lastAssistant ?? null;\n  if (assistant?.stopReason === "stop" && OLLAMA_INCOMPLETE_TURN_PROVIDER_ID_PATTERN.test(normalizeLowercaseStringOrEmpty(params.provider ?? "")) && !hasPositiveOutputTokenUsage(assistant)) return null;\n  if (shouldApplyNonVisibleTurnRetryGuard({\n    provider: params.provider,\n    modelId: params.modelId,\n    modelApi: params.modelApi,\n    executionContract: params.executionContract\n  }) || isZeroUsageEmptyStopAssistantTurn(assistant)) return EMPTY_RESPONSE_RETRY_INSTRUCTION;\n  return null;\n}',
+      'function resolveEmptyResponseRetryInstruction(params) {\n  if (shouldSkipNonVisibleTurnRetry(params)) return null;\n  if (!isEmptyResponseAssistantTurn({\n    payloadCount: params.payloadCount,\n    attempt: params.attempt\n  })) return null;\n  const assistant = params.attempt.currentAttemptAssistant ?? params.attempt.lastAssistant ?? null;\n  if (assistant?.stopReason === "stop" && OLLAMA_INCOMPLETE_TURN_PROVIDER_ID_PATTERN.test(normalizeLowercaseStringOrEmpty(params.provider ?? "")) && !hasPositiveOutputTokenUsage(assistant)) return null;\n  if (shouldApplyNonVisibleTurnRetryGuard({\n    provider: params.provider,\n    modelId: params.modelId,\n    modelApi: params.modelApi,\n    executionContract: params.executionContract\n  }) || isZeroUsageEmptyStopAssistantTurn(assistant)) return EMPTY_RESPONSE_RETRY_INSTRUCTION;\n  return null;\n}\nfunction resolveZeroUsageVisibleStopRetryInstruction(params) {\n  if (params.timedOut) return null;\n  const assistant = params.attempt.currentAttemptAssistant ?? params.attempt.lastAssistant ?? null;\n  if (!isZeroUsageVisibleStopAssistantTurn(assistant)) return null;\n  if (hasOnlySilentAssistantReply(params.attempt.assistantTexts)) return null;\n  if (hasCommittedMessagingToolDeliveryEvidence(params.attempt)) return null;\n  if (hasAcceptedSessionSpawn(params.attempt.acceptedSessionSpawns)) return null;\n  if (params.attempt.clientToolCalls || params.attempt.yieldDetected || params.attempt.didSendDeterministicApprovalPrompt || params.attempt.lastToolError || resolveAttemptReplayMetadata(params.attempt).hadPotentialSideEffects) return null;\n  if (!shouldApplyNonVisibleTurnRetryGuard({\n    provider: params.provider,\n    modelId: params.modelId,\n    modelApi: params.modelApi,\n    executionContract: params.executionContract\n  })) return null;\n  return "The previous attempt recorded a partial assistant sentence with zero model token usage before taking the next action. Continue from the current state and perform the promised next action now. Do not restart from scratch, repeat completed work, or summarize instead of acting.";\n}',
+    );
+    content = result.content;
+    changed ||= result.changed;
+  }
 
   result = replaceOnce(
     content,
@@ -290,6 +301,16 @@ function patchFile(filePath) {
   );
   content = result.content;
   changed ||= result.changed;
+
+  // Older revisions of this patch treated absent usage as proof of a partial
+  // stream. Normalize every generated variant after the compatibility
+  // replacements above so OpenAI-compatible providers may omit usage without
+  // causing a second model turn.
+  const usageNormalized = content
+    .replaceAll('zero/missing-usage visible stop', 'zero-usage visible stop')
+    .replaceAll('zero or missing model token usage', 'zero model token usage');
+  changed ||= usageNormalized !== content;
+  content = usageNormalized;
 
   if (!changed) return false;
   fs.writeFileSync(filePath, content, 'utf8');
