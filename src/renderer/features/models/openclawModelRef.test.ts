@@ -8,7 +8,7 @@ import {
 } from '@/features/models/openclawModelRef';
 
 // Mock configService (fallback only, prefer model.provider)
-vi.mock('../services/config', () => ({
+vi.mock('@/services/config', () => ({
   configService: {
     getConfig: () => ({
       providers: {

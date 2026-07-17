@@ -817,6 +817,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                   size="large"
                   showModelSelector={true}
                   sessionId={currentSession.id}
+                  modelAgentId={currentSession.agentId}
                   hasAssistantMessage={currentSession.messages.some(
                     message => message.type === 'assistant',
                   )}
@@ -883,7 +884,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                 />
               </div>
             </div>
-
           </div>
         </div>
       </div>

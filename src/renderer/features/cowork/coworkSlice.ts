@@ -1,6 +1,9 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-import { removeSessionFromState, removeSessionsFromState } from '@/features/cowork/coworkDeleteState';
+import {
+  removeSessionFromState,
+  removeSessionsFromState,
+} from '@/features/cowork/coworkDeleteState';
 import type {
   CoworkConfig,
   CoworkInteractionRequest,
@@ -471,6 +474,17 @@ const coworkSlice = createSlice({
       state.draftAttachments[draftKey] = [...existing, attachment];
     },
 
+    hydrateDraftImageAttachment(
+      state,
+      action: PayloadAction<{ draftKey: string; path: string; dataUrl: string }>,
+    ) {
+      const { draftKey, path, dataUrl } = action.payload;
+      const attachment = state.draftAttachments[draftKey]?.find(item => item.path === path);
+      if (!attachment) return;
+      attachment.isImage = true;
+      attachment.dataUrl = dataUrl;
+    },
+
     clearDraftAttachments(state, action: PayloadAction<string>) {
       delete state.draftAttachments[action.payload];
     },
@@ -551,6 +565,7 @@ export const {
   setDraftPrompt,
   setDraftAttachments,
   addDraftAttachment,
+  hydrateDraftImageAttachment,
   clearDraftAttachments,
   addSession,
   updateSessionStatus,

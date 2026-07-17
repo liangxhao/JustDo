@@ -15,6 +15,7 @@ import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPo
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import { getGoalRefreshDelay } from '@/features/cowork/components/goalRuntimeRefresh';
 import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
+import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerialTaskQueue';
 import {
   getHiddenCommandCount,
   getSlashCommandByName,
@@ -30,6 +31,7 @@ import {
   addDraftAttachment,
   clearDraftAttachments,
   type DraftAttachment,
+  hydrateDraftImageAttachment,
   setDraftAttachments,
   setDraftPrompt,
 } from '@/features/cowork/coworkSlice';
@@ -73,6 +75,11 @@ const isImagePath = (filePath: string): boolean => {
 const isImageMimeType = (mimeType: string): boolean => {
   return mimeType.startsWith('image/');
 };
+
+const isImageAttachment = (attachment: DraftAttachment): boolean =>
+  attachment.isImage === true ||
+  isImagePath(attachment.path) ||
+  attachment.dataUrl?.startsWith('data:image/') === true;
 
 const extractBase64FromDataUrl = (
   dataUrl: string,
@@ -137,6 +144,8 @@ interface CoworkPromptInputProps {
   showFolderSelector?: boolean;
   showModelSelector?: boolean;
   sessionId?: string;
+  /** Agent that owns the session. Defaults to the agent selected on the home screen. */
+  modelAgentId?: string;
   /** Whether the session has completed at least one Gateway-backed turn. */
   hasAssistantMessage?: boolean;
   /** Objective inferred from the optimistic first message while the real session is being created. */
@@ -185,6 +194,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       showFolderSelector = false,
       showModelSelector = false,
       sessionId,
+      modelAgentId,
       hasAssistantMessage = false,
       initialGoalObjective = null,
       goalRunProgress = null,
@@ -202,14 +212,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const agents = useSelector((state: RootState) => state.agent.agents);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
     const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
-    const currentAgent = agents.find(agent => agent.id === currentAgentId);
+    const effectiveAgentId = modelAgentId ?? currentAgentId;
+    const currentAgent = agents.find(agent => agent.id === effectiveAgentId);
     const { selectedModel: agentSelectedModel, hasInvalidExplicitModel: agentModelIsInvalid } =
       resolveAgentModelSelection({
         agentModel: currentAgent?.model ?? '',
         availableModels,
         fallbackModel: globalSelectedModel,
       });
+    const agentSelectedModelRef = useRef<Model | null>(agentSelectedModel);
+    agentSelectedModelRef.current = agentSelectedModel;
     const [optimisticSessionModel, setOptimisticSessionModel] = useState<Model | null>(null);
+    const optimisticSessionModelRef = useRef<Model | null>(null);
+    const confirmedSessionModelRef = useRef<Model | null>(agentSelectedModel);
+    const modelSelectionContextRef = useRef(0);
+    const modelSelectionQueueRef = useRef(new LatestSerialTaskQueue());
+    const effectiveSelectedModel = optimisticSessionModel ?? agentSelectedModel;
+    const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const [value, setValue] = useState(draftPrompt);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
     const [showFolderRequiredWarning, setShowFolderRequiredWarning] = useState(false);
@@ -246,12 +265,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const latestValueRef = useRef(value);
 
     useEffect(() => {
+      modelSelectionContextRef.current += 1;
+      modelSelectionQueueRef.current.invalidate();
+      optimisticSessionModelRef.current = null;
+      confirmedSessionModelRef.current = agentSelectedModelRef.current;
       setOptimisticSessionModel(null);
       setContextUsage(null);
       setSessionGoal(null);
       sessionGoalRef.current = null;
       setPendingGoalObjective(null);
-    }, [sessionId, currentAgentId]);
+    }, [sessionId, effectiveAgentId]);
 
     useEffect(() => {
       if (initialGoalObjective && !sessionGoal) {
@@ -464,22 +487,70 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
         const attachmentPayloads: CoworkAttachmentPayload[] = [];
         const mediaDirectivePaths: string[] = [];
+        let attachmentPreparationFailed = false;
+        let imagePreparationFailed = false;
         for (const attachment of attachments) {
-          if (!attachment.dataUrl) {
+          const attachmentIsImage = isImageAttachment(attachment);
+          let dataUrl = attachment.dataUrl;
+
+          if (
+            attachmentIsImage &&
+            modelSupportsImage &&
+            !dataUrl &&
+            !attachment.path.startsWith('inline:')
+          ) {
+            try {
+              const result = await window.electron.dialog.readFileAsDataUrl(attachment.path);
+              dataUrl = result.success ? result.dataUrl : undefined;
+            } catch (error) {
+              console.error('Failed to read image before submit:', error);
+            }
+          }
+
+          if (!dataUrl) {
             if (!attachment.path.startsWith('inline:')) {
               mediaDirectivePaths.push(attachment.path);
+            } else {
+              attachmentPreparationFailed = true;
+              imagePreparationFailed ||= attachmentIsImage;
             }
             continue;
           }
 
-          const extracted = extractBase64FromDataUrl(attachment.dataUrl);
-          if (extracted) {
+          const extracted = extractBase64FromDataUrl(dataUrl);
+          if (extracted && (!attachmentIsImage || modelSupportsImage)) {
             attachmentPayloads.push({
               name: attachment.name,
               mimeType: extracted.mimeType,
               base64Data: extracted.base64Data,
             });
+          } else if (!attachment.path.startsWith('inline:')) {
+            mediaDirectivePaths.push(attachment.path);
+          } else if (extracted && attachmentIsImage) {
+            const staged = await window.electron.dialog.saveInlineFile({
+              dataBase64: extracted.base64Data,
+              fileName: attachment.name,
+              mimeType: extracted.mimeType,
+              cwd: workingDirectory,
+            });
+            if (staged.success && staged.path) {
+              mediaDirectivePaths.push(staged.path);
+            } else {
+              attachmentPreparationFailed = true;
+              imagePreparationFailed = true;
+              console.error('Failed to stage image for non-vision model:', staged.error);
+            }
+          } else if (!extracted) {
+            attachmentPreparationFailed = true;
+            imagePreparationFailed ||= attachmentIsImage;
           }
+        }
+
+        if (attachmentPreparationFailed) {
+          if (!modelSupportsImage && imagePreparationFailed) {
+            setImageVisionHint(true);
+          }
+          return;
         }
 
         const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
@@ -530,6 +601,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         workingDirectory,
         dispatch,
         draftKey,
+        modelSupportsImage,
       ],
     );
 
@@ -743,8 +815,55 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
     };
 
-    const effectiveSelectedModel = optimisticSessionModel ?? agentSelectedModel;
-    const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
+    const hasImageAttachment = attachments.some(isImageAttachment);
+
+    useEffect(() => {
+      setImageVisionHint(!modelSupportsImage && hasImageAttachment);
+    }, [draftKey, hasImageAttachment, modelSupportsImage]);
+
+    useEffect(() => {
+      if (!modelSupportsImage) return;
+
+      const imagesToHydrate = attachments.filter(
+        attachment =>
+          !attachment.dataUrl &&
+          !attachment.path.startsWith('inline:') &&
+          isImagePath(attachment.path),
+      );
+      if (imagesToHydrate.length === 0) return;
+
+      let cancelled = false;
+      void Promise.all(
+        imagesToHydrate.map(async attachment => {
+          try {
+            const result = await window.electron.dialog.readFileAsDataUrl(attachment.path);
+            return result.success && result.dataUrl
+              ? { path: attachment.path, dataUrl: result.dataUrl }
+              : null;
+          } catch (error) {
+            console.error('Failed to hydrate image after model switch:', error);
+            return null;
+          }
+        }),
+      ).then(results => {
+        if (cancelled) return;
+        for (const result of results) {
+          if (!result) continue;
+          dispatch(
+            hydrateDraftImageAttachment({
+              draftKey,
+              path: result.path,
+              dataUrl: result.dataUrl,
+            }),
+          );
+        }
+      });
+
+      return () => {
+        cancelled = true;
+      };
+    }, [attachments, dispatch, draftKey, modelSupportsImage]);
+
     const contextUsageText = useMemo(() => {
       if (!contextUsage) return null;
       const contextTokens =
@@ -1531,42 +1650,59 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         value={effectiveSelectedModel}
                         onChange={async nextModel => {
                           if (!nextModel) return;
-                          const previousOptimisticModel = optimisticSessionModel;
+                          confirmedSessionModelRef.current ??= agentSelectedModelRef.current;
+                          const selectionContext = modelSelectionContextRef.current;
+                          optimisticSessionModelRef.current = nextModel;
                           setOptimisticSessionModel(nextModel);
-                          try {
-                            if (!sessionId) {
-                              const result = await coworkService.setDefaultModel({
-                                modelId: nextModel.id,
-                                providerKey: nextModel.providerKey,
-                                agentId: currentAgentId,
-                              });
-                              if (!result.success) {
-                                throw new Error(result.error || 'setDefaultModel failed');
+                          const { taskId, completion } = modelSelectionQueueRef.current.enqueue(
+                            async () => {
+                              if (!sessionId) {
+                                const result = await coworkService.setDefaultModel({
+                                  modelId: nextModel.id,
+                                  providerKey: nextModel.providerKey,
+                                  agentId: effectiveAgentId,
+                                });
+                                if (!result.success) {
+                                  throw new Error(result.error || 'setDefaultModel failed');
+                                }
+                              } else {
+                                const modelRef = toOpenClawModelRef(nextModel);
+                                if (modelRef) {
+                                  const result = await coworkService.patchSessionModel({
+                                    sessionId,
+                                    model: modelRef,
+                                    agentId: effectiveAgentId,
+                                  });
+                                  if (!result.success) {
+                                    throw new Error(result.error || 'patchSessionModel failed');
+                                  }
+                                }
                               }
+                            },
+                          );
+                          try {
+                            await completion;
+                            if (selectionContext === modelSelectionContextRef.current) {
+                              confirmedSessionModelRef.current = nextModel;
+                            }
+                            if (!sessionId) {
                               const modelRef = toOpenClawModelRef(nextModel);
                               if (modelRef) {
                                 dispatch(
                                   updateAgent({
-                                    id: currentAgentId,
+                                    id: effectiveAgentId,
                                     updates: { model: modelRef },
                                   }),
                                 );
                               }
-                            } else {
-                              const modelRef = toOpenClawModelRef(nextModel);
-                              if (modelRef) {
-                                const result = await coworkService.patchSessionModel({
-                                  sessionId,
-                                  model: modelRef,
-                                });
-                                if (!result.success) {
-                                  throw new Error(result.error || 'patchSessionModel failed');
-                                }
-                              }
+                              dispatch(setSelectedModel(nextModel));
                             }
-                            dispatch(setSelectedModel(nextModel));
+                            if (!modelSelectionQueueRef.current.isLatest(taskId)) return;
                           } catch (error) {
-                            setOptimisticSessionModel(previousOptimisticModel);
+                            if (!modelSelectionQueueRef.current.isLatest(taskId)) return;
+                            const confirmedModel = confirmedSessionModelRef.current;
+                            optimisticSessionModelRef.current = confirmedModel;
+                            setOptimisticSessionModel(confirmedModel);
                             console.warn('[CoworkPromptInput] Failed to update session model', {
                               sessionId,
                               error,
