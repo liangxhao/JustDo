@@ -1005,6 +1005,48 @@ test('agent assistant stream wins over duplicate chat deltas for active run', ()
   expect(updates.at(-1)?.content).toBe(finalSnapshot);
 });
 
+test('merges a fuller chat final without run id into the active assistant stream', () => {
+  const { session, store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const mainMessages: Array<Record<string, unknown>> = [];
+  adapter.on('message', (_sessionId, message) => mainMessages.push(message));
+
+  const sessionKey = 'agent:main:justdo:session-1';
+  const runId = 'run-1';
+  const streamedSnapshot =
+    '报告已整理完成！文件保存在 `report.md`，以下是核心要点速览：\n\n---\n\n报告摘要已经整理完毕。';
+  const finalSnapshot =
+    '报告已整理完成！文件保存在 `report.md`，以下是核心要点速览：\n---\n报告摘要已经整理完毕。\nMEDIA:report.md\n还有什么需要我深入展开的吗？';
+
+  adapter.rememberSessionKey('session-1', sessionKey);
+  adapter.ensureActiveTurn('session-1', sessionKey, runId);
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: streamedSnapshot },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: {
+      sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: finalSnapshot },
+    },
+  });
+
+  expect(mainMessages).toHaveLength(1);
+  expect(session.messages).toHaveLength(1);
+  expect(session.messages[0].content).toBe(finalSnapshot);
+  expect(session.messages[0].metadata).toMatchObject({
+    isStreaming: false,
+    isFinal: true,
+  });
+});
+
 test('throttled assistant stream updates are persisted before renderer reloads', () => {
   vi.useFakeTimers();
   const { session, store } = createEmptyStore();

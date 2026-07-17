@@ -734,6 +734,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (turn.runId && !runId) {
       if (state === 'final') {
+        if (
+          turn.agentAssistantStreamSeen &&
+          this.mergeUnscopedFinalIntoActiveAssistant(sessionId, turn, p.message)
+        ) {
+          return;
+        }
         this.appendExternalFinalAssistantMessage(sessionId, turn.modelName, p.message, sessionKey);
       }
       return;
@@ -1238,6 +1244,52 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (message.content.trim() === normalized) return message;
     }
     return null;
+  }
+
+  private mergeUnscopedFinalIntoActiveAssistant(
+    sessionId: string,
+    turn: SessionTurn,
+    message: unknown,
+  ): boolean {
+    const content = extractAssistantText(message).trim();
+    if (!content || isNoReply(content)) return false;
+
+    const normalizedFinal = content.replace(/\s+/g, ' ').trim();
+    const session = this.store.getSession(sessionId);
+    if (!session) return false;
+
+    const activeMessage = turn.assistantMessageId
+      ? session.messages.find(candidate => candidate.id === turn.assistantMessageId)
+      : [...session.messages]
+          .reverse()
+          .find(
+            candidate =>
+              candidate.type === 'assistant' &&
+              candidate.metadata?.isStreaming === true &&
+              !candidate.metadata?.isThinking,
+          );
+    if (!activeMessage || activeMessage.type !== 'assistant') return false;
+
+    const normalizedActive = activeMessage.content.replace(/\s+/g, ' ').trim();
+    if (!normalizedActive) return false;
+    const isExactMatch = normalizedFinal === normalizedActive;
+    const isSubstantialExpansion =
+      normalizedActive.length >= 24 && normalizedFinal.startsWith(normalizedActive);
+    if (!isExactMatch && !isSubstantialExpansion) return false;
+
+    const metadata = {
+      ...activeMessage.metadata,
+      isStreaming: false,
+      isFinal: true,
+      ...(turn.modelName ? { modelName: turn.modelName } : {}),
+    };
+    this.clearPendingMessageUpdate(activeMessage.id);
+    this.store.updateMessage(sessionId, activeMessage.id, { content, metadata });
+    this.emit('messageUpdate', sessionId, activeMessage.id, content);
+    this.emit('messageMetadataUpdate', sessionId, activeMessage.id, metadata);
+    turn.assistantMessageId = activeMessage.id;
+    turn.chatStream = content;
+    return true;
   }
 
   private isRecentAssistantSegmentComposite(sessionId: string, content: string): boolean {
