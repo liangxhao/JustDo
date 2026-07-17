@@ -62,6 +62,7 @@ import {
   registerMcpHandlers,
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
+  registerOpenClawUsageHandlers,
   registerSkillHandlers,
   registerSlashCommandHandlers,
 } from './ipc/openclaw';
@@ -669,6 +670,7 @@ if (!gotTheLock) {
       };
     },
   );
+  registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });
 
   registerSlashCommandHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,

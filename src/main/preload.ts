@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { LogIpc } from '../shared/logIpc';
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
+import { UsageStatsIpc } from '../shared/openclaw/usage';
 import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
 import { SlashCommandIpc } from '../shared/slashCommands';
 
@@ -132,6 +133,10 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
       getPagedHistory: (params: { sessionKey: string }) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetPagedHistory, params),
+    },
+    usage: {
+      getDaily: (options: { days: number; utcOffset: string }) =>
+        ipcRenderer.invoke(UsageStatsIpc.GetDaily, options),
     },
   },
   agents: {

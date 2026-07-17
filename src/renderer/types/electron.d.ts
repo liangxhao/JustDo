@@ -44,6 +44,15 @@ interface TokenUsage {
   cacheWrite?: number;
 }
 
+interface DailyTokenUsage {
+  date: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+}
+
 interface CoworkMessage {
   id: string;
   type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'subagent_completion';
@@ -448,6 +457,22 @@ interface IElectronAPI {
       getPagedHistory: (params: { sessionKey: string }) => Promise<{
         success: boolean;
         messages?: unknown[];
+        error?: string;
+      }>;
+    };
+    usage: {
+      getDaily: (options: { days: number; utcOffset: string }) => Promise<{
+        success: boolean;
+        daily?: DailyTokenUsage[];
+        totalTokens?: number;
+        updatedAt?: number;
+        cacheStatus?: {
+          status: 'fresh' | 'partial' | 'stale' | 'refreshing';
+          cachedFiles: number;
+          pendingFiles: number;
+          staleFiles: number;
+          refreshedAt?: number;
+        };
         error?: string;
       }>;
     };

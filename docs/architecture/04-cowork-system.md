@@ -52,6 +52,22 @@ sequenceDiagram
 | 用户交互请求 | extension host event | 弹窗和用户响应 |
 | Subagent 状态 | Gateway event/history | UI 展示和跳转 |
 | Agent 配置 | JustDo SQLite | Gateway 配置同步输入 |
+| Token 使用统计 | OpenClaw Gateway `usage.cost` | 设置页按日柱状图展示 |
+
+## 使用统计
+
+设置页的“使用统计”选项卡通过受控 preload API 调用 Main 进程，Main 再向 Gateway 请求
+`usage.cost`。查询使用 `agentScope: all` 覆盖所有代理，并按本机 UTC offset 计算最近
+7、14 或 30 天的范围。柱状图使用 Gateway 返回的 `daily[].totalTokens`，其中总量口径与
+OpenClaw 一致，包括 input、output、cache read 和 cache write Token。
+
+Renderer 不扫描 SQLite 消息缓存自行计数；`cowork_messages.usage` 仅用于消息展示和历史缓存，
+无法保证覆盖子代理、归档 transcript 或所有 Gateway 会话。Gateway 未连接或统计请求失败时，
+页面显示可重试错误态，不用不完整的本地数据冒充完整统计。
+
+`usage.cost` 可能先返回旧缓存并用 `cacheStatus` 标记为 `refreshing`、`partial` 或 `stale`。
+JustDo 必须透传该状态并自动轮询；只有 `fresh`（或旧版 Gateway 未返回状态）才视为本轮加载完成，
+避免把后台扫描期间的部分日期展示成最终统计。
 
 ## Renderer 状态
 

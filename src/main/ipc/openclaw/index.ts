@@ -4,3 +4,4 @@ export { registerHookHandlers } from './hooks';
 export { registerMcpHandlers } from './mcp';
 export { registerSkillHandlers } from './skills';
 export { registerSlashCommandHandlers } from './slashCommands';
+export { registerOpenClawUsageHandlers } from './usage';

@@ -1,5 +1,6 @@
 import {
   ArrowPathIcon,
+  ChartBarIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
   CubeIcon,
@@ -39,6 +40,7 @@ import ShortcutsSettings, {
   shortcutLabelMap,
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
+import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
@@ -46,7 +48,7 @@ import Modal from '@/shared/components/common/Modal';
 import ErrorMessage from '@/shared/components/ErrorMessage';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
-type TabType = 'general' | 'model' | 'im' | 'shortcuts' | 'help';
+type TabType = 'general' | 'usage' | 'model' | 'im' | 'shortcuts' | 'help';
 
 const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
@@ -1464,6 +1466,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <Cog6ToothIcon className="h-5 w-5" />,
     },
     {
+      key: 'usage',
+      label: i18nService.t('usageStats'),
+      icon: <ChartBarIcon className="h-5 w-5" />,
+    },
+    {
       key: 'model',
       label: i18nService.t('model'),
       icon: <CubeIcon className="h-5 w-5" />,
@@ -2189,6 +2196,9 @@ const Settings: React.FC<SettingsProps> = ({
             onRequestDeleteProvider={setPendingDeleteProvider}
           />
         );
+
+      case 'usage':
+        return <UsageStatsTab />;
 
       case 'shortcuts':
         return <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />;
