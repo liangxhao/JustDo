@@ -70,7 +70,7 @@ Thinking/reasoning 内容通过 Gateway stream 和 runtime patch 支持。Render
 - 覆盖 `active`、`paused`、`blocked`、`usage_limited`、`budget_limited`、`complete` 全部状态。
 - renderer 在提交创建型 `/goal` 命令时先从命令参数生成仅用于展示的 optimistic objective，因此首页首轮切换到临时 session 后也会立即出现卡片；一旦 Gateway 返回权威 `goal`，立即替换 optimistic 状态。
 - 运行期间每 1.5 秒读取一次 `sessions.list` 中的 Goal，空闲但 Goal 仍为 `active` 时降频到每 5 秒；运行状态查询不得因 session active 而被主进程拒绝。终态停止轮询，后续控制命令和新一轮运行会重新触发刷新。
-- `ChatController` 的 live state 被投影为 `starting`、`thinking`、`tool`、`responding` 四种瞬时执行阶段，卡片显示当前阶段、已执行工具数量和本轮耗时。它们是运行活动提示，不伪装成可量化的任务完成百分比。
+- `ChatController` 的 live state 被投影为 `starting`、`thinking`、`tool`、`responding`、`compacting` 五种瞬时执行阶段，卡片显示当前阶段、已执行工具数量和本轮耗时。它们是运行活动提示，不伪装成可量化的任务完成百分比。
 - 展示 objective、最后状态备注、token 使用量及预算进度。
 - OpenClaw 在缺少 fresh token baseline 时会把首个 Goal 回合结束后的快照作为基线，此时自动回复可能产生不可靠的 `Tokens used: 0`；JustDo 会隐藏该零值及零进度，取得正数用量后再展示。
 - 根据当前状态提供 pause、resume、complete 或 clear 快捷操作；操作仍以 `/goal` 命令交给 Gateway 执行。
@@ -87,6 +87,15 @@ Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产�
 - `ChatController` 分别通过 local handler 和 before-send hook 表执行行为；新增特殊命令时注册对应 handler/hook，不新增命令名判断链。
 - 主进程首页首轮发送也读取同一 before-send hook，确保两条发送路径的 session 前置条件一致。
 - 命令特有的展示语义（例如 `/goal` optimistic objective）可以保留独立解析器，但必须复用统一命令解析结果。
+- `/compact` 通过 `sessions.compact` 本地执行。当前 Gateway RPC 不接受自定义摘要指令，因此带参数的 `/compact` 必须明确报错，不能静默丢弃参数。
+
+## 上下文压缩展示
+
+- transcript 中的 compaction marker 使用 compaction entry ID；checkpoint 使用独立 UUID。Controller 保留 marker 的 `id`，并把恢复用途的 UUID 写入 `checkpointId`。
+- checkpoint 优先通过 `postCompaction.entryId` 或 `postCompaction.leafId` 与 marker 精确关联。只有缺少 transcript 位置的旧 checkpoint 才允许按时间顺序回退配对。
+- checkpoint 持久化是可失败的附加能力；没有 checkpoint 的 marker 仍应显示为普通压缩分隔线，不能借用其他压缩的摘要。
+- `session.operation` 和 agent `compaction` start/end 共同维护 `compactionInFlight`。压缩期间暂停缺少 `chat.final` 时的终态计时，压缩结束后再恢复收敛。
+- 手动压缩成功后必须以重新加载的 Gateway history 为准。刷新失败时保留现有历史并显示错误，不追加本地伪造 marker。
 
 ## 工具显示
 

@@ -1096,6 +1096,132 @@ test('chat delta without run id is ignored while a turn is active', () => {
   expect(session.messages).toHaveLength(0);
 });
 
+test('lifecycle end clears the active turn when chat final is missing', () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createEmptyStore();
+    session.status = 'running';
+    store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+      Object.assign(session, updates);
+    };
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const complete = vi.fn();
+    adapter.on('complete', complete);
+    adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+    adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'run-1');
+
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'lifecycle',
+        data: { phase: 'end' },
+      },
+    });
+
+    vi.advanceTimersByTime(1499);
+    expect(adapter.isSessionActive('session-1')).toBe(true);
+
+    vi.advanceTimersByTime(1);
+    expect(adapter.isSessionActive('session-1')).toBe(false);
+    expect(session.status).toBe('idle');
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith('session-1', 'idle');
+  } finally {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('chat final cancels the lifecycle end fallback', () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const complete = vi.fn();
+    adapter.on('complete', complete);
+    adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+    adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'run-1');
+
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'lifecycle',
+        data: { phase: 'end' },
+      },
+    });
+    adapter.handleGatewayEvent({
+      event: 'chat',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        state: 'final',
+        message: { role: 'assistant', content: 'done' },
+      },
+    });
+
+    vi.advanceTimersByTime(1500);
+    expect(complete).toHaveBeenCalledOnce();
+  } finally {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('compaction pauses and then resumes the lifecycle end fallback', () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createEmptyStore();
+    session.status = 'running';
+    store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+      Object.assign(session, updates);
+    };
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+    adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'run-1');
+
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'lifecycle',
+        data: { phase: 'end' },
+      },
+    });
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'compaction',
+        data: { phase: 'start' },
+      },
+    });
+    vi.advanceTimersByTime(2000);
+    expect(adapter.isSessionActive('session-1')).toBe(true);
+
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'compaction',
+        data: { phase: 'end', completed: true },
+      },
+    });
+    vi.advanceTimersByTime(1500);
+    expect(adapter.isSessionActive('session-1')).toBe(false);
+    expect(session.status).toBe('idle');
+  } finally {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  }
+});
+
 test('session.message reload is deferred until sessions.changed clears active run', () => {
   const session = {
     id: 'session-1',
@@ -1123,6 +1249,8 @@ test('session.message reload is deferred until sessions.changed clears active ru
     replaceConversationMessages: () => {},
   };
   const adapter = new OpenClawRuntimeAdapter(store, {});
+  const complete = vi.fn();
+  adapter.on('complete', complete);
   const reconcileWithHistory = vi.fn().mockResolvedValue(undefined);
   (
     adapter as unknown as {
@@ -1150,7 +1278,36 @@ test('session.message reload is deferred until sessions.changed clears active ru
 
   expect(reconcileWithHistory).toHaveBeenCalledWith('session-1', 'agent:main:justdo:session-1');
   expect(session.status).toBe('idle');
+  expect(complete).toHaveBeenCalledWith('session-1', 'idle');
 });
+
+test.each(['failed', 'timeout', 'timed_out', 'killed', 'aborted', 'cancelled'])(
+  'maps abnormal terminal session status %s to error',
+  status => {
+    const { session, store } = createEmptyStore();
+    session.status = 'running';
+    store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+      Object.assign(session, updates);
+    };
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const complete = vi.fn();
+    adapter.on('complete', complete);
+    adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+    adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'run-1');
+
+    adapter.handleGatewayEvent({
+      event: 'sessions.changed',
+      payload: {
+        sessionKey: 'agent:main:justdo:session-1',
+        status,
+        hasActiveRun: false,
+      },
+    });
+
+    expect(session.status).toBe('error');
+    expect(complete).toHaveBeenCalledWith('session-1', 'error');
+  },
+);
 
 test('patchSessionModel defers gateway patch while session is active', async () => {
   const session = {

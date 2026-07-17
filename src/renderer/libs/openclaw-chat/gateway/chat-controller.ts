@@ -45,6 +45,7 @@ export interface ChatState {
   chatToolMessages: unknown[];
   chatStreamSegments: Array<{ text: string; ts: number }>;
   chatSending: boolean;
+  compactionInFlight: boolean;
   chatRunId: string | null;
   chatStream: string | null;
   chatStreamStartedAt: number | null;
@@ -80,6 +81,20 @@ type ToolContentBlock = {
   arguments?: unknown;
   text?: string;
   isError?: boolean;
+};
+
+type CompactionTranscriptReference = {
+  leafId?: string;
+  entryId?: string;
+};
+
+type CompactionCheckpoint = {
+  checkpointId?: string;
+  summary?: string;
+  tokensBefore?: number;
+  tokensAfter?: number;
+  createdAt?: number;
+  postCompaction?: CompactionTranscriptReference;
 };
 
 type OpenClawHistoryBridge = {
@@ -320,9 +335,10 @@ function shouldPreferNextToolCall(existingToolCall: unknown, nextToolCall: unkno
 // ─── ChatController ─────────────────────────────────────────────────────────
 
 export class ChatController {
-  private readonly localSlashCommandHandlers = new Map<string, () => Promise<void>>([
-    ['compact', () => this.compactSession()],
-  ]);
+  private readonly localSlashCommandHandlers = new Map<
+    string,
+    (argumentsText: string) => Promise<void>
+  >([['compact', argumentsText => this.compactSession(argumentsText)]]);
 
   private readonly slashCommandBeforeSendHandlers = new Map<
     string,
@@ -352,6 +368,7 @@ export class ChatController {
   private historyLoadSeq = 0;
   private subscribedMessageSessionKey: string | null = null;
   private messageSubscriptionSeq = 0;
+  private terminalLifecycleSeen = false;
 
   /** Compact state snapshot for diagnostic logging */
   private _snap(): Record<string, unknown> {
@@ -392,6 +409,7 @@ export class ChatController {
       chatToolMessages: [],
       chatStreamSegments: [],
       chatSending: false,
+      compactionInFlight: false,
       chatRunId: null,
       chatStream: null,
       chatStreamStartedAt: null,
@@ -519,6 +537,44 @@ export class ChatController {
     if (!this.lifecycleEndFallbackTimer) return;
     clearTimeout(this.lifecycleEndFallbackTimer);
     this.lifecycleEndFallbackTimer = null;
+  }
+
+  private scheduleChatLifecycleEndFallback(): void {
+    if (!this.state.chatSending || this.state.compactionInFlight) return;
+    const endingRunId = this.state.chatRunId;
+    this.clearLifecycleEndFallback();
+    this.lifecycleEndFallbackTimer = setTimeout(() => {
+      this.lifecycleEndFallbackTimer = null;
+      if (
+        !this.state.chatSending ||
+        this.state.compactionInFlight ||
+        this.state.chatRunId !== endingRunId
+      ) {
+        return;
+      }
+      debugLog('[ChatCtrl] ▶ lifecycle:end fallback', this._snap());
+      this.state.chatSending = false;
+      this.state.chatRunId = null;
+      this.terminalLifecycleSeen = false;
+      this.flushPendingHistoryReload();
+      this.notify();
+    }, 1500);
+    this.notifyStream();
+  }
+
+  private handleCompactionPhase(phase: string): void {
+    if (phase === 'start') {
+      this.state.compactionInFlight = true;
+      this.clearLifecycleEndFallback();
+      this.notifyStream();
+      this.notify();
+      return;
+    }
+    if (phase !== 'end') return;
+    this.state.compactionInFlight = false;
+    if (this.terminalLifecycleSeen) this.scheduleChatLifecycleEndFallback();
+    this.notifyStream();
+    this.notify();
   }
 
   private clearPostFinalHistoryReload(): void {
@@ -848,6 +904,8 @@ export class ChatController {
     this.state.chatStream = null;
     this.state.chatThinkingStream = null;
     this.state.chatRunId = null;
+    this.state.compactionInFlight = false;
+    this.terminalLifecycleSeen = false;
     this.state.lastError = null;
     this.resetAssistantSnapshotSource();
     this.notify();
@@ -894,6 +952,8 @@ export class ChatController {
     this.state.chatStream = null;
     this.state.chatThinkingStream = null;
     this.state.chatRunId = null;
+    this.state.compactionInFlight = false;
+    this.terminalLifecycleSeen = false;
     this.state.chatLoading = true;
     this.pendingHistoryReload = false;
     this.clearPostFinalHistoryReload();
@@ -915,6 +975,9 @@ export class ChatController {
     this.state.client?.stop();
     this.state.client = null;
     this.state.connected = false;
+    this.state.chatSending = false;
+    this.state.compactionInFlight = false;
+    this.terminalLifecycleSeen = false;
     this.messageSubscriptionSeq += 1;
     this.subscribedMessageSessionKey = null;
     this.notify();
@@ -943,6 +1006,8 @@ export class ChatController {
   private handleClose(): void {
     this.state.connected = false;
     this.state.chatSending = false;
+    this.state.compactionInFlight = false;
+    this.terminalLifecycleSeen = false;
     this.messageSubscriptionSeq += 1;
     this.subscribedMessageSessionKey = null;
     this.notify();
@@ -961,12 +1026,12 @@ export class ChatController {
       return;
     }
 
-    // session.message — trigger history reload (matches webchat: deferred if run active)
-    // NOTE: session.message events are broadcast and the payload does NOT contain
-    // session routing fields, so we cannot filter by sessionKey here.  Instead we
-    // rely on the lifecycle/end event (which IS session-scoped) to flush the
-    // pending reload.  During an active run we always defer.
+    // session.message — trigger history reload for the selected session.
     if (event.event === 'session.message') {
+      const payload = asRecord(event.payload);
+      const eventSessionKey =
+        typeof payload?.sessionKey === 'string' ? payload.sessionKey.trim() : '';
+      if (eventSessionKey && eventSessionKey !== this.state.sessionKey) return;
       if (this.state.chatSending || this.pendingHistoryReload) {
         debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
           eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
@@ -982,6 +1047,19 @@ export class ChatController {
         });
         this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-message');
       }
+      return;
+    }
+
+    if (event.event === 'session.operation') {
+      const payload = asRecord(event.payload);
+      if (
+        payload?.operation !== 'compact' ||
+        (typeof payload.sessionKey === 'string' && payload.sessionKey !== this.state.sessionKey)
+      ) {
+        return;
+      }
+      const phase = typeof payload.phase === 'string' ? payload.phase : '';
+      this.handleCompactionPhase(phase);
     }
   }
 
@@ -1214,9 +1292,12 @@ export class ChatController {
 
   // ─── History Loading ──────────────────────────────────────────────────
 
-  async loadHistory(queueIfBusy = false, options: { preferStartup?: boolean } = {}): Promise<void> {
+  async loadHistory(
+    queueIfBusy = false,
+    options: { preferStartup?: boolean } = {},
+  ): Promise<boolean> {
     const client = this.state.client;
-    if (!client || !this.state.connected) return;
+    if (!client || !this.state.connected) return false;
 
     const sessionKey = this.state.sessionKey;
     if (this.historyLoadsInFlight.has(sessionKey)) {
@@ -1228,7 +1309,7 @@ export class ChatController {
         inFlightSessions: [...this.historyLoadsInFlight],
         ...this._snap(),
       });
-      return;
+      return false;
     }
     const loadSeq = ++this.historyLoadSeq;
     this.historyLoadsInFlight.add(sessionKey);
@@ -1286,7 +1367,7 @@ export class ChatController {
           requestedSessionKey: sessionKey,
           currentSessionKey: this.state.sessionKey,
         });
-        return;
+        return false;
       }
 
       this.state.currentSessionId = normalizeSessionId(
@@ -1338,7 +1419,7 @@ export class ChatController {
           requestedSessionKey: sessionKey,
           currentSessionKey: this.state.sessionKey,
         });
-        return;
+        return false;
       }
       let messages = hydratedMessages.map(message =>
         normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
@@ -1381,7 +1462,7 @@ export class ChatController {
         );
         this.state.chatLoading = false;
         this.notify();
-        return;
+        return false;
       }
 
       if (this.state.chatSending) {
@@ -1400,7 +1481,7 @@ export class ChatController {
         this.state.chatLoading = false;
         this.notify();
         if (backfilledThinking) this.notifyStream();
-        return;
+        return false;
       }
 
       if (isStaleHistoryRefresh(messages, previousMessages, this.state.chatMessages)) {
@@ -1422,7 +1503,7 @@ export class ChatController {
         this.scheduleDeferredHistoryReload(sessionKey, 'stale-history');
         this.state.chatLoading = false;
         this.notify();
-        return;
+        return false;
       }
 
       if (isRegressiveHistoryRefresh(messages, this.state.chatMessages)) {
@@ -1441,7 +1522,7 @@ export class ChatController {
         this.scheduleDeferredHistoryReload(sessionKey, 'regressive-history');
         this.state.chatLoading = false;
         this.notify();
-        return;
+        return false;
       }
 
       // Normal post-run load: replace everything with authoritative history.
@@ -1524,8 +1605,9 @@ export class ChatController {
         this.notify();
       });
       this.notify();
+      return true;
     } catch (err) {
-      if (this.state.sessionKey !== sessionKey) return;
+      if (this.state.sessionKey !== sessionKey) return false;
       this.state.chatLoading = false;
       this.state.lastError = (err as Error).message;
       console.error('[ChatCtrl] loadHistory FAILED:', (err as Error).message);
@@ -1536,6 +1618,7 @@ export class ChatController {
         ...this._snap(),
       });
       this.notify();
+      return false;
     } finally {
       this.historyLoadsInFlight.delete(sessionKey);
       if (this.historyReloadRequested.delete(sessionKey) && this.state.sessionKey === sessionKey) {
@@ -1681,7 +1764,9 @@ export class ChatController {
     }
     this.state.chatStreamSegments = [];
     this.state.chatSending = false;
+    this.state.compactionInFlight = false;
     this.state.chatRunId = null;
+    this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
     if (willAppend) {
       // Match OpenClaw webchat: a renderable final message already reconciles
@@ -1710,7 +1795,9 @@ export class ChatController {
     this.state.chatStreamStartedAt = null;
     this.state.chatThinkingStream = null;
     this.state.chatSending = false;
+    this.state.compactionInFlight = false;
     this.state.chatRunId = null;
+    this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
     this.state.chatToolMessages = [];
     this.state.chatThinkingMessages = [];
@@ -1726,7 +1813,9 @@ export class ChatController {
     this.state.chatStreamStartedAt = null;
     this.state.chatThinkingStream = null;
     this.state.chatSending = false;
+    this.state.compactionInFlight = false;
     this.state.chatRunId = null;
+    this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
     this.state.chatToolMessages = [];
     this.state.chatThinkingMessages = [];
@@ -1897,6 +1986,7 @@ export class ChatController {
         pendingReload: this.pendingHistoryReload,
       });
       if (phase === 'start') {
+        this.terminalLifecycleSeen = false;
         this.clearLifecycleEndFallback();
         if (!this.state.chatSending) {
           this.state.chatSending = true;
@@ -1917,26 +2007,16 @@ export class ChatController {
         this.notifyStream();
       }
       if (phase === 'end') {
+        this.terminalLifecycleSeen = true;
         // Do not clear stream/thinking/tool overlays here. chat.final is the
         // authoritative terminal event; lifecycle:end may arrive while more
         // visible deltas are still in flight. Use a short fallback for older
         // gateways or interrupted streams that never send chat.final.
-        if (this.state.chatSending) {
+        if (this.state.chatSending && !this.state.compactionInFlight) {
           if (runId && !this.state.chatRunId) {
             this.state.chatRunId = runId;
           }
-          const endingRunId = this.state.chatRunId;
-          this.clearLifecycleEndFallback();
-          this.lifecycleEndFallbackTimer = setTimeout(() => {
-            this.lifecycleEndFallbackTimer = null;
-            if (!this.state.chatSending || this.state.chatRunId !== endingRunId) return;
-            debugLog('[ChatCtrl] ▶ lifecycle:end fallback', this._snap());
-            this.state.chatSending = false;
-            this.state.chatRunId = null;
-            this.flushPendingHistoryReload();
-            this.notify();
-          }, 1500);
-          this.notifyStream();
+          this.scheduleChatLifecycleEndFallback();
         }
       }
       if (phase === 'error') {
@@ -1954,6 +2034,8 @@ export class ChatController {
         this.state.chatStreamStartedAt = null;
         this.state.chatThinkingStream = null;
         this.state.chatSending = false;
+        this.state.compactionInFlight = false;
+        this.terminalLifecycleSeen = false;
         this.state.chatRunId = null;
         this.resetAssistantSnapshotSource();
         this.state.chatToolMessages = [];
@@ -1963,6 +2045,12 @@ export class ChatController {
         this.flushPendingHistoryReload();
         this.notify();
       }
+      return;
+    }
+
+    if (stream === 'compaction') {
+      const phase = typeof data.phase === 'string' ? data.phase : '';
+      this.handleCompactionPhase(phase);
       return;
     }
 
@@ -2091,7 +2179,7 @@ export class ChatController {
       if (!handler) {
         throw new Error(`No local handler registered for /${slashCommand.name}`);
       }
-      await handler();
+      await handler(slashCommand.argumentsText);
       return;
     }
 
@@ -2203,10 +2291,25 @@ export class ChatController {
     if (this.state.sessionKey === sessionKey) this.state.currentSessionId = sessionId;
   }
 
-  private async compactSession(): Promise<void> {
+  private async compactSession(argumentsText = ''): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
     const sessionKey = this.state.sessionKey;
+    if (argumentsText.trim()) {
+      const error = new Error(i18nService.t('coworkCompactInstructionsUnsupported'));
+      this.state.lastError = error.message;
+      this.notify();
+      throw error;
+    }
+    const markerIdsBefore = new Set(
+      this.state.chatMessages
+        .filter(isCompactionMarker)
+        .map(message => {
+          const marker = (message as Record<string, unknown>).__openclaw as Record<string, unknown>;
+          return typeof marker.id === 'string' ? marker.id : '';
+        })
+        .filter(Boolean),
+    );
 
     this.state.chatSending = true;
     this.state.lastError = null;
@@ -2220,48 +2323,41 @@ export class ChatController {
       }>('sessions.compact', { key: sessionKey });
       if (this.state.sessionKey !== sessionKey) return;
       this.state.chatSending = false;
+      this.state.compactionInFlight = false;
       const before = result?.result?.tokensBefore;
       const after = result?.result?.tokensAfter;
       if (result?.compacted) {
-        await this.loadHistory();
+        const historyLoaded = await this.loadHistory();
         if (this.state.sessionKey !== sessionKey) return;
-        const checkpoint = await this.loadLatestCompactionCheckpoint(sessionKey);
-        if (this.state.sessionKey !== sessionKey) return;
-        const marker = {
-          kind: 'compaction',
-          id: checkpoint?.checkpointId,
-          summary: checkpoint?.summary,
-          tokensBefore: checkpoint?.tokensBefore ?? before,
-          tokensAfter: checkpoint?.tokensAfter ?? after,
-        };
-        const existingMarkerIndex = checkpoint?.checkpointId
-          ? this.state.chatMessages.findIndex(message => {
-              if (!isCompactionMarker(message)) return false;
-              const metadata = (message as Record<string, unknown>).__openclaw as Record<
-                string,
-                unknown
-              >;
-              return metadata.id === checkpoint.checkpointId;
-            })
-          : -1;
+        if (!historyLoaded) return;
+        let newMarkerIndex = -1;
+        for (let index = this.state.chatMessages.length - 1; index >= 0; index--) {
+          const message = this.state.chatMessages[index];
+          if (!isCompactionMarker(message)) continue;
+          const marker = (message as Record<string, unknown>).__openclaw as Record<string, unknown>;
+          if (typeof marker.id === 'string' && !markerIdsBefore.has(marker.id)) {
+            newMarkerIndex = index;
+            break;
+          }
+        }
+        if (newMarkerIndex < 0) {
+          this.scheduleDeferredHistoryReload(sessionKey, 'compact-marker-pending');
+          return;
+        }
         this.setCurrentSessionMessages(
-          existingMarkerIndex >= 0
-            ? this.state.chatMessages.map((message, index) =>
-                index === existingMarkerIndex
-                  ? {
-                      ...(message as Record<string, unknown>),
-                      __openclaw: marker,
-                    }
-                  : message,
-              )
-            : [
-                ...this.state.chatMessages,
-                {
-                  role: 'system',
-                  timestamp: Date.now(),
-                  __openclaw: marker,
-                },
-              ],
+          this.state.chatMessages.map((message, index) => {
+            if (index !== newMarkerIndex) return message;
+            const record = message as Record<string, unknown>;
+            const marker = record.__openclaw as Record<string, unknown>;
+            return {
+              ...record,
+              __openclaw: {
+                ...marker,
+                tokensBefore: marker.tokensBefore ?? before,
+                tokensAfter: marker.tokensAfter ?? after,
+              },
+            };
+          }),
         );
         this.notify();
         return;
@@ -2281,6 +2377,7 @@ export class ChatController {
     } catch (err) {
       if (this.state.sessionKey !== sessionKey) return;
       this.state.chatSending = false;
+      this.state.compactionInFlight = false;
       this.state.lastError = (err as Error).message;
       this.setCurrentSessionMessages([
         ...this.state.chatMessages,
@@ -2294,45 +2391,19 @@ export class ChatController {
     }
   }
 
-  private async loadLatestCompactionCheckpoint(sessionKey = this.state.sessionKey): Promise<{
-    checkpointId?: string;
-    summary?: string;
-    tokensBefore?: number;
-    tokensAfter?: number;
-    createdAt?: number;
-  } | null> {
-    const checkpoints = await this.loadCompactionCheckpoints(sessionKey);
-    return (
-      [...checkpoints].sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))[0] ??
-      null
-    );
-  }
-
-  private async loadCompactionCheckpoints(sessionKey = this.state.sessionKey): Promise<
-    Array<{
-      checkpointId?: string;
-      summary?: string;
-      tokensBefore?: number;
-      tokensAfter?: number;
-      createdAt?: number;
-    }>
-  > {
+  private async loadCompactionCheckpoints(
+    sessionKey = this.state.sessionKey,
+  ): Promise<CompactionCheckpoint[]> {
     const client = this.state.client;
     if (!client) return [];
     try {
       const response = await client.request<{
-        checkpoints?: Array<{
-          checkpointId?: string;
-          summary?: string;
-          tokensBefore?: number;
-          tokensAfter?: number;
-          createdAt?: number;
-        }>;
+        checkpoints?: CompactionCheckpoint[];
       }>('sessions.compaction.list', { key: sessionKey });
       return response?.checkpoints ?? [];
     } catch (err) {
       console.warn(
-        '[ChatController] Failed to load the latest compaction checkpoint',
+        '[ChatController] Failed to load compaction checkpoints',
         (err as Error).message,
       );
       return [];
@@ -2343,33 +2414,80 @@ export class ChatController {
     messages: unknown[],
     sessionKey = this.state.sessionKey,
   ): Promise<unknown[]> {
-    const markers = messages.filter(message => isCompactionMarker(message));
-    if (markers.length === 0) return messages;
+    const markerIndexes = messages.flatMap((message, index) =>
+      isCompactionMarker(message) ? [index] : [],
+    );
+    if (markerIndexes.length === 0) return messages;
 
     const checkpoints = await this.loadCompactionCheckpoints(sessionKey);
     if (checkpoints.length === 0) return messages;
-    const checkpointsById = new Map(
-      checkpoints
-        .filter(checkpoint => checkpoint.checkpointId)
-        .map(checkpoint => [checkpoint.checkpointId as string, checkpoint]),
-    );
+    const checkpointsByTranscriptId = new Map<string, CompactionCheckpoint>();
+    const checkpointsById = new Map<string, CompactionCheckpoint>();
+    for (const checkpoint of checkpoints) {
+      if (checkpoint.checkpointId) checkpointsById.set(checkpoint.checkpointId, checkpoint);
+      for (const id of [checkpoint.postCompaction?.entryId, checkpoint.postCompaction?.leafId]) {
+        if (id) checkpointsByTranscriptId.set(id, checkpoint);
+      }
+    }
     const checkpointsNewestFirst = [...checkpoints].sort(
       (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0),
     );
+    const checkpointByMarkerIndex = new Map<number, (typeof checkpoints)[number]>();
+    const assignedCheckpointIds = new Set<string>();
 
-    return messages.map(message => {
+    for (const markerIndex of markerIndexes) {
+      const marker = (messages[markerIndex] as Record<string, unknown>).__openclaw as Record<
+        string,
+        unknown
+      >;
+      const markerId = typeof marker.id === 'string' ? marker.id : undefined;
+      const exactCheckpoint = markerId
+        ? (checkpointsByTranscriptId.get(markerId) ?? checkpointsById.get(markerId))
+        : undefined;
+      if (!exactCheckpoint) continue;
+      checkpointByMarkerIndex.set(markerIndex, exactCheckpoint);
+      if (exactCheckpoint.checkpointId) assignedCheckpointIds.add(exactCheckpoint.checkpointId);
+    }
+
+    // OpenClaw transcript markers carry the compaction-entry id, while the
+    // checkpoint API exposes a separately generated checkpoint UUID. Align the
+    // remaining records newest-to-newest so each historical marker receives at
+    // most one checkpoint instead of reusing the latest checkpoint for all of them.
+    const unmatchedMarkerIndexesNewestFirst = markerIndexes
+      .filter(markerIndex => !checkpointByMarkerIndex.has(markerIndex))
+      .reverse();
+    const unassignedCheckpointsNewestFirst = checkpointsNewestFirst.filter(checkpoint => {
+      const hasTranscriptPosition = Boolean(
+        checkpoint.postCompaction?.entryId || checkpoint.postCompaction?.leafId,
+      );
+      return (
+        !hasTranscriptPosition &&
+        (!checkpoint.checkpointId || !assignedCheckpointIds.has(checkpoint.checkpointId))
+      );
+    });
+    for (
+      let index = 0;
+      index <
+      Math.min(unmatchedMarkerIndexesNewestFirst.length, unassignedCheckpointsNewestFirst.length);
+      index++
+    ) {
+      checkpointByMarkerIndex.set(
+        unmatchedMarkerIndexesNewestFirst[index],
+        unassignedCheckpointsNewestFirst[index],
+      );
+    }
+
+    return messages.map((message, index) => {
       if (!isCompactionMarker(message)) return message;
       const record = message as Record<string, unknown>;
       const marker = record.__openclaw as Record<string, unknown>;
-      const markerId = typeof marker.id === 'string' ? marker.id : undefined;
-      const checkpoint =
-        (markerId ? checkpointsById.get(markerId) : undefined) ?? checkpointsNewestFirst[0];
+      const checkpoint = checkpointByMarkerIndex.get(index);
       if (!checkpoint) return message;
       return {
         ...record,
         __openclaw: {
           ...marker,
-          id: checkpoint.checkpointId ?? marker.id,
+          checkpointId: checkpoint.checkpointId,
           summary: checkpoint.summary,
           tokensBefore: checkpoint.tokensBefore,
           tokensAfter: checkpoint.tokensAfter,

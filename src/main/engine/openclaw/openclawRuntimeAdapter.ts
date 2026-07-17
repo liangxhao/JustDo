@@ -80,6 +80,16 @@ const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
 const RUNTIME_SESSION_SNAPSHOT_TTL_MS = 2_000;
+const LIFECYCLE_END_FALLBACK_MS = 1_500;
+const ERROR_TERMINAL_SESSION_STATUSES = new Set([
+  'aborted',
+  'cancelled',
+  'error',
+  'failed',
+  'killed',
+  'timed_out',
+  'timeout',
+]);
 
 type SessionAbortResponse = {
   ok?: boolean;
@@ -181,6 +191,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly pendingSessionModelPatches = new Map<string, PendingSessionModelPatch>();
   private readonly visibleRunStreams = new Map<string, VisibleRunStreamState>();
   private readonly terminalLifecycleSessionIds = new Set<string>();
+  private readonly compactionInFlightSessionIds = new Set<string>();
+  private readonly lifecycleEndFallbackTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
 
   // Gateway connection
   private gatewayClient: GatewayClientLike | null = null;
@@ -630,6 +645,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    if (event.event === 'session.operation') {
+      this.handleSessionOperationEvent(event.payload);
+      return;
+    }
+
     if (event.event === 'sessions.changed') {
       this.handleSessionsChangedEvent(event.payload);
       return;
@@ -1020,11 +1040,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    if (stream === 'compaction') {
+      const phase = typeof data.phase === 'string' ? data.phase : '';
+      this.handleCompactionPhase(sessionId, phase, turn);
+      return;
+    }
+
     // Lifecycle events
     if (stream === 'lifecycle') {
       const phase = typeof data.phase === 'string' ? data.phase : '';
       if (phase === 'end' || phase === 'error') {
         this.terminalLifecycleSessionIds.add(sessionId);
+      }
+      if (phase === 'end') {
+        this.scheduleLifecycleEndFallback(sessionId, turn);
       }
       return;
     }
@@ -1095,6 +1124,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     void this.historyReconciler.reconcileWithHistory(sessionId, sessionKey).catch(() => {});
   }
 
+  private handleSessionOperationEvent(payload: unknown): void {
+    if (!isRecord(payload) || payload.operation !== 'compact') return;
+    const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
+    if (!sessionKey) return;
+    const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
+    if (!sessionId) return;
+    const phase = typeof payload.phase === 'string' ? payload.phase : '';
+    this.handleCompactionPhase(sessionId, phase, this.activeTurns.get(sessionId));
+  }
+
+  private handleCompactionPhase(
+    sessionId: string,
+    phase: string,
+    turn: SessionTurn | undefined,
+  ): void {
+    if (phase === 'start') {
+      this.compactionInFlightSessionIds.add(sessionId);
+      const timer = this.lifecycleEndFallbackTimers.get(sessionId);
+      if (timer) {
+        clearTimeout(timer);
+        this.lifecycleEndFallbackTimers.delete(sessionId);
+      }
+      return;
+    }
+    if (phase !== 'end') return;
+    this.compactionInFlightSessionIds.delete(sessionId);
+    if (turn && this.terminalLifecycleSessionIds.has(sessionId)) {
+      this.scheduleLifecycleEndFallback(sessionId, turn);
+    }
+  }
+
   private handleSessionsChangedEvent(payload: unknown): void {
     if (!isRecord(payload)) return;
     const source = isRecord(payload.session) ? payload.session : payload;
@@ -1114,9 +1174,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!shouldClearRun) return;
 
     this.cleanupSessionTurn(sessionId);
-    this.store.updateSession(sessionId, { status: status === 'failed' ? 'error' : 'idle' });
+    const terminalStatus: CoworkSessionStatus = ERROR_TERMINAL_SESSION_STATUSES.has(status)
+      ? 'error'
+      : 'idle';
+    this.store.updateSession(sessionId, { status: terminalStatus });
     this.resolveTurn(sessionId);
     this.replayDeferredSessionMessageReload(sessionId);
+    this.emit('complete', sessionId, terminalStatus);
   }
 
   private replayDeferredSessionMessageReload(sessionId: string): void {
@@ -1826,6 +1890,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // ─── Turn Lifecycle Helpers ─────────────────────────────────────────────
 
   private cleanupSessionTurn(sessionId: string): void {
+    const lifecycleEndFallbackTimer = this.lifecycleEndFallbackTimers.get(sessionId);
+    if (lifecycleEndFallbackTimer) {
+      clearTimeout(lifecycleEndFallbackTimer);
+      this.lifecycleEndFallbackTimers.delete(sessionId);
+    }
     const turn = this.activeTurns.get(sessionId);
     if (turn) {
       if (turn.thinkingMessageId) {
@@ -1847,8 +1916,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.finalizeVisibleRun(runId);
     }
     this.activeTurns.delete(sessionId);
+    this.compactionInFlightSessionIds.delete(sessionId);
     this.reCreatedChannelSessionIds.delete(sessionId);
     this.flushPendingSessionModelPatch(sessionId);
+  }
+
+  private scheduleLifecycleEndFallback(sessionId: string, turn: SessionTurn): void {
+    if (this.compactionInFlightSessionIds.has(sessionId)) return;
+    const existingTimer = this.lifecycleEndFallbackTimers.get(sessionId);
+    if (existingTimer) clearTimeout(existingTimer);
+    const timer = setTimeout(() => {
+      this.lifecycleEndFallbackTimers.delete(sessionId);
+      if (this.activeTurns.get(sessionId) !== turn) return;
+      this.cleanupSessionTurn(sessionId);
+      this.store.updateSession(sessionId, { status: 'idle' });
+      this.resolveTurn(sessionId);
+      this.replayDeferredSessionMessageReload(sessionId);
+      this.emit('complete', sessionId, 'idle');
+    }, LIFECYCLE_END_FALLBACK_MS);
+    this.lifecycleEndFallbackTimers.set(sessionId, timer);
   }
 
   private flushPendingSessionModelPatch(sessionId: string): void {
@@ -1873,6 +1959,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (this.manuallyStoppedSessions.has(sessionId)) {
       this.manuallyStoppedSessions.delete(sessionId);
     }
+    this.terminalLifecycleSessionIds.delete(sessionId);
+    this.compactionInFlightSessionIds.delete(sessionId);
 
     const turnRunId = runId || randomUUID();
     const turnToken = this.nextTurnToken(sessionId);

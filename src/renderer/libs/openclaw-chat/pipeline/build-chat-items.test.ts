@@ -1001,7 +1001,7 @@ test('builds an expandable compaction divider with token counts and summary', ()
   ]);
 });
 
-test('renders an incomplete compaction marker as not needing compaction', () => {
+test('renders an incomplete compaction marker as a completed compaction', () => {
   const items = buildChatItems({
     sessionKey: 'session-1',
     messages: [
@@ -1026,7 +1026,7 @@ test('renders an incomplete compaction marker as not needing compaction', () => 
     expect.objectContaining({
       kind: 'divider',
       key: 'divider:compaction:checkpoint-1',
-      label: 'No context compaction needed',
+      label: '上下文已压缩',
       expandable: false,
     }),
   ]);

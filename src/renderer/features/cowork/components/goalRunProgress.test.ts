@@ -4,6 +4,7 @@ import { buildGoalRunProgress } from './goalRunProgress';
 
 const createState = (overrides: Record<string, unknown> = {}) => ({
   chatSending: true,
+  compactionInFlight: false,
   chatStreamStartedAt: 100,
   chatStream: null,
   chatStreamSegments: [],
@@ -27,6 +28,9 @@ describe('buildGoalRunProgress', () => {
     ).toMatchObject({ phase: 'tool', toolCount: 1, toolName: 'exec' });
     expect(buildGoalRunProgress(createState({ chatStream: 'Done' }))).toMatchObject({
       phase: 'responding',
+    });
+    expect(buildGoalRunProgress(createState({ compactionInFlight: true }))).toMatchObject({
+      phase: 'compacting',
     });
   });
 

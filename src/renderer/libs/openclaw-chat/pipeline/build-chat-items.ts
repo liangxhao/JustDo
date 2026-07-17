@@ -1276,18 +1276,17 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
       const tokensAfter =
         typeof marker.tokensAfter === 'number' ? marker.tokensAfter : undefined;
       const summary = typeof marker.summary === 'string' ? marker.summary : undefined;
-      if (
-        tokensBefore === undefined ||
-        tokensAfter === undefined ||
-        isEmptyCompactionSummary(summary)
-      ) {
+      const emptyConversationSummary = isEmptyCompactionSummary(summary);
+      if (tokensBefore === undefined || tokensAfter === undefined || emptyConversationSummary) {
         items.push({
           kind: 'divider',
           key:
             typeof marker.id === 'string'
               ? `divider:compaction:${marker.id}`
               : `divider:compaction:${normalized.timestamp}:${i}`,
-          label: i18nService.t('coworkCompactNotNeeded'),
+          label: i18nService.t(
+            emptyConversationSummary ? 'coworkCompactNotNeeded' : 'coworkCompacted',
+          ),
           expandable: false,
           timestamp: normalized.timestamp ?? Date.now(),
         });

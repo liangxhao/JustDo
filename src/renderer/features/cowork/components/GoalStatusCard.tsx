@@ -91,6 +91,8 @@ const getPrimaryAction = (status: SessionGoal['status']) => {
 
 const getProgressLabel = (progress: GoalRunProgress | null): string => {
   switch (progress?.phase) {
+    case 'compacting':
+      return i18nService.t('coworkGoalPhaseCompacting');
     case 'thinking':
       return i18nService.t('coworkGoalPhaseThinking');
     case 'tool':
@@ -167,9 +169,7 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
                 aria-live="polite"
                 className={`text-[11px] font-semibold ${tone.label}`}
               >
-                {goal
-                  ? i18nService.t(presentation.labelKey)
-                  : i18nService.t('coworkGoalCreating')}
+                {goal ? i18nService.t(presentation.labelKey) : i18nService.t('coworkGoalCreating')}
               </span>
               {live && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-primary/15 bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">

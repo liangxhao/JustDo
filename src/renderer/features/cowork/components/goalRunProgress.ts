@@ -1,6 +1,6 @@
 import type { ChatState } from '@/libs/openclaw-chat/gateway/chat-controller';
 
-export type GoalRunPhase = 'starting' | 'thinking' | 'tool' | 'responding';
+export type GoalRunPhase = 'starting' | 'thinking' | 'tool' | 'responding' | 'compacting';
 
 export interface GoalRunProgress {
   phase: GoalRunPhase;
@@ -12,6 +12,7 @@ export interface GoalRunProgress {
 type GoalActivityState = Pick<
   ChatState,
   | 'chatSending'
+  | 'compactionInFlight'
   | 'chatStreamStartedAt'
   | 'chatStream'
   | 'chatThinkingStream'
@@ -42,6 +43,9 @@ export const buildGoalRunProgress = (state: GoalActivityState): GoalRunProgress 
     startedAt: state.chatStreamStartedAt ?? Date.now(),
     toolCount,
   };
+  if (state.compactionInFlight) {
+    return { ...base, phase: 'compacting' };
+  }
   if (state.chatStream) {
     return { ...base, phase: 'responding' };
   }

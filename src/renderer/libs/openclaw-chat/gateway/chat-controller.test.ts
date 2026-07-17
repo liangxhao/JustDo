@@ -239,7 +239,15 @@ test('compacts the current session instead of sending /compact as chat', async (
       compacted: true,
       result: { tokensBefore: 25_329, tokensAfter: 1_069 },
     })
-    .mockResolvedValueOnce({ messages: [] })
+    .mockResolvedValueOnce({
+      messages: [
+        {
+          role: 'system',
+          timestamp: 2000,
+          __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
+        },
+      ],
+    })
     .mockResolvedValueOnce({
       checkpoints: [
         {
@@ -248,6 +256,7 @@ test('compacts the current session instead of sending /compact as chat', async (
           tokensBefore: 25_329,
           tokensAfter: 1_069,
           createdAt: 2000,
+          postCompaction: { entryId: 'compaction-entry-1', leafId: 'compaction-entry-1' },
         },
       ],
     });
@@ -275,7 +284,8 @@ test('compacts the current session instead of sending /compact as chat', async (
       role: 'system',
       __openclaw: {
         kind: 'compaction',
-        id: 'checkpoint-1',
+        id: 'compaction-entry-1',
+        checkpointId: 'checkpoint-1',
         summary: 'The compacted conversation summary.',
         tokensBefore: 25_329,
         tokensAfter: 1_069,
@@ -331,6 +341,21 @@ test('sends and optimistically renders image attachments in an existing session'
   ]);
 });
 
+test('rejects /compact arguments instead of silently discarding them', async () => {
+  const request = vi.fn();
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await expect(controller.sendMessage('/compact keep recent decisions')).rejects.toThrow(
+    '当前界面仅支持不带参数的 /compact。',
+  );
+
+  expect(request).not.toHaveBeenCalled();
+  expect(controller.state.lastError).toBe('当前界面仅支持不带参数的 /compact。');
+});
+
 test('renders an error result and does not refresh history when session compaction fails', async () => {
   const request = vi.fn().mockRejectedValue(new Error('compact unavailable'));
   const controller = new ChatController();
@@ -338,7 +363,7 @@ test('renders an error result and does not refresh history when session compacti
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
 
-  await controller.sendMessage('/compact keep recent decisions');
+  await controller.sendMessage('/compact');
 
   expect(request).toHaveBeenCalledOnce();
   expect(request).toHaveBeenCalledWith('sessions.compact', {
@@ -374,6 +399,55 @@ test('renders the reason when session compaction is skipped', async () => {
         kind: 'compaction-skipped',
         reason: 'not enough history',
       },
+    }),
+  ]);
+});
+
+test('does not append a synthetic marker when post-compact history refresh fails', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ compacted: true, result: { tokensBefore: 100, tokensAfter: 20 } })
+    .mockRejectedValueOnce(new Error('history unavailable'));
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [{ role: 'assistant', content: 'old visible history' }];
+
+  await controller.sendMessage('/compact');
+
+  expect(controller.state.chatMessages).toEqual([
+    { role: 'assistant', content: 'old visible history' },
+  ]);
+  expect(controller.state.lastError).toBe('history unavailable');
+  expect(request).toHaveBeenCalledTimes(2);
+});
+
+test('applies intentionally shorter authoritative history after compaction', async () => {
+  const compactedMarker = {
+    role: 'system',
+    timestamp: 2000,
+    __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
+  };
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ compacted: true, result: { tokensBefore: 100, tokensAfter: 20 } })
+    .mockResolvedValueOnce({ messages: [compactedMarker] })
+    .mockResolvedValueOnce({ checkpoints: [] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [
+    { role: 'user', content: 'old prompt', timestamp: 1000 },
+    { role: 'assistant', content: 'old answer', timestamp: 1100 },
+  ];
+
+  await controller.sendMessage('/compact');
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({ kind: 'compaction', id: 'compaction-entry-1' }),
     }),
   ]);
 });
@@ -416,6 +490,7 @@ test('enriches compaction markers again after history refreshes', async () => {
       __openclaw: {
         kind: 'compaction',
         id: 'checkpoint-1',
+        checkpointId: 'checkpoint-1',
         summary: 'Persisted compact summary.',
         tokensBefore: 25_329,
         tokensAfter: 1_069,
@@ -467,7 +542,7 @@ test('does not apply history when the session changes during async normalization
   expect(controller.state.chatMessages).toBe(nextSessionMessages);
 });
 
-test('uses the latest checkpoint when the history marker id differs', async () => {
+test('uses positional fallback only for a legacy checkpoint without transcript position', async () => {
   const request = vi
     .fn()
     .mockResolvedValueOnce({
@@ -501,12 +576,128 @@ test('uses the latest checkpoint when the history marker id differs', async () =
     expect.objectContaining({
       __openclaw: {
         kind: 'compaction',
-        id: 'checkpoint-1',
+        id: 'history-marker-id',
+        checkpointId: 'checkpoint-1',
         summary: 'Persisted compact summary.',
         tokensBefore: 25_329,
         tokensAfter: 1_069,
       },
     }),
+  ]);
+});
+
+test('pairs multiple history markers with distinct checkpoints from newest to newest', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      messages: [
+        {
+          role: 'system',
+          timestamp: 1000,
+          __openclaw: { kind: 'compaction', id: 'history-marker-1' },
+        },
+        {
+          role: 'system',
+          timestamp: 2000,
+          __openclaw: { kind: 'compaction', id: 'history-marker-2' },
+        },
+        {
+          role: 'system',
+          timestamp: 3000,
+          __openclaw: { kind: 'compaction', id: 'history-marker-3' },
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      checkpoints: [
+        {
+          checkpointId: 'checkpoint-1',
+          summary: 'First persisted summary.',
+          createdAt: 1000,
+        },
+        {
+          checkpointId: 'checkpoint-2',
+          summary: 'Second persisted summary.',
+          createdAt: 2000,
+        },
+      ],
+    });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+
+  expect(
+    controller.state.chatMessages.map(message => (message as Record<string, unknown>).__openclaw),
+  ).toEqual([
+    { kind: 'compaction', id: 'history-marker-1' },
+    {
+      kind: 'compaction',
+      id: 'history-marker-2',
+      checkpointId: 'checkpoint-1',
+      summary: 'First persisted summary.',
+      tokensBefore: undefined,
+      tokensAfter: undefined,
+    },
+    {
+      kind: 'compaction',
+      id: 'history-marker-3',
+      checkpointId: 'checkpoint-2',
+      summary: 'Second persisted summary.',
+      tokensBefore: undefined,
+      tokensAfter: undefined,
+    },
+  ]);
+});
+
+test('does not shift an older positioned checkpoint onto a newer marker', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      messages: [
+        {
+          role: 'system',
+          timestamp: 1000,
+          __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
+        },
+        {
+          role: 'system',
+          timestamp: 2000,
+          __openclaw: { kind: 'compaction', id: 'compaction-entry-2' },
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      checkpoints: [
+        {
+          checkpointId: 'checkpoint-1',
+          summary: 'Summary for the first compaction only.',
+          createdAt: 1000,
+          postCompaction: { entryId: 'compaction-entry-1' },
+        },
+      ],
+    });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+
+  expect(
+    controller.state.chatMessages.map(message => (message as Record<string, unknown>).__openclaw),
+  ).toEqual([
+    {
+      kind: 'compaction',
+      id: 'compaction-entry-1',
+      checkpointId: 'checkpoint-1',
+      summary: 'Summary for the first compaction only.',
+      tokensBefore: undefined,
+      tokensAfter: undefined,
+    },
+    { kind: 'compaction', id: 'compaction-entry-2' },
   ]);
 });
 
@@ -945,6 +1136,27 @@ test('coalesces idle session.message events before refreshing history', async ()
     sessionKey: 'agent:main:justdo:session-1',
     limit: 1000,
   });
+});
+
+test('ignores session.message events routed to another session', async () => {
+  vi.useFakeTimers();
+  const request = vi.fn().mockResolvedValue({ messages: [] });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: { sessionKey: 'agent:main:justdo:session-2' },
+  });
+  await vi.runOnlyPendingTimersAsync();
+
+  expect(request).not.toHaveBeenCalled();
 });
 
 test('replays deferred session.message reload after silent final message', async () => {
@@ -1532,6 +1744,47 @@ test('captures the gateway detail when a lifecycle run fails', () => {
   expect(controller.state.lastError).toBe(
     'LLM request failed: provider rejected the request schema or tool payload.',
   );
+});
+
+test('does not apply the lifecycle end fallback while compaction is in flight', async () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  const handleAgentEvent = (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent.bind(controller);
+
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'lifecycle',
+    session: 'agent:main:justdo:session-1',
+    data: { phase: 'end' },
+  });
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: 'agent:main:justdo:session-1',
+    data: { phase: 'start' },
+  });
+  await vi.advanceTimersByTimeAsync(2000);
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.compactionInFlight).toBe(true);
+
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: 'agent:main:justdo:session-1',
+    data: { phase: 'end', completed: true },
+  });
+  await vi.advanceTimersByTimeAsync(1600);
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.compactionInFlight).toBe(false);
 });
 
 test('restores a persisted lifecycle failure after the controller restarts', async () => {
