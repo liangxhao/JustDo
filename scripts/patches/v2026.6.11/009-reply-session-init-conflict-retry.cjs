@@ -1,12 +1,14 @@
 'use strict';
 
-// Purpose: Keep transient session-entry writes from aborting reply session
-// initialization after only one optimistic-concurrency retry.
+// Purpose: Keep stale writer caches, semantically identical session-entry
+// snapshots with different object key order, and transient session-entry writes
+// from aborting reply session initialization.
 // Affected OpenClaw version: v2026.6.11.
-// Risk: A reply whose session entry is continuously mutated can start up to
-// 150ms later before preserving the upstream conflict error.
-// Remove when: OpenClaw retries reply session initialization conflicts with a
-// bounded backoff or serializes transcript persistence with initialization.
+// Risk: Revision creation sorts JSON object keys recursively. A reply whose
+// session entry is genuinely mutated can start up to 150ms later before
+// preserving the upstream conflict error.
+// Remove when: OpenClaw uses key-order-independent revisions and retries reply
+// session initialization conflicts, or serializes persistence with initialization.
 // Upstream tracking: TODO(openclaw): file issue/PR with the JustDo concurrent
 // chat transcript persistence reproduction from 2026-07-16.
 // Temporary: yes.
@@ -39,19 +41,80 @@ const PATCHED_CONFLICT_HANDLER = `  if (!committed.ok) {
     throw new Error(\`reply session initialization conflicted for \${sessionKey}\`);
   }`;
 
+const ORIGINAL_REVISION = `function createReplySessionInitializationRevision(entry) {
+  return JSON.stringify(entry ?? null);
+}`;
+
+const PATCHED_REVISION = `function canonicalizeReplySessionInitializationRevisionValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeReplySessionInitializationRevisionValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizeReplySessionInitializationRevisionValue(value[key])])
+    );
+  }
+  return value;
+}
+function createReplySessionInitializationRevision(entry) {
+  return JSON.stringify(canonicalizeReplySessionInitializationRevisionValue(entry ?? null));
+}`;
+
+const ORIGINAL_COMMIT_ENTRY = `async function commitReplySessionInitialization(params) {
+  const committed = await updateSessionStore(params.storePath, async (store2) => {`;
+
+const PATCHED_COMMIT_ENTRY = `async function commitReplySessionInitialization(params) {
+  dropSessionStoreObjectCache(params.storePath);
+  const committed = await updateSessionStore(params.storePath, async (store2) => {`;
+
+const LEGACY_PATCHED_COMMIT_ENTRY = `async function commitReplySessionInitialization(params) {
+  invalidateSessionStoreCache(params.storePath);
+  const committed = await updateSessionStore(params.storePath, async (store2) => {`;
+
 function patchFile(filePath) {
   const content = fs.readFileSync(filePath, 'utf8');
-  const alreadyPatched =
+  const retryAlreadyPatched =
     content.includes(PATCHED_ENTRY) && content.includes(PATCHED_CONFLICT_HANDLER);
+  const revisionAlreadyPatched = content.includes(PATCHED_REVISION);
+  const commitAlreadyPatched = content.includes(PATCHED_COMMIT_ENTRY);
+  const alreadyPatched = retryAlreadyPatched && revisionAlreadyPatched && commitAlreadyPatched;
   if (alreadyPatched) return false;
 
-  if (!content.includes(ORIGINAL_ENTRY) || !content.includes(ORIGINAL_CONFLICT_HANDLER)) {
-    throw new Error(`OpenClaw reply session initialization patch target not found: ${filePath}`);
+  let patched = content;
+  if (!retryAlreadyPatched) {
+    if (!patched.includes(ORIGINAL_ENTRY) || !patched.includes(ORIGINAL_CONFLICT_HANDLER)) {
+      throw new Error(
+        `OpenClaw reply session initialization retry patch target not found: ${filePath}`,
+      );
+    }
+    patched = patched
+      .replace(ORIGINAL_ENTRY, PATCHED_ENTRY)
+      .replace(ORIGINAL_CONFLICT_HANDLER, PATCHED_CONFLICT_HANDLER);
   }
 
-  const patched = content
-    .replace(ORIGINAL_ENTRY, PATCHED_ENTRY)
-    .replace(ORIGINAL_CONFLICT_HANDLER, PATCHED_CONFLICT_HANDLER);
+  if (!revisionAlreadyPatched) {
+    if (!patched.includes(ORIGINAL_REVISION)) {
+      throw new Error(
+        `OpenClaw reply session initialization revision patch target not found: ${filePath}`,
+      );
+    }
+    patched = patched.replace(ORIGINAL_REVISION, PATCHED_REVISION);
+  }
+
+  if (!commitAlreadyPatched) {
+    if (patched.includes(LEGACY_PATCHED_COMMIT_ENTRY)) {
+      patched = patched.replace(LEGACY_PATCHED_COMMIT_ENTRY, PATCHED_COMMIT_ENTRY);
+    } else if (patched.includes(ORIGINAL_COMMIT_ENTRY)) {
+      patched = patched.replace(ORIGINAL_COMMIT_ENTRY, PATCHED_COMMIT_ENTRY);
+    } else {
+      throw new Error(
+        `OpenClaw reply session initialization commit patch target not found: ${filePath}`,
+      );
+    }
+  }
+
   fs.writeFileSync(filePath, patched, 'utf8');
   return true;
 }

@@ -10,9 +10,22 @@ const { applyPatch } =
   };
 
 const FIXTURE = `let commitAttempts = 0;
-async function commitReplySessionInitialization() {
-  commitAttempts += 1;
-  return { ok: commitAttempts >= 4 };
+let objectCacheDrops = 0;
+function dropSessionStoreObjectCache() {
+  objectCacheDrops += 1;
+}
+function createReplySessionInitializationRevision(entry) {
+  return JSON.stringify(entry ?? null);
+}
+async function updateSessionStore(storePath, mutator) {
+  return await mutator({});
+}
+async function commitReplySessionInitialization(params) {
+  const committed = await updateSessionStore(params.storePath, async (store2) => {
+    commitAttempts += 1;
+    return { ok: commitAttempts >= 4 };
+  });
+  return committed;
 }
 async function initSessionState(params) {
   return await initSessionStateAttempt(params, false);
@@ -34,23 +47,50 @@ test('recovers from repeated transient reply session initialization conflicts', 
     fs.writeFileSync(bundlePath, FIXTURE, 'utf8');
 
     expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    const initiallyPatched = fs.readFileSync(bundlePath, 'utf8');
+    fs.writeFileSync(
+      bundlePath,
+      initiallyPatched.replace(
+        'dropSessionStoreObjectCache(params.storePath);',
+        'invalidateSessionStoreCache(params.storePath);',
+      ),
+      'utf8',
+    );
+    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
     const patched = fs.readFileSync(bundlePath, 'utf8');
 
     expect(patched).toContain('REPLY_SESSION_INITIALIZATION_MAX_RETRIES = 8');
     expect(patched).toContain('staleSnapshotRetryCount + 1');
     expect(patched).toContain('Math.min(5 * (staleSnapshotRetryCount + 1), 25)');
+    expect(patched).toContain('canonicalizeReplySessionInitializationRevisionValue');
+    expect(patched).toContain('dropSessionStoreObjectCache(params.storePath)');
+    expect(patched).not.toContain('invalidateSessionStoreCache(params.storePath)');
     expect(patched).not.toContain('staleSnapshotRetried');
 
     const harness = new Function(
-      `${patched}\nreturn { initSessionState, getCommitAttempts: () => commitAttempts };`,
+      `${patched}\nreturn { createReplySessionInitializationRevision, initSessionState, getCommitAttempts: () => commitAttempts, getObjectCacheDrops: () => objectCacheDrops };`,
     )() as {
+      createReplySessionInitializationRevision: (entry: unknown) => string;
       initSessionState: (params: { sessionKey: string }) => Promise<{ ok: boolean }>;
       getCommitAttempts: () => number;
+      getObjectCacheDrops: () => number;
     };
+    expect(
+      harness.createReplySessionInitializationRevision({
+        status: 'running',
+        nested: { updatedAt: 2, sessionId: 'session-1' },
+      }),
+    ).toBe(
+      harness.createReplySessionInitializationRevision({
+        nested: { sessionId: 'session-1', updatedAt: 2 },
+        status: 'running',
+      }),
+    );
     await expect(harness.initSessionState({ sessionKey: 'test-session' })).resolves.toEqual({
       ok: true,
     });
     expect(harness.getCommitAttempts()).toBe(4);
+    expect(harness.getObjectCacheDrops()).toBe(4);
     expect(applyPatch(runtimeDir)).toEqual([]);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
