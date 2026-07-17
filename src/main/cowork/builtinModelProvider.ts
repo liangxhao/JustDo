@@ -133,7 +133,6 @@ export async function syncBuiltinModelProvider(store: SqliteStore): Promise<void
   const fileConfig = readBuiltinModelProviderFile();
   const appConfig = store.get<AppConfig>('app_config') || {};
   const providers = { ...(appConfig.providers ?? {}) };
-  const existingProvider = providers[ProviderName.BuiltinModels];
 
   if (!fileConfig?.enabled || !fileConfig.baseUrl) {
     delete providers[ProviderName.BuiltinModels];
@@ -141,12 +140,12 @@ export async function syncBuiltinModelProvider(store: SqliteStore): Promise<void
     return;
   }
 
-  let models = existingProvider?.models ?? [];
+  let models: ProviderModel[] = [];
   try {
     models = await fetchBuiltinModels(fileConfig.baseUrl, fileConfig.apiKey ?? '');
     console.log(`[BuiltinModelProvider] Synced ${models.length} model(s)`);
   } catch (error) {
-    console.warn('[BuiltinModelProvider] Failed to refresh models, keeping cached list:', error);
+    console.warn('[BuiltinModelProvider] Failed to refresh models, clearing cached list:', error);
   }
 
   providers[ProviderName.BuiltinModels] = {
