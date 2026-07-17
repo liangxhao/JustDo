@@ -325,7 +325,6 @@ const ALL_SLASH_COMMANDS: SlashCommandDef[] = [
     key: 'compact',
     name: 'compact',
     description: 'Compact the session context.',
-    args: '[instructions]',
     category: 'session',
     executeLocal: true,
     tier: 'essential',

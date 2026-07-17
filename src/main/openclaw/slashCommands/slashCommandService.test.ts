@@ -39,6 +39,22 @@ describe('mapGatewaySlashCommand', () => {
   test('places goal controls in the session category', () => {
     expect(mapGatewaySlashCommand({ key: 'goal', name: 'goal' })?.category).toBe('session');
   });
+
+  test('hides compact arguments that the current sessions.compact RPC cannot forward', () => {
+    expect(
+      mapGatewaySlashCommand({
+        key: 'compact',
+        name: 'compact',
+        args: [{ name: 'instructions', required: false, choices: ['keep decisions'] }],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        name: 'compact',
+        args: undefined,
+        argOptions: undefined,
+      }),
+    );
+  });
 });
 
 describe('SlashCommandService', () => {

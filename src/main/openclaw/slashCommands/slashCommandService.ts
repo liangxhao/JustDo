@@ -153,16 +153,20 @@ export const mapGatewaySlashCommand = (entry: GatewayCommandEntry): SlashCommand
   const args = Array.isArray(entry.args) ? (entry.args as GatewayCommandArg[]) : [];
   const key = typeof entry.key === 'string' && entry.key.trim() ? entry.key.trim() : name;
   const normalizedAliases = aliases.map(normalizeAlias).filter(alias => alias && alias !== name);
+  // OpenClaw v2026.6.11 advertises /compact instructions even though its
+  // sessions.compact RPC cannot forward them. Hide that misleading hint while
+  // JustDo uses the RPC path. Re-check this override when upgrading OpenClaw.
+  const exposeArgs = key !== 'compact';
 
   return {
     key,
     name,
     ...(normalizedAliases.length > 0 ? { aliases: normalizedAliases } : {}),
     description: typeof entry.description === 'string' ? entry.description : '',
-    args: formatArgs(args),
+    args: exposeArgs ? formatArgs(args) : undefined,
     category: mapCategory(entry),
     executeLocal: LOCAL_COMMANDS.has(key),
-    argOptions: getArgOptions(args),
+    argOptions: exposeArgs ? getArgOptions(args) : undefined,
     tier: mapTier(entry),
   };
 };

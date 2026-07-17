@@ -330,7 +330,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // Cowork 错误消息
     coworkErrorSessionStartFailed: '会话启动失败：{error}',
     coworkCompactFailed: '上下文压缩失败：{error}',
-    coworkCompactInstructionsUnsupported: '当前界面仅支持不带参数的 /compact。',
     coworkGoalPhaseCompacting: '正在压缩上下文',
     coworkCompacted: '上下文已压缩',
     coworkCompactDetails: '查看压缩摘要',
@@ -991,8 +990,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // Cowork error messages
     coworkErrorSessionStartFailed: 'Failed to start session: {error}',
     coworkCompactFailed: 'Compaction failed: {error}',
-    coworkCompactInstructionsUnsupported:
-      'This interface currently supports /compact without arguments only.',
     coworkGoalPhaseCompacting: 'Compacting context',
     coworkCompacted: 'Context compacted',
     coworkCompactDetails: 'View compaction summary',

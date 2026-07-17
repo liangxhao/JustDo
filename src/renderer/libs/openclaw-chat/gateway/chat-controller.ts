@@ -2291,16 +2291,14 @@ export class ChatController {
     if (this.state.sessionKey === sessionKey) this.state.currentSessionId = sessionId;
   }
 
-  private async compactSession(argumentsText = ''): Promise<void> {
+  private async compactSession(_argumentsText = ''): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
     const sessionKey = this.state.sessionKey;
-    if (argumentsText.trim()) {
-      const error = new Error(i18nService.t('coworkCompactInstructionsUnsupported'));
-      this.state.lastError = error.message;
-      this.notify();
-      throw error;
-    }
+    // OpenClaw v2026.6.11's sessions.compact RPC cannot carry custom instructions,
+    // and its Control UI also ignores inline /compact arguments. Keep that behavior
+    // intentionally for now. Re-check the RPC schema and upstream UI when upgrading
+    // OpenClaw; if customInstructions becomes supported, forward _argumentsText here.
     const markerIdsBefore = new Set(
       this.state.chatMessages
         .filter(isCompactionMarker)

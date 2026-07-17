@@ -341,19 +341,23 @@ test('sends and optimistically renders image attachments in an existing session'
   ]);
 });
 
-test('rejects /compact arguments instead of silently discarding them', async () => {
-  const request = vi.fn();
+test('compacts while intentionally ignoring unsupported /compact arguments', async () => {
+  const request = vi.fn().mockResolvedValueOnce({
+    compacted: false,
+    reason: 'not enough history',
+  });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
 
-  await expect(controller.sendMessage('/compact keep recent decisions')).rejects.toThrow(
-    '当前界面仅支持不带参数的 /compact。',
-  );
+  await controller.sendMessage('/compact keep recent decisions');
 
-  expect(request).not.toHaveBeenCalled();
-  expect(controller.state.lastError).toBe('当前界面仅支持不带参数的 /compact。');
+  expect(request).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledWith('sessions.compact', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(controller.state.lastError).toBeNull();
 });
 
 test('renders an error result and does not refresh history when session compaction fails', async () => {
