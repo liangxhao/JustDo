@@ -11,12 +11,13 @@ import {
   isCustomProvider,
   validateDisplayName,
 } from '@/app/config';
-import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '@/app/constants/app';
+import { APP_ID, EXPORT_PASSWORD } from '@/app/constants/app';
 import {
-  decryptWithPassword,
-  encryptWithPassword,
-  type PasswordEncryptedPayload,
-} from '@/services/encryption';
+  createProvidersExportPayload,
+  mergeImportedProviders,
+  parseProvidersImportPayload,
+} from '@/features/settings/providerTransfer';
+import { decryptWithPassword, encryptWithPassword } from '@/services/encryption';
 import { i18nService } from '@/services/i18n';
 import PencilIcon from '@/shared/components/icons/PencilIcon';
 import PlusCircleIcon from '@/shared/components/icons/PlusCircleIcon';
@@ -101,19 +102,17 @@ const ModelSettingsTab: React.FC<Props> = ({
     setError(null);
     setIsExporting(true);
     try {
-      const entries = await Promise.all(
+      const exportedProviders = await Promise.all(
         Object.entries(providers)
           .filter(([key, config]) => !isProviderReadOnly(key, config))
-          .map(async ([key, config]) => [
+          .map(async ([key, config]) => ({
             key,
-            {
-              ...config,
-              apiKey: await encryptWithPassword(config.apiKey, EXPORT_PASSWORD),
-            },
-          ]),
+            config,
+            apiKey: await encryptWithPassword(config.apiKey, EXPORT_PASSWORD),
+          })),
       );
       const blob = new Blob(
-        [JSON.stringify({ type: EXPORT_FORMAT_TYPE, version: 2, providers: Object.fromEntries(entries) }, null, 2)],
+        [JSON.stringify(createProvidersExportPayload(exportedProviders), null, 2)],
         { type: 'application/json' },
       );
       const url = URL.createObjectURL(blob);
@@ -138,24 +137,18 @@ const ModelSettingsTab: React.FC<Props> = ({
     setError(null);
     setIsImporting(true);
     try {
-      const payload = JSON.parse(await file.text()) as {
-        type?: string;
-        providers?: Record<string, ProviderConfig & { apiKey: PasswordEncryptedPayload | string }>;
-      };
-      if (payload.type !== EXPORT_FORMAT_TYPE || !payload.providers) {
-        setError(i18nService.t('invalidProvidersFile'));
-        return;
-      }
+      const payload: unknown = JSON.parse(await file.text());
+      const serializedProviders = parseProvidersImportPayload(payload);
       const entries = await Promise.all(
-        Object.entries(payload.providers).map(async ([key, config]) => {
+        serializedProviders.map(async config => {
           const apiKey =
             typeof config.apiKey === 'string'
               ? config.apiKey
               : await decryptWithPassword(config.apiKey, EXPORT_PASSWORD);
-          return [key, { ...config, apiKey }] as const;
+          return { ...config, apiKey };
         }),
       );
-      setProviders(previous => ({ ...previous, ...Object.fromEntries(entries) }));
+      setProviders(previous => mergeImportedProviders(previous, entries));
     } catch {
       setError(i18nService.t('importProvidersFailed'));
     } finally {
