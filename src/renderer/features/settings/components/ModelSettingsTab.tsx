@@ -7,6 +7,7 @@ import {
   getCustomProviderDefaultName,
   getProviderDisplayName,
   isBuiltinModelsProvider,
+  isBuiltinProviderDisplayName,
   isCustomProvider,
   validateDisplayName,
 } from '@/app/config';
@@ -300,13 +301,28 @@ const ModelSettingsTab: React.FC<Props> = ({
                 onChange={e => {
                   const value = e.target.value;
                   const validation = validateDisplayName(value);
-                  setDisplayNameError(validation.valid ? null : (validation.error ?? null));
-                  if (validation.valid) {
+                  const duplicateName = Object.entries(providers).some(
+                    ([providerKey, providerConfig]) =>
+                      providerKey !== activeProvider &&
+                      isCustomProvider(providerKey) &&
+                      getProviderDisplayName(providerKey, providerConfig)
+                        .trim()
+                        .toLocaleLowerCase() === value.trim().toLocaleLowerCase(),
+                  );
+                  const nameError = isBuiltinProviderDisplayName(value)
+                    ? i18nService.t('providerNameConflictsBuiltin')
+                    : duplicateName
+                      ? i18nService.t('providerNameExists')
+                      : validation.valid
+                        ? undefined
+                        : i18nService.t('providerNameInvalid');
+                  setDisplayNameError(nameError ?? null);
+                  if (validation.valid && !duplicateName) {
                     handleProviderConfigChange(activeProvider, 'displayName', value);
                   }
                 }}
                 className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
-                placeholder={i18nService.t('customDisplayNamePlaceholder')}
+                placeholder={getCustomProviderDefaultName(activeProvider)}
               />
               {displayNameError && <p className="mt-1 text-xs text-red-500">{displayNameError}</p>}
             </div>
@@ -316,7 +332,7 @@ const ModelSettingsTab: React.FC<Props> = ({
             <div className="space-y-4">
               <div>
                 <label htmlFor={`${activeProvider}-baseUrl`} className="block text-xs font-medium text-foreground mb-1">
-                  {i18nService.t('baseUrl')}
+                  {i18nService.t('baseUrl')}{isCustomProvider(activeProvider) && <span className="text-red-500"> *</span>}
                 </label>
                 <input
                   type="text"
@@ -326,13 +342,14 @@ const ModelSettingsTab: React.FC<Props> = ({
                   disabled={isBaseUrlLocked}
                   className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
                   placeholder={getProviderDefaultBaseUrl(activeProvider) || defaultConfig.providers?.[activeProvider]?.baseUrl || i18nService.t('baseUrlPlaceholder')}
+                  required={isCustomProvider(activeProvider)}
                 />
               </div>
 
               {!isBuiltinModelsProvider(activeProvider) && (
                 <div>
                   <label htmlFor={`${activeProvider}-apiKey`} className="block text-xs font-medium text-foreground mb-1">
-                    {i18nService.t('apiKey')}
+                    {i18nService.t('apiKey')}{isCustomProvider(activeProvider) && <span className="text-red-500"> *</span>}
                   </label>
                   <input
                     type="password"
@@ -341,6 +358,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                     onChange={e => handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)}
                     className="block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
                     placeholder={i18nService.t('apiKeyPlaceholder')}
+                    required={isCustomProvider(activeProvider)}
                   />
                 </div>
               )}

@@ -25,10 +25,13 @@ import { useDispatch } from 'react-redux';
 import {
   type AppConfig,
   defaultConfig,
+  getCustomProviderDefaultName,
   getProviderDisplayName,
   getVisibleProviders,
   isBuiltinModelsProvider,
+  isBuiltinProviderDisplayName,
   isCustomProvider,
+  validateDisplayName,
 } from '@/app/config';
 import { setAvailableModels } from '@/features/models/modelSlice';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
@@ -877,6 +880,59 @@ const Settings: React.FC<SettingsProps> = ({
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    const incompleteCustomProvider = Object.entries(providers).find(
+      ([providerKey, providerConfig]) =>
+        isCustomProvider(providerKey) &&
+        (!providerConfig.baseUrl.trim() || !providerConfig.apiKey.trim()),
+    );
+    if (incompleteCustomProvider) {
+      setActiveTab('model');
+      setActiveProvider(incompleteCustomProvider[0]);
+      setError(i18nService.t('customProviderRequiredFields'));
+      return;
+    }
+
+    const customProviderNames = Object.entries(providers)
+      .filter(([providerKey]) => isCustomProvider(providerKey))
+      .map(([providerKey, providerConfig]) => [
+        providerKey,
+        providerConfig.displayName?.trim() || getCustomProviderDefaultName(providerKey),
+      ] as const);
+    const reservedNameProvider = customProviderNames.find(([, name]) =>
+      isBuiltinProviderDisplayName(name),
+    );
+    if (reservedNameProvider) {
+      setActiveTab('model');
+      setActiveProvider(reservedNameProvider[0]);
+      setError(i18nService.t('providerNameConflictsBuiltin'));
+      return;
+    }
+
+    const invalidNameProvider = customProviderNames.find(([, name]) =>
+      !validateDisplayName(name).valid,
+    );
+    if (invalidNameProvider) {
+      setActiveTab('model');
+      setActiveProvider(invalidNameProvider[0]);
+      setError(i18nService.t('providerNameInvalid'));
+      return;
+    }
+
+    const seenProviderNames = new Set<string>();
+    const duplicateNameProvider = customProviderNames.find(([, name]) => {
+      const normalizedName = name.toLocaleLowerCase();
+      if (seenProviderNames.has(normalizedName)) return true;
+      seenProviderNames.add(normalizedName);
+      return false;
+    });
+    if (duplicateNameProvider) {
+      setActiveTab('model');
+      setActiveProvider(duplicateNameProvider[0]);
+      setError(i18nService.t('providerNameExists'));
+      return;
+    }
+
     setIsSaving(true);
     setError(null);
 
@@ -887,6 +943,10 @@ const Settings: React.FC<SettingsProps> = ({
             providerKey,
             {
               ...providerConfig,
+              displayName:
+                isCustomProvider(providerKey) && !providerConfig.displayName?.trim()
+                  ? getCustomProviderDefaultName(providerKey)
+                  : providerConfig.displayName?.trim(),
               apiFormat: 'openai',
               baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl),
             },
