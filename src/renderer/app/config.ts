@@ -188,7 +188,7 @@ export const getProviderDisplayName = (
 /**
  * 内置 provider 名称列表（禁止作为 displayName 使用）
  */
-const BUILTIN_PROVIDER_NAMES = [BUILTIN_MODELS_PROVIDER_KEY, '内置模型', 'built-in models'];
+const BUILTIN_PROVIDER_NAMES = [BUILTIN_MODELS_PROVIDER_KEY];
 
 export const isBuiltinProviderDisplayName = (name: string): boolean =>
   BUILTIN_PROVIDER_NAMES.includes(name.trim().toLowerCase());

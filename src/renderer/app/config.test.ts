@@ -76,7 +76,7 @@ test('validateDisplayName: empty string is valid (fallback to custom_0)', () => 
   expect(validateDisplayName('')).toEqual({ valid: true });
 });
 
-test.each(['builtin_models', '内置模型', 'Built-in Models'])(
+test.each(['builtin_models', 'BUILTIN_MODELS'])(
   'validateDisplayName: reserved built-in provider name %s is invalid',
   name => {
     expect(validateDisplayName(name)).toEqual({
