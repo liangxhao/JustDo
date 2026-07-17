@@ -63,6 +63,9 @@ type SessionRuntimeStatus = {
   running: boolean;
 };
 
+const TERMINAL_IDLE_CONFIRM_DELAY_MS = 750;
+const TERMINAL_IDLE_CONFIRM_MAX_ATTEMPTS = 5;
+
 class CoworkService {
   private streamListenerCleanups: Array<() => void> = [];
   private initialized = false;
@@ -73,6 +76,8 @@ class CoworkService {
   private latestLoadSessionRequestId = 0;
   private readonly runtimeIdleConfirmations = new Map<string, number>();
   private readonly runtimeStatusRequestVersions = new Map<string, number>();
+  private readonly terminalIdleConfirmationTimers = new Map<string, number>();
+  private readonly terminalIdleConfirmationTokens = new Map<string, symbol>();
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -250,8 +255,10 @@ class CoworkService {
         this.clearSessionInProgress(sessionId);
       } else {
         // Main completion can precede subagent/announce completion. Confirm the
-        // aggregate state from Gateway before clearing the shared UI indicator.
-        void this.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
+        // aggregate state twice from fresh Gateway snapshots before clearing the
+        // shared UI indicator. The second check is intentionally quicker than
+        // the regular running-session poll.
+        this.confirmTerminalSessionIdle(sessionId);
       }
       store.dispatch(updateSessionStatus({ sessionId, status }));
     });
@@ -332,6 +339,9 @@ class CoworkService {
   private cleanupListeners(): void {
     this.streamListenerCleanups.forEach(cleanup => cleanup());
     this.streamListenerCleanups = [];
+    this.terminalIdleConfirmationTimers.forEach(timer => window.clearTimeout(timer));
+    this.terminalIdleConfirmationTimers.clear();
+    this.terminalIdleConfirmationTokens.clear();
     this.openClawEngineListenerAttached = false;
   }
 
@@ -350,7 +360,7 @@ class CoworkService {
 
   async getSessionRuntimeStatus(
     sessionId: string,
-    options?: { includeSubagents?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
   ): Promise<{
     known: boolean;
     mainRunning: boolean;
@@ -375,13 +385,14 @@ class CoworkService {
 
   async refreshSessionRuntimeActivity(
     sessionId: string,
-    options?: { includeSubagents?: boolean },
-  ): Promise<void> {
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+  ): Promise<SessionRuntimeStatus | null> {
     const requestVersion = this.nextRuntimeStatusRequestVersion(sessionId);
     const status = await this.getSessionRuntimeStatus(sessionId, {
       includeSubagents: options?.includeSubagents === true,
+      forceRefresh: options?.forceRefresh === true,
     });
-    this.applyRuntimeStatus(sessionId, status, requestVersion);
+    return this.applyRuntimeStatus(sessionId, status, requestVersion) ? status : null;
   }
 
   async refreshSessionRuntimeActivities(sessionIds: string[]): Promise<void> {
@@ -421,6 +432,7 @@ class CoworkService {
   }
 
   markSessionInProgress(sessionId: string): void {
+    this.cancelTerminalIdleConfirmation(sessionId);
     this.nextRuntimeStatusRequestVersion(sessionId);
     this.runtimeIdleConfirmations.delete(sessionId);
     store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: true }));
@@ -428,6 +440,7 @@ class CoworkService {
   }
 
   clearSessionInProgress(sessionId: string): void {
+    this.cancelTerminalIdleConfirmation(sessionId);
     this.nextRuntimeStatusRequestVersion(sessionId);
     this.runtimeIdleConfirmations.delete(sessionId);
     store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: false }));
@@ -438,19 +451,22 @@ class CoworkService {
     sessionId: string,
     status: SessionRuntimeStatus,
     requestVersion?: number,
-  ): void {
+  ): boolean {
     if (
       requestVersion !== undefined &&
       this.runtimeStatusRequestVersions.get(sessionId) !== requestVersion
     ) {
-      return;
+      return false;
     }
-    if (!status.known) return;
+    if (!status.known) {
+      this.runtimeIdleConfirmations.delete(sessionId);
+      return true;
+    }
     store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: status.mainRunning }));
     if (status.running) {
       this.runtimeIdleConfirmations.delete(sessionId);
       store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
-      return;
+      return true;
     }
     const idleConfirmations = (this.runtimeIdleConfirmations.get(sessionId) ?? 0) + 1;
     this.runtimeIdleConfirmations.set(sessionId, idleConfirmations);
@@ -458,6 +474,55 @@ class CoworkService {
       this.runtimeIdleConfirmations.delete(sessionId);
       store.dispatch(setSessionRuntimeActivity({ sessionId, running: false }));
     }
+    return true;
+  }
+
+  private confirmTerminalSessionIdle(sessionId: string): void {
+    this.cancelTerminalIdleConfirmation(sessionId);
+    this.nextRuntimeStatusRequestVersion(sessionId);
+    this.runtimeIdleConfirmations.delete(sessionId);
+    const token = Symbol(sessionId);
+    this.terminalIdleConfirmationTokens.set(sessionId, token);
+    this.runTerminalIdleConfirmation(sessionId, token, 1);
+  }
+
+  private runTerminalIdleConfirmation(sessionId: string, token: symbol, attempt: number): void {
+    void this.refreshSessionRuntimeActivity(sessionId, {
+      includeSubagents: true,
+      forceRefresh: true,
+    })
+      .catch((): SessionRuntimeStatus => ({
+        known: false,
+        mainRunning: false,
+        subagentRunning: false,
+        running: false,
+      }))
+      .then(status => {
+        if (this.terminalIdleConfirmationTokens.get(sessionId) !== token) return;
+        if (store.getState().cowork.sessionRuntimeActivity[sessionId] !== true) {
+          this.terminalIdleConfirmationTokens.delete(sessionId);
+          return;
+        }
+        if (status === null || attempt >= TERMINAL_IDLE_CONFIRM_MAX_ATTEMPTS) {
+          this.terminalIdleConfirmationTokens.delete(sessionId);
+          return;
+        }
+        const timer = window.setTimeout(() => {
+          this.terminalIdleConfirmationTimers.delete(sessionId);
+          if (this.terminalIdleConfirmationTokens.get(sessionId) !== token) return;
+          this.runTerminalIdleConfirmation(sessionId, token, attempt + 1);
+        }, TERMINAL_IDLE_CONFIRM_DELAY_MS);
+        this.terminalIdleConfirmationTimers.set(sessionId, timer);
+      });
+  }
+
+  private cancelTerminalIdleConfirmation(sessionId: string): void {
+    const timer = this.terminalIdleConfirmationTimers.get(sessionId);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      this.terminalIdleConfirmationTimers.delete(sessionId);
+    }
+    this.terminalIdleConfirmationTokens.delete(sessionId);
   }
 
   async loadConfig(): Promise<void> {

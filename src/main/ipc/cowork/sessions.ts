@@ -165,7 +165,11 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle(
     'cowork:session:runtimeStatus',
-    async (_event, sessionId: string, options?: { includeSubagents?: boolean }) => {
+    async (
+      _event,
+      sessionId: string,
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    ) => {
       try {
         return {
           success: true,
@@ -186,7 +190,11 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle(
     'cowork:sessions:runtimeStatus',
-    async (_event, sessionIds: string[], options?: { includeSubagents?: boolean }) => {
+    async (
+      _event,
+      sessionIds: string[],
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    ) => {
       try {
         return {
           success: true,

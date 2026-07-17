@@ -173,9 +173,15 @@ contextBridge.exposeInMainWorld('electron', {
     getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
     remoteManaged: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:remoteManaged', sessionId),
-    getSessionRuntimeStatus: (sessionId: string, options?: { includeSubagents?: boolean }) =>
+    getSessionRuntimeStatus: (
+      sessionId: string,
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    ) =>
       ipcRenderer.invoke('cowork:session:runtimeStatus', sessionId, options),
-    getSessionRuntimeStatuses: (sessionIds: string[], options?: { includeSubagents?: boolean }) =>
+    getSessionRuntimeStatuses: (
+      sessionIds: string[],
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
+    ) =>
       ipcRenderer.invoke('cowork:sessions:runtimeStatus', sessionIds, options),
     patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:session:patchModel', options),

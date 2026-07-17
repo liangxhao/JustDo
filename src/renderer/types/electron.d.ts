@@ -535,7 +535,7 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; remoteManaged: boolean; error?: string }>;
     getSessionRuntimeStatus: (
       sessionId: string,
-      options?: { includeSubagents?: boolean },
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
     ) => Promise<{
       success: boolean;
       known: boolean;
@@ -546,7 +546,7 @@ interface IElectronAPI {
     }>;
     getSessionRuntimeStatuses: (
       sessionIds: string[],
-      options?: { includeSubagents?: boolean },
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean },
     ) => Promise<{
       success: boolean;
       statuses: Record<

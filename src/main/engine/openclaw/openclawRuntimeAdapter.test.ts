@@ -400,6 +400,51 @@ test('getSessionRuntimeStatuses shares one Gateway snapshot across concurrent ca
   ]);
 });
 
+test('getSessionRuntimeStatus can bypass a cached running snapshot after completion', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      sessions: [
+        {
+          key: 'agent:main:justdo:session-1',
+          hasActiveRun: true,
+          status: 'running',
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      sessions: [
+        {
+          key: 'agent:main:justdo:session-1',
+          hasActiveRun: false,
+          status: 'completed',
+        },
+      ],
+    });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({
+    running: true,
+  });
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toMatchObject({
+    running: true,
+  });
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
+  ).resolves.toEqual({
+    known: true,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  expect(request).toHaveBeenCalledTimes(2);
+});
+
 test('getSessionRuntimeStatus reports unknown when the Gateway snapshot fails', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

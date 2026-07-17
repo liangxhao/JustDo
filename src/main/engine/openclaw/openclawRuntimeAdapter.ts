@@ -2753,7 +2753,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   async getSessionRuntimeStatus(
     sessionId: string,
-    options?: { includeSubagents?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
   ): Promise<{
     known: boolean;
     mainRunning: boolean;
@@ -2774,7 +2774,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   async getSessionRuntimeStatuses(
     sessionIds: string[],
-    options?: { includeSubagents?: boolean },
+    options?: { includeSubagents?: boolean; forceRefresh?: boolean },
   ): Promise<Record<string, SessionRuntimeStatus>> {
     const uniqueSessionIds = [...new Set(sessionIds.filter(Boolean))];
     const localMainRunning = new Map(
@@ -2796,7 +2796,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return statuses;
     }
 
-    const snapshot = await this.getRuntimeSessionSnapshot();
+    const snapshot = await this.getRuntimeSessionSnapshot(options?.forceRefresh === true);
     const parentByKey = new Map<string, string>();
     for (const row of snapshot.sessions) {
       const key = this.runtimeRowString(row.key);
@@ -2867,12 +2867,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     );
   }
 
-  private async getRuntimeSessionSnapshot(): Promise<RuntimeSessionSnapshot> {
+  private async getRuntimeSessionSnapshot(forceRefresh = false): Promise<RuntimeSessionSnapshot> {
     const now = Date.now();
-    if (this.runtimeSessionSnapshot && this.runtimeSessionSnapshot.expiresAt > now) {
+    if (
+      !forceRefresh &&
+      this.runtimeSessionSnapshot &&
+      this.runtimeSessionSnapshot.expiresAt > now
+    ) {
       return this.runtimeSessionSnapshot;
     }
-    if (this.runtimeSessionSnapshotPromise) return this.runtimeSessionSnapshotPromise;
+    if (this.runtimeSessionSnapshotPromise) {
+      const pendingSnapshot = await this.runtimeSessionSnapshotPromise;
+      return forceRefresh ? this.getRuntimeSessionSnapshot(true) : pendingSnapshot;
+    }
     const client = this.gatewayClient;
     if (!client) return { known: false, sessions: [] };
 
