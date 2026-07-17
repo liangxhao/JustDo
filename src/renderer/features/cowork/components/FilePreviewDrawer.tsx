@@ -4,6 +4,7 @@ import mermaid from 'mermaid';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { renderMermaidSvg } from '@/libs/openclaw-chat/components/mermaidRenderer';
 import { i18nService } from '@/services/i18n';
 
 export interface FilePreview {
@@ -86,7 +87,7 @@ const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose 
         if (!target || !source) continue;
         try {
           const id = `file-preview-mermaid-${crypto.randomUUID()}`;
-          const { svg } = await mermaid.render(id, source.trim());
+          const svg = await renderMermaidSvg(id, source, target);
           if (!cancelled) target.innerHTML = svg;
         } catch (error) {
           if (cancelled) return;

@@ -28,6 +28,8 @@ import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract
 import type { ChatItem, GatewayMessage, MessageGroup } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
+import { renderMermaidSvg } from './mermaidRenderer';
+
 type ChatMinimapEntry = {
   index: number;
   role: 'user' | 'assistant';
@@ -1792,7 +1794,7 @@ export class JustDoChatElement extends LitElement {
           theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
         });
         const id = `justdo-mermaid-${crypto.randomUUID()}`;
-        const { svg } = await mermaid.render(id, code.trim());
+        const svg = await renderMermaidSvg(id, code);
         preview.innerHTML = svg;
         this.resizeMermaidBubble(block, preview);
       } catch (error) {
