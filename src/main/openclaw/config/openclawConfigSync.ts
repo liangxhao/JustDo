@@ -175,6 +175,9 @@ type OpenClawProviderSelection = {
       api: OpenClawProviderApi;
       input: string[];
       reasoning?: boolean;
+      compat: {
+        supportsUsageInStreaming: true;
+      };
       cost?: {
         input: number;
         output: number;
@@ -314,6 +317,9 @@ export const buildProviderSelection = (options: {
           name: providerModelName,
           api,
           input: modelInput,
+          compat: {
+            supportsUsageInStreaming: true,
+          },
           ...(reasoning !== undefined ? { reasoning } : { reasoning: true }),
           ...(descriptor.modelDefaults?.cost ? { cost: descriptor.modelDefaults.cost } : {}),
           ...(effectiveContextWindow ? { contextWindow: effectiveContextWindow } : {}),

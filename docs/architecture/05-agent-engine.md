@@ -188,6 +188,10 @@ Agent model 绑定可能是：
 
 `openclawAgentModels.ts` 负责识别 ambiguous model。若同一个 model id 出现在多个 provider，应跳过自动迁移并写 warning，避免把用户 Agent 绑定到错误 provider。
 
+JustDo 生成的所有 `openai-completions` 模型条目都显式设置
+`compat.supportsUsageInStreaming: true`。OpenClaw 据此在流式请求中发送
+`stream_options.include_usage`，使支持该协议的模型提供商返回上下文与 token 使用统计。
+
 ## Startup And Recovery
 
 启动时的恢复动作包括：

@@ -84,6 +84,21 @@ describe('default provider descriptor', () => {
 });
 
 describe('OpenClaw provider config', () => {
+  test('enables streaming usage metadata for every generated model', () => {
+    const selection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://api.example.com/v1',
+      modelId: 'usage-aware-model',
+      apiType: 'openai',
+      providerName: 'custom_0',
+    });
+
+    expect(selection.providerConfig.models).toHaveLength(1);
+    expect(selection.providerConfig.models[0]?.compat).toEqual({
+      supportsUsageInStreaming: true,
+    });
+  });
+
   test('sets a provider idle timeout above the OpenClaw default', () => {
     const selection = buildProviderSelection({
       apiKey: 'sk-test',
