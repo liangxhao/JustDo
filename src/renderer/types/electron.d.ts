@@ -329,8 +329,8 @@ interface IElectronAPI {
       error?: string;
       gatewayOffline?: boolean;
     }>;
-    // Offline skill import from folder
-    importFolder: (folderPath: string) => Promise<{
+    // Offline skill import from a folder or archive
+    importPath: (sourcePath: string) => Promise<{
       success: boolean;
       skillId?: string;
       error?: string;

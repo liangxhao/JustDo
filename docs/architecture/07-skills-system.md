@@ -48,7 +48,7 @@ Preload 暴露：
 - `skills.list()`
 - `skills.setEnabled({ id, enabled })`
 - `skills.install({ id, version?, force? })`
-- `skills.importFolder(folderPath)`
+- `skills.importPath(sourcePath)`
 - `skills.search({ query?, limit? })`
 - `skills.detail({ id })`
 - `skills.delete(id)`
@@ -66,7 +66,7 @@ Renderer 不直接访问 marketplace server。
 
 ## 用户导入 Skills
 
-用户导入的 skill 文件放在 Gateway state 下的用户 skill 目录。`openclawSkillFiles.ts` 只负责复制、删除和文件级操作，不维护 Gateway 的 skill truth。Gateway 仍负责发现、启用、禁用和运行。
+用户可从本地目录或 `.zip`、`.tar`、`.tar.gz`、`.tgz` 压缩包导入 skill。压缩包先解压到临时目录，导入完成后清理；压缩包内容可直接是 skill，也可包含单层 skill 根目录。导入的 skill 文件放在 Gateway state 下的用户 skill 目录。`openclawSkillFiles.ts` 只负责复制、删除和文件级操作，不维护 Gateway 的 skill truth。Gateway 仍负责发现、启用、禁用和运行。
 
 ## 维护规则
 
@@ -84,7 +84,7 @@ JustDo 区分两类 skill：
 | 类型 | 来源 | 管理方式 | 典型用途 |
 | --- | --- | --- | --- |
 | 内置 skill | `resources/skills/` + `resources/builtin-skills.json` | 打包/安装 runtime 时同步 | Office、PDF、搜索、Playwright、数据分析 |
-| 用户导入 skill | 用户选择的本地目录 | 复制到 Gateway state 下的用户 skill 区域 | 私有工作流、自定义工具、团队内部能力 |
+| 用户导入 skill | 用户选择的本地目录或压缩包 | 解压（如需要）并复制到 Gateway state 下的用户 skill 区域 | 私有工作流、自定义工具、团队内部能力 |
 
 内置 skill 是产品能力的一部分，应随版本发布；用户 skill 是用户数据，不应在应用升级时被覆盖。
 
@@ -126,12 +126,16 @@ sequenceDiagram
   participant Files as OpenClawSkillFiles
   participant GW as Gateway
 
-  User->>UI: Import folder
-  UI->>Dialog: selectDirectory()
-  Dialog-->>UI: folderPath
-  UI->>IPC: skills.importFolder(folderPath)
-  IPC->>Files: copy/validate
-  Files-->>IPC: imported skill
+  User->>UI: Import skill
+  UI->>Dialog: selectFolders() / selectFiles()
+  Dialog-->>UI: sourcePaths
+  loop Each selected source
+    UI->>IPC: skills.importPath(sourcePath)
+    IPC->>Files: extract if needed / validate / copy
+    Files-->>IPC: import result
+    IPC-->>UI: import result
+  end
+  UI->>IPC: skills.list()
   IPC->>GW: refresh/status through skill service
   GW-->>UI: updated skills list
 ```

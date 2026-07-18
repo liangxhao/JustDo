@@ -167,13 +167,12 @@ export const registerSkillHandlers = ({
     }
   });
 
-  ipcMain.handle('skills:importFolder', async (_event, folderPath: string) => {
+  ipcMain.handle('skills:import', async (_event, sourcePath: string) => {
     try {
-      return getSkillFiles().importDirectory(folderPath);
+      return await getSkillFiles().importPath(sourcePath);
     } catch (error) {
-      const errorMsg =
-        error instanceof Error ? error.message : 'Failed to import skill from folder';
-      console.error('[Skills] skills:importFolder error:', errorMsg);
+      const errorMsg = error instanceof Error ? error.message : 'Failed to import skill';
+      console.error('[Skills] skills:import error:', errorMsg);
       return { success: false, error: errorMsg };
     }
   });

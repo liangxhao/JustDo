@@ -1,7 +1,9 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import * as tar from 'tar';
 import { afterEach, expect, test } from 'vitest';
+import { ZipFile } from 'yazl';
 
 import { __openClawSkillFilesTestUtils, OpenClawSkillFiles } from './openclawSkillFiles';
 
@@ -11,6 +13,17 @@ const makeTempDir = (): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-skill-test-'));
   tempDirs.push(dir);
   return dir;
+};
+
+const writeZip = async (zipPath: string, entries: Record<string, string>): Promise<void> => {
+  const zip = new ZipFile();
+  for (const [entryPath, content] of Object.entries(entries)) {
+    zip.addBuffer(Buffer.from(content), entryPath);
+  }
+  await new Promise<void>((resolve, reject) => {
+    zip.outputStream.pipe(fs.createWriteStream(zipPath)).on('close', resolve).on('error', reject);
+    zip.end();
+  });
 };
 
 afterEach(() => {
@@ -36,6 +49,53 @@ test('imports a skill directory into the OpenClaw managed directory', () => {
 
   expect(result).toEqual({ success: true, skillId: 'linked-skill' });
   expect(fs.existsSync(path.join(managed, 'linked-skill', 'SKILL.md'))).toBe(true);
+});
+
+test('imports a zipped skill with a single wrapper directory', async () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  const archivePath = path.join(source, 'wrapped-skill.zip');
+  await writeZip(archivePath, {
+    'wrapped-skill/SKILL.md': '---\nname: Zipped Skill\ndescription: demo\n---\n',
+    'wrapped-skill/references/example.md': 'example',
+  });
+
+  const result = await new OpenClawSkillFiles(managed).importPath(archivePath);
+
+  expect(result).toEqual({ success: true, skillId: 'zipped-skill' });
+  expect(
+    fs.readFileSync(path.join(managed, 'zipped-skill', 'references', 'example.md'), 'utf8'),
+  ).toBe('example');
+});
+
+test('imports a gzipped tar skill archive', async () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  const skillDir = path.join(source, 'tarred-skill');
+  const archivePath = path.join(source, 'tarred-skill.tar.gz');
+  fs.mkdirSync(skillDir);
+  fs.writeFileSync(
+    path.join(skillDir, 'SKILL.md'),
+    '---\nname: Tarred Skill\ndescription: demo\n---\n',
+  );
+  await tar.create({ cwd: source, file: archivePath, gzip: true }, ['tarred-skill']);
+
+  const result = await new OpenClawSkillFiles(managed).importPath(archivePath);
+
+  expect(result).toEqual({ success: true, skillId: 'tarred-skill' });
+  expect(fs.existsSync(path.join(managed, 'tarred-skill', 'SKILL.md'))).toBe(true);
+});
+
+test('rejects unsupported archive formats', async () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  const archivePath = path.join(source, 'skill.rar');
+  fs.writeFileSync(archivePath, 'not an archive');
+
+  const result = await new OpenClawSkillFiles(managed).importPath(archivePath);
+
+  expect(result.success).toBe(false);
+  expect(result.error).toContain('supported archive');
 });
 
 test('deletes only a direct child of the managed skills directory', () => {

@@ -390,11 +390,16 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillMarketplaceInstallFailed: '安装技能失败',
     skillMarketplaceHomepage: '查看项目主页',
     // Offline skill import
-    importSkillFolder: '导入文件夹',
-    importSkillFolderProgress: '导入中',
-    importSkillFolderTooltip:
-      '从本地文件夹导入技能；可一次选择多个文件夹，每个文件夹对应一个技能目录',
-    selectSkillFolder: '选择技能文件夹',
+    importSkill: '导入技能',
+    importSkillProgress: '导入中',
+    importSkillTooltip: '从本地文件夹或压缩文件导入技能',
+    selectSkillSourceDescription: '选择要导入的技能来源；文件夹和压缩文件均可多选。',
+    selectSkillFolders: '选择文件夹',
+    selectSkillFoldersDescription: '每个文件夹对应一个技能目录',
+    selectSkillArchives: '选择压缩文件',
+    selectSkillArchivesDescription:
+      '可一次选择多个压缩文件，每个压缩文件对应一个技能；支持 ZIP、TAR、TAR.GZ 和 TGZ',
+    skillArchiveFiles: '技能压缩文件',
     skillImportSuccess: '技能 {skillId} 导入成功',
     skillImportFailed: '技能导入失败',
     // Gateway offline
@@ -1071,11 +1076,17 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillMarketplaceInstallFailed: 'Failed to install skill',
     skillMarketplaceHomepage: 'View project homepage',
     // Offline skill import
-    importSkillFolder: 'Import Folder',
-    importSkillFolderProgress: 'Importing',
-    importSkillFolderTooltip:
-      'Import skills from local folders; select multiple folders at once, with each folder as one skill directory',
-    selectSkillFolder: 'Select skill folder',
+    importSkill: 'Import Skills',
+    importSkillProgress: 'Importing',
+    importSkillTooltip: 'Import skills from local folders or archives',
+    selectSkillSourceDescription:
+      'Choose a skill source. Both folders and archives support multiple selection.',
+    selectSkillFolders: 'Select folders',
+    selectSkillFoldersDescription: 'Each folder is imported as one skill',
+    selectSkillArchives: 'Select archives',
+    selectSkillArchivesDescription:
+      'Select multiple archives at once; each archive is imported as one skill. Supports ZIP, TAR, TAR.GZ, and TGZ',
+    skillArchiveFiles: 'Skill archives',
     skillImportSuccess: 'Skill {skillId} imported successfully',
     skillImportFailed: 'Skill import failed',
     // Gateway offline

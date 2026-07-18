@@ -1,10 +1,14 @@
+import extractZip from 'extract-zip';
 import fs from 'fs';
 import yaml from 'js-yaml';
+import os from 'os';
 import path from 'path';
+import * as tar from 'tar';
 
 import { cpRecursiveSync } from '../../core/fsCompat';
 
 const SKILL_FILE_NAME = 'SKILL.md';
+const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 
 export type LocalSkillFileResult = {
   success: boolean;
@@ -45,8 +49,60 @@ const replaceDirectory = (sourceDir: string, targetDir: string): void => {
   cpRecursiveSync(sourceDir, targetDir, { force: true });
 };
 
+const isSupportedArchive = (filePath: string): boolean => {
+  const lowerPath = filePath.toLowerCase();
+  return SUPPORTED_ARCHIVE_EXTENSIONS.some(extension => lowerPath.endsWith(extension));
+};
+
+const assertNoSymbolicLinks = (directory: string): void => {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error('Skill archives cannot contain symbolic links.');
+    }
+    if (entry.isDirectory()) {
+      assertNoSymbolicLinks(entryPath);
+    }
+  }
+};
+
+const resolveExtractedSkillDirectory = (extractDir: string): string => {
+  if (fs.existsSync(path.join(extractDir, SKILL_FILE_NAME))) {
+    return extractDir;
+  }
+
+  const entries = fs
+    .readdirSync(extractDir, { withFileTypes: true })
+    .filter(entry => entry.name !== '__MACOSX' && entry.name !== '.DS_Store');
+  if (entries.length === 1 && entries[0].isDirectory()) {
+    return path.join(extractDir, entries[0].name);
+  }
+  return extractDir;
+};
+
 export class OpenClawSkillFiles {
   constructor(private readonly managedSkillsDir: string) {}
+
+  async importPath(sourcePath: string): Promise<LocalSkillFileResult> {
+    try {
+      const stats = fs.statSync(sourcePath);
+      if (stats.isDirectory()) {
+        return this.importDirectory(sourcePath);
+      }
+      if (!stats.isFile() || !isSupportedArchive(sourcePath)) {
+        return {
+          success: false,
+          error: 'Select a skill folder or a supported archive (.zip, .tar, .tar.gz, .tgz).',
+        };
+      }
+      return await this.importArchive(sourcePath);
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to import skill',
+      };
+    }
+  }
 
   importDirectory(folderPath: string): LocalSkillFileResult {
     try {
@@ -79,6 +135,40 @@ export class OpenClawSkillFiles {
     }
   }
 
+  private async importArchive(archivePath: string): Promise<LocalSkillFileResult> {
+    const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-skill-import-'));
+    try {
+      const lowerPath = archivePath.toLowerCase();
+      if (lowerPath.endsWith('.zip')) {
+        await extractZip(archivePath, { dir: extractDir });
+      } else {
+        await tar.extract({
+          file: archivePath,
+          cwd: extractDir,
+          preservePaths: false,
+          strict: true,
+        });
+      }
+      assertNoSymbolicLinks(extractDir);
+      return this.importDirectory(resolveExtractedSkillDirectory(extractDir));
+    } finally {
+      try {
+        fs.rmSync(extractDir, {
+          recursive: true,
+          force: true,
+          maxRetries: process.platform === 'win32' ? 5 : 0,
+          retryDelay: process.platform === 'win32' ? 200 : 0,
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'unknown error';
+        console.warn(
+          '[OpenClawSkillFiles] Failed to clean temporary import directory:',
+          errorMessage,
+        );
+      }
+    }
+  }
+
   delete(skillId: string): void {
     if (skillId !== path.basename(skillId)) {
       throw new Error('Invalid skill id');
@@ -95,4 +185,9 @@ export class OpenClawSkillFiles {
   }
 }
 
-export const __openClawSkillFilesTestUtils = { normalizeSkillId, readSkillId };
+export const __openClawSkillFilesTestUtils = {
+  isSupportedArchive,
+  normalizeSkillId,
+  readSkillId,
+  resolveExtractedSkillDirectory,
+};

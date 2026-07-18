@@ -132,16 +132,16 @@ class SkillService {
     }
   }
 
-  /** Import a skill from a local folder */
-  async importSkillFromFolder(
-    folderPath: string,
+  /** Import a skill from a local folder or archive */
+  async importSkill(
+    sourcePath: string,
   ): Promise<{ success: boolean; skillId?: string; error?: string }> {
     try {
-      const result = await window.electron.skills.importFolder(folderPath);
+      const result = await window.electron.skills.importPath(sourcePath);
       return { success: result.success, skillId: result.skillId, error: result.error };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to import skill from folder';
-      console.error('Failed to import skill from folder:', error);
+      const message = error instanceof Error ? error.message : 'Failed to import skill';
+      console.error('Failed to import skill:', error);
       return { success: false, error: message };
     }
   }

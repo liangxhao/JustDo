@@ -1,9 +1,17 @@
-import { FolderIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  ArchiveBoxIcon,
+  ArrowUpTrayIcon,
+  FolderIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { groupSkillsBySource, SkillGroupId } from '@/features/plugins/components/skills/skillGroups';
+import {
+  groupSkillsBySource,
+  SkillGroupId,
+} from '@/features/plugins/components/skills/skillGroups';
 import SkillMarketplace from '@/features/plugins/components/skills/SkillMarketplace';
 import { skillService } from '@/features/plugins/services/skillService';
 import { setSkills } from '@/features/plugins/slices/skillSlice';
@@ -33,6 +41,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   const [activeTab, setActiveTab] = useState<SkillTab>('installed');
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [skillPendingDelete, setSkillPendingDelete] = useState<Skill | null>(null);
+  const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<{ fileName: string; error: string }[]>([]);
@@ -94,31 +103,41 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     }
   };
 
-  const handleImportSkillFromFolder = async () => {
+  const handleImportSkills = async (sourceType: 'folders' | 'archives') => {
     if (readOnly || importing) return;
 
     try {
+      setImportPickerOpen(false);
       setImporting(true);
       setSkillActionError('');
       setImportSuccess(null);
       setImportErrors([]);
 
-      // Open folder dialog for skill folders (multi-select)
-      const result = await window.electron.dialog.selectFolders({
-        title: i18nService.t('selectSkillFolder'),
-      });
+      const result =
+        sourceType === 'folders'
+          ? await window.electron.dialog.selectFolders({
+              title: i18nService.t('selectSkillFolders'),
+            })
+          : await window.electron.dialog.selectFiles({
+              title: i18nService.t('selectSkillArchives'),
+              filters: [
+                {
+                  name: i18nService.t('skillArchiveFiles'),
+                  extensions: ['zip', 'tar', 'gz', 'tgz'],
+                },
+              ],
+            });
 
       if (!result.success || !result.paths || result.paths.length === 0) {
         setImporting(false);
         return;
       }
 
-      // Import each skill folder
       const results: { path: string; success: boolean; skillId?: string; error?: string }[] = [];
-      for (const folderPath of result.paths) {
-        const importResult = await skillService.importSkillFromFolder(folderPath);
+      for (const sourcePath of result.paths) {
+        const importResult = await skillService.importSkill(sourcePath);
         results.push({
-          path: folderPath,
+          path: sourcePath,
           success: importResult.success,
           skillId: importResult.skillId,
           error: importResult.error,
@@ -355,22 +374,22 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                 <div className="w-full sm:ml-auto sm:w-auto">
                   <Tooltip
                     className="w-full sm:w-auto"
-                    content={i18nService.t('importSkillFolderTooltip')}
+                    content={i18nService.t('importSkillTooltip')}
                     position="bottom"
                   >
                     <button
                       type="button"
-                      onClick={handleImportSkillFromFolder}
+                      onClick={() => setImportPickerOpen(true)}
                       disabled={importing}
                       className={`flex w-full items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-xl bg-surface border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors sm:w-auto ${
                         importing ? 'opacity-50 cursor-not-allowed' : ''
                       }`}
                     >
-                      <FolderIcon className="h-4 w-4" />
+                      <ArrowUpTrayIcon className="h-4 w-4" />
                       <span>
                         {importing
-                          ? i18nService.t('importSkillFolderProgress')
-                          : i18nService.t('importSkillFolder')}
+                          ? i18nService.t('importSkillProgress')
+                          : i18nService.t('importSkill')}
                       </span>
                     </button>
                   </Tooltip>
@@ -600,6 +619,51 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                   }`}
                 />
               </div>
+            </div>
+          </Modal>,
+          document.body,
+        )}
+
+      {importPickerOpen &&
+        createPortal(
+          <Modal
+            onClose={() => setImportPickerOpen(false)}
+            overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+            className="w-full max-w-md mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-5"
+          >
+            <div className="text-lg font-semibold text-foreground">
+              {i18nService.t('importSkill')}
+            </div>
+            <p className="mt-2 text-sm text-secondary">
+              {i18nService.t('selectSkillSourceDescription')}
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => handleImportSkills('folders')}
+                className="rounded-xl border border-border p-4 text-left transition-colors hover:bg-surface-raised"
+              >
+                <FolderIcon className="h-5 w-5 text-primary" />
+                <div className="mt-2 text-sm font-medium text-foreground">
+                  {i18nService.t('selectSkillFolders')}
+                </div>
+                <div className="mt-1 text-xs text-secondary">
+                  {i18nService.t('selectSkillFoldersDescription')}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleImportSkills('archives')}
+                className="rounded-xl border border-border p-4 text-left transition-colors hover:bg-surface-raised"
+              >
+                <ArchiveBoxIcon className="h-5 w-5 text-primary" />
+                <div className="mt-2 text-sm font-medium text-foreground">
+                  {i18nService.t('selectSkillArchives')}
+                </div>
+                <div className="mt-1 text-xs text-secondary">
+                  {i18nService.t('selectSkillArchivesDescription')}
+                </div>
+              </button>
             </div>
           </Modal>,
           document.body,

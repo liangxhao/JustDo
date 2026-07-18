@@ -144,7 +144,7 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 - JustDo owns UX, persistence, permissions, packaging, app shell, and product flows.
 - OpenClaw owns agent execution, Gateway capabilities, tool semantics, and skill runtime behavior.
 - `openclawSkillService.ts` talks to Gateway skill APIs.
-- `openclawSkillFiles.ts` only copies/removes user-imported local skill files; it is not skill metadata authority.
+- `openclawSkillFiles.ts` only extracts/copies/removes user-imported local skill files; it is not skill metadata authority.
 
 ## Coding Rules
 
