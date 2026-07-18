@@ -58,6 +58,7 @@ import {
   registerSessionGroupHandlers,
 } from './ipc/cowork';
 import {
+  registerExtensionHandlers,
   registerHookHandlers,
   registerMcpHandlers,
   registerOpenClawEngineHandlers,
@@ -84,6 +85,7 @@ import {
   createPluginMarketplaceService,
   McpServices,
   OpenClawExtensionHostLifecycle,
+  OpenClawExtensionImportService,
   OpenClawHookServices,
   OpenClawSkillFileService,
   OpenClawSkillService,
@@ -680,6 +682,11 @@ if (!gotTheLock) {
     skillService: openClawSkillService,
     getSkillFiles: getOpenClawSkillFiles,
     pluginManager,
+  });
+  registerExtensionHandlers({
+    extensionImportService: new OpenClawExtensionImportService({
+      getOpenClawEngineManager,
+    }),
   });
   registerHookHandlers({
     getManager: getOpenClawEngineManager,

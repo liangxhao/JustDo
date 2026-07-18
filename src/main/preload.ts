@@ -2,6 +2,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { LogIpc } from '../shared/logIpc';
+import {
+  type ExtensionDeleteRequest,
+  type ExtensionImportProgress,
+  type ExtensionImportRequest,
+  ExtensionIpc,
+  type ExtensionSetEnabledRequest,
+} from '../shared/openclaw/extensions';
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
 import { UsageStatsIpc } from '../shared/openclaw/usage';
 import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
@@ -29,6 +36,21 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('skills:search', options || {}),
     detail: (options: { id: string }) => ipcRenderer.invoke('skills:detail', options),
     delete: (id: string) => ipcRenderer.invoke('skills:delete', id),
+  },
+  extensions: {
+    list: () => ipcRenderer.invoke(ExtensionIpc.List),
+    delete: (request: ExtensionDeleteRequest) => ipcRenderer.invoke(ExtensionIpc.Delete, request),
+    setEnabled: (request: ExtensionSetEnabledRequest) =>
+      ipcRenderer.invoke(ExtensionIpc.SetEnabled, request),
+    // Import a native OpenClaw extension from a local folder or archive.
+    importPath: (request: ExtensionImportRequest) =>
+      ipcRenderer.invoke(ExtensionIpc.Import, request),
+    onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: ExtensionImportProgress) =>
+        callback(progress);
+      ipcRenderer.on(ExtensionIpc.ImportProgress, handler);
+      return () => ipcRenderer.removeListener(ExtensionIpc.ImportProgress, handler);
+    },
   },
   hooks: {
     list: () => ipcRenderer.invoke('hooks:list'),

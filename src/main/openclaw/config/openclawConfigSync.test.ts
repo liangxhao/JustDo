@@ -9,6 +9,7 @@ import {
 import {
   buildOpenClawConfigMeta,
   buildProviderSelection,
+  mergeOpenClawPluginConfig,
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
   OPENCLAW_STUCK_SESSION_ABORT_MS,
   OPENCLAW_STUCK_SESSION_WARN_MS,
@@ -130,6 +131,44 @@ describe('OpenClaw managed config metadata', () => {
     expect(meta).toEqual({
       lastTouchedVersion: '2026.6.11',
       lastTouchedAt: '2026-07-13T03:27:00.677Z',
+    });
+  });
+});
+
+describe('OpenClaw plugin config merging', () => {
+  test('preserves imported plugin entries and exclusive slots', () => {
+    expect(
+      mergeOpenClawPluginConfig(
+        {
+          slots: { contextEngine: 'openviking' },
+          entries: {
+            openviking: { enabled: true, config: { baseUrl: 'http://127.0.0.1:1933' } },
+            workboard: { enabled: false },
+          },
+        },
+        { workboard: { enabled: true } },
+      ),
+    ).toEqual({
+      slots: { contextEngine: 'openviking' },
+      entries: {
+        openviking: { enabled: true, config: { baseUrl: 'http://127.0.0.1:1933' } },
+        workboard: { enabled: true },
+      },
+    });
+  });
+
+  test('preserves imported plugin config when there are no managed entries', () => {
+    expect(
+      mergeOpenClawPluginConfig(
+        {
+          slots: { contextEngine: 'openviking' },
+          entries: { openviking: { enabled: true } },
+        },
+        {},
+      ),
+    ).toEqual({
+      slots: { contextEngine: 'openviking' },
+      entries: { openviking: { enabled: true } },
     });
   });
 });

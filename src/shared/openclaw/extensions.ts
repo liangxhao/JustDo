@@ -35,3 +35,67 @@ export type AskUserResponse = {
   behavior: 'allow' | 'deny';
   answers?: Record<string, string>;
 };
+
+export const ExtensionIpc = {
+  List: 'extensions:list',
+  Import: 'extensions:import',
+  ImportProgress: 'extensions:import-progress',
+  Delete: 'extensions:delete',
+  SetEnabled: 'extensions:set-enabled',
+} as const;
+
+export type InstalledOpenClawExtension = {
+  id: string;
+  name: string;
+  description: string;
+  version?: string;
+  installPath: string;
+  enabled: boolean;
+  missingRequirements: string[];
+};
+
+export type ExtensionSetEnabledRequest = {
+  extensionId: string;
+  enabled: boolean;
+};
+
+export type ExtensionSetEnabledResult = {
+  success: boolean;
+  error?: string;
+};
+
+export type ExtensionDeleteRequest = {
+  extensionId: string;
+};
+
+export type ExtensionDeleteResult = {
+  success: boolean;
+  error?: string;
+};
+
+export type ExtensionImportStage =
+  | 'preparing'
+  | 'extracting'
+  | 'validating'
+  | 'preparing_runtime'
+  | 'installing'
+  | 'installing_dependencies'
+  | 'restarting_gateway'
+  | 'completed';
+
+export type ExtensionImportRequest = {
+  requestId: string;
+  sourcePath: string;
+};
+
+export type ExtensionImportProgress = ExtensionImportRequest & {
+  stage: ExtensionImportStage;
+  percent: number;
+};
+
+export type ExtensionImportResult = {
+  success: boolean;
+  extensionId?: string;
+  error?: string;
+  failedStage?: ExtensionImportStage;
+};

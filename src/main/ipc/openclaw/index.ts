@@ -1,4 +1,5 @@
 export { registerOpenClawEngineHandlers } from './engine';
+export { registerExtensionHandlers } from './extensions';
 export { registerOpenClawHistoryHandlers } from './history';
 export { registerHookHandlers } from './hooks';
 export { registerMcpHandlers } from './mcp';

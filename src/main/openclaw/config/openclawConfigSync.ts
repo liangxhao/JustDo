@@ -86,6 +86,19 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 };
 
+export const mergeOpenClawPluginConfig = (
+  existingPlugins: Record<string, unknown>,
+  managedEntries: Record<string, unknown>,
+): Record<string, unknown> => {
+  const mergedEntries = {
+    ...(isRecord(existingPlugins.entries) ? existingPlugins.entries : {}),
+    ...managedEntries,
+  };
+  return Object.keys(mergedEntries).length > 0
+    ? { ...existingPlugins, entries: mergedEntries }
+    : existingPlugins;
+};
+
 const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-main' | 'all' => {
   switch (mode) {
     case 'sandbox':
@@ -384,6 +397,17 @@ export class OpenClawConfigSync {
 
   sync(reason: string): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
+    let currentContent = '';
+    let existingPlugins: Record<string, unknown> = {};
+    try {
+      currentContent = fs.readFileSync(configPath, 'utf8');
+      const existingConfig = JSON.parse(currentContent) as unknown;
+      if (isRecord(existingConfig) && isRecord(existingConfig.plugins)) {
+        existingPlugins = existingConfig.plugins;
+      }
+    } catch {
+      currentContent = '';
+    }
     const coworkConfig = this.getCoworkConfig();
     const apiResolution = resolveRawApiConfig();
 
@@ -591,11 +615,12 @@ export class OpenClawConfigSync {
           workboard: { enabled: true },
         };
 
-        return Object.keys(pluginEntries).length > 0
+        const mergedPlugins = mergeOpenClawPluginConfig(existingPlugins, pluginEntries);
+        return Object.keys(mergedPlugins).length > 0
           ? {
-              plugins: {
-                entries: pluginEntries,
-              },
+              // Plugin installs and setup commands write user-owned entries and
+              // exclusive slots here. Keep them while managed bundled entries win.
+              plugins: mergedPlugins,
             }
           : {};
       })(),
@@ -605,13 +630,6 @@ export class OpenClawConfigSync {
     // IM channel config syncing removed — channels disabled pending future adaptation
 
     const nextContent = `${JSON.stringify(managedConfig, null, 2)}\n`;
-    let currentContent = '';
-    try {
-      currentContent = fs.readFileSync(configPath, 'utf8');
-    } catch {
-      currentContent = '';
-    }
-
     const configChanged = currentContent !== nextContent;
     const extensionContractsChanged = buildBundledExtensionToolContracts(
       { askUser: askUserConfig },

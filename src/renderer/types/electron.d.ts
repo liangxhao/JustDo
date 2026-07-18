@@ -1,4 +1,15 @@
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
+type ExtensionImportProgress = import('../../shared/openclaw/extensions').ExtensionImportProgress;
+type ExtensionImportRequest = import('../../shared/openclaw/extensions').ExtensionImportRequest;
+type ExtensionImportStage = import('../../shared/openclaw/extensions').ExtensionImportStage;
+type ExtensionDeleteRequest = import('../../shared/openclaw/extensions').ExtensionDeleteRequest;
+type ExtensionDeleteResult = import('../../shared/openclaw/extensions').ExtensionDeleteResult;
+type ExtensionSetEnabledRequest =
+  import('../../shared/openclaw/extensions').ExtensionSetEnabledRequest;
+type ExtensionSetEnabledResult =
+  import('../../shared/openclaw/extensions').ExtensionSetEnabledResult;
+type InstalledOpenClawExtension =
+  import('../../shared/openclaw/extensions').InstalledOpenClawExtension;
 
 interface ApiResponse {
   ok: boolean;
@@ -349,6 +360,22 @@ interface IElectronAPI {
       gatewayOffline?: boolean;
     }>;
     delete: (id: string) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
+  };
+  extensions: {
+    list: () => Promise<{
+      success: boolean;
+      extensions: InstalledOpenClawExtension[];
+      error?: string;
+    }>;
+    delete: (request: ExtensionDeleteRequest) => Promise<ExtensionDeleteResult>;
+    setEnabled: (request: ExtensionSetEnabledRequest) => Promise<ExtensionSetEnabledResult>;
+    importPath: (request: ExtensionImportRequest) => Promise<{
+      success: boolean;
+      extensionId?: string;
+      error?: string;
+      failedStage?: ExtensionImportStage;
+    }>;
+    onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => () => void;
   };
   hooks: {
     list: () => Promise<{

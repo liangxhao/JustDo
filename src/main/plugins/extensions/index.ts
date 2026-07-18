@@ -10,6 +10,14 @@ export { OpenClawExtensionCallbackServer } from './openclawExtensionCallbackServ
 export { OpenClawExtensionHostController } from './openclawExtensionHostController';
 export { OpenClawExtensionHostLifecycle } from './openclawExtensionHostLifecycle';
 export type {
+  ExtensionImportResult,
+  InstalledOpenClawExtension,
+} from './openclawExtensionImportService';
+export {
+  __openClawExtensionImportTestUtils,
+  OpenClawExtensionImportService,
+} from './openclawExtensionImportService';
+export type {
   OpenClawExtensionContext,
   OpenClawExtensionDescriptor,
 } from './openclawExtensionRegistry';
