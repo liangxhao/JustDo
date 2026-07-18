@@ -8,6 +8,7 @@ import {
   type ExtensionImportRequest,
   ExtensionIpc,
   type ExtensionSetEnabledRequest,
+  type ExtensionUpdateConfigurationRequest,
 } from '../shared/openclaw/extensions';
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
 import { UsageStatsIpc } from '../shared/openclaw/usage';
@@ -42,6 +43,8 @@ contextBridge.exposeInMainWorld('electron', {
     delete: (request: ExtensionDeleteRequest) => ipcRenderer.invoke(ExtensionIpc.Delete, request),
     setEnabled: (request: ExtensionSetEnabledRequest) =>
       ipcRenderer.invoke(ExtensionIpc.SetEnabled, request),
+    updateConfiguration: (request: ExtensionUpdateConfigurationRequest) =>
+      ipcRenderer.invoke(ExtensionIpc.UpdateConfiguration, request),
     // Import a native OpenClaw extension from a local folder or archive.
     importPath: (request: ExtensionImportRequest) =>
       ipcRenderer.invoke(ExtensionIpc.Import, request),

@@ -5,6 +5,7 @@ import {
   type ExtensionImportRequest,
   ExtensionIpc,
   type ExtensionSetEnabledRequest,
+  type ExtensionUpdateConfigurationRequest,
 } from '../../../shared/openclaw/extensions';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
 
@@ -85,6 +86,42 @@ export const registerExtensionHandlers = ({
         const errorMsg =
           error instanceof Error ? error.message : 'Failed to update extension status';
         console.error('[Extensions] extensions:set-enabled error:', errorMsg);
+        return { success: false, error: errorMsg };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    ExtensionIpc.UpdateConfiguration,
+    async (_event, request: ExtensionUpdateConfigurationRequest) => {
+      try {
+        const valuesAreValid =
+          request?.values !== null &&
+          typeof request?.values === 'object' &&
+          !Array.isArray(request.values) &&
+          Object.keys(request.values).length <= 32 &&
+          Object.entries(request.values).every(
+            ([fieldPath, value]) =>
+              fieldPath.length > 0 &&
+              fieldPath.length <= 256 &&
+              typeof value === 'string' &&
+              value.length <= 16_384,
+          );
+        if (
+          typeof request?.extensionId !== 'string' ||
+          !request.extensionId.trim() ||
+          !valuesAreValid
+        ) {
+          return { success: false, error: 'Invalid extension configuration request' };
+        }
+        return await extensionImportService.updateConfiguration(
+          request.extensionId.trim(),
+          request.values,
+        );
+      } catch (error) {
+        const errorMsg =
+          error instanceof Error ? error.message : 'Failed to update extension configuration';
+        console.error('[Extensions] extensions:update-configuration error:', errorMsg);
         return { success: false, error: errorMsg };
       }
     },

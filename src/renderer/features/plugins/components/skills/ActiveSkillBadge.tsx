@@ -1,9 +1,9 @@
+import { SparklesIcon } from '@heroicons/react/24/outline';
 import React from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { clearActiveSkills, toggleActiveSkill } from '@/features/plugins/slices/skillSlice';
 import { i18nService } from '@/services/i18n';
-import PuzzleIcon from '@/shared/components/icons/PuzzleIcon';
 import XMarkIcon from '@/shared/components/icons/XMarkIcon';
 import { RootState } from '@/store';
 
@@ -35,7 +35,7 @@ const ActiveSkillBadge: React.FC = () => {
           key={skill.id}
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-primary-muted border border-primary"
         >
-          <PuzzleIcon className="h-3.5 w-3.5 text-primary" />
+          <SparklesIcon className="h-3.5 w-3.5 text-primary" />
           <span className="text-xs font-medium text-primary max-w-[80px] truncate">
             {skill.name}
           </span>

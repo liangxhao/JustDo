@@ -8,6 +8,10 @@ type ExtensionSetEnabledRequest =
   import('../../shared/openclaw/extensions').ExtensionSetEnabledRequest;
 type ExtensionSetEnabledResult =
   import('../../shared/openclaw/extensions').ExtensionSetEnabledResult;
+type ExtensionUpdateConfigurationRequest =
+  import('../../shared/openclaw/extensions').ExtensionUpdateConfigurationRequest;
+type ExtensionUpdateConfigurationResult =
+  import('../../shared/openclaw/extensions').ExtensionUpdateConfigurationResult;
 type InstalledOpenClawExtension =
   import('../../shared/openclaw/extensions').InstalledOpenClawExtension;
 
@@ -369,6 +373,9 @@ interface IElectronAPI {
     }>;
     delete: (request: ExtensionDeleteRequest) => Promise<ExtensionDeleteResult>;
     setEnabled: (request: ExtensionSetEnabledRequest) => Promise<ExtensionSetEnabledResult>;
+    updateConfiguration: (
+      request: ExtensionUpdateConfigurationRequest,
+    ) => Promise<ExtensionUpdateConfigurationResult>;
     importPath: (request: ExtensionImportRequest) => Promise<{
       success: boolean;
       extensionId?: string;

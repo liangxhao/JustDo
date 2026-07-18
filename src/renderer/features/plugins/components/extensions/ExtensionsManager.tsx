@@ -3,6 +3,7 @@ import {
   ArrowUpTrayIcon,
   ExclamationTriangleIcon,
   FolderIcon,
+  QuestionMarkCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
@@ -60,8 +61,17 @@ const ExtensionsManager: React.FC = () => {
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
   const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
   const [togglingExtensionId, setTogglingExtensionId] = useState<string | null>(null);
+  const [selectedExtension, setSelectedExtension] = useState<InstalledOpenClawExtension | null>(
+    null,
+  );
+  const [configurationValues, setConfigurationValues] = useState<Record<string, string>>({});
+  const [configurationError, setConfigurationError] = useState('');
+  const [savingConfiguration, setSavingConfiguration] = useState(false);
   const extensionActionBusy =
-    importing || deletingExtensionId !== null || togglingExtensionId !== null;
+    importing ||
+    deletingExtensionId !== null ||
+    togglingExtensionId !== null ||
+    savingConfiguration;
 
   const loadExtensions = useCallback(async () => {
     try {
@@ -231,6 +241,53 @@ const ExtensionsManager: React.FC = () => {
     }
   };
 
+  const openExtensionDetails = (extension: InstalledOpenClawExtension) => {
+    setSelectedExtension(extension);
+    setConfigurationValues({});
+    setConfigurationError('');
+  };
+
+  const handleSaveConfiguration = async () => {
+    if (!selectedExtension || extensionActionBusy) return;
+    const values = Object.fromEntries(
+      Object.entries(configurationValues).filter(([, value]) => value.trim()),
+    );
+    if (Object.keys(values).length === 0) {
+      setConfigurationError(i18nService.t('extensionConfigurationValueRequired'));
+      return;
+    }
+    try {
+      setSavingConfiguration(true);
+      setConfigurationError('');
+      const result = await window.electron.extensions.updateConfiguration({
+        extensionId: selectedExtension.id,
+        values,
+      });
+      if (!result.success) {
+        throw new Error(result.error || i18nService.t('extensionConfigurationSaveFailed'));
+      }
+      const latestExtensions = await loadExtensions();
+      const updatedExtension = latestExtensions?.find(item => item.id === selectedExtension.id);
+      if (updatedExtension) setSelectedExtension(updatedExtension);
+      setConfigurationValues({});
+    } catch (error) {
+      setConfigurationError(
+        error instanceof Error ? error.message : i18nService.t('extensionConfigurationSaveFailed'),
+      );
+    } finally {
+      setSavingConfiguration(false);
+    }
+  };
+
+  const handleOpenExtensionFolder = async () => {
+    if (!selectedExtension) return;
+    setConfigurationError('');
+    const result = await window.electron.shell.openPath(selectedExtension.installPath);
+    if (!result.success) {
+      setConfigurationError(result.error || i18nService.t('extensionOpenFolderFailed'));
+    }
+  };
+
   const tabClass = (tab: ExtensionTab) =>
     `px-4 py-2 text-sm font-medium transition-colors relative ${
       activeTab === tab ? 'text-foreground' : 'text-secondary hover:hover:text-foreground'
@@ -388,45 +445,34 @@ const ExtensionsManager: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(16rem,100%),1fr))] items-start gap-3">
               {filteredExtensions.map(extension => (
                 <article
                   key={extension.id}
-                  className="rounded-xl border border-border bg-surface p-4"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openExtensionDetails(extension)}
+                  onKeyDown={event => {
+                    if (
+                      event.target === event.currentTarget &&
+                      (event.key === 'Enter' || event.key === ' ')
+                    ) {
+                      event.preventDefault();
+                      openExtensionDetails(extension);
+                    }
+                  }}
+                  className="cursor-pointer rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
                 >
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-raised text-primary">
-                      <PuzzleIcon className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="truncate text-sm font-semibold text-foreground">
-                          {extension.name}
-                        </h3>
-                        {extension.version && (
-                          <span className="shrink-0 rounded-full bg-surface-raised px-2 py-0.5 text-[10px] text-secondary">
-                            v{extension.version}
-                          </span>
-                        )}
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface">
+                        <PuzzleIcon className="h-4 w-4 text-secondary" />
                       </div>
-                      <div className="mt-0.5 truncate text-xs text-secondary">{extension.id}</div>
-                      {extension.description && (
-                        <p className="mt-2 line-clamp-2 text-xs leading-5 text-secondary">
-                          {extension.description}
-                        </p>
-                      )}
-                      {extension.missingRequirements.length > 0 && (
-                        <div className="mt-3 flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs leading-5 text-amber-700 dark:text-amber-400">
-                          <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
-                          <span>
-                            {i18nService
-                              .t('extensionMissingRequirements')
-                              .replace('{requirements}', extension.missingRequirements.join(', '))}
-                          </span>
-                        </div>
-                      )}
+                      <h3 className="truncate text-sm font-medium text-foreground">
+                        {extension.name}
+                      </h3>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-1.5">
                       <Tooltip
                         content={i18nService.t(
                           extension.enabled ? 'extensionDisable' : 'extensionEnable',
@@ -440,7 +486,10 @@ const ExtensionsManager: React.FC = () => {
                           aria-label={i18nService.t(
                             extension.enabled ? 'extensionDisable' : 'extensionEnable',
                           )}
-                          onClick={() => void handleToggleExtension(extension)}
+                          onClick={event => {
+                            event.stopPropagation();
+                            void handleToggleExtension(extension);
+                          }}
                           disabled={extensionActionBusy}
                           className={`flex h-5 w-9 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                             extension.enabled ? 'bg-primary' : 'bg-border'
@@ -456,9 +505,12 @@ const ExtensionsManager: React.FC = () => {
                       <Tooltip content={i18nService.t('extensionDelete')} position="bottom">
                         <button
                           type="button"
-                          onClick={() => setPendingDelete(extension)}
+                          onClick={event => {
+                            event.stopPropagation();
+                            setPendingDelete(extension);
+                          }}
                           disabled={extensionActionBusy}
-                          className="rounded-lg p-1.5 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label={i18nService.t('extensionDelete')}
                         >
                           <TrashIcon className="h-4 w-4" />
@@ -466,6 +518,28 @@ const ExtensionsManager: React.FC = () => {
                       </Tooltip>
                     </div>
                   </div>
+
+                  {extension.description && (
+                    <Tooltip
+                      content={extension.description}
+                      position="bottom"
+                      maxWidth="360px"
+                      className="block w-full"
+                    >
+                      <p className="line-clamp-2 text-xs leading-5 text-secondary">
+                        {extension.description}
+                      </p>
+                    </Tooltip>
+                  )}
+
+                  {extension.missingRequirements.length > 0 && (
+                    <div className="mt-3 flex items-center">
+                      <span className="flex max-w-full items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                        <ExclamationTriangleIcon className="h-3 w-3 shrink-0" />
+                        <span>{i18nService.t('extensionMissingConfiguration')}</span>
+                      </span>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
@@ -528,6 +602,146 @@ const ExtensionsManager: React.FC = () => {
                   {i18nService.t('selectExtensionArchivesDescription')}
                 </div>
               </button>
+            </div>
+          </Modal>,
+          document.body,
+        )}
+
+      {selectedExtension &&
+        createPortal(
+          <Modal
+            onClose={() => {
+              if (!savingConfiguration) setSelectedExtension(null);
+            }}
+            overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+            className="mx-4 w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background">
+                  <PuzzleIcon className="h-5 w-5 text-secondary" />
+                </div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="truncate text-base font-semibold text-foreground">
+                    {selectedExtension.name}
+                  </h2>
+                  {selectedExtension.version && (
+                    <span className="shrink-0 text-xs text-secondary">
+                      v{selectedExtension.version}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedExtension(null)}
+                disabled={savingConfiguration}
+                className="rounded-lg p-1.5 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
+                aria-label={i18nService.t('close')}
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            {selectedExtension.description && (
+              <p className="mt-3 text-sm leading-5 text-secondary">
+                {selectedExtension.description}
+              </p>
+            )}
+
+            <div className="mt-5">
+              {selectedExtension.configurationFields.length > 0 ? (
+                <div className="space-y-4">
+                  {selectedExtension.configurationFields.map(field => (
+                    <div
+                      key={field.path}
+                      className="grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] items-center gap-3"
+                    >
+                      <div className="flex min-w-0 items-center justify-end text-right text-xs font-medium text-foreground">
+                        <label
+                          htmlFor={`extension-config-${field.path}`}
+                          className="truncate"
+                          title={field.requirement || field.label}
+                        >
+                          {field.requirement || field.label}
+                        </label>
+                        {field.requirement && (
+                          <span className="ml-0.5 text-base font-semibold leading-none text-red-500">
+                            *
+                          </span>
+                        )}
+                        {field.help && (
+                          <Tooltip
+                            content={field.help}
+                            position="bottom"
+                            maxWidth="320px"
+                            className="ml-1 shrink-0"
+                          >
+                            <QuestionMarkCircleIcon className="h-3.5 w-3.5 text-secondary" />
+                          </Tooltip>
+                        )}
+                      </div>
+                      <input
+                        id={`extension-config-${field.path}`}
+                        type={field.sensitive ? 'password' : 'text'}
+                        value={configurationValues[field.path] || ''}
+                        onChange={event =>
+                          setConfigurationValues(current => ({
+                            ...current,
+                            [field.path]: event.target.value,
+                          }))
+                        }
+                        disabled={savingConfiguration}
+                        required={Boolean(field.requirement)}
+                        autoComplete="new-password"
+                        className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-4 rounded-xl bg-background px-3 py-3 text-xs text-secondary">
+                  {i18nService.t('extensionConfigurationNoFields')}
+                </div>
+              )}
+
+              {configurationError && (
+                <div className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-500">
+                  {configurationError}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => void handleOpenExtensionFolder()}
+                disabled={savingConfiguration}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
+              >
+                <FolderIcon className="h-4 w-4" />
+                {i18nService.t('openFolder')}
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedExtension(null)}
+                  disabled={savingConfiguration}
+                  className="rounded-lg px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised disabled:opacity-50"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                {selectedExtension.configurationFields.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveConfiguration()}
+                    disabled={savingConfiguration}
+                    className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {i18nService.t(savingConfiguration ? 'saving' : 'save')}
+                  </button>
+                )}
+              </div>
             </div>
           </Modal>,
           document.body,

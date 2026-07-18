@@ -146,6 +146,7 @@ describe('OpenClawExtensionImportService', () => {
         installPath: installedDir,
         enabled: true,
         missingRequirements: [],
+        configurationFields: [],
       },
     ]);
 
@@ -168,7 +169,9 @@ describe('OpenClawExtensionImportService', () => {
         setup: {
           providers: [{ id: 'brave', envVars: ['JUSTDO_TEST_MISSING_EXTENSION_KEY'] }],
         },
-        uiHints: { 'webSearch.apiKey': { sensitive: true } },
+        uiHints: {
+          'webSearch.apiKey': { label: 'Brave Search API Key', sensitive: true },
+        },
       }),
     );
     const manager = {
@@ -182,6 +185,15 @@ describe('OpenClawExtensionImportService', () => {
 
     expect(service.listInstalled()[0].missingRequirements).toEqual([
       'JUSTDO_TEST_MISSING_EXTENSION_KEY',
+    ]);
+    expect(service.listInstalled()[0].configurationFields).toEqual([
+      {
+        path: 'webSearch.apiKey',
+        label: 'Brave Search API Key',
+        requirement: 'JUSTDO_TEST_MISSING_EXTENSION_KEY',
+        sensitive: true,
+        configured: false,
+      },
     ]);
 
     const openClawHome = path.join(fixtureRoot, 'openclaw-home');
@@ -216,6 +228,72 @@ describe('OpenClawExtensionImportService', () => {
       }),
     );
     expect(service.listInstalled()[0].missingRequirements).toEqual([]);
+  });
+
+  it('updates declared extension configuration without exposing or replacing unrelated config', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const installedDir = path.join(stateDir, 'extensions', 'brave');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(installedDir, 'openclaw.plugin.json'),
+      JSON.stringify({
+        id: 'brave',
+        name: 'Brave',
+        setup: {
+          providers: [{ id: 'brave', envVars: ['JUSTDO_TEST_EDIT_EXTENSION_KEY'] }],
+        },
+        uiHints: {
+          'webSearch.apiKey': {
+            label: 'Brave Search API Key',
+            help: 'Key used for Brave Search.',
+            sensitive: true,
+          },
+          'constructor.prototype.polluted': { sensitive: true },
+        },
+      }),
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        gateway: { mode: 'local' },
+        plugins: { entries: { brave: { enabled: true } } },
+      }),
+    );
+    const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
+    const manager = {
+      getStateDir: vi.fn().mockReturnValue(stateDir),
+      getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
+      getConfigPath: vi.fn().mockReturnValue(configPath),
+      getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
+      restartGateway,
+    } as unknown as OpenClawEngineManager;
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+    });
+
+    await expect(
+      service.updateConfiguration('brave', {
+        'webSearch.apiKey': 'secret-key',
+        'unsupported.path': 'must-not-be-written',
+        'constructor.prototype.polluted': 'must-not-be-written',
+      }),
+    ).resolves.toEqual({ success: true });
+
+    const savedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(savedConfig.gateway).toEqual({ mode: 'local' });
+    expect(savedConfig.plugins.entries.brave).toEqual({
+      enabled: true,
+      config: { webSearch: { apiKey: 'secret-key' } },
+    });
+    expect(service.listInstalled()[0]).toMatchObject({
+      missingRequirements: [],
+      configurationFields: [
+        expect.objectContaining({ path: 'webSearch.apiKey', configured: true }),
+      ],
+    });
+    expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
+    expect(restartGateway).toHaveBeenCalledOnce();
   });
 
   it('uninstalls an installed extension through OpenClaw and restarts Gateway', async () => {

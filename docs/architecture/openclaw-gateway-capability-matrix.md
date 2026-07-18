@@ -13,7 +13,7 @@ This matrix records which layer owns each capability in the current JustDo archi
 | Skills | Owns discovery/status/install runtime | Skill RPC, local file import/delete, marketplace adapter | Skills manager and marketplace |
 | MCP | Runs configured servers/tools | Stores definitions, probes, syncs config | MCP manager |
 | Hooks | Runs configured hooks | Stores definitions and syncs config | Hook manager |
-| Extensions | Extension host/runtime interactions, native plugin install/enable/disable/uninstall semantics | Lifecycle, callback server, ask-user routing, local native-extension import using the injected runtime environment, declared prerequisite checks | Extension manager, enable switch, missing-configuration warnings, delete confirmation, interaction UI |
+| Extensions | Extension host/runtime interactions, native plugin install/enable/disable/uninstall semantics | Lifecycle, callback server, ask-user routing, local native-extension import using the injected runtime environment, validated plugin configuration updates, declared prerequisite checks | Extension manager, details/configuration editor, enable switch, missing-configuration warnings, delete confirmation, interaction UI |
 | Scheduled tasks | Cron execution | CronJobService polling and IPC | Scheduled tasks UI |
 | Slash commands | Gateway capability + JustDo policy | Lists commands through Gateway client/policies | Slash command menu |
 | Local files | No direct ownership | Dialog/shell/localfile protocol | File picker and preview UI |

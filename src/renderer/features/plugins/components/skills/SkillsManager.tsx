@@ -2,6 +2,7 @@ import {
   ArchiveBoxIcon,
   ArrowUpTrayIcon,
   FolderIcon,
+  SparklesIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -19,7 +20,6 @@ import { Skill } from '@/features/plugins/types/skill';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 import ErrorMessage from '@/shared/components/ErrorMessage';
-import PuzzleIcon from '@/shared/components/icons/PuzzleIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Tooltip from '@/shared/components/ui/Tooltip';
@@ -439,7 +439,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                           <div className="flex items-start justify-between mb-2">
                             <div className="flex items-center gap-2 min-w-0">
                               <div className="w-7 h-7 rounded-lg bg-surface flex items-center justify-center flex-shrink-0">
-                                <PuzzleIcon className="h-4 w-4 text-secondary" />
+                                <SparklesIcon className="h-4 w-4 text-secondary" />
                               </div>
                               <span className="text-sm font-medium text-foreground truncate">
                                 {skill.name}
@@ -525,7 +525,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-9 h-9 rounded-lg bg-background flex items-center justify-center flex-shrink-0">
-                  <PuzzleIcon className="h-5 w-5 text-secondary" />
+                  <SparklesIcon className="h-5 w-5 text-secondary" />
                 </div>
                 <div className="min-w-0">
                   <div className="text-base font-semibold text-foreground truncate">

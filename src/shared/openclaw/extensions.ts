@@ -42,7 +42,17 @@ export const ExtensionIpc = {
   ImportProgress: 'extensions:import-progress',
   Delete: 'extensions:delete',
   SetEnabled: 'extensions:set-enabled',
+  UpdateConfiguration: 'extensions:update-configuration',
 } as const;
+
+export type OpenClawExtensionConfigurationField = {
+  path: string;
+  label: string;
+  help?: string;
+  requirement?: string;
+  sensitive: boolean;
+  configured: boolean;
+};
 
 export type InstalledOpenClawExtension = {
   id: string;
@@ -52,6 +62,17 @@ export type InstalledOpenClawExtension = {
   installPath: string;
   enabled: boolean;
   missingRequirements: string[];
+  configurationFields: OpenClawExtensionConfigurationField[];
+};
+
+export type ExtensionUpdateConfigurationRequest = {
+  extensionId: string;
+  values: Record<string, string>;
+};
+
+export type ExtensionUpdateConfigurationResult = {
+  success: boolean;
+  error?: string;
 };
 
 export type ExtensionSetEnabledRequest = {

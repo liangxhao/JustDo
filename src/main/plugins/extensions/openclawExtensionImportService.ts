@@ -11,6 +11,7 @@ import type {
   ExtensionImportResult,
   ExtensionImportStage,
   InstalledOpenClawExtension,
+  OpenClawExtensionConfigurationField,
 } from '../../../shared/openclaw/extensions';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 
@@ -152,6 +153,35 @@ const getNestedValue = (value: unknown, dottedPath: string): unknown =>
     return isRecord(current) ? current[segment] : undefined;
   }, value);
 
+const FORBIDDEN_CONFIG_PATH_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
+const isSafeConfigPath = (dottedPath: string): boolean => {
+  if (!dottedPath || dottedPath.length > 256) return false;
+  const segments = dottedPath.split('.');
+  return segments.every(
+    segment =>
+      /^[A-Za-z_][A-Za-z0-9_-]*$/.test(segment) && !FORBIDDEN_CONFIG_PATH_SEGMENTS.has(segment),
+  );
+};
+
+const setNestedValue = (
+  target: Record<string, unknown>,
+  dottedPath: string,
+  value: string,
+): void => {
+  if (!isSafeConfigPath(dottedPath)) throw new Error('Unsupported extension configuration path.');
+  const segments = dottedPath.split('.');
+  let current = target;
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      current[segment] = value;
+      return;
+    }
+    const next = isRecord(current[segment]) ? current[segment] : {};
+    current[segment] = next;
+    current = next;
+  });
+};
+
 const hasConfiguredValue = (value: unknown): boolean => {
   if (typeof value === 'string') return value.trim().length > 0;
   return isRecord(value) && Object.keys(value).length > 0;
@@ -171,35 +201,39 @@ const readDotEnvKeys = (filePath: string): Set<string> => {
   return keys;
 };
 
-const findMissingRequirements = (
-  manager: OpenClawEngineManager,
-  extensionId: string,
-  manifest: Record<string, unknown>,
-): string[] => {
-  const setup = isRecord(manifest.setup) ? manifest.setup : {};
-  const providers = Array.isArray(setup.providers) ? setup.providers : [];
+const collectRequiredEnvVars = (manifest: Record<string, unknown>): string[] => {
   const requiredEnvVars = new Set<string>();
-  for (const provider of providers) {
-    if (!isRecord(provider) || !Array.isArray(provider.envVars)) continue;
-    for (const envVar of provider.envVars) {
-      if (typeof envVar === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar)) {
-        requiredEnvVars.add(envVar);
-      }
-    }
-  }
-  const legacyProviderEnvVars = isRecord(manifest.providerAuthEnvVars)
-    ? manifest.providerAuthEnvVars
-    : {};
-  for (const envVars of Object.values(legacyProviderEnvVars)) {
-    if (!Array.isArray(envVars)) continue;
+  const addEnvVars = (envVars: unknown): void => {
+    if (!Array.isArray(envVars)) return;
     for (const envVar of envVars) {
       if (typeof envVar === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar)) {
         requiredEnvVars.add(envVar);
       }
     }
-  }
-  if (requiredEnvVars.size === 0) return [];
+  };
+  const setup = isRecord(manifest.setup) ? manifest.setup : {};
+  const providers = Array.isArray(setup.providers) ? setup.providers : [];
+  providers.forEach(provider => {
+    if (isRecord(provider)) addEnvVars(provider.envVars);
+  });
+  const legacyProviderEnvVars = isRecord(manifest.providerAuthEnvVars)
+    ? manifest.providerAuthEnvVars
+    : {};
+  Object.values(legacyProviderEnvVars).forEach(addEnvVars);
+  return [...requiredEnvVars];
+};
 
+type ExtensionConfigurationState = {
+  fields: OpenClawExtensionConfigurationField[];
+  missingRequirements: string[];
+};
+
+const getExtensionConfigurationState = (
+  manager: OpenClawEngineManager,
+  extensionId: string,
+  manifest: Record<string, unknown>,
+): ExtensionConfigurationState => {
+  const requiredEnvVars = collectRequiredEnvVars(manifest);
   const config = readJsonRecord(manager.getConfigPath());
   const pluginsConfig = isRecord(config.plugins) ? config.plugins : {};
   const pluginEntries = isRecord(pluginsConfig.entries) ? pluginsConfig.entries : {};
@@ -225,12 +259,32 @@ const findMissingRequirements = (
     return hasConfiguredValue(value);
   };
   const uiHints = isRecord(manifest.uiHints) ? manifest.uiHints : {};
-  const hasSensitivePluginConfig = Object.entries(uiHints).some(
-    ([configPath, hint]) =>
-      isRecord(hint) &&
-      hint.sensitive === true &&
-      hasResolvedConfiguredValue(getNestedValue(pluginConfig, configPath)),
+  const sensitiveHints = Object.entries(uiHints).filter(
+    (entry): entry is [string, Record<string, unknown>] =>
+      isSafeConfigPath(entry[0]) && isRecord(entry[1]) && entry[1].sensitive === true,
   );
+  const resolveRequirement = (configPath: string): string | undefined => {
+    const leafName = configPath.split('.').at(-1) || '';
+    const normalizedLeaf = leafName.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
+    const matches = requiredEnvVars.filter(envVar => envVar.endsWith(normalizedLeaf));
+    if (matches.length === 1) return matches[0];
+    return requiredEnvVars.length === 1 && sensitiveHints.length === 1
+      ? requiredEnvVars[0]
+      : undefined;
+  };
+  const fields = sensitiveHints.map<OpenClawExtensionConfigurationField>(([configPath, hint]) => {
+    const requirement = resolveRequirement(configPath);
+    return {
+      path: configPath,
+      label: typeof hint.label === 'string' && hint.label.trim() ? hint.label.trim() : configPath,
+      help: typeof hint.help === 'string' && hint.help.trim() ? hint.help.trim() : undefined,
+      requirement,
+      sensitive: true,
+      configured:
+        hasResolvedConfiguredValue(getNestedValue(pluginConfig, configPath)) ||
+        Boolean(requirement && isEnvConfigured(requirement)),
+    };
+  });
   const configContracts = isRecord(manifest.configContracts) ? manifest.configContracts : {};
   const compatibilityPaths = Array.isArray(configContracts.compatibilityRuntimePaths)
     ? configContracts.compatibilityRuntimePaths
@@ -240,9 +294,11 @@ const findMissingRequirements = (
       typeof configPath === 'string' &&
       hasResolvedConfiguredValue(getNestedValue(config, configPath)),
   );
-  if (hasSensitivePluginConfig || hasCompatibilityConfig) return [];
-
-  return [...requiredEnvVars].filter(name => !isEnvConfigured(name));
+  const missingRequirements = requiredEnvVars.filter(requirement => {
+    if (isEnvConfigured(requirement) || hasCompatibilityConfig) return false;
+    return !fields.some(field => field.requirement === requirement && field.configured);
+  });
+  return { fields, missingRequirements };
 };
 
 const isExtensionEnabled = (manager: OpenClawEngineManager, extensionId: string): boolean => {
@@ -419,6 +475,7 @@ export class OpenClawExtensionImportService {
           const packageJson = fs.existsSync(packagePath) ? readJsonRecord(packagePath) : undefined;
           const id =
             typeof manifest.id === 'string' && manifest.id.trim() ? manifest.id.trim() : entry.name;
+          const configurationState = getExtensionConfigurationState(manager, id, manifest);
           return [
             {
               id,
@@ -436,7 +493,8 @@ export class OpenClawExtensionImportService {
                     : undefined,
               installPath,
               enabled: isExtensionEnabled(manager, id),
-              missingRequirements: findMissingRequirements(manager, id, manifest),
+              missingRequirements: configurationState.missingRequirements,
+              configurationFields: configurationState.fields,
             },
           ];
         } catch (error) {
@@ -448,6 +506,73 @@ export class OpenClawExtensionImportService {
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async updateConfiguration(
+    extensionId: string,
+    values: Record<string, string>,
+  ): Promise<{ success: boolean; error?: string }> {
+    const installed = this.listInstalled().find(extension => extension.id === extensionId);
+    if (!installed) return { success: false, error: 'Extension is not installed.' };
+
+    const allowedPaths = new Set(installed.configurationFields.map(field => field.path));
+    const updates = Object.entries(values).filter(
+      ([configPath, value]) =>
+        value.trim().length > 0 && isSafeConfigPath(configPath) && allowedPaths.has(configPath),
+    );
+    if (updates.length === 0) {
+      return { success: false, error: 'Enter at least one supported configuration value.' };
+    }
+
+    const manager = this.deps.getOpenClawEngineManager();
+    const configPath = manager.getConfigPath();
+    const temporaryPath = `${configPath}.tmp-extension-${Date.now()}`;
+    const wasRunning = manager.getStatus().phase === 'running';
+    try {
+      let config: Record<string, unknown> = {};
+      if (fs.existsSync(configPath)) {
+        const parsed = JSON5.parse(fs.readFileSync(configPath, 'utf8')) as unknown;
+        if (!isRecord(parsed)) throw new Error('OpenClaw configuration is not an object.');
+        config = parsed;
+      }
+      const plugins = isRecord(config.plugins) ? config.plugins : {};
+      const entries = isRecord(plugins.entries) ? plugins.entries : {};
+      const entry = isRecord(entries[extensionId]) ? entries[extensionId] : {};
+      const pluginConfig = isRecord(entry.config) ? entry.config : {};
+      updates.forEach(([fieldPath, value]) => setNestedValue(pluginConfig, fieldPath, value));
+      entry.config = pluginConfig;
+      entries[extensionId] = entry;
+      plugins.entries = entries;
+      config.plugins = plugins;
+
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+      fs.renameSync(temporaryPath, configPath);
+
+      if (wasRunning) {
+        const status = await manager.restartGateway();
+        if (status.phase !== 'running') {
+          return {
+            success: false,
+            error:
+              status.message ||
+              'Extension configuration was saved, but the OpenClaw Gateway failed to restart.',
+          };
+        }
+      }
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update extension configuration',
+      };
+    } finally {
+      try {
+        if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+      } catch {
+        // Best-effort cleanup for an interrupted atomic write.
+      }
+    }
   }
 
   async delete(extensionId: string): Promise<{ success: boolean; error?: string }> {
