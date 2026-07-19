@@ -1,4 +1,8 @@
-import { CommandLineIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import {
+  BookOpenIcon,
+  CommandLineIcon,
+  ExclamationTriangleIcon,
+} from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -23,8 +27,9 @@ import TrashIcon from '@/shared/components/icons/TrashIcon';
 
 interface SidebarProps {
   onShowSettings: () => void;
-  activeView: 'cowork' | 'scheduledTasks' | 'plugins';
+  activeView: 'cowork' | 'memory' | 'scheduledTasks' | 'plugins';
   onShowCowork: () => void;
+  onShowMemory: () => void;
   onShowScheduledTasks: () => void;
   onShowPlugins: () => void;
   onNewChat: () => void;
@@ -36,6 +41,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
   activeView,
   onShowCowork,
+  onShowMemory,
   onShowScheduledTasks,
   onShowPlugins,
   onNewChat,
@@ -308,6 +314,21 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <PuzzleIcon className="h-4 w-4" />
             {i18nService.t('plugins')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchOpen(false);
+              onShowMemory();
+            }}
+            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+              activeView === 'memory'
+                ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+            }`}
+          >
+            <BookOpenIcon className="h-4 w-4" />
+            {i18nService.t('memoryTitle')}
           </button>
         </div>
       </div>

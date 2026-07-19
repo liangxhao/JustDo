@@ -18,6 +18,7 @@ import {
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import type { CoworkInteractionResult } from '@/features/cowork/coworkTypes';
+import MemoryView from '@/features/memory/MemoryView';
 import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
 import PluginsView from '@/features/plugins/components/PluginsView';
 import { CronView } from '@/features/scheduled-tasks/components';
@@ -32,7 +33,9 @@ import { RootState, store } from '@/store';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'scheduledTasks' | 'plugins'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'memory' | 'scheduledTasks' | 'plugins'>(
+    'cowork',
+  );
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -244,6 +247,10 @@ const App: React.FC = () => {
 
   const handleShowScheduledTasks = useCallback(() => {
     setMainView('scheduledTasks');
+  }, []);
+
+  const handleShowMemory = useCallback(() => {
+    setMainView('memory');
   }, []);
 
   const handleShowPlugins = useCallback(() => {
@@ -494,6 +501,7 @@ const App: React.FC = () => {
           onShowSettings={handleShowSettings}
           activeView={mainView}
           onShowCowork={handleShowCowork}
+          onShowMemory={handleShowMemory}
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowPlugins={handleShowPlugins}
           onNewChat={handleNewChat}
@@ -503,7 +511,13 @@ const App: React.FC = () => {
         <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
           <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
             <EngineStartupStatusBar />
-            {mainView === 'scheduledTasks' ? (
+            {mainView === 'memory' ? (
+              <MemoryView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+              />
+            ) : mainView === 'scheduledTasks' ? (
               <CronView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}

@@ -12,6 +12,7 @@ import {
 } from '../shared/openclaw/extensions';
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
 import { HookIpc } from '../shared/openclaw/hooks';
+import { MemoryIpc } from '../shared/openclaw/memory';
 import { UsageStatsIpc } from '../shared/openclaw/usage';
 import {
   type MarketplaceDetailRequest,
@@ -171,6 +172,13 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
       getPagedHistory: (params: { sessionKey: string }) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetPagedHistory, params),
+    },
+    memory: {
+      getOverview: () => ipcRenderer.invoke(MemoryIpc.GetOverview),
+      getDocument: (relativePath: string) =>
+        ipcRenderer.invoke(MemoryIpc.GetDocument, relativePath),
+      search: (query: string) => ipcRenderer.invoke(MemoryIpc.Search, query),
+      rebuildIndex: () => ipcRenderer.invoke(MemoryIpc.RebuildIndex),
     },
     usage: {
       getDaily: (options: { days: number; utcOffset: string }) =>

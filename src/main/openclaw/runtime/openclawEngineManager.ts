@@ -21,6 +21,7 @@ import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from './electronNodeRuntime';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
+import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
 type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;
@@ -931,10 +932,10 @@ export class OpenClawEngineManager extends EventEmitter {
       `}\n` +
       `process.stderr.write('[openclaw-launcher] argv=' + JSON.stringify(process.argv) + '\\n');\n` +
       `process.stderr.write('[openclaw-launcher] node=' + process.versions.node + '\\n');\n` +
-      `// Keep the event loop alive while openclaw's fire-and-forget import chain\n` +
-      `// loads its full module graph and starts the gateway server. Without this,\n` +
-      `// Electron's utilityProcess exits before the async work completes.\n` +
-      `const _keepAlive = setInterval(() => {}, 30000);\n` +
+      `// Only the long-running gateway command needs an explicit event-loop handle.\n` +
+      `// One-shot CLI commands (for example memory search/index/status) must be\n` +
+      `// allowed to exit after their asynchronous work completes.\n` +
+      OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE +
       `const t0 = Date.now();\n` +
       `// Strategy 1: Try the esbuild single-file bundle via dynamic import().\n` +
       `// The bundle collapses ~1100 ESM modules into one file, eliminating the\n` +
@@ -1034,7 +1035,8 @@ export class OpenClawEngineManager extends EventEmitter {
       `} else {\n` +
       `  process.argv.splice(1, 0, bundlePath);\n` +
       `}\n` +
-      `const _keepAlive = setInterval(() => {}, 30000);\n` +
+      `// Keep only the Gateway alive. One-shot CLI commands must exit normally.\n` +
+      OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE +
       `const bundleUrl = pathToFileURL(bundlePath).href;\n` +
       `_log('loading bundle (' + _elapsed() + ')');\n` +
       `import(bundleUrl).then(() => {\n` +

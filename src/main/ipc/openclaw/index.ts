@@ -4,6 +4,7 @@ export { registerOpenClawHistoryHandlers } from './history';
 export { registerHookHandlers } from './hooks';
 export { registerMarketplaceHandlers } from './marketplace';
 export { registerMcpHandlers } from './mcp';
+export { registerOpenClawMemoryHandlers } from './memory';
 export { registerSkillHandlers } from './skills';
 export { registerSlashCommandHandlers } from './slashCommands';
 export { registerOpenClawUsageHandlers } from './usage';

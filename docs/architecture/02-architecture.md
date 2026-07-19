@@ -8,9 +8,9 @@ JustDo 使用严格的 Electron 进程隔离架构：Renderer 只负责浏览器
 flowchart TB
   subgraph R["Renderer Process"]
     App["React App Shell"]
-    Store["Redux Store\n7 slices"]
+    Store["Redux Store\n6 slices"]
     Chat["<justdo-chat>\nLit custom element"]
-    Features["Feature Services\ncowork/plugins/settings/tasks"]
+    Features["Feature Services\ncowork/memory/plugins/settings/tasks"]
   end
 
   subgraph P["Preload"]
@@ -74,6 +74,7 @@ src/renderer/
     agents/
     cowork/
     models/
+    memory/
     plugins/
     scheduled-tasks/
     settings/
@@ -171,6 +172,7 @@ src/renderer/
     cowork/                  会话、输入、附件、权限、搜索、子任务 UI
     agents/                  Agent 列表、类型和 service
     models/                  模型选择和 OpenClaw model ref 解析
+    memory/                  记忆概览、语义搜索、时间线和 Markdown 预览
     plugins/                 Skills、MCP、Hooks、Extensions UI
     scheduled-tasks/         定时任务 CRUD、运行历史、会话跳转
     settings/                应用设置、模型设置、快捷键
@@ -182,6 +184,21 @@ src/renderer/
 ```
 
 Renderer service 的职责是把 UI 事件变成 `window.electron` 调用，并把失败结果转换成 UI 可理解的错误状态。Renderer service 不应该绕过 preload 去 import main 文件，也不应该把 IPC channel 字符串散落在组件里。
+
+### Memory Management Flow
+
+记忆页面以工作区 Markdown 为展示事实来源，以 OpenClaw memory CLI 为索引事实来源。Renderer 不读取文件或执行命令：`window.electron.openclaw.memory` 通过 Main IPC 扫描 `MEMORY.md`、`DREAMS.md` 和 `memory/**/*.md`，并使用 Engine Manager 构造的同一套 CLI 环境执行 `memory status/search/index`。这样能复用 JustDo 管理的 runtime、state dir 和 SecretRef 环境，同时避免依赖 OpenClaw 内部 SQLite schema。
+
+```mermaid
+flowchart LR
+  View["MemoryView"] --> Bridge["preload memory API"]
+  Bridge --> Handler["Main memory IPC"]
+  Handler --> Files["Workspace Markdown"]
+  Handler --> Cli["OpenClaw memory CLI"]
+  Cli --> Index["Derived memory index"]
+```
+
+文件预览仅接受工作区内的相对 Markdown 路径，拒绝绝对路径、路径逃逸和符号链接。强制重建在 Main 中串行化，UI 在运行期间禁用重复触发。
 
 ### Preload Layer
 

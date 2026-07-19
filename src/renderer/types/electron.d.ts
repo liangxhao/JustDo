@@ -288,6 +288,12 @@ interface HookEntryIPC {
 
 import type { GatewayPortSetErrorCode } from '@shared/openclaw/gatewayPort';
 import type {
+  MemoryDocumentResult,
+  MemoryOverviewResult,
+  MemoryRebuildResult,
+  MemorySearchResult,
+} from '@shared/openclaw/memory';
+import type {
   MarketplaceDetailRequest,
   MarketplaceDetailResponse,
   MarketplaceInstallRequest,
@@ -489,6 +495,12 @@ interface IElectronAPI {
         messages?: unknown[];
         error?: string;
       }>;
+    };
+    memory: {
+      getOverview: () => Promise<MemoryOverviewResult>;
+      getDocument: (relativePath: string) => Promise<MemoryDocumentResult>;
+      search: (query: string) => Promise<MemorySearchResult>;
+      rebuildIndex: () => Promise<MemoryRebuildResult>;
     };
     usage: {
       getDaily: (options: { days: number; utcOffset: string }) => Promise<{
