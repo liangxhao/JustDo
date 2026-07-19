@@ -192,7 +192,7 @@ JustDo syncs:
 
 - Cowork 执行变化：`04-cowork-system.md`。
 - Gateway lifecycle/config：`05-agent-engine.md`。
-- Skills/MCP/Hooks：`07-skills-system.md` 或 marketplace 文档。
+- Extensions/Skills/MCP/Hooks：`07-plugin-system.md` 或 marketplace 文档。
 - Scheduled tasks：`08-scheduled-tasks.md`。
 - Chat rendering/history：`15-chat-rendering.md`。
 - Runtime patch：`patches/openclaw-patch-guide.md`。

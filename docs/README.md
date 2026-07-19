@@ -24,7 +24,7 @@
 | [03-process-model.md](architecture/03-process-model.md) | Electron 进程模型与 IPC API |
 | [04-cowork-system.md](architecture/04-cowork-system.md) | Cowork 会话系统 |
 | [05-agent-engine.md](architecture/05-agent-engine.md) | OpenClaw 引擎集成 |
-| [07-skills-system.md](architecture/07-skills-system.md) | Skills 系统 |
+| [07-plugin-system.md](architecture/07-plugin-system.md) | Plugin 系统：Extensions、Skills、MCP、Hooks 与 Marketplace |
 | [08-scheduled-tasks.md](architecture/08-scheduled-tasks.md) | 定时任务系统 |
 | [10-data-storage.md](architecture/10-data-storage.md) | SQLite 和本地数据 |
 | [11-security-model.md](architecture/11-security-model.md) | 安全模型 |
@@ -53,5 +53,5 @@
 - 更新 `package.json` 中版本、端口、OpenClaw 版本时，同步更新根 README 和本文件。
 - 修改 IPC surface 时，同步更新 `03-process-model.md`。
 - 修改 SQLite schema 时，同步更新 `10-data-storage.md`。
-- 修改 skill manifest 或安装逻辑时，同步更新 `07-skills-system.md`。
+- 修改 Plugin 能力边界、skill manifest 或安装逻辑时，同步更新 `07-plugin-system.md`。
 - 修改 runtime patch 时，同步更新 `patches/openclaw-patch-guide.md`。

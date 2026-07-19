@@ -189,7 +189,7 @@ Bundled skills:
 
 1. Update `resources/skills/<skill-id>/`.
 2. Update `resources/builtin-skills.json`.
-3. If runtime behavior changes, update `docs/architecture/07-skills-system.md`.
+3. If runtime behavior changes, update `docs/architecture/07-plugin-system.md`.
 
 Scheduled tasks:
 
@@ -209,7 +209,7 @@ when they clarify ownership, flow, or lifecycle.
 
 When architecture/data flow changes, update the relevant doc in the same change:
 `02-architecture`, `03-process-model`, `04-cowork-system`, `05-agent-engine`,
-`07-skills-system`, `08-scheduled-tasks`, `10-data-storage`,
+`07-plugin-system`, `08-scheduled-tasks`, `10-data-storage`,
 `15-chat-rendering`, or `16-skill-marketplace-adapter`.
 
 ## Testing
