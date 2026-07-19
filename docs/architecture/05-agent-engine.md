@@ -44,8 +44,8 @@ Renderer 可以通过 `openclaw.engine.getStatus()` 和 `openclaw.engine.onProgr
 `src/main/main.ts` 中的主流程：
 
 1. 初始化 SQLite。
-2. 初始化 provider/config getter。
-3. 同步内置模型 provider。
+2. 初始化 provider/config getter，并恢复保存的系统/自定义代理路由。
+3. 通过已恢复的代理路由强制刷新内置模型 provider。
 4. 绑定 Cowork runtime forwarder。
 5. 同步 OpenClaw config。
 6. 启动 OpenClaw Gateway。
@@ -191,6 +191,11 @@ Agent model 绑定可能是：
 JustDo 生成的所有 `openai-completions` 模型条目都显式设置
 `compat.supportsUsageInStreaming: true`。OpenClaw 据此在流式请求中发送
 `stream_options.include_usage`，使支持该协议的模型提供商返回上下文与 token 使用统计。
+
+内置模型同步会根据 `/model/info` 的 `model_info.mode` 区分聊天与 embedding
+模型。聊天模型进入应用的可选模型列表；embedding 模型按 ID 排序，并将第一个模型写入
+`agents.defaults.memorySearch`，复用同一个内置 provider 的 base URL 和 API key。若没有
+embedding 模型，则显式设置 `memorySearch.enabled: false`，避免 OpenClaw 回退到 OpenAI。
 
 ## Startup And Recovery
 

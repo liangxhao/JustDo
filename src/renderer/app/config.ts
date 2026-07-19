@@ -38,6 +38,10 @@ export interface AppConfig {
         contextLength?: number;
         maxTokens?: number;
       }>;
+      embeddingModels?: Array<{
+        id: string;
+        name: string;
+      }>;
     };
   };
   // 主题配置

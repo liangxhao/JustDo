@@ -17,6 +17,7 @@ type ProviderConfig = {
   apiFormat?: 'openai';
   displayName?: string;
   models?: ProviderModel[];
+  embeddingModels?: ProviderModel[];
   readonly?: boolean;
 };
 
@@ -74,10 +75,15 @@ const parseModelsResponse = (payload: unknown): string[] => {
     .filter(Boolean);
 };
 
-const parseModelInfoResponse = (payload: unknown): Map<string, ProviderModel> => {
+type ProviderModelInfo = {
+  model: ProviderModel;
+  mode?: string;
+};
+
+const parseModelInfoResponse = (payload: unknown): Map<string, ProviderModelInfo> => {
   const record = toRecord(payload);
   const data = Array.isArray(record?.data) ? record.data : [];
-  const result = new Map<string, ProviderModel>();
+  const result = new Map<string, ProviderModelInfo>();
 
   for (const item of data) {
     const entry = toRecord(item);
@@ -92,19 +98,31 @@ const parseModelInfoResponse = (payload: unknown): Map<string, ProviderModel> =>
       continue;
     }
 
+    const rawMode = modelInfo?.mode ?? entry?.mode;
     result.set(modelId, {
-      id: modelId,
-      name: modelName || modelId,
-      supportsImage: modelInfo?.supports_vision === true,
-      contextLength: modelInfo ? getNumber(modelInfo, 'max_input_tokens') : undefined,
-      maxTokens: modelInfo ? getNumber(modelInfo, 'max_output_tokens') : undefined,
+      model: {
+        id: modelId,
+        name: modelName || modelId,
+        supportsImage: modelInfo?.supports_vision === true,
+        contextLength: modelInfo ? getNumber(modelInfo, 'max_input_tokens') : undefined,
+        maxTokens: modelInfo ? getNumber(modelInfo, 'max_output_tokens') : undefined,
+      },
+      mode: typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : undefined,
     });
   }
 
   return result;
 };
 
-async function fetchBuiltinModels(baseUrl: string, apiKey: string): Promise<ProviderModel[]> {
+type BuiltinModels = {
+  chatModels: ProviderModel[];
+  embeddingModels: ProviderModel[];
+};
+
+const compareModelIds = (left: ProviderModel, right: ProviderModel): number =>
+  left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+
+async function fetchBuiltinModels(baseUrl: string, apiKey: string): Promise<BuiltinModels> {
   const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined;
   const modelsResponse = await fetch(buildModelsUrl(baseUrl), { headers });
   if (!modelsResponse.ok) {
@@ -115,18 +133,30 @@ async function fetchBuiltinModels(baseUrl: string, apiKey: string): Promise<Prov
   const infoResponse = await fetch(buildModelInfoUrl(baseUrl), { headers });
   const infoById = infoResponse.ok
     ? parseModelInfoResponse(await infoResponse.json())
-    : new Map<string, ProviderModel>();
+    : new Map<string, ProviderModelInfo>();
 
-  return modelIds.map(modelId => {
+  const chatModels: ProviderModel[] = [];
+  const embeddingModels: ProviderModel[] = [];
+  for (const modelId of modelIds) {
     const modelInfo = infoById.get(modelId);
-    return {
+    const model = {
       id: modelId,
-      name: modelInfo?.name || modelId,
-      supportsImage: modelInfo?.supportsImage ?? false,
-      ...(modelInfo?.contextLength ? { contextLength: modelInfo.contextLength } : {}),
-      ...(modelInfo?.maxTokens ? { maxTokens: modelInfo.maxTokens } : {}),
+      name: modelInfo?.model.name || modelId,
+      supportsImage: modelInfo?.model.supportsImage ?? false,
+      ...(modelInfo?.model.contextLength ? { contextLength: modelInfo.model.contextLength } : {}),
+      ...(modelInfo?.model.maxTokens ? { maxTokens: modelInfo.model.maxTokens } : {}),
     };
-  });
+    if (modelInfo?.mode === 'embedding') {
+      embeddingModels.push(model);
+    } else {
+      chatModels.push(model);
+    }
+  }
+
+  return {
+    chatModels,
+    embeddingModels: embeddingModels.sort(compareModelIds),
+  };
 }
 
 export async function syncBuiltinModelProvider(store: SqliteStore): Promise<void> {
@@ -141,9 +171,14 @@ export async function syncBuiltinModelProvider(store: SqliteStore): Promise<void
   }
 
   let models: ProviderModel[] = [];
+  let embeddingModels: ProviderModel[] = [];
   try {
-    models = await fetchBuiltinModels(fileConfig.baseUrl, fileConfig.apiKey ?? '');
-    console.log(`[BuiltinModelProvider] Synced ${models.length} model(s)`);
+    const fetchedModels = await fetchBuiltinModels(fileConfig.baseUrl, fileConfig.apiKey ?? '');
+    models = fetchedModels.chatModels;
+    embeddingModels = fetchedModels.embeddingModels;
+    console.log(
+      `[BuiltinModelProvider] Synced ${models.length} chat model(s) and ${embeddingModels.length} embedding model(s)`,
+    );
   } catch (error) {
     console.warn('[BuiltinModelProvider] Failed to refresh models, clearing cached list:', error);
   }
@@ -155,6 +190,7 @@ export async function syncBuiltinModelProvider(store: SqliteStore): Promise<void
     apiFormat: 'openai',
     readonly: true,
     models,
+    embeddingModels,
   };
 
   const nextModel = { ...(appConfig.model ?? {}) };

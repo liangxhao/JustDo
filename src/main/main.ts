@@ -915,6 +915,12 @@ if (!gotTheLock) {
     // Inject store getter into providerApiConfig
     setStoreGetter(() => store);
 
+    // Restore proxy routing before refreshing the built-in provider. Its model
+    // endpoint may require the saved system/custom proxy to be reachable.
+    bindOpenClawGatewayPortProxyBypass();
+    const appConfig = getStore().get<AppConfigSettings>('app_config');
+    await applySystemProxyPreference(appConfig, outboundHeaderProxy);
+
     await syncBuiltinModelProvider(store);
 
     bindCoworkRuntimeForwarder(getCoworkEngineRouter(), getCoworkStore);
@@ -936,12 +942,6 @@ if (!gotTheLock) {
     if (!startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
-
-    // The Gateway snapshots process.env when it starts, so restore the saved
-    // proxy preference and routing rules before launching it.
-    bindOpenClawGatewayPortProxyBypass();
-    const appConfig = getStore().get<AppConfigSettings>('app_config');
-    await applySystemProxyPreference(appConfig, outboundHeaderProxy);
 
     void ensureOpenClawRunningForCowork()
       .then(() => {

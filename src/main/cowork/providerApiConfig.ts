@@ -15,6 +15,7 @@ type ProviderConfig = {
   baseUrl: string;
   apiFormat?: 'openai';
   models?: ProviderModel[];
+  embeddingModels?: ProviderModel[];
   displayName?: string;
 };
 
@@ -270,6 +271,7 @@ export type ProviderRawConfig = {
   apiKey: string;
   apiType: 'openai';
   models: ProviderModel[];
+  embeddingModels: ProviderModel[];
   displayName?: string;
 };
 
@@ -291,7 +293,10 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
     if (!baseURL) continue;
 
     const models = (providerConfig.models ?? []).filter(model => model.id?.trim());
-    if (models.length === 0) continue;
+    const embeddingModels = (providerConfig.embeddingModels ?? []).filter(model =>
+      model.id?.trim(),
+    );
+    if (models.length === 0 && embeddingModels.length === 0) continue;
 
     result.push({
       providerName,
@@ -299,6 +304,7 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
       apiKey: apiKey || 'sk-justdo-local',
       apiType: 'openai',
       models,
+      embeddingModels,
       displayName: providerConfig.displayName?.trim(),
     });
   }

@@ -6,7 +6,9 @@ import {
   ProviderName,
   ProviderRegistry,
 } from '../../../shared/providers';
+import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
+  buildBuiltinMemorySearchConfig,
   buildOpenClawConfigMeta,
   buildProviderSelection,
   mergeOpenClawPluginConfig,
@@ -85,6 +87,40 @@ describe('default provider descriptor', () => {
 });
 
 describe('OpenClaw provider config', () => {
+  test('uses the first sorted built-in embedding model for memory search', () => {
+    const providers: ProviderRawConfig[] = [
+      {
+        providerName: ProviderName.BuiltinModels,
+        baseURL: 'http://127.0.0.1:4000/v1',
+        apiKey: 'sk-local',
+        apiType: 'openai',
+        models: [{ id: 'chat-model' }],
+        embeddingModels: [{ id: 'embedding-z' }, { id: 'embedding-a' }],
+      },
+    ];
+
+    expect(buildBuiltinMemorySearchConfig(providers)).toEqual({
+      enabled: true,
+      provider: OpenClawProviderId.BuiltinModels,
+      model: 'embedding-a',
+    });
+  });
+
+  test('disables memory search without a built-in embedding model', () => {
+    expect(
+      buildBuiltinMemorySearchConfig([
+        {
+          providerName: ProviderName.BuiltinModels,
+          baseURL: 'http://127.0.0.1:4000/v1',
+          apiKey: 'sk-local',
+          apiType: 'openai',
+          models: [{ id: 'chat-model' }],
+          embeddingModels: [],
+        },
+      ]),
+    ).toEqual({ enabled: false });
+  });
+
   test('enables streaming usage metadata for every generated model', () => {
     const selection = buildProviderSelection({
       apiKey: 'sk-test',

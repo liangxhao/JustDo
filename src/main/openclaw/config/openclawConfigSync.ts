@@ -5,7 +5,9 @@ import path from 'path';
 import {
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
+  ProviderName,
 } from '../../../shared/providers';
+import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
@@ -343,6 +345,50 @@ export const buildProviderSelection = (options: {
   };
 };
 
+export const buildBuiltinMemorySearchConfig = (
+  providers: ProviderRawConfig[],
+): { enabled: true; provider: string; model: string } | { enabled: false } => {
+  const provider = providers.find(candidate => candidate.providerName === ProviderName.BuiltinModels);
+  const model = provider?.embeddingModels
+    .filter(candidate => candidate.id.trim())
+    .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))[0];
+  if (!provider || !model) {
+    return { enabled: false };
+  }
+
+  const selection = buildProviderSelection({
+    apiKey: provider.apiKey,
+    baseURL: provider.baseURL,
+    modelId: model.id,
+    apiType: provider.apiType,
+    providerName: provider.providerName,
+    modelName: model.name,
+    displayName: provider.displayName,
+  });
+  return {
+    enabled: true,
+    provider: selection.providerId,
+    model: selection.sessionModelId,
+  };
+};
+
+const withDisabledMemorySearch = (
+  config: Record<string, unknown>,
+): Record<string, unknown> => {
+  const agents = isRecord(config.agents) ? config.agents : {};
+  const defaults = isRecord(agents.defaults) ? agents.defaults : {};
+  return {
+    ...config,
+    agents: {
+      ...agents,
+      defaults: {
+        ...defaults,
+        memorySearch: { enabled: false },
+      },
+    },
+  };
+};
+
 const readPreinstalledPluginIds = (): string[] => {
   try {
     const pkgPath = path.join(app.getAppPath(), 'package.json');
@@ -427,6 +473,9 @@ export class OpenClawConfigSync {
     let allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> = {};
     let primaryModel = '';
     let providerSelection: OpenClawProviderSelection | null = null;
+    let memorySearchConfig:
+      | { enabled: true; provider: string; model: string }
+      | { enabled: false } = { enabled: false };
     if (apiResolution.config) {
       const { baseURL, apiKey, model, apiType } = apiResolution.config;
       const modelId = model.trim();
@@ -454,8 +503,10 @@ export class OpenClawConfigSync {
       });
       primaryModel = providerSelection.primaryModel;
 
-      for (const p of resolveAllEnabledProviderConfigs()) {
-        for (const m of p.models) {
+      const enabledProviders = resolveAllEnabledProviderConfigs();
+      memorySearchConfig = buildBuiltinMemorySearchConfig(enabledProviders);
+      for (const p of enabledProviders) {
+        for (const m of [...p.models, ...p.embeddingModels]) {
           const sel = buildProviderSelection({
             apiKey: p.apiKey,
             baseURL: p.baseURL,
@@ -537,6 +588,7 @@ export class OpenClawConfigSync {
           model: {
             primary: primaryModel,
           },
+          memorySearch: memorySearchConfig,
           sandbox: {
             mode: sandboxMode,
           },
@@ -1054,7 +1106,7 @@ export class OpenClawConfigSync {
    */
   private writeMinimalConfig(configPath: string, _reason: string): OpenClawConfigSyncResult {
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
-    const minimalConfig: Record<string, unknown> = {
+    const minimalConfig: Record<string, unknown> = withDisabledMemorySearch({
       gateway: {
         mode: 'local',
         controlUi: {
@@ -1073,7 +1125,7 @@ export class OpenClawConfigSync {
       // synchronously BEFORE the HTTP server binds, and can block gateway startup
       // for minutes on a fresh install.  Plugins will be enabled when the user
       // configures an API model and a full config sync runs.
-    };
+    });
 
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     let currentContent = '';
@@ -1089,26 +1141,28 @@ export class OpenClawConfigSync {
     if (currentContent && currentContent !== nextContent) {
       try {
         const existing = JSON.parse(currentContent);
-        const hasHookConfig = Object.keys(hookConfig).length > 0;
-        if (hasHookConfig && isRecord(existing)) {
-          const mergedConfig = {
-            ...existing,
-            ...hookConfig,
-            meta: minimalConfig.meta,
-          };
-          const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
-          if (currentContent !== mergedContent) {
-            ensureDir(path.dirname(configPath));
-            const tmpPath = `${configPath}.tmp-${Date.now()}`;
-            fs.writeFileSync(tmpPath, mergedContent, 'utf8');
-            fs.renameSync(tmpPath, configPath);
-            return { ok: true, changed: true, configPath };
+        if (isRecord(existing)) {
+          const hasHookConfig = Object.keys(hookConfig).length > 0;
+          const hasSubstantiveConfig =
+            Boolean(isRecord(existing.models) && existing.models.providers) ||
+            Boolean(isRecord(existing.plugins) && existing.plugins.entries) ||
+            Boolean(isRecord(existing.gateway) && existing.gateway.mode);
+          if (hasHookConfig || hasSubstantiveConfig) {
+            const mergedConfig = withDisabledMemorySearch({
+              ...existing,
+              ...hookConfig,
+              meta: minimalConfig.meta,
+            });
+            const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
+            if (currentContent !== mergedContent) {
+              ensureDir(path.dirname(configPath));
+              const tmpPath = `${configPath}.tmp-${Date.now()}`;
+              fs.writeFileSync(tmpPath, mergedContent, 'utf8');
+              fs.renameSync(tmpPath, configPath);
+              return { ok: true, changed: true, configPath };
+            }
+            return { ok: true, changed: false, configPath };
           }
-          return { ok: true, changed: false, configPath };
-        }
-        if (existing.models?.providers || existing.plugins?.entries || existing.gateway?.mode) {
-          // Already has a config with substance — keep it.
-          return { ok: true, changed: false, configPath };
         }
       } catch {
         // Malformed JSON — overwrite with minimal config.

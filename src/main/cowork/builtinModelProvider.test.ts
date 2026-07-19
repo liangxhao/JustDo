@@ -37,4 +37,44 @@ describe('syncBuiltinModelProvider', () => {
       }),
     );
   });
+
+  test('keeps embedding models out of the chat list and sorts them by id', async () => {
+    const set = vi.fn();
+    const store = {
+      get: vi.fn(() => ({})),
+      set,
+    } as unknown as SqliteStore;
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'chat-model' }, { id: 'embedding-z' }, { id: 'embedding-a' }],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            data: [
+              { model_name: 'chat-model', model_info: { mode: 'chat' } },
+              { model_name: 'embedding-z', model_info: { mode: 'embedding' } },
+              { model_name: 'embedding-a', model_info: { mode: 'embedding' } },
+            ],
+          }),
+        }),
+    );
+
+    await syncBuiltinModelProvider(store);
+
+    const savedConfig = set.mock.calls[0]?.[1];
+    expect(savedConfig.providers.builtin_models.models).toEqual([
+      expect.objectContaining({ id: 'chat-model' }),
+    ]);
+    expect(savedConfig.providers.builtin_models.embeddingModels).toEqual([
+      expect.objectContaining({ id: 'embedding-a' }),
+      expect.objectContaining({ id: 'embedding-z' }),
+    ]);
+  });
 });
