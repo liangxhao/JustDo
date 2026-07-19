@@ -85,7 +85,7 @@ export const getProxyPreferenceSignature = (config?: SystemProxySettings): strin
   });
 };
 
-export const applySystemProxyPreference = async (
+const applySystemProxyPreferenceNow = async (
   config: SystemProxySettings | boolean | undefined,
   outboundHeaderProxy: OutboundHeaderProxy,
 ): Promise<void> => {
@@ -148,4 +148,32 @@ export const applySystemProxyPreference = async (
   } else {
     console.warn('[SystemProxy] Enabled, but no proxy endpoint was resolved (DIRECT).');
   }
+};
+
+let proxyPreferenceGeneration = 0;
+let proxyPreferenceApplyQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Applies proxy changes in order and reports whether this request is still the
+ * latest preference. Callers should only perform follow-up work (such as a
+ * Gateway restart) when the returned value is true.
+ */
+export const applySystemProxyPreference = (
+  config: SystemProxySettings | boolean | undefined,
+  outboundHeaderProxy: OutboundHeaderProxy,
+): Promise<boolean> => {
+  const generation = ++proxyPreferenceGeneration;
+  const operation = proxyPreferenceApplyQueue.then(async () => {
+    if (generation !== proxyPreferenceGeneration) {
+      return false;
+    }
+    await applySystemProxyPreferenceNow(config, outboundHeaderProxy);
+    return generation === proxyPreferenceGeneration;
+  });
+
+  proxyPreferenceApplyQueue = operation.then(
+    (): void => undefined,
+    (): void => undefined,
+  );
+  return operation;
 };

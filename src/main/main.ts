@@ -17,6 +17,7 @@ import { initLogger } from './core/logger';
 import { createMainWindow } from './core/mainWindowFactory';
 import { OutboundHeaderProxy } from './core/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './core/pythonRuntime';
+import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/systemProxy';
 import {
   applySystemProxyPreference,
   getProxyPreferenceSignature,
@@ -24,6 +25,7 @@ import {
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { enableSystemCaForCurrentProcess } from './core/trustedCertificates';
 import { syncBuiltinModelProvider } from './cowork/builtinModelProvider';
+import { BUILTIN_MODEL_PROVIDER_CONFIG } from './cowork/builtinModelProviderConfig';
 import {
   resolveAllEnabledProviderConfigs,
   resolveRawApiConfig,
@@ -95,6 +97,10 @@ import {
 } from './plugins';
 
 const outboundHeaderProxy = new OutboundHeaderProxy();
+const builtinModelForcedProxyBaseUrls =
+  BUILTIN_MODEL_PROVIDER_CONFIG.enabled && isLoopbackBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl)
+    ? [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl]
+    : [];
 
 // 设置应用程序名称
 app.setName(APP_NAME);
@@ -362,9 +368,18 @@ const bindOpenClawGatewayPortProxyBypass = (): void => {
   const manager = getOpenClawEngineManager();
   manager.setGatewayPortListener(port => {
     if (port) {
-      outboundHeaderProxy.setProxyBypassEntries([`127.0.0.1:${port}`]);
+      const bypassEntries = [`127.0.0.1:${port}`];
+      setProcessProxyRouting({
+        bypassEntries,
+        forcedBaseUrls: builtinModelForcedProxyBaseUrls,
+      });
+      outboundHeaderProxy.setProxyBypassEntries(bypassEntries);
       return;
     }
+    setProcessProxyRouting({
+      bypassEntries: [],
+      forcedBaseUrls: builtinModelForcedProxyBaseUrls,
+    });
     outboundHeaderProxy.setProxyBypassEntries([]);
   });
   openClawGatewayPortProxyBypassBound = true;
@@ -920,6 +935,13 @@ if (!gotTheLock) {
     if (!startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
+
+    // The Gateway snapshots process.env when it starts, so restore the saved
+    // proxy preference and routing rules before launching it.
+    bindOpenClawGatewayPortProxyBypass();
+    const appConfig = getStore().get<AppConfigSettings>('app_config');
+    await applySystemProxyPreference(appConfig, outboundHeaderProxy);
+
     void ensureOpenClawRunningForCowork()
       .then(() => {
         try {
@@ -940,9 +962,6 @@ if (!gotTheLock) {
     } catch (error) {
       console.error('[Main] initApp: ensurePythonRuntimeReady threw:', error);
     }
-
-    const appConfig = getStore().get<AppConfigSettings>('app_config');
-    await applySystemProxyPreference(appConfig, outboundHeaderProxy);
 
     // 设置安全策略
     registerContentSecurityPolicy({
@@ -994,7 +1013,8 @@ if (!gotTheLock) {
         : lastProxyPreference;
       const currentProxyPreference = getProxyPreferenceSignature(newConfig);
       if (currentProxyPreference !== previousProxyPreference) {
-        void applySystemProxyPreference(newConfig, outboundHeaderProxy).then(() => {
+        void applySystemProxyPreference(newConfig, outboundHeaderProxy).then(isLatest => {
+          if (!isLatest) return;
           if (getOpenClawEngineManager().getStatus().phase === 'running') {
             // Dispose the adapter's client before restarting the Gateway. Otherwise the
             // old socket closes asynchronously and leaves gatewayReadyPromise rejected,
