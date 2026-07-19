@@ -9,7 +9,10 @@ import {
 } from '../../../shared/slashCommands';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../../cowork/providerApiConfig';
-import { SessionTitleGenerator } from '../../cowork/sessionTitleGenerator';
+import {
+  type SessionTitleFetch,
+  SessionTitleGenerator,
+} from '../../cowork/sessionTitleGenerator';
 import type {
   CoworkExecutionMode,
   CoworkMessage,
@@ -248,7 +251,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   agentTimeoutSeconds = OPENCLAW_AGENT_TIMEOUT_SECONDS;
 
-  constructor(store: CoworkStore, engineManager: OpenClawEngineManager) {
+  constructor(
+    store: CoworkStore,
+    engineManager: OpenClawEngineManager,
+    titleFetch?: SessionTitleFetch,
+  ) {
     super();
     this.store = store;
     this.engineManager = engineManager;
@@ -287,6 +294,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     this.titleGenerator = new SessionTitleGenerator({
       resolveApiConfig: () => resolveRawApiConfig(),
+      fetch: titleFetch,
     });
     this.sessionRpc = new SessionRpc({
       getGatewayClient: () => this.gatewayClient,

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -46,6 +47,45 @@ const writeUserInfo = (content: string): string => {
   fs.writeFileSync(userInfoPath, content);
   return userInfoPath;
 };
+
+test('sends explicit proxy fetches through the configured proxy endpoint', async () => {
+  let receivedUrl = '';
+  let receivedBody = '';
+  const proxyServer = http.createServer((request, response) => {
+    receivedUrl = request.url || '';
+    request.on('data', chunk => {
+      receivedBody += chunk.toString();
+    });
+    request.on('end', () => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ choices: [{ message: { content: '代理标题' } }] }));
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    proxyServer.once('error', reject);
+    proxyServer.listen(0, '127.0.0.1', resolve);
+  });
+
+  try {
+    const address = proxyServer.address();
+    if (!address || typeof address === 'string') throw new Error('Proxy server did not start.');
+    const outboundProxy = new OutboundHeaderProxy(
+      { enabled: true, baseUrlWhitelist: [], headerNames: [] },
+      async () => `http://127.0.0.1:${address.port}`,
+      'C:\\AppData\\JustDo\\huawei\\user_info.json',
+    );
+    const response = await outboundProxy.fetch('http://model.example/v1/chat/completions', {
+      method: 'POST',
+      body: '{"model":"title-model"}',
+    });
+
+    expect(response.status).toBe(200);
+    expect(receivedUrl).toBe('http://model.example/v1/chat/completions');
+    expect(receivedBody).toBe('{"model":"title-model"}');
+  } finally {
+    await new Promise<void>(resolve => proxyServer.close(() => resolve()));
+  }
+});
 
 const writePolicyConfig = (content: object): string => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-header-policy-'));

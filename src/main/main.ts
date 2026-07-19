@@ -457,6 +457,7 @@ const getCoworkEngineService = (): CoworkEngineService => {
     coworkEngineService = new CoworkEngineService({
       getCoworkStore,
       getOpenClawEngineManager,
+      fetchSessionTitle: (requestUrl, init) => outboundHeaderProxy.fetch(requestUrl, init),
     });
   }
   return coworkEngineService;

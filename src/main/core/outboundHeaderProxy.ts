@@ -1,8 +1,11 @@
 import { app, session } from 'electron';
 import fs from 'fs';
+import http from 'http';
 import { Proxy } from 'http-mitm-proxy';
+import https from 'https';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import path from 'path';
+import { ProxyAgent } from 'proxy-agent';
 
 import {
   getOutboundHeaderPolicyConfig,
@@ -350,6 +353,81 @@ const resolveConfiguredUpstreamProxy = async (requestUrl: string): Promise<strin
   return resolveSystemProxyUrl(requestUrl);
 };
 
+const fetchWithProxy = async (
+  requestUrl: string,
+  init: RequestInit | undefined,
+  proxyUrl: string,
+): Promise<Response> => {
+  const url = new URL(requestUrl);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Unsupported proxy fetch protocol: ${url.protocol}`);
+  }
+
+  const body = init?.body;
+  if (
+    body !== undefined &&
+    body !== null &&
+    typeof body !== 'string' &&
+    !ArrayBuffer.isView(body)
+  ) {
+    throw new Error('Proxy fetch only supports string and typed-array request bodies.');
+  }
+
+  const headers = Object.fromEntries(new Headers(init?.headers).entries());
+  const agent = new ProxyAgent({ getProxyForUrl: () => proxyUrl });
+  const transport = url.protocol === 'https:' ? https : http;
+
+  return new Promise<Response>((resolve, reject) => {
+    const request = transport.request(
+      url,
+      {
+        method: init?.method || 'GET',
+        headers,
+        agent,
+        signal: init?.signal ?? undefined,
+      },
+      response => {
+        const chunks: Buffer[] = [];
+        response.on('data', chunk =>
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+        );
+        response.on('error', error => {
+          agent.destroy();
+          reject(error);
+        });
+        response.on('end', () => {
+          const responseHeaders = new Headers();
+          for (const [name, value] of Object.entries(response.headers)) {
+            if (Array.isArray(value)) {
+              value.forEach(item => responseHeaders.append(name, item));
+            } else if (value !== undefined) {
+              responseHeaders.set(name, value);
+            }
+          }
+          const status = response.statusCode || 500;
+          const responseBody = [204, 205, 304].includes(status) ? null : Buffer.concat(chunks);
+          resolve(
+            new Response(responseBody, {
+              status,
+              statusText: response.statusMessage,
+              headers: responseHeaders,
+            }),
+          );
+          agent.destroy();
+        });
+      },
+    );
+    request.on('error', error => {
+      agent.destroy();
+      reject(error);
+    });
+    if (body !== undefined && body !== null) {
+      request.write(body);
+    }
+    request.end();
+  });
+};
+
 const setProxyAuthorizationHeader = (
   proxyUrl: URL,
   headers: Record<string, string | string[] | undefined>,
@@ -409,14 +487,18 @@ export class OutboundHeaderProxy {
   private originalFetch: typeof globalThis.fetch | null = null;
   private bypassEntries: readonly string[] = [];
   private readonly configuredPolicy: OutboundHeaderProxyConfig | null;
+  private readonly resolveUpstreamProxy: (targetUrl: string) => Promise<string | null>;
   private readonly userInfoPath: string;
 
   constructor(
     config?: OutboundHeaderProxyConfig,
-    _resolveUpstreamProxy?: (targetUrl: string) => Promise<string | null>,
+    resolveUpstreamProxy: (
+      targetUrl: string,
+    ) => Promise<string | null> = resolveConfiguredUpstreamProxy,
     userInfoPath = resolveOutboundHeaderUserInfoPath(),
   ) {
     this.configuredPolicy = config ? resolveOutboundHeaderProxyConfig(config) : null;
+    this.resolveUpstreamProxy = resolveUpstreamProxy;
     this.userInfoPath = userInfoPath;
     if (!config) {
       updateOutboundHeaderUserInfoCache(this.userInfoPath);
@@ -530,6 +612,27 @@ export class OutboundHeaderProxy {
     if (this.info) {
       applyOutboundProxyEnv(process.env, this.info, this.getConfig(), this.bypassEntries);
     }
+  }
+
+  async fetch(requestUrl: string, init?: RequestInit): Promise<Response> {
+    const config = this.getConfig();
+    let effectiveInit = init;
+    if (shouldApplyOutboundHeadersForRequest(config, requestUrl)) {
+      const headers = new Headers(init?.headers);
+      const headerValues = getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames);
+      for (const [name, value] of Object.entries(headerValues)) {
+        headers.set(name, value);
+      }
+      effectiveInit = { ...init, headers };
+    }
+
+    const proxyUrl = await this.resolveUpstreamProxy(requestUrl);
+    if (proxyUrl) {
+      return fetchWithProxy(requestUrl, effectiveInit, proxyUrl);
+    }
+
+    const directFetch = this.originalFetch ?? globalThis.fetch;
+    return directFetch(requestUrl, effectiveInit);
   }
 
   private registerElectronHeaderInjection(): void {

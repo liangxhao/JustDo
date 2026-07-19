@@ -18,9 +18,11 @@ export type SessionTitleApiConfig = {
   model: string;
 };
 
+export type SessionTitleFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
 export interface SessionTitleGeneratorCallbacks {
   resolveApiConfig(): { config: SessionTitleApiConfig | null; error?: string };
-  fetch?: typeof fetch;
+  fetch?: SessionTitleFetch;
 }
 
 export class SessionTitleGenerator {

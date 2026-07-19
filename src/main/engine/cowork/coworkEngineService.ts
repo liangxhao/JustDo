@@ -1,3 +1,4 @@
+import type { SessionTitleFetch } from '../../cowork/sessionTitleGenerator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { OpenClawRuntimeAdapter } from '../openclaw/openclawRuntimeAdapter';
@@ -6,6 +7,7 @@ import { CoworkEngineRouter } from './coworkEngineRouter';
 type CoworkEngineServiceDeps = {
   getCoworkStore: () => CoworkStore;
   getOpenClawEngineManager: () => OpenClawEngineManager;
+  fetchSessionTitle?: SessionTitleFetch;
 };
 
 export class CoworkEngineService {
@@ -31,6 +33,7 @@ export class CoworkEngineService {
         this.runtimeAdapter = new OpenClawRuntimeAdapter(
           this.deps.getCoworkStore(),
           this.deps.getOpenClawEngineManager(),
+          this.deps.fetchSessionTitle,
         );
       }
       this.router = new CoworkEngineRouter({
