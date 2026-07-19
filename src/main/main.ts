@@ -87,6 +87,7 @@ import {
 import { justDoSlashCommandPolicy } from './openclaw/slashCommands/slashCommandPolicies';
 import {
   createPluginMarketplaceService,
+  discoverExtensionMcpServers,
   McpServices,
   OpenClawExtensionHostLifecycle,
   OpenClawExtensionImportService,
@@ -727,6 +728,7 @@ if (!gotTheLock) {
     syncConfig: syncMcpConfig,
     probeServer: probeMcpServer,
     readResource: readMcpResource,
+    listExtensionServers: () => discoverExtensionMcpServers(getOpenClawEngineManager()),
     installationService: pluginInstallationService,
   });
   registerCoworkSessionExecutionHandlers({

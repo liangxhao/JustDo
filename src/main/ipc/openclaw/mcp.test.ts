@@ -33,7 +33,10 @@ const createStore = () => ({
   setEnabled: vi.fn(),
 });
 
-const register = (store: ReturnType<typeof createStore>) => {
+const register = (
+  store: ReturnType<typeof createStore>,
+  listExtensionServers = vi.fn(async () => []),
+) => {
   const installationService = new PluginInstallationService();
   registerMcpHandlers({
     getStore: () => store as unknown as McpStore,
@@ -41,9 +44,62 @@ const register = (store: ReturnType<typeof createStore>) => {
     probeServer: vi.fn(),
     readResource: vi.fn(),
     installationService,
+    listExtensionServers,
   });
   return installationService;
 };
+
+test('lists user-configured MCP servers without waiting for extension discovery', async () => {
+  const store = createStore();
+  const listExtensionServers = vi.fn(() => new Promise<never>(() => undefined));
+  register(store, listExtensionServers);
+
+  expect(handlers.get('mcp:list')?.()).toEqual({
+    success: true,
+    servers: store.listServers(),
+  });
+  expect(listExtensionServers).not.toHaveBeenCalled();
+});
+
+test('lists extension-provided MCP servers through a separate handler', async () => {
+  const store = createStore();
+  const extensionServers = [
+    {
+      id: 'extension:calendar:calendar',
+      name: 'calendar',
+      providerId: 'calendar',
+      providerName: 'Calendar',
+      providerDescription: '',
+      enabled: true,
+      supported: true,
+    },
+  ];
+  register(store, vi.fn(async () => extensionServers));
+
+  await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toEqual({
+    success: true,
+    extensionServers,
+  });
+});
+
+test('keeps extension discovery failure isolated from the user-configured list', async () => {
+  const store = createStore();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  register(store, vi.fn(async () => Promise.reject(new Error('discovery failed'))));
+
+  await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toEqual({
+    success: false,
+    extensionServers: [],
+  });
+  expect(handlers.get('mcp:list')?.()).toEqual({
+    success: true,
+    servers: store.listServers(),
+  });
+  expect(warn).toHaveBeenCalledWith(
+    '[OpenClawMcp] Failed to discover extension-provided MCP servers:',
+    'discovery failed',
+  );
+});
 
 beforeEach(() => {
   handlers.clear();

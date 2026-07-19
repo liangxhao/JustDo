@@ -1,3 +1,4 @@
+export { discoverExtensionMcpServers } from './extensionMcpDiscovery';
 export { McpConfigSyncService } from './mcpConfigSyncService';
 export type {
   McpProbePrompt,

@@ -8,6 +8,7 @@ import { mcpRegistry } from '@/features/plugins/data/mcpRegistry';
 import { mcpService } from '@/features/plugins/services/mcpService';
 import { setMcpServers } from '@/features/plugins/slices/mcpSlice';
 import {
+  ExtensionProvidedMcpServer,
   McpProbePrompt,
   McpProbeResource,
   McpProbeResult,
@@ -128,6 +129,7 @@ const McpManager: React.FC = () => {
   const servers = useSelector((state: RootState) => state.mcp.servers);
 
   const [activeTab, setActiveTab] = useState<McpTab>('installed');
+  const [extensionServers, setExtensionServers] = useState<ExtensionProvidedMcpServer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [actionError, setActionError] = useState('');
   const [pendingDelete, setPendingDelete] = useState<McpServerConfig | null>(null);
@@ -163,6 +165,10 @@ const McpManager: React.FC = () => {
       const loaded = await mcpService.loadServers();
       if (!isActive) return;
       dispatch(setMcpServers(loaded));
+
+      const loadedExtensionServers = await mcpService.loadExtensionServers();
+      if (!isActive) return;
+      setExtensionServers(loadedExtensionServers);
     };
     loadServers();
     return () => {
@@ -229,6 +235,17 @@ const McpManager: React.FC = () => {
         getInstalledDescription(server).toLowerCase().includes(query),
     );
   }, [servers, searchQuery, getInstalledDescription]);
+
+  const filteredExtensionServers = useMemo(() => {
+    const query = searchQuery.toLowerCase();
+    if (!query) return extensionServers;
+    return extensionServers.filter(
+      server =>
+        server.name.toLowerCase().includes(query) ||
+        server.providerName.toLowerCase().includes(query) ||
+        server.providerDescription.toLowerCase().includes(query),
+    );
+  }, [extensionServers, searchQuery]);
 
   const handleToggleEnabled = async (serverId: string) => {
     const targetServer = servers.find(s => s.id === serverId);
@@ -602,9 +619,9 @@ const McpManager: React.FC = () => {
               className={tabClass('installed')}
             >
               {i18nService.t('mcpInstalled')}
-              {servers.length > 0 && (
+              {servers.length + extensionServers.length > 0 && (
                 <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-surface-raised">
-                  {servers.length}
+                  {servers.length + extensionServers.length}
                 </span>
               )}
               <div className={tabIndicatorClass('installed')} />
@@ -656,114 +673,179 @@ const McpManager: React.FC = () => {
                 <span>{i18nService.t('mcpTestAll')}</span>
               </button>
             </div>
-            {filteredInstalled.length === 0 ? (
+            {filteredInstalled.length === 0 && filteredExtensionServers.length === 0 ? (
               <div className="py-12 text-center text-sm text-secondary">
                 {i18nService.t('mcpNoInstalledServers')}
               </div>
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(16rem,100%),1fr))] items-start gap-3">
-                {filteredInstalled.map(server => {
-                  const registryEntry = getRegistryEntryForServer(server);
-                  const installedDescription = getInstalledDescription(server);
-                  const statusLabel = getServerStatusLabel(server);
-                  const statusClass = getServerStatusClass(server);
-                  return (
-                    <div
-                      key={server.id}
-                      className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-7 h-7 rounded-lg bg-surface flex items-center justify-center flex-shrink-0">
-                            <ConnectorIcon className="h-4 w-4 text-secondary" />
-                          </div>
-                          <span className="text-sm font-medium text-foreground truncate">
-                            {server.name}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditForm(server)}
-                            className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors"
-                            title={i18nService.t('editMcpServer')}
-                          >
-                            <PencilIcon className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRequestDelete(server)}
-                            className="p-1 rounded-lg text-secondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                            title={i18nService.t('deleteMcpServer')}
-                          >
-                            <TrashIcon className="h-3.5 w-3.5" />
-                          </button>
-                          <div
-                            className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
-                              server.enabled ? 'bg-primary' : 'bg-border'
-                            }`}
-                            onClick={() => handleToggleEnabled(server.id)}
-                          >
-                            <div
-                              className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
-                                server.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-                              }`}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <Tooltip
-                        content={installedDescription}
-                        position="bottom"
-                        maxWidth="360px"
-                        className="block w-full"
-                      >
-                        <p className="line-clamp-2 text-xs text-secondary">
-                          {installedDescription}
-                        </p>
-                      </Tooltip>
-
-                      <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-secondary">
-                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                          <span
-                            className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
-                          >
-                            {server.transportType}
-                          </span>
-                          {registryEntry?.requiredEnvKeys &&
-                            registryEntry.requiredEnvKeys.length > 0 && (
-                              <>
-                                <span>·</span>
-                                <span className="text-amber-500 dark:text-amber-400">
-                                  {registryEntry.requiredEnvKeys.length} key
-                                  {registryEntry.requiredEnvKeys.length > 1 ? 's' : ''}
-                                </span>
-                              </>
-                            )}
-                          {statusLabel && statusClass && (
-                            <span
-                              title={probeResults[server.id]?.error}
-                              className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${statusClass}`}
-                            >
-                              {statusLabel}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleProbeServer(server, true)}
-                          disabled={probingServerIds.has(server.id)}
-                          className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-wait disabled:opacity-60"
-                          title={i18nService.t('mcpTestServer')}
-                        >
-                          <ClockIcon className="h-3.5 w-3.5" />
-                          <span>{i18nService.t('mcpTestShort')}</span>
-                        </button>
-                      </div>
+              <div className="space-y-6">
+                {filteredInstalled.length > 0 && (
+                  <section className="space-y-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        {i18nService.t('mcpGroupUserLabel')}
+                      </h3>
+                      <p className="mt-0.5 text-xs text-secondary">
+                        {i18nService.t('mcpGroupUserDescription')}
+                      </p>
                     </div>
-                  );
-                })}
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(16rem,100%),1fr))] items-start gap-3">
+                      {filteredInstalled.map(server => {
+                        const registryEntry = getRegistryEntryForServer(server);
+                        const installedDescription = getInstalledDescription(server);
+                        const statusLabel = getServerStatusLabel(server);
+                        const statusClass = getServerStatusClass(server);
+                        return (
+                          <div
+                            key={server.id}
+                            className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
+                          >
+                            <div className="flex items-start justify-between mb-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="w-7 h-7 rounded-lg bg-surface flex items-center justify-center flex-shrink-0">
+                                  <ConnectorIcon className="h-4 w-4 text-secondary" />
+                                </div>
+                                <span className="text-sm font-medium text-foreground truncate">
+                                  {server.name}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditForm(server)}
+                                  className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors"
+                                  title={i18nService.t('editMcpServer')}
+                                >
+                                  <PencilIcon className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRequestDelete(server)}
+                                  className="p-1 rounded-lg text-secondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                                  title={i18nService.t('deleteMcpServer')}
+                                >
+                                  <TrashIcon className="h-3.5 w-3.5" />
+                                </button>
+                                <div
+                                  className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
+                                    server.enabled ? 'bg-primary' : 'bg-border'
+                                  }`}
+                                  onClick={() => handleToggleEnabled(server.id)}
+                                >
+                                  <div
+                                    className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+                                      server.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                                    }`}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <Tooltip
+                              content={installedDescription}
+                              position="bottom"
+                              maxWidth="360px"
+                              className="block w-full"
+                            >
+                              <p className="line-clamp-2 text-xs text-secondary">
+                                {installedDescription}
+                              </p>
+                            </Tooltip>
+
+                            <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-secondary">
+                              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                <span
+                                  className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
+                                >
+                                  {server.transportType}
+                                </span>
+                                {registryEntry?.requiredEnvKeys &&
+                                  registryEntry.requiredEnvKeys.length > 0 && (
+                                    <>
+                                      <span>·</span>
+                                      <span className="text-amber-500 dark:text-amber-400">
+                                        {registryEntry.requiredEnvKeys.length} key
+                                        {registryEntry.requiredEnvKeys.length > 1 ? 's' : ''}
+                                      </span>
+                                    </>
+                                  )}
+                                {statusLabel && statusClass && (
+                                  <span
+                                    title={probeResults[server.id]?.error}
+                                    className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${statusClass}`}
+                                  >
+                                    {statusLabel}
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleProbeServer(server, true)}
+                                disabled={probingServerIds.has(server.id)}
+                                className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-wait disabled:opacity-60"
+                                title={i18nService.t('mcpTestServer')}
+                              >
+                                <ClockIcon className="h-3.5 w-3.5" />
+                                <span>{i18nService.t('mcpTestShort')}</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
+                {filteredExtensionServers.length > 0 && (
+                  <section className="space-y-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">
+                        {i18nService.t('mcpGroupExtensionLabel')}
+                      </h3>
+                      <p className="mt-0.5 text-xs text-secondary">
+                        {i18nService.t('mcpGroupExtensionDescription')}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(16rem,100%),1fr))] items-start gap-3">
+                      {filteredExtensionServers.map(server => (
+                        <div
+                          key={server.id}
+                          className="rounded-xl border border-border bg-surface p-3"
+                        >
+                          <div className="flex items-start gap-2">
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-raised">
+                              <ConnectorIcon className="h-4 w-4 text-secondary" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium text-foreground">
+                                {server.name}
+                              </div>
+                              <div className="mt-1 truncate text-xs text-secondary">
+                                {i18nService
+                                  .t('mcpProvidedByExtension')
+                                  .replace('{name}', server.providerName)}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex items-center gap-1.5 text-[10px]">
+                            <span className="rounded bg-purple-500/10 px-1.5 py-0.5 font-medium text-purple-600 dark:text-purple-400">
+                              {i18nService.t('mcpExtensionBadge')}
+                            </span>
+                            {!server.enabled && (
+                              <span className="rounded bg-surface-raised px-1.5 py-0.5 font-medium text-secondary">
+                                {i18nService.t('mcpExtensionDisabled')}
+                              </span>
+                            )}
+                            {!server.supported && (
+                              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
+                                {i18nService.t('mcpExtensionUnsupported')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
               </div>
             )}
           </div>

@@ -411,7 +411,16 @@ interface IElectronAPI {
     ) => Promise<import('@shared/slashCommands').ListSlashCommandsResult>;
   };
   mcp: {
-    list: () => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+    list: () => Promise<{
+      success: boolean;
+      servers?: McpServerConfigIPC[];
+      error?: string;
+    }>;
+    listExtensionServers: () => Promise<{
+      success: boolean;
+      extensionServers?: import('@shared/openclaw/mcp').ExtensionProvidedMcpServer[];
+      error?: string;
+    }>;
     create: (
       data: any,
     ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;

@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),
+    listExtensionServers: () => ipcRenderer.invoke('mcp:listExtensionServers'),
     create: (data: any) => ipcRenderer.invoke('mcp:create', data),
     update: (id: string, data: any) => ipcRenderer.invoke('mcp:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),

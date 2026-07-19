@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 
+import type { ExtensionProvidedMcpServer } from '../../../shared/openclaw/mcp';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
@@ -16,6 +17,7 @@ interface McpHandlerDependencies {
   probeServer: (id: string) => Promise<McpProbeResult>;
   readResource: (id: string, uri: string) => Promise<McpReadResourceResult>;
   installationService: PluginInstallationService;
+  listExtensionServers: () => Promise<ExtensionProvidedMcpServer[]>;
 }
 
 const syncMcpConfigInBackground = (syncConfig: McpHandlerDependencies['syncConfig']): void => {
@@ -30,6 +32,7 @@ export const registerMcpHandlers = ({
   probeServer,
   readResource,
   installationService,
+  listExtensionServers,
 }: McpHandlerDependencies): void => {
   installationService.registerInstaller({
     kind: PluginKind.MCP,
@@ -93,6 +96,18 @@ export const registerMcpHandlers = ({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to list MCP servers',
       };
+    }
+  });
+
+  ipcMain.handle('mcp:listExtensionServers', async () => {
+    try {
+      return { success: true, extensionServers: await listExtensionServers() };
+    } catch (error) {
+      console.warn(
+        '[OpenClawMcp] Failed to discover extension-provided MCP servers:',
+        error instanceof Error ? error.message : String(error),
+      );
+      return { success: false, extensionServers: [] };
     }
   });
 

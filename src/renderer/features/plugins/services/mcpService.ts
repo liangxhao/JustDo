@@ -1,4 +1,5 @@
 import {
+  ExtensionProvidedMcpServer,
   McpProbeResult,
   McpReadResourceResult,
   McpServerConfig,
@@ -28,6 +29,16 @@ class McpService {
       console.error('Failed to load MCP servers:', error);
       this.servers = [];
       return this.servers;
+    }
+  }
+
+  async loadExtensionServers(): Promise<ExtensionProvidedMcpServer[]> {
+    try {
+      const result = await window.electron.mcp.listExtensionServers();
+      return result.success ? (result.extensionServers ?? []) : [];
+    } catch (error) {
+      console.error('Failed to load extension-provided MCP servers:', error);
+      return [];
     }
   }
 

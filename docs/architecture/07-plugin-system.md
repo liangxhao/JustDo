@@ -137,7 +137,9 @@ sequenceDiagram
 
 ## MCP
 
-MCP server 定义存放在 SQLite `mcp_servers`。`McpStore` 是本地配置权威，支持 stdio/HTTP transport、启用状态和 transport config。创建、更新、删除或切换启用状态后，`McpConfigSyncService` 把已启用 server 写入 OpenClaw 配置。
+MCP server 定义存放在 SQLite `mcp_servers`。`McpStore` 是用户配置的本地权威，支持 stdio/HTTP transport、启用状态和 transport config。创建、更新、删除或切换启用状态后，`McpConfigSyncService` 把已启用 server 写入 OpenClaw 配置。
+
+MCP 的已安装视图同时展示“用户配置”和“扩展提供”两组。`mcp:list` 先独立返回 SQLite 用户配置，不等待扩展发现。扩展 MCP 由 Main process 通过 OpenClaw `plugins inspect --all --json` 读取已安装 Bundle 的 MCP 清单，再由独立 IPC 异步返回，不复制到 SQLite。Renderer 对这些条目只读展示，标注所属扩展及其启用状态；启停、更新和删除仍由 Extension 生命周期管理。扩展清单发现失败不影响用户配置展示。
 
 MCP probe 和 resource read 在 Main process 执行。Renderer 不启动子进程、不直接请求 MCP endpoint，也不读取 server credential。配置同步通过 `mcp:config:syncStart` 和 `mcp:config:syncDone` 广播进度。
 

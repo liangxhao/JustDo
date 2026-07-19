@@ -19,6 +19,8 @@ export interface McpServerConfig {
   updatedAt: number;
 }
 
+export type { ExtensionProvidedMcpServer } from '@shared/openclaw/mcp';
+
 export interface McpServerFormData {
   name: string;
   description?: string;
