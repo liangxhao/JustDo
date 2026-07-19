@@ -51,7 +51,7 @@ Preload 暴露：
 - `skills.importPath(sourcePath)`
 - `skills.search({ query?, limit? })`
 - `skills.detail({ id })`
-- `skills.delete(id)`
+- `skills.delete({ id, source })`
 
 ## Marketplace 边界
 
@@ -67,6 +67,8 @@ Renderer 不直接访问 marketplace server。
 ## 用户导入 Skills
 
 用户可从本地目录或 `.zip`、`.tar`、`.tar.gz`、`.tgz` 压缩包导入 skill。压缩包先解压到临时目录，导入完成后清理；压缩包内容可直接是 skill，也可包含单层 skill 根目录。导入的 skill 文件放在 Gateway state 下的用户 skill 目录。`openclawSkillFiles.ts` 只负责复制、删除和文件级操作，不维护 Gateway 的 skill truth。Gateway 仍负责发现、启用、禁用和运行。
+
+Skill 卡片仅对用户拥有的 `workspace`、`agents-project`、`agents-personal` 和 `managed` 来源提供删除。主进程按 `id + source` 重新匹配 Gateway 当前状态，并只删除其返回的 `skills/<skill-id>/` 目录；bundled、extra-dir 和 unknown 来源不提供删除。
 
 ## 维护规则
 

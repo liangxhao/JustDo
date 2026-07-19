@@ -37,7 +37,8 @@ contextBridge.exposeInMainWorld('electron', {
     search: (options?: { query?: string; limit?: number }) =>
       ipcRenderer.invoke('skills:search', options || {}),
     detail: (options: { id: string }) => ipcRenderer.invoke('skills:detail', options),
-    delete: (id: string) => ipcRenderer.invoke('skills:delete', id),
+    delete: (options: { id: string; source?: string }) =>
+      ipcRenderer.invoke('skills:delete', options),
   },
   extensions: {
     list: () => ipcRenderer.invoke(ExtensionIpc.List),

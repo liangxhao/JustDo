@@ -181,6 +181,26 @@ export class OpenClawSkillFiles {
     if (!fs.existsSync(targetDir)) {
       throw new Error('Only locally imported skills can be deleted');
     }
+    this.deleteDirectory(targetDir);
+  }
+
+  deleteDirectory(skillDirectory: string): void {
+    const targetDir = path.resolve(skillDirectory);
+    const parentDir = path.dirname(targetDir);
+    const relativeToManaged = path.relative(path.resolve(this.managedSkillsDir), targetDir);
+    const isDirectManagedChild =
+      Boolean(relativeToManaged) &&
+      !relativeToManaged.startsWith('..') &&
+      !path.isAbsolute(relativeToManaged) &&
+      path.dirname(relativeToManaged) === '.';
+    const isUserSkillsChild = path.basename(parentDir).toLowerCase() === 'skills';
+    const hasSkillManifest = fs.existsSync(path.join(targetDir, SKILL_FILE_NAME));
+    if (
+      targetDir === path.parse(targetDir).root ||
+      (!isDirectManagedChild && (!isUserSkillsChild || !hasSkillManifest))
+    ) {
+      throw new Error('Only user-owned skill directories can be deleted');
+    }
     fs.rmSync(targetDir, { recursive: true, force: true });
   }
 }

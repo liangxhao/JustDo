@@ -1,6 +1,10 @@
 import { expect, test } from 'vitest';
 
-import { groupSkillsBySource, SkillGroupId } from '@/features/plugins/components/skills/skillGroups';
+import {
+  canDeleteSkill,
+  groupSkillsBySource,
+  SkillGroupId,
+} from '@/features/plugins/components/skills/skillGroups';
 import { Skill } from '@/features/plugins/types/skill';
 
 const createSkill = (id: string, source: Skill['source']): Skill => ({
@@ -41,4 +45,15 @@ test('puts missing and unrecognized sources in the unknown group', () => {
   expect(groups).toHaveLength(1);
   expect(groups[0].id).toBe(SkillGroupId.UNKNOWN);
   expect(groups[0].skills.map(skill => skill.id)).toEqual(['missing', 'future']);
+});
+
+test('allows deletion only for user-owned, non-built-in skills', () => {
+  expect(canDeleteSkill(createSkill('managed', 'openclaw-managed'))).toBe(true);
+  expect(canDeleteSkill(createSkill('workspace', 'workspace'))).toBe(true);
+  expect(canDeleteSkill(createSkill('project', 'agents-project'))).toBe(true);
+  expect(canDeleteSkill(createSkill('personal', 'agents-personal'))).toBe(true);
+  expect(canDeleteSkill(createSkill('extra', 'extra-dir'))).toBe(false);
+  expect(canDeleteSkill({ ...createSkill('bundled', 'openclaw-managed'), isBuiltIn: true })).toBe(
+    false,
+  );
 });

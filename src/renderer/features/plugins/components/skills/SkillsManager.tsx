@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import {
+  canDeleteSkill,
   groupSkillsBySource,
   SkillGroupId,
 } from '@/features/plugins/components/skills/skillGroups';
@@ -178,7 +179,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     }
   };
 
-  // Skill deletion not supported - handled via error message
   const handleCancelDeleteSkill = () => {
     setSkillPendingDelete(null);
   };
@@ -192,25 +192,15 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   };
 
   const handleDeleteClick = (skill: Skill) => {
+    if (!canDeleteSkill(skill)) return;
+    setSelectedSkill(null);
     setSkillPendingDelete(skill);
   };
 
   const handleConfirmDelete = async () => {
     if (!skillPendingDelete) return;
 
-    // If built-in skill, show manual delete hint and open folder
-    if (skillPendingDelete.isBuiltIn) {
-      const skillPath = skillPendingDelete.skillPath;
-      const lastSep = Math.max(skillPath.lastIndexOf('/'), skillPath.lastIndexOf('\\'));
-      const skillDir = lastSep >= 0 ? skillPath.substring(0, lastSep) : skillPath;
-      await window.electron.shell.openPath(skillDir);
-      setSkillActionError(i18nService.t('skillBuiltInDeleteHint'));
-      setSkillPendingDelete(null);
-      return;
-    }
-
-    // Try to delete managed skill
-    const result = await skillService.deleteSkill(skillPendingDelete.id);
+    const result = await skillService.deleteSkill(skillPendingDelete.id, skillPendingDelete.source);
     if (result.success && result.skills) {
       dispatch(setSkills(result.skills));
       // Show success message and close detail modal
@@ -448,6 +438,19 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                             <div className="flex items-center gap-2 flex-shrink-0">
                               {/* Status badge */}
                               {renderSkillStatus(skill)}
+                              {!readOnly && !gatewayOffline && canDeleteSkill(skill) && (
+                                <button
+                                  type="button"
+                                  title={i18nService.t('deleteSkill')}
+                                  onClick={event => {
+                                    event.stopPropagation();
+                                    handleDeleteClick(skill);
+                                  }}
+                                  className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
+                                >
+                                  <TrashIcon className="h-4 w-4" />
+                                </button>
+                              )}
                               {/* Toggle */}
                               <div
                                 className={`w-9 h-5 rounded-full flex items-center transition-colors flex-shrink-0 ${
@@ -582,44 +585,15 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               )}
             </div>
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleOpenFolder(selectedSkill)}
-                  className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-                  title={i18nService.t('openFolder')}
-                >
-                  <FolderIcon className="h-3.5 w-3.5" />
-                  {i18nService.t('openFolder')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteClick(selectedSkill)}
-                  className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg text-red-500 hover:bg-red-500/10 transition-colors"
-                  title={i18nService.t('delete')}
-                >
-                  <TrashIcon className="h-3.5 w-3.5" />
-                  {i18nService.t('delete')}
-                </button>
-              </div>
-              <div
-                className={`w-9 h-5 rounded-full flex items-center transition-colors flex-shrink-0 ${
-                  readOnly || gatewayOffline ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                } ${selectedSkill.enabled ? 'bg-primary' : 'bg-border'}`}
-                onClick={() => {
-                  if (readOnly || gatewayOffline) return;
-                  handleToggleSkill(selectedSkill.id);
-                  setSelectedSkill({ ...selectedSkill, enabled: !selectedSkill.enabled });
-                }}
-              >
-                <div
-                  className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
-                    selectedSkill.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-                  }`}
-                />
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={() => handleOpenFolder(selectedSkill)}
+              className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
+              title={i18nService.t('openFolder')}
+            >
+              <FolderIcon className="h-3.5 w-3.5" />
+              {i18nService.t('openFolder')}
+            </button>
           </Modal>,
           document.body,
         )}
@@ -680,9 +654,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               {i18nService.t('deleteSkill')}
             </div>
             <p className="mt-2 text-sm text-secondary">
-              {skillPendingDelete.isBuiltIn
-                ? i18nService.t('skillBuiltInDeleteHint')
-                : i18nService.t('skillDeleteConfirm').replace('{name}', skillPendingDelete.name)}
+              {i18nService.t('skillDeleteConfirm').replace('{name}', skillPendingDelete.name)}
             </p>
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
@@ -695,15 +667,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               <button
                 type="button"
                 onClick={handleConfirmDelete}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                  skillPendingDelete.isBuiltIn
-                    ? 'bg-surface-raised text-foreground hover:bg-border'
-                    : 'bg-red-500 text-white hover:bg-red-600'
-                }`}
+                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
               >
-                {skillPendingDelete.isBuiltIn
-                  ? i18nService.t('openFolder')
-                  : i18nService.t('delete')}
+                {i18nService.t('delete')}
               </button>
             </div>
           </Modal>,

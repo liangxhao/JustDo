@@ -30,6 +30,30 @@ const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
   homepage: entry.homepage,
 });
 
+const DELETABLE_SKILL_SOURCES = new Set<GatewaySkillEntry['source']>([
+  'workspace',
+  'agents-project',
+  'agents-personal',
+  'managed',
+]);
+
+const normalizeRequestedSkillSource = (
+  source: unknown,
+): GatewaySkillEntry['source'] | undefined => {
+  if (typeof source !== 'string') return undefined;
+  const aliases: Record<string, GatewaySkillEntry['source']> = {
+    workspace: 'workspace',
+    'openclaw-workspace': 'workspace',
+    'agents-project': 'agents-project',
+    'agents-skills-project': 'agents-project',
+    'agents-personal': 'agents-personal',
+    'agents-skills-personal': 'agents-personal',
+    managed: 'managed',
+    'openclaw-managed': 'managed',
+  };
+  return aliases[source];
+};
+
 export const registerSkillHandlers = ({
   skillService,
   getSkillFiles,
@@ -177,11 +201,25 @@ export const registerSkillHandlers = ({
     }
   });
 
-  ipcMain.handle('skills:delete', async (_event, id: string) => {
+  ipcMain.handle('skills:delete', async (_event, request: { id?: unknown; source?: unknown }) => {
     try {
-      getSkillFiles().delete(id);
-      const status = await skillService.getStatus();
-      return { success: true, skills: status.skills.map(mapGatewaySkill) };
+      const skillId = typeof request?.id === 'string' ? request.id.trim() : '';
+      const requestedSource = normalizeRequestedSkillSource(request?.source);
+      if (!skillId || !requestedSource) {
+        return { success: false, error: 'Skill id and source are required' };
+      }
+
+      const currentStatus = await skillService.getStatus();
+      const skill = currentStatus.skills.find(
+        entry => entry.skillKey === skillId && entry.source === requestedSource,
+      );
+      if (!skill || skill.bundled || !DELETABLE_SKILL_SOURCES.has(skill.source)) {
+        return { success: false, error: 'Only user-owned skills can be deleted' };
+      }
+
+      getSkillFiles().deleteDirectory(skill.baseDir);
+      const updatedStatus = await skillService.getStatus();
+      return { success: true, skills: updatedStatus.skills.map(mapGatewaySkill) };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';
       return { success: false, error: errorMsg };

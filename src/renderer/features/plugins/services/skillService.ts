@@ -69,9 +69,12 @@ class SkillService {
     }
   }
 
-  async deleteSkill(id: string): Promise<{ success: boolean; skills?: Skill[]; error?: string }> {
+  async deleteSkill(
+    id: string,
+    source?: Skill['source'],
+  ): Promise<{ success: boolean; skills?: Skill[]; error?: string }> {
     try {
-      const result = await window.electron.skills.delete(id);
+      const result = await window.electron.skills.delete({ id, source });
       if (result.success && result.skills) {
         this.skills = result.skills;
         return { success: true, skills: this.skills };

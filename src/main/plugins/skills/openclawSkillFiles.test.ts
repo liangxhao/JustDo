@@ -98,6 +98,22 @@ test('rejects unsupported archive formats', async () => {
   expect(result.error).toContain('supported archive');
 });
 
+test('deletes a user-owned skill directory outside the managed skill root', () => {
+  const root = makeTempDir();
+  const managed = path.join(root, 'managed', 'skills');
+  const skillDir = path.join(root, 'workspace', 'skills', 'project-skill');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: project-skill\n---\n');
+  const files = new OpenClawSkillFiles(managed);
+
+  files.deleteDirectory(skillDir);
+
+  expect(fs.existsSync(skillDir)).toBe(false);
+  expect(() => files.deleteDirectory(path.join(root, 'workspace'))).toThrow(
+    'Only user-owned skill directories can be deleted',
+  );
+});
+
 test('deletes only a direct child of the managed skills directory', () => {
   const managed = makeTempDir();
   const skillDir = path.join(managed, 'demo');

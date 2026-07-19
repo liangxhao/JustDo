@@ -363,7 +363,10 @@ interface IElectronAPI {
       error?: string;
       gatewayOffline?: boolean;
     }>;
-    delete: (id: string) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
+    delete: (options: {
+      id: string;
+      source?: string;
+    }) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
   };
   extensions: {
     list: () => Promise<{

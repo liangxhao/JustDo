@@ -18,6 +18,17 @@ export interface SkillGroup {
   skills: Skill[];
 }
 
+const deletableSkillSources = new Set<SkillSource>([
+  'workspace',
+  'openclaw-workspace',
+  'agents-project',
+  'agents-skills-project',
+  'agents-personal',
+  'agents-skills-personal',
+  'managed',
+  'openclaw-managed',
+]);
+
 const sourceToGroup: Record<SkillSource, SkillGroupId> = {
   workspace: SkillGroupId.WORKSPACE,
   'openclaw-workspace': SkillGroupId.WORKSPACE,
@@ -67,3 +78,6 @@ export const groupSkillsBySource = (skills: Skill[]): SkillGroup[] => {
     return groupedSkills ? [{ id, priority: groupPriority[id], skills: groupedSkills }] : [];
   });
 };
+
+export const canDeleteSkill = (skill: Skill): boolean =>
+  !skill.isBuiltIn && skill.source !== undefined && deletableSkillSources.has(skill.source);
