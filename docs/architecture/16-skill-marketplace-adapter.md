@@ -6,14 +6,15 @@ handles enterprise authentication.
 
 ## Boundary
 
-| Layer               | Responsibility                                                           |
-| ------------------- | ------------------------------------------------------------------------ |
-| Renderer            | Shared card/search/action UI plus installed-state reconciliation         |
-| Preload             | Narrow `window.electron.marketplace` API                                 |
-| Main IPC            | Validate plugin kinds and return typed success/failure results           |
-| Marketplace service | Normalize queries and route by stable source id and kind                 |
-| Provider            | Authentication, endpoint protocol, DTO mapping, and installation         |
-| Runtime services    | Persist or activate installed Extensions, Skills, MCP servers, and Hooks |
+| Layer                | Responsibility                                                           |
+| -------------------- | ------------------------------------------------------------------------ |
+| Renderer             | Shared card/search/action UI plus installed-state reconciliation         |
+| Preload              | Narrow `window.electron.marketplace` API                                 |
+| Main IPC             | Validate plugin kinds and return typed success/failure results           |
+| Marketplace service  | Normalize queries and route by stable source id and kind                 |
+| Provider             | Authentication, endpoint protocol, DTO mapping, and install preparation  |
+| Installation service | Route provider-neutral payloads through the owning installer             |
+| Runtime services     | Persist or activate installed Extensions, Skills, MCP servers, and Hooks |
 
 ```mermaid
 flowchart LR
@@ -22,7 +23,8 @@ flowchart LR
   IPC --> Manager["PluginManager"]
   Manager --> Market["PluginMarketplaceService"]
   Market --> Provider["Configured provider"]
-  Provider --> Runtime["Owning runtime service"]
+  Provider --> Install["PluginInstallationService"]
+  Install --> Runtime["Owning runtime service"]
 ```
 
 The shared contract lives in `src/shared/plugins/marketplace.ts`. Search results
@@ -56,7 +58,15 @@ the provider:
 - request pagination and private response DTOs;
 - mapping company categories to `PluginKind`;
 - policy/availability and update-state mapping;
-- dispatch to the correct owning installer.
+- downloading or constructing a provider-neutral payload in `prepareInstall()`;
+- cleanup of provider-owned temporary downloads.
+
+`prepareInstall()` returns `PreparedMarketplaceInstall`. Extension, Skill, and
+Hook payloads contain a local directory/archive path; MCP payloads contain the
+server configuration. The marketplace service then creates the same
+`PluginInstallRequest` used by custom import and calls `PluginInstallationService`.
+Providers must not write managed directories, SQLite, or OpenClaw configuration
+directly.
 
 Provider ids must be stable and unique. A provider declares only the kinds it
 actually supports. Do not add company protocol fields to shared contracts unless

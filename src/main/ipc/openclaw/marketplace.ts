@@ -177,14 +177,14 @@ export const registerMarketplaceHandlers = (pluginManager: PluginManager): void 
     async (_event, request: unknown): Promise<MarketplaceInstallResponse> => {
       try {
         const input = requireRecord(request);
-        await pluginManager.installFromMarketplace({
+        const result = await pluginManager.installFromMarketplace({
           sourceId: requireString(input.sourceId, 'source id'),
           pluginId: requireString(input.pluginId, 'plugin id'),
           kind: requireKind(input.kind),
           version: optionalString(input.version, 'version', 128),
           operation: optionalOperation(input.operation),
         });
-        return { success: true };
+        return result;
       } catch (error) {
         logError('install', error);
         return { success: false, ...publicError(error) };

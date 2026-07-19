@@ -6,6 +6,7 @@ import {
   type MarketplacePlugin,
   PluginKind,
 } from '../../../shared/plugins/marketplace';
+import { PluginInstallationService } from '../installation';
 import { PluginMarketplaceService } from './pluginMarketplaceService';
 import { MarketplaceError, type PluginMarketplaceProvider } from './types';
 
@@ -17,7 +18,9 @@ const createProvider = (): PluginMarketplaceProvider => ({
   },
   search: vi.fn(async () => ({ items: [] })),
   getDetail: vi.fn(async () => null),
-  install: vi.fn(async () => undefined),
+  prepareInstall: vi.fn(async () => ({
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer.zip' },
+  })),
 });
 
 test('searches only providers that support the requested plugin kind', async () => {
@@ -54,7 +57,10 @@ test('normalizes marketplace search options', async () => {
 
 test('routes installation to its marketplace provider', async () => {
   const provider = createProvider();
-  const service = new PluginMarketplaceService([provider]);
+  const installationService = new PluginInstallationService();
+  const install = vi.fn(async () => ({ success: true, pluginId: 'writer' }));
+  installationService.registerInstaller({ kind: PluginKind.SKILL, install });
+  const service = new PluginMarketplaceService([provider], installationService);
 
   await service.install({
     sourceId: provider.source.id,
@@ -63,13 +69,68 @@ test('routes installation to its marketplace provider', async () => {
     version: ' 1.2.3 ',
   });
 
-  expect(provider.install).toHaveBeenCalledWith({
+  expect(provider.prepareInstall).toHaveBeenCalledWith({
     sourceId: provider.source.id,
     pluginId: 'writer',
     kind: PluginKind.SKILL,
     version: '1.2.3',
     operation: MarketplaceInstallOperation.INSTALL,
   });
+  expect(install).toHaveBeenCalledWith({
+    operation: MarketplaceInstallOperation.INSTALL,
+    origin: 'marketplace',
+    marketplacePluginId: 'writer',
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer.zip' },
+  });
+});
+
+test('cleans up a prepared marketplace payload after installation', async () => {
+  const provider = createProvider();
+  const cleanup = vi.fn();
+  vi.mocked(provider.prepareInstall).mockResolvedValue({
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer.zip' },
+    cleanup,
+  });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async () => ({ success: false, error: 'invalid package' })),
+  });
+  const service = new PluginMarketplaceService([provider], installationService);
+
+  await service.install({
+    sourceId: provider.source.id,
+    pluginId: 'writer',
+    kind: PluginKind.SKILL,
+  });
+
+  expect(cleanup).toHaveBeenCalledOnce();
+});
+
+test('does not turn a successful installation into a failure when cleanup fails', async () => {
+  const provider = createProvider();
+  vi.mocked(provider.prepareInstall).mockResolvedValue({
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer.zip' },
+    cleanup: vi.fn(async () => {
+      throw new Error('temporary file is locked');
+    }),
+  });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async () => ({ success: true, pluginId: 'writer' })),
+  });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const service = new PluginMarketplaceService([provider], installationService);
+
+  await expect(
+    service.install({
+      sourceId: provider.source.id,
+      pluginId: 'writer',
+      kind: PluginKind.SKILL,
+    }),
+  ).resolves.toEqual({ success: true, pluginId: 'writer' });
+  expect(JSON.stringify(warn.mock.calls)).not.toContain('temporary file is locked');
 });
 
 test('rejects details for a plugin kind the provider does not support', async () => {

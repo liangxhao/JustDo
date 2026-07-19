@@ -6,6 +6,7 @@ import type {
   MarketplaceSearchResult,
   MarketplaceSource,
 } from '../../shared/plugins/marketplace';
+import type { PluginInstallResult } from './installation';
 import type { PluginMarketplaceService } from './marketplace';
 
 /**
@@ -25,7 +26,7 @@ export class PluginManager {
     return this.marketplace.search(query);
   }
 
-  installFromMarketplace(request: MarketplaceInstallRequest): Promise<void> {
+  installFromMarketplace(request: MarketplaceInstallRequest): Promise<PluginInstallResult> {
     return this.marketplace.install(request);
   }
 

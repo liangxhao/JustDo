@@ -7,15 +7,44 @@ import {
   type ExtensionSetEnabledRequest,
   type ExtensionUpdateConfigurationRequest,
 } from '../../../shared/openclaw/extensions';
+import {
+  MarketplaceInstallOperation,
+  PluginKind,
+} from '../../../shared/plugins/marketplace';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
+import {
+  type PluginInstallationService,
+  PluginInstallOrigin,
+} from '../../plugins/installation';
 
 type ExtensionHandlerDependencies = {
   extensionImportService: OpenClawExtensionImportService;
+  installationService: PluginInstallationService;
 };
 
 export const registerExtensionHandlers = ({
   extensionImportService,
+  installationService,
 }: ExtensionHandlerDependencies): void => {
+  installationService.registerInstaller({
+    kind: PluginKind.EXTENSION,
+    install: async request => {
+      if (request.payload.kind !== PluginKind.EXTENSION) {
+        return { success: false, error: 'Invalid extension installation payload' };
+      }
+      const result = await extensionImportService.importPath(
+        request.payload.sourcePath,
+        request.onProgress,
+      );
+      return {
+        success: result.success,
+        pluginId: result.extensionId,
+        failedStage: result.failedStage,
+        error: result.error,
+      };
+    },
+  });
+
   ipcMain.handle(ExtensionIpc.List, () => {
     try {
       return { success: true, extensions: extensionImportService.listInstalled() };
@@ -37,11 +66,22 @@ export const registerExtensionHandlers = ({
       ) {
         return { success: false, error: 'Extension source path is required' };
       }
-      return await extensionImportService.importPath(request.sourcePath, progress => {
-        if (!event.sender.isDestroyed()) {
-          event.sender.send(ExtensionIpc.ImportProgress, { ...request, ...progress });
-        }
+      const result = await installationService.install({
+        operation: MarketplaceInstallOperation.INSTALL,
+        origin: PluginInstallOrigin.CUSTOM,
+        payload: { kind: PluginKind.EXTENSION, sourcePath: request.sourcePath },
+        onProgress: progress => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send(ExtensionIpc.ImportProgress, { ...request, ...progress });
+          }
+        },
       });
+      return {
+        success: result.success,
+        extensionId: result.pluginId,
+        failedStage: result.failedStage,
+        error: result.error,
+      };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to import extension';
       console.error('[Extensions] extensions:import error:', errorMsg);

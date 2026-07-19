@@ -13,6 +13,8 @@ import {
   MarketplaceInstallState,
   PluginKind,
 } from '../../../shared/plugins/marketplace';
+import type { PluginInstallResult } from '../installation';
+import { PluginInstallationService, PluginInstallOrigin } from '../installation';
 import { MarketplaceError, type PluginMarketplaceProvider } from './types';
 
 const DEFAULT_LIMIT = 20;
@@ -23,7 +25,10 @@ const pluginKinds = new Set<string>(Object.values(PluginKind));
 export class PluginMarketplaceService {
   private readonly providers: Map<string, PluginMarketplaceProvider>;
 
-  constructor(providers: PluginMarketplaceProvider[]) {
+  constructor(
+    providers: PluginMarketplaceProvider[],
+    private readonly installationService: PluginInstallationService = new PluginInstallationService(),
+  ) {
     this.providers = new Map();
     for (const provider of providers) {
       const source = provider.source;
@@ -121,19 +126,39 @@ export class PluginMarketplaceService {
     };
   }
 
-  async install(request: MarketplaceInstallRequest): Promise<void> {
+  async install(request: MarketplaceInstallRequest): Promise<PluginInstallResult> {
     const provider = this.requireProviderForKind(request.sourceId, request.kind);
     const pluginId = this.requirePluginId(request.pluginId);
-    await this.callProvider(
-      () =>
-        provider.install({
-          ...request,
-          pluginId,
-          version: request.version?.trim() || undefined,
-          operation: request.operation ?? MarketplaceInstallOperation.INSTALL,
-        }),
-      'install',
+    const normalizedRequest = {
+      ...request,
+      pluginId,
+      version: request.version?.trim() || undefined,
+      operation: request.operation ?? MarketplaceInstallOperation.INSTALL,
+    };
+    const prepared = await this.callProvider(
+      () => provider.prepareInstall(normalizedRequest),
+      'prepare installation',
     );
+    if (!prepared || prepared.payload?.kind !== request.kind) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.INVALID_RESPONSE,
+        'Marketplace source returned an invalid installation payload',
+      );
+    }
+    try {
+      return await this.installationService.install({
+        operation: normalizedRequest.operation,
+        origin: PluginInstallOrigin.MARKETPLACE,
+        marketplacePluginId: pluginId,
+        payload: prepared.payload,
+      });
+    } finally {
+      try {
+        await prepared.cleanup?.();
+      } catch {
+        console.warn('[PluginMarketplace] Failed to clean prepared installation payload');
+      }
+    }
   }
 
   async getDetail(request: MarketplaceDetailRequest): Promise<MarketplacePluginDetail | null> {

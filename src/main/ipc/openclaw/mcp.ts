@@ -1,5 +1,8 @@
 import { ipcMain } from 'electron';
 
+import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import type { PluginInstallationService } from '../../plugins/installation';
+import { PluginInstallOrigin } from '../../plugins/installation';
 import type {
   McpProbeResult,
   McpReadResourceResult,
@@ -12,6 +15,7 @@ interface McpHandlerDependencies {
   syncConfig: () => Promise<{ tools: number; error?: string }>;
   probeServer: (id: string) => Promise<McpProbeResult>;
   readResource: (id: string, uri: string) => Promise<McpReadResourceResult>;
+  installationService: PluginInstallationService;
 }
 
 const syncMcpConfigInBackground = (syncConfig: McpHandlerDependencies['syncConfig']): void => {
@@ -25,7 +29,62 @@ export const registerMcpHandlers = ({
   syncConfig,
   probeServer,
   readResource,
+  installationService,
 }: McpHandlerDependencies): void => {
+  installationService.registerInstaller({
+    kind: PluginKind.MCP,
+    install: async request => {
+      if (request.payload.kind !== PluginKind.MCP) {
+        return { success: false, error: 'Invalid MCP installation payload' };
+      }
+      const store = getStore();
+      if (request.operation === MarketplaceInstallOperation.UPDATE) {
+        const targetId =
+          request.origin === PluginInstallOrigin.CUSTOM
+            ? request.payload.targetId
+            : store
+                .listServers()
+                .find(server => server.registryId === request.marketplacePluginId)?.id;
+        if (!targetId) return { success: false, error: 'Installed MCP server was not found' };
+        const updated = store.updateServer(targetId, {
+          ...request.payload.config,
+          registryId:
+            request.origin === PluginInstallOrigin.MARKETPLACE
+              ? request.marketplacePluginId
+              : request.payload.config.registryId,
+        });
+        if (!updated) return { success: false, error: 'Installed MCP server was not found' };
+        syncMcpConfigInBackground(syncConfig);
+        return { success: true, pluginId: updated.id };
+      }
+
+      const config = request.payload.config;
+      if (typeof config.name !== 'string' || !config.name.trim()) {
+        return { success: false, error: 'MCP server name is required' };
+      }
+      if (!config.transportType) {
+        return { success: false, error: 'MCP transport type is required' };
+      }
+      if (
+        request.origin === PluginInstallOrigin.MARKETPLACE &&
+        store.listServers().some(server => server.registryId === request.marketplacePluginId)
+      ) {
+        return { success: false, error: 'MCP server is already installed' };
+      }
+      const created = store.createServer({
+        ...config,
+        name: config.name,
+        transportType: config.transportType,
+        registryId:
+          request.origin === PluginInstallOrigin.MARKETPLACE
+            ? request.marketplacePluginId
+            : config.registryId,
+      });
+      syncMcpConfigInBackground(syncConfig);
+      return { success: true, pluginId: created.id };
+    },
+  });
+
   ipcMain.handle('mcp:list', () => {
     try {
       return { success: true, servers: getStore().listServers() };
@@ -39,9 +98,13 @@ export const registerMcpHandlers = ({
 
   ipcMain.handle('mcp:create', async (_event, data: McpServerFormData) => {
     try {
-      getStore().createServer(data);
+      const installResult = await installationService.install({
+        operation: MarketplaceInstallOperation.INSTALL,
+        origin: PluginInstallOrigin.CUSTOM,
+        payload: { kind: PluginKind.MCP, config: data },
+      });
+      if (!installResult.success) return installResult;
       const servers = getStore().listServers();
-      syncMcpConfigInBackground(syncConfig);
       return { success: true, servers };
     } catch (error) {
       return {
@@ -53,9 +116,13 @@ export const registerMcpHandlers = ({
 
   ipcMain.handle('mcp:update', async (_event, id: string, data: Partial<McpServerFormData>) => {
     try {
-      getStore().updateServer(id, data);
+      const installResult = await installationService.install({
+        operation: MarketplaceInstallOperation.UPDATE,
+        origin: PluginInstallOrigin.CUSTOM,
+        payload: { kind: PluginKind.MCP, config: data, targetId: id },
+      });
+      if (!installResult.success) return installResult;
       const servers = getStore().listServers();
-      syncMcpConfigInBackground(syncConfig);
       return { success: true, servers };
     } catch (error) {
       return {

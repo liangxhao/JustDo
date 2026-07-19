@@ -115,6 +115,8 @@ export interface MarketplaceDetailResponse {
 
 export interface MarketplaceInstallResponse {
   success: boolean;
+  pluginId?: string;
+  restartRequired?: boolean;
   error?: string;
   errorCode?: MarketplaceErrorCode;
 }

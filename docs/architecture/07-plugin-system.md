@@ -6,13 +6,13 @@ Marketplace 是能力分发入口，不是第五种运行时能力。Extension �
 
 ## 能力模型
 
-| 类型 | 主要用途 | 状态权威 | 本地持久化 | 用户管理入口 |
-| --- | --- | --- | --- | --- |
-| Extension | 打包并分发一个或多个运行时能力 | Extension manifest、OpenClaw 配置和本地 registry | Extension 安装目录、配置文件 | 导入、配置、启用、删除 |
-| Skill | 向 Agent 提供指令、工作流和资源 | Gateway `skills.status` | bundled resources 或用户 Skill 目录 | 导入、市场安装、启用、删除 |
-| MCP | 连接 stdio/HTTP MCP server | SQLite `mcp_servers`，同步到 Gateway 配置 | SQLite | 创建、编辑、探测、启用、删除 |
-| Hook | 在命令、会话或 Gateway 生命周期事件触发自动化 | Hook 文件发现 + SQLite `openclaw_hooks` | bundled/managed Hook 目录和 SQLite | 导入、启用、删除 |
-| Marketplace | 搜索、详情和安装分发包 | configured marketplace provider | 搜索结果仅为 UI 临时状态 | 搜索、查看、安装 |
+| 类型        | 主要用途                                      | 状态权威                                         | 本地持久化                          | 用户管理入口                 |
+| ----------- | --------------------------------------------- | ------------------------------------------------ | ----------------------------------- | ---------------------------- |
+| Extension   | 打包并分发一个或多个运行时能力                | Extension manifest、OpenClaw 配置和本地 registry | Extension 安装目录、配置文件        | 导入、配置、启用、删除       |
+| Skill       | 向 Agent 提供指令、工作流和资源               | Gateway `skills.status`                          | bundled resources 或用户 Skill 目录 | 导入、市场安装、启用、删除   |
+| MCP         | 连接 stdio/HTTP MCP server                    | SQLite `mcp_servers`，同步到 Gateway 配置        | SQLite                              | 创建、编辑、探测、启用、删除 |
+| Hook        | 在命令、会话或 Gateway 生命周期事件触发自动化 | Hook 文件发现 + SQLite `openclaw_hooks`          | bundled/managed Hook 目录和 SQLite  | 导入、启用、删除             |
+| Marketplace | 搜索、详情和安装分发包                        | configured marketplace provider                  | 搜索结果仅为 UI 临时状态            | 搜索、查看、安装             |
 
 ## 总体架构
 
@@ -40,16 +40,17 @@ Renderer 只通过 preload bridge 发起操作，不读取插件文件、不访�
 
 ## 关键边界
 
-| 层 | 职责 |
-| --- | --- |
-| `src/renderer/features/plugins/` | 列表、分组、表单、确认弹窗和临时 UI 状态 |
-| `src/main/preload.ts` | 暴露窄化的 Extensions、Skills、MCP、Hooks API |
-| `src/main/ipc/openclaw/` | 校验 payload、匹配当前状态并调用领域服务 |
-| `src/main/plugins/extensions/` | Extension 导入、registry、配置、host lifecycle 和交互路由 |
-| `src/main/plugins/skills/` | Gateway Skill RPC 和用户 Skill 文件操作 |
-| `src/main/plugins/mcp/` | MCP SQLite store、probe、resource read 和配置同步 |
-| `src/main/plugins/hooks/` | Hook SQLite store、文件导入/删除和配置同步 |
-| `src/main/plugins/marketplace/` | provider-neutral marketplace facade 和 provider adapter |
+| 层                               | 职责                                                                |
+| -------------------------------- | ------------------------------------------------------------------- |
+| `src/renderer/features/plugins/` | 列表、分组、表单、确认弹窗和临时 UI 状态                            |
+| `src/main/preload.ts`            | 暴露窄化的 Extensions、Skills、MCP、Hooks API                       |
+| `src/main/ipc/openclaw/`         | 校验 payload、匹配当前状态并调用领域服务                            |
+| `src/main/plugins/extensions/`   | Extension 导入、registry、配置、host lifecycle 和交互路由           |
+| `src/main/plugins/skills/`       | Gateway Skill RPC 和用户 Skill 文件操作                             |
+| `src/main/plugins/mcp/`          | MCP SQLite store、probe、resource read 和配置同步                   |
+| `src/main/plugins/hooks/`        | Hook SQLite store、文件导入/删除和配置同步                          |
+| `src/main/plugins/marketplace/`  | provider-neutral marketplace facade 和 provider adapter             |
+| `src/main/plugins/installation/` | 自定义导入与 Marketplace 共用的安装/更新请求、结果和 installer 路由 |
 
 跨进程 channel 和 payload 优先定义在 `src/shared/`。Renderer service 负责把 IPC 结果归一化为 UI 类型，不应成为运行时状态权威。
 
@@ -57,13 +58,13 @@ Renderer 只通过 preload bridge 发起操作，不读取插件文件、不访�
 
 卡片上的启用和删除操作必须反映能力所有权，不应仅根据“是否内置”推断。
 
-| 能力来源 | 可启用/禁用 | 可在当前页面删除 | 说明 |
-| --- | --- | --- | --- |
-| bundled | 是 | 否 | 随应用或 runtime 提供 |
-| managed/imported | 是 | 是 | 用户显式导入或安装 |
-| workspace/project/personal Skill | 是 | 是 | 文件属于用户工作区或用户目录 |
-| extra-dir / plugin-owned | 由所有者决定 | 否 | 应删除或禁用对应 Extension |
-| unknown | 保守处理 | 否 | 未识别来源不得执行破坏性操作 |
+| 能力来源                         | 可启用/禁用  | 可在当前页面删除 | 说明                         |
+| -------------------------------- | ------------ | ---------------- | ---------------------------- |
+| bundled                          | 是           | 否               | 随应用或 runtime 提供        |
+| managed/imported                 | 是           | 是               | 用户显式导入或安装           |
+| workspace/project/personal Skill | 是           | 是               | 文件属于用户工作区或用户目录 |
+| extra-dir / plugin-owned         | 由所有者决定 | 否               | 应删除或禁用对应 Extension   |
+| unknown                          | 保守处理     | 否               | 未识别来源不得执行破坏性操作 |
 
 删除操作由 Main process 根据当前权威状态重新匹配目标。Renderer 不传递可直接删除的任意文件路径。
 
@@ -181,9 +182,11 @@ UI 按所有权分为自定义、内置、插件提供和其他 Hook。只有 `o
 
 ## Marketplace
 
-Renderer 不直接访问 marketplace endpoint。`PluginMarketplaceService` 根据 `PluginKind` 和 configured provider 执行 search/detail/install，并把 provider DTO 转为稳定的应用模型。当前 UI 主要提供 Skill marketplace；未来 Extension 或 MCP provider 应复用相同 facade，而不是把 provider 协议泄漏到 renderer。
+Renderer 不直接访问 marketplace endpoint。`PluginMarketplaceService` 根据 `PluginKind` 和 configured provider 执行 search/detail/install，并把 provider DTO 转为稳定的应用模型。四类 Marketplace 应复用相同 facade，而不是把 provider 协议泄漏到 renderer。
 
-搜索结果、详情和 installing ids 是临时 UI 状态，不写入 SQLite。安装动作必须经过对应领域 service，使 Gateway 或本地 registry 保持权威。
+搜索结果、详情和 installing ids 是临时 UI 状态，不写入 SQLite。Provider 的 `prepareInstall()` 只负责认证、下载和生成 provider-neutral 安装载荷：Extension、Skill、Hook 返回本地包路径，MCP 返回 server 配置；临时下载可通过 `cleanup()` 在安装结束后清理。
+
+自定义导入与市场安装最终都提交 `PluginInstallRequest` 到 `PluginInstallationService`。请求用 `kind + operation + origin + payload` 区分能力类型、安装/更新和来源，再路由到 Extension、Skill、MCP 或 Hook 的 owning installer。Provider 不直接写插件目录、SQLite 或 OpenClaw 配置，因此市场安装自然复用自定义导入已有的包校验、覆盖策略、配置同步和 Gateway restart 逻辑。
 
 Marketplace provider、错误降级、状态机和时序详见 [16-skill-marketplace-adapter.md](16-skill-marketplace-adapter.md)。
 

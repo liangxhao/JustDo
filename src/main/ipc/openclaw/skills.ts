@@ -1,11 +1,15 @@
 import { ipcMain } from 'electron';
 
+import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import type { GatewaySkillEntry } from '../../engine/types';
+import type { PluginInstallationService } from '../../plugins/installation';
+import { PluginInstallOrigin } from '../../plugins/installation';
 import type { OpenClawSkillFiles, OpenClawSkillService } from '../../plugins/skills';
 
 interface SkillHandlerDependencies {
   skillService: OpenClawSkillService;
   getSkillFiles: () => OpenClawSkillFiles;
+  installationService: PluginInstallationService;
 }
 
 const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
@@ -54,7 +58,19 @@ const normalizeRequestedSkillSource = (
 export const registerSkillHandlers = ({
   skillService,
   getSkillFiles,
+  installationService,
 }: SkillHandlerDependencies): void => {
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: async request => {
+      if (request.payload.kind !== PluginKind.SKILL) {
+        return { success: false, error: 'Invalid skill installation payload' };
+      }
+      const result = await getSkillFiles().importPath(request.payload.sourcePath);
+      return { success: result.success, pluginId: result.skillId, error: result.error };
+    },
+  });
+
   ipcMain.handle('skills:list', async () => {
     try {
       const status = await skillService.getStatus();
@@ -97,7 +113,12 @@ export const registerSkillHandlers = ({
 
   ipcMain.handle('skills:import', async (_event, sourcePath: string) => {
     try {
-      return await getSkillFiles().importPath(sourcePath);
+      const result = await installationService.install({
+        operation: MarketplaceInstallOperation.INSTALL,
+        origin: PluginInstallOrigin.CUSTOM,
+        payload: { kind: PluginKind.SKILL, sourcePath },
+      });
+      return { success: result.success, skillId: result.pluginId, error: result.error };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to import skill';
       console.error('[Skills] skills:import error:', errorMsg);

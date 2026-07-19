@@ -90,6 +90,7 @@ import {
   OpenClawHookServices,
   OpenClawSkillFileService,
   OpenClawSkillService,
+  PluginInstallationService,
   PluginManager,
 } from './plugins';
 
@@ -294,7 +295,8 @@ let coworkEngineService: CoworkEngineService | null = null;
 const openClawSkillService = new OpenClawSkillService(
   () => coworkEngineService?.getRuntimeAdapter() ?? null,
 );
-const pluginManager = new PluginManager(createPluginMarketplaceService());
+const pluginInstallationService = new PluginInstallationService();
+const pluginManager = new PluginManager(createPluginMarketplaceService(pluginInstallationService));
 const askUserSessionByRequestId = new Map<string, string>();
 const extensionHostLifecycle = new OpenClawExtensionHostLifecycle({
   askUserSessionByRequestId,
@@ -682,17 +684,20 @@ if (!gotTheLock) {
   registerSkillHandlers({
     skillService: openClawSkillService,
     getSkillFiles: getOpenClawSkillFiles,
+    installationService: pluginInstallationService,
   });
   registerMarketplaceHandlers(pluginManager);
   registerExtensionHandlers({
     extensionImportService: new OpenClawExtensionImportService({
       getOpenClawEngineManager,
     }),
+    installationService: pluginInstallationService,
   });
   registerHookHandlers({
     getManager: getOpenClawEngineManager,
     getStore: getHookStore,
     syncConfig: syncHookConfig,
+    installationService: pluginInstallationService,
   });
 
   registerOpenClawEngineHandlers({
@@ -704,6 +709,7 @@ if (!gotTheLock) {
     syncConfig: syncMcpConfig,
     probeServer: probeMcpServer,
     readResource: readMcpResource,
+    installationService: pluginInstallationService,
   });
   registerCoworkSessionExecutionHandlers({
     ensureEngineRunning: ensureOpenClawRunningForCowork,

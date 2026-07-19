@@ -3,13 +3,17 @@ import fs from 'fs';
 import path from 'path';
 
 import { HookIpc } from '../../../shared/openclaw/hooks';
+import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { OpenClawHookFiles, type OpenClawHookStore } from '../../plugins/hooks';
+import type { PluginInstallationService } from '../../plugins/installation';
+import { PluginInstallOrigin } from '../../plugins/installation';
 
 interface HookHandlerDependencies {
   getManager: () => OpenClawEngineManager;
   getStore: () => OpenClawHookStore;
   syncConfig: () => Promise<{ hooks: number; error?: string }>;
+  installationService: PluginInstallationService;
 }
 
 type HookReport = {
@@ -172,7 +176,31 @@ export const registerHookHandlers = ({
   getManager,
   getStore,
   syncConfig,
+  installationService,
 }: HookHandlerDependencies): void => {
+  installationService.registerInstaller({
+    kind: PluginKind.HOOK,
+    install: async request => {
+      if (request.payload.kind !== PluginKind.HOOK) {
+        return { success: false, error: 'Invalid Hook installation payload' };
+      }
+      const manager = getManager();
+      const hookStore = getStore();
+      const currentReport = await buildLocalHookReport(manager, hookStore);
+      const bundledHookIds = new Set(
+        currentReport.hooks
+          .filter(hook => hook.source === 'openclaw-bundled')
+          .map(hook => String(hook.hookKey || hook.name || '').toLowerCase())
+          .filter(Boolean),
+      );
+      const result = await new OpenClawHookFiles(
+        currentReport.managedHooksDir,
+        bundledHookIds,
+      ).importPath(request.payload.sourcePath);
+      return { success: result.success, pluginId: result.hookId, error: result.error };
+    },
+  });
+
   ipcMain.handle(HookIpc.List, async () => {
     try {
       const report = await buildLocalHookReport(getManager(), getStore());
@@ -197,23 +225,18 @@ export const registerHookHandlers = ({
         return { success: false, error: 'Hook source path is required' };
       }
 
-      const manager = getManager();
-      const hookStore = getStore();
-      const currentReport = await buildLocalHookReport(manager, hookStore);
-      const bundledHookIds = new Set(
-        currentReport.hooks
-          .filter(hook => hook.source === 'openclaw-bundled')
-          .map(hook => String(hook.hookKey || hook.name || '').toLowerCase())
-          .filter(Boolean),
-      );
-      const result = await new OpenClawHookFiles(
-        currentReport.managedHooksDir,
-        bundledHookIds,
-      ).importPath(sourcePath.trim());
+      const result = await installationService.install({
+        operation: MarketplaceInstallOperation.INSTALL,
+        origin: PluginInstallOrigin.CUSTOM,
+        payload: { kind: PluginKind.HOOK, sourcePath: sourcePath.trim() },
+      });
       if (!result.success) return result;
 
+      const manager = getManager();
+      const hookStore = getStore();
       return {
-        ...result,
+        success: true,
+        hookId: result.pluginId,
         ...(await buildLocalHookReport(manager, hookStore)),
       };
     } catch (error) {
