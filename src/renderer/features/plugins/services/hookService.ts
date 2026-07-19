@@ -90,6 +90,20 @@ class HookService {
     throw new Error(result.error || 'Failed to update hook');
   }
 
+  async importHook(sourcePath: string): Promise<HookListResult> {
+    const result: GatewayHookListResult = await window.electron.hooks.importPath(sourcePath);
+    const hooks = result.hooks?.map(normalizeHook);
+    if (result.success && hooks) this.hooks = hooks;
+    return { ...result, hooks };
+  }
+
+  async deleteHook(id: string): Promise<HookListResult> {
+    const result: GatewayHookListResult = await window.electron.hooks.delete(id);
+    if (!result.success) throw new Error(result.error || 'Failed to delete Hook');
+    if (result.hooks) this.hooks = result.hooks.map(normalizeHook);
+    return { ...result, hooks: this.hooks };
+  }
+
   getHooks(): HookEntry[] {
     return this.hooks;
   }

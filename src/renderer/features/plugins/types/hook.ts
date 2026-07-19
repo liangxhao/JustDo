@@ -35,4 +35,5 @@ export interface HookListResult {
   error?: string;
   gatewayOffline?: boolean;
   restartRequired?: boolean;
+  hookId?: string;
 }

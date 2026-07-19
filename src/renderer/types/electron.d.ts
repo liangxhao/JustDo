@@ -393,6 +393,22 @@ interface IElectronAPI {
       error?: string;
       gatewayOffline?: boolean;
     }>;
+    importPath: (sourcePath: string) => Promise<{
+      success: boolean;
+      hookId?: string;
+      hooks?: HookEntryIPC[];
+      workspaceDir?: string;
+      managedHooksDir?: string;
+      error?: string;
+    }>;
+    delete: (hookId: string) => Promise<{
+      success: boolean;
+      hooks?: HookEntryIPC[];
+      workspaceDir?: string;
+      managedHooksDir?: string;
+      restartRequired?: boolean;
+      error?: string;
+    }>;
     setEnabled: (options: { id: string; enabled: boolean }) => Promise<{
       success: boolean;
       hooks?: HookEntryIPC[];

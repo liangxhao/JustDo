@@ -203,6 +203,20 @@ Skill 可能带来文件、网络、浏览器、命令执行等能力。JustDo �
 - 用户导入目录只作为文件复制来源，不在 renderer 中解析执行。
 - Marketplace 返回内容不应直接渲染为可信 HTML。
 
+## Hook 本地导入
+
+Plugins > Hook 的“已安装”页按所有权展示 Hook：
+
+- `openclaw-managed`：用户从本地导入的自定义 Hook。
+- `openclaw-bundled`：OpenClaw 运行时自带 Hook。
+- `managedByPlugin`：由扩展插件提供并由其所有者管理的 Hook。
+
+本地 Hook 包必须在根目录包含 `HOOK.md` 和可执行的 `handler.js`。导入支持目录、ZIP、TAR、TAR.GZ 和 TGZ；主进程负责解压、拒绝符号链接、从 `HOOK.md` frontmatter 读取 Hook ID，并复制到 OpenClaw state 目录的 `hooks/<id>/`。与 bundled Hook 同名的包会被拒绝，防止遮蔽运行时内置实现。
+
+导入只安装文件，不自动启用 Hook。用户通过开关显式启用后，SQLite 中的 `openclaw_hooks` 状态才会同步到 OpenClaw 配置。Renderer 不读取或执行 `handler.js`。
+
+只有 `openclaw-managed` 自定义 Hook 可在 Hook 页面删除。删除会先移除 SQLite 启用记录并同步配置，再移除 managed Hook 目录；bundled Hook 和插件托管 Hook 不提供单独删除入口。
+
 ## 常见变更场景
 
 ### 新增内置 Skill

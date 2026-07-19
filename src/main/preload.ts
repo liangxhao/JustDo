@@ -11,6 +11,7 @@ import {
   type ExtensionUpdateConfigurationRequest,
 } from '../shared/openclaw/extensions';
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
+import { HookIpc } from '../shared/openclaw/hooks';
 import { UsageStatsIpc } from '../shared/openclaw/usage';
 import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
 import { SlashCommandIpc } from '../shared/slashCommands';
@@ -56,9 +57,11 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   hooks: {
-    list: () => ipcRenderer.invoke('hooks:list'),
+    list: () => ipcRenderer.invoke(HookIpc.List),
+    importPath: (sourcePath: string) => ipcRenderer.invoke(HookIpc.Import, sourcePath),
+    delete: (hookId: string) => ipcRenderer.invoke(HookIpc.Delete, hookId),
     setEnabled: (options: { id: string; enabled: boolean }) =>
-      ipcRenderer.invoke('hooks:setEnabled', options),
+      ipcRenderer.invoke(HookIpc.SetEnabled, options),
   },
   slashCommands: {
     list: (options?: { agentId?: string | null }) =>
@@ -201,13 +204,11 @@ contextBridge.exposeInMainWorld('electron', {
     getSessionRuntimeStatus: (
       sessionId: string,
       options?: { includeSubagents?: boolean; forceRefresh?: boolean },
-    ) =>
-      ipcRenderer.invoke('cowork:session:runtimeStatus', sessionId, options),
+    ) => ipcRenderer.invoke('cowork:session:runtimeStatus', sessionId, options),
     getSessionRuntimeStatuses: (
       sessionIds: string[],
       options?: { includeSubagents?: boolean; forceRefresh?: boolean },
-    ) =>
-      ipcRenderer.invoke('cowork:sessions:runtimeStatus', sessionIds, options),
+    ) => ipcRenderer.invoke('cowork:sessions:runtimeStatus', sessionIds, options),
     patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:session:patchModel', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
@@ -287,16 +288,9 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:stream:interactionDismiss', handler);
       return () => ipcRenderer.removeListener('cowork:stream:interactionDismiss', handler);
     },
-    onStreamComplete: (
-      callback: (data: {
-        sessionId: string;
-        finalStatus?: string;
-      }) => void,
-    ) => {
-      const handler = (
-        _event: any,
-        data: { sessionId: string; finalStatus?: string },
-      ) => callback(data);
+    onStreamComplete: (callback: (data: { sessionId: string; finalStatus?: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; finalStatus?: string }) =>
+        callback(data);
       ipcRenderer.on('cowork:stream:complete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:complete', handler);
     },

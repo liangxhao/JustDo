@@ -59,6 +59,30 @@ export class OpenClawHookStore {
     return this.getHook(id)!;
   }
 
+  deleteHook(id: string): boolean {
+    return this.db.prepare('DELETE FROM openclaw_hooks WHERE id = ?').run(id).changes > 0;
+  }
+
+  restoreHook(record: OpenClawHookRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO openclaw_hooks (id, enabled, config_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           enabled = excluded.enabled,
+           config_json = excluded.config_json,
+           created_at = excluded.created_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        record.id,
+        record.enabled ? 1 : 0,
+        JSON.stringify(record.config),
+        record.createdAt,
+        record.updatedAt,
+      );
+  }
+
   importEntries(entries: Record<string, unknown>): void {
     const now = Date.now();
     const upsert = this.db.prepare(

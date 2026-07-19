@@ -2,8 +2,9 @@ import { ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+import { HookIpc } from '../../../shared/openclaw/hooks';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
-import type { OpenClawHookStore } from '../../plugins/hooks';
+import { OpenClawHookFiles, type OpenClawHookStore } from '../../plugins/hooks';
 
 interface HookHandlerDependencies {
   getManager: () => OpenClawEngineManager;
@@ -172,7 +173,7 @@ export const registerHookHandlers = ({
   getStore,
   syncConfig,
 }: HookHandlerDependencies): void => {
-  ipcMain.handle('hooks:list', async () => {
+  ipcMain.handle(HookIpc.List, async () => {
     try {
       const report = await buildLocalHookReport(getManager(), getStore());
       return {
@@ -190,7 +191,86 @@ export const registerHookHandlers = ({
     }
   });
 
-  ipcMain.handle('hooks:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
+  ipcMain.handle(HookIpc.Import, async (_event, sourcePath: string) => {
+    try {
+      if (typeof sourcePath !== 'string' || !sourcePath.trim()) {
+        return { success: false, error: 'Hook source path is required' };
+      }
+
+      const manager = getManager();
+      const hookStore = getStore();
+      const currentReport = await buildLocalHookReport(manager, hookStore);
+      const bundledHookIds = new Set(
+        currentReport.hooks
+          .filter(hook => hook.source === 'openclaw-bundled')
+          .map(hook => String(hook.hookKey || hook.name || '').toLowerCase())
+          .filter(Boolean),
+      );
+      const result = await new OpenClawHookFiles(
+        currentReport.managedHooksDir,
+        bundledHookIds,
+      ).importPath(sourcePath.trim());
+      if (!result.success) return result;
+
+      return {
+        ...result,
+        ...(await buildLocalHookReport(manager, hookStore)),
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to import Hook';
+      console.error('[OpenClawHooks] hooks:import error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  });
+
+  ipcMain.handle(HookIpc.Delete, async (_event, hookId: string) => {
+    try {
+      if (typeof hookId !== 'string' || !hookId.trim()) {
+        return { success: false, error: 'Hook id is required' };
+      }
+
+      const id = hookId.trim();
+      const manager = getManager();
+      const hookStore = getStore();
+      const currentReport = await buildLocalHookReport(manager, hookStore);
+      const hook = currentReport.hooks.find(
+        entry =>
+          (entry.hookKey === id || entry.name === id) &&
+          entry.source === 'openclaw-managed' &&
+          entry.managedByPlugin !== true,
+      );
+      if (!hook) {
+        return { success: false, error: 'Only custom Hooks can be deleted' };
+      }
+      if (typeof hook.baseDir !== 'string' || !hook.baseDir) {
+        return { success: false, error: 'Hook directory is unavailable' };
+      }
+
+      const previousState = hookStore.getHook(id);
+      hookStore.deleteHook(id);
+      const firstSyncResult = await syncConfig();
+      const syncResult = firstSyncResult.error ? firstSyncResult : await syncConfig();
+      if (syncResult.error) {
+        if (previousState) {
+          hookStore.restoreHook(previousState);
+          syncHookConfigInBackground(syncConfig);
+        }
+        return { success: false, error: syncResult.error };
+      }
+      new OpenClawHookFiles(currentReport.managedHooksDir).deleteDirectory(hook.baseDir);
+      return {
+        success: true,
+        restartRequired: true,
+        ...(await buildLocalHookReport(manager, hookStore)),
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to delete Hook';
+      console.error('[OpenClawHooks] hooks:delete error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  });
+
+  ipcMain.handle(HookIpc.SetEnabled, async (_event, options: { id: string; enabled: boolean }) => {
     try {
       const hookId = options.id?.trim();
       if (!hookId) {
