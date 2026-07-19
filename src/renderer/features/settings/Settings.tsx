@@ -41,6 +41,10 @@ import ShortcutsSettings, {
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
+import {
+  getEnabledProviderModels,
+  mergeRefreshedBuiltinProvider,
+} from '@/features/settings/modelSettingsRefresh';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
@@ -760,7 +764,15 @@ const Settings: React.FC<SettingsProps> = ({
       } else {
         const freshConfig = await window.electron.store.get('app_config');
         if (freshConfig && typeof freshConfig === 'object') {
-          await configService.updateConfig(freshConfig as Partial<AppConfig>);
+          const refreshedConfig = freshConfig as Partial<AppConfig>;
+          await configService.updateConfig(refreshedConfig);
+
+          if (refreshedConfig.providers?.builtin_models) {
+            setProviders(currentProviders =>
+              mergeRefreshedBuiltinProvider(currentProviders, refreshedConfig.providers),
+            );
+            dispatch(setAvailableModels(getEnabledProviderModels(refreshedConfig.providers)));
+          }
         }
       }
     } catch (error) {
