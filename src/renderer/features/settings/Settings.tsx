@@ -1466,14 +1466,14 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <Cog6ToothIcon className="h-5 w-5" />,
     },
     {
-      key: 'usage',
-      label: i18nService.t('usageStats'),
-      icon: <ChartBarIcon className="h-5 w-5" />,
-    },
-    {
       key: 'model',
       label: i18nService.t('model'),
       icon: <CubeIcon className="h-5 w-5" />,
+    },
+    {
+      key: 'usage',
+      label: i18nService.t('usageStats'),
+      icon: <ChartBarIcon className="h-5 w-5" />,
     },
     {
       key: 'im',
