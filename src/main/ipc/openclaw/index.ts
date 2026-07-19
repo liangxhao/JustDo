@@ -2,6 +2,7 @@ export { registerOpenClawEngineHandlers } from './engine';
 export { registerExtensionHandlers } from './extensions';
 export { registerOpenClawHistoryHandlers } from './history';
 export { registerHookHandlers } from './hooks';
+export { registerMarketplaceHandlers } from './marketplace';
 export { registerMcpHandlers } from './mcp';
 export { registerSkillHandlers } from './skills';
 export { registerSlashCommandHandlers } from './slashCommands';

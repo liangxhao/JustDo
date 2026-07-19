@@ -1,11 +1,9 @@
-import type { OpenClawSkillService } from '../skills';
-import { OpenClawClawHubProvider } from './openClawClawHubProvider';
 import { PluginMarketplaceService } from './pluginMarketplaceService';
 
-export const createPluginMarketplaceService = (
-  skillService: OpenClawSkillService,
-): PluginMarketplaceService =>
-  new PluginMarketplaceService([new OpenClawClawHubProvider(skillService)]);
+// Product builds register the configured enterprise provider here. Keeping the
+// default empty avoids coupling the application boundary to a public market.
+export const createPluginMarketplaceService = (): PluginMarketplaceService =>
+  new PluginMarketplaceService([]);
 
 export { PluginMarketplaceService } from './pluginMarketplaceService';
 export type { PluginMarketplaceProvider } from './types';

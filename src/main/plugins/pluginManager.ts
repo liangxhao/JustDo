@@ -1,9 +1,10 @@
 import type {
   MarketplaceDetailRequest,
   MarketplaceInstallRequest,
-  MarketplacePlugin,
   MarketplacePluginDetail,
   MarketplaceQuery,
+  MarketplaceSearchResult,
+  MarketplaceSource,
 } from '../../shared/plugins/marketplace';
 import type { PluginMarketplaceService } from './marketplace';
 
@@ -16,7 +17,11 @@ import type { PluginMarketplaceService } from './marketplace';
 export class PluginManager {
   constructor(private readonly marketplace: PluginMarketplaceService) {}
 
-  searchMarketplace(query: MarketplaceQuery): Promise<MarketplacePlugin[]> {
+  listMarketplaceSources(kind?: MarketplaceQuery['kind']): MarketplaceSource[] {
+    return this.marketplace.listSources(kind);
+  }
+
+  searchMarketplace(query: MarketplaceQuery): Promise<MarketplaceSearchResult> {
     return this.marketplace.search(query);
   }
 

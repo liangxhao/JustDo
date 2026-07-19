@@ -1,6 +1,8 @@
+import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import MarketplaceView from '@/features/plugins/components/marketplace/MarketplaceView';
 import McpServerFormModal from '@/features/plugins/components/mcp/McpServerFormModal';
 import { mcpRegistry } from '@/features/plugins/data/mcpRegistry';
 import { mcpService } from '@/features/plugins/services/mcpService';
@@ -769,14 +771,16 @@ const McpManager: React.FC = () => {
 
         {/* ── Tab: Marketplace ────────────────────────────── */}
         {activeTab === 'marketplace' && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 mb-4 rounded-2xl bg-surface flex items-center justify-center">
-              <ConnectorIcon className="h-8 w-8 text-secondary" />
-            </div>
-            <h3 className="text-base font-semibold text-foreground">
-              {i18nService.t('commonComingSoon')}
-            </h3>
-          </div>
+          <MarketplaceView
+            kind={PluginKind.MCP}
+            icon={<ConnectorIcon className="h-4 w-4" />}
+            installed={servers.map(server => ({
+              id: server.registryId || server.id,
+            }))}
+            onInstalled={async () => {
+              dispatch(setMcpServers(await mcpService.loadServers()));
+            }}
+          />
         )}
       </div>
 

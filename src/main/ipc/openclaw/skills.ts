@@ -1,14 +1,11 @@
 import { ipcMain } from 'electron';
 
-import { MarketplaceSourceId, PluginKind } from '../../../shared/plugins/marketplace';
 import type { GatewaySkillEntry } from '../../engine/types';
-import type { PluginManager } from '../../plugins';
 import type { OpenClawSkillFiles, OpenClawSkillService } from '../../plugins/skills';
 
 interface SkillHandlerDependencies {
   skillService: OpenClawSkillService;
   getSkillFiles: () => OpenClawSkillFiles;
-  pluginManager: PluginManager;
 }
 
 const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
@@ -57,7 +54,6 @@ const normalizeRequestedSkillSource = (
 export const registerSkillHandlers = ({
   skillService,
   getSkillFiles,
-  pluginManager,
 }: SkillHandlerDependencies): void => {
   ipcMain.handle('skills:list', async () => {
     try {
@@ -91,98 +87,6 @@ export const registerSkillHandlers = ({
       return { success: true, skills: status.skills.map(mapGatewaySkill) };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to update skill';
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: errorMsg.includes('not connected'),
-      };
-    }
-  });
-
-  ipcMain.handle(
-    'skills:install',
-    async (_event, params: { id?: string; version?: string; force?: boolean } | undefined) => {
-      try {
-        const pluginId = params?.id?.trim();
-        if (!pluginId) {
-          return { success: false, error: 'Unsupported marketplace install request' };
-        }
-        await pluginManager.installFromMarketplace({
-          sourceId: MarketplaceSourceId.DEFAULT,
-          pluginId,
-          kind: PluginKind.SKILL,
-          version: params.version,
-          force: params.force,
-        });
-        return { success: true };
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Failed to install skill';
-        return {
-          success: false,
-          error: errorMsg,
-          gatewayOffline: errorMsg.includes('not connected'),
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('skills:search', async (_event, options: { query?: string; limit?: number }) => {
-    try {
-      const results = await pluginManager.searchMarketplace({
-        kind: PluginKind.SKILL,
-        ...options,
-      });
-      return {
-        success: true,
-        results: results.map(skill => ({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description,
-          version: skill.version,
-          author: skill.author,
-          tags: skill.tags,
-          homepage: skill.homepage,
-        })),
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to search skills';
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: errorMsg.includes('not connected'),
-      };
-    }
-  });
-
-  ipcMain.handle('skills:detail', async (_event, options: { id?: string } | undefined) => {
-    try {
-      const pluginId = options?.id?.trim();
-      if (!pluginId) {
-        return { success: false, error: 'Marketplace plugin id is required' };
-      }
-      const detail = await pluginManager.getMarketplaceDetail({
-        sourceId: MarketplaceSourceId.DEFAULT,
-        pluginId,
-        kind: PluginKind.SKILL,
-      });
-      return {
-        success: true,
-        detail: detail
-          ? {
-              id: detail.id,
-              name: detail.name,
-              description: detail.description,
-              version: detail.version,
-              author: detail.author,
-              tags: detail.tags,
-              homepage: detail.homepage,
-              readme: detail.readme,
-              install: detail.requirements ? { requires: detail.requirements } : undefined,
-            }
-          : null,
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to get skill detail';
       return {
         success: false,
         error: errorMsg,

@@ -1,154 +1,81 @@
-# Skill Marketplace Adapter
+# Plugin Marketplace Adapter
 
-JustDo exposes skill marketplace actions through the main process only. The renderer never talks directly to marketplace providers.
+JustDo exposes one provider-neutral marketplace boundary for Extensions, Skills,
+MCP servers, and Hooks. The renderer never talks directly to a marketplace or
+handles enterprise authentication.
 
 ## Boundary
 
-| Layer | Responsibility |
-| --- | --- |
-| Renderer | Search/detail/install UI and Redux state |
-| Preload | Narrow `skills.search`, `skills.detail`, `skills.install` APIs |
-| Main IPC | Validate inputs and call plugin marketplace service |
-| Marketplace provider | Query remote/local marketplace source |
-| OpenClawSkillService | Execute Gateway skill install/status operations |
+| Layer               | Responsibility                                                           |
+| ------------------- | ------------------------------------------------------------------------ |
+| Renderer            | Shared card/search/action UI plus installed-state reconciliation         |
+| Preload             | Narrow `window.electron.marketplace` API                                 |
+| Main IPC            | Validate plugin kinds and return typed success/failure results           |
+| Marketplace service | Normalize queries and route by stable source id and kind                 |
+| Provider            | Authentication, endpoint protocol, DTO mapping, and installation         |
+| Runtime services    | Persist or activate installed Extensions, Skills, MCP servers, and Hooks |
 
 ```mermaid
 flowchart LR
-  UI["SkillMarketplace UI"] --> Preload["window.electron.skills"]
-  Preload --> IPC["skills IPC handler"]
-  IPC --> Market["PluginMarketplaceService"]
-  Market --> Provider["Marketplace Provider\nClawHub/local/future"]
-  IPC --> SkillSvc["OpenClawSkillService"]
-  SkillSvc --> Gateway["OpenClaw Gateway\nskills.* RPC"]
-  Provider --> Market
-  Market --> UI
-  Gateway --> SkillSvc
-  SkillSvc --> UI
+  UI["Four marketplace tabs"] --> Preload["window.electron.marketplace"]
+  Preload --> IPC["plugins:marketplace:* IPC"]
+  IPC --> Manager["PluginManager"]
+  Manager --> Market["PluginMarketplaceService"]
+  Market --> Provider["Configured provider"]
+  Provider --> Runtime["Owning runtime service"]
 ```
 
-## Key Files
+The shared contract lives in `src/shared/plugins/marketplace.ts`. Search results
+contain provider-neutral metadata and an optional install state:
+`available`, `installed`, `update-available`, or `unavailable`. The renderer also
+compares stable item ids with the owning installed page so a provider may omit
+installed state. An enterprise provider should return `update-available` when it
+has authoritative version or policy information.
 
-| File | Purpose |
-| --- | --- |
-| `src/main/plugins/marketplace/pluginMarketplaceService.ts` | marketplace service |
-| `src/main/plugins/marketplace/openClawClawHubProvider.ts` | ClawHub provider |
-| `src/main/plugins/marketplace/clawHubSkillRpc.ts` | provider RPC |
-| `src/main/plugins/skills/openclawSkillService.ts` | Gateway skill RPC |
-| `src/main/ipc/openclaw/skills.ts` | IPC handler |
-| `src/renderer/features/plugins/components/skills/SkillMarketplace.tsx` | UI |
-| `src/shared/plugins/marketplace.ts` | shared contracts |
+## API
 
-## Rules
+The preload API exposes:
 
-- Renderer uses `window.electron.skills.*` only.
-- Main process normalizes query, id, version, and force options.
-- Provider errors must be converted to typed failure results.
-- Installing a skill must go through OpenClaw skill service so Gateway remains authoritative.
-- New user-visible errors require i18n entries.
+- `listSources(kind?)` for source discovery.
+- `search({ kind, query, limit, cursor, sourceId })` for paged listings.
+- `detail({ sourceId, pluginId, kind })` for optional heavy metadata.
+- `install({ sourceId, pluginId, kind, version, operation })` for install/update.
+
+Search returns `{ items, nextCursor }`. Provider-specific response fields,
+credentials, transport errors, and install descriptors must not cross IPC.
+No provider is registered by default. The UI reports that the marketplace is
+not configured until a product build registers an enterprise provider.
+
+## Adding the enterprise marketplace
+
+Implement `PluginMarketplaceProvider` under `src/main/plugins/marketplace/` and
+register it only in `createPluginMarketplaceService`. Keep these concerns inside
+the provider:
+
+- endpoint and authentication acquisition;
+- request pagination and private response DTOs;
+- mapping company categories to `PluginKind`;
+- policy/availability and update-state mapping;
+- dispatch to the correct owning installer.
+
+Provider ids must be stable and unique. A provider declares only the kinds it
+actually supports. Do not add company protocol fields to shared contracts unless
+the UI has a provider-independent need for them. Plugin ids are globally unique
+within a plugin kind; providers must namespace ids if their native ids can
+collide with another configured source.
+
+## Security and behavior
+
+- Treat marketplace metadata and README content as untrusted.
+- Never expose tokens, raw authorization headers, or credential objects to IPC.
+- Installation is privileged and must use a registered provider; renderer input
+  cannot supply arbitrary URLs or local paths.
+- A failed or unconfigured provider affects only its marketplace result region,
+  not the Plugins page.
+- Refresh the owning installed list after a successful install.
 
 ## Verification
 
 - `src/main/plugins/marketplace/*.test.ts`
-- `src/renderer/features/plugins/components/skills/*.test.ts`
-- Manual smoke test through Plugins -> Skills marketplace UI.
-
-## Data Model
-
-Marketplace items should be normalized before reaching renderer. A renderer item should have enough information for display and install intent, but not provider-specific transport details.
-
-Recommended fields:
-
-| Field | Meaning |
-| --- | --- |
-| `id` | Stable skill id |
-| `name` | Display name |
-| `description` | Short description |
-| `version` | Version string when available |
-| `author` | Publisher/owner |
-| `tags` | Search/filter tags |
-| `installed` | Whether Gateway/local state reports installed |
-| `enabled` | Whether Gateway reports enabled |
-
-Provider-specific fields should stay in Main unless the UI explicitly needs them.
-
-## Search Flow
-
-```text
-SkillMarketplace input
-  -> skillService.search({ query, limit })
-  -> window.electron.skills.search()
-  -> skills IPC handler
-  -> PluginMarketplaceService.search()
-  -> provider.search()
-  -> normalized result
-```
-
-Search should be best-effort. Network/provider failure should not break the whole Plugins page; it should show a localized marketplace error region.
-
-## Detail Flow
-
-Detail lookup is separate from search so the list can stay light:
-
-```text
-User opens detail
-  -> skills.detail({ id })
-  -> provider.detail(id)
-  -> normalized details
-```
-
-Details may include README/description content. Treat it as untrusted text/markdown and sanitize in renderer.
-
-## Install Flow
-
-```mermaid
-sequenceDiagram
-  actor User
-  participant UI as SkillMarketplace
-  participant IPC as Main IPC
-  participant Market as PluginMarketplaceService
-  participant Skill as OpenClawSkillService
-  participant GW as Gateway skills RPC
-
-  User->>UI: Click install
-  UI->>IPC: skills.install({ id, version, force })
-  IPC->>IPC: validate id/version
-  IPC->>Market: resolve package/provider metadata
-  Market-->>IPC: install descriptor
-  IPC->>Skill: install(descriptor)
-  Skill->>GW: skills.install
-  GW-->>Skill: installed/status
-  Skill-->>UI: result
-  UI->>IPC: skills.list()
-```
-```
-
-Install result should distinguish:
-
-- already installed
-- installed successfully
-- version conflict
-- provider unavailable
-- Gateway unavailable
-- validation failure
-
-## Provider Abstraction
-
-`PluginMarketplaceService` should depend on provider interface, not a hardcoded network client. This allows:
-
-- ClawHub provider.
-- Local/test provider.
-- Future enterprise/private marketplace.
-
-Provider implementations must not leak tokens or raw HTTP errors to renderer.
-
-## Caching
-
-Renderer can cache search results in component/Redux state for UX, but not in SQLite unless there is a product requirement. Installed state should be refreshed from Gateway after install/delete/enable changes.
-
-## Security
-
-- Marketplace metadata is untrusted.
-- Install action is privileged because it changes runtime capability.
-- Renderer cannot choose arbitrary install source paths unless using explicit local import flow.
-- Force install should be explicit and visible.
-- Logs should include skill id/version but not marketplace credentials.
+- Manual smoke test for all four Plugins -> Marketplace tabs.
+- Verify `+`, `✓`, update, loading, empty, unavailable, and error states.

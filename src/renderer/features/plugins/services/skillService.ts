@@ -1,5 +1,4 @@
-import { MarketplaceSkill, MarketplaceSkillDetail, Skill } from '@/features/plugins/types/skill';
-import { i18nService } from '@/services/i18n';
+import { Skill } from '@/features/plugins/types/skill';
 
 type SkillListResult = {
   success: boolean;
@@ -96,43 +95,6 @@ class SkillService {
 
   getSkillById(id: string): Skill | undefined {
     return this.skills.find(s => s.id === id);
-  }
-
-  // ============================================================
-  // Marketplace methods
-  // ============================================================
-
-  /** Search the configured marketplace for skills */
-  async searchMarketplace(query?: string, limit?: number): Promise<MarketplaceSkill[]> {
-    const result = await window.electron.skills.search({ query, limit });
-    if (result.success && result.results) {
-      return result.results;
-    }
-    throw new Error(result.error || i18nService.t('skillMarketplaceSearchFailed'));
-  }
-
-  /** Get detailed info for a marketplace skill */
-  async getMarketplaceDetail(id: string): Promise<MarketplaceSkillDetail | null> {
-    const result = await window.electron.skills.detail({ id });
-    if (result.success && result.detail) {
-      return result.detail;
-    }
-    throw new Error(result.error || i18nService.t('skillMarketplaceDetailFailed'));
-  }
-
-  /** Install a skill from the configured marketplace */
-  async installSkill(id: string, version?: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      const result = await window.electron.skills.install({
-        id,
-        version,
-      });
-      return { success: result.success, error: result.error };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to install skill';
-      console.error('Failed to install skill:', error);
-      return { success: false, error: message };
-    }
   }
 
   /** Import a skill from a local folder or archive */

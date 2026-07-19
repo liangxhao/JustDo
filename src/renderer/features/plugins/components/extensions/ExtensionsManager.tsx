@@ -11,9 +11,11 @@ import type {
   ExtensionImportStage,
   InstalledOpenClawExtension,
 } from '@shared/openclaw/extensions';
+import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import MarketplaceView from '@/features/plugins/components/marketplace/MarketplaceView';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 import ErrorMessage from '@/shared/components/ErrorMessage';
@@ -553,18 +555,17 @@ const ExtensionsManager: React.FC = () => {
       )}
 
       {activeTab === 'marketplace' && (
-        <div className="flex min-h-64 items-center justify-center rounded-xl border border-dashed border-border bg-surface/40 px-4 py-10 text-center">
-          <div className="max-w-md space-y-3">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary">
-              <PuzzleIcon className="h-5 w-5" />
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-base font-semibold text-foreground">
-                {i18nService.t('commonComingSoon')}
-              </h3>
-            </div>
-          </div>
-        </div>
+        <MarketplaceView
+          kind={PluginKind.EXTENSION}
+          icon={<PuzzleIcon className="h-4 w-4" />}
+          installed={extensions.map(extension => ({
+            id: extension.id,
+            version: extension.version,
+          }))}
+          onInstalled={async () => {
+            await loadExtensions();
+          }}
+        />
       )}
 
       {importPickerOpen &&

@@ -110,9 +110,8 @@ Skill 卡片仅对 `workspace`、`agents-project`、`agents-personal` 和 `manag
 - `skills.setEnabled({ id, enabled })`
 - `skills.importPath(sourcePath)`
 - `skills.delete({ id, source })`
-- `skills.search({ query?, limit? })`
-- `skills.detail({ id })`
-- `skills.install({ id, version?, force? })`
+
+市场操作不属于 Skill 专用 API，统一通过 `marketplace.listSources/search/detail/install`。
 
 ### Skill 数据流
 

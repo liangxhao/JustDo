@@ -178,27 +178,6 @@ interface Skill {
   homepage?: string;
 }
 
-// Marketplace skill types
-interface MarketplaceSkill {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-  author?: string;
-  tags?: string[];
-  homepage?: string;
-}
-
-interface MarketplaceSkillDetail extends MarketplaceSkill {
-  readme?: string;
-  install?: {
-    requires?: {
-      bins?: string[];
-      env?: string[];
-    };
-  };
-}
-
 type CoworkInteractionResult =
   | {
       behavior: 'submit';
@@ -309,6 +288,16 @@ interface HookEntryIPC {
 
 import type { GatewayPortSetErrorCode } from '@shared/openclaw/gatewayPort';
 import type {
+  MarketplaceDetailRequest,
+  MarketplaceDetailResponse,
+  MarketplaceInstallRequest,
+  MarketplaceInstallResponse,
+  MarketplaceQuery,
+  MarketplaceSearchResponse,
+  MarketplaceSourcesResponse,
+  PluginKind,
+} from '@shared/plugins/marketplace';
+import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
   ScheduledTaskInput,
@@ -327,6 +316,12 @@ interface IElectronAPI {
     set: (key: string, value: any) => Promise<void>;
     remove: (key: string) => Promise<void>;
   };
+  marketplace: {
+    listSources: (kind?: PluginKind) => Promise<MarketplaceSourcesResponse>;
+    search: (query: MarketplaceQuery) => Promise<MarketplaceSearchResponse>;
+    detail: (request: MarketplaceDetailRequest) => Promise<MarketplaceDetailResponse>;
+    install: (request: MarketplaceInstallRequest) => Promise<MarketplaceInstallResponse>;
+  };
   skills: {
     list: () => Promise<{
       success: boolean;
@@ -338,30 +333,12 @@ interface IElectronAPI {
       id: string;
       enabled: boolean;
     }) => Promise<{ success: boolean; skills?: Skill[]; error?: string; gatewayOffline?: boolean }>;
-    // Marketplace-based skill management
-    install: (params: { id: string; version?: string; force?: boolean }) => Promise<{
-      success: boolean;
-      error?: string;
-      gatewayOffline?: boolean;
-    }>;
     // Offline skill import from a folder or archive
     importPath: (sourcePath: string) => Promise<{
       success: boolean;
       skillId?: string;
       error?: string;
       skills?: Skill[];
-    }>;
-    search: (options?: { query?: string; limit?: number }) => Promise<{
-      success: boolean;
-      results?: MarketplaceSkill[];
-      error?: string;
-      gatewayOffline?: boolean;
-    }>;
-    detail: (options: { id: string }) => Promise<{
-      success: boolean;
-      detail?: MarketplaceSkillDetail;
-      error?: string;
-      gatewayOffline?: boolean;
     }>;
     delete: (options: {
       id: string;

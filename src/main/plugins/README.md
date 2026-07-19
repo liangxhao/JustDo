@@ -12,9 +12,6 @@ areas live here with the marketplace and manager facade.
   sync, the ask-user callback server, and interaction routing.
 - `hooks/` contains hook persistence and OpenClaw config sync.
 - `marketplace/` contains provider-neutral models, routing, and providers.
-- `marketplace/openClawClawHubProvider.ts` is the reference implementation. It
-  maps ClawHub Skill data to the common Extension/Skill/MCP marketplace model
-  and delegates installation to OpenClaw.
 
 Import plugin services through `src/main/plugins` when a caller needs
 multiple plugin capabilities, or through the subdomain barrel such as
@@ -22,13 +19,13 @@ multiple plugin capabilities, or through the subdomain barrel such as
 plugin runtime code from `openclaw/*`; OpenClaw config and runtime code should
 depend on this plugin boundary instead.
 
-To connect a private ClawHub, implement `PluginMarketplaceProvider` in
+To connect an enterprise marketplace, implement `PluginMarketplaceProvider` in
 `marketplace/types.ts`. Keep private authentication, endpoint configuration,
-and response DTO conversion inside that provider. Replace
-`OpenClawClawHubProvider` in `createPluginMarketplaceService` with the private
-provider. Keep the application-facing source ID `default` for the configured
-marketplace source; renderer and IPC code then need no changes.
+and response DTO conversion inside that provider. Register it in
+`createPluginMarketplaceService`; renderer and generic IPC code then need no
+changes. No marketplace provider is registered by default, so product builds
+must explicitly register the configured enterprise provider.
 
 Provider IDs must be stable and unique. A provider declares only the values of
-`PluginKind` it actually supports. Extension and MCP providers can implement the
-same contract later without changing the plugin manager.
+`PluginKind` it actually supports. Search pagination and install/update state
+are part of the shared contract; private response DTOs stay inside the provider.

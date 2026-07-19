@@ -80,7 +80,7 @@ export interface SkillUpdateParams {
 }
 
 /**
- * Result from skills.install or skills.update RPC.
+ * Result from the skills.update RPC.
  */
 export interface SkillRpcResult {
   ok: boolean;

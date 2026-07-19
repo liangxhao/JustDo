@@ -13,6 +13,13 @@ import {
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
 import { HookIpc } from '../shared/openclaw/hooks';
 import { UsageStatsIpc } from '../shared/openclaw/usage';
+import {
+  type MarketplaceDetailRequest,
+  type MarketplaceInstallRequest,
+  MarketplaceIpc,
+  type MarketplaceQuery,
+  type PluginKind,
+} from '../shared/plugins/marketplace';
 import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
 import { SlashCommandIpc } from '../shared/slashCommands';
 
@@ -25,18 +32,20 @@ contextBridge.exposeInMainWorld('electron', {
     set: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
     remove: (key: string) => ipcRenderer.invoke('store:remove', key),
   },
+  marketplace: {
+    listSources: (kind?: PluginKind) => ipcRenderer.invoke(MarketplaceIpc.ListSources, kind),
+    search: (query: MarketplaceQuery) => ipcRenderer.invoke(MarketplaceIpc.Search, query),
+    detail: (request: MarketplaceDetailRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.Detail, request),
+    install: (request: MarketplaceInstallRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.Install, request),
+  },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
     setEnabled: (options: { id: string; enabled: boolean }) =>
       ipcRenderer.invoke('skills:setEnabled', options),
-    // Marketplace-based skill management
-    install: (params: { id: string; version?: string; force?: boolean }) =>
-      ipcRenderer.invoke('skills:install', params),
     // Offline import from a local folder or archive
     importPath: (sourcePath: string) => ipcRenderer.invoke('skills:import', sourcePath),
-    search: (options?: { query?: string; limit?: number }) =>
-      ipcRenderer.invoke('skills:search', options || {}),
-    detail: (options: { id: string }) => ipcRenderer.invoke('skills:detail', options),
     delete: (options: { id: string; source?: string }) =>
       ipcRenderer.invoke('skills:delete', options),
   },

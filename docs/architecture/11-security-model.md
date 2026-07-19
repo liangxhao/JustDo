@@ -93,13 +93,13 @@ Main handler 对输入做三层处理：
 2. semantic validation：id 是否存在、状态是否允许、路径/URL 是否合理。
 3. authority validation：这个操作是否应该由用户当前动作触发。
 
-例如 skill install：
+例如市场安装：
 
 ```text
 Renderer install click
-  -> skills.install({ id, version, force })
-  -> Main validates id/version
-  -> marketplace/Gateway service
+  -> marketplace.install({ sourceId, pluginId, kind, version })
+  -> Main validates source/kind/id/version
+  -> registered marketplace provider
   -> result
 ```
 

@@ -514,7 +514,16 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
           </div>
         )}
 
-        {activeTab === 'marketplace' && <SkillMarketplace />}
+        {activeTab === 'marketplace' && (
+          <SkillMarketplace
+            installed={skills.map(skill => ({ id: skill.id, version: skill.version }))}
+            readOnly={readOnly}
+            onInstalled={async () => {
+              const loadedSkills = await skillService.loadSkills();
+              dispatch(setSkills(loadedSkills));
+            }}
+          />
+        )}
       </div>
 
       {/* Skill detail modal */}

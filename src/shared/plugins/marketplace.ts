@@ -2,18 +2,25 @@ export const PluginKind = {
   EXTENSION: 'extension',
   SKILL: 'skill',
   MCP: 'mcp',
+  HOOK: 'hook',
 } as const;
 
 export type PluginKind = (typeof PluginKind)[keyof typeof PluginKind];
 
-export const MarketplaceSourceId = {
-  DEFAULT: 'default',
+export const MarketplaceErrorCode = {
+  INVALID_REQUEST: 'invalid-request',
+  SOURCE_NOT_FOUND: 'source-not-found',
+  UNSUPPORTED_KIND: 'unsupported-kind',
+  PROVIDER_FAILURE: 'provider-failure',
+  INVALID_RESPONSE: 'invalid-response',
+  INTERNAL: 'internal',
 } as const;
+
+export type MarketplaceErrorCode = (typeof MarketplaceErrorCode)[keyof typeof MarketplaceErrorCode];
 
 export interface MarketplaceSource {
   id: string;
   name: string;
-  endpoint?: string;
   supportedKinds: PluginKind[];
 }
 
@@ -26,8 +33,29 @@ export interface MarketplacePlugin {
   author?: string;
   tags?: string[];
   homepage?: string;
+  iconUrl?: string;
   sourceId: string;
+  installState?: MarketplaceInstallState;
+  installedVersion?: string;
 }
+
+export const MarketplaceInstallState = {
+  AVAILABLE: 'available',
+  INSTALLED: 'installed',
+  UPDATE_AVAILABLE: 'update-available',
+  UNAVAILABLE: 'unavailable',
+} as const;
+
+export type MarketplaceInstallState =
+  (typeof MarketplaceInstallState)[keyof typeof MarketplaceInstallState];
+
+export const MarketplaceInstallOperation = {
+  INSTALL: 'install',
+  UPDATE: 'update',
+} as const;
+
+export type MarketplaceInstallOperation =
+  (typeof MarketplaceInstallOperation)[keyof typeof MarketplaceInstallOperation];
 
 export interface MarketplacePluginDetail extends MarketplacePlugin {
   readme?: string;
@@ -41,6 +69,13 @@ export interface MarketplaceQuery {
   kind: PluginKind;
   query?: string;
   limit?: number;
+  cursor?: string;
+  sourceId?: string;
+}
+
+export interface MarketplaceSearchResult {
+  items: MarketplacePlugin[];
+  nextCursor?: string;
 }
 
 export interface MarketplaceInstallRequest {
@@ -48,11 +83,45 @@ export interface MarketplaceInstallRequest {
   pluginId: string;
   kind: PluginKind;
   version?: string;
-  force?: boolean;
+  operation?: MarketplaceInstallOperation;
 }
 
 export interface MarketplaceDetailRequest {
   sourceId: string;
   pluginId: string;
   kind: PluginKind;
+}
+
+export const MarketplaceIpc = {
+  ListSources: 'plugins:marketplace:listSources',
+  Search: 'plugins:marketplace:search',
+  Detail: 'plugins:marketplace:detail',
+  Install: 'plugins:marketplace:install',
+} as const;
+
+export interface MarketplaceSearchResponse {
+  success: boolean;
+  result?: MarketplaceSearchResult;
+  error?: string;
+  errorCode?: MarketplaceErrorCode;
+}
+
+export interface MarketplaceDetailResponse {
+  success: boolean;
+  detail?: MarketplacePluginDetail | null;
+  error?: string;
+  errorCode?: MarketplaceErrorCode;
+}
+
+export interface MarketplaceInstallResponse {
+  success: boolean;
+  error?: string;
+  errorCode?: MarketplaceErrorCode;
+}
+
+export interface MarketplaceSourcesResponse {
+  success: boolean;
+  sources?: MarketplaceSource[];
+  error?: string;
+  errorCode?: MarketplaceErrorCode;
 }

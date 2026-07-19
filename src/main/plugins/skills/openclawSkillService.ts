@@ -13,16 +13,8 @@ export class OpenClawSkillService {
     return this.requireGateway().requestGateway('skills.status', { agentId });
   }
 
-  install(params: unknown): Promise<SkillRpcResult> {
-    return this.requireGateway().requestGateway('skills.install', params);
-  }
-
   updateConfig(params: SkillUpdateParams): Promise<SkillRpcResult> {
     return this.requireGateway().requestGateway('skills.update', params);
-  }
-
-  request<T>(method: string, params?: unknown): Promise<T> {
-    return this.requireGateway().requestGateway<T>(method, params);
   }
 
   private requireGateway(): OpenClawSkillGateway {

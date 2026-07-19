@@ -4,10 +4,12 @@ import {
   FolderIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { groupHooksBySource, HookGroupId } from '@/features/plugins/components/hooks/hookGroups';
+import MarketplaceView from '@/features/plugins/components/marketplace/MarketplaceView';
 import { hookService } from '@/features/plugins/services/hookService';
 import { HookEntry } from '@/features/plugins/types/hook';
 import { i18nService } from '@/services/i18n';
@@ -477,14 +479,15 @@ const HookManager: React.FC = () => {
       )}
 
       {activeTab === 'marketplace' && (
-        <div className="flex min-h-72 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface px-6 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-background">
-            <ConnectorIcon className="h-6 w-6 text-secondary" />
-          </div>
-          <h2 className="mt-4 text-base font-semibold text-foreground">
-            {i18nService.t('commonComingSoon')}
-          </h2>
-        </div>
+        <MarketplaceView
+          kind={PluginKind.HOOK}
+          icon={<ConnectorIcon className="h-4 w-4" />}
+          installed={hooks.map(hook => ({ id: hook.id }))}
+          onInstalled={async () => {
+            const result = await hookService.loadHooks();
+            setHooks(result.hooks ?? []);
+          }}
+        />
       )}
 
       {selectedHook &&

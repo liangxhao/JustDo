@@ -60,6 +60,7 @@ import {
 import {
   registerExtensionHandlers,
   registerHookHandlers,
+  registerMarketplaceHandlers,
   registerMcpHandlers,
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
@@ -293,7 +294,7 @@ let coworkEngineService: CoworkEngineService | null = null;
 const openClawSkillService = new OpenClawSkillService(
   () => coworkEngineService?.getRuntimeAdapter() ?? null,
 );
-const pluginManager = new PluginManager(createPluginMarketplaceService(openClawSkillService));
+const pluginManager = new PluginManager(createPluginMarketplaceService());
 const askUserSessionByRequestId = new Map<string, string>();
 const extensionHostLifecycle = new OpenClawExtensionHostLifecycle({
   askUserSessionByRequestId,
@@ -681,8 +682,8 @@ if (!gotTheLock) {
   registerSkillHandlers({
     skillService: openClawSkillService,
     getSkillFiles: getOpenClawSkillFiles,
-    pluginManager,
   });
+  registerMarketplaceHandlers(pluginManager);
   registerExtensionHandlers({
     extensionImportService: new OpenClawExtensionImportService({
       getOpenClawEngineManager,

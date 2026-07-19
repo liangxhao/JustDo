@@ -50,24 +50,3 @@ export interface SkillInstallOption {
   hint?: string;
   optional?: boolean;
 }
-
-// Marketplace skill types
-export interface MarketplaceSkill {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-  author?: string;
-  tags?: string[];
-  homepage?: string;
-}
-
-export interface MarketplaceSkillDetail extends MarketplaceSkill {
-  readme?: string;
-  install?: {
-    requires?: {
-      bins?: string[];
-      env?: string[];
-    };
-  };
-}
