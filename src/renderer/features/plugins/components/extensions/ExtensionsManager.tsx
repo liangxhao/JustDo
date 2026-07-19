@@ -461,7 +461,7 @@ const ExtensionsManager: React.FC = () => {
                       openExtensionDetails(extension);
                     }
                   }}
-                  className="cursor-pointer rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="relative cursor-pointer rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   <div className="mb-2 flex items-start justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
@@ -533,11 +533,16 @@ const ExtensionsManager: React.FC = () => {
                   )}
 
                   {extension.missingRequirements.length > 0 && (
-                    <div className="mt-3 flex items-center">
-                      <span className="flex max-w-full items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
-                        <ExclamationTriangleIcon className="h-3 w-3 shrink-0" />
-                        <span>{i18nService.t('extensionMissingConfiguration')}</span>
-                      </span>
+                    <div className="absolute bottom-2 right-2">
+                      <Tooltip
+                        content={i18nService.t('extensionMissingConfiguration')}
+                        position="top"
+                      >
+                        <ExclamationTriangleIcon
+                          className="h-4 w-4 text-amber-600 dark:text-amber-400"
+                          aria-label={i18nService.t('extensionMissingConfiguration')}
+                        />
+                      </Tooltip>
                     </div>
                   )}
                 </article>
