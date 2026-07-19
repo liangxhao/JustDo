@@ -576,7 +576,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     extensionDisable: '关闭扩展',
     extensionStatusUpdateFailed: '更新扩展状态失败',
     extensionMissingConfiguration: '缺少必要配置',
-    extensionConfigurationNoFields: '该扩展没有声明可在此编辑的配置项。',
     extensionConfigurationValueRequired: '请至少填写一个配置项。',
     extensionConfigurationSaveFailed: '保存扩展配置失败',
     extensionOpenFolderFailed: '打开扩展文件夹失败',
@@ -1329,8 +1328,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     extensionDisable: 'Disable extension',
     extensionStatusUpdateFailed: 'Failed to update extension status',
     extensionMissingConfiguration: 'Missing required configuration',
-    extensionConfigurationNoFields:
-      'This extension declares no configuration fields editable here.',
     extensionConfigurationValueRequired: 'Enter at least one configuration value.',
     extensionConfigurationSaveFailed: 'Failed to save extension configuration',
     extensionOpenFolderFailed: 'Failed to open the extension folder',

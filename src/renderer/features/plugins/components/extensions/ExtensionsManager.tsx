@@ -650,7 +650,7 @@ const ExtensionsManager: React.FC = () => {
             )}
 
             <div className="mt-5">
-              {selectedExtension.configurationFields.length > 0 ? (
+              {selectedExtension.configurationFields.length > 0 && (
                 <div className="space-y-4">
                   {selectedExtension.configurationFields.map(field => (
                     <div
@@ -698,10 +698,6 @@ const ExtensionsManager: React.FC = () => {
                       />
                     </div>
                   ))}
-                </div>
-              ) : (
-                <div className="mt-4 rounded-xl bg-background px-3 py-3 text-xs text-secondary">
-                  {i18nService.t('extensionConfigurationNoFields')}
                 </div>
               )}
 
