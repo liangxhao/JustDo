@@ -18,27 +18,15 @@ export const registerCoworkUtilityHandlers = ({
   listRecentCwds,
 }: CoworkUtilitiesHandlerOptions): void => {
   ipcMain.handle('generate-session-title', async (_event, userInput: string | null) => {
-    // Use Gateway-based title generation (reuses session authentication)
-    console.log('[main] generate-session-title: attempting Gateway-based generation...');
     try {
       const router = getTitleGenerator();
-      console.log(
-        '[main] generate-session-title: router exists, hasGenerateTitle=',
-        !!router.generateTitle,
-      );
       if (router.generateTitle) {
-        console.log('[main] generate-session-title: calling router.generateTitle...');
-        const title = await router.generateTitle(userInput);
-        console.log('[main] generate-session-title: Gateway result=', title);
-        return title;
+        return await router.generateTitle(userInput);
       }
-      console.warn(
-        '[main] generate-session-title: router.generateTitle not available, using simple fallback',
-      );
+      console.warn('[CoworkUtilities] title generator unavailable; using fallback title');
     } catch (error) {
-      console.warn('[main] Gateway-based title generation failed:', error);
+      console.warn('[CoworkUtilities] title generation failed:', error);
     }
-    // Simple fallback when Gateway is completely unavailable (no HTTP method)
     const fallback = 'New Session';
     const normalizedInput = typeof userInput === 'string' ? userInput.trim() : '';
     if (!normalizedInput) return fallback;

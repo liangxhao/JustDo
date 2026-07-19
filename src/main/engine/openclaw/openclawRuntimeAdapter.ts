@@ -9,6 +9,7 @@ import {
 } from '../../../shared/slashCommands';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../../cowork/providerApiConfig';
+import { SessionTitleGenerator } from '../../cowork/sessionTitleGenerator';
 import type {
   CoworkExecutionMode,
   CoworkMessage,
@@ -35,7 +36,6 @@ import {
   waitWithTimeout,
 } from '../gateway/helpers';
 import { SessionRpc } from '../gateway/sessionRpc';
-import { GatewayTitleGenerator } from '../gateway/titleGenerator';
 import type {
   AgentEventPayload,
   ChatEventPayload,
@@ -244,7 +244,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // Collaborators
   private historyReconciler!: HistoryReconciler;
   private sessionRpc!: SessionRpc;
-  private titleGenerator!: GatewayTitleGenerator;
+  private titleGenerator!: SessionTitleGenerator;
 
   agentTimeoutSeconds = OPENCLAW_AGENT_TIMEOUT_SECONDS;
 
@@ -285,9 +285,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       getFullHistorySyncLimit: () => FULL_HISTORY_SYNC_LIMIT,
     });
 
-    this.titleGenerator = new GatewayTitleGenerator({
-      ensureGatewayClientReady: () => this.ensureGatewayClientReady(),
-      getGatewayClient: () => this.gatewayClient,
+    this.titleGenerator = new SessionTitleGenerator({
+      resolveApiConfig: () => resolveRawApiConfig(),
     });
     this.sessionRpc = new SessionRpc({
       getGatewayClient: () => this.gatewayClient,

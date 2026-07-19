@@ -99,7 +99,9 @@ Gateway history 是权威。`historyReconciler` 和 `src/main/openclaw/sessions/
 本地 `cowork_sessions` 存的是 UI 和产品元数据：
 
 - `id`：JustDo UI session id。
-- `title`：本地显示标题，可由标题生成服务更新。
+- `title`：本地显示标题，可由标题生成服务更新。标题服务通过当前选中模型的
+  OpenAI-compatible API 做一次无状态请求，不创建 OpenClaw/Gateway 会话；模型不可用、
+  请求失败或超时时回退为首条非空输入的截断文本。
 - `status`：UI 状态，例如 idle/running/error。
 - `cwd`：会话工作目录。
 - `execution_mode`：当前只保留 local/sandbox/auto 语义，旧 container 会迁移到 local。
