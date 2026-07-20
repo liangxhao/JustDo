@@ -1,5 +1,6 @@
 import {
   ArrowPathIcon,
+  BookOpenIcon,
   ChartBarIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
@@ -34,6 +35,7 @@ import {
   isCustomProvider,
   validateDisplayName,
 } from '@/app/config';
+import MemoryView from '@/features/memory/MemoryView';
 import { setAvailableModels } from '@/features/models/modelSlice';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
 import ShortcutsSettings, {
@@ -52,7 +54,7 @@ import Modal from '@/shared/components/common/Modal';
 import ErrorMessage from '@/shared/components/ErrorMessage';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
-type TabType = 'general' | 'usage' | 'model' | 'im' | 'shortcuts' | 'help';
+type TabType = 'general' | 'usage' | 'model' | 'memory' | 'im' | 'shortcuts' | 'help';
 
 const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
@@ -1483,6 +1485,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CubeIcon className="h-5 w-5" />,
     },
     {
+      key: 'memory',
+      label: i18nService.t('memoryTitle'),
+      icon: <BookOpenIcon className="h-5 w-5" />,
+    },
+    {
       key: 'usage',
       label: i18nService.t('usageStats'),
       icon: <ChartBarIcon className="h-5 w-5" />,
@@ -2369,34 +2376,40 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-            {/* Tab content */}
-            <div
-              ref={contentRef}
-              className="px-6 py-4 flex-1 overflow-y-auto"
-              style={{ scrollbarGutter: 'stable' }}
-            >
-              {renderTabContent()}
+          {activeTab === 'memory' ? (
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <MemoryView />
             </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+              {/* Tab content */}
+              <div
+                ref={contentRef}
+                className="px-6 py-4 flex-1 overflow-y-auto"
+                style={{ scrollbarGutter: 'stable' }}
+              >
+                {renderTabContent()}
+              </div>
 
-            {/* Footer buttons */}
-            <div className="flex justify-end space-x-4 p-4 border-border border-t bg-background shrink-0">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-foreground hover:bg-surface-raised rounded-xl transition-colors text-sm font-medium border border-border active:scale-[0.98]"
-              >
-                {i18nService.t('cancel')}
-              </button>
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
-              >
-                {isSaving ? i18nService.t('saving') : i18nService.t('save')}
-              </button>
-            </div>
-          </form>
+              {/* Footer buttons */}
+              <div className="flex justify-end space-x-4 p-4 border-border border-t bg-background shrink-0">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 text-foreground hover:bg-surface-raised rounded-xl transition-colors text-sm font-medium border border-border active:scale-[0.98]"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                >
+                  {isSaving ? i18nService.t('saving') : i18nService.t('save')}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
         {isTestResultModalOpen && testResult && (

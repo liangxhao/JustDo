@@ -21,19 +21,10 @@ import type {
 } from '@shared/openclaw/memory';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
-import ComposeIcon from '@/shared/components/icons/ComposeIcon';
-import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 
 type MemoryTab = 'overview' | 'search' | 'timeline' | 'files';
-
-interface MemoryViewProps {
-  isSidebarCollapsed: boolean;
-  onToggleSidebar: () => void;
-  onNewChat: () => void;
-}
 
 const MEMORY_TABS: MemoryTab[] = ['overview', 'search', 'timeline', 'files'];
 
@@ -45,11 +36,7 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 };
 
-const MemoryView: React.FC<MemoryViewProps> = ({
-  isSidebarCollapsed,
-  onToggleSidebar,
-  onNewChat,
-}) => {
+const MemoryView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<MemoryTab>('overview');
   const [overview, setOverview] = useState<MemoryOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,7 +50,6 @@ const MemoryView: React.FC<MemoryViewProps> = ({
   const [hasSearched, setHasSearched] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const isMac = window.electron.platform === 'darwin';
   const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
 
   const loadOverview = useCallback(async () => {
@@ -562,47 +548,9 @@ const MemoryView: React.FC<MemoryViewProps> = ({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="draggable relative flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
-        <div className="flex h-8 items-center">
-          {isSidebarCollapsed && (
-            <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
-                aria-label={i18nService.t('expand')}
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed />
-              </button>
-              <button
-                type="button"
-                onClick={onNewChat}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
-                aria-label={i18nService.t('newChat')}
-              >
-                <ComposeIcon className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-        </div>
-        <WindowTitleBar inline />
-      </div>
-
-      <header className="shrink-0 border-b border-border bg-gradient-to-b from-primary/[0.05] to-transparent px-6 pb-0 pt-5 lg:px-8">
+      <header className="shrink-0 border-b border-border bg-gradient-to-b from-primary/[0.05] to-transparent px-6 pb-0 pt-2">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <BookOpenIcon className="h-5 w-5" />
-              </div>
-              <div>
-                <h1 className="text-xl font-semibold tracking-tight text-foreground">
-                  {i18nService.t('memoryTitle')}
-                </h1>
-                <p className="text-xs text-secondary">{i18nService.t('memoryDescription')}</p>
-              </div>
-            </div>
-          </div>
+          <p className="pt-2 text-xs text-secondary">{i18nService.t('memoryDescription')}</p>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -642,7 +590,7 @@ const MemoryView: React.FC<MemoryViewProps> = ({
         </nav>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-6 py-6 lg:px-8">
+      <main className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
         {notice && (
           <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-600 dark:text-emerald-400">
             <CheckCircleIcon className="h-4 w-4" />
