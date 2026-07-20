@@ -618,10 +618,13 @@ function resolveImageSourceUrl(url: string, workingDirectory?: string): string {
 
   const localPath = localPathFromAttachmentUrl(trimmed);
   const isAbsolute = /^[A-Za-z]:[\\/]/.test(localPath) || /^[\\/]/.test(localPath);
-  const baseDirectory = workingDirectory?.trim().replace(/[\\/]+$/, '');
+  const baseDirectory = workingDirectory?.trim();
   if (!isAbsolute && !baseDirectory) return trimmed;
 
-  const resolvedPath = isAbsolute ? localPath : `${baseDirectory}/${localPath}`;
+  const directory = baseDirectory ?? '';
+  const resolvedPath = isAbsolute
+    ? localPath
+    : `${directory}${/[\\/]$/.test(directory) ? '' : '/'}${localPath}`;
   const slashPath = resolvedPath.replace(/\\/g, '/');
   const encodedPath = slashPath
     .split('/')

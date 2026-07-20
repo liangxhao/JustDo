@@ -529,6 +529,29 @@ describe('renderMessageGroup', () => {
     expect(rendered).not.toContain('message-attachment');
   });
 
+  test('resolves a relative assistant MEDIA image from a root working directory', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup(
+        {
+          kind: 'group',
+          key: 'assistant-root-image-group',
+          role: 'assistant',
+          messages: [
+            {
+              key: 'assistant-root-image-msg',
+              message: { role: 'assistant', content: 'MEDIA:visualization.png', timestamp: 1 },
+            },
+          ],
+          timestamp: 1,
+          isStreaming: false,
+        },
+        { workingDirectory: '/' },
+      ),
+    );
+
+    expect(rendered).toContain('localfile:///visualization.png');
+  });
+
   test('renders a persisted transcript file attachment from MediaPath fields', () => {
     const rendered = stringifyTemplate(
       renderMessageGroup({
