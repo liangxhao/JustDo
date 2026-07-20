@@ -15,7 +15,7 @@ export const validateProductName = (value: string): string => {
 /** User-facing brand name. Stable internal identifiers must not derive from this value. */
 export const PRODUCT_NAME = validateProductName(productName);
 
-/** Visible per-user application data directory, for example `%APPDATA%/JustDo`. */
+/** Visible per-user application data directory, for example `%APPDATA%/<productName>`. */
 export const USER_DATA_DIRECTORY_NAME = PRODUCT_NAME;
 
 /** Visible default workspace root. Keep the existing lowercase directory convention. */

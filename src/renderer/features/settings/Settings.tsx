@@ -68,6 +68,7 @@ export type SettingsOpenOptions = {
 
 interface SettingsProps extends SettingsOpenOptions {
   onClose: () => void;
+  developerModeAvailable: boolean;
 }
 
 type ProviderType = string;
@@ -249,6 +250,7 @@ const getNextCustomProviderKey = (providers: ProvidersConfig): string => {
 
 const Settings: React.FC<SettingsProps> = ({
   onClose,
+  developerModeAvailable,
   initialTab,
   notice,
   noticeI18nKey,
@@ -1678,35 +1680,37 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
 
             {/* Developer Mode Section */}
-            <div>
-              <h4 className="text-sm font-medium text-foreground mb-3">
-                {i18nService.t('developerMode')}
-              </h4>
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-sm text-secondary">
-                  {i18nService.t('developerModeDescription')}
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={developerMode}
-                  onClick={() => {
-                    setDeveloperMode(prev => !prev);
-                  }}
-                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-                    developerMode ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      developerMode ? 'translate-x-6' : 'translate-x-1'
+            {developerModeAvailable && (
+              <div>
+                <h4 className="text-sm font-medium text-foreground mb-3">
+                  {i18nService.t('developerMode')}
+                </h4>
+                <label className="flex items-center justify-between cursor-pointer">
+                  <span className="text-sm text-secondary">
+                    {i18nService.t('developerModeDescription')}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={developerMode}
+                    onClick={() => {
+                      setDeveloperMode(prev => !prev);
+                    }}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                      developerMode ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
                     }`}
-                  />
-                </button>
-              </label>
-            </div>
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        developerMode ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </label>
+              </div>
+            )}
 
-            {developerMode && (
+            {developerModeAvailable && developerMode && (
               <>
                 {/* Proxy Settings Section */}
                 <div className="space-y-4 rounded-xl border px-4 py-4 border-border">

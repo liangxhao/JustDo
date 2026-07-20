@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
+import { DeveloperConfigIpc } from '../shared/developerConfig';
 import { LogIpc } from '../shared/logIpc';
 import {
   type ExtensionDeleteRequest,
@@ -377,6 +378,9 @@ contextBridge.exposeInMainWorld('electron', {
   preventSleep: {
     get: () => ipcRenderer.invoke('app:getPreventSleep'),
     set: (enabled: boolean) => ipcRenderer.invoke('app:setPreventSleep', enabled),
+  },
+  developerConfig: {
+    get: () => ipcRenderer.invoke(DeveloperConfigIpc.Get),
   },
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),

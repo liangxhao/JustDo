@@ -38,6 +38,7 @@ const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [developerModeAvailable, setDeveloperModeAvailable] = useState(false);
   const toastTimerRef = useRef<number | null>(null);
   const hasInitialized = useRef(false);
   const dispatch = useDispatch();
@@ -84,6 +85,17 @@ const App: React.FC = () => {
         // 初始化配置
         console.info('[App] initializeApp: configService.init');
         await waitWithTimeout(configService.init(), 5000, 'configService.init');
+
+        try {
+          const developerConfig = await waitWithTimeout(
+            window.electron.developerConfig.get(),
+            5000,
+            'developerConfig.get',
+          );
+          setDeveloperModeAvailable(developerConfig.showDeveloperMode === true);
+        } catch {
+          setDeveloperModeAvailable(false);
+        }
 
         // 初始化主题
         console.info('[App] initializeApp: themeService.initialize');
@@ -477,6 +489,7 @@ const App: React.FC = () => {
           {showSettings && (
             <Settings
               onClose={handleCloseSettings}
+              developerModeAvailable={developerModeAvailable}
               initialTab={settingsOptions.initialTab}
               notice={settingsOptions.notice}
             />
@@ -499,6 +512,7 @@ const App: React.FC = () => {
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
+          developerModeAvailable={developerModeAvailable}
         />
         <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
           <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
@@ -531,6 +545,7 @@ const App: React.FC = () => {
       {showSettings && (
         <Settings
           onClose={handleCloseSettings}
+          developerModeAvailable={developerModeAvailable}
           initialTab={settingsOptions.initialTab}
           notice={settingsOptions.notice}
         />

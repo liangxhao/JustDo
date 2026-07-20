@@ -30,6 +30,7 @@ interface SidebarProps {
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  developerModeAvailable: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -41,6 +42,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNewChat,
   isCollapsed,
   onToggleCollapse,
+  developerModeAvailable,
 }) => {
   const sessions = useSelector(selectCoworkSessions);
   const currentSessionId = useSelector(selectCurrentSessionId);
@@ -234,7 +236,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
           <div className="flex items-center gap-1">
-            {developerMode && isOpenClawEngine && (
+            {developerModeAvailable && developerMode && isOpenClawEngine && (
               <>
                 <button
                   type="button"

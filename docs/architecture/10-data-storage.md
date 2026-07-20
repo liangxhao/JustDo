@@ -1,6 +1,8 @@
 # 数据存储
 
-JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据。数据库文件名来自 `src/main/core/appConstants.ts`，当前为 `justdo.sqlite`。Electron `userData` 目录名来自 `package.json.productName`，当前路径为 `userData/JustDo`。`productName` 只控制对外品牌与可见目录，不改变 `justdo.sqlite`等内部持久化标识。
+JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据。数据库文件名来自 `src/main/core/appConstants.ts`，当前为 `justdo.sqlite`。Electron `userData` 目录名来自 `package.json.productName`，路径为 `<appData>/<package.json.productName>`。`productName` 只控制对外品牌与可见目录，不改变 `justdo.sqlite`等内部持久化标识。
+
+开发者功能的可见性是一个独立的启动期文件配置，不存入 SQLite。Main process 每次启动读取 `<userData>/developer/config.json`（Windows 默认为 `%APPDATA%/<package.json.productName>/developer/config.json`）；文件不存在时自动创建 `{ "showDeveloperMode": false }`。只有 `showDeveloperMode` 为 JSON 布尔值 `true` 时，Renderer 才展示“开发者模式”选项及其已启用的开发入口。文件缺失、解析失败或任何其他值都按隐藏处理，运行期间修改需重启应用生效。
 
 `productName` 必须是长度 1–64 的单个英文单词，只允许 ASCII 字母 `A-Z` / `a-z`。构建配置和运行时都会校验该约束。更换它会直接使用新的 `userData` 和默认工程目录，不提供旧品牌目录的兼容或迁移。
 

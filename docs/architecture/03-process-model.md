@@ -63,6 +63,7 @@ flowchart TB
 | `shell` | 打开路径、预览文件、定位文件、外部链接 |
 | `autoLaunch` | 开机启动 |
 | `preventSleep` | 防休眠 |
+| `developerConfig` | 读取启动时加载的开发者功能可见性配置 |
 | `appInfo` | 应用版本、OpenClaw 版本、系统语言 |
 | `builtinModels` | 刷新内置模型 provider |
 | `log` | 日志路径、打开日志目录、导出 zip、debug 日志 |

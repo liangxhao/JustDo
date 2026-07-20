@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
+import type { DeveloperConfig } from '../shared/developerConfig';
 import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
   USER_DATA_DIRECTORY_NAME,
@@ -15,6 +16,7 @@ import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
 import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
 import { applyDependencyManagerConfigEnv } from './core/dependencyManagerConfig';
+import { loadDeveloperConfig } from './core/developerConfigFile';
 import { setLanguage } from './core/i18n';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
@@ -212,6 +214,8 @@ configureUserDataPath();
 applyDependencyManagerConfigEnv(process.env, app.getPath('userData'));
 initLogger();
 enableSystemCaForCurrentProcess();
+
+const developerConfig: DeveloperConfig = loadDeveloperConfig(app.getPath('userData'));
 
 const isDev = process.env.NODE_ENV === 'development';
 const isLinux = process.platform === 'linux';
@@ -680,6 +684,7 @@ if (!gotTheLock) {
     setPreventSleepBlockerId: blockerId => {
       preventSleepBlockerId = blockerId;
     },
+    getDeveloperConfig: () => developerConfig,
   });
   registerWindowHandlers({
     getMainWindow: () => mainWindow,

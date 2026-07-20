@@ -226,8 +226,8 @@ export const getOutboundHeaderPolicyConfig = (): OutboundHeaderPolicyConfig =>
  * Reloads the outbound header policy and user header values from disk.
  *
  * Call without arguments to refresh both default files:
- * - `%APPDATA%/JustDo/outbound-header-proxy/config.json`
- * - `%APPDATA%/JustDo/huawei/user_info.json`
+ * - `%APPDATA%/<productName>/outbound-header-proxy/config.json`
+ * - `%APPDATA%/<productName>/huawei/user_info.json`
  *
  * Subsequent requests handled by the running outbound header proxy use the
  * refreshed policy and values. The optional parameters are intended for tests
