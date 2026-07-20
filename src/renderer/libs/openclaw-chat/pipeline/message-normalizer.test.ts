@@ -99,6 +99,45 @@ describe('normalizeMessage assistant media', () => {
       },
     ]);
   });
+
+  test('labels an HTTPS MEDIA URL with its protocol', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: '文件已生成：\nMEDIA:https://container/report.pdf',
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: '文件已生成：' },
+      {
+        type: 'attachment',
+        attachment: {
+          url: 'https://container/report.pdf',
+          kind: 'document',
+          label: 'https',
+          mimeType: 'application/pdf',
+        },
+      },
+    ]);
+  });
+
+  test('labels an HTTP MEDIA URL with its protocol', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'MEDIA:http://container',
+    });
+
+    expect(message.content).toEqual([
+      {
+        type: 'attachment',
+        attachment: {
+          url: 'http://container',
+          kind: 'document',
+          label: 'http',
+          mimeType: undefined,
+        },
+      },
+    ]);
+  });
 });
 
 describe('normalizeMessage user media', () => {

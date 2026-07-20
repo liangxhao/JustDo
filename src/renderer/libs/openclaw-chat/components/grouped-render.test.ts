@@ -471,6 +471,34 @@ describe('renderMessageGroup', () => {
     expect(rendered).not.toContain('MEDIA:');
   });
 
+  test('renders an assistant MEDIA image URL as an image', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup({
+        kind: 'group',
+        key: 'assistant-media-image-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-media-image-msg',
+            message: {
+              role: 'assistant',
+              content: '图片已生成\nMEDIA:https://container/generated/image.png',
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('chat-bubble__images--assistant');
+    expect(rendered).toContain('class="chat-bubble__image"');
+    expect(rendered).toContain('https://container/generated/image.png');
+    expect(rendered).not.toContain('message-attachment');
+    expect(rendered).not.toContain('MEDIA:');
+  });
+
   test('renders a persisted transcript file attachment from MediaPath fields', () => {
     const rendered = stringifyTemplate(
       renderMessageGroup({

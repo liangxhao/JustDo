@@ -585,6 +585,27 @@ function renderAssistantAttachments(
   `;
 }
 
+function renderMessageImages(
+  images: RenderableAttachment[],
+  assistant = false,
+): TemplateResult | typeof nothing {
+  if (images.length === 0) return nothing;
+  return html`
+    <div class=${`chat-bubble__images${assistant ? ' chat-bubble__images--assistant' : ''}`}>
+      ${images.map(
+        image => html`
+          <img
+            class="chat-bubble__image"
+            src=${image.url}
+            alt=${image.label}
+            title=${image.label}
+          />
+        `,
+      )}
+    </div>
+  `;
+}
+
 function renderAssistantToolCards(
   cards: ToolCard[],
   rawMessage: unknown,
@@ -817,24 +838,7 @@ function renderUserMessage(
   return html`
     <div class="chat-bubble chat-bubble--user" dir=${dir}>
       ${renderCopyButton(text)}
-      ${
-        images.length > 0
-          ? html`
-              <div class="chat-bubble__images">
-                ${images.map(
-                image => html`
-                  <img
-                    class="chat-bubble__image"
-                    src=${image.url}
-                    alt=${image.label}
-                    title=${image.label}
-                  />
-                `,
-              )}
-              </div>
-            `
-          : nothing
-      }
+      ${renderMessageImages(images)}
       ${renderAssistantAttachments(visibleAttachments, workingDirectory)}
       ${text
         ? html`<div class="chat-bubble__text markdown-content">${unsafeHTML(htmlContent)}</div>`
@@ -851,17 +855,26 @@ function renderAssistantMessage(
   workingDirectory?: string,
 ): TemplateResult {
   const orderedBlocks = renderAssistantMessageInContentOrder(rawMessage);
+  const images = msg.content
+    .filter(
+      (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
+        item.type === 'attachment' && item.attachment.kind === 'image',
+    )
+    .map(item => item.attachment);
   const attachments = msg.content
     .filter(
       (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
-        item.type === 'attachment',
+        item.type === 'attachment' && item.attachment.kind !== 'image',
     )
     .map(item => item.attachment);
   const canvases = msg.content.filter(
     (item): item is AssistantCanvasItem => item.type === 'canvas',
   );
   if (orderedBlocks) {
-    return html`${orderedBlocks}${renderAssistantAttachments(attachments, workingDirectory)}`;
+    return html`${orderedBlocks}${renderMessageImages(images, true)}${renderAssistantAttachments(
+      attachments,
+      workingDirectory,
+    )}`;
   }
 
   const thinking = extractThinkingCached(rawMessage);
@@ -882,6 +895,7 @@ function renderAssistantMessage(
         : nothing
     }
     ${renderAssistantTextBlock(text)} ${canvases.map(renderAssistantCanvas)}
+    ${renderMessageImages(images, true)}
     ${renderAssistantAttachments(attachments, workingDirectory)}
   `;
 }

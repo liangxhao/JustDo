@@ -541,6 +541,11 @@ export class JustDoChatElement extends LitElement {
       margin-bottom: 0;
     }
 
+    .chat-bubble__images--assistant {
+      margin-top: 8px;
+      margin-bottom: 0;
+    }
+
     .chat-bubble__image {
       display: block;
       max-width: min(360px, 100%);
