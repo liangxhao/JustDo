@@ -114,6 +114,8 @@ Outbound Header Proxy 的代理数据面只属于 OpenClaw Gateway generation，
 Main 或 Renderer 的全局网络层。代理启动后，Main 为即将启动的 Gateway 构造一份新的环境
 快照，并仅通过 Gateway spawn 的 `env` 传入代理、CA 和 `NO_PROXY` 设置；不得改写 Main
 的 `process.env`，也不得替换 Main `fetch` 或注册 Renderer `webRequest` Header listener。
+Gateway 的 MITM CA bundle 使用独立文件，不能与普通运行时的基础信任 bundle 共用输出
+路径，避免后续基础证书刷新覆盖代理 CA。
 唯一例外是确定性的 Main 标题生成请求：该调用点按同一 URL 白名单匹配，命中后显式加入
 配置 Header，但仍使用 Main 自己的普通网络 transport，不经过本地 MITM 代理。
 

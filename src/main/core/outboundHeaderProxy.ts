@@ -17,7 +17,7 @@ import {
   updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
 import { getFixedProxyUrl, isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
-import { buildTrustedCaBundle } from './trustedCertificates';
+import { buildOutboundHeaderTrustedCaBundle } from './trustedCertificates';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const CA_DIRECTORY_NAME = 'outbound-header-proxy';
@@ -97,7 +97,8 @@ export const isOutboundHeaderProxyActive = (config: OutboundHeaderProxyConfig): 
 export const applyOutboundHeaders = (
   headers: Record<string, string | string[] | undefined>,
   headerValues: Readonly<Record<string, string>>,
-): void => {
+): number => {
+  let injectedHeaderCount = 0;
   for (const [headerName, value] of Object.entries(headerValues)) {
     if (!HTTP_HEADER_VALUE_PATTERN.test(value)) {
       console.warn(`[OutboundHeaderProxy] Skipped unsafe outbound header value: ${headerName}`);
@@ -107,7 +108,9 @@ export const applyOutboundHeaders = (
       Object.keys(headers).find(key => key.toLowerCase() === headerName.toLowerCase()) ||
       headerName;
     headers[existingKey] = value;
+    injectedHeaderCount += 1;
   }
+  return injectedHeaderCount;
 };
 
 export const isIgnorableProxyClientError = (error: unknown): boolean => {
@@ -745,18 +748,6 @@ export class OutboundHeaderProxy {
         const activePolicy = this.activePolicy;
         const matched =
           !!activePolicy && shouldApplyOutboundHeadersForRequest(activePolicy, requestUrl);
-        try {
-          const url = new URL(requestUrl);
-          console.debug('[OutboundHeaderProxy] policy evaluated', {
-            requestId: crypto.randomUUID(),
-            origin: url.origin,
-            matched,
-          });
-        } catch {
-          console.debug('[OutboundHeaderProxy] policy evaluated for malformed URL', {
-            matched: false,
-          });
-        }
         if (!matched) {
           callback();
           return;
@@ -766,7 +757,10 @@ export class OutboundHeaderProxy {
           callback(new Error(`Upstream request headers are unavailable for ${requestUrl}`));
           return;
         }
-        applyOutboundHeaders(upstreamHeaders, this.activeHeaderValues);
+        const injectedHeaderCount = applyOutboundHeaders(upstreamHeaders, this.activeHeaderValues);
+        console.log(
+          `[OutboundHeaderProxy] outbound header policy matched requestId=${crypto.randomUUID()} origin=${new URL(requestUrl).origin} matched=true injectedHeaderCount=${injectedHeaderCount}`,
+        );
         callback();
       })().catch(error => callback(error instanceof Error ? error : new Error(String(error))));
     });
@@ -810,7 +804,8 @@ export class OutboundHeaderProxy {
       proxyUrl: `http://${LOOPBACK_HOST}:${proxy.httpPort}`,
       caCertificatePath,
       caBundlePath:
-        buildTrustedCaBundle(userDataDirectory, [caCertificatePath]) ?? caCertificatePath,
+        buildOutboundHeaderTrustedCaBundle(userDataDirectory, caCertificatePath) ??
+        caCertificatePath,
     };
     console.log(`[OutboundHeaderProxy] listening on ${this.info.proxyUrl}`);
     return this.info;

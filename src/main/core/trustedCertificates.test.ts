@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, expect, test } from 'vitest';
 
-import { buildTrustedCaBundle } from './trustedCertificates';
+import { buildOutboundHeaderTrustedCaBundle, buildTrustedCaBundle } from './trustedCertificates';
 
 const tempDirs: string[] = [];
 
@@ -45,4 +45,27 @@ test('removes the legacy generated trust bundle after writing the new bundle', (
   );
   expect(fs.existsSync(path.join(legacyDir, 'trusted-ca-bundle.pem'))).toBe(false);
   expect(fs.existsSync(path.join(legacyDir, 'keep.pem'))).toBe(true);
+});
+
+test('keeps the outbound header CA bundle isolated from baseline trust refreshes', () => {
+  const userDataPath = createTempDir();
+  const caCertificatePath = path.join(userDataPath, 'proxy-ca.pem');
+  const proxyCa = [
+    '-----BEGIN CERTIFICATE-----',
+    'outbound-header-proxy-ca',
+    '-----END CERTIFICATE-----',
+  ].join('\n');
+  fs.writeFileSync(caCertificatePath, proxyCa, 'utf8');
+
+  const outboundBundlePath = buildOutboundHeaderTrustedCaBundle(userDataPath, caCertificatePath);
+  const outboundBundleBeforeRefresh = fs.readFileSync(outboundBundlePath as string, 'utf8');
+  const baselineBundlePath = buildTrustedCaBundle(userDataPath);
+
+  expect(outboundBundlePath).toBe(
+    path.join(userDataPath, 'outbound-header-proxy', 'certs', 'gateway-trusted-ca-bundle.pem'),
+  );
+  expect(baselineBundlePath).not.toBe(outboundBundlePath);
+  expect(outboundBundleBeforeRefresh).toContain(proxyCa);
+  expect(fs.readFileSync(outboundBundlePath as string, 'utf8')).toBe(outboundBundleBeforeRefresh);
+  expect(fs.readFileSync(baselineBundlePath as string, 'utf8')).not.toContain(proxyCa);
 });

@@ -5,6 +5,7 @@ import tls from 'tls';
 const TRUST_DIRECTORY_RELATIVE_PATH = path.join('outbound-header-proxy', 'certs');
 const LEGACY_TRUST_DIRECTORY_NAME = 'network-trust';
 const TRUSTED_CA_BUNDLE_NAME = 'trusted-ca-bundle.pem';
+const OUTBOUND_HEADER_TRUSTED_CA_BUNDLE_NAME = 'gateway-trusted-ca-bundle.pem';
 const USE_SYSTEM_CA_OPTION = '--use-system-ca';
 
 const TRUST_ENV_KEYS = [
@@ -69,7 +70,10 @@ const cleanupLegacyTrustedCaBundle = (userDataPath: string, currentBundlePath: s
 };
 
 export const enableSystemCaForCurrentProcess = (): void => {
-  if (typeof tls.getCACertificates !== 'function' || typeof tls.setDefaultCACertificates !== 'function') {
+  if (
+    typeof tls.getCACertificates !== 'function' ||
+    typeof tls.setDefaultCACertificates !== 'function'
+  ) {
     return;
   }
 
@@ -80,15 +84,18 @@ export const enableSystemCaForCurrentProcess = (): void => {
       return;
     }
     tls.setDefaultCACertificates(uniqueCertificates([...current, ...system]));
-    console.log(`[NetworkTrust] Enabled system CA certificates for current process (${system.length}).`);
+    console.log(
+      `[NetworkTrust] Enabled system CA certificates for current process (${system.length}).`,
+    );
   } catch (error) {
     console.warn('[NetworkTrust] Failed to enable system CA certificates:', error);
   }
 };
 
-export const buildTrustedCaBundle = (
+const buildTrustedCaBundleFile = (
   userDataPath: string,
-  additionalCertificatePaths: readonly string[] = [],
+  bundleName: string,
+  additionalCertificatePaths: readonly string[],
 ): string | null => {
   if (typeof tls.getCACertificates !== 'function') {
     return null;
@@ -101,14 +108,19 @@ export const buildTrustedCaBundle = (
     const additionalCerts = additionalCertificatePaths
       .map(readCertificateFile)
       .filter((value): value is string => value !== null);
-    const certs = uniqueCertificates([...defaultCerts, ...systemCerts, ...extraCerts, ...additionalCerts]);
+    const certs = uniqueCertificates([
+      ...defaultCerts,
+      ...systemCerts,
+      ...extraCerts,
+      ...additionalCerts,
+    ]);
     if (certs.length === 0) {
       return null;
     }
 
     const trustDir = path.join(userDataPath, TRUST_DIRECTORY_RELATIVE_PATH);
     fs.mkdirSync(trustDir, { recursive: true });
-    const bundlePath = path.join(trustDir, TRUSTED_CA_BUNDLE_NAME);
+    const bundlePath = path.join(trustDir, bundleName);
     const content = `${certs.join('\n')}\n`;
     if (!fs.existsSync(bundlePath) || fs.readFileSync(bundlePath, 'utf8') !== content) {
       fs.writeFileSync(bundlePath, content, 'utf8');
@@ -120,6 +132,18 @@ export const buildTrustedCaBundle = (
     return null;
   }
 };
+
+export const buildTrustedCaBundle = (userDataPath: string): string | null =>
+  buildTrustedCaBundleFile(userDataPath, TRUSTED_CA_BUNDLE_NAME, []);
+
+/** Builds the Gateway trust bundle without sharing the baseline bundle's output file. */
+export const buildOutboundHeaderTrustedCaBundle = (
+  userDataPath: string,
+  caCertificatePath: string,
+): string | null =>
+  buildTrustedCaBundleFile(userDataPath, OUTBOUND_HEADER_TRUSTED_CA_BUNDLE_NAME, [
+    caCertificatePath,
+  ]);
 
 export const applyTrustedCertificateEnv = (
   env: NodeJS.ProcessEnv,

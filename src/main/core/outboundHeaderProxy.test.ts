@@ -28,6 +28,7 @@ import {
   suppressNoisyMitmDisconnectLogs,
   uninstallNoisyMitmConsoleFilter,
 } from './outboundHeaderProxy';
+import { buildTrustedCaBundle } from './trustedCertificates';
 
 const temporaryDirectories: string[] = [];
 const HEADER_NAMES = {
@@ -427,10 +428,12 @@ test('rewrites policy config with defaults when overwrite is true', () => {
 test('adds only configured header values and replaces names case-insensitively', () => {
   const headers = { [HEADER_NAMES.USER_ACCOUNT]: 'old-value', untouched: 'yes' };
 
-  applyOutboundHeaders(headers, {
-    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
-    [HEADER_NAMES.COOKIE]: 'cookie-value',
-  });
+  expect(
+    applyOutboundHeaders(headers, {
+      [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+      [HEADER_NAMES.COOKIE]: 'cookie-value',
+    }),
+  ).toBe(2);
 
   expect(headers).toEqual({
     [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
@@ -465,10 +468,12 @@ test('injects an immutable header snapshot into 100 concurrent request header ob
 test('skips unsafe outbound header values during injection', () => {
   const headers = { untouched: 'yes' };
 
-  applyOutboundHeaders(headers, {
-    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
-    [HEADER_NAMES.COOKIE]: 'Cookie: a=b\r\nHost: example.com',
-  });
+  expect(
+    applyOutboundHeaders(headers, {
+      [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+      [HEADER_NAMES.COOKIE]: 'Cookie: a=b\r\nHost: example.com',
+    }),
+  ).toBe(1);
 
   expect(headers).toEqual({
     [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
@@ -862,6 +867,7 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
       userInfoPath,
       caDirectory,
     );
+    const injectionLogSpy = vi.spyOn(console, 'log');
 
     try {
       await outboundProxy.start();
@@ -869,17 +875,20 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
         .proxy;
       internalProxy.httpsAgent = new https.Agent({ rejectUnauthorized: false });
       const gatewayEnv = outboundProxy.buildGatewayEnvironment({});
+      buildTrustedCaBundle(directory);
       const proxyUrl = new URL(gatewayEnv.HTTPS_PROXY!);
       const authorization = `Basic ${Buffer.from(
         `${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`,
       ).toString('base64')}`;
       proxyUrl.username = '';
       proxyUrl.password = '';
+      const gatewayCaBundle = fs.readFileSync(gatewayEnv.NODE_EXTRA_CA_CERTS!, 'utf8');
       const caCertificate = fs.readFileSync(path.join(caDirectory, 'certs', 'ca.pem'), 'utf8');
       const targetCaCertificate = fs.readFileSync(
         path.join(targetCaDirectory, 'certs', 'ca.pem'),
         'utf8',
       );
+      expect(gatewayCaBundle).toContain(caCertificate.trim());
 
       expect(
         await Promise.all(
@@ -889,7 +898,7 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
               targetHost,
               targetAddress.port,
               authorization,
-              caCertificate,
+              gatewayCaBundle,
             ),
           ),
         ),
@@ -905,7 +914,24 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
         ),
       ).toBe(200);
       expect(tunneledHeaders).toEqual([undefined]);
+      const injectionLogs = injectionLogSpy.mock.calls.filter(
+        ([message]) =>
+          typeof message === 'string' &&
+          message.startsWith('[OutboundHeaderProxy] outbound header policy matched '),
+      );
+      expect(injectionLogs).toHaveLength(3);
+      expect(
+        injectionLogs.every(args => args.length === 1 && !String(args[0]).includes('\n')),
+      ).toBe(true);
+      expect(
+        injectionLogs.every(([message]) =>
+          String(message).endsWith(
+            `origin=https://${targetHost}:${targetAddress.port} matched=true injectedHeaderCount=1`,
+          ),
+        ),
+      ).toBe(true);
     } finally {
+      injectionLogSpy.mockRestore();
       outboundProxy.stop();
       await new Promise<void>(resolve => targetServer.close(() => resolve()));
       await new Promise<void>(resolve => tunneledServer.close(() => resolve()));
