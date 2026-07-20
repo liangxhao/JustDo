@@ -855,7 +855,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           <div className="space-y-12">
             {/* Welcome Section */}
             <div className="text-center space-y-5">
-              <img src={logoUrl} alt="logo" className="w-16 h-16 mx-auto" />
+              <img src={logoUrl} alt="logo" className="mx-auto h-32 w-32" />
               <h2 className="text-3xl font-bold tracking-tight text-foreground">
                 {i18nService.t('coworkWelcome')}
               </h2>

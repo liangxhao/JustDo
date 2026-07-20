@@ -64,7 +64,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
 
   if (options.isMac && options.isDev) {
-    const iconPath = path.join(__dirname, '../build/icons/png/512x512.png');
+    const iconPath = path.join(__dirname, '../resources/icons/png/512x512.png');
     if (fs.existsSync(iconPath)) {
       app.dock.setIcon(nativeImage.createFromPath(iconPath));
     }

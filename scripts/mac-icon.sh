@@ -21,7 +21,7 @@ usage() {
 # ── regenerate ───────────────────────────────────────────────────────────────
 
 regenerate_icon() {
-  ICON_DIR="$PROJECT_ROOT/build/icons"
+  ICON_DIR="$PROJECT_ROOT/resources/icons"
   PNG_DIR="$ICON_DIR/png"
   MAC_DIR="$ICON_DIR/mac"
   ICONSET_DIR="$MAC_DIR/icon.iconset"

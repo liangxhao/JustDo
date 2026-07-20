@@ -5,8 +5,8 @@
  * Generate all app icons from resources/logo.png.
  *
  * Modes:
- *   node scripts/generate-icons.cjs png          — PNG sizes (build/icons/png/)
- *   node scripts/generate-icons.cjs app-icon     — Windows .ico (build/icons/win/)
+ *   node scripts/generate-icons.cjs png          — PNG sizes (resources/icons/png/)
+ *   node scripts/generate-icons.cjs app-icon     — Windows .ico (resources/icons/win/)
  *   node scripts/generate-icons.cjs tray-icons   — tray icons for all platforms (resources/tray/)
  *   node scripts/generate-icons.cjs all          — run all three in order
  *   node scripts/generate-icons.cjs              — same as "all"
@@ -42,7 +42,7 @@ function hasCommand(cmd, args) {
 // ── PNG mode ────────────────────────────────────────────────────────────────
 
 function generatePngIcons() {
-  const pngDir = path.join(projectRoot, 'build', 'icons', 'png');
+  const pngDir = path.join(projectRoot, 'resources', 'icons', 'png');
   const sizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024];
 
   fs.mkdirSync(pngDir, { recursive: true });
@@ -74,7 +74,7 @@ foreach ($s in $sizes) {
 $src.Dispose()
 `;
 
-  const tmpDir = path.join(projectRoot, 'build', 'icons', '_tmp');
+  const tmpDir = path.join(projectRoot, 'resources', 'icons', '_tmp');
   fs.mkdirSync(tmpDir, { recursive: true });
   const psFile = path.join(tmpDir, 'resize-png.ps1');
   fs.writeFileSync(psFile, psScript, 'utf8');
@@ -91,13 +91,13 @@ $src.Dispose()
 // ── App icon (.ico) mode ────────────────────────────────────────────────────
 
 function generateAppIcon() {
-  const OUT_DIR = path.join(projectRoot, 'build', 'icons', 'win');
+  const OUT_DIR = path.join(projectRoot, 'resources', 'icons', 'win');
   const OUT_ICO = path.join(OUT_DIR, 'icon.ico');
   const SIZES = [256, 128, 64, 48, 32, 16];
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
-  const tmpDir = path.join(projectRoot, 'build', 'icons', '_tmp');
+  const tmpDir = path.join(projectRoot, 'resources', 'icons', '_tmp');
   fs.mkdirSync(tmpDir, { recursive: true });
 
   const psScript = `
