@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from '@shared/productMetadata';
+
 import type { LanguageType } from '@/services/i18n';
 
 // 语言文本映射
@@ -222,7 +224,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     initializationError: '初始化应用程序失败。请检查您的配置。',
 
     // JustDo
-    cowork: 'JustDo',
+    cowork: PRODUCT_NAME,
     coworkHistory: '最近对话',
     groupedSessions: '对话分组',
     coworkNoSessions: '暂无最近对话',
@@ -274,7 +276,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayRestarting: '正在重启...',
     openclawGatewayRestarted: '网关已重新启动',
     openclawGatewayRestartFailed: '网关重启失败',
-    coworkConfigSaveFailed: '保存 JustDo 配置失败，请稍后重试。',
+    coworkConfigSaveFailed: `保存 ${PRODUCT_NAME} 配置失败，请稍后重试。`,
     coworkStatusIdle: '已停止',
     coworkStatusRunning: '运行中',
     coworkInProgress: '进行中...',
@@ -283,7 +285,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkInteractionRequired: '需要回应',
     coworkInteractionDescription: '需要你回应以下请求',
     coworkSelectionRequired: '请选择',
-    coworkSelectionDescription: 'JustDo 需要你做出选择',
+    coworkSelectionDescription: `${PRODUCT_NAME} 需要你做出选择`,
     coworkToolName: '工具名称',
     coworkToolInput: '工具参数',
     coworkToolResult: '执行结果',
@@ -1022,7 +1024,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     initializationError: 'Failed to initialize application. Please check your configuration.',
 
     // JustDo
-    cowork: 'JustDo',
+    cowork: PRODUCT_NAME,
     coworkHistory: 'Recent Chats',
     groupedSessions: 'Groups',
     coworkNoSessions: 'No chats yet',
@@ -1079,16 +1081,16 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayRestarting: 'Restarting...',
     openclawGatewayRestarted: 'Gateway restarted',
     openclawGatewayRestartFailed: 'Failed to restart gateway',
-    coworkConfigSaveFailed: 'Failed to save JustDo settings. Please try again.',
+    coworkConfigSaveFailed: `Failed to save ${PRODUCT_NAME} settings. Please try again.`,
     coworkStatusIdle: 'Idle',
     coworkStatusRunning: 'Running',
     coworkInProgress: 'In Progress...',
     coworkStatusCompleted: 'Completed',
     coworkStatusError: 'Error',
     coworkInteractionRequired: 'Response Needed',
-    coworkInteractionDescription: 'JustDo needs your response to the following request',
+    coworkInteractionDescription: `${PRODUCT_NAME} needs your response to the following request`,
     coworkSelectionRequired: 'Please Choose',
-    coworkSelectionDescription: 'JustDo needs your input',
+    coworkSelectionDescription: `${PRODUCT_NAME} needs your input`,
     coworkToolName: 'Tool Name',
     coworkToolInput: 'Tool Input',
     coworkToolResult: 'Result',

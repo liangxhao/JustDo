@@ -19,7 +19,7 @@ JustDo 是 OpenClaw Gateway 的桌面前端和本地控制面：
 | 消息权威 | Gateway `chat.history` 是执行历史权威；SQLite 是本地 UI 缓存 |
 | Chat UI | React 包装 `<justdo-chat>` Lit 元素，后者连接 Gateway WebSocket |
 | Redux | 7 个 slice，位于 `src/renderer/features/**` |
-| SQLite | `justdo.sqlite` 位于 Electron `userData/JustDo` |
+| SQLite | `justdo.sqlite` 位于 Electron `userData/<package.json.productName>` |
 | Skills | 15 个内置 skill 声明，14 个默认启用 |
 | Runtime patches | 当前 OpenClaw 版本保留 6 个 patch |
 | Dev server | `http://localhost:4175` |

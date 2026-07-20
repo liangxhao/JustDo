@@ -3,6 +3,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { USER_DATA_DIRECTORY_NAME } from '../../shared/productMetadata';
+
 export type OutboundHeaderPolicyConfig = {
   /**
    * Whether startup should rewrite this file with the bundled defaults.
@@ -64,8 +66,16 @@ export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig =
   headerNames: ['X-User-Account', 'X-Cookie'],
 });
 
-const USER_INFO_RELATIVE_PATH = path.join('JustDo', 'huawei', 'user_info.json');
-const POLICY_CONFIG_RELATIVE_PATH = path.join('JustDo', 'outbound-header-proxy', 'config.json');
+const USER_INFO_RELATIVE_PATH = path.join(
+  USER_DATA_DIRECTORY_NAME,
+  'huawei',
+  'user_info.json',
+);
+const POLICY_CONFIG_RELATIVE_PATH = path.join(
+  USER_DATA_DIRECTORY_NAME,
+  'outbound-header-proxy',
+  'config.json',
+);
 const POLICY_CONFIG_README_FILE_NAME = 'config.README.md';
 const EMPTY_HEADER_VALUE = '';
 const UNSAFE_HEADER_VALUE_PATTERN = /[\u0000-\u001f\u007f]/;

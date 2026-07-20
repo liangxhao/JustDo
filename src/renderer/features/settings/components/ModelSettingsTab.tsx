@@ -11,7 +11,7 @@ import {
   isCustomProvider,
   validateDisplayName,
 } from '@/app/config';
-import { APP_ID, EXPORT_PASSWORD } from '@/app/constants/app';
+import { APP_NAME, EXPORT_PASSWORD } from '@/app/constants/app';
 import {
   createProvidersExportPayload,
   mergeImportedProviders,
@@ -118,7 +118,7 @@ const ModelSettingsTab: React.FC<Props> = ({
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${APP_ID}-providers-${new Date().toISOString().slice(0, 10)}.json`;
+      link.download = `${APP_NAME}-providers-${new Date().toISOString().slice(0, 10)}.json`;
       document.body.appendChild(link);
       link.click();
       link.remove();

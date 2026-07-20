@@ -232,7 +232,7 @@ async function askUser(
 const plugin = {
   id: 'ask-user-question',
   name: 'AskUserQuestion',
-  description: 'Structured choice and confirmation tool for JustDo desktop.',
+  description: 'Structured choice and confirmation tool for the desktop application.',
   configSchema: {
     parse(value: unknown): PluginConfig {
       return parsePluginConfig(value);

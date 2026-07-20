@@ -13,6 +13,8 @@
  *   3. Receive "hello-ok" response
  */
 
+import { PRODUCT_NAME } from '@shared/productMetadata';
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface GatewayClientOptions {
@@ -217,7 +219,7 @@ export class GatewayClient {
       maxProtocol: 4,
       client: {
         id: 'openclaw-control-ui',
-        displayName: 'JustDo',
+        displayName: PRODUCT_NAME,
         version: 'control-ui',
         platform: navigator.platform,
         mode: 'webchat',

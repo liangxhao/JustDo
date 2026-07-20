@@ -255,7 +255,7 @@ flowchart LR
 
 ## 启动序列
 
-1. `main.ts` 设置 `userData` 到 `JustDo` 专用目录。
+1. `main.ts` 根据 `package.json.productName` 设置专用 `userData` 目录。
 2. 初始化日志、Electron command line、异常处理。
 3. 注册 IPC handlers。
 4. `app.whenReady()` 后启动 outbound proxy、注册本地协议。

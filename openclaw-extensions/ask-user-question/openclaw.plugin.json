@@ -1,7 +1,7 @@
 {
   "id": "ask-user-question",
   "name": "AskUserQuestion",
-  "description": "Structured choice and confirmation tool for JustDo desktop.",
+  "description": "Structured choice and confirmation tool for the desktop application.",
   "contracts": {
     "tools": [
       "AskUserQuestion"
@@ -13,7 +13,7 @@
     "properties": {
       "callbackUrl": {
         "type": "string",
-        "description": "JustDo HTTP callback URL for approval requests"
+        "description": "Desktop application HTTP callback URL for approval requests"
       },
       "secret": {
         "type": "string",

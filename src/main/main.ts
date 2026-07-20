@@ -5,6 +5,10 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
+import {
+  DEFAULT_WORKSPACE_DIRECTORY_NAME,
+  USER_DATA_DIRECTORY_NAME,
+} from '../shared/productMetadata';
 import type { ProxySettings } from '../shared/proxy';
 import { APP_NAME } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
@@ -195,7 +199,7 @@ const migrateAgentModelRefs = (): number => {
 
 const configureUserDataPath = (): void => {
   const appDataPath = app.getPath('appData');
-  const preferredUserDataPath = path.join(appDataPath, APP_NAME);
+  const preferredUserDataPath = path.join(appDataPath, USER_DATA_DIRECTORY_NAME);
   const currentUserDataPath = app.getPath('userData');
 
   if (currentUserDataPath !== preferredUserDataPath) {
@@ -899,7 +903,7 @@ if (!gotTheLock) {
     // We don't trigger permission dialogs at startup to avoid annoying users
 
     // Ensure default working directory exists
-    const defaultProjectDir = path.join(os.homedir(), 'justdo', 'project');
+    const defaultProjectDir = path.join(os.homedir(), DEFAULT_WORKSPACE_DIRECTORY_NAME, 'project');
     if (!fs.existsSync(defaultProjectDir)) {
       fs.mkdirSync(defaultProjectDir, { recursive: true });
       console.log('Created default project directory:', defaultProjectDir);

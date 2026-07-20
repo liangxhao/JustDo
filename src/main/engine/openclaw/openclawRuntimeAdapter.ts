@@ -3,6 +3,7 @@ import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
+import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
   hasSlashCommandBeforeSendHook,
   SlashCommandBeforeSendHook,
@@ -2307,7 +2308,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = new GatewayClient({
       url: connection.url,
       token: connection.token,
-      clientDisplayName: 'JustDo',
+      clientDisplayName: PRODUCT_NAME,
       clientVersion: app.getVersion(),
       mode: 'backend',
       caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP],

@@ -13,9 +13,13 @@
     Return
   ${EndIf}
 
+  ; Pass the path through the process environment instead of embedding it in
+  ; PowerShell source. This preserves every Windows-legal Unicode/special path.
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r0'
   nsExec::ExecToLog '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "\
     $$ErrorActionPreference = $\"SilentlyContinue$\";\
-    $$installRoot = [IO.Path]::GetFullPath($\"$INSTDIR$\").TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar;\
+    $$installPath = [Environment]::GetEnvironmentVariable($\"JUSTDO_INSTALL_ROOT$\", $\"Process$\");\
+    $$installRoot = [IO.Path]::GetFullPath($$installPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar;\
     $$currentPid = $$PID;\
     $$isInstalledProcess = { param($$process)\
       try {\
@@ -35,8 +39,9 @@
     };\
     exit 1"'
   Pop $0
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
   ${If} $0 != "0"
-    DetailPrint "Some JustDo processes could not be closed automatically; continuing installation flow."
+    DetailPrint "Some ${PRODUCT_NAME} processes could not be closed automatically; continuing installation flow."
   ${EndIf}
 !macroend
 
@@ -53,8 +58,8 @@
 !macroend
 
 !macro customInit
-  CreateDirectory "$APPDATA\JustDo"
-  FileOpen $2 "$APPDATA\JustDo\install-timing.log" w
+  CreateDirectory "$APPDATA\${PRODUCT_NAME}"
+  FileOpen $2 "$APPDATA\${PRODUCT_NAME}\install-timing.log" w
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "init-start: $5-$4-$3 $6:$7:$8$\r$\n"
   FileWrite $2 "product: ${PRODUCT_NAME} ${VERSION}$\r$\n"
@@ -93,10 +98,10 @@
 !macro customInstall
   ; ─── Install Timing Log ───
   ; Write timestamps to help diagnose slow installation phases.
-  ; Log file: %APPDATA%\JustDo\install-timing.log
+  ; Log file: %APPDATA%\${PRODUCT_NAME}\install-timing.log
 
-  CreateDirectory "$APPDATA\JustDo"
-  FileOpen $2 "$APPDATA\JustDo\install-timing.log" a
+  CreateDirectory "$APPDATA\${PRODUCT_NAME}"
+  FileOpen $2 "$APPDATA\${PRODUCT_NAME}\install-timing.log" a
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "custom-install-start: $5-$4-$3 $6:$7:$8$\r$\n"
@@ -202,18 +207,18 @@
   ${EndIf}
 
   ; ─── Dependency manager config ───
-  ; Copy optional npm/pip config templates into %APPDATA%\JustDo during install.
+  ; Copy optional npm/pip config templates into the branded app-data directory during install.
   ; Each file is independent: if a resource file is absent, that manager is left
   ; unconfigured and the app will not inject the corresponding env var.
-  CreateDirectory "$APPDATA\JustDo\dependency-config"
+  CreateDirectory "$APPDATA\${PRODUCT_NAME}\dependency-config"
   ${If} ${FileExists} "$INSTDIR\resources\dependency-config\.npmrc"
-    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\.npmrc" "$APPDATA\JustDo\dependency-config\.npmrc"
+    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\.npmrc" "$APPDATA\${PRODUCT_NAME}\dependency-config\.npmrc"
     FileWrite $2 "dependency-config-npmrc: copied$\r$\n"
   ${Else}
     FileWrite $2 "dependency-config-npmrc: missing$\r$\n"
   ${EndIf}
   ${If} ${FileExists} "$INSTDIR\resources\dependency-config\pip.ini"
-    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\pip.ini" "$APPDATA\JustDo\dependency-config\pip.ini"
+    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\pip.ini" "$APPDATA\${PRODUCT_NAME}\dependency-config\pip.ini"
     FileWrite $2 "dependency-config-pip-ini: copied$\r$\n"
   ${Else}
     FileWrite $2 "dependency-config-pip-ini: missing$\r$\n"

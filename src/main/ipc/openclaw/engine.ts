@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -78,9 +79,10 @@ const launchTerminal = (options: {
   cwd: string;
 }): Promise<{ success: boolean; error?: string }> => {
   const { env, cwd } = options;
+  const terminalTitle = `${PRODUCT_NAME} Terminal`;
+  const terminalReadyMessage = `${PRODUCT_NAME} CLI is ready.`;
 
   if (process.platform === 'win32') {
-    const title = 'JustDo Terminal';
     const launcherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-openclaw-terminal-'));
     fs.mkdirSync(launcherDir, { recursive: true });
     const launcherPath = path.join(launcherDir, 'justdo-openclaw-terminal.cmd');
@@ -92,12 +94,12 @@ const launchTerminal = (options: {
       .filter((line): line is string => line !== null);
     const launcher = [
       '@echo off',
-      `title ${title}`,
+      `title ${escapeWindowsCmdValue(terminalTitle)}`,
       ...envLines,
       `cd /d "${cwd}"`,
-      'echo JustDo Terminal',
+      `echo ${escapeWindowsCmdValue(terminalTitle)}`,
       'echo.',
-      'echo JustDo CLI is ready.',
+      `echo ${escapeWindowsCmdValue(terminalReadyMessage)}`,
       'echo.',
       '',
     ].join('\r\n');
@@ -151,7 +153,7 @@ const launchTerminal = (options: {
       `do script "${quoteAppleScriptString(
         `cd ${quotePosixShell(cwd)}; ${buildPosixExportScript(
           env,
-        )}; clear; echo 'JustDo Terminal'; echo; echo 'JustDo CLI is ready.'; echo; ${interactiveShellCommand('/bin/zsh')}`,
+        )}; clear; echo ${quotePosixShell(terminalTitle)}; echo; echo ${quotePosixShell(terminalReadyMessage)}; echo; ${interactiveShellCommand('/bin/zsh')}`,
       )}"`,
       'end tell',
     ].join('\n');
@@ -166,7 +168,7 @@ const launchTerminal = (options: {
 
   const command = `cd ${quotePosixShell(cwd)}; ${buildPosixExportScript(
     env,
-  )}; clear; echo 'JustDo Terminal'; echo; echo 'JustDo CLI is ready.'; echo; ${interactiveShellCommand('/bin/bash')}`;
+  )}; clear; echo ${quotePosixShell(terminalTitle)}; echo; echo ${quotePosixShell(terminalReadyMessage)}; echo; ${interactiveShellCommand('/bin/bash')}`;
   const terminalCandidates: Array<{ command: string; args: string[] }> = [
     { command: 'x-terminal-emulator', args: ['-e', 'sh', '-lc', command] },
     { command: 'gnome-terminal', args: ['--', 'sh', '-lc', command] },

@@ -1,15 +1,15 @@
 # Dependency Manager Config
 
 This directory contains optional dependency download configuration templates
-used by packaged JustDo builds.
+used by packaged application builds.
 
 During Windows installation, files in this directory are copied to the user's
-JustDo app data directory:
+branded app data directory:
 
-- `.npmrc` -> `%APPDATA%\JustDo\dependency-config\.npmrc`
-- `pip.ini` -> `%APPDATA%\JustDo\dependency-config\pip.ini`
+- `.npmrc` -> `%APPDATA%\<package.json.productName>\dependency-config\.npmrc`
+- `pip.ini` -> `%APPDATA%\<package.json.productName>\dependency-config\pip.ini`
 
-At runtime, JustDo also syncs these files and injects the corresponding
+At runtime, the application also syncs these files and injects the corresponding
 environment variables for managed subprocesses:
 
 - `.npmrc` enables `NPM_CONFIG_USERCONFIG`

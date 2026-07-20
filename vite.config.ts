@@ -5,13 +5,25 @@ import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 import monacoEditorPlugin from 'vite-plugin-monaco-editor';
+
 import packageJson from './package.json';
 
 // https://vitejs.dev/config/
 const devPort = packageJson.devServer.port;
+const escapedProductName = packageJson.productName.replace(
+  /[&<>"']/g,
+  character =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character,
+);
 
 export default defineConfig({
   plugins: [
+    {
+      name: 'product-name-html',
+      transformIndexHtml(html) {
+        return html.replaceAll('%PRODUCT_NAME%', escapedProductName);
+      },
+    },
     react(),
     monacoEditorPlugin({
       languageWorkers: ['editorWorkerService', 'typescript', 'json'],

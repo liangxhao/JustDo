@@ -35,6 +35,7 @@ import {
   isCustomProvider,
   validateDisplayName,
 } from '@/app/config';
+import { APP_NAME } from '@/app/constants/app';
 import MemoryView from '@/features/memory/MemoryView';
 import { setAvailableModels } from '@/features/models/modelSlice';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
@@ -2260,7 +2261,7 @@ const Settings: React.FC<SettingsProps> = ({
               <div className="space-y-3">
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
                   <span className="text-sm text-secondary">{i18nService.t('appName')}</span>
-                  <span className="text-sm font-medium text-foreground">JustDo</span>
+                  <span className="text-sm font-medium text-foreground">{APP_NAME}</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
                   <span className="text-sm text-secondary">{i18nService.t('appVersion')}</span>

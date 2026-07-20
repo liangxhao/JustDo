@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 
 import { LogIpc } from '../../../shared/logIpc';
+import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { getLogFilePath, getRecentMainLogEntries } from '../../core/logger';
 import { getCoworkLogPath } from '../../cowork/coworkLogger';
 import { exportLogsZip } from './logExport';
@@ -12,7 +13,7 @@ const buildLogExportFileName = (): string => {
   const now = new Date();
   const datePart = `${now.getFullYear()}${padTwoDigits(now.getMonth() + 1)}${padTwoDigits(now.getDate())}`;
   const timePart = `${padTwoDigits(now.getHours())}${padTwoDigits(now.getMinutes())}${padTwoDigits(now.getSeconds())}`;
-  return `justdo-logs-${datePart}-${timePart}.zip`;
+  return `${PRODUCT_NAME}-logs-${datePart}-${timePart}.zip`;
 };
 
 const ensureZipFileName = (value: string): string =>

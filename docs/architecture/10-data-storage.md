@@ -1,6 +1,8 @@
 # 数据存储
 
-JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据。数据库文件名来自 `src/main/core/appConstants.ts`，当前为 `justdo.sqlite`，路径位于 Electron `userData/JustDo`。
+JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据。数据库文件名来自 `src/main/core/appConstants.ts`，当前为 `justdo.sqlite`。Electron `userData` 目录名来自 `package.json.productName`，当前路径为 `userData/JustDo`。`productName` 只控制对外品牌与可见目录，不改变 `justdo.sqlite`等内部持久化标识。
+
+`productName` 必须是长度 1–64 的单个英文单词，只允许 ASCII 字母 `A-Z` / `a-z`。构建配置和运行时都会校验该约束。更换它会直接使用新的 `userData` 和默认工程目录，不提供旧品牌目录的兼容或迁移。
 
 ## SQLite 初始化
 
