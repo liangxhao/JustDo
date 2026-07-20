@@ -499,6 +499,36 @@ describe('renderMessageGroup', () => {
     expect(rendered).not.toContain('MEDIA:');
   });
 
+  test('resolves a relative assistant MEDIA image against the working directory', () => {
+    const rendered = stringifyTemplate(
+      renderMessageGroup(
+        {
+          kind: 'group',
+          key: 'assistant-local-image-group',
+          role: 'assistant',
+          messages: [
+            {
+              key: 'assistant-local-image-msg',
+              message: {
+                role: 'assistant',
+                content: '图片已生成\nMEDIA:output files/visualization_demo.png',
+                timestamp: 1,
+              },
+            },
+          ],
+          timestamp: 1,
+          isStreaming: false,
+        },
+        { workingDirectory: 'E:\\workspace\\JustDo' },
+      ),
+    );
+
+    expect(rendered).toContain(
+      'localfile:///E%3A/workspace/JustDo/output%20files/visualization_demo.png',
+    );
+    expect(rendered).not.toContain('message-attachment');
+  });
+
   test('renders a persisted transcript file attachment from MediaPath fields', () => {
     const rendered = stringifyTemplate(
       renderMessageGroup({

@@ -588,6 +588,7 @@ function renderAssistantAttachments(
 function renderMessageImages(
   images: RenderableAttachment[],
   assistant = false,
+  workingDirectory?: string,
 ): TemplateResult | typeof nothing {
   if (images.length === 0) return nothing;
   return html`
@@ -596,7 +597,7 @@ function renderMessageImages(
         image => html`
           <img
             class="chat-bubble__image"
-            src=${image.url}
+            src=${resolveImageSourceUrl(image.url, workingDirectory)}
             alt=${image.label}
             title=${image.label}
           />
@@ -604,6 +605,30 @@ function renderMessageImages(
       )}
     </div>
   `;
+}
+
+function resolveImageSourceUrl(url: string, workingDirectory?: string): string {
+  const trimmed = url.trim();
+  if (
+    /^(?:https?|data|blob|localfile):/i.test(trimmed) ||
+    trimmed.startsWith('/api/')
+  ) {
+    return trimmed;
+  }
+
+  const localPath = localPathFromAttachmentUrl(trimmed);
+  const isAbsolute = /^[A-Za-z]:[\\/]/.test(localPath) || /^[\\/]/.test(localPath);
+  const baseDirectory = workingDirectory?.trim().replace(/[\\/]+$/, '');
+  if (!isAbsolute && !baseDirectory) return trimmed;
+
+  const resolvedPath = isAbsolute ? localPath : `${baseDirectory}/${localPath}`;
+  const slashPath = resolvedPath.replace(/\\/g, '/');
+  const encodedPath = slashPath
+    .split('/')
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+  if (slashPath.startsWith('//')) return `localfile://${encodedPath}`;
+  return `localfile:///${encodedPath.replace(/^\/+/, '')}`;
 }
 
 function renderAssistantToolCards(
@@ -838,7 +863,7 @@ function renderUserMessage(
   return html`
     <div class="chat-bubble chat-bubble--user" dir=${dir}>
       ${renderCopyButton(text)}
-      ${renderMessageImages(images)}
+      ${renderMessageImages(images, false, workingDirectory)}
       ${renderAssistantAttachments(visibleAttachments, workingDirectory)}
       ${text
         ? html`<div class="chat-bubble__text markdown-content">${unsafeHTML(htmlContent)}</div>`
@@ -871,10 +896,11 @@ function renderAssistantMessage(
     (item): item is AssistantCanvasItem => item.type === 'canvas',
   );
   if (orderedBlocks) {
-    return html`${orderedBlocks}${renderMessageImages(images, true)}${renderAssistantAttachments(
-      attachments,
+    return html`${orderedBlocks}${renderMessageImages(
+      images,
+      true,
       workingDirectory,
-    )}`;
+    )}${renderAssistantAttachments(attachments, workingDirectory)}`;
   }
 
   const thinking = extractThinkingCached(rawMessage);
@@ -895,7 +921,7 @@ function renderAssistantMessage(
         : nothing
     }
     ${renderAssistantTextBlock(text)} ${canvases.map(renderAssistantCanvas)}
-    ${renderMessageImages(images, true)}
+    ${renderMessageImages(images, true, workingDirectory)}
     ${renderAssistantAttachments(attachments, workingDirectory)}
   `;
 }
