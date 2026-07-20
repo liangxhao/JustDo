@@ -2,20 +2,13 @@
   "version": 1,
   "description": "JustDo built-in skills configuration for OpenClaw runtime",
   "skills": [
-    { "id": "agent-browser", "enabled": false },
     { "id": "algorithmic-art", "enabled": true },
     { "id": "data-analysis", "enabled": true },
     { "id": "diagram-generator", "enabled": true },
     { "id": "docx", "enabled": true },
-    { "id": "multi-search-engine", "enabled": true },
-    { "id": "ontology", "enabled": true },
     { "id": "pdf", "enabled": true },
-    { "id": "playwright", "enabled": true },
     { "id": "pptx", "enabled": true },
-    { "id": "self-improvement", "enabled": true },
     { "id": "skill-creator", "enabled": true },
-    { "id": "taskflow", "enabled": true },
-    { "id": "theme-factory", "enabled": true },
     { "id": "xlsx", "enabled": true }
   ],
   "disableOpenClawDefaults": true
