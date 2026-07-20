@@ -16,6 +16,20 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 - Dev server port: `4175`
 - License: MIT
 
+## Branding
+
+- `package.json.name` (`justdo`) is the stable internal ID; never rebrand it.
+- `package.json.productName` (`JustDo`) is the external name. Read it through
+  `src/shared/productMetadata.ts` / `electron-builder.config.cjs`; do not add
+  hardcoded user-facing `JustDo` strings.
+- `productName` must match `[A-Za-z]{1,64}`. This does not restrict user-selected
+  install paths, which may contain Chinese or spaces.
+- It controls installer/UI names, `<appData>/<productName>`, and
+  `~/<productName lowercase>/project`; old branded directories are not migrated.
+- Never rename `com.justdo.app`, `justdo://`, `justdo.sqlite`, `JUSTDO_*`,
+  `.justdo-tasks`, `--justdo-*`, `<justdo-chat>`, provider/export IDs, or source
+  symbols/files. `author.name` is separate publisher metadata.
+
 ## Commands
 
 ```bash
@@ -27,6 +41,7 @@ npm run electron:dev:openclaw  # Prepare host OpenClaw runtime + launch
 npm run rebuild:electron-native
 
 npm run lint
+npm run validate:product-metadata
 npm run build
 npm run compile:electron
 npm test                       # pretest rebuilds better-sqlite3
@@ -115,8 +130,9 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 
 ## Runtime Log Triage
 
-- Start with the daily main log (`%APPDATA%/JustDo/logs/main-YYYY-MM-DD.log`
-  on Windows) and `%APPDATA%/JustDo/openclaw/logs/gateway.log`.
+- Start with the daily main log
+  (`%APPDATA%/<package.json.productName>/logs/main-YYYY-MM-DD.log` on Windows)
+  and `%APPDATA%/<package.json.productName>/openclaw/logs/gateway.log`.
   A user-supplied redirected development-terminal log is only a capture of
   console output, regardless of its filename, and is not the authoritative
   OpenClaw event log.

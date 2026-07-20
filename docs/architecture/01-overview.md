@@ -24,6 +24,24 @@ JustDo 是 OpenClaw Gateway 的桌面前端和本地控制面：
 | Runtime patches | 当前 OpenClaw 版本保留 6 个 patch |
 | Dev server | `http://localhost:4175` |
 
+## 产品名与内部标识
+
+`package.json` 中的两个名字职责不同，禁止混用：
+
+| 字段 | 当前值 | 含义 | 更名规则 |
+| --- | --- | --- | --- |
+| `name` | `justdo` | npm 包名和稳定内部标识 | 产品换名时不修改 |
+| `productName` | `JustDo` | 对外产品名和可见目录名 | 未来换名只修改该字段 |
+
+`productName` 必须是长度 1–64 的单个 ASCII 英文单词。它通过
+`src/shared/productMetadata.ts` 和 `electron-builder.config.cjs` 驱动安装包、
+可执行文件、快捷方式、窗口/托盘/终端文案、`userData` 与默认工程目录。
+该限制不影响用户选择包含中文或空格的 Windows 安装路径。
+
+`name` 及其他内部标识保持稳定，包括 `com.justdo.app`、`justdo://`、
+`justdo.sqlite`、`JUSTDO_*`、`.justdo-tasks`、`--justdo-*`、`<justdo-chat>` 和各种
+provider/export 格式标识。更换 `productName` 后不读取或迁移旧品牌目录。
+
 ## 用户可见模块
 
 - Cowork：AI 工作会话、附件、流式输出、ask-user 交互、子任务状态。

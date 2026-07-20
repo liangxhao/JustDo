@@ -1,6 +1,8 @@
 # 数据存储
 
-JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据。数据库文件名来自 `src/main/core/appConstants.ts`，当前为 `justdo.sqlite`。Electron `userData` 目录名来自 `package.json.productName`，路径为 `<appData>/<package.json.productName>`。`productName` 只控制对外品牌与可见目录，不改变 `justdo.sqlite`等内部持久化标识。
+JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据。数据库文件名来自 `src/main/core/appConstants.ts`，当前为 `justdo.sqlite`。Electron `userData` 目录名来自 `package.json.productName`，路径为 `<appData>/<package.json.productName>`。
+
+`package.json.name` 当前为 `justdo`，它是稳定内部包标识，不参与可见目录派生，也不随产品换名修改。`package.json.productName` 当前为 `JustDo`，它是对外产品名，决定 `userData` 目录和默认工程根目录。数据库文件名 `justdo.sqlite` 仍是内部稳定标识，不从 `productName` 派生。
 
 开发者功能的可见性是一个独立的启动期文件配置，不存入 SQLite。Main process 每次启动读取 `<userData>/developer/config.json`（Windows 默认为 `%APPDATA%/<package.json.productName>/developer/config.json`）；文件不存在时自动创建 `{ "showDeveloperMode": false }`。只有 `showDeveloperMode` 为 JSON 布尔值 `true` 时，Renderer 才展示“开发者模式”选项及其已启用的开发入口。文件缺失、解析失败或任何其他值都按隐藏处理，运行期间修改需重启应用生效。
 
