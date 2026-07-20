@@ -129,6 +129,29 @@ export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 
+export const buildManagedOpenClawConnectivityConfig = () => ({
+  update: {
+    checkOnStart: false,
+    auto: {
+      enabled: false,
+    },
+  },
+  tools: {
+    deny: ['web_search'],
+    web: {
+      search: {
+        enabled: false,
+      },
+      fetch: {
+        enabled: true,
+      },
+    },
+  },
+  browser: {
+    enabled: true,
+  },
+});
+
 export const buildOpenClawConfigMeta = (
   version: string | null | undefined,
   now = new Date(),
@@ -561,6 +584,7 @@ export class OpenClawConfigSync {
     );
     const mcpServers = buildOpenClawMcpServers(this.getMcpServers?.() ?? []);
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
+    const connectivityConfig = buildManagedOpenClawConnectivityConfig();
 
     const managedConfig: Record<string, unknown> = {
       gateway: {
@@ -581,6 +605,9 @@ export class OpenClawConfigSync {
       diagnostics: {
         stuckSessionWarnMs: OPENCLAW_STUCK_SESSION_WARN_MS,
         stuckSessionAbortMs: OPENCLAW_STUCK_SESSION_ABORT_MS,
+        otel: {
+          enabled: false,
+        },
       },
       agents: {
         defaults: {
@@ -624,8 +651,9 @@ export class OpenClawConfigSync {
         servers: mcpServers,
       },
       ...hookConfig,
+      update: connectivityConfig.update,
       tools: {
-        deny: ['web_search'],
+        ...connectivityConfig.tools,
         // OpenClaw applies an additional tool gate to sandboxed turns. Native
         // MCP tools belong to bundle-mcp, so explicitly allow that owner when
         // executionMode maps to `all` or `non-main`. This is harmless when the
@@ -635,18 +663,11 @@ export class OpenClawConfigSync {
             alsoAllow: [OPENCLAW_MCP_TOOL_OWNER],
           },
         },
-        web: {
-          search: {
-            enabled: false,
-          },
-        },
         loopDetection: {
           enabled: true,
         },
       },
-      browser: {
-        enabled: true,
-      },
+      browser: connectivityConfig.browser,
       skills: {
         // Skills 已在构建时处理，无需额外配置
       },
@@ -1106,6 +1127,7 @@ export class OpenClawConfigSync {
    */
   private writeMinimalConfig(configPath: string, _reason: string): OpenClawConfigSyncResult {
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
+    const connectivityConfig = buildManagedOpenClawConnectivityConfig();
     const minimalConfig: Record<string, unknown> = withDisabledMemorySearch({
       gateway: {
         mode: 'local',
@@ -1119,6 +1141,12 @@ export class OpenClawConfigSync {
           enabled: false,
         },
       },
+      diagnostics: {
+        otel: {
+          enabled: false,
+        },
+      },
+      ...connectivityConfig,
       ...hookConfig,
       meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
       // Don't enable plugins in minimal config — plugin loading via jiti happens
@@ -1148,8 +1176,18 @@ export class OpenClawConfigSync {
             Boolean(isRecord(existing.plugins) && existing.plugins.entries) ||
             Boolean(isRecord(existing.gateway) && existing.gateway.mode);
           if (hasHookConfig || hasSubstantiveConfig) {
+            const existingDiagnostics = isRecord(existing.diagnostics)
+              ? existing.diagnostics
+              : {};
             const mergedConfig = withDisabledMemorySearch({
               ...existing,
+              diagnostics: {
+                ...existingDiagnostics,
+                otel: {
+                  enabled: false,
+                },
+              },
+              update: connectivityConfig.update,
               ...hookConfig,
               meta: minimalConfig.meta,
             });

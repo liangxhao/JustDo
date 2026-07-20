@@ -400,6 +400,8 @@ export class OpenClawEngineManager extends EventEmitter {
       OPENCLAW_GATEWAY_TOKEN: token,
       OPENCLAW_GATEWAY_PORT: String(port),
       OPENCLAW_NO_RESPAWN: '1',
+      OPENCLAW_NO_AUTO_UPDATE: '1',
+      OPENCLAW_OFFLINE: '1',
       OPENCLAW_ENGINE_VERSION: runtime.version,
       OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'extensions'),
       OPENCLAW_LOG_LEVEL: app.isPackaged ? 'info' : 'debug',

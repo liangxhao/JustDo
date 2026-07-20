@@ -2,7 +2,6 @@
   "version": 1,
   "description": "JustDo built-in skills configuration for OpenClaw runtime",
   "skills": [
-    { "id": "algorithmic-art", "enabled": true },
     { "id": "data-analysis", "enabled": true },
     { "id": "diagram-generator", "enabled": true },
     { "id": "docx", "enabled": true },

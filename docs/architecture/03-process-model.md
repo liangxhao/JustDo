@@ -143,6 +143,14 @@ env-proxy 无法精确表达“同一 loopback 主机只有某个端口经过代
 不会让应用启动失败，但会从 Gateway 代理策略中忽略并给出脱敏警告；普通 loopback 流量
 继续直连。确定性的 Main 标题请求不依赖 env proxy，仍可在调用点匹配这类 URL。
 
+### 内网运行默认值
+
+JustDo 生成的 OpenClaw 配置关闭启动版本检查、自动更新、远程模型价格目录、
+`web_search` 和 OTEL 导出。Gateway 环境同时设置 `OPENCLAW_OFFLINE=1`，避免缺少
+`fd`/`rg` 时从 GitHub 自动下载。`web_fetch` 与 browser 保持开启，用于内网站点；
+它们不是公网隔离边界，严格内网部署仍须由防火墙或出口网关限制可达目标。模型 API、
+用户启用的 MCP 以及 tool/skill 子进程沿用该部署环境允许的网络范围。
+
 ## IPC API 详细说明
 
 ### 调用型 IPC

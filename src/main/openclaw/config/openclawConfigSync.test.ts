@@ -9,6 +9,7 @@ import {
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   buildBuiltinMemorySearchConfig,
+  buildManagedOpenClawConnectivityConfig,
   buildOpenClawConfigMeta,
   buildProviderSelection,
   mergeOpenClawPluginConfig,
@@ -167,6 +168,33 @@ describe('OpenClaw managed config metadata', () => {
     expect(meta).toEqual({
       lastTouchedVersion: '2026.6.11',
       lastTouchedAt: '2026-07-13T03:27:00.677Z',
+    });
+  });
+});
+
+describe('OpenClaw managed connectivity config', () => {
+  test('keeps intranet web tools while disabling public search and update checks', () => {
+    expect(buildManagedOpenClawConnectivityConfig()).toEqual({
+      update: {
+        checkOnStart: false,
+        auto: {
+          enabled: false,
+        },
+      },
+      tools: {
+        deny: ['web_search'],
+        web: {
+          search: {
+            enabled: false,
+          },
+          fetch: {
+            enabled: true,
+          },
+        },
+      },
+      browser: {
+        enabled: true,
+      },
     });
   });
 });
