@@ -51,10 +51,8 @@ export type OutboundHeaderPolicyConfig = {
    * Header names whose values are read from user_info.json and injected into
    * matching outbound requests.
    *
-   * Every name must begin with `X-`. These requests are sent through LiteLLM,
-   * which only passes these custom `X-` headers through to the upstream model
-   * provider. A name without the prefix may reach LiteLLM but be omitted from
-   * the provider request.
+   * Names must be valid HTTP field names. `X-User-Account` and `X-Cookie` are
+   * the recommended examples, but the `X-` prefix is not enforced.
    */
   headerNames: readonly string[];
 };
@@ -66,11 +64,7 @@ export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig =
   headerNames: ['X-User-Account', 'X-Cookie'],
 });
 
-const USER_INFO_RELATIVE_PATH = path.join(
-  USER_DATA_DIRECTORY_NAME,
-  'huawei',
-  'user_info.json',
-);
+const USER_INFO_RELATIVE_PATH = path.join(USER_DATA_DIRECTORY_NAME, 'huawei', 'user_info.json');
 const POLICY_CONFIG_RELATIVE_PATH = path.join(
   USER_DATA_DIRECTORY_NAME,
   'outbound-header-proxy',
@@ -90,11 +84,9 @@ This file controls outbound header injection.
 
 ## headerNames requirements
 
-- Every custom header name must begin with \`X-\`, for example
-  \`X-User-Account\` and \`X-Cookie\`.
-- This prefix is required because requests pass through LiteLLM. LiteLLM
-  forwards these custom \`X-\` headers to the upstream model provider; a custom
-  header without the prefix may be dropped before the provider request is sent.
+- Use a valid HTTP field name. Examples and recommended custom names start with
+  \`X-\`, such as \`X-User-Account\` and \`X-Cookie\`, but this prefix is not
+  required.
 - The name in \`headerNames\` must exactly match the corresponding property in
   \`user_info.json\`.
 
@@ -267,8 +259,14 @@ export const updateOutboundHeaderUserInfoCache = (
 };
 
 export const getOutboundHeaderUserInfo = (
-  userInfoPath = resolveOutboundHeaderUserInfoPath(),
+  userInfoPath?: string,
   headerNames?: readonly string[],
 ): Readonly<Record<string, string>> => {
-  return cachedOutboundHeaderValues ?? updateOutboundHeaderUserInfoCache(userInfoPath, headerNames);
+  return (
+    cachedOutboundHeaderValues ??
+    updateOutboundHeaderUserInfoCache(
+      userInfoPath ?? resolveOutboundHeaderUserInfoPath(),
+      headerNames,
+    )
+  );
 };

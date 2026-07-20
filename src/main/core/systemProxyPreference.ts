@@ -7,7 +7,6 @@ import {
   ProxyProtocol,
   type ProxySettings,
 } from '../../shared/proxy';
-import type { OutboundHeaderProxy } from './outboundHeaderProxy';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrl,
@@ -87,7 +86,6 @@ export const getProxyPreferenceSignature = (config?: SystemProxySettings): strin
 
 const applySystemProxyPreferenceNow = async (
   config: SystemProxySettings | boolean | undefined,
-  outboundHeaderProxy: OutboundHeaderProxy,
 ): Promise<void> => {
   const settings = typeof config === 'boolean' ? { useSystemProxy: config } : config;
   const proxyMode = resolveProxyMode(settings);
@@ -110,6 +108,7 @@ const applySystemProxyPreferenceNow = async (
     } else {
       await session.defaultSession.setProxy({ mode: ProxyMode.DIRECT });
     }
+    await session.defaultSession.closeAllConnections();
   } catch (error) {
     console.error('[SystemProxy] Failed to apply session proxy mode:', error);
   }
@@ -120,7 +119,6 @@ const applySystemProxyPreferenceNow = async (
     const customProxyUrl = buildCustomProxyUrl(normalizeCustomProxy(settings?.proxy?.custom));
     setFixedProxyUrl(customProxyUrl);
     applySystemProxyEnv(customProxyUrl);
-    outboundHeaderProxy.reapplyProcessEnvironment();
 
     if (customProxyUrl) {
       console.log('[SystemProxy] Custom proxy enabled for process environment.');
@@ -133,7 +131,6 @@ const applySystemProxyPreferenceNow = async (
   if (proxyMode === ProxyMode.DIRECT) {
     setFixedProxyUrl(null);
     restoreOriginalProxyEnv();
-    outboundHeaderProxy.reapplyProcessEnvironment();
     console.log('[SystemProxy] Disabled; using direct mode.');
     return;
   }
@@ -141,7 +138,6 @@ const applySystemProxyPreferenceNow = async (
   setFixedProxyUrl(null);
   const proxyUrl = await resolveSystemProxyUrl('https://proxy-check.invalid');
   applySystemProxyEnv(proxyUrl);
-  outboundHeaderProxy.reapplyProcessEnvironment();
 
   if (proxyUrl) {
     console.log('[SystemProxy] Enabled for process environment:', proxyUrl);
@@ -160,14 +156,13 @@ let proxyPreferenceApplyQueue: Promise<void> = Promise.resolve();
  */
 export const applySystemProxyPreference = (
   config: SystemProxySettings | boolean | undefined,
-  outboundHeaderProxy: OutboundHeaderProxy,
 ): Promise<boolean> => {
   const generation = ++proxyPreferenceGeneration;
   const operation = proxyPreferenceApplyQueue.then(async () => {
     if (generation !== proxyPreferenceGeneration) {
       return false;
     }
-    await applySystemProxyPreferenceNow(config, outboundHeaderProxy);
+    await applySystemProxyPreferenceNow(config);
     return generation === proxyPreferenceGeneration;
   });
 

@@ -4,11 +4,11 @@ JustDo 使用 Electron 的 Main / Preload / Renderer 三层隔离。Renderer 只
 
 ## 进程职责
 
-| 进程 | 路径 | 能力 |
-| --- | --- | --- |
-| Main | `src/main/main.ts` 和 `src/main/**` | Electron API、SQLite、文件系统、OpenClaw Gateway、插件服务、IPC handlers |
-| Preload | `src/main/preload.ts` | `contextBridge.exposeInMainWorld('electron', ...)` |
-| Renderer | `src/renderer/**` | React、Redux、Lit、UI 状态、用户交互 |
+| 进程     | 路径                                | 能力                                                                     |
+| -------- | ----------------------------------- | ------------------------------------------------------------------------ |
+| Main     | `src/main/main.ts` 和 `src/main/**` | Electron API、SQLite、文件系统、OpenClaw Gateway、插件服务、IPC handlers |
+| Preload  | `src/main/preload.ts`               | `contextBridge.exposeInMainWorld('electron', ...)`                       |
+| Renderer | `src/renderer/**`                   | React、Redux、Lit、UI 状态、用户交互                                     |
 
 ```mermaid
 flowchart TB
@@ -44,40 +44,40 @@ flowchart TB
 
 `window.electron` 当前暴露的主要分组：
 
-| 分组 | 用途 |
-| --- | --- |
-| `store` | `kv` 配置读写 |
-| `skills` | skill 列表、启停、安装、搜索、详情、本地导入、删除 |
-| `hooks` | OpenClaw hooks 列表和启停 |
-| `slashCommands` | 从 Gateway/策略读取 slash command 列表 |
-| `mcp` | MCP server CRUD、配置同步、探测、resource 读取 |
-| `permissions` | 系统权限，例如日历权限 |
-| `api` | main-process 代理的普通 HTTP fetch |
-| `window` | 窗口最小化、最大化、关闭、系统菜单、窗口状态 |
-| `openclaw.engine` | Gateway 状态、端口、token、重启、打开终端、进度事件 |
-| `openclaw.history` | 工具输入和分页历史读取 |
-| `agents` | Agent 列表 |
-| `cowork` | session CRUD、执行、ask-user 响应、流式事件、子任务状态 |
-| `sessionGroup` | 会话分组 CRUD、排序、移动会话 |
-| `dialog` | 文件/目录选择、保存 inline file、本地文件 data URL |
-| `shell` | 打开路径、预览文件、定位文件、外部链接 |
-| `autoLaunch` | 开机启动 |
-| `preventSleep` | 防休眠 |
-| `developerConfig` | 读取启动时加载的开发者功能可见性配置 |
-| `appInfo` | 应用版本、OpenClaw 版本、系统语言 |
-| `builtinModels` | 刷新内置模型 provider |
-| `log` | 日志路径、打开日志目录、导出 zip、debug 日志 |
-| `scheduledTasks` | 定时任务 CRUD、手动运行、运行历史、状态事件 |
-| `networkStatus` | renderer 网络状态上报 |
+| 分组               | 用途                                                    |
+| ------------------ | ------------------------------------------------------- |
+| `store`            | `kv` 配置读写                                           |
+| `skills`           | skill 列表、启停、安装、搜索、详情、本地导入、删除      |
+| `hooks`            | OpenClaw hooks 列表和启停                               |
+| `slashCommands`    | 从 Gateway/策略读取 slash command 列表                  |
+| `mcp`              | MCP server CRUD、配置同步、探测、resource 读取          |
+| `permissions`      | 系统权限，例如日历权限                                  |
+| `api`              | main-process 代理的普通 HTTP fetch                      |
+| `window`           | 窗口最小化、最大化、关闭、系统菜单、窗口状态            |
+| `openclaw.engine`  | Gateway 状态、端口、token、重启、打开终端、进度事件     |
+| `openclaw.history` | 工具输入和分页历史读取                                  |
+| `agents`           | Agent 列表                                              |
+| `cowork`           | session CRUD、执行、ask-user 响应、流式事件、子任务状态 |
+| `sessionGroup`     | 会话分组 CRUD、排序、移动会话                           |
+| `dialog`           | 文件/目录选择、保存 inline file、本地文件 data URL      |
+| `shell`            | 打开路径、预览文件、定位文件、外部链接                  |
+| `autoLaunch`       | 开机启动                                                |
+| `preventSleep`     | 防休眠                                                  |
+| `developerConfig`  | 读取启动时加载的开发者功能可见性配置                    |
+| `appInfo`          | 应用版本、OpenClaw 版本、系统语言                       |
+| `builtinModels`    | 刷新内置模型 provider                                   |
+| `log`              | 日志路径、打开日志目录、导出 zip、debug 日志            |
+| `scheduledTasks`   | 定时任务 CRUD、手动运行、运行历史、状态事件             |
+| `networkStatus`    | renderer 网络状态上报                                   |
 
 ## IPC 注册位置
 
-| 领域 | Main handler 路径 |
-| --- | --- |
-| app/window/dialog/shell/log/network/store | `src/main/ipc/app/` |
-| cowork sessions/config/ask-user/agents/subtasks/groups | `src/main/ipc/cowork/` |
-| OpenClaw engine/history/skills/mcp/hooks/slash commands | `src/main/ipc/openclaw/` |
-| scheduled tasks | `src/main/ipc/scheduledTask/` |
+| 领域                                                    | Main handler 路径             |
+| ------------------------------------------------------- | ----------------------------- |
+| app/window/dialog/shell/log/network/store               | `src/main/ipc/app/`           |
+| cowork sessions/config/ask-user/agents/subtasks/groups  | `src/main/ipc/cowork/`        |
+| OpenClaw engine/history/skills/mcp/hooks/slash commands | `src/main/ipc/openclaw/`      |
+| scheduled tasks                                         | `src/main/ipc/scheduledTask/` |
 
 ## 事件流
 
@@ -107,6 +107,41 @@ Scheduled task events use constants from `src/shared/scheduledTask/constants.ts`
 - New IPC channels should use shared constants when they are referenced from both sides.
 - All handler inputs must be normalized in main process before touching filesystem, SQLite, Gateway, or marketplace services.
 - Renderer must treat every IPC result as fallible and show localized errors.
+
+## OpenClaw 出站 Header 代理边界
+
+Outbound Header Proxy 的代理数据面只属于 OpenClaw Gateway generation，不是 Electron
+Main 或 Renderer 的全局网络层。代理启动后，Main 为即将启动的 Gateway 构造一份新的环境
+快照，并仅通过 Gateway spawn 的 `env` 传入代理、CA 和 `NO_PROXY` 设置；不得改写 Main
+的 `process.env`，也不得替换 Main `fetch` 或注册 Renderer `webRequest` Header listener。
+唯一例外是确定性的 Main 标题生成请求：该调用点按同一 URL 白名单匹配，命中后显式加入
+配置 Header，但仍使用 Main 自己的普通网络 transport，不经过本地 MITM 代理。
+
+```mermaid
+flowchart LR
+  Main[Electron Main] -->|ordinary fetch; no implicit headers| Remote[Remote services]
+  Main -->|title request only; whitelist match| Protected[Protected service]
+  Renderer[Renderer] -->|Electron session; no business headers| Remote
+  Main -->|immutable env snapshot| Gateway[OpenClaw Gateway generation]
+  Gateway --> Tool[Tool / skill / MCP child process]
+  Gateway --> Proxy[Loopback selective proxy]
+  Tool --> Proxy
+  Proxy -->|whitelist match: inject configured headers| Protected[Protected service]
+  Proxy -->|non-candidate HTTPS: raw tunnel| Remote
+```
+
+每个 Gateway generation 使用新的随机本地代理 capability。HTTP 请求和 HTTPS CONNECT
+必须先通过代理认证；认证信息在本地一跳消费，不能发送到目标或复用为上游代理认证。
+非候选 HTTPS origin 只建立原始 tunnel，不生成本地证书。候选 origin 才进行 MITM，随后
+按完整 URL/path 重新匹配并决定是否注入。普通 loopback 地址保留在 `NO_PROXY` 中；当前
+env-proxy 模式忽略 loopback 白名单，以免为了一个本地目标破坏全部本地服务访问。
+
+关闭时先停止 Cowork 请求和 Gateway 进程树，最后关闭本地代理，避免仍在退出的 tool
+请求命中已经释放的代理端口。
+
+env-proxy 无法精确表达“同一 loopback 主机只有某个端口经过代理”。因此 loopback 白名单
+不会让应用启动失败，但会从 Gateway 代理策略中忽略并给出脱敏警告；普通 loopback 流量
+继续直连。确定性的 Main 标题请求不依赖 env proxy，仍可在调用点匹配这类 URL。
 
 ## IPC API 详细说明
 
@@ -171,11 +206,11 @@ sequenceDiagram
 所有事件 listener 都应在 preload 中返回 unsubscribe：
 
 ```typescript
-onStatusUpdate: (callback) => {
+onStatusUpdate: callback => {
   const handler = (_event, data) => callback(data);
   ipcRenderer.on(IpcChannel.StatusUpdate, handler);
   return () => ipcRenderer.removeListener(IpcChannel.StatusUpdate, handler);
-}
+};
 ```
 
 Renderer component 必须在 `useEffect` cleanup 中调用 unsubscribe，避免切换会话或反复打开弹窗后重复监听。

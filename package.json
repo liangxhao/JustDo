@@ -39,7 +39,7 @@
     "start:electron": "node scripts/launch-electron.cjs",
     "electron:dev": "rimraf dist-electron && npm run compile:electron && node scripts/run-electron-dev.cjs",
     "electron:dev:openclaw": "npm run openclaw:runtime:host && npm run electron:dev",
-    "postinstall": "electron-builder install-app-deps && npm run rebuild:electron-native",
+    "postinstall": "node scripts/patch-http-mitm-proxy.cjs && electron-builder install-app-deps && npm run rebuild:electron-native",
     "pack": "npm run setup:python-runtime && npm run build && npm run compile:electron && electron-builder --config electron-builder.config.cjs --dir",
     "dist": "npm run setup:python-runtime && npm run build && npm run compile:electron && electron-builder --config electron-builder.config.cjs",
     "dist:mac": "node -r dotenv/config node_modules/.bin/electron-builder --mac --config electron-builder.config.cjs",

@@ -4,7 +4,7 @@ import { ProxyMode, ProxyProtocol } from '../../shared/proxy';
 
 const mocks = vi.hoisted(() => ({
   applySystemProxyEnv: vi.fn(),
-  reapplyProcessEnvironment: vi.fn(),
+  closeAllConnections: vi.fn(),
   resolveSystemProxyUrl: vi.fn(),
   restoreOriginalProxyEnv: vi.fn(),
   setFixedProxyUrl: vi.fn(),
@@ -16,6 +16,7 @@ vi.mock('electron', () => ({
   session: {
     defaultSession: {
       setProxy: mocks.setProxy,
+      closeAllConnections: mocks.closeAllConnections,
     },
   },
 }));
@@ -30,13 +31,10 @@ vi.mock('./systemProxy', () => ({
 
 import { applySystemProxyPreference, isSystemProxyEnabled } from './systemProxyPreference';
 
-const outboundHeaderProxy = {
-  reapplyProcessEnvironment: mocks.reapplyProcessEnvironment,
-};
-
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.setProxy.mockResolvedValue(undefined);
+  mocks.closeAllConnections.mockResolvedValue(undefined);
   mocks.resolveSystemProxyUrl.mockResolvedValue('http://system-proxy:8080');
 });
 
@@ -61,21 +59,15 @@ describe('applySystemProxyPreference', () => {
         }),
     );
 
-    const systemApply = applySystemProxyPreference(
-      { proxy: { mode: ProxyMode.SYSTEM } },
-      outboundHeaderProxy as never,
-    );
+    const systemApply = applySystemProxyPreference({ proxy: { mode: ProxyMode.SYSTEM } });
     await vi.waitFor(() => expect(releaseSystemProxyResolution).toBeTypeOf('function'));
 
-    const customApply = applySystemProxyPreference(
-      {
-        proxy: {
-          mode: ProxyMode.CUSTOM,
-          custom: { protocol: ProxyProtocol.HTTP, host: '127.0.0.1', port: '9000' },
-        },
+    const customApply = applySystemProxyPreference({
+      proxy: {
+        mode: ProxyMode.CUSTOM,
+        custom: { protocol: ProxyProtocol.HTTP, host: '127.0.0.1', port: '9000' },
       },
-      outboundHeaderProxy as never,
-    );
+    });
     releaseSystemProxyResolution?.();
 
     await expect(systemApply).resolves.toBe(false);
@@ -84,5 +76,6 @@ describe('applySystemProxyPreference', () => {
     expect(mocks.setProxy).toHaveBeenLastCalledWith(
       expect.objectContaining({ mode: 'fixed_servers' }),
     );
+    expect(mocks.closeAllConnections).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,9 +1,14 @@
 import fs from 'fs';
 import http from 'http';
+import CA from 'http-mitm-proxy/dist/lib/ca';
+import https from 'https';
+import net from 'net';
 import os from 'os';
 import path from 'path';
+import tls from 'tls';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { mainProcessFetch, mainProcessTitleFetch } from './mainProcessFetch';
 import {
   DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
   getOutboundHeaderPolicyConfig,
@@ -12,13 +17,11 @@ import {
 } from './outboundHeaderPolicyConfig';
 import {
   applyOutboundHeaders,
-  applyOutboundProxyEnv,
   installNoisyMitmConsoleFilter,
   isIgnorableProxyClientError,
   isOutboundHeaderProxyActive,
   OutboundHeaderProxy,
   resolveOutboundHeaderProxyConfig,
-  restoreOutboundProxyEnv,
   shouldApplyOutboundHeadersForRequest,
   shouldInjectOutboundHeaders,
   shouldSuppressMitmProxyErrorLog,
@@ -48,7 +51,7 @@ const writeUserInfo = (content: string): string => {
   return userInfoPath;
 };
 
-test('sends explicit proxy fetches through the configured proxy endpoint', async () => {
+test('sends Main requests through the configured transport without outbound header injection', async () => {
   let receivedUrl = '';
   let receivedBody = '';
   const proxyServer = http.createServer((request, response) => {
@@ -69,12 +72,9 @@ test('sends explicit proxy fetches through the configured proxy endpoint', async
   try {
     const address = proxyServer.address();
     if (!address || typeof address === 'string') throw new Error('Proxy server did not start.');
-    const outboundProxy = new OutboundHeaderProxy(
-      { enabled: true, baseUrlWhitelist: [], headerNames: [] },
-      async () => `http://127.0.0.1:${address.port}`,
-      'C:\\AppData\\JustDo\\huawei\\user_info.json',
-    );
-    const response = await outboundProxy.fetch('http://model.example/v1/chat/completions', {
+    const { setFixedProxyUrl } = await import('./systemProxy');
+    setFixedProxyUrl(`http://127.0.0.1:${address.port}`);
+    const response = await mainProcessFetch('http://model.example/v1/chat/completions', {
       method: 'POST',
       body: '{"model":"title-model"}',
     });
@@ -83,6 +83,8 @@ test('sends explicit proxy fetches through the configured proxy endpoint', async
     expect(receivedUrl).toBe('http://model.example/v1/chat/completions');
     expect(receivedBody).toBe('{"model":"title-model"}');
   } finally {
+    const { setFixedProxyUrl } = await import('./systemProxy');
+    setFixedProxyUrl(null);
     await new Promise<void>(resolve => proxyServer.close(() => resolve()));
   }
 });
@@ -94,6 +96,169 @@ const writePolicyConfig = (content: object): string => {
   fs.writeFileSync(configPath, JSON.stringify(content));
   return configPath;
 };
+
+test('injects configured headers only for a whitelisted Main title request', async () => {
+  const receivedHeaders: Array<string | undefined> = [];
+  const proxyServer = http.createServer((request, response) => {
+    receivedHeaders.push(request.headers['x-user-account'] as string | undefined);
+    response.end('ok');
+  });
+  await new Promise<void>((resolve, reject) => {
+    proxyServer.once('error', reject);
+    proxyServer.listen(0, '127.0.0.1', resolve);
+  });
+
+  const userInfoPath = writeUserInfo(JSON.stringify({ 'X-User-Account': 'user-123' }));
+  const configPath = writePolicyConfig({
+    overwrite: false,
+    enabled: true,
+    baseUrlWhitelist: ['http://model.example/v1/'],
+    headerNames: ['X-User-Account'],
+  });
+  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+
+  try {
+    const address = proxyServer.address();
+    if (!address || typeof address === 'string') throw new Error('Proxy server did not start.');
+    const { setFixedProxyUrl } = await import('./systemProxy');
+    setFixedProxyUrl(`http://127.0.0.1:${address.port}`);
+
+    await mainProcessTitleFetch('http://model.example/v1/title', { method: 'POST' });
+    await mainProcessTitleFetch('http://model.example/v2/title', { method: 'POST' });
+
+    expect(receivedHeaders).toEqual(['user-123', undefined]);
+  } finally {
+    const { setFixedProxyUrl } = await import('./systemProxy');
+    setFixedProxyUrl(null);
+    await new Promise<void>(resolve => proxyServer.close(() => resolve()));
+  }
+});
+
+const findReachableNonLoopbackIpv4 = (): string | null => {
+  for (const addresses of Object.values(os.networkInterfaces())) {
+    for (const address of addresses || []) {
+      if (address.family === 'IPv4' && !address.internal) return address.address;
+    }
+  }
+  return null;
+};
+const NON_LOOPBACK_IPV4 = findReachableNonLoopbackIpv4();
+
+const requestThroughHttpProxy = (
+  proxyUrl: URL,
+  targetUrl: string,
+  authorization?: string,
+  hostHeader?: string,
+): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const target = new URL(targetUrl);
+    const request = http.request(
+      {
+        hostname: proxyUrl.hostname,
+        port: proxyUrl.port,
+        path: targetUrl,
+        headers: {
+          Host: hostHeader ?? target.host,
+          ...(authorization ? { 'Proxy-Authorization': authorization } : {}),
+        },
+      },
+      response => {
+        response.resume();
+        response.once('end', () => resolve(response.statusCode || 0));
+      },
+    );
+    request.once('error', reject);
+    request.end();
+  });
+
+const requestThroughHttpsProxy = (
+  proxyUrl: URL,
+  targetHost: string,
+  targetPort: number,
+  authorization: string,
+  caCertificate: string,
+): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const socket = net.connect(Number(proxyUrl.port), proxyUrl.hostname);
+    let connectResponse = Buffer.alloc(0);
+    const fail = (error: Error) => {
+      socket.destroy();
+      reject(error);
+    };
+    socket.once('error', fail);
+    socket.once('connect', () => {
+      socket.write(
+        `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\n` +
+          `Host: ${targetHost}:${targetPort}\r\n` +
+          `Proxy-Authorization: ${authorization}\r\n\r\n`,
+      );
+    });
+    const onConnectData = (chunk: Buffer) => {
+      connectResponse = Buffer.concat([connectResponse, chunk]);
+      const headerEnd = connectResponse.indexOf('\r\n\r\n');
+      if (headerEnd < 0) return;
+      socket.off('data', onConnectData);
+      if (!connectResponse.subarray(0, headerEnd).toString().startsWith('HTTP/1.1 200')) {
+        fail(new Error(`CONNECT failed: ${connectResponse.toString()}`));
+        return;
+      }
+      const remaining = connectResponse.subarray(headerEnd + 4);
+      if (remaining.length > 0) socket.unshift(remaining);
+      const secureSocket = tls.connect({
+        socket,
+        servername: net.isIP(targetHost) ? undefined : targetHost,
+        ca: caCertificate,
+        checkServerIdentity: (_hostname, certificate) =>
+          tls.checkServerIdentity(targetHost, certificate),
+      });
+      secureSocket.once('error', reject);
+      secureSocket.once('secureConnect', () => {
+        secureSocket.write(
+          `GET /protected HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\nConnection: close\r\n\r\n`,
+        );
+      });
+      let response = '';
+      secureSocket.on('data', chunk => {
+        response += chunk.toString();
+      });
+      secureSocket.once('end', () => {
+        const match = response.match(/^HTTP\/1\.1 (\d{3})/);
+        resolve(match ? Number(match[1]) : 0);
+      });
+    };
+    socket.on('data', onConnectData);
+  });
+
+const openAuthenticatedTunnel = (
+  proxyUrl: URL,
+  targetHost: string,
+  targetPort: number,
+  authorization: string,
+): Promise<net.Socket> =>
+  new Promise((resolve, reject) => {
+    const socket = net.connect(Number(proxyUrl.port), proxyUrl.hostname);
+    let response = '';
+    socket.once('error', reject);
+    socket.once('connect', () => {
+      socket.write(
+        `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\n` +
+          `Host: ${targetHost}:${targetPort}\r\n` +
+          `Proxy-Authorization: ${authorization}\r\n\r\n`,
+      );
+    });
+    const onData = (chunk: Buffer) => {
+      response += chunk.toString();
+      if (!response.includes('\r\n\r\n')) return;
+      socket.off('data', onData);
+      if (!response.startsWith('HTTP/1.1 200')) {
+        socket.destroy();
+        reject(new Error(`CONNECT failed: ${response}`));
+        return;
+      }
+      resolve(socket);
+    };
+    socket.on('data', onData);
+  });
 
 test('matches no requests when the whitelist is empty', () => {
   expect(shouldInjectOutboundHeaders('https://example.com/a', [])).toBe(false);
@@ -274,6 +439,29 @@ test('adds only configured header values and replaces names case-insensitively',
   });
 });
 
+test('injects an immutable header snapshot into 100 concurrent request header objects', async () => {
+  const sourceHeaders = Array.from({ length: 100 }, (_, index) => ({
+    'X-Request-Number': String(index),
+  }));
+
+  await Promise.all(
+    sourceHeaders.map(async headers => {
+      applyOutboundHeaders(headers, {
+        [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+        account_id: 'account-123',
+      });
+    }),
+  );
+
+  sourceHeaders.forEach((headers, index) => {
+    expect(headers).toEqual({
+      'X-Request-Number': String(index),
+      [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+      account_id: 'account-123',
+    });
+  });
+});
+
 test('skips unsafe outbound header values during injection', () => {
   const headers = { untouched: 'yes' };
 
@@ -306,152 +494,6 @@ test('normalizes the static policy and ignores invalid base URLs', () => {
     headerNames: CONFIGURED_HEADER_NAMES,
     baseUrlWhitelist: ['https://one.example/api/', 'http://two.example/'],
   });
-});
-
-test('configures common Node, Python, and curl proxy environment variables for active policies', () => {
-  const env: NodeJS.ProcessEnv = {
-    NO_PROXY: 'internal.example,localhost,127.0.0.1',
-    no_proxy: 'legacy.example,::1',
-  };
-
-  applyOutboundProxyEnv(
-    env,
-    {
-      proxyUrl: 'http://127.0.0.1:1234',
-      caCertificatePath: '/tmp/ca.pem',
-      caBundlePath: '/tmp/trusted-ca-bundle.pem',
-    },
-    {
-      enabled: true,
-      baseUrlWhitelist: ['https://example.com/api/'],
-      headerNames: [HEADER_NAMES.USER_ACCOUNT],
-    },
-    ['127.0.0.1:4321'],
-  );
-
-  expect(env).toMatchObject({
-    HTTP_PROXY: 'http://127.0.0.1:1234',
-    HTTPS_PROXY: 'http://127.0.0.1:1234',
-    NODE_EXTRA_CA_CERTS: '/tmp/trusted-ca-bundle.pem',
-    NODE_OPTIONS: expect.stringContaining('--use-system-ca'),
-    NODE_USE_ENV_PROXY: '1',
-    REQUESTS_CA_BUNDLE: '/tmp/trusted-ca-bundle.pem',
-    CURL_CA_BUNDLE: '/tmp/trusted-ca-bundle.pem',
-    SSL_CERT_FILE: '/tmp/trusted-ca-bundle.pem',
-    PIP_CERT: '/tmp/trusted-ca-bundle.pem',
-    NO_PROXY: 'internal.example,legacy.example,127.0.0.1:4321',
-    no_proxy: 'internal.example,legacy.example,127.0.0.1:4321',
-  });
-});
-
-test('routes local LiteLLM through the proxy when no explicit bypass entries are provided', () => {
-  const env: NodeJS.ProcessEnv = {
-    NO_PROXY: 'internal.example,localhost,127.0.0.1,::1',
-    no_proxy: '*',
-  };
-
-  applyOutboundProxyEnv(
-    env,
-    {
-      proxyUrl: 'http://127.0.0.1:1234',
-      caCertificatePath: '/tmp/ca.pem',
-      caBundlePath: '/tmp/trusted-ca-bundle.pem',
-    },
-    {
-      enabled: true,
-      baseUrlWhitelist: ['https://example.com/api/'],
-      headerNames: [HEADER_NAMES.USER_ACCOUNT],
-    },
-  );
-
-  expect(env.NO_PROXY).toBe('internal.example');
-  expect(env.no_proxy).toBe('internal.example');
-});
-
-test('replaces a stale Gateway bypass when its port changes', () => {
-  const env: NodeJS.ProcessEnv = {
-    NO_PROXY: 'internal.example,localhost',
-  };
-  const proxyInfo = {
-    proxyUrl: 'http://127.0.0.1:1234',
-    caCertificatePath: '/tmp/ca.pem',
-    caBundlePath: '/tmp/trusted-ca-bundle.pem',
-  };
-  const config = {
-    enabled: true,
-    baseUrlWhitelist: ['http://127.0.0.1:4000/'],
-    headerNames: [HEADER_NAMES.USER_ACCOUNT],
-  };
-
-  applyOutboundProxyEnv(env, proxyInfo, config, ['127.0.0.1:4321']);
-  applyOutboundProxyEnv(env, proxyInfo, config, ['127.0.0.1:4322']);
-
-  expect(env.NO_PROXY).toBe('internal.example,127.0.0.1:4322');
-  expect(env.no_proxy).toBe('internal.example,127.0.0.1:4322');
-});
-
-test('does not configure proxy environment variables when disabled or whitelist is empty', () => {
-  const disabledEnv: NodeJS.ProcessEnv = {
-    HTTP_PROXY: 'http://system-proxy:8080',
-    NO_PROXY: 'localhost',
-  };
-  const emptyWhitelistEnv: NodeJS.ProcessEnv = {
-    HTTPS_PROXY: 'http://system-proxy:8080',
-  };
-  const proxyInfo = {
-    proxyUrl: 'http://127.0.0.1:1234',
-    caCertificatePath: '/tmp/ca.pem',
-    caBundlePath: '/tmp/trusted-ca-bundle.pem',
-  };
-
-  applyOutboundProxyEnv(disabledEnv, proxyInfo, {
-    enabled: false,
-    baseUrlWhitelist: ['https://example.com/api/'],
-    headerNames: [HEADER_NAMES.USER_ACCOUNT],
-  });
-  applyOutboundProxyEnv(emptyWhitelistEnv, proxyInfo, {
-    enabled: true,
-    baseUrlWhitelist: [],
-    headerNames: [HEADER_NAMES.USER_ACCOUNT],
-  });
-
-  expect(disabledEnv).toEqual({
-    HTTP_PROXY: 'http://system-proxy:8080',
-    NO_PROXY: 'localhost',
-  });
-  expect(emptyWhitelistEnv).toEqual({
-    HTTPS_PROXY: 'http://system-proxy:8080',
-  });
-});
-
-test('restores outbound-header-specific environment variables', () => {
-  const keys = [
-    'NODE_EXTRA_CA_CERTS',
-    'NODE_OPTIONS',
-    'NODE_USE_ENV_PROXY',
-    'REQUESTS_CA_BUNDLE',
-    'CURL_CA_BUNDLE',
-    'SSL_CERT_FILE',
-    'PIP_CERT',
-  ] as const;
-  const expected = Object.fromEntries(
-    keys
-      .map(key => [key, process.env[key]])
-      .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  );
-  const env: NodeJS.ProcessEnv = {
-    NODE_EXTRA_CA_CERTS: '/tmp/ca.pem',
-    NODE_OPTIONS: '--use-system-ca',
-    NODE_USE_ENV_PROXY: '1',
-    REQUESTS_CA_BUNDLE: '/tmp/ca.pem',
-    CURL_CA_BUNDLE: '/tmp/ca.pem',
-    SSL_CERT_FILE: '/tmp/ca.pem',
-    PIP_CERT: '/tmp/ca.pem',
-  };
-
-  restoreOutboundProxyEnv(env);
-
-  expect(env).toEqual(expected);
 });
 
 test('classifies proxy client disconnects as ignorable errors', () => {
@@ -580,3 +622,293 @@ test('accepts a dynamic upstream proxy resolver and user info path', () => {
       new OutboundHeaderProxy(undefined, resolver, 'C:\\AppData\\JustDo\\huawei\\user_info.json'),
   ).not.toThrow();
 });
+
+test('does not mutate the Main process environment when the proxy starts and stops', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-outbound-proxy-'));
+  temporaryDirectories.push(directory);
+  const userInfoPath = path.join(directory, 'user_info.json');
+  fs.writeFileSync(userInfoPath, JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
+  updateOutboundHeaderUserInfoCache(userInfoPath, [HEADER_NAMES.USER_ACCOUNT]);
+  const before = { ...process.env };
+  const outboundProxy = new OutboundHeaderProxy(
+    {
+      enabled: true,
+      baseUrlWhitelist: ['https://example.com/api/'],
+      headerNames: [HEADER_NAMES.USER_ACCOUNT],
+    },
+    async () => null,
+    userInfoPath,
+    path.join(directory, 'ca'),
+  );
+
+  try {
+    await outboundProxy.start();
+    expect(process.env).toEqual(before);
+    expect(() => outboundProxy.buildGatewayEnvironment({ NO_PROXY: 'example.com' })).toThrow(
+      /conflicts with NO_PROXY entry/i,
+    );
+  } finally {
+    outboundProxy.stop();
+  }
+  expect(process.env).toEqual(before);
+});
+
+test('ignores loopback whitelist entries without blocking application startup', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-outbound-proxy-'));
+  temporaryDirectories.push(directory);
+  const outboundProxy = new OutboundHeaderProxy(
+    {
+      enabled: true,
+      baseUrlWhitelist: ['http://127.0.0.1:4000/'],
+      headerNames: [HEADER_NAMES.USER_ACCOUNT],
+    },
+    async () => null,
+    path.join(directory, 'user_info.json'),
+    path.join(directory, 'ca'),
+  );
+
+  await expect(outboundProxy.start()).resolves.toBeNull();
+  expect(outboundProxy.buildGatewayEnvironment({ NO_PROXY: 'localhost' })).toEqual({
+    NO_PROXY: 'localhost',
+  });
+});
+
+test.each(['http://127.0.0.2:4000/', 'http://[::ffff:127.0.0.1]:4000/'])(
+  'ignores loopback variant %s in Gateway proxy policy',
+  async baseUrl => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-outbound-proxy-'));
+    temporaryDirectories.push(directory);
+    const outboundProxy = new OutboundHeaderProxy(
+      {
+        enabled: true,
+        baseUrlWhitelist: [baseUrl],
+        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      },
+      async () => null,
+      path.join(directory, 'user_info.json'),
+      path.join(directory, 'ca'),
+    );
+
+    await expect(outboundProxy.start()).resolves.toBeNull();
+  },
+);
+
+test.skipIf(!NON_LOOPBACK_IPV4)(
+  'authenticates the Gateway proxy and injects headers into all concurrent HTTP requests',
+  async () => {
+    const targetHost = NON_LOOPBACK_IPV4!;
+    const receivedHeaders: Array<string | undefined> = [];
+    const targetServer = http.createServer((request, response) => {
+      receivedHeaders.push(
+        request.headers[HEADER_NAMES.USER_ACCOUNT.toLowerCase()] as string | undefined,
+      );
+      response.end('ok');
+    });
+    await new Promise<void>((resolve, reject) => {
+      targetServer.once('error', reject);
+      targetServer.listen(0, '0.0.0.0', resolve);
+    });
+    const targetAddress = targetServer.address();
+    if (!targetAddress || typeof targetAddress === 'string')
+      throw new Error('Target did not start.');
+    let attackerRequests = 0;
+    const attackerServer = http.createServer((_request, response) => {
+      attackerRequests += 1;
+      response.end('unexpected');
+    });
+    await new Promise<void>((resolve, reject) => {
+      attackerServer.once('error', reject);
+      attackerServer.listen(0, '0.0.0.0', resolve);
+    });
+    const attackerAddress = attackerServer.address();
+    if (!attackerAddress || typeof attackerAddress === 'string') {
+      throw new Error('Attacker target did not start.');
+    }
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-outbound-proxy-'));
+    temporaryDirectories.push(directory);
+    const userInfoPath = path.join(directory, 'user_info.json');
+    fs.writeFileSync(userInfoPath, JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
+    updateOutboundHeaderUserInfoCache(userInfoPath, [HEADER_NAMES.USER_ACCOUNT]);
+    const targetUrl = `http://${targetHost}:${targetAddress.port}/protected`;
+    const outboundProxy = new OutboundHeaderProxy(
+      {
+        enabled: true,
+        baseUrlWhitelist: [targetUrl],
+        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      },
+      async () => null,
+      userInfoPath,
+      path.join(directory, 'ca'),
+    );
+
+    try {
+      await outboundProxy.start();
+      const gatewayEnv = outboundProxy.buildGatewayEnvironment({});
+      const proxyUrl = new URL(gatewayEnv.HTTP_PROXY!);
+      const authorization = `Basic ${Buffer.from(
+        `${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`,
+      ).toString('base64')}`;
+      proxyUrl.username = '';
+      proxyUrl.password = '';
+
+      expect(await requestThroughHttpProxy(proxyUrl, targetUrl)).toBe(407);
+      expect(receivedHeaders).toHaveLength(0);
+      expect(
+        await Promise.all(
+          Array.from({ length: 3 }, () =>
+            requestThroughHttpProxy(proxyUrl, targetUrl, authorization),
+          ),
+        ),
+      ).toEqual([200, 200, 200]);
+      expect(receivedHeaders).toEqual(['user-123', 'user-123', 'user-123']);
+      expect(
+        await requestThroughHttpProxy(
+          proxyUrl,
+          `http://${targetHost}:${attackerAddress.port}/protected`,
+          authorization,
+          `${targetHost}:${targetAddress.port}`,
+        ),
+      ).toBe(504);
+      expect(attackerRequests).toBe(0);
+
+      const oldGenerationTunnel = await openAuthenticatedTunnel(
+        proxyUrl,
+        targetHost,
+        attackerAddress.port,
+        authorization,
+      );
+      const oldTunnelClosed = new Promise<void>(resolve =>
+        oldGenerationTunnel.once('close', () => resolve()),
+      );
+      outboundProxy.rotateGatewayCapability();
+      await oldTunnelClosed;
+      expect(await requestThroughHttpProxy(proxyUrl, targetUrl, authorization)).toBe(407);
+      expect(receivedHeaders).toHaveLength(3);
+      const nextProxyUrl = new URL(outboundProxy.buildGatewayEnvironment({}).HTTP_PROXY!);
+      const nextAuthorization = `Basic ${Buffer.from(
+        `${decodeURIComponent(nextProxyUrl.username)}:${decodeURIComponent(nextProxyUrl.password)}`,
+      ).toString('base64')}`;
+      nextProxyUrl.username = '';
+      nextProxyUrl.password = '';
+      expect(await requestThroughHttpProxy(nextProxyUrl, targetUrl, nextAuthorization)).toBe(200);
+      expect(receivedHeaders).toHaveLength(4);
+    } finally {
+      outboundProxy.stop();
+      await new Promise<void>(resolve => targetServer.close(() => resolve()));
+      await new Promise<void>(resolve => attackerServer.close(() => resolve()));
+    }
+  },
+);
+
+test.skipIf(!NON_LOOPBACK_IPV4)(
+  'injects headers into all three first concurrent HTTPS requests',
+  async () => {
+    const targetHost = NON_LOOPBACK_IPV4!;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-outbound-https-'));
+    temporaryDirectories.push(directory);
+    const targetCaDirectory = path.join(directory, 'target-ca');
+    const certificateAuthority = await new Promise<CA>((resolve, reject) => {
+      CA.create(targetCaDirectory, (error: Error | null, instance: CA) =>
+        error ? reject(error) : resolve(instance),
+      );
+    });
+    const serverCertificate = await new Promise<{ cert: string; key: string }>(resolve => {
+      certificateAuthority.generateServerCertificateKeys(targetHost, (cert: string, key: string) =>
+        resolve({ cert, key }),
+      );
+    });
+    const caDirectory = path.join(directory, 'proxy-ca');
+
+    const receivedHeaders: Array<string | undefined> = [];
+    const targetServer = https.createServer(serverCertificate, (request, response) => {
+      receivedHeaders.push(
+        request.headers[HEADER_NAMES.USER_ACCOUNT.toLowerCase()] as string | undefined,
+      );
+      response.end('ok');
+    });
+    await new Promise<void>((resolve, reject) => {
+      targetServer.once('error', reject);
+      targetServer.listen(0, '0.0.0.0', resolve);
+    });
+    const targetAddress = targetServer.address();
+    if (!targetAddress || typeof targetAddress === 'string')
+      throw new Error('Target did not start.');
+    const tunneledHeaders: Array<string | undefined> = [];
+    const tunneledServer = https.createServer(serverCertificate, (request, response) => {
+      tunneledHeaders.push(
+        request.headers[HEADER_NAMES.USER_ACCOUNT.toLowerCase()] as string | undefined,
+      );
+      response.end('ok');
+    });
+    await new Promise<void>((resolve, reject) => {
+      tunneledServer.once('error', reject);
+      tunneledServer.listen(0, '0.0.0.0', resolve);
+    });
+    const tunneledAddress = tunneledServer.address();
+    if (!tunneledAddress || typeof tunneledAddress === 'string') {
+      throw new Error('Tunnel target did not start.');
+    }
+
+    const userInfoPath = path.join(directory, 'user_info.json');
+    fs.writeFileSync(userInfoPath, JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
+    updateOutboundHeaderUserInfoCache(userInfoPath, [HEADER_NAMES.USER_ACCOUNT]);
+    const outboundProxy = new OutboundHeaderProxy(
+      {
+        enabled: true,
+        baseUrlWhitelist: [`https://${targetHost}:${targetAddress.port}/protected`],
+        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      },
+      async () => null,
+      userInfoPath,
+      caDirectory,
+    );
+
+    try {
+      await outboundProxy.start();
+      const internalProxy = (outboundProxy as unknown as { proxy: { httpsAgent: https.Agent } })
+        .proxy;
+      internalProxy.httpsAgent = new https.Agent({ rejectUnauthorized: false });
+      const gatewayEnv = outboundProxy.buildGatewayEnvironment({});
+      const proxyUrl = new URL(gatewayEnv.HTTPS_PROXY!);
+      const authorization = `Basic ${Buffer.from(
+        `${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`,
+      ).toString('base64')}`;
+      proxyUrl.username = '';
+      proxyUrl.password = '';
+      const caCertificate = fs.readFileSync(path.join(caDirectory, 'certs', 'ca.pem'), 'utf8');
+      const targetCaCertificate = fs.readFileSync(
+        path.join(targetCaDirectory, 'certs', 'ca.pem'),
+        'utf8',
+      );
+
+      expect(
+        await Promise.all(
+          Array.from({ length: 3 }, () =>
+            requestThroughHttpsProxy(
+              proxyUrl,
+              targetHost,
+              targetAddress.port,
+              authorization,
+              caCertificate,
+            ),
+          ),
+        ),
+      ).toEqual([200, 200, 200]);
+      expect(receivedHeaders).toEqual(['user-123', 'user-123', 'user-123']);
+      expect(
+        await requestThroughHttpsProxy(
+          proxyUrl,
+          targetHost,
+          tunneledAddress.port,
+          authorization,
+          targetCaCertificate,
+        ),
+      ).toBe(200);
+      expect(tunneledHeaders).toEqual([undefined]);
+    } finally {
+      outboundProxy.stop();
+      await new Promise<void>(resolve => targetServer.close(() => resolve()));
+      await new Promise<void>(resolve => tunneledServer.close(() => resolve()));
+    }
+  },
+);

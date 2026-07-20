@@ -4,17 +4,17 @@ Cowork 是 JustDo 的 AI 工作会话系统。用户在 renderer 中创建或继
 
 ## 关键文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `src/renderer/features/cowork/` | Cowork UI、Redux slice、service、组件 |
-| `src/main/ipc/cowork/` | Cowork IPC handlers |
-| `src/main/engine/coworkEngineService.ts` | Cowork engine service |
-| `src/main/engine/coworkEngineRouter.ts` | session routing facade |
-| `src/main/engine/openclawRuntimeAdapter.ts` | Gateway adapter |
-| `src/main/engine/coworkRuntimeForwarder.ts` | runtime events -> IPC events |
-| `src/main/data/coworkStore.ts` | local session/message/agent persistence |
-| `src/main/openclaw/sessions/` | Gateway session key/history/text helpers |
-| `src/main/engine/openclaw/subagentGateway.ts` | subagent status/history bridge |
+| 文件                                          | 作用                                     |
+| --------------------------------------------- | ---------------------------------------- |
+| `src/renderer/features/cowork/`               | Cowork UI、Redux slice、service、组件    |
+| `src/main/ipc/cowork/`                        | Cowork IPC handlers                      |
+| `src/main/engine/coworkEngineService.ts`      | Cowork engine service                    |
+| `src/main/engine/coworkEngineRouter.ts`       | session routing facade                   |
+| `src/main/engine/openclawRuntimeAdapter.ts`   | Gateway adapter                          |
+| `src/main/engine/coworkRuntimeForwarder.ts`   | runtime events -> IPC events             |
+| `src/main/data/coworkStore.ts`                | local session/message/agent persistence  |
+| `src/main/openclaw/sessions/`                 | Gateway session key/history/text helpers |
+| `src/main/engine/openclaw/subagentGateway.ts` | subagent status/history bridge           |
 
 ## 会话生命周期
 
@@ -45,14 +45,14 @@ sequenceDiagram
 
 ## 数据边界
 
-| 数据 | 权威来源 | JustDo 本地角色 |
-| --- | --- | --- |
-| 执行历史 | OpenClaw Gateway `chat.history` | 缓存、搜索、列表展示 |
+| 数据           | 权威来源                            | JustDo 本地角色                |
+| -------------- | ----------------------------------- | ------------------------------ |
+| 执行历史       | OpenClaw Gateway `chat.history`     | 缓存、搜索、列表展示           |
 | 会话列表元数据 | JustDo SQLite + Gateway session key | UI 列表、标题、pin、group、cwd |
-| 用户交互请求 | extension host event | 弹窗和用户响应 |
-| Subagent 状态 | Gateway event/history | UI 展示和跳转 |
-| Agent 配置 | JustDo SQLite | Gateway 配置同步输入 |
-| Token 使用统计 | OpenClaw Gateway `usage.cost` | 设置页按日柱状图展示 |
+| 用户交互请求   | extension host event                | 弹窗和用户响应                 |
+| Subagent 状态  | Gateway event/history               | UI 展示和跳转                  |
+| Agent 配置     | JustDo SQLite                       | Gateway 配置同步输入           |
+| Token 使用统计 | OpenClaw Gateway `usage.cost`       | 设置页按日柱状图展示           |
 
 ## 使用统计
 
@@ -101,7 +101,9 @@ Gateway history 是权威。`historyReconciler` 和 `src/main/openclaw/sessions/
 - `id`：JustDo UI session id。
 - `title`：本地显示标题，可由标题生成服务更新。标题服务通过当前选中模型的
   OpenAI-compatible API 做一次无状态请求，不创建 OpenClaw/Gateway 会话；模型不可用、
-  请求失败或超时时回退为首条非空输入的截断文本。
+  请求失败或超时时回退为首条非空输入的截断文本。该 Main 进程请求可以遵循用户选择的
+  系统/自定义代理，但不经过本地 MITM。标题 URL 命中 Outbound Header 白名单时，该确定性
+  调用点会显式注入配置 Header；Main 的其他请求不继承这一行为。
 - `status`：UI 状态，例如 idle/running/error。
 - `cwd`：会话工作目录。
 - `execution_mode`：当前只保留 local/sandbox/auto 语义，旧 container 会迁移到 local。
@@ -163,17 +165,17 @@ Stop 是用户意图，不保证 Gateway 已经立即停止所有下游工具。
 
 ## Stream Event 分类
 
-| Event | 用途 | UI 行为 |
-| --- | --- | --- |
-| `message` | 新消息块 | 插入消息 |
-| `messageUpdate` | 文本 delta | 更新当前消息 |
-| `thinkingUpdate` | reasoning delta | 更新 thinking 区域 |
-| `messageMetadataUpdate` | usage/tool metadata | 更新附加信息 |
-| `messageDelete` | runtime 删除消息 | 从 UI cache 移除 |
-| `interaction` | ask-user 交互请求 | 打开用户交互弹窗 |
-| `interactionDismiss` | 请求失效 | 关闭弹窗 |
-| `complete` | turn 完成 | 刷新 session/history |
-| `error` | turn 失败 | 展示错误并标记状态 |
+| Event                   | 用途                | UI 行为              |
+| ----------------------- | ------------------- | -------------------- |
+| `message`               | 新消息块            | 插入消息             |
+| `messageUpdate`         | 文本 delta          | 更新当前消息         |
+| `thinkingUpdate`        | reasoning delta     | 更新 thinking 区域   |
+| `messageMetadataUpdate` | usage/tool metadata | 更新附加信息         |
+| `messageDelete`         | runtime 删除消息    | 从 UI cache 移除     |
+| `interaction`           | ask-user 交互请求   | 打开用户交互弹窗     |
+| `interactionDismiss`    | 请求失效            | 关闭弹窗             |
+| `complete`              | turn 完成           | 刷新 session/history |
+| `error`                 | turn 失败           | 展示错误并标记状态   |
 
 ## Ask-User Flow
 
@@ -221,10 +223,10 @@ Subagent 状态由 Gateway 提供，JustDo 只负责桥接和展示：
 
 ## Failure Modes
 
-| 场景 | 处理 |
-| --- | --- |
-| Gateway 未就绪 | 返回 `ENGINE_NOT_READY`，UI 显示启动状态 |
-| Gateway stream 中断 | 标记 session error，保留可恢复 cache |
-| SQLite cache 损坏 | 重建 cache，优先从 Gateway history 恢复 |
-| Interaction 请求过期 | dismiss 弹窗，阻止继续响应 |
-| Provider config 无效 | 阻止执行并引导设置模型/API |
+| 场景                 | 处理                                     |
+| -------------------- | ---------------------------------------- |
+| Gateway 未就绪       | 返回 `ENGINE_NOT_READY`，UI 显示启动状态 |
+| Gateway stream 中断  | 标记 session error，保留可恢复 cache     |
+| SQLite cache 损坏    | 重建 cache，优先从 Gateway history 恢复  |
+| Interaction 请求过期 | dismiss 弹窗，阻止继续响应               |
+| Provider config 无效 | 阻止执行并引导设置模型/API               |

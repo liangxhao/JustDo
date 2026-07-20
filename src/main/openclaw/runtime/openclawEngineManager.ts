@@ -65,6 +65,11 @@ interface OpenClawEngineManagerEvents {
   status: (status: OpenClawEngineStatus) => void;
 }
 
+export type OpenClawEngineManagerOptions = {
+  beginNetworkGeneration?: () => void;
+  buildNetworkEnvironment?: (baseEnv: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+};
+
 type RuntimeMetadata = {
   root: string | null;
   version: string | null;
@@ -164,9 +169,17 @@ export class OpenClawEngineManager extends EventEmitter {
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
   private secretEnvVars: Record<string, string> = {};
   private gatewayPortListener: ((port: number | null) => void) | null = null;
+  private readonly buildNetworkEnvironment: (
+    baseEnv: NodeJS.ProcessEnv,
+  ) => NodeJS.ProcessEnv;
+  private readonly beginNetworkGeneration: () => void;
 
-  constructor() {
+  constructor(options: OpenClawEngineManagerOptions = {}) {
     super();
+
+    this.buildNetworkEnvironment =
+      options.buildNetworkEnvironment ?? (baseEnv => ({ ...baseEnv }));
+    this.beginNetworkGeneration = options.beginNetworkGeneration ?? (() => undefined);
 
     const userDataPath = app.getPath('userData');
     this.baseDir = path.join(userDataPath, 'openclaw');
@@ -510,6 +523,7 @@ export class OpenClawEngineManager extends EventEmitter {
       return this.getStatus();
     }
 
+    this.beginNetworkGeneration();
     const cliEnvironment = await this.buildCliEnvironment();
     console.log(`[OpenClaw] buildCliEnvironment done (${elapsed()})`);
     const openclawEntry = cliEnvironment.openclawEntry;
@@ -518,7 +532,7 @@ export class OpenClawEngineManager extends EventEmitter {
     );
     const token = cliEnvironment.token;
     const port = cliEnvironment.port;
-    const env = cliEnvironment.env;
+    const env = this.buildNetworkEnvironment(cliEnvironment.env);
     const gatewayEnv = {
       ...env,
       // Keep Gateway stdout stable across terminals and developer machines.

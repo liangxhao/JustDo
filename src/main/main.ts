@@ -20,6 +20,7 @@ import { loadDeveloperConfig } from './core/developerConfigFile';
 import { setLanguage } from './core/i18n';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
+import { mainProcessTitleFetch } from './core/mainProcessFetch';
 import { createMainWindow } from './core/mainWindowFactory';
 import { OutboundHeaderProxy } from './core/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './core/pythonRuntime';
@@ -346,7 +347,10 @@ const getStore = (): SqliteStore => {
 
 const getOpenClawEngineManager = (): OpenClawEngineManager => {
   if (!openClawEngineManager) {
-    openClawEngineManager = new OpenClawEngineManager();
+    openClawEngineManager = new OpenClawEngineManager({
+      beginNetworkGeneration: () => outboundHeaderProxy.rotateGatewayCapability(),
+      buildNetworkEnvironment: baseEnv => outboundHeaderProxy.buildGatewayEnvironment(baseEnv),
+    });
   }
   return openClawEngineManager;
 };
@@ -467,7 +471,7 @@ const getCoworkEngineService = (): CoworkEngineService => {
     coworkEngineService = new CoworkEngineService({
       getCoworkStore,
       getOpenClawEngineManager,
-      fetchSessionTitle: (requestUrl, init) => outboundHeaderProxy.fetch(requestUrl, init),
+      fetchSessionTitle: mainProcessTitleFetch,
     });
   }
   return coworkEngineService;
@@ -860,9 +864,14 @@ if (!gotTheLock) {
   };
 
   const runAppCleanup = async (): Promise<void> => {
-    outboundHeaderProxy.stop();
     console.log('[Main] App is quitting, starting cleanup...');
     destroyTray();
+    // Prevent scheduled work from starting while dependent runtimes are draining.
+    try {
+      getCronJobService().stopPolling();
+    } catch {
+      // CronJobService may not have been initialized — safe to ignore.
+    }
     // Stop Cowork sessions before the Gateway and database are closed.
     const coworkRouter = coworkEngineService?.getCurrentRouter();
     if (coworkRouter) {
@@ -881,12 +890,7 @@ if (!gotTheLock) {
     // tool calls, and before closing application storage.
     await stopExtensionHost();
 
-    // Stop the cron job polling
-    try {
-      getCronJobService().stopPolling();
-    } catch {
-      // CronJobService may not have been initialized — safe to ignore.
-    }
+    outboundHeaderProxy.stop();
 
     // Close the SQLite database to flush the WAL and release the file lock.
     try {
@@ -932,7 +936,7 @@ if (!gotTheLock) {
     // endpoint may require the saved system/custom proxy to be reachable.
     bindOpenClawGatewayPortProxyBypass();
     const appConfig = getStore().get<AppConfigSettings>('app_config');
-    await applySystemProxyPreference(appConfig, outboundHeaderProxy);
+    await applySystemProxyPreference(appConfig);
 
     await syncBuiltinModelProvider(store);
 
@@ -1027,7 +1031,7 @@ if (!gotTheLock) {
         : lastProxyPreference;
       const currentProxyPreference = getProxyPreferenceSignature(newConfig);
       if (currentProxyPreference !== previousProxyPreference) {
-        void applySystemProxyPreference(newConfig, outboundHeaderProxy).then(isLatest => {
+        void applySystemProxyPreference(newConfig).then(isLatest => {
           if (!isLatest) return;
           if (getOpenClawEngineManager().getStatus().phase === 'running') {
             // Dispose the adapter's client before restarting the Gateway. Otherwise the
