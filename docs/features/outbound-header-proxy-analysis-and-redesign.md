@@ -62,7 +62,7 @@ Header 名称不强制要求 `X-` 前缀；只需满足合法 HTTP field name �
 2. 不修改 Electron Main 的全局 proxy/CA env，不 patch Main `fetch`，不注册 Electron Header listener。
 3. Proxy ready 后构造一次不可变 Gateway env snapshot，再 spawn Gateway；配置变化创建新 generation 并受控 restart。
 4. Gateway env 携带当前 generation 的随机 local proxy capability；未认证的本地客户端不能使用代理。
-5. HTTPS CONNECT 的 origin 不属于任何白名单候选时只做 raw tunnel；候选 origin 才 MITM，解密后再按完整 URL/path 决定是否注入。
+5. CONNECT 建立后先根据首个 tunnel 数据包区分明文 HTTP 与 TLS，再按对应协议匹配候选 origin；非候选请求只做 raw tunnel，候选 HTTP 进入明文解析，候选 HTTPS 才 MITM，解析后再按完整 URL/path 决定是否注入。
 6. 修复/替换 `http-mitm-proxy` 的证书初始化 single-flight，保证首次同 origin 并发请求共享同一个初始化结果。
 7. 每个请求使用独立 request context、headers 和 upstream plan；业务 Header snapshot 在一个 generation 内只读。
 8. 保留普通 loopback 和用户 bypass；Gateway env-proxy 模式忽略 loopback 白名单并脱敏告警，不能因这类配置阻塞应用启动，也不能再为 LiteLLM 删除全局 loopback bypass。
@@ -437,9 +437,10 @@ Electron Renderer and Main
 #### `SelectiveOutboundProxy`
 
 - 只监听 `127.0.0.1`。
-- 收到 HTTPS CONNECT 时先解析并规范化 hostname 和 port。
-- origin 不属于任何拦截候选规则时只建立原始 TCP tunnel，不终止 TLS。
-- origin 至少对应一条白名单规则时才进行 MITM；path 是否匹配只能在解密后判断。
+- 收到 CONNECT 时先解析并规范化 hostname 和 port，并在 tunnel 建立后嗅探首个数据包以区分明文 HTTP 与 TLS。
+- 对应协议的 origin 不属于任何拦截候选规则时只建立原始 TCP tunnel；非候选 TLS 不在本地终止。
+- HTTP 候选进入明文请求解析，HTTPS 候选才进行 MITM；path 是否匹配只能在解析后判断。
+- CONNECT 内层明文 HTTP 继承外层已验证的 Gateway capability，不要求或转发第二份代理认证 Header。
 - 解密后再次按完整 URL/path 判断是否注入。
 - 校验 CONNECT authority、TLS SNI、解密后的 Host/`:authority` 一致性；不一致时 fail closed，绝不把 Header 发往意外 origin。
 - Header snapshot 只读；每个请求修改独立 headers。
@@ -831,8 +832,10 @@ request_completed
 
 ## 当前工作区注意事项
 
-选择性 CONNECT tunnel 已在本次实现：非候选 HTTPS origin 走 raw tunnel，候选 origin 才进入
-MITM。后续修改应以当前实现和集成测试为基线，不再按旧的“所有 HTTPS 都 MITM”路径设计。
+选择性 CONNECT tunnel 已在本次实现：代理会区分 CONNECT 内的明文 HTTP 与 TLS；非候选
+请求走 raw tunnel，候选 HTTP 进入明文解析，候选 HTTPS 才进入 MITM。后续修改应以当前
+实现和集成测试为基线，不再假设 CONNECT 必然承载 HTTPS，也不再按旧的“所有 HTTPS 都
+MITM”路径设计。
 
 后续会话开始时仍须执行 `git status` 和 `git diff`，以实际工作区状态为准；保留所有用户修改，不要处理无关的未跟踪文件 `my.png`。
 

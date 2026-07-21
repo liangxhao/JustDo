@@ -129,14 +129,17 @@ flowchart LR
   Gateway --> Proxy[Loopback selective proxy]
   Tool --> Proxy
   Proxy -->|whitelist match: inject configured headers| Protected[Protected service]
-  Proxy -->|non-candidate HTTPS: raw tunnel| Remote
+  Proxy -->|non-candidate CONNECT: raw tunnel| Remote
 ```
 
-每个 Gateway generation 使用新的随机本地代理 capability。HTTP 请求和 HTTPS CONNECT
+每个 Gateway generation 使用新的随机本地代理 capability。普通 HTTP 代理请求和 CONNECT
 必须先通过代理认证；认证信息在本地一跳消费，不能发送到目标或复用为上游代理认证。
-非候选 HTTPS origin 只建立原始 tunnel，不生成本地证书。候选 origin 才进行 MITM，随后
-按完整 URL/path 重新匹配并决定是否注入。普通 loopback 地址保留在 `NO_PROXY` 中；当前
-env-proxy 模式忽略 loopback 白名单，以免为了一个本地目标破坏全部本地服务访问。
+部分 Gateway HTTP 客户端也会用 CONNECT 承载明文 HTTP，因此代理在 CONNECT 建立后根据
+首个 tunnel 数据包区分 HTTP 与 TLS，再按对应协议的 origin 决定解析或 raw tunnel。命中的
+明文 HTTP tunnel 继承已验证的 CONNECT capability，并在解析后按完整 URL/path 决定是否
+注入；非候选 HTTPS origin 只建立原始 tunnel，不生成本地证书。普通 loopback 地址保留在
+`NO_PROXY` 中；当前 env-proxy 模式忽略 loopback 白名单，以免为了一个本地目标破坏全部
+本地服务访问。
 
 关闭时先停止 Cowork 请求和 Gateway 进程树，最后关闭本地代理，避免仍在退出的 tool
 请求命中已经释放的代理端口。

@@ -230,6 +230,53 @@ const requestThroughHttpsProxy = (
     socket.on('data', onConnectData);
   });
 
+const requestHttpThroughConnectProxy = (
+  proxyUrl: URL,
+  targetHost: string,
+  targetPort: number,
+  authorization: string,
+  requestPath = '/protected',
+): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const socket = net.connect(Number(proxyUrl.port), proxyUrl.hostname);
+    let response = Buffer.alloc(0);
+    let tunnelEstablished = false;
+    const fail = (error: Error) => {
+      socket.destroy();
+      reject(error);
+    };
+    socket.once('error', fail);
+    socket.once('connect', () => {
+      socket.write(
+        `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\n` +
+          `Host: ${targetHost}:${targetPort}\r\n` +
+          `Proxy-Authorization: ${authorization}\r\n\r\n`,
+      );
+    });
+    socket.on('data', chunk => {
+      response = Buffer.concat([response, chunk]);
+      if (!tunnelEstablished) {
+        const headerEnd = response.indexOf('\r\n\r\n');
+        if (headerEnd < 0) return;
+        if (!response.subarray(0, headerEnd).toString().startsWith('HTTP/1.1 200')) {
+          fail(new Error(`CONNECT failed: ${response.toString()}`));
+          return;
+        }
+        tunnelEstablished = true;
+        response = response.subarray(headerEnd + 4);
+        socket.write(
+          `GET ${requestPath} HTTP/1.1\r\n` +
+            `Host: ${targetHost}:${targetPort}\r\n` +
+            'Connection: close\r\n\r\n',
+        );
+      }
+    });
+    socket.once('end', () => {
+      const match = response.toString().match(/^HTTP\/1\.1 (\d{3})/);
+      resolve(match ? Number(match[1]) : 0);
+    });
+  });
+
 const openAuthenticatedTunnel = (
   proxyUrl: URL,
   targetHost: string,
@@ -801,6 +848,100 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
       outboundProxy.stop();
       await new Promise<void>(resolve => targetServer.close(() => resolve()));
       await new Promise<void>(resolve => attackerServer.close(() => resolve()));
+    }
+  },
+);
+
+test.skipIf(!NON_LOOPBACK_IPV4)(
+  'injects headers into HTTP requests carried over CONNECT',
+  async () => {
+    const targetHost = NON_LOOPBACK_IPV4!;
+    const receivedHeaders: Array<string | undefined> = [];
+    const targetServer = http.createServer((request, response) => {
+      receivedHeaders.push(
+        request.headers[HEADER_NAMES.USER_ACCOUNT.toLowerCase()] as string | undefined,
+      );
+      response.end('ok');
+    });
+    await new Promise<void>((resolve, reject) => {
+      targetServer.once('error', reject);
+      targetServer.listen(0, '0.0.0.0', resolve);
+    });
+    const targetAddress = targetServer.address();
+    if (!targetAddress || typeof targetAddress === 'string') {
+      throw new Error('Target did not start.');
+    }
+    const rawTunnelHeaders: Array<string | undefined> = [];
+    const rawTunnelServer = http.createServer((request, response) => {
+      rawTunnelHeaders.push(
+        request.headers[HEADER_NAMES.USER_ACCOUNT.toLowerCase()] as string | undefined,
+      );
+      response.end('ok');
+    });
+    await new Promise<void>((resolve, reject) => {
+      rawTunnelServer.once('error', reject);
+      rawTunnelServer.listen(0, '0.0.0.0', resolve);
+    });
+    const rawTunnelAddress = rawTunnelServer.address();
+    if (!rawTunnelAddress || typeof rawTunnelAddress === 'string') {
+      throw new Error('Raw tunnel target did not start.');
+    }
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-outbound-connect-http-'));
+    temporaryDirectories.push(directory);
+    const userInfoPath = path.join(directory, 'user_info.json');
+    fs.writeFileSync(userInfoPath, JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
+    updateOutboundHeaderUserInfoCache(userInfoPath, [HEADER_NAMES.USER_ACCOUNT]);
+    const outboundProxy = new OutboundHeaderProxy(
+      {
+        enabled: true,
+        baseUrlWhitelist: [`http://${targetHost}:${targetAddress.port}/protected`],
+        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      },
+      async () => null,
+      userInfoPath,
+      path.join(directory, 'ca'),
+    );
+
+    try {
+      await outboundProxy.start();
+      const proxyUrl = new URL(outboundProxy.buildGatewayEnvironment({}).HTTP_PROXY!);
+      const authorization = `Basic ${Buffer.from(
+        `${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`,
+      ).toString('base64')}`;
+      proxyUrl.username = '';
+      proxyUrl.password = '';
+
+      expect(
+        await requestHttpThroughConnectProxy(
+          proxyUrl,
+          targetHost,
+          targetAddress.port,
+          authorization,
+        ),
+      ).toBe(200);
+      expect(
+        await requestHttpThroughConnectProxy(
+          proxyUrl,
+          targetHost,
+          targetAddress.port,
+          authorization,
+          '/other',
+        ),
+      ).toBe(200);
+      expect(receivedHeaders).toEqual(['user-123', undefined]);
+      expect(
+        await requestHttpThroughConnectProxy(
+          proxyUrl,
+          targetHost,
+          rawTunnelAddress.port,
+          authorization,
+        ),
+      ).toBe(200);
+      expect(rawTunnelHeaders).toEqual([undefined]);
+    } finally {
+      outboundProxy.stop();
+      await new Promise<void>(resolve => targetServer.close(() => resolve()));
+      await new Promise<void>(resolve => rawTunnelServer.close(() => resolve()));
     }
   },
 );

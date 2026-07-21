@@ -435,31 +435,39 @@ const findWhitelistBypassConflict = (
   return null;
 };
 
-const isHttpsInterceptionCandidate = (
+const isConnectInterceptionCandidate = (
   authority: ConnectAuthority,
+  protocol: 'http:' | 'https:',
   config: OutboundHeaderProxyConfig,
 ): boolean =>
   config.baseUrlWhitelist.some(value => {
     const url = new URL(value);
     return (
-      url.protocol === 'https:' &&
-      url.hostname === authority.hostname &&
-      Number(url.port || DEFAULT_HTTPS_PORT) === authority.port
+      url.protocol === protocol &&
+      url.hostname.toLowerCase() === authority.hostname.toLowerCase() &&
+      Number(url.port || getDefaultPort(url.protocol)) === authority.port
     );
   });
+
+const detectConnectProtocol = (data: Buffer): 'http:' | 'https:' =>
+  data[0] === 0x16 || data[0] === 0x80 || data[0] === 0x00 ? 'https:' : 'http:';
+
+const writeConnectionEstablished = (socket: Duplex): void => {
+  socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+};
 
 const doesConnectAuthorityMatchRequest = (
   context: ProxyRequestContext,
   requestUrl: string,
 ): boolean => {
-  if (!context.isSSL) return true;
+  if (!context.connectRequest) return !context.isSSL;
   const authority = parseConnectAuthority(context.connectRequest?.url);
   if (!authority) return false;
   try {
     const request = new URL(requestUrl);
     return (
-      request.hostname === authority.hostname &&
-      Number(request.port || DEFAULT_HTTPS_PORT) === authority.port
+      request.hostname.toLowerCase() === authority.hostname.toLowerCase() &&
+      Number(request.port || getDefaultPort(request.protocol)) === authority.port
     );
   } catch {
     return false;
@@ -530,13 +538,14 @@ const connectRawTunnel = async (
   head: Buffer,
   authority: ConnectAuthority,
   upstreamProxyUrl: string | null,
+  connectionEstablished = false,
 ): Promise<void> => {
   const attach = (upstreamSocket: Duplex): void => {
     if ('destroyed' in clientSocket && clientSocket.destroyed) {
       upstreamSocket.destroy();
       return;
     }
-    clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+    if (!connectionEstablished) writeConnectionEstablished(clientSocket);
     if (head.length > 0) upstreamSocket.write(head);
     clientSocket.pipe(upstreamSocket);
     upstreamSocket.pipe(clientSocket);
@@ -666,14 +675,19 @@ export class OutboundHeaderProxy {
 
     const proxy = new Proxy();
     const proxyInternals = proxy as Proxy & {
+      connectRequests: Record<string, http.IncomingMessage>;
       _onHttpServerConnect: (request: http.IncomingMessage, socket: Duplex, head: Buffer) => void;
+      _onHttpServerConnectData: (
+        request: http.IncomingMessage,
+        socket: Duplex,
+        head: Buffer,
+      ) => void;
       _onHttpServerRequest: (
         isSSL: boolean,
         request: http.IncomingMessage,
         response: http.ServerResponse,
       ) => void;
     };
-    const originalConnect = proxyInternals._onHttpServerConnect.bind(proxy);
     const originalRequest = proxyInternals._onHttpServerRequest.bind(proxy);
     proxyInternals._onHttpServerConnect = (request, socket, head) => {
       socket.once('error', () => socket.destroy());
@@ -690,21 +704,44 @@ export class OutboundHeaderProxy {
       this.authenticatedConnectCapabilities.set(request, capability);
       this.authenticatedConnectSockets.add(socket);
       socket.once('close', () => this.authenticatedConnectSockets.delete(socket));
-      if (isHttpsInterceptionCandidate(authority, this.activePolicy!)) {
-        originalConnect(request, socket, head);
-        return;
+      const handleTunnelData = (data: Buffer): void => {
+        socket.pause();
+        const protocol = detectConnectProtocol(data);
+        if (isConnectInterceptionCandidate(authority, protocol, this.activePolicy!)) {
+          proxyInternals._onHttpServerConnectData(request, socket, data);
+          return;
+        }
+        void this.resolveUpstreamProxy(`${protocol}//${authority.hostname}:${authority.port}/`)
+          .then(upstreamProxyUrl =>
+            connectRawTunnel(socket, data, authority, upstreamProxyUrl, true),
+          )
+          .catch(error => {
+            console.warn('[OutboundHeaderProxy] Raw CONNECT tunnel failed:', error);
+            socket.destroy();
+          });
+      };
+      writeConnectionEstablished(socket);
+      if (head.length > 0) {
+        handleTunnelData(head);
+      } else {
+        socket.once('data', handleTunnelData);
       }
-      void this.resolveUpstreamProxy(`https://${authority.hostname}:${authority.port}/`)
-        .then(upstreamProxyUrl => connectRawTunnel(socket, head, authority, upstreamProxyUrl))
-        .catch(error => {
-          console.warn('[OutboundHeaderProxy] Raw CONNECT tunnel failed:', error);
-          socket.destroy();
-        });
     };
     proxyInternals._onHttpServerRequest = (isSSL, request, response) => {
       if (!isSSL) {
         const capability = this.capability;
-        if (!capability || !consumeLocalProxyAuthorization(request.headers, capability)) {
+        const connectRequest =
+          proxyInternals.connectRequests[
+            `${request.socket.remotePort}:${request.socket.localPort}`
+          ];
+        const hasAuthenticatedConnect =
+          !!capability &&
+          !!connectRequest &&
+          this.authenticatedConnectCapabilities.get(connectRequest) === capability;
+        if (
+          !hasAuthenticatedConnect &&
+          (!capability || !consumeLocalProxyAuthorization(request.headers, capability))
+        ) {
           response.writeHead(407, {
             'Proxy-Authenticate': 'Basic realm="OpenClaw Gateway"',
             Connection: 'close',
@@ -727,12 +764,12 @@ export class OutboundHeaderProxy {
           return;
         }
         if (
-          requestContext.isSSL &&
-          (!requestContext.connectRequest ||
+          (requestContext.isSSL && !requestContext.connectRequest) ||
+          (requestContext.connectRequest &&
             this.authenticatedConnectCapabilities.get(requestContext.connectRequest) !==
               this.capability)
         ) {
-          callback(new Error('HTTPS proxy capability is no longer valid.'));
+          callback(new Error('CONNECT proxy capability is no longer valid.'));
           return;
         }
         if (!doesForwardTargetMatchRequest(requestContext, requestUrl)) {
