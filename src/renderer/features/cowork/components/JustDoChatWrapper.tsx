@@ -43,6 +43,11 @@ interface JustDoChatWrapperProps {
 
 export interface JustDoChatWrapperRef {
   sendMessage: (text: string, attachments?: CoworkAttachmentPayload[]) => Promise<void>;
+  getExportSnapshot: () => {
+    messages: unknown[];
+    runtimeSessionId: string | null;
+    isLoading: boolean;
+  };
   /** Set an optimistic user message shown until gateway history loads */
   setPendingUserMessage: (text: string, attachments?: CoworkAttachmentPayload[]) => void;
   /** Clear sending state (e.g. when session start fails) */
@@ -86,6 +91,14 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     useImperativeHandle(
       ref,
       () => ({
+        getExportSnapshot: () => {
+          const controller = controllerRef.current;
+          return {
+            messages: controller ? [...controller.state.chatMessages] : [],
+            runtimeSessionId: controller?.state.currentSessionId ?? null,
+            isLoading: !controller?.state.connected || controller.state.chatLoading,
+          };
+        },
         sendMessage: async (text: string, attachments = []) => {
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');

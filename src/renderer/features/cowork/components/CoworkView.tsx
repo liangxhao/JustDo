@@ -1,3 +1,5 @@
+import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import { SaveTextFileErrorCode } from '@shared/dialogIpc';
 import { parseGoalStartObjective } from '@shared/slashCommands';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -7,6 +9,7 @@ import { resolveAgentModelSelection } from '@/features/cowork/components/agentMo
 import CoworkPromptInput, {
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/CoworkPromptInput';
+import ExportSessionModal from '@/features/cowork/components/ExportSessionModal';
 import FilePreviewDrawer, {
   type FilePreview,
 } from '@/features/cowork/components/FilePreviewDrawer';
@@ -37,6 +40,10 @@ import type {
   CoworkSession,
   OpenClawEngineStatus,
 } from '@/features/cowork/coworkTypes';
+import {
+  buildSessionExportFileName,
+  createSessionExportDocument,
+} from '@/features/cowork/sessionExport';
 import { clearActiveSkills } from '@/features/plugins/slices/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import { i18nService } from '@/services/i18n';
@@ -84,6 +91,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
+  const [isSessionExportOpen, setIsSessionExportOpen] = useState(false);
+  const [sessionExportMessageCount, setSessionExportMessageCount] = useState(0);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSearchIgnoreCase, setSessionSearchIgnoreCase] = useState(true);
   const [sessionSearchMatchCount, setSessionSearchMatchCount] = useState(0);
@@ -670,6 +679,63 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       }
     };
 
+    const handleOpenSessionExport = () => {
+      const snapshot = chatWrapperRef.current?.getExportSnapshot();
+      if (!snapshot || snapshot.isLoading) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkExportHistoryLoading'),
+          }),
+        );
+        return;
+      }
+      setSessionExportMessageCount(snapshot?.messages.length ?? currentSession.messages.length);
+      setIsSessionExportOpen(true);
+    };
+
+    const handleExportSession = async (includeRawData: boolean): Promise<boolean> => {
+      try {
+        const snapshot = chatWrapperRef.current?.getExportSnapshot();
+        const messages = snapshot?.messages ?? currentSession.messages;
+        const document = createSessionExportDocument({
+          session: currentSession,
+          messages,
+          model: sessionSelectedModel?.id ?? sessionSelectedModel?.name,
+          runtimeSessionId: snapshot?.runtimeSessionId,
+          includeRawData,
+        });
+        const result = await window.electron.dialog.saveTextFile({
+          title: i18nService.t('coworkExportSession'),
+          defaultFileName: buildSessionExportFileName(currentSession.title),
+          content: `${JSON.stringify(document, null, 2)}\n`,
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+        });
+        if (!result.success) {
+          const errorKey =
+            result.errorCode === SaveTextFileErrorCode.FileTooLarge
+              ? 'coworkExportTooLarge'
+              : 'coworkExportFailed';
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t(errorKey) }),
+          );
+          return false;
+        }
+        if (result.canceled) return false;
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: i18nService.t('coworkExportSuccess') }),
+        );
+        return true;
+      } catch (error) {
+        console.error('[CoworkView] Failed to export session:', error);
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkExportFailed'),
+          }),
+        );
+        return false;
+      }
+    };
+
     return (
       <div className="relative flex-1 flex flex-col h-full">
         {/* Header */}
@@ -723,6 +789,28 @@ const CoworkView: React.FC<CoworkViewProps> = ({
               aria-label={i18nService.t('coworkSearchInSession')}
             >
               <SearchIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
+                handleOpenSessionExport();
+              }}
+              disabled={currentSessionRuntimeRunning}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+              title={i18nService.t(
+                currentSessionRuntimeRunning
+                  ? 'coworkExportWaitForCompletion'
+                  : 'coworkExportSession',
+              )}
+              aria-label={i18nService.t(
+                currentSessionRuntimeRunning
+                  ? 'coworkExportWaitForCompletion'
+                  : 'coworkExportSession',
+              )}
+            >
+              <ArrowDownTrayIcon className="h-4 w-4" />
             </button>
             <SubagentMenu
               sessionId={currentSession.id}
@@ -838,6 +926,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           {filePreview && (
             <FilePreviewDrawer preview={filePreview} onClose={() => setFilePreview(null)} />
           )}
+          <ExportSessionModal
+            isOpen={isSessionExportOpen}
+            sessionTitle={currentSession.title}
+            messageCount={sessionExportMessageCount}
+            onClose={() => setIsSessionExportOpen(false)}
+            onExport={handleExportSession}
+          />
         </div>
       </div>
     );
@@ -855,7 +950,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           <div className="space-y-12">
             {/* Welcome Section */}
             <div className="text-center space-y-5">
-              <img src={logoUrl} alt="logo" className="mx-auto h-32 w-32" />
+              <img src={logoUrl} alt="logo" className="mx-auto h-[5.333rem] w-[5.333rem]" />
               <h2 className="text-3xl font-bold tracking-tight text-foreground">
                 {i18nService.t('coworkWelcome')}
               </h2>

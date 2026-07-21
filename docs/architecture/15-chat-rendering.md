@@ -223,6 +223,12 @@ Tool card 的展示应区分：
 
 敏感 tool input 不应随意塞进 DOM。需要读取历史 tool input 时，通过 `openclaw.history.getToolInputs()` 走 Main IPC。
 
+## 会话导出
+
+会话页导出使用 `ChatController` 当前已加载的 Gateway history，而不是可能滞后的 Redux/SQLite message cache。`sessionExport.ts` 将文本、assistant tool calls 和 tool results 转为 OpenAI Chat Completions 兼容的 `messages`，并在用户选择时把原始 runtime messages 放入 `extensions.justdo`，以保留 reasoning、附件和运行时扩展字段。
+
+Renderer 只负责构建 JSON；文件路径由系统另存为对话框选择，Main 通过受限的 `dialog:saveTextFile` IPC 写入 UTF-8 文本。导出内容有大小上限，错误必须返回 renderer 并显示本地化提示。
+
 ## Markdown 安全
 
 模型输出是不可信输入。Markdown 渲染必须：

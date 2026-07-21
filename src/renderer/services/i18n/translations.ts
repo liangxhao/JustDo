@@ -214,6 +214,20 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkSearchInSession: '搜索当前会话',
     coworkSearchInSessionPlaceholder: '搜索当前会话...',
     coworkSearchMatchCount: '{current}/{total}，共 {total} 个',
+    coworkExportSession: '导出会话',
+    coworkExportOpenAiFormat: 'OpenAI 兼容 JSON',
+    coworkExportOpenAiFormatDescription:
+      '对话消息使用 role、content、tool_calls 和 tool_call_id 等标准字段，便于二次处理或迁移。',
+    coworkExportMessageCountValue: '{count} 条消息',
+    coworkExportIncludeRaw: '附带原始消息，保留思考过程、附件和运行时扩展字段',
+    coworkExportPrivacyNotice: '导出内容可能包含文件路径、工具输入输出及其他敏感信息，请妥善保管。',
+    coworkExportSave: '另存为 JSON',
+    coworkExportSaving: '正在导出...',
+    coworkExportSuccess: '会话已导出',
+    coworkExportFailed: '导出会话失败，请稍后重试',
+    coworkExportTooLarge: '导出内容超过 50 MB，请取消附带原始消息后重试',
+    coworkExportHistoryLoading: '会话历史仍在加载，请稍后再试',
+    coworkExportWaitForCompletion: '请等待当前回复完成后再导出',
     reasoning: '思考过程',
 
     // 模型选择
@@ -1014,6 +1028,22 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkSearchInSession: 'Search current session',
     coworkSearchInSessionPlaceholder: 'Search current session...',
     coworkSearchMatchCount: '{current}/{total}, {total} total',
+    coworkExportSession: 'Export session',
+    coworkExportOpenAiFormat: 'OpenAI-compatible JSON',
+    coworkExportOpenAiFormatDescription:
+      'Messages use standard role, content, tool_calls, and tool_call_id fields for processing or migration.',
+    coworkExportMessageCountValue: '{count} messages',
+    coworkExportIncludeRaw:
+      'Include raw messages to preserve reasoning, attachments, and runtime extension fields',
+    coworkExportPrivacyNotice:
+      'The export may contain file paths, tool input and output, or other sensitive information. Store it securely.',
+    coworkExportSave: 'Save JSON as',
+    coworkExportSaving: 'Exporting...',
+    coworkExportSuccess: 'Session exported',
+    coworkExportFailed: 'Failed to export the session. Please try again.',
+    coworkExportTooLarge: 'The export exceeds 50 MB. Try again without raw messages.',
+    coworkExportHistoryLoading: 'Session history is still loading. Please try again shortly.',
+    coworkExportWaitForCompletion: 'Wait for the current response to finish before exporting',
     reasoning: 'Reasoning',
 
     // Model Selection

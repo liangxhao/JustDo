@@ -1,4 +1,6 @@
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
+type SaveTextFileOptions = import('../../shared/dialogIpc').SaveTextFileOptions;
+type SaveTextFileResult = import('../../shared/dialogIpc').SaveTextFileResult;
 type ExtensionImportProgress = import('../../shared/openclaw/extensions').ExtensionImportProgress;
 type ExtensionImportRequest = import('../../shared/openclaw/extensions').ExtensionImportRequest;
 type ExtensionImportStage = import('../../shared/openclaw/extensions').ExtensionImportStage;
@@ -722,6 +724,7 @@ interface IElectronAPI {
     reorder: (groupIds: string[]) => Promise<{ success: boolean; error?: string }>;
   };
   dialog: {
+    saveTextFile: (options: SaveTextFileOptions) => Promise<SaveTextFileResult>;
     selectDirectory: () => Promise<{ success: boolean; path: string | null }>;
     selectFile: (options?: {
       title?: string;

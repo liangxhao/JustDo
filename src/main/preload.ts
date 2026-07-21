@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { DeveloperConfigIpc } from '../shared/developerConfig';
+import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
 import { LogIpc } from '../shared/logIpc';
 import {
   type ExtensionDeleteRequest,
@@ -341,6 +342,8 @@ contextBridge.exposeInMainWorld('electron', {
     reorder: (groupIds: string[]) => ipcRenderer.invoke('sessionGroup:reorder', groupIds),
   },
   dialog: {
+    saveTextFile: (options: SaveTextFileOptions) =>
+      ipcRenderer.invoke(DialogIpc.SaveTextFile, options),
     selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
     selectFile: (options?: {
       title?: string;

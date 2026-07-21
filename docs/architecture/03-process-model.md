@@ -59,7 +59,7 @@ flowchart TB
 | `agents`           | Agent 列表                                              |
 | `cowork`           | session CRUD、执行、ask-user 响应、流式事件、子任务状态 |
 | `sessionGroup`     | 会话分组 CRUD、排序、移动会话                           |
-| `dialog`           | 文件/目录选择、保存 inline file、本地文件 data URL      |
+| `dialog`           | 文件/目录选择、文本保存、inline file、本地文件 data URL |
 | `shell`            | 打开路径、预览文件、定位文件、外部链接                  |
 | `autoLaunch`       | 开机启动                                                |
 | `preventSleep`     | 防休眠                                                  |
