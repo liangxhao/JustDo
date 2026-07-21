@@ -15,6 +15,23 @@ describe('GatewayStdoutLogFilter', () => {
     expect(filter.push(lifecycle)).toBe(last + lifecycle);
   });
 
+  it('keeps only the first and last item event for a run', () => {
+    const filter = new GatewayStdoutLogFilter();
+    const timestamp = '2026-07-21T19:17:38.972+08:00 ';
+    const prefix =
+      `${timestamp}[ws] → event agent seq=per-client clients=2 ` +
+      'run=justdo-17846...vluk agent=main session=justdo:session-1 stream=item ';
+    const first = `${prefix}aseq=1487\n`;
+    const middle = `${prefix}aseq=1488\n`;
+    const last = `${prefix}aseq=1493\n`;
+    const lifecycle =
+      `${timestamp}[ws] → event agent run=justdo-17846...vluk ` +
+      'stream=lifecycle phase=end\n';
+
+    expect(filter.push(first + middle + last)).toBe(first);
+    expect(filter.push(lifecycle)).toBe(last + lifecycle);
+  });
+
   it('does not let unrelated logs split a buffered stream', () => {
     const filter = new GatewayStdoutLogFilter();
     const first = '[ws] → event agent run=run-1 stream=thinking aseq=2\n';

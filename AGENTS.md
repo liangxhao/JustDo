@@ -137,8 +137,8 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
   console output, regardless of its filename, and is not the authoritative
   OpenClaw event log.
 - Gateway stdout is intentionally condensed by
-  `src/main/openclaw/runtime/gatewayLogFilter.ts`: thinking and assistant
-  streams keep only the first and last event per run/stream segment, with
+  `src/main/openclaw/runtime/gatewayLogFilter.ts`: thinking, assistant, and item
+  streams keep only the first and last event per run/stream segment, with text
   previews capped at 80 characters. Successful `sessions.list` and `cron.list`
   polling responses remain visible for frequency and latency diagnosis.
 - The condensed logs omit per-plugin `loading` lines, sensitive-schema walk

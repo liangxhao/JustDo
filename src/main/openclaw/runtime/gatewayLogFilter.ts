@@ -1,6 +1,6 @@
 import { stripVTControlCharacters } from 'node:util';
 
-type BufferedAgentStream = 'assistant' | 'thinking';
+type BufferedAgentStream = 'assistant' | 'item' | 'thinking';
 
 type BufferedStreamState = {
   runId: string;
@@ -20,7 +20,7 @@ const parseAgentEvent = (line: string): AgentEvent | null => {
 };
 
 const getBufferedAgentStream = (stream: string): BufferedAgentStream | null => {
-  if (stream === 'thinking' || stream === 'assistant') return stream;
+  if (stream === 'thinking' || stream === 'assistant' || stream === 'item') return stream;
   return null;
 };
 

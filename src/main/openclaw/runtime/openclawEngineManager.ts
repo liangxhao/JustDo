@@ -1525,9 +1525,9 @@ export class OpenClawEngineManager extends EventEmitter {
       // OpenClaw's config.get schema walk logs one debug line for every path
       // whose name looks sensitive. These are schema classifications, not
       // leaked values or actionable warnings, and can produce hundreds of
-      // lines whenever the Control UI connects. Thinking and assistant stream
-      // websocket events are similarly high-volume transport metadata, so
-      // retain only the first and last event for each run and stream.
+      // lines whenever the Control UI connects. Thinking, assistant, and item
+      // stream websocket events are similarly high-volume transport metadata,
+      // so retain only the first and last event for each run and stream.
       // The filter also removes individual plugin loading lines while
       // preserving load summaries and websocket polling diagnostics.
       const filteredText = stdoutLogFilter.push(text);
