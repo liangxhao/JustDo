@@ -112,6 +112,34 @@ test('generateTitle normalizes model formatting', async () => {
   await expect(handler.generateTitle('测试')).resolves.toBe('简短标题');
 });
 
+test('generateTitle removes thinking blocks from the generated title', async () => {
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: '<think>需要概括用户意图。\n标题应当简短。</think>\nTypeScript 错误修复',
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+  );
+  const handler = new SessionTitleGenerator({
+    resolveApiConfig: () => ({
+      config: { apiKey: '', baseURL: 'http://localhost:4000/v1', model: 'local-model' },
+    }),
+    fetch: fetchMock,
+  });
+
+  await expect(handler.generateTitle('请修复这个 TypeScript 错误')).resolves.toBe(
+    'TypeScript 错误修复',
+  );
+});
+
 test('generateTitle rejects a conversational reply and uses the source as fallback', async () => {
   const fetchMock = vi.fn(
     async () =>

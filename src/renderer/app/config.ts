@@ -116,7 +116,7 @@ export const defaultConfig: AppConfig = {
     defaultModelProvider: BUILTIN_MODELS_PROVIDER_KEY,
   },
   providers: buildDefaultProviders(),
-  theme: 'system',
+  theme: 'light',
   language: 'zh',
   useSystemProxy: false,
   proxy: defaultProxySettings,

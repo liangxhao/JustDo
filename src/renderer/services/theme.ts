@@ -6,7 +6,7 @@ type ThemeType = 'light' | 'dark' | 'system';
 
 class ThemeService {
   private mediaQuery: MediaQueryList | null = null;
-  private currentTheme: ThemeType = 'system';
+  private currentTheme: ThemeType = 'light';
   private initialized = false;
   private mediaQueryListener: ((event: MediaQueryListEvent) => void) | null = null;
   private manager: ThemeManager;
@@ -45,7 +45,7 @@ class ThemeService {
       }
     } catch (error) {
       console.error('Failed to initialize theme:', error);
-      this.setTheme('system');
+      this.setTheme('light');
     }
   }
 

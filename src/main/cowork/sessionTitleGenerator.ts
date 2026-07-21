@@ -141,6 +141,8 @@ export class SessionTitleGenerator {
   private normalizeTitle(value: string, fallback: string): string {
     let title = value.trim();
 
+    title = title.replace(/<think\b[^>]*>[\s\S]*?<\/think\s*>/gi, '').trim();
+
     const fenced = /```(?:[\w-]+)?\s*([\s\S]*?)```/i.exec(title);
     if (fenced?.[1]) title = fenced[1].trim();
 

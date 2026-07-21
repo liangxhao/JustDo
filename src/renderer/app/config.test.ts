@@ -1,11 +1,16 @@
 import { expect, test } from 'vitest';
 
 import {
+  defaultConfig,
   getCustomProviderDefaultName,
   getProviderDisplayName,
   isCustomProvider,
   validateDisplayName,
 } from '@/app/config';
+
+test('defaultConfig: uses light theme for first launch', () => {
+  expect(defaultConfig.theme).toBe('light');
+});
 
 test('isCustomProvider: custom_0 is custom', () => {
   expect(isCustomProvider('custom_0')).toBe(true);
