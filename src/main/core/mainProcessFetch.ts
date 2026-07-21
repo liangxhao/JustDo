@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
 import { ProxyAgent } from 'proxy-agent';
@@ -83,18 +84,29 @@ export const mainProcessFetch = async (
   });
 };
 
-/** The only Main-process request allowed to opt into the outbound-header policy. */
+export const applyMainProcessOutboundHeaderPolicy = (
+  requestUrl: string,
+  requestHeaders?: HeadersInit,
+): Record<string, string> => {
+  const headers = Object.fromEntries(new Headers(requestHeaders).entries());
+  const policy = resolveOutboundHeaderProxyConfig(getOutboundHeaderPolicyConfig());
+  if (!shouldApplyOutboundHeadersForRequest(policy, requestUrl)) {
+    return headers;
+  }
+
+  const values = getOutboundHeaderUserInfo(undefined, policy.headerNames);
+  const injectedHeaderCount = applyOutboundHeaders(headers, values);
+  console.log(
+    `[OutboundHeaderProxy] outbound header policy matched requestId=${crypto.randomUUID()} origin=${new URL(requestUrl).origin} matched=true injectedHeaderCount=${injectedHeaderCount}`,
+  );
+  return headers;
+};
+
+/** Title-generation fetch with outbound-header policy support. */
 export const mainProcessTitleFetch = async (
   requestUrl: string,
   init?: RequestInit,
 ): Promise<Response> => {
-  const policy = resolveOutboundHeaderProxyConfig(getOutboundHeaderPolicyConfig());
-  if (!shouldApplyOutboundHeadersForRequest(policy, requestUrl)) {
-    return mainProcessFetch(requestUrl, init);
-  }
-
-  const headers = Object.fromEntries(new Headers(init?.headers).entries());
-  const values = getOutboundHeaderUserInfo(undefined, policy.headerNames);
-  applyOutboundHeaders(headers, values);
+  const headers = applyMainProcessOutboundHeaderPolicy(requestUrl, init?.headers);
   return mainProcessFetch(requestUrl, { ...init, headers });
 };

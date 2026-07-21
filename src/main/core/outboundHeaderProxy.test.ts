@@ -100,6 +100,7 @@ const writePolicyConfig = (content: object): string => {
 
 test('injects configured headers only for a whitelisted Main title request', async () => {
   const receivedHeaders: Array<string | undefined> = [];
+  const injectionLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   const proxyServer = http.createServer((request, response) => {
     receivedHeaders.push(request.headers['x-user-account'] as string | undefined);
     response.end('ok');
@@ -128,7 +129,18 @@ test('injects configured headers only for a whitelisted Main title request', asy
     await mainProcessTitleFetch('http://model.example/v2/title', { method: 'POST' });
 
     expect(receivedHeaders).toEqual(['user-123', undefined]);
+    const injectionLogs = injectionLogSpy.mock.calls.filter(
+      ([message]) =>
+        typeof message === 'string' &&
+        message.startsWith('[OutboundHeaderProxy] outbound header policy matched '),
+    );
+    expect(injectionLogs).toHaveLength(1);
+    expect(injectionLogs[0]).toHaveLength(1);
+    expect(String(injectionLogs[0][0])).toMatch(
+      /^\[OutboundHeaderProxy\] outbound header policy matched requestId=[0-9a-f-]+ origin=http:\/\/model\.example matched=true injectedHeaderCount=1$/,
+    );
   } finally {
+    injectionLogSpy.mockRestore();
     const { setFixedProxyUrl } = await import('./systemProxy');
     setFixedProxyUrl(null);
     await new Promise<void>(resolve => proxyServer.close(() => resolve()));
