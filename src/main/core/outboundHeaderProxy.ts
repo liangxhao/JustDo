@@ -11,6 +11,7 @@ import type { Duplex } from 'stream';
 
 import { buildGatewayNetworkEnvironment } from './gatewayNetworkEnvironment';
 import {
+  captureOutboundHeaderStartupEnabled,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
   resolveOutboundHeaderUserInfoPath,
@@ -392,6 +393,7 @@ const isLoopbackHostname = (hostname: string): boolean => {
 
 const excludeLoopbackWhitelistEntries = (
   config: OutboundHeaderProxyConfig,
+  logIgnoredEntries = true,
 ): OutboundHeaderProxyConfig => {
   const baseUrlWhitelist = config.baseUrlWhitelist.filter(value => {
     try {
@@ -400,7 +402,7 @@ const excludeLoopbackWhitelistEntries = (
       return true;
     }
   });
-  if (baseUrlWhitelist.length !== config.baseUrlWhitelist.length) {
+  if (logIgnoredEntries && baseUrlWhitelist.length !== config.baseUrlWhitelist.length) {
     console.warn(
       `[OutboundHeaderProxy] Ignored ${config.baseUrlWhitelist.length - baseUrlWhitelist.length} loopback whitelist entry or entries; loopback remains direct.`,
     );
@@ -634,11 +636,29 @@ export class OutboundHeaderProxy {
     this.caDirectory = caDirectory;
     if (!config) {
       updateOutboundHeaderUserInfoCache(this.userInfoPath);
+      captureOutboundHeaderStartupEnabled();
     }
   }
 
   private getConfig(): OutboundHeaderProxyConfig {
     return this.configuredPolicy ?? resolveOutboundHeaderProxyConfig();
+  }
+
+  private getActiveRequestPolicy(): OutboundHeaderProxyConfig | null {
+    if (!this.activePolicy) {
+      return null;
+    }
+    return this.configuredPolicy
+      ? this.activePolicy
+      : excludeLoopbackWhitelistEntries(resolveOutboundHeaderProxyConfig(), false);
+  }
+
+  private getActiveHeaderValues(
+    policy: OutboundHeaderProxyConfig,
+  ): Readonly<Record<string, string>> {
+    return this.configuredPolicy
+      ? this.activeHeaderValues
+      : getOutboundHeaderUserInfo(this.userInfoPath, policy.headerNames);
   }
 
   setProxyBypassEntries(entries: readonly string[]): void {
@@ -707,7 +727,8 @@ export class OutboundHeaderProxy {
       const handleTunnelData = (data: Buffer): void => {
         socket.pause();
         const protocol = detectConnectProtocol(data);
-        if (isConnectInterceptionCandidate(authority, protocol, this.activePolicy!)) {
+        const activePolicy = this.getActiveRequestPolicy();
+        if (activePolicy && isConnectInterceptionCandidate(authority, protocol, activePolicy)) {
           proxyInternals._onHttpServerConnectData(request, socket, data);
           return;
         }
@@ -782,7 +803,7 @@ export class OutboundHeaderProxy {
           delete upstreamHeaders['Proxy-Authorization'];
         }
         await applyUpstreamProxyForRequest(requestContext, requestUrl, this.resolveUpstreamProxy);
-        const activePolicy = this.activePolicy;
+        const activePolicy = this.getActiveRequestPolicy();
         const matched =
           !!activePolicy && shouldApplyOutboundHeadersForRequest(activePolicy, requestUrl);
         if (!matched) {
@@ -794,7 +815,10 @@ export class OutboundHeaderProxy {
           callback(new Error(`Upstream request headers are unavailable for ${requestUrl}`));
           return;
         }
-        const injectedHeaderCount = applyOutboundHeaders(upstreamHeaders, this.activeHeaderValues);
+        const injectedHeaderCount = applyOutboundHeaders(
+          upstreamHeaders,
+          this.getActiveHeaderValues(activePolicy),
+        );
         console.log(
           `[OutboundHeaderProxy] outbound header policy matched requestId=${crypto.randomUUID()} origin=${new URL(requestUrl).origin} matched=true injectedHeaderCount=${injectedHeaderCount}`,
         );
@@ -874,7 +898,10 @@ export class OutboundHeaderProxy {
     if (!this.info || !this.capability || !this.activePolicy) {
       return { ...baseEnv };
     }
-    const bypassConflict = findWhitelistBypassConflict(this.activePolicy, baseEnv);
+    const bypassConflict = findWhitelistBypassConflict(
+      this.getActiveRequestPolicy() ?? this.activePolicy,
+      baseEnv,
+    );
     if (bypassConflict) {
       throw new Error(
         `Outbound Header Proxy whitelist conflicts with NO_PROXY entry: ${bypassConflict}`,

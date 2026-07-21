@@ -10,6 +10,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { mainProcessFetch, mainProcessTitleFetch } from './mainProcessFetch';
 import {
+  captureOutboundHeaderStartupEnabled,
   DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
@@ -447,6 +448,31 @@ test('reloads the outbound header policy together with user info', () => {
   });
 });
 
+test('logs refreshed whitelist and header counts without logging values', () => {
+  const userInfoPath = writeUserInfo(
+    JSON.stringify({ account_id: 'account-123', session_id: 'secret-session' }),
+  );
+  const configPath = writePolicyConfig({
+    overwrite: false,
+    enabled: true,
+    baseUrlWhitelist: ['https://one.example/api/', 'https://two.example/api/'],
+    headerNames: ['account_id', 'session_id'],
+  });
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+  try {
+    updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+
+    expect(logSpy).toHaveBeenCalledWith(
+      '[OutboundHeaderPolicy] Cache updated: baseUrlWhitelistCount=2 headerCount=2',
+    );
+    expect(logSpy.mock.calls.flat().join(' ')).not.toContain('account-123');
+    expect(logSpy.mock.calls.flat().join(' ')).not.toContain('secret-session');
+  } finally {
+    logSpy.mockRestore();
+  }
+});
+
 test('rewrites policy config with defaults when overwrite is missing', () => {
   const userInfoPath = writeUserInfo(JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
   const configPath = writePolicyConfig({
@@ -863,6 +889,28 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
     }
   },
 );
+
+test('keeps the startup enabled state while refreshing the runtime policy', () => {
+  const startupEnabled = getOutboundHeaderPolicyConfig().enabled;
+  captureOutboundHeaderStartupEnabled();
+  const userInfoPath = writeUserInfo(JSON.stringify({ refreshed_header: 'refreshed-value' }));
+  const configPath = writePolicyConfig({
+    overwrite: false,
+    enabled: !startupEnabled,
+    baseUrlWhitelist: ['https://refreshed.example/api/'],
+    headerNames: ['refreshed_header'],
+  });
+
+  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+
+  expect(getOutboundHeaderPolicyConfig()).toEqual({
+    overwrite: false,
+    enabled: startupEnabled,
+    baseUrlWhitelist: ['https://refreshed.example/api/'],
+    headerNames: ['refreshed_header'],
+  });
+  expect(getOutboundHeaderUserInfo()).toEqual({ refreshed_header: 'refreshed-value' });
+});
 
 test.skipIf(!NON_LOOPBACK_IPV4)(
   'injects headers into HTTP requests carried over CONNECT',

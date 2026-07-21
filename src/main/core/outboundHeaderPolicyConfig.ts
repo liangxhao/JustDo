@@ -116,6 +116,7 @@ Example:
 
 let cachedOutboundHeaderValues: Readonly<Record<string, string>> | null = null;
 let cachedOutboundHeaderPolicyConfig = DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
+let startupOutboundHeaderEnabled: boolean | null = null;
 
 const normalizeHeaderValue = (value: unknown): string => {
   if (value === null || value === undefined) {
@@ -211,8 +212,22 @@ const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHeaderPolic
   return DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG;
 };
 
-export const getOutboundHeaderPolicyConfig = (): OutboundHeaderPolicyConfig =>
-  cachedOutboundHeaderPolicyConfig;
+export const captureOutboundHeaderStartupEnabled = (): void => {
+  startupOutboundHeaderEnabled ??= cachedOutboundHeaderPolicyConfig.enabled;
+};
+
+export const getOutboundHeaderPolicyConfig = (): OutboundHeaderPolicyConfig => {
+  if (
+    startupOutboundHeaderEnabled === null ||
+    startupOutboundHeaderEnabled === cachedOutboundHeaderPolicyConfig.enabled
+  ) {
+    return cachedOutboundHeaderPolicyConfig;
+  }
+  return Object.freeze({
+    ...cachedOutboundHeaderPolicyConfig,
+    enabled: startupOutboundHeaderEnabled,
+  });
+};
 
 /**
  * Reloads the outbound header policy and user header values from disk.
@@ -222,8 +237,10 @@ export const getOutboundHeaderPolicyConfig = (): OutboundHeaderPolicyConfig =>
  * - `%APPDATA%/<productName>/huawei/user_info.json`
  *
  * Subsequent requests handled by the running outbound header proxy use the
- * refreshed policy and values. The optional parameters are intended for tests
- * or callers that need to override the default paths or header names.
+ * refreshed whitelist, header names, and values. The enabled state is captured
+ * during application startup and does not change during a runtime refresh. The
+ * optional parameters are intended for tests or callers that need to override
+ * the default paths or header names.
  *
  * @returns The refreshed header values keyed by configured header name.
  */
@@ -254,6 +271,9 @@ export const updateOutboundHeaderUserInfoCache = (
         normalizeHeaderValue(userInfo[headerName]),
       ]),
     ),
+  );
+  console.log(
+    `[OutboundHeaderPolicy] Cache updated: baseUrlWhitelistCount=${cachedOutboundHeaderPolicyConfig.baseUrlWhitelist.length} headerCount=${Object.keys(cachedOutboundHeaderValues).length}`,
   );
   return cachedOutboundHeaderValues;
 };

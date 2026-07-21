@@ -272,11 +272,11 @@ Gateway 和它的子进程在创建时复制环境。之后修改 Electron Main 
 
 应把配置说明改成：示例和推荐命名以 `X-` 开头，但运行时允许注入任意语法合法的 Header 名。当前阶段不增加额外 allowlist、denylist 或 `X-` 强制校验；保留现有非法名称和非法值校验，避免 Node/Electron 网络栈因格式错误崩溃。
 
-### 12. 策略“reload”目前没有生产调用入口
+### 12. 策略运行时 reload
 
-`updateOutboundHeaderUserInfoCache()` 的注释称运行中的代理会使用刷新后的策略和值，但当前生产代码只在 `OutboundHeaderProxy` 构造时调用一次，项目中没有配置文件监听、IPC reload 或其他生产调用点。
+`updateOutboundHeaderUserInfoCache()` 是显式的生产刷新入口。每次调用都重读 `config.json` 和 `user_info.json`，运行中的代理请求使用最新的白名单、Header 名和 Header 值。`enabled` 只在应用启动时捕获，运行时 reload 不改变代理启停状态。
 
-因此，运行时修改 `config.json` 或 `user_info.json` 不会自动生效；即使未来补上 reload，启用状态、白名单或 CA/代理需求变化还必须触发受控的 proxy/Gateway generation 切换，不能只替换缓存对象。
+该入口不监听文件变化；调用方需在文件更新后显式调用。如果代理在启动时因空白名单而未启动，仅 reload 缓存不会创建代理或切换 Gateway generation。
 
 ### 13. 构造函数的上游 resolver 没有用于代理请求路径
 
