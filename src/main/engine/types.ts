@@ -1,3 +1,4 @@
+import type { OpenClawSkillSource } from '../../shared/plugins/skills';
 import type { CoworkMessage } from '../data/coworkStore';
 
 export type CoworkAgentEngine = 'openclaw';
@@ -21,14 +22,7 @@ export interface GatewaySkillStatus {
 export interface GatewaySkillEntry {
   name: string;
   description: string;
-  source:
-    | 'workspace'
-    | 'agents-project'
-    | 'agents-personal'
-    | 'managed'
-    | 'openclaw-bundled'
-    | 'extra-dir'
-    | 'unknown';
+  source: OpenClawSkillSource;
   bundled: boolean;
   filePath: string;
   baseDir: string;

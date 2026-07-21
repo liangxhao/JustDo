@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import { isUserOwnedSkillSource } from '../../../shared/plugins/skills';
 import type { GatewaySkillEntry } from '../../engine/types';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
@@ -30,30 +31,6 @@ const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
   emoji: entry.emoji,
   homepage: entry.homepage,
 });
-
-const DELETABLE_SKILL_SOURCES = new Set<GatewaySkillEntry['source']>([
-  'workspace',
-  'agents-project',
-  'agents-personal',
-  'managed',
-]);
-
-const normalizeRequestedSkillSource = (
-  source: unknown,
-): GatewaySkillEntry['source'] | undefined => {
-  if (typeof source !== 'string') return undefined;
-  const aliases: Record<string, GatewaySkillEntry['source']> = {
-    workspace: 'workspace',
-    'openclaw-workspace': 'workspace',
-    'agents-project': 'agents-project',
-    'agents-skills-project': 'agents-project',
-    'agents-personal': 'agents-personal',
-    'agents-skills-personal': 'agents-personal',
-    managed: 'managed',
-    'openclaw-managed': 'managed',
-  };
-  return aliases[source];
-};
 
 export const registerSkillHandlers = ({
   skillService,
@@ -129,8 +106,8 @@ export const registerSkillHandlers = ({
   ipcMain.handle('skills:delete', async (_event, request: { id?: unknown; source?: unknown }) => {
     try {
       const skillId = typeof request?.id === 'string' ? request.id.trim() : '';
-      const requestedSource = normalizeRequestedSkillSource(request?.source);
-      if (!skillId || !requestedSource) {
+      const requestedSource = request?.source;
+      if (!skillId || !isUserOwnedSkillSource(requestedSource)) {
         return { success: false, error: 'Skill id and source are required' };
       }
 
@@ -138,7 +115,7 @@ export const registerSkillHandlers = ({
       const skill = currentStatus.skills.find(
         entry => entry.skillKey === skillId && entry.source === requestedSource,
       );
-      if (!skill || skill.bundled || !DELETABLE_SKILL_SOURCES.has(skill.source)) {
+      if (!skill || skill.bundled || !isUserOwnedSkillSource(skill.source)) {
         return { success: false, error: 'Only user-owned skills can be deleted' };
       }
 

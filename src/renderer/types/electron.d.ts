@@ -16,6 +16,7 @@ type ExtensionUpdateConfigurationResult =
   import('../../shared/openclaw/extensions').ExtensionUpdateConfigurationResult;
 type InstalledOpenClawExtension =
   import('../../shared/openclaw/extensions').InstalledOpenClawExtension;
+type OpenClawSkillSource = import('../../shared/plugins/skills').OpenClawSkillSource;
 
 interface ApiResponse {
   ok: boolean;
@@ -153,14 +154,7 @@ interface Skill {
   prompt: string;
   skillPath: string;
   // Gateway extended fields
-  source?:
-    | 'workspace'
-    | 'agents-project'
-    | 'agents-personal'
-    | 'managed'
-    | 'openclaw-bundled'
-    | 'extra-dir'
-    | 'unknown';
+  source?: OpenClawSkillSource;
   eligible?: boolean;
   missing?: {
     bins: string[];
@@ -350,7 +344,7 @@ interface IElectronAPI {
     }>;
     delete: (options: {
       id: string;
-      source?: string;
+      source?: OpenClawSkillSource;
     }) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
   };
   extensions: {

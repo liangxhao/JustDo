@@ -1,3 +1,5 @@
+import type { OpenClawSkillSource } from '@shared/plugins/skills';
+
 // Skill type definition - extended with Gateway fields
 export interface Skill {
   id: string;
@@ -19,19 +21,7 @@ export interface Skill {
   homepage?: string;
 }
 
-export type SkillSource =
-  | 'workspace'
-  | 'openclaw-workspace'
-  | 'agents-project'
-  | 'agents-skills-project'
-  | 'agents-personal'
-  | 'agents-skills-personal'
-  | 'managed'
-  | 'openclaw-managed'
-  | 'openclaw-bundled'
-  | 'extra-dir'
-  | 'openclaw-extra'
-  | 'unknown';
+export type SkillSource = OpenClawSkillSource;
 
 export interface SkillMissing {
   bins: string[];

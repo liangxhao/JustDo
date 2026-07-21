@@ -23,8 +23,8 @@ const createSkill = (id: string, source: Skill['source']): Skill => ({
 test('groups skills in descending OpenClaw precedence order', () => {
   const groups = groupSkillsBySource([
     createSkill('extra', 'openclaw-extra'),
-    createSkill('managed', 'managed'),
-    createSkill('workspace', 'workspace'),
+    createSkill('managed', 'openclaw-managed'),
+    createSkill('workspace', 'openclaw-workspace'),
     createSkill('personal', 'agents-skills-personal'),
   ]);
 
@@ -49,10 +49,10 @@ test('puts missing and unrecognized sources in the unknown group', () => {
 
 test('allows deletion only for user-owned, non-built-in skills', () => {
   expect(canDeleteSkill(createSkill('managed', 'openclaw-managed'))).toBe(true);
-  expect(canDeleteSkill(createSkill('workspace', 'workspace'))).toBe(true);
-  expect(canDeleteSkill(createSkill('project', 'agents-project'))).toBe(true);
-  expect(canDeleteSkill(createSkill('personal', 'agents-personal'))).toBe(true);
-  expect(canDeleteSkill(createSkill('extra', 'extra-dir'))).toBe(false);
+  expect(canDeleteSkill(createSkill('workspace', 'openclaw-workspace'))).toBe(true);
+  expect(canDeleteSkill(createSkill('project', 'agents-skills-project'))).toBe(true);
+  expect(canDeleteSkill(createSkill('personal', 'agents-skills-personal'))).toBe(true);
+  expect(canDeleteSkill(createSkill('extra', 'openclaw-extra'))).toBe(false);
   expect(canDeleteSkill({ ...createSkill('bundled', 'openclaw-managed'), isBuiltIn: true })).toBe(
     false,
   );

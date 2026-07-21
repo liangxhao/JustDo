@@ -23,6 +23,7 @@ import {
   type MarketplaceQuery,
   type PluginKind,
 } from '../shared/plugins/marketplace';
+import type { OpenClawSkillSource } from '../shared/plugins/skills';
 import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
 import { SlashCommandIpc } from '../shared/slashCommands';
 
@@ -49,7 +50,7 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('skills:setEnabled', options),
     // Offline import from a local folder or archive
     importPath: (sourcePath: string) => ipcRenderer.invoke('skills:import', sourcePath),
-    delete: (options: { id: string; source?: string }) =>
+    delete: (options: { id: string; source?: OpenClawSkillSource }) =>
       ipcRenderer.invoke('skills:delete', options),
   },
   extensions: {

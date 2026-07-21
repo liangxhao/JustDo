@@ -1,3 +1,5 @@
+import { isUserOwnedSkillSource } from '@shared/plugins/skills';
+
 import { Skill, SkillSource } from '@/features/plugins/types/skill';
 
 export const SkillGroupId = {
@@ -18,28 +20,12 @@ export interface SkillGroup {
   skills: Skill[];
 }
 
-const deletableSkillSources = new Set<SkillSource>([
-  'workspace',
-  'openclaw-workspace',
-  'agents-project',
-  'agents-skills-project',
-  'agents-personal',
-  'agents-skills-personal',
-  'managed',
-  'openclaw-managed',
-]);
-
 const sourceToGroup: Record<SkillSource, SkillGroupId> = {
-  workspace: SkillGroupId.WORKSPACE,
   'openclaw-workspace': SkillGroupId.WORKSPACE,
-  'agents-project': SkillGroupId.AGENTS_PROJECT,
   'agents-skills-project': SkillGroupId.AGENTS_PROJECT,
-  'agents-personal': SkillGroupId.AGENTS_PERSONAL,
   'agents-skills-personal': SkillGroupId.AGENTS_PERSONAL,
-  managed: SkillGroupId.MANAGED,
   'openclaw-managed': SkillGroupId.MANAGED,
   'openclaw-bundled': SkillGroupId.BUNDLED,
-  'extra-dir': SkillGroupId.EXTRA,
   'openclaw-extra': SkillGroupId.EXTRA,
   unknown: SkillGroupId.UNKNOWN,
 };
@@ -80,4 +66,4 @@ export const groupSkillsBySource = (skills: Skill[]): SkillGroup[] => {
 };
 
 export const canDeleteSkill = (skill: Skill): boolean =>
-  !skill.isBuiltIn && skill.source !== undefined && deletableSkillSources.has(skill.source);
+  !skill.isBuiltIn && isUserOwnedSkillSource(skill.source);

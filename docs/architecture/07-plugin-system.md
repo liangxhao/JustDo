@@ -91,7 +91,7 @@ Extension 的启用、删除和配置更新由 `OpenClawExtensionImportService` 
 
 Gateway `skills.status` 是 Skill 列表、来源、启用状态和依赖检查的权威。JustDo 本地文件服务只负责导入和删除文件，不能判断某个 Skill 是否已被 Gateway 加载。
 
-OpenClaw precedence 为 extra < bundled < managed < personal < project < workspace。UI 按来源分组，并把更具体、优先级更高的来源显示在前。
+OpenClaw precedence 为 `openclaw-extra` < `openclaw-bundled` < `openclaw-managed` < `agents-skills-personal` < `agents-skills-project` < `openclaw-workspace`。UI 按来源分组，并把更具体、优先级更高的来源显示在前。
 
 ### 当前内置 Skills
 
@@ -103,7 +103,7 @@ OpenClaw precedence 为 extra < bundled < managed < personal < project < workspa
 
 用户可从目录或 ZIP、TAR、TAR.GZ、TGZ 导入 Skill。压缩包先解压到临时目录，校验 `SKILL.md`、拒绝符号链接，再复制到 Gateway state 的 managed Skill 目录。用户数据不应在应用升级时被覆盖。
 
-Skill 卡片仅对 `workspace`、`agents-project`、`agents-personal` 和 `managed` 来源提供删除。删除请求携带 `id + source`，Main process 从最新 `skills.status` 精确匹配条目，并校验目标为包含 `SKILL.md` 的 `skills/<skill-id>/` 目录。bundled、extra-dir 和 unknown 来源不可删除。
+Skill 卡片仅对 `openclaw-workspace`、`agents-skills-project`、`agents-skills-personal` 和 `openclaw-managed` 来源提供删除。删除请求携带 `id + source`，Main process 从最新 `skills.status` 精确匹配条目，并校验目标为包含 `SKILL.md` 的 `skills/<skill-id>/` 目录。`openclaw-bundled`、`openclaw-extra` 和 `unknown` 来源不可删除。
 
 主要 preload API：
 
