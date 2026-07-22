@@ -772,7 +772,7 @@ const Settings: React.FC<SettingsProps> = ({
           const refreshedConfig = freshConfig as Partial<AppConfig>;
           await configService.updateConfig(refreshedConfig);
 
-          if (refreshedConfig.providers?.builtin_models) {
+          if (refreshedConfig.providers) {
             setProviders(currentProviders =>
               mergeRefreshedBuiltinProvider(currentProviders, refreshedConfig.providers),
             );

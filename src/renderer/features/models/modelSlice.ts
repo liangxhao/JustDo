@@ -113,6 +113,8 @@ const modelSlice = createSlice({
           // 如果当前选中的模型不在新的可用模型列表中，选择第一个可用模型
           state.selectedModel = state.availableModels[0];
         }
+      } else {
+        state.selectedModel = fallbackModel;
       }
     },
     setServerModels: (state, action: PayloadAction<Model[]>) => {
@@ -137,8 +139,8 @@ const modelSlice = createSlice({
       state.availableModels = state.availableModels.filter(m => !m.isServerModel);
       availableModels = state.availableModels;
       // 如果当前选中的是服务端模型，切换到第一个可用模型
-      if (state.selectedModel.isServerModel && state.availableModels.length > 0) {
-        state.selectedModel = state.availableModels[0];
+      if (state.selectedModel.isServerModel) {
+        state.selectedModel = state.availableModels[0] ?? fallbackModel;
       }
     },
   },

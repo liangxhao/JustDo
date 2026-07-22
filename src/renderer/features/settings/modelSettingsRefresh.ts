@@ -9,7 +9,9 @@ export const mergeRefreshedBuiltinProvider = (
 ): ProvidersConfig => {
   const refreshedBuiltinProvider = refreshedProviders?.builtin_models;
   if (!refreshedBuiltinProvider) {
-    return currentProviders;
+    const nextProviders = { ...currentProviders };
+    delete nextProviders.builtin_models;
+    return nextProviders;
   }
 
   return {

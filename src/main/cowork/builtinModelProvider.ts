@@ -40,6 +40,39 @@ type BuiltinProviderFile = {
   baseUrl?: string;
 };
 
+export const BuiltinModelAccess = {
+  Enabled: 'enabled',
+  Disabled: 'disabled',
+} as const;
+
+export type BuiltinModelAccess = (typeof BuiltinModelAccess)[keyof typeof BuiltinModelAccess];
+
+type SyncBuiltinModelProviderOptions = {
+  access: BuiltinModelAccess;
+};
+
+type BuiltinModelSyncState = {
+  generation: number;
+  controller: AbortController | null;
+};
+
+const syncStateByStore = new WeakMap<SqliteStore, BuiltinModelSyncState>();
+
+const beginBuiltinModelSync = (store: SqliteStore, shouldFetch: boolean): BuiltinModelSyncState => {
+  const previousState = syncStateByStore.get(store);
+  previousState?.controller?.abort();
+
+  const nextState = {
+    generation: (previousState?.generation ?? 0) + 1,
+    controller: shouldFetch ? new AbortController() : null,
+  };
+  syncStateByStore.set(store, nextState);
+  return nextState;
+};
+
+const isCurrentBuiltinModelSync = (store: SqliteStore, state: BuiltinModelSyncState): boolean =>
+  syncStateByStore.get(store)?.generation === state.generation;
+
 const toRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -122,15 +155,19 @@ type BuiltinModels = {
 const compareModelIds = (left: ProviderModel, right: ProviderModel): number =>
   left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 
-async function fetchBuiltinModels(baseUrl: string, apiKey: string): Promise<BuiltinModels> {
+async function fetchBuiltinModels(
+  baseUrl: string,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<BuiltinModels> {
   const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined;
-  const modelsResponse = await fetch(buildModelsUrl(baseUrl), { headers });
+  const modelsResponse = await fetch(buildModelsUrl(baseUrl), { headers, signal });
   if (!modelsResponse.ok) {
     throw new Error(`GET /models failed with ${modelsResponse.status}`);
   }
   const modelIds = parseModelsResponse(await modelsResponse.json());
 
-  const infoResponse = await fetch(buildModelInfoUrl(baseUrl), { headers });
+  const infoResponse = await fetch(buildModelInfoUrl(baseUrl), { headers, signal });
   const infoById = infoResponse.ok
     ? parseModelInfoResponse(await infoResponse.json())
     : new Map<string, ProviderModelInfo>();
@@ -159,12 +196,20 @@ async function fetchBuiltinModels(baseUrl: string, apiKey: string): Promise<Buil
   };
 }
 
-export async function syncBuiltinModelProvider(store: SqliteStore): Promise<void> {
+export async function syncBuiltinModelProvider(
+  store: SqliteStore,
+  options: SyncBuiltinModelProviderOptions,
+): Promise<void> {
   const fileConfig = readBuiltinModelProviderFile();
+  const shouldEnable =
+    options?.access === BuiltinModelAccess.Enabled &&
+    fileConfig?.enabled === true &&
+    Boolean(fileConfig.baseUrl);
+  const syncState = beginBuiltinModelSync(store, shouldEnable);
   const appConfig = store.get<AppConfig>('app_config') || {};
   const providers = { ...(appConfig.providers ?? {}) };
 
-  if (!fileConfig?.enabled || !fileConfig.baseUrl) {
+  if (!shouldEnable || !fileConfig?.baseUrl) {
     delete providers[ProviderName.BuiltinModels];
     store.set('app_config', { ...appConfig, providers });
     return;
@@ -173,13 +218,23 @@ export async function syncBuiltinModelProvider(store: SqliteStore): Promise<void
   let models: ProviderModel[] = [];
   let embeddingModels: ProviderModel[] = [];
   try {
-    const fetchedModels = await fetchBuiltinModels(fileConfig.baseUrl, fileConfig.apiKey ?? '');
+    const fetchedModels = await fetchBuiltinModels(
+      fileConfig.baseUrl,
+      fileConfig.apiKey ?? '',
+      syncState.controller!.signal,
+    );
+    if (!isCurrentBuiltinModelSync(store, syncState)) {
+      return;
+    }
     models = fetchedModels.chatModels;
     embeddingModels = fetchedModels.embeddingModels;
     console.log(
       `[BuiltinModelProvider] Synced ${models.length} chat model(s) and ${embeddingModels.length} embedding model(s)`,
     );
   } catch (error) {
+    if (!isCurrentBuiltinModelSync(store, syncState)) {
+      return;
+    }
     console.warn('[BuiltinModelProvider] Failed to refresh models, clearing cached list:', error);
   }
 

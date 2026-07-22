@@ -157,8 +157,8 @@ const App: React.FC = () => {
             maxTokens: model.maxTokens,
           }));
         const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
+        dispatch(setAvailableModels(resolvedModels));
         if (resolvedModels.length > 0) {
-          dispatch(setAvailableModels(resolvedModels));
           // Restore previously selected model if available
           // so that a previously selected model is correctly restored.
           const allModels = store.getState().model.availableModels;
@@ -338,9 +338,7 @@ const App: React.FC = () => {
           );
         }
       });
-      if (allModels.length > 0) {
-        dispatch(setAvailableModels(allModels));
-      }
+      dispatch(setAvailableModels(allModels));
     }
   };
 

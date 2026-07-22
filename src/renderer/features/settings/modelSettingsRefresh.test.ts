@@ -54,4 +54,21 @@ describe('model settings refresh', () => {
       }),
     ]);
   });
+
+  test('removes the cached built-in provider while preserving unsaved custom changes', () => {
+    const currentProviders: ProvidersConfig = {
+      builtin_models: provider([{ id: 'old-model', name: 'Old model' }]),
+      custom_0: {
+        ...provider([{ id: 'custom-model', name: 'Custom model' }]),
+        displayName: 'Unsaved name',
+      },
+    };
+
+    const result = mergeRefreshedBuiltinProvider(currentProviders, {
+      custom_0: provider([{ id: 'saved-custom-model', name: 'Saved custom model' }]),
+    });
+
+    expect(result.builtin_models).toBeUndefined();
+    expect(result.custom_0).toBe(currentProviders.custom_0);
+  });
 });

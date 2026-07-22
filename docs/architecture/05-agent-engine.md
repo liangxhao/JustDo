@@ -45,7 +45,7 @@ Renderer 可以通过 `openclaw.engine.getStatus()` 和 `openclaw.engine.onProgr
 
 1. 初始化 SQLite。
 2. 初始化 provider/config getter，并恢复保存的系统/自定义代理路由。
-3. 通过已恢复的代理路由强制刷新内置模型 provider。
+3. 通过已恢复的代理路由，以显式 `enabled` 访问状态刷新内置模型 provider。
 4. 绑定 Cowork runtime forwarder。
 5. 同步 OpenClaw config。
 6. 启动 OpenClaw Gateway。
@@ -62,7 +62,7 @@ sequenceDiagram
   participant UI as Renderer
 
   Main->>DB: initStore()
-  Main->>Main: syncBuiltinModelProvider()
+  Main->>Main: syncBuiltinModelProvider(enabled)
   Main->>Adapter: bind runtime forwarder
   Main->>Config: syncConfig(startup)
   Main->>Manager: startGateway()
@@ -196,6 +196,76 @@ JustDo 生成的所有 `openai-completions` 模型条目都显式设置
 模型。聊天模型进入应用的可选模型列表；embedding 模型按 ID 排序，并将第一个模型写入
 `agents.defaults.memorySearch`，复用同一个内置 provider 的 base URL 和 API key。若没有
 embedding 模型，则显式设置 `memorySearch.enabled: false`，避免 OpenClaw 回退到 OpenAI。
+
+`syncBuiltinModelProvider()` 要求调用方显式传入 `enabled` 或 `disabled` 访问状态。
+当前启动和设置页手动刷新均传入 `enabled`，因此保持现有行为。未来接入登录后，未登录
+启动和退出登录传入 `disabled`，登录成功传入 `enabled`；禁用路径不会请求模型接口，
+并会从持久化 provider 配置中移除 `builtin_models`，后续 OpenClaw 配置同步会同时移除
+对应聊天模型和 memory search provider。
+
+### 未来登录功能接入
+
+登录状态必须由 Main 进程持有和校验。Renderer 可以发起登录、退出或刷新操作，但不能
+把自己传入的 `isLoggedIn` 布尔值作为授权依据。接入登录后，建议在 Main 进程封装一个
+统一刷新入口（以下为示意代码）：
+
+```ts
+const refreshBuiltinModelsForAuthenticatedSession = async (
+  reason: 'auth-login' | 'manual-refresh',
+): Promise<void> => {
+  if (!(await authService.isAuthenticated())) {
+    throw new Error('Authentication required to refresh built-in models');
+  }
+
+  await syncBuiltinModelProvider(getStore(), { access: BuiltinModelAccess.Enabled });
+
+  const syncResult = await syncOpenClawConfig({
+    reason,
+    restartGatewayIfRunning: false,
+  });
+  if (!syncResult.success) {
+    console.error(`[Auth] Failed to sync OpenClaw config after ${reason}:`, syncResult.error);
+  }
+};
+```
+
+各生命周期的调用方式：
+
+```ts
+// 应用启动：从 Main 进程可信存储恢复登录状态。
+const isAuthenticated = await authService.isAuthenticated();
+await syncBuiltinModelProvider(store, {
+  access: isAuthenticated ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
+});
+
+// 后面继续执行现有的 startup OpenClaw config sync，无需在这里重复同步。
+
+// 登录成功：服务端会话已验证并持久化之后再刷新。
+await refreshBuiltinModelsForAuthenticatedSession('auth-login');
+
+// 退出登录：先关闭授权并阻止新任务，再删除 provider 和强制刷新 Gateway。
+authService.markLoggedOut();
+executionGate.blockBuiltinModelRuns();
+await syncBuiltinModelProvider(getStore(), { access: BuiltinModelAccess.Disabled });
+await syncOpenClawConfig({ reason: 'auth-logout', restartGatewayIfRunning: false });
+await forceRestartGatewayForAuthRevocation();
+await authService.clearCredentials();
+```
+
+`forceRestartGatewayForAuthRevocation()` 是登录功能需要新增的强制撤权接口：它必须终止或
+拒绝继续执行使用内置模型的活动任务，且不能复用“有活动任务时延迟重启”的普通配置同步
+策略。强制重启完成后，如果仍有可用的自定义 provider，可以解除普通任务执行 gate；若
+没有可用模型则保持不可执行状态。仅设置 `restartGatewayIfRunning: true` 仍可能触发延迟
+重启，不能单独作为退出登录的授权撤销保证。
+
+设置页的 `builtinModels:refresh` IPC 也必须读取 Main 进程的真实登录状态：未登录时调用
+`Disabled`（或返回明确的未登录错误），登录后才允许调用 `Enabled`。不能继续在 IPC
+handler 中无条件传入 `Enabled`，否则未登录用户仍可通过手动刷新绕过限制。
+
+`syncBuiltinModelProvider()` 会取消同一 store 上较早的刷新，并通过 generation 阻止旧请求
+在禁用后写回 provider。认证层仍应串行化登录、退出和手动刷新，并在刷新入口再次核对
+当前登录会话。每次运行期切换完成后，还需要通知 Renderer 重新读取 `app_config`，更新
+Redux 模型列表；退出登录且没有自定义模型时，UI 应进入“无可用模型”状态。
 
 ## Startup And Recovery
 

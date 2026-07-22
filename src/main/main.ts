@@ -31,7 +31,7 @@ import {
 } from './core/systemProxyPreference';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { enableSystemCaForCurrentProcess } from './core/trustedCertificates';
-import { syncBuiltinModelProvider } from './cowork/builtinModelProvider';
+import { BuiltinModelAccess, syncBuiltinModelProvider } from './cowork/builtinModelProvider';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from './cowork/builtinModelProviderConfig';
 import {
   resolveAllEnabledProviderConfigs,
@@ -676,7 +676,8 @@ if (!gotTheLock) {
         );
       }
     },
-    refreshBuiltinModels: () => syncBuiltinModelProvider(getStore()),
+    refreshBuiltinModels: () =>
+      syncBuiltinModelProvider(getStore(), { access: BuiltinModelAccess.Enabled }),
   });
 
   registerNetworkHandlers();
@@ -938,7 +939,9 @@ if (!gotTheLock) {
     const appConfig = getStore().get<AppConfigSettings>('app_config');
     await applySystemProxyPreference(appConfig);
 
-    await syncBuiltinModelProvider(store);
+    // Keep access enabled until authentication is introduced. Future login/logout
+    // flows can switch this single call between Enabled and Disabled.
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
 
     bindCoworkRuntimeForwarder(getCoworkEngineRouter(), getCoworkStore);
     bindOpenClawStatusForwarder();
