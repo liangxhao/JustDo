@@ -306,6 +306,18 @@ describe('group footer helpers', () => {
     ).toBe('gpt-4.1');
   });
 
+  test.each(['openclaw/gateway-injected', 'gateway-injected'])(
+    'uses the localized system message label for %s',
+    modelName => {
+      expect(
+        getGroupFooterLabel({
+          ...createGroup('assistant'),
+          modelName,
+        }),
+      ).toBe(i18nService.t('coworkSystemMessageLabel'));
+    },
+  );
+
   test('falls back to assistant label when model name is missing', () => {
     expect(getGroupFooterLabel(createGroup('assistant'))).toBe(
       i18nService.t('coworkAssistantLabel'),

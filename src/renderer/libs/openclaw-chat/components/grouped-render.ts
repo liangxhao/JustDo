@@ -1075,6 +1075,9 @@ export function getGroupFooterLabel(group: MessageGroup, assistantName?: string)
   if (group.role === 'assistant') {
     const modelName = group.modelName?.trim() ?? '';
     const senderLabel = group.senderLabel?.trim() ?? '';
+    if (modelName === 'openclaw/gateway-injected' || modelName === 'gateway-injected') {
+      return i18nService.t('coworkSystemMessageLabel');
+    }
     return (
       modelName || assistantName?.trim() || senderLabel || i18nService.t('coworkAssistantLabel')
     );
