@@ -26,9 +26,12 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
   install paths, which may contain Chinese or spaces.
 - It controls installer/UI names, `<appData>/<productName>`, and
   `~/<productName lowercase>/project`; old branded directories are not migrated.
-- Never rename `com.justdo.app`, `justdo://`, `justdo.sqlite`, `JUSTDO_*`,
-  `.justdo-tasks`, `--justdo-*`, `<justdo-chat>`, provider/export IDs, or source
-  symbols/files. `author.name` is separate publisher metadata.
+- `appId` is derived as `com.<productName lowercase>.app`; changing the
+  lowercase-normalized name intentionally creates a separate OS application
+  identity. Case-only changes retain the existing identity.
+- Never rename `justdo://`, `justdo.sqlite`, `JUSTDO_*`, `.justdo-tasks`,
+  `--justdo-*`, `<justdo-chat>`, provider/export IDs, or source symbols/files.
+  `author.name` is separate publisher metadata.
 
 ## Commands
 

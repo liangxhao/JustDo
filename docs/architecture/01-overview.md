@@ -38,9 +38,12 @@ JustDo 是 OpenClaw Gateway 的桌面前端和本地控制面：
 可执行文件、快捷方式、窗口/托盘/终端文案、`userData` 与默认工程目录。
 该限制不影响用户选择包含中文或空格的 Windows 安装路径。
 
-`name` 及其他内部标识保持稳定，包括 `com.justdo.app`、`justdo://`、
+构建配置根据 `productName` 动态生成应用身份 `com.<productName lowercase>.app`。
+因此，小写归一化后的名称发生变化时会创建新的 OS 应用身份，不会沿用旧品牌安装器
+记录的安装目录；仅改变名称大小写仍会保留原应用身份。
+其他内部标识保持稳定，包括 `justdo://`、
 `justdo.sqlite`、`JUSTDO_*`、`.justdo-tasks`、`--justdo-*`、`<justdo-chat>` 和各种
-provider/export 格式标识。更换 `productName` 后不读取或迁移旧品牌目录。
+provider/export 格式标识。更换 `productName` 后不读取或迁移旧品牌数据目录。
 
 ## 用户可见模块
 
