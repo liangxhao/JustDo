@@ -483,6 +483,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     missing: '缺失',
     missingBins: '缺失工具',
     missingEnv: '缺失环境变量',
+    missingConfig: '缺失配置',
+    missingOs: '不支持的操作系统',
     skillMissingRequirements: '技能缺少必要依赖',
 
     // Security scan
@@ -1314,6 +1316,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     missing: 'missing',
     missingBins: 'Missing tools',
     missingEnv: 'Missing env vars',
+    missingConfig: 'Missing configuration',
+    missingOs: 'Unsupported operating system',
     skillMissingRequirements: 'Skill missing required dependencies',
 
     // Security scan

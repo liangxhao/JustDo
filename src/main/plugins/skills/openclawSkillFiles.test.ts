@@ -34,6 +34,9 @@ afterEach(() => {
 
 test('normalizes the frontmatter name into a safe skill id', () => {
   expect(__openClawSkillFilesTestUtils.normalizeSkillId('My Useful Skill')).toBe('my-useful-skill');
+  expect(__openClawSkillFilesTestUtils.normalizeSkillId('import-smoke-test')).toBe(
+    'import-smoke-test',
+  );
   expect(__openClawSkillFilesTestUtils.normalizeSkillId('../')).toBeNull();
 });
 
@@ -49,6 +52,20 @@ test('imports a skill directory into the OpenClaw managed directory', () => {
 
   expect(result).toEqual({ success: true, skillId: 'linked-skill' });
   expect(fs.existsSync(path.join(managed, 'linked-skill', 'SKILL.md'))).toBe(true);
+});
+
+test('imports a skill whose name starts with import-', () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  fs.writeFileSync(
+    path.join(source, 'SKILL.md'),
+    '---\nname: import-smoke-test\ndescription: demo\n---\n',
+  );
+
+  const result = new OpenClawSkillFiles(managed).importDirectory(source);
+
+  expect(result).toEqual({ success: true, skillId: 'import-smoke-test' });
+  expect(fs.existsSync(path.join(managed, 'import-smoke-test', 'SKILL.md'))).toBe(true);
 });
 
 test('imports a zipped skill with a single wrapper directory', async () => {

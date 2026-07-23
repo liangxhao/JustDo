@@ -15,6 +15,7 @@ import {
   SkillGroupId,
 } from '@/features/plugins/components/skills/skillGroups';
 import SkillMarketplace from '@/features/plugins/components/skills/SkillMarketplace';
+import { getMissingRequirementCount } from '@/features/plugins/components/skills/skillRequirements';
 import { skillService } from '@/features/plugins/services/skillService';
 import { setSkills } from '@/features/plugins/slices/skillSlice';
 import { Skill } from '@/features/plugins/types/skill';
@@ -226,23 +227,20 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
 
   // Render skill eligibility status
   const renderSkillStatus = (skill: Skill) => {
-    if (skill.eligible === false) {
-      const missingBins = skill.missing?.bins || [];
-      const missingEnv = skill.missing?.env || [];
-      const missingCount = missingBins.length + missingEnv.length;
-      if (missingCount > 0) {
-        return (
-          <Tooltip
-            content={`${i18nService.t('skillMissingRequirements')}: ${missingBins.join(', ')} ${missingEnv.join(', ')}`}
-            position="bottom"
-            maxWidth="360px"
-          >
-            <span className="px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-600 text-[10px] font-medium">
-              {missingCount} {i18nService.t('missing')}
-            </span>
-          </Tooltip>
-        );
-      }
+    const missingCount = getMissingRequirementCount(skill.missing);
+    if (missingCount > 0) {
+      const missingItems = Object.values(skill.missing ?? {}).flat();
+      return (
+        <Tooltip
+          content={`${i18nService.t('skillMissingRequirements')}: ${missingItems.join(', ')}`}
+          position="bottom"
+          maxWidth="360px"
+        >
+          <span className="px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-600 text-[10px] font-medium">
+            {missingCount} {i18nService.t('missing')}
+          </span>
+        </Tooltip>
+      );
     }
     return null;
   };
@@ -563,7 +561,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
             </p>
 
             {/* Eligibility info */}
-            {selectedSkill.eligible === false && selectedSkill.missing && (
+            {selectedSkill.missing &&
+              getMissingRequirementCount(selectedSkill.missing) > 0 && (
               <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 mb-4">
                 <p className="text-xs text-yellow-600 font-medium mb-1">
                   {i18nService.t('skillMissingRequirements')}
@@ -578,8 +577,18 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                     {i18nService.t('missingEnv')}: {selectedSkill.missing.env.join(', ')}
                   </p>
                 )}
+                {selectedSkill.missing.config.length > 0 && (
+                  <p className="text-xs text-secondary">
+                    {i18nService.t('missingConfig')}: {selectedSkill.missing.config.join(', ')}
+                  </p>
+                )}
+                {selectedSkill.missing.os.length > 0 && (
+                  <p className="text-xs text-secondary">
+                    {i18nService.t('missingOs')}: {selectedSkill.missing.os.join(', ')}
+                  </p>
+                )}
               </div>
-            )}
+              )}
 
             <div className="space-y-2 mb-5">
               {selectedSkill.version && (

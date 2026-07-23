@@ -22,9 +22,7 @@ const normalizeSkillId = (name: string): string | null => {
     .replace(/[^a-z0-9_-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
-  return normalized && !normalized.startsWith('.') && !normalized.startsWith('import-')
-    ? normalized
-    : null;
+  return normalized || null;
 };
 
 const readSkillId = (skillDir: string): string | null => {
