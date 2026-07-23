@@ -91,6 +91,30 @@ test('rejects noncanonical source names', async () => {
   expect(getStatus).not.toHaveBeenCalled();
 });
 
+test('returns the skill import validation error to the renderer', async () => {
+  const importPath = vi.fn(async () => ({
+    success: false,
+    error:
+      'SKILL.md "name" must be 1-64 characters and contain only lowercase letters, numbers, and single hyphens.',
+  }));
+
+  registerSkillHandlers({
+    skillService: {} as OpenClawSkillService,
+    getSkillFiles: () => ({ importPath }) as unknown as OpenClawSkillFiles,
+    installationService: new PluginInstallationService(),
+  });
+
+  await expect(
+    handlers.get('skills:import')?.(undefined, 'C:/skills/invalid-skill'),
+  ).resolves.toEqual({
+    success: false,
+    skillId: undefined,
+    error:
+      'SKILL.md "name" must be 1-64 characters and contain only lowercase letters, numbers, and single hyphens.',
+  });
+  expect(importPath).toHaveBeenCalledWith('C:/skills/invalid-skill');
+});
+
 test('does not delete a same-key skill from a different source', async () => {
   const skill = createSkill('openclaw-workspace');
   const deleteDirectory = vi.fn();

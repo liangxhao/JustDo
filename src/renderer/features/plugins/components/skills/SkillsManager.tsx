@@ -130,8 +130,11 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               ],
             });
 
-      if (!result.success || !result.paths || result.paths.length === 0) {
-        setImporting(false);
+      if (!result.success) {
+        setSkillActionError(result.error || i18nService.t('skillImportFailed'));
+        return;
+      }
+      if (!result.paths || result.paths.length === 0) {
         return;
       }
 

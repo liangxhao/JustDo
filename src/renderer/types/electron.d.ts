@@ -727,10 +727,11 @@ interface IElectronAPI {
     selectFiles: (options?: {
       title?: string;
       filters?: { name: string; extensions: string[] }[];
-    }) => Promise<{ success: boolean; paths: string[] }>;
+    }) => Promise<{ success: boolean; paths: string[]; error?: string }>;
     selectFolders: (options?: { title?: string }) => Promise<{
       success: boolean;
       paths: string[];
+      error?: string;
     }>;
     saveInlineFile: (options: {
       dataBase64: string;

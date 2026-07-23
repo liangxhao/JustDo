@@ -2,9 +2,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ZipFile } from 'yazl';
 
+import { setLanguage } from '../../core/i18n';
 import { __openClawSkillFilesTestUtils, OpenClawSkillFiles } from './openclawSkillFiles';
 
 const tempDirs: string[] = [];
@@ -26,19 +27,34 @@ const writeZip = async (zipPath: string, entries: Record<string, string>): Promi
   });
 };
 
+beforeEach(() => {
+  setLanguage('en');
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  setLanguage('zh');
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('normalizes the frontmatter name into a safe skill id', () => {
-  expect(__openClawSkillFilesTestUtils.normalizeSkillId('My Useful Skill')).toBe('my-useful-skill');
-  expect(__openClawSkillFilesTestUtils.normalizeSkillId('import-smoke-test')).toBe(
-    'import-smoke-test',
+test('accepts only skill names that are safe directory names on Windows', () => {
+  expect(__openClawSkillFilesTestUtils.validateSkillName('import-smoke-test')).toEqual({
+    skillId: 'import-smoke-test',
+  });
+  expect(__openClawSkillFilesTestUtils.validateSkillName('My Useful Skill').error).toContain(
+    'lowercase letters',
   );
-  expect(__openClawSkillFilesTestUtils.normalizeSkillId('../')).toBeNull();
+  expect(__openClawSkillFilesTestUtils.validateSkillName('../').error).toContain(
+    'lowercase letters',
+  );
+  expect(__openClawSkillFilesTestUtils.validateSkillName('con').error).toContain(
+    'Windows reserved',
+  );
+  expect(__openClawSkillFilesTestUtils.validateSkillName('a'.repeat(65)).error).toContain(
+    '1-64 characters',
+  );
 });
 
 test('imports a skill directory into the OpenClaw managed directory', () => {
@@ -46,13 +62,40 @@ test('imports a skill directory into the OpenClaw managed directory', () => {
   const managed = makeTempDir();
   fs.writeFileSync(
     path.join(source, 'SKILL.md'),
-    '---\nname: Linked Skill\ndescription: demo\n---\n',
+    '---\nname: linked-skill\ndescription: demo\n---\n',
   );
 
   const result = new OpenClawSkillFiles(managed).importDirectory(source);
 
   expect(result).toEqual({ success: true, skillId: 'linked-skill' });
   expect(fs.existsSync(path.join(managed, 'linked-skill', 'SKILL.md'))).toBe(true);
+});
+
+test('rejects an invalid skill name before creating its managed directory', () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  fs.writeFileSync(
+    path.join(source, 'SKILL.md'),
+    '---\nname: Invalid/Skill\ndescription: demo\n---\n',
+  );
+
+  const result = new OpenClawSkillFiles(managed).importDirectory(source);
+
+  expect(result.success).toBe(false);
+  expect(result.error).toContain('lowercase letters');
+  expect(fs.readdirSync(managed)).toEqual([]);
+});
+
+test('rejects a Windows reserved skill name before creating its managed directory', () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  fs.writeFileSync(path.join(source, 'SKILL.md'), '---\nname: con\ndescription: demo\n---\n');
+
+  const result = new OpenClawSkillFiles(managed).importDirectory(source);
+
+  expect(result.success).toBe(false);
+  expect(result.error).toContain('Windows reserved directory name');
+  expect(fs.readdirSync(managed)).toEqual([]);
 });
 
 test('imports a skill whose name starts with import-', () => {
@@ -136,7 +179,7 @@ test('imports a zipped skill with a single wrapper directory', async () => {
   const managed = makeTempDir();
   const archivePath = path.join(source, 'wrapped-skill.zip');
   await writeZip(archivePath, {
-    'wrapped-skill/SKILL.md': '---\nname: Zipped Skill\ndescription: demo\n---\n',
+    'wrapped-skill/SKILL.md': '---\nname: zipped-skill\ndescription: demo\n---\n',
     'wrapped-skill/references/example.md': 'example',
   });
 
@@ -156,7 +199,7 @@ test('imports a gzipped tar skill archive', async () => {
   fs.mkdirSync(skillDir);
   fs.writeFileSync(
     path.join(skillDir, 'SKILL.md'),
-    '---\nname: Tarred Skill\ndescription: demo\n---\n',
+    '---\nname: tarred-skill\ndescription: demo\n---\n',
   );
   await tar.create({ cwd: source, file: archivePath, gzip: true }, ['tarred-skill']);
 

@@ -6,11 +6,15 @@ import path from 'path';
 import * as tar from 'tar';
 
 import { cpRecursiveSync } from '../../core/fsCompat';
+import { t } from '../../core/i18n';
 
 const SKILL_FILE_NAME = 'SKILL.md';
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 const WINDOWS_FS_RETRY_COUNT = 5;
 const WINDOWS_FS_RETRY_DELAY_MS = 200;
+const MAX_SKILL_NAME_LENGTH = 64;
+const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const WINDOWS_RESERVED_NAME_PATTERN = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
 export type LocalSkillFileResult = {
   success: boolean;
@@ -18,24 +22,36 @@ export type LocalSkillFileResult = {
   error?: string;
 };
 
-const normalizeSkillId = (name: string): string | null => {
-  const normalized = name
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return normalized || null;
+type SkillIdResult =
+  | { skillId: string; error?: never }
+  | { skillId?: never; error: string };
+
+const validateSkillName = (name: unknown): SkillIdResult => {
+  if (
+    typeof name !== 'string' ||
+    name.length === 0 ||
+    name.length > MAX_SKILL_NAME_LENGTH ||
+    !SKILL_NAME_PATTERN.test(name)
+  ) {
+    return { error: t('skillInvalidName') };
+  }
+  if (WINDOWS_RESERVED_NAME_PATTERN.test(name)) {
+    return {
+      error: t('skillWindowsReservedName', { name }),
+    };
+  }
+  return { skillId: name };
 };
 
-const readSkillId = (skillDir: string): string | null => {
+const readSkillId = (skillDir: string): SkillIdResult => {
   try {
     const content = fs.readFileSync(path.join(skillDir, SKILL_FILE_NAME), 'utf8');
     const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/);
-    if (!match) return null;
+    if (!match) return { error: t('skillInvalidFrontmatter') };
     const frontmatter = yaml.load(match[1]) as Record<string, unknown> | undefined;
-    return typeof frontmatter?.name === 'string' ? normalizeSkillId(frontmatter.name) : null;
+    return validateSkillName(frontmatter?.name);
   } catch {
-    return null;
+    return { error: t('skillInvalidFrontmatterName') };
   }
 };
 
@@ -203,13 +219,14 @@ export class OpenClawSkillFiles {
         };
       }
 
-      const skillId = readSkillId(folderPath);
-      if (!skillId) {
+      const skillIdResult = readSkillId(folderPath);
+      if (skillIdResult.error) {
         return {
           success: false,
-          error: 'SKILL.md must have a valid "name" field in frontmatter.',
+          error: skillIdResult.error,
         };
       }
+      const { skillId } = skillIdResult;
 
       fs.mkdirSync(this.managedSkillsDir, { recursive: true });
       replaceDirectory(folderPath, path.join(this.managedSkillsDir, skillId));
@@ -293,7 +310,7 @@ export class OpenClawSkillFiles {
 
 export const __openClawSkillFilesTestUtils = {
   isSupportedArchive,
-  normalizeSkillId,
   readSkillId,
   resolveExtractedSkillDirectory,
+  validateSkillName,
 };
