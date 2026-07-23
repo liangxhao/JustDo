@@ -14,6 +14,7 @@ import {
   buildProviderSelection,
   hasOpenClawConfigChanged,
   mergeOpenClawPluginConfig,
+  mergeOpenClawSkillConfig,
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
   OPENCLAW_STUCK_SESSION_ABORT_MS,
   OPENCLAW_STUCK_SESSION_WARN_MS,
@@ -291,6 +292,46 @@ describe('OpenClaw plugin config merging', () => {
     ).toEqual({
       slots: { contextEngine: 'openviking' },
       entries: { openviking: { enabled: true } },
+    });
+  });
+});
+
+describe('OpenClaw skill config merging', () => {
+  test('preserves disabled skills and custom load directories', () => {
+    expect(
+      mergeOpenClawSkillConfig(
+        {
+          load: { extraDirs: ['C:/skills'] },
+          entries: {
+            docx: { enabled: false },
+            pdf: { enabled: true, env: { PDF_RENDERER: 'local' } },
+          },
+        },
+        {},
+      ),
+    ).toEqual({
+      load: { extraDirs: ['C:/skills'] },
+      entries: {
+        docx: { enabled: false },
+        pdf: { enabled: true, env: { PDF_RENDERER: 'local' } },
+      },
+    });
+  });
+
+  test('overrides only fields explicitly managed by JustDo', () => {
+    expect(
+      mergeOpenClawSkillConfig(
+        {
+          load: { extraDirs: ['C:/skills'], watch: true },
+          entries: { docx: { enabled: false } },
+        },
+        {
+          load: { watch: false },
+        },
+      ),
+    ).toEqual({
+      load: { extraDirs: ['C:/skills'], watch: false },
+      entries: { docx: { enabled: false } },
     });
   });
 });

@@ -101,6 +101,8 @@ OpenClaw precedence 为 `openclaw-extra` < `openclaw-bundled` < `openclaw-manage
 
 内置 Skill 位于 `resources/skills/<id>/`。新增、删除或重命名内置 Skill 时必须同步 `resources/builtin-skills.json`、README、打包规则和相关测试。
 
+技能启用状态由 Gateway 的 `skills.update` 写入 OpenClaw 配置。JustDo 启动时的配置同步会保留现有 `skills` 节点（包括 `entries.<id>.enabled` 和 `load.extraDirs`），避免用户选择在重启后被托管配置覆盖。
+
 ### 导入与删除
 
 用户可从目录或 ZIP、TAR、TAR.GZ、TGZ 导入 Skill。压缩包先解压到临时目录，校验 `SKILL.md`、拒绝符号链接，再复制到 Gateway state 的 managed Skill 目录。用户数据不应在应用升级时被覆盖。

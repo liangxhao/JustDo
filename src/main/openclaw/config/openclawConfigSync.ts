@@ -101,6 +101,22 @@ export const mergeOpenClawPluginConfig = (
     : existingPlugins;
 };
 
+export const mergeOpenClawSkillConfig = (
+  existingSkills: Record<string, unknown>,
+  managedSkills: Record<string, unknown>,
+): Record<string, unknown> => {
+  const mergedSkills = { ...existingSkills, ...managedSkills };
+  for (const key of ['load', 'entries']) {
+    if (isRecord(existingSkills[key]) && isRecord(managedSkills[key])) {
+      mergedSkills[key] = {
+        ...existingSkills[key],
+        ...managedSkills[key],
+      };
+    }
+  }
+  return mergedSkills;
+};
+
 const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-main' | 'all' => {
   switch (mode) {
     case 'sandbox':
@@ -517,11 +533,17 @@ export class OpenClawConfigSync {
     const configPath = this.engineManager.getConfigPath();
     let currentContent = '';
     let existingPlugins: Record<string, unknown> = {};
+    let existingSkills: Record<string, unknown> = {};
     try {
       currentContent = fs.readFileSync(configPath, 'utf8');
       const existingConfig = JSON.parse(currentContent) as unknown;
-      if (isRecord(existingConfig) && isRecord(existingConfig.plugins)) {
-        existingPlugins = existingConfig.plugins;
+      if (isRecord(existingConfig)) {
+        if (isRecord(existingConfig.plugins)) {
+          existingPlugins = existingConfig.plugins;
+        }
+        if (isRecord(existingConfig.skills)) {
+          existingSkills = existingConfig.skills;
+        }
       }
     } catch {
       currentContent = '';
@@ -719,9 +741,9 @@ export class OpenClawConfigSync {
         },
       },
       browser: connectivityConfig.browser,
-      skills: {
-        // Skills 已在构建时处理，无需额外配置
-      },
+      // skills.update writes user choices such as entries.<id>.enabled here.
+      // Preserve those Gateway-owned settings across JustDo startup syncs.
+      skills: mergeOpenClawSkillConfig(existingSkills, {}),
       cron: {
         enabled: true,
         maxConcurrentRuns: 3,
