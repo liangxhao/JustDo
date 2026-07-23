@@ -13,6 +13,7 @@ JustDo 当前只有一个 AI 执行引擎：OpenClaw Gateway `v2026.6.11`。Main
 | `src/main/engine/gateway/sessionRpc.ts`                 | Gateway session RPC helper            |
 | `src/main/cowork/providerApiConfig.ts`                  | provider 配置解析                     |
 | `src/main/cowork/builtinModelProvider.ts`               | 内置模型 provider 同步                |
+| `src/main/cowork/builtinModelLifecycle.ts`              | 登录/退出模型与 OpenClaw 同步协调     |
 | `src/main/openclaw/models/openclawAgentModels.ts`       | Agent 模型引用解析                    |
 | `src/main/ipc/openclaw/engine.ts`                       | engine IPC handlers                   |
 
@@ -224,74 +225,33 @@ JustDo 生成的所有 `openai-completions` 模型条目都显式设置
 embedding 模型，则显式设置 `memorySearch.enabled: false`，避免 OpenClaw 回退到 OpenAI。
 
 `syncBuiltinModelProvider()` 要求调用方显式传入 `enabled` 或 `disabled` 访问状态。
-当前启动和设置页手动刷新均传入 `enabled`，因此保持现有行为。未来接入登录后，未登录
-启动和退出登录传入 `disabled`，登录成功传入 `enabled`；禁用路径不会请求模型接口，
-并会从持久化 provider 配置中移除 `builtin_models`，后续 OpenClaw 配置同步会同时移除
-对应聊天模型和 memory search provider。
+禁用路径不会请求模型接口，并会从持久化 provider 配置中移除 `builtin_models`。
 
-### 未来登录功能接入
+`BuiltinModelLifecycle` 是认证生命周期与模型/OpenClaw 配置之间的统一边界：
 
-登录状态必须由 Main 进程持有和校验。Renderer 可以发起登录、退出或刷新操作，但不能
-把自己传入的 `isLoggedIn` 布尔值作为授权依据。接入登录后，建议在 Main 进程封装一个
-统一刷新入口（以下为示意代码）：
+- 登录状态在 Main 进程确认并持久化后，调用 `refreshAfterLogin()`。
+- 退出状态在 Main 进程确认后，调用 `refreshAfterLogout()`。
+- 已认证会话的设置页手动刷新调用 `refreshAuthenticatedModels()`。
 
-```ts
-const refreshBuiltinModelsForAuthenticatedSession = async (
-  reason: 'auth-login' | 'manual-refresh',
-): Promise<void> => {
-  if (!(await authService.isAuthenticated())) {
-    throw new Error('Authentication required to refresh built-in models');
-  }
+每个入口都会依次更新 SQLite `app_config`、同步 `openclaw.json`，然后通过
+`builtinModels:changed` 通知所有 Renderer。Renderer 会重新读取配置，更新内存中的
+`configService`、Redux 模型列表和已打开的模型设置页。退出登录且没有自定义模型时，
+当前模型选择会被清空。
 
-  await syncBuiltinModelProvider(getStore(), { access: BuiltinModelAccess.Enabled });
+生命周期协调器和 `syncBuiltinModelProvider()` 都使用 generation 防止旧的登录刷新在
+随后的退出操作后写回 provider、同步旧配置或发送过期通知。认证 handler 不能把
+Renderer 传入的 `isLoggedIn` 布尔值作为授权依据；它必须先在 Main 进程校验并提交真实
+认证状态，再调用对应入口。
 
-  const syncResult = await syncOpenClawConfig({
-    reason,
-    restartGatewayIfRunning: false,
-  });
-  if (!syncResult.success) {
-    console.error(`[Auth] Failed to sync OpenClaw config after ${reason}:`, syncResult.error);
-  }
-};
-```
+当前仓库尚未包含认证 handler，因此启动路径仍显式使用 `Enabled`，设置页手动刷新也
+直接调用 `refreshAuthenticatedModels()`。认证模块接入时必须完成两个调用点：启动时
+根据 Main 进程恢复出的可信状态选择 `Enabled` 或 `Disabled`；手动刷新前由 Main 进程
+确认已登录，避免未登录用户通过 IPC 重新启用内置模型。
 
-各生命周期的调用方式：
-
-```ts
-// 应用启动：从 Main 进程可信存储恢复登录状态。
-const isAuthenticated = await authService.isAuthenticated();
-await syncBuiltinModelProvider(store, {
-  access: isAuthenticated ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
-});
-
-// 后面继续执行现有的 startup OpenClaw config sync，无需在这里重复同步。
-
-// 登录成功：服务端会话已验证并持久化之后再刷新。
-await refreshBuiltinModelsForAuthenticatedSession('auth-login');
-
-// 退出登录：先关闭授权并阻止新任务，再删除 provider 和强制刷新 Gateway。
-authService.markLoggedOut();
-executionGate.blockBuiltinModelRuns();
-await syncBuiltinModelProvider(getStore(), { access: BuiltinModelAccess.Disabled });
-await syncOpenClawConfig({ reason: 'auth-logout', restartGatewayIfRunning: false });
-await forceRestartGatewayForAuthRevocation();
-await authService.clearCredentials();
-```
-
-`forceRestartGatewayForAuthRevocation()` 是登录功能需要新增的强制撤权接口：它必须终止或
-拒绝继续执行使用内置模型的活动任务，且不能复用“有活动任务时延迟重启”的普通配置同步
-策略。强制重启完成后，如果仍有可用的自定义 provider，可以解除普通任务执行 gate；若
-没有可用模型则保持不可执行状态。仅设置 `restartGatewayIfRunning: true` 仍可能触发延迟
-重启，不能单独作为退出登录的授权撤销保证。
-
-设置页的 `builtinModels:refresh` IPC 也必须读取 Main 进程的真实登录状态：未登录时调用
-`Disabled`（或返回明确的未登录错误），登录后才允许调用 `Enabled`。不能继续在 IPC
-handler 中无条件传入 `Enabled`，否则未登录用户仍可通过手动刷新绕过限制。
-
-`syncBuiltinModelProvider()` 会取消同一 store 上较早的刷新，并通过 generation 阻止旧请求
-在禁用后写回 provider。认证层仍应串行化登录、退出和手动刷新，并在刷新入口再次核对
-当前登录会话。每次运行期切换完成后，还需要通知 Renderer 重新读取 `app_config`，更新
-Redux 模型列表；退出登录且没有自定义模型时，UI 应进入“无可用模型”状态。
+`refreshAfterLogout()` 的职责是移除 provider、写入 OpenClaw 配置并刷新 UI；它不负责
+清理认证凭据，也不保证中止已经使用内置模型启动的活动任务。认证模块必须先阻止新的
+内置模型任务，并根据产品的撤权语义停止或强制重启相关运行，再清理凭据。普通配置同步
+在存在活动任务时可能延迟重启，不能单独作为即时撤权保证。
 
 ## Startup And Recovery
 

@@ -158,6 +158,39 @@ class ConfigService {
     return this.config;
   }
 
+  async reloadFromStore(): Promise<AppConfig> {
+    const storedConfig = await localStore.getItem<AppConfig>(CONFIG_KEYS.APP_CONFIG);
+    if (!storedConfig) {
+      return this.config;
+    }
+
+    const normalizedProviders = normalizeProvidersConfig(storedConfig.providers);
+    this.config = migrateCustomProviders({
+      ...this.config,
+      ...storedConfig,
+      api: {
+        ...this.config.api,
+        ...storedConfig.api,
+      },
+      model: {
+        ...this.config.model,
+        ...storedConfig.model,
+      },
+      app: {
+        ...this.config.app,
+        ...storedConfig.app,
+      },
+      proxy: normalizeProxyConfig(storedConfig.proxy),
+      shortcuts: {
+        ...this.config.shortcuts,
+        ...(storedConfig.shortcuts ?? {}),
+      } as AppConfig['shortcuts'],
+      ...(normalizedProviders ? { providers: normalizedProviders } : {}),
+    });
+    window.dispatchEvent(new CustomEvent('config-updated'));
+    return this.config;
+  }
+
   async updateConfig(newConfig: Partial<AppConfig>) {
     const normalizedProviders = normalizeProvidersConfig(
       newConfig.providers as AppConfig['providers'] | undefined,

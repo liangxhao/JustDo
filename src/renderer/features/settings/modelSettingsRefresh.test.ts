@@ -1,10 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
 import type { AppConfig } from '@/app/config';
-import {
-  getEnabledProviderModels,
-  mergeRefreshedBuiltinProvider,
-} from '@/features/settings/modelSettingsRefresh';
+import { getEnabledProviderModels } from '@/features/models/modelConfig';
+import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
 
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 

@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
+import { BuiltinModelIpc } from '../shared/builtinModels';
 import type { DeveloperConfig } from '../shared/developerConfig';
 import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
@@ -31,6 +32,7 @@ import {
 } from './core/systemProxyPreference';
 import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
 import { enableSystemCaForCurrentProcess } from './core/trustedCertificates';
+import { BuiltinModelLifecycle } from './cowork/builtinModelLifecycle';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './cowork/builtinModelProvider';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from './cowork/builtinModelProviderConfig';
 import {
@@ -322,6 +324,7 @@ let openClawSkillFileService: OpenClawSkillFileService | null = null;
 let mcpServices: McpServices | null = null;
 let openClawHookServices: OpenClawHookServices | null = null;
 let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
+let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawStatusForwarderBound = false;
@@ -466,6 +469,38 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
 
 const syncOpenClawConfig = (options: { reason: string } = { reason: 'unknown' }) =>
   getOpenClawConfigSyncService().syncConfig(options);
+
+const notifyBuiltinModelsChanged = (): void => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) {
+      continue;
+    }
+    try {
+      window.webContents.send(BuiltinModelIpc.Changed);
+    } catch (error) {
+      console.error('[BuiltinModelLifecycle] Failed to notify Renderer:', error);
+    }
+  }
+};
+
+const getBuiltinModelLifecycle = (): BuiltinModelLifecycle => {
+  if (!builtinModelLifecycle) {
+    builtinModelLifecycle = new BuiltinModelLifecycle({
+      getStore,
+      syncOpenClawConfig,
+      notifyModelsChanged: notifyBuiltinModelsChanged,
+    });
+  }
+  return builtinModelLifecycle;
+};
+
+// Authentication handlers should call these only after the Main process has
+// committed the corresponding authenticated/logged-out state.
+export const refreshBuiltinModelsAfterLogin = () =>
+  getBuiltinModelLifecycle().refreshAfterLogin();
+
+export const refreshBuiltinModelsAfterLogout = () =>
+  getBuiltinModelLifecycle().refreshAfterLogout();
 
 const getCoworkEngineService = (): CoworkEngineService => {
   if (!coworkEngineService) {
@@ -676,8 +711,9 @@ if (!gotTheLock) {
         );
       }
     },
-    refreshBuiltinModels: () =>
-      syncBuiltinModelProvider(getStore(), { access: BuiltinModelAccess.Enabled }),
+    refreshBuiltinModels: async () => {
+      await getBuiltinModelLifecycle().refreshAuthenticatedModels();
+    },
   });
 
   registerNetworkHandlers();

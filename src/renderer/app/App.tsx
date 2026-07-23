@@ -1,4 +1,5 @@
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import { BuiltinModelIpc } from '@shared/builtinModels';
 import { CoworkInteractionKind } from '@shared/openclaw/extensions';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -18,6 +19,10 @@ import {
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import type { CoworkInteractionResult } from '@/features/cowork/coworkTypes';
+import {
+  BUILTIN_MODELS_UPDATED_EVENT,
+  getEnabledProviderModels,
+} from '@/features/models/modelConfig';
 import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
 import PluginsView from '@/features/plugins/components/PluginsView';
 import { CronView } from '@/features/scheduled-tasks/components';
@@ -202,6 +207,21 @@ const App: React.FC = () => {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.electron.ipcRenderer.on(BuiltinModelIpc.Changed, () => {
+      void configService
+        .reloadFromStore()
+        .then(config => {
+          dispatch(setAvailableModels(getEnabledProviderModels(config.providers)));
+          window.dispatchEvent(new CustomEvent(BUILTIN_MODELS_UPDATED_EVENT));
+        })
+        .catch(error => {
+          console.error('[App] Failed to reload models after authentication change:', error);
+        });
+    });
+    return unsubscribe;
+  }, [dispatch]);
 
   // Network status monitoring
   useEffect(() => {

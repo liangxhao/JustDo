@@ -37,6 +37,10 @@ import {
 } from '@/app/config';
 import { APP_NAME } from '@/app/constants/app';
 import MemoryView from '@/features/memory/MemoryView';
+import {
+  BUILTIN_MODELS_UPDATED_EVENT,
+  getEnabledProviderModels,
+} from '@/features/models/modelConfig';
 import { setAvailableModels } from '@/features/models/modelSlice';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
 import ShortcutsSettings, {
@@ -44,10 +48,7 @@ import ShortcutsSettings, {
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
-import {
-  getEnabledProviderModels,
-  mergeRefreshedBuiltinProvider,
-} from '@/features/settings/modelSettingsRefresh';
+import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
@@ -665,6 +666,17 @@ const Settings: React.FC<SettingsProps> = ({
     } catch {
       setError('Failed to load settings');
     }
+  }, []);
+
+  useEffect(() => {
+    const refreshProviders = () => {
+      const config = configService.getConfig();
+      setProviders(currentProviders =>
+        mergeRefreshedBuiltinProvider(currentProviders, config.providers),
+      );
+    };
+    window.addEventListener(BUILTIN_MODELS_UPDATED_EVENT, refreshProviders);
+    return () => window.removeEventListener(BUILTIN_MODELS_UPDATED_EVENT, refreshProviders);
   }, []);
 
   useEffect(() => {
