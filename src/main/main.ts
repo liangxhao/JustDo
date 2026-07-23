@@ -418,10 +418,6 @@ const ensureOpenClawRunningForCowork = async () => {
   });
   const syncResult = await syncOpenClawConfig({
     reason: 'ensureRunning',
-    // The callback server uses a dynamic loopback port. If it was restarted
-    // while the Gateway stayed alive, the plugin must be reloaded with the
-    // current URL instead of continuing to call the stale port.
-    restartGatewayIfRunning: true,
   });
   if (!syncResult.success) {
     console.error('[OpenClaw] ensureRunning: config sync failed:', syncResult.error);
@@ -468,9 +464,8 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
   return openClawConfigSyncService;
 };
 
-const syncOpenClawConfig = (
-  options: { reason: string; restartGatewayIfRunning?: boolean } = { reason: 'unknown' },
-) => getOpenClawConfigSyncService().syncConfig(options);
+const syncOpenClawConfig = (options: { reason: string } = { reason: 'unknown' }) =>
+  getOpenClawConfigSyncService().syncConfig(options);
 
 const getCoworkEngineService = (): CoworkEngineService => {
   if (!coworkEngineService) {
@@ -673,7 +668,6 @@ if (!gotTheLock) {
     onAppConfigChanged: async () => {
       const syncResult = await syncOpenClawConfig({
         reason: 'app-config-change',
-        restartGatewayIfRunning: false,
       });
       if (!syncResult.success) {
         console.error(
@@ -971,7 +965,6 @@ if (!gotTheLock) {
 
     const startupSync = await syncOpenClawConfig({
       reason: 'startup',
-      restartGatewayIfRunning: false,
     });
     if (!startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);

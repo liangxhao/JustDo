@@ -76,7 +76,7 @@ Extension 可以声明配置字段和敏感字段。Renderer 只提交字符串�
 
 Extension 的启用、删除和配置更新由 `OpenClawExtensionImportService` 统一处理。由 Extension 提供的 Skill、MCP 或 Hook 不应在子能力页面直接删除，否则可能破坏 Extension 包完整性。
 
-内置 `ask-user-question` Extension 通过 Main process 的 loopback HTTP callback server 把结构化问题交给 renderer。Callback server 使用动态端口，因此必须先开始监听，再把当前 URL 和 secret placeholder 同步到 Gateway 配置。每次确保 Gateway 可用时都会先检查 callback host；如果端口变化而 Gateway 仍在运行，配置同步必须重启 Gateway，使 Extension 不会继续请求上一次进程留下的失效端口。Callback URL 只在 HTTP server 确实处于 listening 状态时对外发布。
+内置 `ask-user-question` Extension 通过 Main process 的 loopback HTTP callback server 把结构化问题交给 renderer。Callback server 使用动态端口，因此必须先开始监听，再把当前 URL 和 secret placeholder 同步到 Gateway 配置。每次确保 Gateway 可用时都会先检查 callback host；如果端口变化而 Gateway 仍在运行，Gateway watcher 会热重载 Extension 配置，使它不再请求上一次进程留下的失效端口。只有 secret 环境变量或 Extension manifest 变化才需要 JustDo 硬重启 Gateway。Callback URL 只在 HTTP server 确实处于 listening 状态时对外发布。
 
 主要 preload API：
 
@@ -198,7 +198,12 @@ Marketplace provider、错误降级、状态机和时序详见 [16-skill-marketp
 
 MCP 和 Hook 先写本地 SQLite，再通过 `syncOpenClawConfig` 生成 Gateway 配置。同步服务会合并并发请求、广播开始/完成事件，并把错误返回 UI。Extension 配置和启用状态由 Extension service 管理；Skill 启用和安装通过 Gateway Skill RPC 管理。
 
-配置同步和 runtime restart 是不同动作。只有当前能力的 runtime 行为确实要求重启时，UI 才显示 restart required；不得用 renderer 本地状态假装 Gateway 已应用配置。
+配置同步和 runtime restart 是不同动作。MCP、Hook 和 Extension 启用/配置变化由
+Gateway `hybrid` watcher 热更新；同步调用按 changed paths 等待对应 hot reload
+完成；restart 被 Gateway 接管后仍等待下一次 ready，再放行新会话。Extension 包文件
+或 manifest、Gateway child process secret 环境变化仍要求硬重启。只有当前能力的
+runtime 行为确实要求重启时，UI 才显示 restart required；不得用 renderer 本地状态
+假装 Gateway 已应用配置。
 
 ## 安全边界
 

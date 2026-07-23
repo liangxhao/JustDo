@@ -10,10 +10,7 @@ type OpenClawConfigSyncResult = {
 
 type OpenClawHookConfigSyncServiceDeps = {
   getHookStore: () => OpenClawHookStore;
-  syncOpenClawConfig: (options: {
-    reason: string;
-    restartGatewayIfRunning?: boolean;
-  }) => Promise<OpenClawConfigSyncResult>;
+  syncOpenClawConfig: (options: { reason: string }) => Promise<OpenClawConfigSyncResult>;
 };
 
 type OpenClawHookConfigSyncResult = {

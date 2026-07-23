@@ -13,7 +13,6 @@ type McpServicesDeps = {
   getDatabase: () => Database.Database;
   syncOpenClawConfig: (options: {
     reason: string;
-    restartGatewayIfRunning?: boolean;
   }) => Promise<{ success: boolean; changed: boolean; error?: string }>;
 };
 

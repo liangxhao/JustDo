@@ -19,6 +19,7 @@ import {
 } from '../../core/trustedCertificates';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from './electronNodeRuntime';
+import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
@@ -167,8 +168,10 @@ export class OpenClawEngineManager extends EventEmitter {
   private shutdownRequested = false;
   private gatewayPort: number | null = null;
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
+  private gatewayProcessGeneration = 0;
   private secretEnvVars: Record<string, string> = {};
   private gatewayPortListener: ((port: number | null) => void) | null = null;
+  private readonly gatewayConfigReloadMonitor = new GatewayConfigReloadMonitor();
   private readonly buildNetworkEnvironment: (
     baseEnv: NodeJS.ProcessEnv,
   ) => NodeJS.ProcessEnv;
@@ -249,6 +252,18 @@ export class OpenClawEngineManager extends EventEmitter {
 
   getStatus(): OpenClawEngineStatus {
     return { ...this.status };
+  }
+
+  getGatewayConfigReloadGeneration(): number {
+    return this.gatewayConfigReloadMonitor.getGeneration();
+  }
+
+  waitForGatewayConfigReload(generation: number, timeoutMs?: number): Promise<boolean> {
+    return this.gatewayConfigReloadMonitor.waitForReloadAfter(generation, timeoutMs);
+  }
+
+  getGatewayProcessGeneration(): number {
+    return this.gatewayProcessGeneration;
   }
 
   setExternalError(message: string): OpenClawEngineStatus {
@@ -600,6 +615,7 @@ export class OpenClawEngineManager extends EventEmitter {
     );
 
     this.gatewayProcess = child;
+    this.gatewayProcessGeneration += 1;
     this.attachGatewayProcessLogs(child);
     this.attachGatewayExitHandlers(child);
 
@@ -1510,6 +1526,7 @@ export class OpenClawEngineManager extends EventEmitter {
     const emitLines = (text: string, stream: 'stdout' | 'stderr') => {
       for (const line of text.split(/\r?\n/)) {
         if (!line) continue;
+        this.gatewayConfigReloadMonitor.observeLine(line);
         appendLog(`${line}\n`, stream);
         const renderedLine = OpenClawEngineManager.rewriteUtcTimestamps(line);
         if (stream === 'stdout') {

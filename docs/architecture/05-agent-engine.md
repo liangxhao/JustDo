@@ -4,17 +4,17 @@ JustDo 当前只有一个 AI 执行引擎：OpenClaw Gateway `v2026.6.11`。Main
 
 ## 关键文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `src/main/openclaw/runtime/openclawEngineManager.ts` | Gateway runtime 生命周期 |
-| `src/main/openclaw/config/openclawConfigSyncService.ts` | 配置同步服务 |
-| `src/main/openclaw/config/openclawConfigSync.ts` | provider/MCP/hooks/extension 配置生成 |
-| `src/main/engine/openclawRuntimeAdapter.ts` | Cowork 到 Gateway 的 adapter |
-| `src/main/engine/gateway/sessionRpc.ts` | Gateway session RPC helper |
-| `src/main/cowork/providerApiConfig.ts` | provider 配置解析 |
-| `src/main/cowork/builtinModelProvider.ts` | 内置模型 provider 同步 |
-| `src/main/openclaw/models/openclawAgentModels.ts` | Agent 模型引用解析 |
-| `src/main/ipc/openclaw/engine.ts` | engine IPC handlers |
+| 文件                                                    | 作用                                  |
+| ------------------------------------------------------- | ------------------------------------- |
+| `src/main/openclaw/runtime/openclawEngineManager.ts`    | Gateway runtime 生命周期              |
+| `src/main/openclaw/config/openclawConfigSyncService.ts` | 配置同步服务                          |
+| `src/main/openclaw/config/openclawConfigSync.ts`        | provider/MCP/hooks/extension 配置生成 |
+| `src/main/engine/openclawRuntimeAdapter.ts`             | Cowork 到 Gateway 的 adapter          |
+| `src/main/engine/gateway/sessionRpc.ts`                 | Gateway session RPC helper            |
+| `src/main/cowork/providerApiConfig.ts`                  | provider 配置解析                     |
+| `src/main/cowork/builtinModelProvider.ts`               | 内置模型 provider 同步                |
+| `src/main/openclaw/models/openclawAgentModels.ts`       | Agent 模型引用解析                    |
+| `src/main/ipc/openclaw/engine.ts`                       | engine IPC handlers                   |
 
 ## Runtime 生命周期
 
@@ -83,7 +83,27 @@ JustDo 本地配置包括：
 - Ask-user extension 配置
 - 本地 skill 文件状态
 
-这些配置通过 `OpenClawConfigSyncService` 写入 Gateway 可读取的配置位置。Gateway 正在运行时，某些配置变更会触发 Gateway restart 或 client reconnect。
+这些配置通过 `OpenClawConfigSyncService` 写入 Gateway 可读取的配置位置。Gateway
+运行时使用 OpenClaw 默认的 `hybrid` reload 策略：模型、Agent、MCP、Hook 和插件
+启用配置优先原地热更新，Gateway 自身配置等不支持热更新的字段由 Gateway watcher
+触发 restart。
+
+配置应用按所有权明确分为四类：
+
+| 变化                                                                         | 应用方式             | 生命周期所有者 |
+| ---------------------------------------------------------------------------- | -------------------- | -------------- |
+| `meta`、`tools`、`skills`、`session` 等动态读取字段                          | 无进程重启           | OpenClaw       |
+| models、Agent、Hook、cron、MCP、普通插件配置                                 | 原生热更新           | OpenClaw       |
+| `models.pricing`、`plugins.load`、`plugins.installs`、`gateway`、`discovery` | Gateway 内部 restart | OpenClaw       |
+| child process secret 环境或 Extension manifest/tool contract                 | stop/start 硬重启    | JustDo         |
+
+同步服务在写配置前记录 reload generation，并用 Gateway 日志中的 changed paths
+把 hot reload、restart acceptance 关联到正确代次。restart acceptance 只是中间状态，
+必须等 Gateway 再次 ready 才放行新会话；等待预算覆盖 OpenClaw 的 workload drain 和
+Gateway 启动时间。原生应用失败或超时才回退到 JustDo 硬重启。延迟硬重启同时绑定
+Gateway process generation；若等待期间用户已停止 Gateway 或其他路径已替换进程，
+旧 restart intent 会被丢弃，不会复活或重复重启 Gateway。仅 session store 变化不触发
+任何 Gateway restart。
 
 ## 模型引用
 
@@ -140,8 +160,14 @@ Config sync service 把 JustDo 本地配置转换为 Gateway 可读配置。它�
 同步时要考虑 Gateway 是否正在运行：
 
 - 启动前同步：直接写配置。
-- 运行中同步：判断是否需要 restart/reconnect。
+- 普通 `openclaw.json` 变化：等待 Gateway watcher 完成热更新或自主 restart；等待失败时才回退到硬重启。
+- 子进程 secret 环境变量或 Extension manifest 变化：由 JustDo 硬重启，因为运行中的
+  child process 和已加载 manifest 无法通过普通配置热更新替换。
+- 仅 managed session store 修复：不重启 Gateway。
 - 有活跃 workload：避免无提示打断正在执行的会话。
+
+Engine manager 从 Gateway reload 日志维护同步代次。会话执行在配置写入后等待对应代次
+完成，避免 watcher debounce 期间立即发起的新会话读到旧模型或旧插件配置。
 
 ### `OpenClawRuntimeAdapter`
 

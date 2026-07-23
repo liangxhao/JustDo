@@ -19,7 +19,6 @@ interface DefaultModelHandlerOptions {
   getCoworkStore: () => CoworkStore;
   syncOpenClawConfig: (options: {
     reason: string;
-    restartGatewayIfRunning?: boolean;
   }) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -62,7 +61,6 @@ export const registerDefaultModelHandlers = ({
         // syncOpenClawConfig will pick up the updated agent model
         const syncResult = await syncOpenClawConfig({
           reason: 'default-model-change',
-          restartGatewayIfRunning: false,
         });
         if (!syncResult.success) {
           console.error(

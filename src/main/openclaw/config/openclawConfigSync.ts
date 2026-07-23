@@ -160,6 +160,50 @@ export const buildOpenClawConfigMeta = (
   lastTouchedAt: now.toISOString(),
 });
 
+const sortJsonValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValue);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map(key => [key, sortJsonValue(value[key])]),
+  );
+};
+
+const omitVolatileConfigMetadata = (config: Record<string, unknown>): Record<string, unknown> => {
+  if (!isRecord(config.meta)) {
+    return config;
+  }
+  const meta = { ...config.meta };
+  delete meta.lastTouchedAt;
+  return {
+    ...config,
+    meta,
+  };
+};
+
+export const hasOpenClawConfigChanged = (
+  currentContent: string,
+  nextConfig: Record<string, unknown>,
+): boolean => {
+  try {
+    const currentConfig = JSON.parse(currentContent) as unknown;
+    if (!isRecord(currentConfig)) {
+      return true;
+    }
+    return (
+      JSON.stringify(sortJsonValue(omitVolatileConfigMetadata(currentConfig))) !==
+      JSON.stringify(sortJsonValue(omitVolatileConfigMetadata(nextConfig)))
+    );
+  } catch {
+    return true;
+  }
+};
+
 export const resolveOpenClawExecApprovalsPath = (stateDir: string): string =>
   path.join(stateDir, 'exec-approvals.json');
 
@@ -436,6 +480,8 @@ const isBundledPluginAvailable = (pluginId: string): boolean => {
 export type OpenClawConfigSyncResult = {
   ok: boolean;
   changed: boolean;
+  configChanged: boolean;
+  requiresGatewayRestart: boolean;
   configPath: string;
   error?: string;
   agentsMdWarning?: string;
@@ -509,6 +555,8 @@ export class OpenClawConfigSync {
         return {
           ok: false,
           changed: false,
+          configChanged: false,
+          requiresGatewayRestart: false,
           configPath,
           error: 'OpenClaw config sync failed: resolved model is empty.',
         };
@@ -706,7 +754,7 @@ export class OpenClawConfigSync {
     // IM channel config syncing removed — channels disabled pending future adaptation
 
     const nextContent = `${JSON.stringify(managedConfig, null, 2)}\n`;
-    const configChanged = currentContent !== nextContent;
+    const configChanged = hasOpenClawConfigChanged(currentContent, managedConfig);
     const extensionContractsChanged = buildBundledExtensionToolContracts(
       { askUser: askUserConfig },
       isBundledPluginAvailable,
@@ -726,6 +774,8 @@ export class OpenClawConfigSync {
         return {
           ok: false,
           changed: false,
+          configChanged: false,
+          requiresGatewayRestart: false,
           configPath,
           error: error instanceof Error ? error.message : String(error),
         };
@@ -746,6 +796,8 @@ export class OpenClawConfigSync {
     return {
       ok: true,
       changed: configChanged || sessionStoreChanged || extensionContractsChanged,
+      configChanged,
+      requiresGatewayRestart: extensionContractsChanged,
       configPath,
     };
   }
@@ -1195,14 +1247,26 @@ export class OpenClawConfigSync {
               meta: minimalConfig.meta,
             });
             const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;
-            if (currentContent !== mergedContent) {
+            if (hasOpenClawConfigChanged(currentContent, mergedConfig)) {
               ensureDir(path.dirname(configPath));
               const tmpPath = `${configPath}.tmp-${Date.now()}`;
               fs.writeFileSync(tmpPath, mergedContent, 'utf8');
               fs.renameSync(tmpPath, configPath);
-              return { ok: true, changed: true, configPath };
+              return {
+                ok: true,
+                changed: true,
+                configChanged: true,
+                requiresGatewayRestart: false,
+                configPath,
+              };
             }
-            return { ok: true, changed: false, configPath };
+            return {
+              ok: true,
+              changed: false,
+              configChanged: false,
+              requiresGatewayRestart: false,
+              configPath,
+            };
           }
         }
       } catch {
@@ -1210,8 +1274,14 @@ export class OpenClawConfigSync {
       }
     }
 
-    if (currentContent === nextContent) {
-      return { ok: true, changed: false, configPath };
+    if (!hasOpenClawConfigChanged(currentContent, minimalConfig)) {
+      return {
+        ok: true,
+        changed: false,
+        configChanged: false,
+        requiresGatewayRestart: false,
+        configPath,
+      };
     }
 
     try {
@@ -1219,11 +1289,19 @@ export class OpenClawConfigSync {
       const tmpPath = `${configPath}.tmp-${Date.now()}`;
       fs.writeFileSync(tmpPath, nextContent, 'utf8');
       fs.renameSync(tmpPath, configPath);
-      return { ok: true, changed: true, configPath };
+      return {
+        ok: true,
+        changed: true,
+        configChanged: true,
+        requiresGatewayRestart: false,
+        configPath,
+      };
     } catch (error) {
       return {
         ok: false,
         changed: false,
+        configChanged: false,
+        requiresGatewayRestart: false,
         configPath,
         error: error instanceof Error ? error.message : String(error),
       };

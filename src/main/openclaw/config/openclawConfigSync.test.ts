@@ -12,6 +12,7 @@ import {
   buildManagedOpenClawConnectivityConfig,
   buildOpenClawConfigMeta,
   buildProviderSelection,
+  hasOpenClawConfigChanged,
   mergeOpenClawPluginConfig,
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
   OPENCLAW_STUCK_SESSION_ABORT_MS,
@@ -170,6 +171,54 @@ describe('OpenClaw managed config metadata', () => {
       lastTouchedVersion: '2026.6.11',
       lastTouchedAt: '2026-07-13T03:27:00.677Z',
     });
+  });
+
+  test('does not treat a refreshed metadata timestamp as a config change', () => {
+    const currentContent = JSON.stringify({
+      gateway: { mode: 'local' },
+      meta: {
+        lastTouchedVersion: '2026.6.11',
+        lastTouchedAt: '2026-07-13T03:27:00.677Z',
+      },
+    });
+    const nextConfig = {
+      meta: {
+        lastTouchedAt: '2026-07-23T07:37:34.681Z',
+        lastTouchedVersion: '2026.6.11',
+      },
+      gateway: { mode: 'local' },
+    };
+
+    expect(hasOpenClawConfigChanged(currentContent, nextConfig)).toBe(false);
+  });
+
+  test('detects substantive config and version changes', () => {
+    const currentContent = JSON.stringify({
+      gateway: { mode: 'local' },
+      meta: {
+        lastTouchedVersion: '2026.6.11',
+        lastTouchedAt: '2026-07-13T03:27:00.677Z',
+      },
+    });
+
+    expect(
+      hasOpenClawConfigChanged(currentContent, {
+        gateway: { mode: 'remote' },
+        meta: {
+          lastTouchedVersion: '2026.6.11',
+          lastTouchedAt: '2026-07-23T07:37:34.681Z',
+        },
+      }),
+    ).toBe(true);
+    expect(
+      hasOpenClawConfigChanged(currentContent, {
+        gateway: { mode: 'local' },
+        meta: {
+          lastTouchedVersion: '2026.7.1',
+          lastTouchedAt: '2026-07-23T07:37:34.681Z',
+        },
+      }),
+    ).toBe(true);
   });
 });
 
