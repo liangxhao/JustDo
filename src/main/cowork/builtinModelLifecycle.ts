@@ -1,3 +1,4 @@
+import { BuiltinModelSyncReason } from '../../shared/builtinModels';
 import type { SqliteStore } from '../data/sqliteStore';
 import {
   BuiltinModelAccess,
@@ -27,14 +28,16 @@ export class BuiltinModelLifecycle {
   constructor(private readonly dependencies: BuiltinModelLifecycleDependencies) {}
 
   refreshAfterLogin(): Promise<BuiltinModelLifecycleResult> {
-    return this.refresh(BuiltinModelAccess.Enabled, 'auth-login');
+    return this.refresh(BuiltinModelAccess.Enabled, BuiltinModelSyncReason.AuthLogin);
   }
 
   refreshAfterLogout(): Promise<BuiltinModelLifecycleResult> {
-    return this.refresh(BuiltinModelAccess.Disabled, 'auth-logout');
+    return this.refresh(BuiltinModelAccess.Disabled, BuiltinModelSyncReason.AuthLogout);
   }
 
-  refreshAuthenticatedModels(reason = 'manual-refresh'): Promise<BuiltinModelLifecycleResult> {
+  refreshAuthenticatedModels(
+    reason = BuiltinModelSyncReason.ManualRefresh,
+  ): Promise<BuiltinModelLifecycleResult> {
     return this.refresh(BuiltinModelAccess.Enabled, reason);
   }
 

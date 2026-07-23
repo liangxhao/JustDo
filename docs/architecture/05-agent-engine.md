@@ -253,6 +253,12 @@ Renderer 传入的 `isLoggedIn` 布尔值作为授权依据；它必须先在 Ma
 内置模型任务，并根据产品的撤权语义停止或强制重启相关运行，再清理凭据。普通配置同步
 在存在活动任务时可能延迟重启，不能单独作为即时撤权保证。
 
+退出后如果没有其他可用 provider，`auth-logout` 配置同步必须从 `openclaw.json` 删除
+所有 provider，以及默认和逐 Agent 的模型引用，并禁用 memory search；插件、技能和
+其他与模型无关的配置必须保留。这个定向清理会在 Gateway 环境移除
+`JUSTDO_APIKEY_BUILTIN_MODELS` 之前删除文件中的对应占位符，避免后续重启因引用不存在的
+环境变量而失败。非退出场景仍保留原有配置保护行为。
+
 ## Startup And Recovery
 
 启动时的恢复动作包括：

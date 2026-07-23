@@ -2,6 +2,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import {
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
@@ -1202,7 +1203,7 @@ export class OpenClawConfigSync {
    * model/provider configured.  The full config will be synced once the
    * user sets up a model in the UI.
    */
-  private writeMinimalConfig(configPath: string, _reason: string): OpenClawConfigSyncResult {
+  private writeMinimalConfig(configPath: string, reason: string): OpenClawConfigSyncResult {
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig();
     const minimalConfig: Record<string, unknown> = withDisabledMemorySearch({
@@ -1240,10 +1241,88 @@ export class OpenClawConfigSync {
       currentContent = '';
     }
 
+    if (
+      reason === BuiltinModelSyncReason.AuthLogout &&
+      currentContent &&
+      currentContent !== nextContent
+    ) {
+      try {
+        const existing = JSON.parse(currentContent);
+        if (isRecord(existing)) {
+          const existingDiagnostics = isRecord(existing.diagnostics)
+            ? existing.diagnostics
+            : {};
+          const existingAgents = isRecord(existing.agents) ? existing.agents : {};
+          const existingAgentDefaults = isRecord(existingAgents.defaults)
+            ? { ...existingAgents.defaults }
+            : {};
+          delete existingAgentDefaults.model;
+          delete existingAgentDefaults.memorySearch;
+          const sanitizedAgentList = Array.isArray(existingAgents.list)
+            ? existingAgents.list.map(agent => {
+                if (!isRecord(agent)) return agent;
+                const sanitizedAgent = { ...agent };
+                delete sanitizedAgent.model;
+                return sanitizedAgent;
+              })
+            : existingAgents.list;
+          const sanitizedConfig = {
+            ...existing,
+            models: minimalConfig.models,
+            agents: {
+              ...existingAgents,
+              defaults: {
+                ...existingAgentDefaults,
+                memorySearch: { enabled: false },
+              },
+              ...(sanitizedAgentList === undefined ? {} : { list: sanitizedAgentList }),
+            },
+            diagnostics: {
+              ...existingDiagnostics,
+              otel: {
+                enabled: false,
+              },
+            },
+            update: connectivityConfig.update,
+            ...hookConfig,
+            meta: minimalConfig.meta,
+          };
+          const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
+          if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
+            ensureDir(path.dirname(configPath));
+            const tmpPath = `${configPath}.tmp-${Date.now()}`;
+            fs.writeFileSync(tmpPath, sanitizedContent, 'utf8');
+            fs.renameSync(tmpPath, configPath);
+            return {
+              ok: true,
+              changed: true,
+              configChanged: true,
+              requiresGatewayRestart: false,
+              configPath,
+            };
+          }
+          return {
+            ok: true,
+            changed: false,
+            configChanged: false,
+            requiresGatewayRestart: false,
+            configPath,
+          };
+        }
+      } catch {
+        // Malformed JSON falls through to a complete minimal-config rewrite.
+      }
+    }
+
     // If the file already has a meaningful config (from a previous sync or
     // user configuration), don't downgrade it to the minimal version.
     // Check for models (API configured), plugin entries, or gateway.mode already set.
-    if (currentContent && currentContent !== nextContent) {
+    // Auth logout was sanitized above so unrelated user-owned config survives.
+    if (
+      reason !== BuiltinModelSyncReason.AuthLogout &&
+      currentContent &&
+      currentContent !== nextContent
+    ) {
       try {
         const existing = JSON.parse(currentContent);
         if (isRecord(existing)) {
