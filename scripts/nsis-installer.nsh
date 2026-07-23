@@ -2,6 +2,36 @@
 
 !define JUSTDO_POWERSHELL "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
 
+!macro FindJustDoProcesses _RESULT
+  ; Return 0 only when a process whose executable lives in this installation
+  ; is running. The uninstaller itself also lives in $INSTDIR, so its PID must
+  ; be excluded to avoid treating every uninstall as an active app instance.
+  System::Call 'Kernel32::GetCurrentProcessId()i.r0'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_UNINSTALLER_PID", "$0").r1'
+  nsExec::ExecToLog '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "\
+    $$ErrorActionPreference = $\"Stop$\";\
+    try {\
+      $$installPath = [Environment]::GetEnvironmentVariable($\"JUSTDO_INSTALL_ROOT$\", $\"Process$\");\
+      $$installRoot = [IO.Path]::GetFullPath($$installPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar;\
+      $$uninstallerPid = [int][Environment]::GetEnvironmentVariable($\"JUSTDO_UNINSTALLER_PID$\", $\"Process$\");\
+      $$currentPid = $$PID;\
+      $$running = @(Get-CimInstance Win32_Process | Where-Object {\
+        try {\
+          $$_.ProcessId -ne $$currentPid -and\
+          $$_.ProcessId -ne $$uninstallerPid -and\
+          -not [string]::IsNullOrWhiteSpace($$_.ExecutablePath) -and\
+          [IO.Path]::GetFullPath($$_.ExecutablePath).StartsWith($$installRoot, [StringComparison]::OrdinalIgnoreCase)\
+        } catch { $$false }\
+      });\
+      if ($$running.Count -gt 0) { exit 0 };\
+      exit 1;\
+    } catch { exit 2 }"'
+  Pop ${_RESULT}
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_UNINSTALLER_PID", t "")i'
+!macroend
+
 !macro StopJustDoProcesses
   ; Only stop processes whose executable is inside the current installation.
   ; Matching by process name or a loose "*JustDo*" path can terminate unrelated
@@ -15,15 +45,19 @@
 
   ; Pass the path through the process environment instead of embedding it in
   ; PowerShell source. This preserves every Windows-legal Unicode/special path.
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r0'
+  System::Call 'Kernel32::GetCurrentProcessId()i.r0'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_UNINSTALLER_PID", "$0").r1'
   nsExec::ExecToLog '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "\
     $$ErrorActionPreference = $\"SilentlyContinue$\";\
     $$installPath = [Environment]::GetEnvironmentVariable($\"JUSTDO_INSTALL_ROOT$\", $\"Process$\");\
     $$installRoot = [IO.Path]::GetFullPath($$installPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar;\
+    $$uninstallerPid = [int][Environment]::GetEnvironmentVariable($\"JUSTDO_UNINSTALLER_PID$\", $\"Process$\");\
     $$currentPid = $$PID;\
     $$isInstalledProcess = { param($$process)\
       try {\
         if ($$process.ProcessId -eq $$currentPid) { return $$false };\
+        if ($$process.ProcessId -eq $$uninstallerPid) { return $$false };\
         if ([string]::IsNullOrWhiteSpace($$process.ExecutablePath)) { return $$false };\
         $$processPath = [IO.Path]::GetFullPath($$process.ExecutablePath);\
         return $$processPath.StartsWith($$installRoot, [StringComparison]::OrdinalIgnoreCase);\
@@ -40,6 +74,7 @@
     exit 1"'
   Pop $0
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_UNINSTALLER_PID", t "")i'
   ${If} $0 != "0"
     DetailPrint "Some ${PRODUCT_NAME} processes could not be closed automatically; continuing installation flow."
   ${EndIf}
@@ -254,12 +289,29 @@
 !macroend
 
 !macro customUnInit
-  ; Kill all running app instances (main app + OpenClaw gateway + detached
-  ; node.exe services) before the uninstaller's built-in process check.
-  ; Without this, the uninstaller detects the OpenClaw gateway process
-  ; (also named JustDo.exe) and shows an "app cannot be closed" dialog
-  ; where even "Retry" never succeeds — because the gateway has no UI window
-  ; for the user to close.
-  !insertmacro StopJustDoProcesses
+  ; In interactive mode, ask the user to close the app instead of silently
+  ; killing it. Closing the main app also gives its gateway and child processes
+  ; a chance to shut down cleanly. Silent uninstall keeps the non-interactive
+  ; cleanup behavior expected by managed deployment tools.
+  ${If} ${Silent}
+    !insertmacro StopJustDoProcesses
+  ${Else}
+    JustDoUninstallProcessCheck:
+      !insertmacro FindJustDoProcesses $0
+      ${If} $0 == "0"
+        ${If} $LANGUAGE == ${LANG_SIMPCHINESE}
+        ${OrIf} $LANGUAGE == ${LANG_TRADCHINESE}
+          StrCpy $1 "${PRODUCT_NAME} 正在运行。请先关闭应用，然后点击“重试”继续卸载；点击“取消”退出卸载程序。"
+        ${Else}
+          StrCpy $1 "${PRODUCT_NAME} is currently running. Close the app, then click Retry to continue uninstalling, or click Cancel to exit."
+        ${EndIf}
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$1" IDRETRY JustDoUninstallProcessRetry
+        Quit
+
+        JustDoUninstallProcessRetry:
+          Sleep 500
+          Goto JustDoUninstallProcessCheck
+      ${EndIf}
+  ${EndIf}
 !macroend
 
