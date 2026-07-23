@@ -272,6 +272,7 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
 
   const onHelloOk = clientOptions?.onHelloOk;
   expect(typeof onHelloOk).toBe('function');
+  expect(clientOptions?.deviceIdentity).toBeNull();
   (onHelloOk as () => void)();
   expect(connectionAdapter.gatewayClient).not.toBeNull();
   expect(connectionAdapter.pendingGatewayClient).toBeNull();

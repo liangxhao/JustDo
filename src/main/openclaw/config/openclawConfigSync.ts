@@ -160,6 +160,9 @@ export const buildOpenClawConfigMeta = (
   lastTouchedAt: now.toISOString(),
 });
 
+export const resolveOpenClawExecApprovalsPath = (stateDir: string): string =>
+  path.join(stateDir, 'exec-approvals.json');
+
 const ensureDir = (dirPath: string): void => {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -842,11 +845,11 @@ export class OpenClawConfigSync {
   }
 
   /**
-   * Ensures ~/.openclaw/exec-approvals.json has security=full + ask=off.
+   * Ensures <managed state dir>/exec-approvals.json has security=full + ask=off.
    * JustDo does not consume exec approval events.
    */
   private ensureExecApprovalDefaults(): void {
-    const filePath = path.join(app.getPath('home'), '.openclaw', 'exec-approvals.json');
+    const filePath = resolveOpenClawExecApprovalsPath(this.engineManager.getStateDir());
 
     type AgentEntry = { security?: string; ask?: string; [key: string]: unknown };
     type ApprovalsFile = {

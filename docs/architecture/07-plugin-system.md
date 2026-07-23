@@ -76,6 +76,8 @@ Extension 可以声明配置字段和敏感字段。Renderer 只提交字符串�
 
 Extension 的启用、删除和配置更新由 `OpenClawExtensionImportService` 统一处理。由 Extension 提供的 Skill、MCP 或 Hook 不应在子能力页面直接删除，否则可能破坏 Extension 包完整性。
 
+内置 `ask-user-question` Extension 通过 Main process 的 loopback HTTP callback server 把结构化问题交给 renderer。Callback server 使用动态端口，因此必须先开始监听，再把当前 URL 和 secret placeholder 同步到 Gateway 配置。每次确保 Gateway 可用时都会先检查 callback host；如果端口变化而 Gateway 仍在运行，配置同步必须重启 Gateway，使 Extension 不会继续请求上一次进程留下的失效端口。Callback URL 只在 HTTP server 确实处于 listening 状态时对外发布。
+
 主要 preload API：
 
 - `extensions.list()`

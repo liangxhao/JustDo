@@ -1,8 +1,8 @@
 import http from 'node:http';
 import https from 'node:https';
 
-import { Type } from '@sinclair/typebox';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import { Type } from 'typebox';
 
 /**
  * AskUserQuestion plugin for OpenClaw.

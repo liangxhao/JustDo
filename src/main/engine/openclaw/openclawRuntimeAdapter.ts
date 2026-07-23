@@ -2314,6 +2314,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP],
       role: 'operator',
       scopes: ['operator.admin'],
+      // JustDo authenticates this loopback backend client with the managed
+      // gateway token. Avoid OpenClaw creating a second device identity under
+      // the Electron main process's default ~/.openclaw state directory.
+      deviceIdentity: null,
       onHelloOk: () => {
         const isExpectedClient =
           generation === this.gatewayClientGeneration &&

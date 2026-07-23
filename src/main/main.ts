@@ -412,23 +412,29 @@ const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
 const ensureOpenClawRunningForCowork = async () => {
   bindOpenClawGatewayPortProxyBypass();
   const manager = getOpenClawEngineManager();
-  const status = manager.getStatus();
-  if (status.phase === 'running' || status.phase === 'starting') {
-    return manager.getStatus();
-  }
 
   await startExtensionHost().catch((err: unknown) => {
     console.error('[OpenClaw] ensureRunning: extension host startup failed (non-fatal):', err);
   });
   const syncResult = await syncOpenClawConfig({
     reason: 'ensureRunning',
-    restartGatewayIfRunning: false,
+    // The callback server uses a dynamic loopback port. If it was restarted
+    // while the Gateway stayed alive, the plugin must be reloaded with the
+    // current URL instead of continuing to call the stale port.
+    restartGatewayIfRunning: true,
   });
   if (!syncResult.success) {
     console.error('[OpenClaw] ensureRunning: config sync failed:', syncResult.error);
   }
 
-  return await manager.startGateway();
+  const status = manager.getStatus();
+  if (status.phase === 'running') {
+    return status;
+  }
+
+  // Reuse an in-flight start when the Gateway is already starting. Calling
+  // startGateway() is intentional: the manager deduplicates concurrent starts.
+  return manager.startGateway();
 };
 
 const getCoworkStore = () => {
@@ -953,6 +959,14 @@ if (!gotTheLock) {
       console.log(
         `[Main] migrated agent model bindings: backfilled=${backfilledAgentModels}, qualified=${qualifiedAgentModels}`,
       );
+    }
+
+    // The ask-user extension configuration contains the callback server's
+    // dynamic port. Start the host before the first config sync so a packaged
+    // Gateway never boots with a callback URL left over from an earlier run.
+    const startupExtensionConfig = await startExtensionHost();
+    if (!startupExtensionConfig) {
+      console.error('[OpenClaw] Startup extension host failed to provide callback config.');
     }
 
     const startupSync = await syncOpenClawConfig({

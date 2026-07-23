@@ -29,7 +29,7 @@ const findLocalExtensionsSourceDir = (): string | null => {
 
 const findBundledExtensionsDir = (): string | null => {
   const candidates = app.isPackaged
-    ? [path.join(process.resourcesPath, 'cfmind', 'extensions')]
+    ? [path.join(process.resourcesPath, 'cfmind', 'dist', 'extensions')]
     : [
         path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions'),
         path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions'),

@@ -16,6 +16,7 @@ import {
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
   OPENCLAW_STUCK_SESSION_ABORT_MS,
   OPENCLAW_STUCK_SESSION_WARN_MS,
+  resolveOpenClawExecApprovalsPath,
 } from './openclawConfigSync';
 
 const providerApiKeyEnvVar = (providerName: string): string => {
@@ -169,6 +170,14 @@ describe('OpenClaw managed config metadata', () => {
       lastTouchedVersion: '2026.6.11',
       lastTouchedAt: '2026-07-13T03:27:00.677Z',
     });
+  });
+});
+
+describe('OpenClaw exec approval path', () => {
+  test('keeps approvals inside the managed state directory', () => {
+    expect(resolveOpenClawExecApprovalsPath('D:\\JustDo\\openclaw\\state')).toBe(
+      'D:\\JustDo\\openclaw\\state\\exec-approvals.json',
+    );
   });
 });
 

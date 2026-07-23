@@ -38,15 +38,17 @@ export class OpenClawExtensionCallbackServer {
   }
 
   get port(): number | null {
-    return this._port;
+    return this.server?.listening ? this._port : null;
   }
 
   get callbackUrl(): string | null {
-    return this._port ? `http://127.0.0.1:${this._port}/mcp/execute` : null;
+    const port = this.port;
+    return port ? `http://127.0.0.1:${port}/mcp/execute` : null;
   }
 
   get askUserCallbackUrl(): string | null {
-    return this._port ? `http://127.0.0.1:${this._port}/askuser` : null;
+    const port = this.port;
+    return port ? `http://127.0.0.1:${port}/askuser` : null;
   }
 
   /**
@@ -76,9 +78,11 @@ export class OpenClawExtensionCallbackServer {
    * Start the HTTP callback server on a free port.
    */
   async start(): Promise<number> {
-    if (this.server) {
+    if (this.server?.listening && this._port) {
       throw new Error('OpenClawExtensionCallbackServer is already running');
     }
+    this.server = null;
+    this._port = null;
 
     const port = await this.findFreePort();
 
@@ -86,13 +90,23 @@ export class OpenClawExtensionCallbackServer {
       const srv = http.createServer((req, res) => {
         this.handleRequest(req, res);
       });
+      let listening = false;
 
       srv.on('error', err => {
         log('ERROR', `HTTP server error: ${err.message}`);
-        reject(err);
+        if (!listening) {
+          reject(err);
+        }
+      });
+      srv.once('close', () => {
+        if (this.server === srv) {
+          this.server = null;
+          this._port = null;
+        }
       });
 
       srv.listen(port, '127.0.0.1', () => {
+        listening = true;
         this._port = port;
         this.server = srv;
         log('INFO', `Extension callback server listening on http://127.0.0.1:${port}`);

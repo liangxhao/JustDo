@@ -125,7 +125,7 @@ async function main() {
         target: 'es2023',
         outfile: outFile,
         // Bundle all dependencies except SDK imports (resolved by jiti at runtime).
-        // This inlines @sinclair/typebox and other small deps so the runtime
+        // This inlines typebox and other small deps so the runtime
         // doesn't need them in node_modules.
         external: SDK_EXTERNALS,
         plugins: [openclawInternalsPlugin],
