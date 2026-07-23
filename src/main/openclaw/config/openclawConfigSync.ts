@@ -89,6 +89,242 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 };
 
+type OpenClawConfigVerification = {
+  ok: boolean;
+  error?: string;
+};
+
+const containsBuiltinModelRef = (value: unknown): boolean => {
+  if (typeof value === 'string') {
+    return (
+      value === OpenClawProviderId.BuiltinModels ||
+      value.startsWith(`${OpenClawProviderId.BuiltinModels}/`)
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.some(containsBuiltinModelRef);
+  }
+  return isRecord(value) && Object.values(value).some(containsBuiltinModelRef);
+};
+
+export const verifyLoggedOutOpenClawConfig = (
+  configPath: string,
+): OpenClawConfigVerification => {
+  let content: string;
+  try {
+    content = fs.readFileSync(configPath, 'utf8');
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Failed to read synced OpenClaw config at ${configPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+
+  if (content.includes('${JUSTDO_APIKEY_BUILTIN_MODELS}')) {
+    return {
+      ok: false,
+      error: `OpenClaw logout config verification failed at ${configPath}: built-in API key placeholder remains.`,
+    };
+  }
+
+  let config: unknown;
+  try {
+    config = JSON.parse(content);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `OpenClaw logout config verification failed at ${configPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  if (!isRecord(config)) {
+    return {
+      ok: false,
+      error: `OpenClaw logout config verification failed at ${configPath}: root must be an object.`,
+    };
+  }
+
+  const models = isRecord(config.models) ? config.models : {};
+  const providers = isRecord(models.providers) ? models.providers : {};
+  if (Object.prototype.hasOwnProperty.call(providers, OpenClawProviderId.BuiltinModels)) {
+    return {
+      ok: false,
+      error: `OpenClaw logout config verification failed at ${configPath}: built-in provider remains.`,
+    };
+  }
+
+  const agents = isRecord(config.agents) ? config.agents : {};
+  const defaults = isRecord(agents.defaults) ? agents.defaults : {};
+  const defaultMemorySearch = isRecord(defaults.memorySearch) ? defaults.memorySearch : {};
+  if (
+    containsBuiltinModelRef(defaults.model) ||
+    defaultMemorySearch.provider === OpenClawProviderId.BuiltinModels
+  ) {
+    return {
+      ok: false,
+      error: `OpenClaw logout config verification failed at ${configPath}: default built-in model reference remains.`,
+    };
+  }
+
+  if (
+    Array.isArray(agents.list) &&
+    agents.list.some(agent => isRecord(agent) && containsBuiltinModelRef(agent.model))
+  ) {
+    return {
+      ok: false,
+      error: `OpenClaw logout config verification failed at ${configPath}: agent built-in model reference remains.`,
+    };
+  }
+
+  return { ok: true };
+};
+
+const constrainAgentEntryToAvailableModels = (
+  entry: Record<string, unknown>,
+  fallbackPrimaryModel: string,
+  availableModelRefs: ReadonlySet<string>,
+): Record<string, unknown> => {
+  const model = isRecord(entry.model) ? entry.model : {};
+  const primary = typeof model.primary === 'string' ? model.primary : '';
+  if (primary && availableModelRefs.has(primary)) {
+    return entry;
+  }
+  return {
+    ...entry,
+    model: {
+      ...model,
+      primary: fallbackPrimaryModel,
+    },
+  };
+};
+
+const buildAuthScopedOpenClawConfig = (
+  existingConfig: Record<string, unknown>,
+  managedConfig: Record<string, unknown>,
+  reason: string,
+): Record<string, unknown> => {
+  const isLogin = reason === BuiltinModelSyncReason.AuthLogin;
+  const existingModels = isRecord(existingConfig.models) ? existingConfig.models : {};
+  const managedModels = isRecord(managedConfig.models) ? managedConfig.models : {};
+  const existingProviders = isRecord(existingModels.providers)
+    ? existingModels.providers
+    : {};
+  const managedProviders = isRecord(managedModels.providers)
+    ? managedModels.providers
+    : {};
+  const hasManagedBuiltinProvider = Object.prototype.hasOwnProperty.call(
+    managedProviders,
+    OpenClawProviderId.BuiltinModels,
+  );
+  const providers = { ...existingProviders };
+  delete providers[OpenClawProviderId.BuiltinModels];
+  if (isLogin && hasManagedBuiltinProvider) {
+    providers[OpenClawProviderId.BuiltinModels] =
+      managedProviders[OpenClawProviderId.BuiltinModels];
+  }
+
+  const existingAgents = isRecord(existingConfig.agents) ? existingConfig.agents : {};
+  const managedAgents = isRecord(managedConfig.agents) ? managedConfig.agents : {};
+  const existingDefaults = isRecord(existingAgents.defaults)
+    ? existingAgents.defaults
+    : {};
+  const managedDefaults = isRecord(managedAgents.defaults) ? managedAgents.defaults : {};
+  const defaults = { ...existingDefaults };
+  const managedDefaultModel = isRecord(managedDefaults.model)
+    ? managedDefaults.model
+    : undefined;
+  const managedDefaultPrimary =
+    typeof managedDefaultModel?.primary === 'string' ? managedDefaultModel.primary : '';
+  const existingFallbackModel =
+    isRecord(defaults.model) && !containsBuiltinModelRef(defaults.model)
+      ? defaults.model
+      : undefined;
+
+  const shouldRemoveBuiltinRefs = !isLogin || !hasManagedBuiltinProvider;
+  if (!shouldRemoveBuiltinRefs) {
+    if (
+      managedDefaultPrimary.startsWith(`${OpenClawProviderId.BuiltinModels}/`) &&
+      (!defaults.model || containsBuiltinModelRef(defaults.model))
+    ) {
+      defaults.model = managedDefaultModel;
+    }
+    const managedMemorySearch = isRecord(managedDefaults.memorySearch)
+      ? managedDefaults.memorySearch
+      : undefined;
+    if (managedMemorySearch?.provider === OpenClawProviderId.BuiltinModels) {
+      defaults.memorySearch = managedMemorySearch;
+    }
+  } else {
+    if (containsBuiltinModelRef(defaults.model)) {
+      if (managedDefaultPrimary && !containsBuiltinModelRef(managedDefaultModel)) {
+        defaults.model = managedDefaultModel;
+      } else {
+        delete defaults.model;
+      }
+    }
+    const memorySearch = isRecord(defaults.memorySearch) ? defaults.memorySearch : undefined;
+    if (
+      memorySearch?.provider === OpenClawProviderId.BuiltinModels ||
+      Object.keys(providers).length === 0
+    ) {
+      defaults.memorySearch = { enabled: false };
+    }
+  }
+
+  let agentList = existingAgents.list;
+  if (shouldRemoveBuiltinRefs && Array.isArray(existingAgents.list)) {
+    const managedList = Array.isArray(managedAgents.list) ? managedAgents.list : [];
+    agentList = existingAgents.list.map(entry => {
+      if (!isRecord(entry) || !containsBuiltinModelRef(entry.model)) {
+        return entry;
+      }
+      const id = typeof entry.id === 'string' ? entry.id : '';
+      const managedEntry = managedList.find(
+        candidate => isRecord(candidate) && candidate.id === id,
+      );
+      const fallbackModel =
+        isRecord(managedEntry) &&
+        isRecord(managedEntry.model) &&
+        !containsBuiltinModelRef(managedEntry.model)
+          ? managedEntry.model
+          : managedDefaultPrimary && !containsBuiltinModelRef(managedDefaultModel)
+            ? managedDefaultModel
+            : existingFallbackModel;
+      const nextEntry = { ...entry };
+      if (fallbackModel) {
+        nextEntry.model = fallbackModel;
+      } else {
+        delete nextEntry.model;
+      }
+      return nextEntry;
+    });
+  }
+
+  const models: Record<string, unknown> = {
+    ...existingModels,
+    ...(Object.prototype.hasOwnProperty.call(existingModels, 'mode')
+      ? {}
+      : { mode: managedModels.mode }),
+    providers,
+  };
+  if (Object.keys(providers).length === 0) {
+    delete models.providers;
+  }
+
+  return {
+    ...existingConfig,
+    models,
+    agents: {
+      ...existingAgents,
+      defaults,
+      ...(agentList === undefined ? {} : { list: agentList }),
+    },
+  };
+};
+
 export const mergeOpenClawPluginConfig = (
   existingPlugins: Record<string, unknown>,
   managedEntries: Record<string, unknown>,
@@ -219,6 +455,32 @@ export const hasOpenClawConfigChanged = (
   } catch {
     return true;
   }
+};
+
+const verifyOpenClawConfigMatches = (
+  configPath: string,
+  expectedConfig: Record<string, unknown>,
+): OpenClawConfigVerification => {
+  let actualContent: string;
+  try {
+    actualContent = fs.readFileSync(configPath, 'utf8');
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Failed to read back OpenClaw config at ${configPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+
+  if (hasOpenClawConfigChanged(actualContent, expectedConfig)) {
+    return {
+      ok: false,
+      error: `OpenClaw config read-back verification failed at ${configPath}: persisted content does not match the requested config.`,
+    };
+  }
+
+  return { ok: true };
 };
 
 export const resolveOpenClawExecApprovalsPath = (stateDir: string): string =>
@@ -504,6 +766,31 @@ export type OpenClawConfigSyncResult = {
   agentsMdWarning?: string;
 };
 
+const buildVerifiedConfigSyncResult = (
+  configPath: string,
+  expectedConfig: Record<string, unknown>,
+  changed: boolean,
+): OpenClawConfigSyncResult => {
+  const verification = verifyOpenClawConfigMatches(configPath, expectedConfig);
+  if (!verification.ok) {
+    return {
+      ok: false,
+      changed: false,
+      configChanged: false,
+      requiresGatewayRestart: false,
+      configPath,
+      error: verification.error,
+    };
+  }
+  return {
+    ok: true,
+    changed,
+    configChanged: changed,
+    requiresGatewayRestart: false,
+    configPath,
+  };
+};
+
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
@@ -532,18 +819,27 @@ export class OpenClawConfigSync {
 
   sync(reason: string): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
+    const isAuthLifecycleSync =
+      reason === BuiltinModelSyncReason.AuthLogin ||
+      reason === BuiltinModelSyncReason.AuthLogout;
     let currentContent = '';
+    let existingConfig: Record<string, unknown> | null = null;
     let existingPlugins: Record<string, unknown> = {};
     let existingSkills: Record<string, unknown> = {};
+    let existingModels: Record<string, unknown> = {};
     try {
       currentContent = fs.readFileSync(configPath, 'utf8');
-      const existingConfig = JSON.parse(currentContent) as unknown;
-      if (isRecord(existingConfig)) {
-        if (isRecord(existingConfig.plugins)) {
-          existingPlugins = existingConfig.plugins;
+      const parsedConfig = JSON.parse(currentContent) as unknown;
+      if (isRecord(parsedConfig)) {
+        existingConfig = parsedConfig;
+        if (isRecord(parsedConfig.plugins)) {
+          existingPlugins = parsedConfig.plugins;
         }
-        if (isRecord(existingConfig.skills)) {
-          existingSkills = existingConfig.skills;
+        if (isRecord(parsedConfig.skills)) {
+          existingSkills = parsedConfig.skills;
+        }
+        if (isRecord(parsedConfig.models)) {
+          existingModels = parsedConfig.models;
         }
       }
     } catch {
@@ -560,8 +856,10 @@ export class OpenClawConfigSync {
       const workspaceDir = (coworkConfig.workingDirectory || '').trim();
       const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
       const resolvedWorkspaceDir = workspaceDir || defaultWorkspaceDir;
-      this.repairWorkspaceState(resolvedWorkspaceDir);
-      this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
+      if (!isAuthLifecycleSync) {
+        this.repairWorkspaceState(resolvedWorkspaceDir);
+        this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
+      }
       return result;
     }
 
@@ -646,7 +944,9 @@ export class OpenClawConfigSync {
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
     const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
     const resolvedWorkspaceDir = workspaceDir ? path.resolve(workspaceDir) : defaultWorkspaceDir;
-    this.repairWorkspaceState(resolvedWorkspaceDir);
+    if (!isAuthLifecycleSync) {
+      this.repairWorkspaceState(resolvedWorkspaceDir);
+    }
 
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
       isBundledPluginAvailable(id),
@@ -660,6 +960,26 @@ export class OpenClawConfigSync {
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig();
 
+    const managedModels: Record<string, unknown> = {
+      mode: 'replace',
+      pricing: {
+        enabled: false,
+      },
+      providers: allProvidersMap,
+    };
+    if (reason === BuiltinModelSyncReason.AuthLogout) {
+      if (Object.prototype.hasOwnProperty.call(existingModels, 'pricing')) {
+        managedModels.pricing = existingModels.pricing;
+      } else {
+        delete managedModels.pricing;
+      }
+    }
+    const availableModelRefs = new Set(
+      Object.entries(allProvidersMap).flatMap(([providerId, provider]) =>
+        provider.models.map(model => `${providerId}/${model.id}`),
+      ),
+    );
+
     const managedConfig: Record<string, unknown> = {
       gateway: {
         mode: 'local',
@@ -669,13 +989,7 @@ export class OpenClawConfigSync {
           allowedOrigins: ['*'],
         },
       },
-      models: {
-        mode: 'replace',
-        pricing: {
-          enabled: false,
-        },
-        providers: allProvidersMap,
-      },
+      models: managedModels,
       diagnostics: {
         stuckSessionWarnMs: OPENCLAW_STUCK_SESSION_WARN_MS,
         stuckSessionAbortMs: OPENCLAW_STUCK_SESSION_ABORT_MS,
@@ -702,7 +1016,7 @@ export class OpenClawConfigSync {
             archiveAfterMinutes: OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES,
           },
         },
-        ...this.buildAgentsList(primaryModel),
+        ...this.buildAgentsList(primaryModel, availableModelRefs),
       },
       session: {
         dmScope: 'per-account-channel-peer',
@@ -776,16 +1090,22 @@ export class OpenClawConfigSync {
 
     // IM channel config syncing removed — channels disabled pending future adaptation
 
-    const nextContent = `${JSON.stringify(managedConfig, null, 2)}\n`;
-    const configChanged = hasOpenClawConfigChanged(currentContent, managedConfig);
-    const extensionContractsChanged = buildBundledExtensionToolContracts(
-      { askUser: askUserConfig },
-      isBundledPluginAvailable,
-    ).reduce(
-      (changed, contract) =>
-        this.syncExtensionToolContracts(contract.id, contract.tools) || changed,
-      false,
-    );
+    const configToPersist =
+      isAuthLifecycleSync && existingConfig
+        ? buildAuthScopedOpenClawConfig(existingConfig, managedConfig, reason)
+        : managedConfig;
+    const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
+    const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
+    const extensionContractsChanged = isAuthLifecycleSync
+      ? false
+      : buildBundledExtensionToolContracts(
+          { askUser: askUserConfig },
+          isBundledPluginAvailable,
+        ).reduce(
+          (changed, contract) =>
+            this.syncExtensionToolContracts(contract.id, contract.tools) || changed,
+          false,
+        );
 
     if (configChanged) {
       try {
@@ -805,16 +1125,30 @@ export class OpenClawConfigSync {
       }
     }
 
-    const sessionStoreChanged = providerSelection
+    const verification = verifyOpenClawConfigMatches(configPath, configToPersist);
+    if (!verification.ok) {
+      return {
+        ok: false,
+        changed: false,
+        configChanged: false,
+        requiresGatewayRestart: false,
+        configPath,
+        error: verification.error,
+      };
+    }
+
+    const sessionStoreChanged = !isAuthLifecycleSync && providerSelection
       ? this.syncManagedSessionStore(providerSelection, allProvidersMap)
       : false;
 
-    // JustDo does not implement command approval UI. Keep OpenClaw exec
-    // approvals disabled so command execution policy stays inside OpenClaw.
-    this.ensureExecApprovalDefaults();
+    if (!isAuthLifecycleSync) {
+      // JustDo does not implement command approval UI. Keep OpenClaw exec
+      // approvals disabled so command execution policy stays inside OpenClaw.
+      this.ensureExecApprovalDefaults();
 
-    // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
-    this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
+      // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
+      this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
+    }
 
     return {
       ok: true,
@@ -1130,7 +1464,10 @@ export class OpenClawConfigSync {
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
    */
-  private buildAgentsList(defaultPrimaryModel: string): { list?: Array<Record<string, unknown>> } {
+  private buildAgentsList(
+    defaultPrimaryModel: string,
+    availableModelRefs: ReadonlySet<string>,
+  ): { list?: Array<Record<string, unknown>> } {
     const agents = this.getAgents?.() ?? [];
     const mainAgent = agents.find(agent => agent.id === 'main');
     const displayNameMap = getProviderDisplayNameMap();
@@ -1152,7 +1489,13 @@ export class OpenClawConfigSync {
         fallbackPrimaryModel: defaultPrimaryModel,
         displayNameMap,
       }),
-    ];
+    ].map(entry =>
+      constrainAgentEntryToAvailableModels(
+        entry,
+        defaultPrimaryModel,
+        availableModelRefs,
+      ),
+    );
 
     return list.length > 0 ? { list } : {};
   }
@@ -1241,73 +1584,27 @@ export class OpenClawConfigSync {
       currentContent = '';
     }
 
-    if (
-      reason === BuiltinModelSyncReason.AuthLogout &&
-      currentContent &&
-      currentContent !== nextContent
-    ) {
+    const isAuthLifecycleSync =
+      reason === BuiltinModelSyncReason.AuthLogin ||
+      reason === BuiltinModelSyncReason.AuthLogout;
+    if (isAuthLifecycleSync && currentContent && currentContent !== nextContent) {
       try {
         const existing = JSON.parse(currentContent);
         if (isRecord(existing)) {
-          const existingDiagnostics = isRecord(existing.diagnostics)
-            ? existing.diagnostics
-            : {};
-          const existingAgents = isRecord(existing.agents) ? existing.agents : {};
-          const existingAgentDefaults = isRecord(existingAgents.defaults)
-            ? { ...existingAgents.defaults }
-            : {};
-          delete existingAgentDefaults.model;
-          delete existingAgentDefaults.memorySearch;
-          const sanitizedAgentList = Array.isArray(existingAgents.list)
-            ? existingAgents.list.map(agent => {
-                if (!isRecord(agent)) return agent;
-                const sanitizedAgent = { ...agent };
-                delete sanitizedAgent.model;
-                return sanitizedAgent;
-              })
-            : existingAgents.list;
-          const sanitizedConfig = {
-            ...existing,
-            models: minimalConfig.models,
-            agents: {
-              ...existingAgents,
-              defaults: {
-                ...existingAgentDefaults,
-                memorySearch: { enabled: false },
-              },
-              ...(sanitizedAgentList === undefined ? {} : { list: sanitizedAgentList }),
-            },
-            diagnostics: {
-              ...existingDiagnostics,
-              otel: {
-                enabled: false,
-              },
-            },
-            update: connectivityConfig.update,
-            ...hookConfig,
-            meta: minimalConfig.meta,
-          };
+          const sanitizedConfig = buildAuthScopedOpenClawConfig(
+            existing,
+            minimalConfig,
+            reason,
+          );
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
             ensureDir(path.dirname(configPath));
             const tmpPath = `${configPath}.tmp-${Date.now()}`;
             fs.writeFileSync(tmpPath, sanitizedContent, 'utf8');
             fs.renameSync(tmpPath, configPath);
-            return {
-              ok: true,
-              changed: true,
-              configChanged: true,
-              requiresGatewayRestart: false,
-              configPath,
-            };
+            return buildVerifiedConfigSyncResult(configPath, sanitizedConfig, true);
           }
-          return {
-            ok: true,
-            changed: false,
-            configChanged: false,
-            requiresGatewayRestart: false,
-            configPath,
-          };
+          return buildVerifiedConfigSyncResult(configPath, sanitizedConfig, false);
         }
       } catch {
         // Malformed JSON falls through to a complete minimal-config rewrite.
@@ -1317,7 +1614,7 @@ export class OpenClawConfigSync {
     // If the file already has a meaningful config (from a previous sync or
     // user configuration), don't downgrade it to the minimal version.
     // Check for models (API configured), plugin entries, or gateway.mode already set.
-    // Auth logout was sanitized above so unrelated user-owned config survives.
+    // Authentication sync was sanitized above so unrelated user-owned config survives.
     if (
       reason !== BuiltinModelSyncReason.AuthLogout &&
       currentContent &&
@@ -1353,21 +1650,9 @@ export class OpenClawConfigSync {
               const tmpPath = `${configPath}.tmp-${Date.now()}`;
               fs.writeFileSync(tmpPath, mergedContent, 'utf8');
               fs.renameSync(tmpPath, configPath);
-              return {
-                ok: true,
-                changed: true,
-                configChanged: true,
-                requiresGatewayRestart: false,
-                configPath,
-              };
+              return buildVerifiedConfigSyncResult(configPath, mergedConfig, true);
             }
-            return {
-              ok: true,
-              changed: false,
-              configChanged: false,
-              requiresGatewayRestart: false,
-              configPath,
-            };
+            return buildVerifiedConfigSyncResult(configPath, mergedConfig, false);
           }
         }
       } catch {
@@ -1376,13 +1661,7 @@ export class OpenClawConfigSync {
     }
 
     if (!hasOpenClawConfigChanged(currentContent, minimalConfig)) {
-      return {
-        ok: true,
-        changed: false,
-        configChanged: false,
-        requiresGatewayRestart: false,
-        configPath,
-      };
+      return buildVerifiedConfigSyncResult(configPath, minimalConfig, false);
     }
 
     try {
@@ -1390,13 +1669,7 @@ export class OpenClawConfigSync {
       const tmpPath = `${configPath}.tmp-${Date.now()}`;
       fs.writeFileSync(tmpPath, nextContent, 'utf8');
       fs.renameSync(tmpPath, configPath);
-      return {
-        ok: true,
-        changed: true,
-        configChanged: true,
-        requiresGatewayRestart: false,
-        configPath,
-      };
+      return buildVerifiedConfigSyncResult(configPath, minimalConfig, true);
     } catch (error) {
       return {
         ok: false,

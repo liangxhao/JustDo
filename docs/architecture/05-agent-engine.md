@@ -224,40 +224,9 @@ JustDo 生成的所有 `openai-completions` 模型条目都显式设置
 `agents.defaults.memorySearch`，复用同一个内置 provider 的 base URL 和 API key。若没有
 embedding 模型，则显式设置 `memorySearch.enabled: false`，避免 OpenClaw 回退到 OpenAI。
 
-`syncBuiltinModelProvider()` 要求调用方显式传入 `enabled` 或 `disabled` 访问状态。
-禁用路径不会请求模型接口，并会从持久化 provider 配置中移除 `builtin_models`。
-
-`BuiltinModelLifecycle` 是认证生命周期与模型/OpenClaw 配置之间的统一边界：
-
-- 登录状态在 Main 进程确认并持久化后，调用 `refreshAfterLogin()`。
-- 退出状态在 Main 进程确认后，调用 `refreshAfterLogout()`。
-- 已认证会话的设置页手动刷新调用 `refreshAuthenticatedModels()`。
-
-每个入口都会依次更新 SQLite `app_config`、同步 `openclaw.json`，然后通过
-`builtinModels:changed` 通知所有 Renderer。Renderer 会重新读取配置，更新内存中的
-`configService`、Redux 模型列表和已打开的模型设置页。退出登录且没有自定义模型时，
-当前模型选择会被清空。
-
-生命周期协调器和 `syncBuiltinModelProvider()` 都使用 generation 防止旧的登录刷新在
-随后的退出操作后写回 provider、同步旧配置或发送过期通知。认证 handler 不能把
-Renderer 传入的 `isLoggedIn` 布尔值作为授权依据；它必须先在 Main 进程校验并提交真实
-认证状态，再调用对应入口。
-
-当前仓库尚未包含认证 handler，因此启动路径仍显式使用 `Enabled`，设置页手动刷新也
-直接调用 `refreshAuthenticatedModels()`。认证模块接入时必须完成两个调用点：启动时
-根据 Main 进程恢复出的可信状态选择 `Enabled` 或 `Disabled`；手动刷新前由 Main 进程
-确认已登录，避免未登录用户通过 IPC 重新启用内置模型。
-
-`refreshAfterLogout()` 的职责是移除 provider、写入 OpenClaw 配置并刷新 UI；它不负责
-清理认证凭据，也不保证中止已经使用内置模型启动的活动任务。认证模块必须先阻止新的
-内置模型任务，并根据产品的撤权语义停止或强制重启相关运行，再清理凭据。普通配置同步
-在存在活动任务时可能延迟重启，不能单独作为即时撤权保证。
-
-退出后如果没有其他可用 provider，`auth-logout` 配置同步必须从 `openclaw.json` 删除
-所有 provider，以及默认和逐 Agent 的模型引用，并禁用 memory search；插件、技能和
-其他与模型无关的配置必须保留。这个定向清理会在 Gateway 环境移除
-`JUSTDO_APIKEY_BUILTIN_MODELS` 之前删除文件中的对应占位符，避免后续重启因引用不存在的
-环境变量而失败。非退出场景仍保留原有配置保护行为。
+登录/退出与内置模型、`openclaw.json`、Gateway 环境之间的接入契约独立记录在
+[`docs/features/authentication-builtin-model-lifecycle.md`](../features/authentication-builtin-model-lifecycle.md)，
+认证模块应只依赖其中定义的 Main 进程生命周期入口。
 
 ## Startup And Recovery
 

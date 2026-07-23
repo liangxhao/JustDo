@@ -7,6 +7,7 @@ import {
 
 type OpenClawConfigSyncResult = {
   success: boolean;
+  configSynced?: boolean;
   error?: string;
 };
 
@@ -16,39 +17,28 @@ type BuiltinModelLifecycleDependencies = {
   notifyModelsChanged: () => void;
 };
 
-export type BuiltinModelLifecycleResult = {
-  applied: boolean;
-  superseded: boolean;
-};
-
 export class BuiltinModelLifecycle {
   private generation = 0;
   private configSyncQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly dependencies: BuiltinModelLifecycleDependencies) {}
 
-  refreshAfterLogin(): Promise<BuiltinModelLifecycleResult> {
+  refreshAfterLogin(): Promise<void> {
     return this.refresh(BuiltinModelAccess.Enabled, BuiltinModelSyncReason.AuthLogin);
   }
 
-  refreshAfterLogout(): Promise<BuiltinModelLifecycleResult> {
+  refreshAfterLogout(): Promise<void> {
     return this.refresh(BuiltinModelAccess.Disabled, BuiltinModelSyncReason.AuthLogout);
-  }
-
-  refreshAuthenticatedModels(
-    reason = BuiltinModelSyncReason.ManualRefresh,
-  ): Promise<BuiltinModelLifecycleResult> {
-    return this.refresh(BuiltinModelAccess.Enabled, reason);
   }
 
   private async refresh(
     access: BuiltinModelAccess,
     reason: string,
-  ): Promise<BuiltinModelLifecycleResult> {
+  ): Promise<void> {
     const generation = ++this.generation;
     await syncBuiltinModelProvider(this.dependencies.getStore(), { access });
     if (generation !== this.generation) {
-      return { applied: false, superseded: true };
+      return;
     }
 
     let syncResult: OpenClawConfigSyncResult;
@@ -61,17 +51,22 @@ export class BuiltinModelLifecycle {
       throw error;
     }
     if (generation !== this.generation) {
-      return { applied: false, superseded: true };
+      return;
     }
 
     this.dependencies.notifyModelsChanged();
     if (!syncResult.success) {
+      if (syncResult.configSynced) {
+        const gatewayError = syncResult.error || 'Gateway did not apply the updated model config';
+        console.warn(
+          `[BuiltinModelLifecycle] Model config was synced after ${reason}, but Gateway application failed: ${gatewayError}`,
+        );
+        return;
+      }
       throw new Error(
         syncResult.error || `Failed to sync OpenClaw config after ${reason}`,
       );
     }
-
-    return { applied: true, superseded: false };
   }
 
   private enqueueOpenClawConfigSync(reason: string): Promise<OpenClawConfigSyncResult> {

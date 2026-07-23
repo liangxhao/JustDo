@@ -89,7 +89,14 @@ const ModelSettingsTab: React.FC<Props> = ({
   const importInputRef = useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const activeConfig = providers[activeProvider];
+  const activeConfig: ProviderConfig = providers[activeProvider] ??
+    Object.values(providers)[0] ?? {
+      enabled: false,
+      apiKey: '',
+      baseUrl: '',
+      apiFormat: 'openai',
+      models: [],
+    };
   const isReadOnly = isProviderReadOnly(activeProvider, activeConfig);
   const isBaseUrlLocked = false;
   const sortedProviders = Object.entries(providers).sort(([leftKey], [rightKey]) => {

@@ -1,17 +1,27 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+import { setStoreGetter } from '../../cowork/providerApiConfig';
 import {
   OpenClawConfigSync,
   type OpenClawConfigSyncResult,
+  verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
+
+vi.mock('electron', () => ({
+  app: {
+    isPackaged: false,
+    getAppPath: () => process.cwd(),
+  },
+}));
 
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
+  setStoreGetter(() => null);
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -25,7 +35,14 @@ const writeExistingBuiltinConfig = (): string => {
     configPath,
     JSON.stringify({
       gateway: { mode: 'local' },
+      customFeature: {
+        enabled: true,
+        nested: { value: 'preserve-me' },
+      },
       models: {
+        pricing: {
+          enabled: true,
+        },
         providers: {
           builtin_models: {
             apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
@@ -66,6 +83,52 @@ const writeExistingBuiltinConfig = (): string => {
   return configPath;
 };
 
+const writeExistingMixedProviderConfig = (): string => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-auth-mixed-config-'));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, 'openclaw.json');
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      gateway: { mode: 'local', customSetting: 'keep-me' },
+      customFeature: { enabled: true },
+      models: {
+        mode: 'replace',
+        pricing: { enabled: true },
+        providers: {
+          builtin_models: {
+            apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+            models: [{ id: 'builtin-model' }],
+          },
+          'custom-provider': {
+            apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+            models: [{ id: 'custom-model' }],
+          },
+        },
+      },
+      agents: {
+        defaults: {
+          model: { primary: 'custom-provider/custom-model' },
+          timeoutSeconds: 120,
+        },
+        list: [
+          {
+            id: 'main',
+            default: true,
+            model: { primary: 'custom-provider/custom-model' },
+          },
+          {
+            id: 'worker',
+            model: { primary: 'builtin_models/builtin-model' },
+          },
+        ],
+      },
+    }),
+    'utf8',
+  );
+  return configPath;
+};
+
 const writeMinimalConfig = (configPath: string, reason: string): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
     engineManager: {
@@ -91,6 +154,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(content).not.toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
     const config = JSON.parse(content);
     expect(config.models.providers).toBeUndefined();
+    expect(config.models.pricing).toEqual({ enabled: true });
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.defaults.memorySearch).toEqual({ enabled: false });
     expect(config.agents.defaults.timeoutSeconds).toBe(120);
@@ -106,6 +170,7 @@ describe('OpenClaw auth logout config sync', () => {
       config: { mode: 'keep-me' },
     });
     expect(config.skills.entries.docx).toEqual({ enabled: false });
+    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
   });
 
   test('keeps the existing preservation behavior for non-logout minimal syncs', () => {
@@ -115,5 +180,315 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(true);
     expect(fs.readFileSync(configPath, 'utf8')).toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
+  });
+
+  test('minimal logout removes only built-in model config and preserves custom selections', () => {
+    const configPath = writeExistingMixedProviderConfig();
+
+    const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout);
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.models.providers).toEqual({
+      'custom-provider': {
+        apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+        models: [{ id: 'custom-model' }],
+      },
+    });
+    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.defaults.timeoutSeconds).toBe(120);
+    expect(config.agents.list[0].model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.list[1].model.primary).toBe('custom-provider/custom-model');
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
+    expect(config.customFeature).toEqual({ enabled: true });
+    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
+  });
+
+  test('minimal login without fetched models preserves custom config and removes stale built-in refs', () => {
+    const configPath = writeExistingMixedProviderConfig();
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.agents.defaults.model = { primary: 'builtin_models/builtin-model' };
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogin);
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.models.providers).toEqual({
+      'custom-provider': {
+        apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+        models: [{ id: 'custom-model' }],
+      },
+    });
+    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.agents.defaults.model).toBeUndefined();
+    expect(config.agents.list[0].model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.list[1].model).toBeUndefined();
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
+    expect(config.customFeature).toEqual({ enabled: true });
+  });
+
+  test('rejects a logout config that still contains the built-in provider', () => {
+    const configPath = writeExistingBuiltinConfig();
+
+    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({
+      ok: false,
+      error: expect.stringContaining('built-in API key placeholder remains'),
+    });
+  });
+
+  test('rejects stale built-in agent model references after provider removal', () => {
+    const configPath = writeExistingBuiltinConfig();
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    config.models = { pricing: { enabled: false } };
+    fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+
+    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({
+      ok: false,
+      error: expect.stringContaining('default built-in model reference remains'),
+    });
+  });
+
+  test('builds the Agent list with a custom fallback after the built-in provider is removed', () => {
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getDesiredVersion: () => '2026.6.11',
+      },
+      getCoworkConfig: () => ({}),
+      getAgents: () => [
+        {
+          id: 'main',
+          name: 'Main',
+          description: '',
+          systemPrompt: '',
+          identity: '',
+          model: 'builtin_models/chat-model',
+          icon: '',
+          skillIds: [],
+          enabled: true,
+          isDefault: true,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+    } as never);
+
+    const result = (
+      sync as unknown as {
+        buildAgentsList: (
+          fallback: string,
+          available: ReadonlySet<string>,
+        ) => { list?: Array<Record<string, unknown>> };
+      }
+    ).buildAgentsList(
+      'custom-provider/custom-model',
+      new Set(['custom-provider/custom-model']),
+    );
+
+    expect(result.list?.[0]).toMatchObject({
+      id: 'main',
+      model: {
+        primary: 'custom-provider/custom-model',
+      },
+    });
+  });
+
+  test('syncs the full logout config with a custom provider and stale built-in Agent model', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-full-auth-logout-'));
+    temporaryDirectories.push(directory);
+    const stateDir = path.join(directory, 'state');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        gateway: { mode: 'local' },
+        customFeature: {
+          enabled: true,
+          nested: { value: 'preserve-me' },
+        },
+        models: {
+          mode: 'replace',
+          pricing: { enabled: true },
+          providers: {
+            builtin_models: {
+              apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+              models: [{ id: 'chat-model' }],
+            },
+            'custom-provider': {
+              apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+              models: [{ id: 'custom-model' }],
+            },
+          },
+        },
+        agents: {
+          defaults: {
+            model: { primary: 'builtin_models/chat-model' },
+          },
+          list: [
+            {
+              id: 'main',
+              default: true,
+              model: { primary: 'builtin_models/chat-model' },
+            },
+          ],
+        },
+      }),
+      'utf8',
+    );
+    const appConfig = {
+      model: {
+        defaultModel: 'custom-model',
+        defaultModelProvider: 'custom_1',
+      },
+      providers: {
+        custom_1: {
+          enabled: true,
+          apiKey: 'custom-secret',
+          baseUrl: 'https://custom.example/v1',
+          apiFormat: 'openai' as const,
+          displayName: 'Custom-Provider',
+          models: [{ id: 'custom-model', name: 'Custom Model' }],
+        },
+      },
+    };
+    setStoreGetter(
+      () =>
+        ({
+          get: () => appConfig,
+        }) as never,
+    );
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.6.11',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [
+        {
+          id: 'main',
+          name: 'Main',
+          description: '',
+          systemPrompt: '',
+          identity: '',
+          model: 'builtin_models/chat-model',
+          icon: '',
+          skillIds: [],
+          enabled: true,
+          isDefault: true,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+    } as never);
+
+    const result = sync.sync(BuiltinModelSyncReason.AuthLogout);
+
+    expect(result.ok).toBe(true);
+    expect(result.configChanged).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.models.providers.builtin_models).toBeUndefined();
+    expect(config.models.providers['custom-provider']).toBeDefined();
+    expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.list[0].model.primary).toBe('custom-provider/custom-model');
+    expect(config.customFeature).toEqual({
+      enabled: true,
+      nested: { value: 'preserve-me' },
+    });
+    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
+  });
+
+  test('login adds only the built-in provider and preserves unrelated config', () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-auth-login-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        gateway: { mode: 'local', customSetting: 'keep-me' },
+        customFeature: { enabled: true },
+        models: {
+          mode: 'replace',
+          pricing: { enabled: true },
+          providers: {
+            'custom-provider': {
+              apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+              models: [{ id: 'custom-model' }],
+            },
+          },
+        },
+        agents: {
+          defaults: {
+            model: { primary: 'custom-provider/custom-model' },
+          },
+        },
+      }),
+      'utf8',
+    );
+    const appConfig = {
+      model: {
+        defaultModel: 'custom-model',
+        defaultModelProvider: 'custom_1',
+      },
+      providers: {
+        builtin_models: {
+          enabled: true,
+          apiKey: 'builtin-secret',
+          baseUrl: 'http://127.0.0.1:4000/v1',
+          apiFormat: 'openai' as const,
+          models: [{ id: 'builtin-model', name: 'Built-in Model' }],
+        },
+        custom_1: {
+          enabled: true,
+          apiKey: 'custom-secret',
+          baseUrl: 'https://custom.example/v1',
+          apiFormat: 'openai' as const,
+          displayName: 'Custom-Provider',
+          models: [{ id: 'custom-model', name: 'Custom Model' }],
+        },
+      },
+    };
+    setStoreGetter(
+      () =>
+        ({
+          get: () => appConfig,
+        }) as never,
+    );
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.6.11',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+    } as never);
+
+    const result = sync.sync(BuiltinModelSyncReason.AuthLogin);
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.models.providers.builtin_models.apiKey).toBe(
+      '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+    );
+    expect(config.models.providers['custom-provider']).toEqual({
+      apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+      models: [{ id: 'custom-model' }],
+    });
+    expect(config.models.pricing).toEqual({ enabled: true });
+    expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
+    expect(config.customFeature).toEqual({ enabled: true });
   });
 });

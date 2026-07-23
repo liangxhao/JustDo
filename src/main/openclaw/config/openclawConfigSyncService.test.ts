@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -127,7 +130,9 @@ describe('OpenClawConfigSyncService', () => {
     phase?: 'ready' | 'starting' | 'running' | 'error';
     waitForReload?: boolean;
     activeWorkloads?: boolean;
+    previousSecrets?: Record<string, string>;
     nextSecrets?: Record<string, string>;
+    configPath?: string;
   } = {}) => {
     let phase = options.phase ?? 'running';
     let processGeneration = 1;
@@ -148,7 +153,7 @@ describe('OpenClawConfigSyncService', () => {
       getStatus,
       getGatewayConfigReloadGeneration: vi.fn(() => 7),
       waitForGatewayConfigReload: vi.fn(async () => options.waitForReload ?? true),
-      getSecretEnvVars: vi.fn(() => ({})),
+      getSecretEnvVars: vi.fn(() => options.previousSecrets ?? {}),
       setSecretEnvVars: vi.fn(),
       getGatewayProcessGeneration: vi.fn(() => processGeneration),
       startGateway,
@@ -171,7 +176,7 @@ describe('OpenClawConfigSyncService', () => {
         changed: true,
         configChanged: true,
         requiresGatewayRestart: false,
-        configPath: 'openclaw.json',
+        configPath: options.configPath ?? 'openclaw.json',
       })),
       collectSecretEnvVars: vi.fn(() => options.nextSecrets ?? {}),
     };
@@ -205,6 +210,44 @@ describe('OpenClawConfigSyncService', () => {
       changed: true,
     });
     expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('restarts login only when the running Gateway needs the newly added secret', async () => {
+    const harness = createHarness({
+      nextSecrets: {
+        JUSTDO_APIKEY_BUILTIN_MODELS: 'builtin-secret',
+      },
+    });
+
+    await expect(
+      harness.service.syncConfig({ reason: 'auth-login' }),
+    ).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+    });
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+  });
+
+  it('hot-reloads login when the Gateway already has the same secret environment', async () => {
+    const secrets = {
+      JUSTDO_APIKEY_BUILTIN_MODELS: 'builtin-secret',
+    };
+    const harness = createHarness({
+      previousSecrets: secrets,
+      nextSecrets: secrets,
+      waitForReload: true,
+    });
+
+    await expect(
+      harness.service.syncConfig({ reason: 'auth-login' }),
+    ).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+    });
+    expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
@@ -249,5 +292,106 @@ describe('OpenClawConfigSyncService', () => {
 
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('rejects logout before changing secrets or restarting when the file still has built-in config', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-logout-verification-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        models: {
+          providers: {
+            builtin_models: {
+              apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+            },
+          },
+        },
+      }),
+      'utf8',
+    );
+    const harness = createHarness({
+      configPath,
+      nextSecrets: { JUSTDO_PROVIDER_API_KEY: 'legacy-unused' },
+    });
+
+    try {
+      await expect(
+        harness.service.syncConfig({ reason: 'auth-logout' }),
+      ).resolves.toMatchObject({
+        success: false,
+        configSynced: false,
+        error: expect.stringContaining('built-in API key placeholder remains'),
+      });
+      expect(harness.engineManager.setSecretEnvVars).not.toHaveBeenCalled();
+      expect(harness.stopGateway).not.toHaveBeenCalled();
+      expect(harness.startGateway).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('hot-reloads logout config without restarting when secrets are removed', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-logout-hot-reload-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        models: { pricing: { enabled: false } },
+        agents: { defaults: { memorySearch: { enabled: false } } },
+      }),
+      'utf8',
+    );
+    const harness = createHarness({
+      configPath,
+      waitForReload: true,
+      nextSecrets: { JUSTDO_PROVIDER_API_KEY: 'legacy-unused' },
+    });
+
+    try {
+      await expect(
+        harness.service.syncConfig({ reason: 'auth-logout' }),
+      ).resolves.toMatchObject({
+        success: true,
+        configSynced: true,
+      });
+      expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
+      expect(harness.stopGateway).not.toHaveBeenCalled();
+      expect(harness.startGateway).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not fall back to a restart when logout hot reload times out', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-logout-hot-reload-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        models: { pricing: { enabled: false } },
+        agents: { defaults: { memorySearch: { enabled: false } } },
+      }),
+      'utf8',
+    );
+    const harness = createHarness({
+      configPath,
+      waitForReload: false,
+      nextSecrets: { JUSTDO_PROVIDER_API_KEY: 'legacy-unused' },
+    });
+
+    try {
+      await expect(
+        harness.service.syncConfig({ reason: 'auth-logout' }),
+      ).resolves.toMatchObject({
+        success: false,
+        configSynced: true,
+        error: expect.stringContaining('native reload did not complete'),
+      });
+      expect(harness.stopGateway).not.toHaveBeenCalled();
+      expect(harness.startGateway).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

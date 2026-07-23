@@ -1,3 +1,4 @@
+import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import type { CoworkStore } from '../../data/coworkStore';
 import type {
   OpenClawEngineManager,
@@ -6,7 +7,10 @@ import type {
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
 import type { AskUserExtensionConfig } from './openclawConfigSync';
-import { OpenClawConfigSync } from './openclawConfigSync';
+import {
+  OpenClawConfigSync,
+  verifyLoggedOutOpenClawConfig,
+} from './openclawConfigSync';
 
 type OpenClawConfigSyncServiceDeps = {
   getCoworkStore: () => CoworkStore;
@@ -25,6 +29,7 @@ type SyncOpenClawConfigOptions = {
 type SyncOpenClawConfigResult = {
   success: boolean;
   changed: boolean;
+  configSynced: boolean;
   status?: OpenClawEngineStatus;
   error?: string;
 };
@@ -53,6 +58,14 @@ export const resolveOpenClawConfigApplyMode = (options: {
     ? 'native-reload'
     : 'none';
 };
+
+const resolveAuthLogoutConfigApplyMode = (options: {
+  gatewayPhase: OpenClawEngineStatus['phase'];
+  configChanged: boolean;
+}): OpenClawConfigApplyMode =>
+  options.gatewayPhase === 'running' && options.configChanged
+    ? 'native-reload'
+    : 'none';
 
 export type DeferredGatewayRestartAction = 'restart' | 'discard';
 
@@ -84,18 +97,39 @@ export class OpenClawConfigSyncService {
 
     const engineManager = this.deps.getOpenClawEngineManager();
     const statusBeforeSync = engineManager.getStatus();
+    const isAuthLifecycleSync =
+      options.reason === BuiltinModelSyncReason.AuthLogin ||
+      options.reason === BuiltinModelSyncReason.AuthLogout;
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
     const syncResult = this.getConfigSync().sync(options.reason);
     if (!syncResult.ok) {
-      const status = engineManager.setExternalError(
-        `OpenClaw config sync failed: ${syncResult.error || 'unknown error'}`,
-      );
+      const status = isAuthLifecycleSync
+        ? statusBeforeSync
+        : engineManager.setExternalError(
+            `OpenClaw config sync failed: ${syncResult.error || 'unknown error'}`,
+          );
       return {
         success: false,
         changed: false,
+        configSynced: false,
         status,
         error: syncResult.error,
       };
+    }
+
+    if (options.reason === BuiltinModelSyncReason.AuthLogout) {
+      const verification = verifyLoggedOutOpenClawConfig(syncResult.configPath);
+      if (!verification.ok) {
+        const error = verification.error || 'OpenClaw logout config verification failed.';
+        return {
+          success: false,
+          changed: syncResult.changed,
+          configSynced: false,
+          status: statusBeforeSync,
+          error,
+        };
+      }
+      console.log(`[OpenClaw] Verified logged-out config at ${syncResult.configPath}`);
     }
 
     const nextSecretEnvVars = this.getConfigSync().collectSecretEnvVars();
@@ -104,17 +138,24 @@ export class OpenClawConfigSyncService {
       JSON.stringify(nextSecretEnvVars) !== JSON.stringify(prevSecretEnvVars);
     engineManager.setSecretEnvVars(nextSecretEnvVars);
 
-    const applyMode = resolveOpenClawConfigApplyMode({
-      gatewayPhase: statusBeforeSync.phase,
-      configChanged: syncResult.configChanged,
-      secretEnvVarsChanged,
-      requiresGatewayRestart: syncResult.requiresGatewayRestart,
-    });
+    const isAuthLogout = options.reason === BuiltinModelSyncReason.AuthLogout;
+    const applyMode = isAuthLogout
+      ? resolveAuthLogoutConfigApplyMode({
+          gatewayPhase: statusBeforeSync.phase,
+          configChanged: syncResult.configChanged,
+        })
+      : resolveOpenClawConfigApplyMode({
+          gatewayPhase: statusBeforeSync.phase,
+          configChanged: syncResult.configChanged,
+          secretEnvVarsChanged,
+          requiresGatewayRestart: syncResult.requiresGatewayRestart,
+        });
 
     if (applyMode === 'none') {
       return {
         success: true,
         changed: syncResult.changed,
+        configSynced: true,
       };
     }
 
@@ -124,7 +165,20 @@ export class OpenClawConfigSyncService {
         return {
           success: true,
           changed: syncResult.changed,
+          configSynced: true,
           status: engineManager.getStatus(),
+        };
+      }
+      if (isAuthLogout) {
+        console.warn(
+          '[OpenClaw] syncOpenClawConfig: logout native reload did not complete; leaving Gateway running without a hard restart.',
+        );
+        return {
+          success: false,
+          changed: syncResult.changed,
+          configSynced: true,
+          status: engineManager.getStatus(),
+          error: 'OpenClaw logout config was written, but native reload did not complete.',
         };
       }
       console.warn(
@@ -152,6 +206,7 @@ export class OpenClawConfigSyncService {
         return {
           success: false,
           changed,
+          configSynced: true,
           status,
           error:
             status.message ||
@@ -162,6 +217,7 @@ export class OpenClawConfigSyncService {
         return {
           success: true,
           changed,
+          configSynced: true,
           status,
         };
       }
@@ -170,13 +226,15 @@ export class OpenClawConfigSyncService {
       const started = await engineManager.startGateway();
       return started.phase === 'running'
         ? {
-            success: true,
-            changed,
-            status: started,
-          }
+          success: true,
+          changed,
+          configSynced: true,
+          status: started,
+        }
         : {
             success: false,
             changed,
+            configSynced: true,
             status: started,
             error:
               started.message ||
@@ -187,6 +245,7 @@ export class OpenClawConfigSyncService {
       return {
         success: true,
         changed,
+        configSynced: true,
         status,
       };
     }
@@ -201,6 +260,7 @@ export class OpenClawConfigSyncService {
       return {
         success: true,
         changed,
+        configSynced: true,
         status,
       };
     }
@@ -216,6 +276,7 @@ export class OpenClawConfigSyncService {
       return {
         success: false,
         changed,
+        configSynced: true,
         status: restarted,
         error: restarted.message || 'Failed to restart OpenClaw gateway after config sync.',
       };
@@ -223,6 +284,7 @@ export class OpenClawConfigSyncService {
     return {
       success: true,
       changed,
+      configSynced: true,
       status: restarted,
     };
   }

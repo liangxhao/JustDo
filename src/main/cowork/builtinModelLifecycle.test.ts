@@ -34,10 +34,7 @@ describe('BuiltinModelLifecycle', () => {
   test('refreshes enabled models, syncs OpenClaw, and notifies renderers after login', async () => {
     const harness = createHarness();
 
-    await expect(harness.lifecycle.refreshAfterLogin()).resolves.toEqual({
-      applied: true,
-      superseded: false,
-    });
+    await expect(harness.lifecycle.refreshAfterLogin()).resolves.toBeUndefined();
 
     expect(syncBuiltinModelProviderMock).toHaveBeenCalledWith(harness.store, {
       access: BuiltinModelAccess.Enabled,
@@ -74,8 +71,8 @@ describe('BuiltinModelLifecycle', () => {
     const logout = harness.lifecycle.refreshAfterLogout();
     releaseLogin?.();
 
-    await expect(login).resolves.toEqual({ applied: false, superseded: true });
-    await expect(logout).resolves.toEqual({ applied: true, superseded: false });
+    await expect(login).resolves.toBeUndefined();
+    await expect(logout).resolves.toBeUndefined();
     expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1);
     expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-logout' });
     expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
@@ -100,8 +97,8 @@ describe('BuiltinModelLifecycle', () => {
     expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1);
     releaseLoginSync?.();
 
-    await expect(login).resolves.toEqual({ applied: false, superseded: true });
-    await expect(logout).resolves.toEqual({ applied: true, superseded: false });
+    await expect(login).resolves.toBeUndefined();
+    await expect(logout).resolves.toBeUndefined();
     expect(harness.syncOpenClawConfig.mock.calls).toEqual([
       [{ reason: 'auth-login' }],
       [{ reason: 'auth-logout' }],
@@ -117,6 +114,45 @@ describe('BuiltinModelLifecycle', () => {
     });
 
     await expect(harness.lifecycle.refreshAfterLogin()).rejects.toThrow('write failed');
+
+    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+  });
+
+  test('completes logout when config was synced but Gateway health check failed', async () => {
+    const harness = createHarness();
+    harness.syncOpenClawConfig.mockResolvedValue({
+      success: false,
+      configSynced: true,
+      error: 'OpenClaw gateway failed to become healthy in time.',
+    });
+
+    await expect(harness.lifecycle.refreshAfterLogout()).resolves.toBeUndefined();
+
+    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+  });
+
+  test('completes login when config was synced but the required Gateway restart failed', async () => {
+    const harness = createHarness();
+    harness.syncOpenClawConfig.mockResolvedValue({
+      success: false,
+      configSynced: true,
+      error: 'OpenClaw gateway failed to become healthy in time.',
+    });
+
+    await expect(harness.lifecycle.refreshAfterLogin()).resolves.toBeUndefined();
+
+    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+  });
+
+  test('still rejects logout when OpenClaw config itself was not synced', async () => {
+    const harness = createHarness();
+    harness.syncOpenClawConfig.mockResolvedValue({
+      success: false,
+      configSynced: false,
+      error: 'write failed',
+    });
+
+    await expect(harness.lifecycle.refreshAfterLogout()).rejects.toThrow('write failed');
 
     expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
   });

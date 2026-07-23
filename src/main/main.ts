@@ -12,6 +12,7 @@ import {
   USER_DATA_DIRECTORY_NAME,
 } from '../shared/productMetadata';
 import type { ProxySettings } from '../shared/proxy';
+import { ProviderName } from '../shared/providers';
 import { APP_NAME } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
@@ -496,10 +497,10 @@ const getBuiltinModelLifecycle = (): BuiltinModelLifecycle => {
 
 // Authentication handlers should call these only after the Main process has
 // committed the corresponding authenticated/logged-out state.
-export const refreshBuiltinModelsAfterLogin = () =>
+export const refreshAfterLogin = (): Promise<void> =>
   getBuiltinModelLifecycle().refreshAfterLogin();
 
-export const refreshBuiltinModelsAfterLogout = () =>
+export const refreshAfterLogout = (): Promise<void> =>
   getBuiltinModelLifecycle().refreshAfterLogout();
 
 const getCoworkEngineService = (): CoworkEngineService => {
@@ -712,7 +713,16 @@ if (!gotTheLock) {
       }
     },
     refreshBuiltinModels: async () => {
-      await getBuiltinModelLifecycle().refreshAuthenticatedModels();
+      const appConfig = getStore().get<{
+        providers?: Record<string, unknown>;
+      }>('app_config');
+      if (!appConfig?.providers?.[ProviderName.BuiltinModels]) {
+        console.warn(
+          '[BuiltinModelLifecycle] Ignoring manual refresh because built-in model access is disabled.',
+        );
+        return;
+      }
+      await refreshAfterLogin();
     },
   });
 
