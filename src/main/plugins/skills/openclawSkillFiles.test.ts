@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { ZipFile } from 'yazl';
 
 import { __openClawSkillFilesTestUtils, OpenClawSkillFiles } from './openclawSkillFiles';
@@ -27,6 +27,7 @@ const writeZip = async (zipPath: string, entries: Record<string, string>): Promi
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -66,6 +67,68 @@ test('imports a skill whose name starts with import-', () => {
 
   expect(result).toEqual({ success: true, skillId: 'import-smoke-test' });
   expect(fs.existsSync(path.join(managed, 'import-smoke-test', 'SKILL.md'))).toBe(true);
+});
+
+test('can delete a skill after importing it', () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  fs.writeFileSync(
+    path.join(source, 'SKILL.md'),
+    '---\nname: deletable-skill\ndescription: demo\n---\n',
+  );
+  const files = new OpenClawSkillFiles(managed);
+
+  expect(files.importDirectory(source).success).toBe(true);
+  files.delete('deletable-skill');
+
+  expect(fs.existsSync(path.join(managed, 'deletable-skill'))).toBe(false);
+});
+
+test('does not leave a partial managed skill when copying fails', () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  fs.writeFileSync(
+    path.join(source, 'SKILL.md'),
+    '---\nname: interrupted-skill\ndescription: demo\n---\n',
+  );
+  const copyError = Object.assign(new Error('copy blocked'), { code: 'EPERM' });
+  vi.spyOn(fs, 'copyFileSync').mockImplementationOnce(() => {
+    throw copyError;
+  });
+
+  const result = new OpenClawSkillFiles(managed).importDirectory(source);
+
+  expect(result.success).toBe(false);
+  expect(result.error).toContain('Cannot access the skill directory');
+  expect(fs.existsSync(path.join(managed, 'interrupted-skill'))).toBe(false);
+});
+
+test('restores the previous skill when installing its replacement fails', () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  const target = path.join(managed, 'replaceable-skill');
+  fs.writeFileSync(
+    path.join(source, 'SKILL.md'),
+    '---\nname: replaceable-skill\ndescription: new\n---\n',
+  );
+  fs.mkdirSync(target);
+  fs.writeFileSync(
+    path.join(target, 'SKILL.md'),
+    '---\nname: replaceable-skill\ndescription: old\n---\n',
+  );
+  const renameSync = fs.renameSync.bind(fs);
+  vi.spyOn(fs, 'renameSync').mockImplementation((oldPath, newPath) => {
+    if (path.basename(oldPath.toString()) === 'skill' && newPath.toString() === target) {
+      throw Object.assign(new Error('rename blocked'), { code: 'EPERM' });
+    }
+    renameSync(oldPath, newPath);
+  });
+
+  const result = new OpenClawSkillFiles(managed).importDirectory(source);
+
+  expect(result.success).toBe(false);
+  expect(result.error).toContain('Cannot access the skill directory');
+  expect(fs.readFileSync(path.join(target, 'SKILL.md'), 'utf8')).toContain('description: old');
 });
 
 test('imports a zipped skill with a single wrapper directory', async () => {

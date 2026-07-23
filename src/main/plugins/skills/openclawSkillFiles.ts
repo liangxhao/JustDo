@@ -9,6 +9,8 @@ import { cpRecursiveSync } from '../../core/fsCompat';
 
 const SKILL_FILE_NAME = 'SKILL.md';
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
+const WINDOWS_FS_RETRY_COUNT = 5;
+const WINDOWS_FS_RETRY_DELAY_MS = 200;
 
 export type LocalSkillFileResult = {
   success: boolean;
@@ -37,14 +39,101 @@ const readSkillId = (skillDir: string): string | null => {
   }
 };
 
-const replaceDirectory = (sourceDir: string, targetDir: string): void => {
-  fs.rmSync(targetDir, {
+const removeDirectory = (directory: string): void => {
+  fs.rmSync(directory, {
     recursive: true,
     force: true,
-    maxRetries: process.platform === 'win32' ? 5 : 0,
-    retryDelay: process.platform === 'win32' ? 200 : 0,
+    maxRetries: process.platform === 'win32' ? WINDOWS_FS_RETRY_COUNT : 0,
+    retryDelay: process.platform === 'win32' ? WINDOWS_FS_RETRY_DELAY_MS : 0,
   });
-  cpRecursiveSync(sourceDir, targetDir, { force: true });
+};
+
+const formatFileSystemError = (error: unknown, targetDir: string): string => {
+  if (!(error instanceof Error)) return 'Failed to update skill files';
+  const code = 'code' in error && typeof error.code === 'string' ? error.code : '';
+  if (code !== 'EACCES' && code !== 'EPERM' && code !== 'EEXIST') return error.message;
+  return `Cannot access the skill directory "${targetDir}". Check its Windows owner and permissions, close processes using it, and try again. (${error.message})`;
+};
+
+const pathExists = (targetPath: string): boolean => {
+  try {
+    fs.lstatSync(targetPath);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+    ) {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const replaceDirectory = (sourceDir: string, targetDir: string): void => {
+  // On Windows, stage under the current user's temp directory so the completed
+  // directory has a user-owned ACL before it is moved into the managed root.
+  // On POSIX, keep staging beside the target to guarantee a same-device rename.
+  const stagingParent = process.platform === 'win32' ? os.tmpdir() : path.dirname(targetDir);
+  const transactionDir = fs.mkdtempSync(path.join(stagingParent, '.justdo-skill-stage-'));
+  const stagedDir = path.join(transactionDir, 'skill');
+  const backupDir = path.join(transactionDir, 'backup');
+  let targetBackedUp = false;
+
+  try {
+    cpRecursiveSync(sourceDir, stagedDir, { force: true });
+    fs.accessSync(stagedDir, fs.constants.R_OK | fs.constants.W_OK);
+    fs.accessSync(path.join(stagedDir, SKILL_FILE_NAME), fs.constants.R_OK);
+
+    if (pathExists(targetDir)) {
+      fs.renameSync(targetDir, backupDir);
+      targetBackedUp = true;
+    }
+
+    try {
+      fs.renameSync(stagedDir, targetDir);
+    } catch (error) {
+      if (targetBackedUp) {
+        try {
+          fs.renameSync(backupDir, targetDir);
+          targetBackedUp = false;
+        } catch (restoreError) {
+          const restoreMessage =
+            restoreError instanceof Error ? restoreError.message : 'unknown restore error';
+          throw new Error(
+            `Failed to install the skill and restore the previous version. The backup was preserved at "${backupDir}". (${restoreMessage})`,
+            { cause: error },
+          );
+        }
+      }
+      throw error;
+    }
+
+    if (targetBackedUp) {
+      targetBackedUp = false;
+      try {
+        removeDirectory(backupDir);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'unknown error';
+        console.warn('[OpenClawSkillFiles] Failed to clean replaced skill backup:', errorMessage);
+      }
+    }
+  } catch (error) {
+    throw new Error(formatFileSystemError(error, targetDir), { cause: error });
+  } finally {
+    if (!targetBackedUp) {
+      try {
+        removeDirectory(transactionDir);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'unknown error';
+        console.warn(
+          '[OpenClawSkillFiles] Failed to clean skill staging directory:',
+          errorMessage,
+        );
+      }
+    }
+  }
 };
 
 const isSupportedArchive = (filePath: string): boolean => {
@@ -151,12 +240,7 @@ export class OpenClawSkillFiles {
       return this.importDirectory(resolveExtractedSkillDirectory(extractDir));
     } finally {
       try {
-        fs.rmSync(extractDir, {
-          recursive: true,
-          force: true,
-          maxRetries: process.platform === 'win32' ? 5 : 0,
-          retryDelay: process.platform === 'win32' ? 200 : 0,
-        });
+        removeDirectory(extractDir);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'unknown error';
         console.warn(
@@ -199,7 +283,11 @@ export class OpenClawSkillFiles {
     ) {
       throw new Error('Only user-owned skill directories can be deleted');
     }
-    fs.rmSync(targetDir, { recursive: true, force: true });
+    try {
+      removeDirectory(targetDir);
+    } catch (error) {
+      throw new Error(formatFileSystemError(error, targetDir), { cause: error });
+    }
   }
 }
 
