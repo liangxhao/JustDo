@@ -1,11 +1,6 @@
 ---
-name: Data Analysis
-slug: data-analysis
-version: 1.0.2
-homepage: https://clawic.com/skills/data-analysis
+name: data-analysis
 description: "Data analysis and visualization. Query databases, generate reports, automate spreadsheets, and turn raw data into clear, actionable insights. Use when (1) you need to analyze, visualize, or explain data; (2) the user wants reports, dashboards, or metrics turned into a decision; (3) the work involves SQL, Python, spreadsheets, BI tools, or notebooks; (4) you need to compare segments, cohorts, funnels, experiments, or time periods; (5) the user explicitly installs or references the skill for the current task."
-changelog: Added metric contracts, chart guidance, and decision brief templates for more reliable analysis.
-metadata: {"clawdbot":{"emoji":"D","requires":{"bins":[]},"os":["linux","darwin","win32"]}}
 ---
 
 ## When to Use
