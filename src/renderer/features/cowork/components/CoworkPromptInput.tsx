@@ -20,6 +20,7 @@ import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgre
 import { getGoalRefreshDelay } from '@/features/cowork/components/goalRuntimeRefresh';
 import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
 import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerialTaskQueue';
+import PermissionModeSelector from '@/features/cowork/components/PermissionModeSelector';
 import {
   getHiddenCommandCount,
   getSlashCommandByName,
@@ -1792,6 +1793,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       >
                         <PaperClipIcon className="h-4 w-4" />
                       </button>
+                      <PermissionModeSelector />
                       {showFolderSelector && (
                         <>
                           <div className="flex items-center">
@@ -1905,6 +1907,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   >
                     <PaperClipIcon className="h-4 w-4" />
                   </button>
+                  <PermissionModeSelector />
                   {contextUsageBadge}
                 </div>
               )}

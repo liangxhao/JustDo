@@ -3,6 +3,11 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+import {
+  DEFAULT_PERMISSION_MODE,
+  isPermissionMode,
+  type PermissionMode,
+} from '../../shared/openclaw/approvals';
 import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
 
 // Default working directory for new users
@@ -168,10 +173,11 @@ export interface CoworkConfig {
   workingDirectory: string;
   executionMode: CoworkExecutionMode;
   agentEngine: CoworkAgentEngine;
+  permissionMode: PermissionMode;
 }
 
 export type CoworkConfigUpdate = Partial<
-  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine'>
+  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine' | 'permissionMode'>
 >;
 
 interface CoworkMessageRow {
@@ -794,7 +800,7 @@ export class CoworkStore {
 
   // Config operations
   getConfig(): CoworkConfig {
-    const configKeys = ['workingDirectory', 'executionMode', 'agentEngine'] as const;
+    const configKeys = ['workingDirectory', 'executionMode', 'agentEngine', 'permissionMode'] as const;
     const configRows = this.getAll<{ key: string; value: string }>(
       `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
       [...configKeys],
@@ -805,6 +811,9 @@ export class CoworkStore {
       workingDirectory: cfg.get('workingDirectory') || getDefaultWorkingDirectory(),
       executionMode: 'local' as CoworkExecutionMode,
       agentEngine: normalizeCoworkAgentEngineValue(cfg.get('agentEngine')),
+      permissionMode: isPermissionMode(cfg.get('permissionMode'))
+        ? (cfg.get('permissionMode') as PermissionMode)
+        : DEFAULT_PERMISSION_MODE,
     };
   }
 
@@ -852,6 +861,23 @@ export class CoworkStore {
       `,
         )
         .run(normalizedAgentEngine, now);
+    }
+
+    if (config.permissionMode !== undefined) {
+      if (!isPermissionMode(config.permissionMode)) {
+        throw new Error('Invalid permission mode');
+      }
+      this.db
+        .prepare(
+          `
+        INSERT INTO cowork_config (key, value, updated_at)
+        VALUES ('permissionMode', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `,
+        )
+        .run(config.permissionMode, now);
     }
   }
 

@@ -1,5 +1,7 @@
 import { expect, test, vi } from 'vitest';
 
+const { sendToRenderer } = vi.hoisted(() => ({ sendToRenderer: vi.fn() }));
+
 vi.mock('electron', () => ({
   app: {
     getAppPath: () => process.cwd(),
@@ -7,7 +9,9 @@ vi.mock('electron', () => ({
     getVersion: () => 'test-version',
   },
   BrowserWindow: {
-    getAllWindows: () => [],
+    getAllWindows: () => [
+      { isDestroyed: () => false, webContents: { send: sendToRenderer } },
+    ],
   },
 }));
 
@@ -15,6 +19,12 @@ vi.mock('../../cowork/coworkLogger', () => ({
   coworkLog: vi.fn(),
 }));
 
+import {
+  ApprovalDecision,
+  ApprovalKind,
+  ExecApprovalDecision,
+  OpenClawApprovalIpc,
+} from '../../../shared/openclaw/approvals';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { ensureSlashCommandSession, OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
@@ -272,7 +282,260 @@ test('falls back to raw persisted messages when display history is empty', async
 type StopTestAdapter = {
   activeTurns: Map<string, SessionTurn>;
   gatewayClient: GatewayClientLike | null;
+  ensureGatewayClientReady: () => Promise<void>;
+  reconcilePendingApprovals: () => Promise<void>;
+  approvalReconciliation: { events: unknown[] } | null;
 };
+
+test.each([
+  ['exec.approval.resolved', OpenClawApprovalIpc.Resolved, ApprovalKind.Exec],
+  ['plugin.approval.requested', OpenClawApprovalIpc.Requested, ApprovalKind.Plugin],
+  ['plugin.approval.resolved', OpenClawApprovalIpc.Resolved, ApprovalKind.Plugin],
+] as const)('forwards %s to the typed renderer approval channel', (event, channel, kind) => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+
+  adapter.handleGatewayEvent({ event, payload: { id: 'approval-1' } });
+
+  return vi.waitFor(() =>
+    expect(sendToRenderer).toHaveBeenCalledWith(channel, { id: 'approval-1', kind }),
+  );
+});
+
+test('forwards unmatched exec approval requests to the renderer', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+
+  adapter.handleGatewayEvent({
+    event: 'exec.approval.requested',
+    payload: { id: 'approval-1', request: { command: 'git status' } },
+  });
+
+  await vi.waitFor(() =>
+    expect(sendToRenderer).toHaveBeenCalledWith(OpenClawApprovalIpc.Requested, {
+      id: 'approval-1',
+      kind: ApprovalKind.Exec,
+      request: { command: 'git status' },
+    }),
+  );
+});
+
+test('does not auto-approve cron-shaped exec or plugin approval requests', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(() => Promise.resolve({}));
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  adapter.handleGatewayEvent({
+    event: 'exec.approval.requested',
+    payload: {
+      id: 'approval-cron-exec',
+      request: {
+        command: 'npm test',
+        agentId: 'main',
+        sessionKey: 'agent:main:cron:job-1:run:run-1',
+      },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'plugin.approval.requested',
+    payload: {
+      id: 'approval-third-party',
+      request: {
+        pluginId: 'third-party-plugin',
+        title: 'Publish',
+        description: 'external side effect',
+        agentId: 'main',
+        sessionKey: 'agent:main:cron:job-1:run:run-1',
+      },
+    },
+  });
+
+  await vi.waitFor(() => {
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      OpenClawApprovalIpc.Requested,
+      expect.objectContaining({ id: 'approval-cron-exec', kind: ApprovalKind.Exec }),
+    );
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      OpenClawApprovalIpc.Requested,
+      expect.objectContaining({ id: 'approval-third-party', kind: ApprovalKind.Plugin }),
+    );
+  });
+  expect(request).not.toHaveBeenCalledWith(
+    expect.stringMatching(/approval\.resolve$/),
+    expect.anything(),
+  );
+});
+
+test('reuses an exact command grant only in the approved session', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const approvedRequest = {
+    id: 'approval-1',
+    request: {
+      command: 'git status',
+      commandArgv: ['git', 'status'],
+      cwd: 'E:/workspace/project',
+      host: 'gateway',
+      agentId: 'main',
+      sessionKey: 'agent:main:justdo:session-1',
+      security: 'allowlist',
+      ask: 'on-miss',
+    },
+    createdAtMs: 1,
+    expiresAtMs: Date.now() + 60_000,
+  };
+  const request = vi.fn((method: string) => {
+    if (method === 'exec.approval.list') return Promise.resolve([approvedRequest]);
+    return Promise.resolve({});
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  (
+    adapter as unknown as { ensureGatewayClientReady: () => Promise<void> }
+  ).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await adapter.resolveApproval(
+    approvedRequest.id,
+    ApprovalDecision.AllowForSession,
+    ApprovalKind.Exec,
+  );
+  const repeatedRequest = { ...approvedRequest, id: 'approval-2' };
+  adapter.handleGatewayEvent({ event: 'exec.approval.requested', payload: repeatedRequest });
+
+  await vi.waitFor(() =>
+    expect(request).toHaveBeenCalledWith('exec.approval.resolve', {
+      id: 'approval-2',
+      decision: ExecApprovalDecision.AllowOnce,
+    }),
+  );
+  expect(request).not.toHaveBeenCalledWith('exec.approval.resolve', {
+    id: expect.any(String),
+    decision: ExecApprovalDecision.AllowAlways,
+  });
+  expect(sendToRenderer).not.toHaveBeenCalled();
+
+  adapter.handleGatewayEvent({
+    event: 'exec.approval.requested',
+    payload: {
+      ...repeatedRequest,
+      id: 'approval-3',
+      request: {
+        ...repeatedRequest.request,
+        sessionKey: 'agent:main:justdo:session-2',
+      },
+    },
+  });
+
+  await vi.waitFor(() =>
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      OpenClawApprovalIpc.Requested,
+      expect.objectContaining({ id: 'approval-3', kind: ApprovalKind.Exec }),
+    ),
+  );
+
+  sendToRenderer.mockClear();
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: { sessionKey: approvedRequest.request.sessionKey, reason: 'reset' },
+  });
+  adapter.handleGatewayEvent({
+    event: 'exec.approval.requested',
+    payload: { ...approvedRequest, id: 'approval-4' },
+  });
+  await vi.waitFor(() =>
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      OpenClawApprovalIpc.Requested,
+      expect.objectContaining({ id: 'approval-4', kind: ApprovalKind.Exec }),
+    ),
+  );
+});
+
+test('commits a session grant only after Gateway confirms the current request', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const approvedRequest = {
+    id: 'approval-race-1',
+    request: {
+      command: 'git status',
+      commandArgv: ['git', 'status'],
+      sessionKey: 'agent:main:justdo:session-race',
+    },
+    createdAtMs: 1,
+    expiresAtMs: Date.now() + 60_000,
+  };
+  let confirmResolve: (() => void) | undefined;
+  const resolving = new Promise<void>(resolve => {
+    confirmResolve = resolve;
+  });
+  const request = vi.fn((method: string, params?: unknown) => {
+    if (method === 'exec.approval.list') return Promise.resolve([approvedRequest]);
+    if (
+      method === 'exec.approval.resolve' &&
+      (params as { id?: string } | undefined)?.id === approvedRequest.id
+    ) {
+      return resolving;
+    }
+    return Promise.resolve({});
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  (
+    adapter as unknown as { ensureGatewayClientReady: () => Promise<void> }
+  ).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  const approving = adapter.resolveApproval(
+    approvedRequest.id,
+    ApprovalDecision.AllowForSession,
+    ApprovalKind.Exec,
+  );
+  await vi.waitFor(() =>
+    expect(request).toHaveBeenCalledWith('exec.approval.resolve', {
+      id: approvedRequest.id,
+      decision: ExecApprovalDecision.AllowOnce,
+    }),
+  );
+  adapter.handleGatewayEvent({
+    event: 'exec.approval.requested',
+    payload: { ...approvedRequest, id: 'approval-race-2' },
+  });
+  await vi.waitFor(() =>
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      OpenClawApprovalIpc.Requested,
+      expect.objectContaining({ id: 'approval-race-2' }),
+    ),
+  );
+
+  confirmResolve?.();
+  await approving;
+  sendToRenderer.mockClear();
+  adapter.handleGatewayEvent({
+    event: 'exec.approval.requested',
+    payload: { ...approvedRequest, id: 'approval-race-3' },
+  });
+  await vi.waitFor(() =>
+    expect(request).toHaveBeenCalledWith('exec.approval.resolve', {
+      id: 'approval-race-3',
+      decision: ExecApprovalDecision.AllowOnce,
+    }),
+  );
+  expect(sendToRenderer).not.toHaveBeenCalled();
+});
 
 test('waits for Gateway confirmation before clearing a stopped session', async () => {
   const { store } = createEmptyStore();
@@ -303,6 +566,152 @@ test('waits for Gateway confirmation before clearing a stopped session', async (
   await stopping;
 
   expect(internals.activeTurns.has(turn.sessionId)).toBe(false);
+});
+
+test('denies only approvals belonging to a stopped session after abort confirmation', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter;
+  const turn = createSessionTurn();
+  internals.activeTurns.set(turn.sessionId, turn);
+  let execTargetPending = true;
+  let pluginTargetPending = true;
+  const request = vi.fn((method: string) => {
+    if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
+    if (method === 'sessions.abort') return Promise.resolve({ ok: true, status: 'aborted' });
+    if (method === 'exec.approval.list') {
+      return Promise.resolve([
+        ...(execTargetPending
+          ? [{
+              id: 'exec-target',
+              request: { command: 'npm test', sessionKey: turn.sessionKey },
+              createdAtMs: 1,
+              expiresAtMs: Number.MAX_SAFE_INTEGER,
+            }]
+          : []),
+        {
+          id: 'exec-other',
+          request: { command: 'npm run build', sessionKey: 'agent:main:justdo:session-2' },
+          createdAtMs: 2,
+          expiresAtMs: Number.MAX_SAFE_INTEGER,
+        },
+      ]);
+    }
+    if (method === 'plugin.approval.list') {
+      return Promise.resolve(pluginTargetPending ? [
+        {
+          id: 'plugin-target',
+          request: {
+            title: 'Write',
+            description: 'write a file',
+            sessionKey: turn.sessionKey,
+          },
+          createdAtMs: 3,
+          expiresAtMs: Number.MAX_SAFE_INTEGER,
+        },
+      ] : []);
+    }
+    if (method === 'exec.approval.resolve') {
+      execTargetPending = false;
+      return Promise.reject(new Error('approval already resolved'));
+    }
+    if (method === 'plugin.approval.resolve') pluginTargetPending = false;
+    return Promise.resolve({});
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  await adapter.stopSession(turn.sessionId);
+
+  expect(request).toHaveBeenCalledWith('exec.approval.resolve', {
+    id: 'exec-target',
+    decision: 'deny-justdo-stop',
+  });
+  expect(request).toHaveBeenCalledWith('plugin.approval.resolve', {
+    id: 'plugin-target',
+    decision: ExecApprovalDecision.Deny,
+  });
+  expect(request).not.toHaveBeenCalledWith(
+    'exec.approval.resolve',
+    expect.objectContaining({ id: 'exec-other' }),
+  );
+  const methods = request.mock.calls.map(([method]) => method);
+  expect(methods.indexOf('sessions.abort')).toBeLessThan(methods.indexOf('exec.approval.list'));
+});
+
+test('broadcasts an authoritative pending approval snapshot during reconciliation', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter;
+  const approval = {
+    id: 'approval-snapshot',
+    request: { command: 'git status', sessionKey: 'agent:main:justdo:session-1' },
+    createdAtMs: 1,
+    expiresAtMs: Number.MAX_SAFE_INTEGER,
+  };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn((method: string) => {
+      if (method === 'exec.approval.list') return Promise.resolve([approval]);
+      if (method === 'plugin.approval.list') return Promise.resolve([]);
+      return Promise.resolve({});
+    }),
+  };
+
+  await internals.reconcilePendingApprovals();
+
+  expect(sendToRenderer).toHaveBeenCalledWith(OpenClawApprovalIpc.Snapshot, [
+    { ...approval, kind: ApprovalKind.Exec },
+  ]);
+  expect(sendToRenderer).not.toHaveBeenCalledWith(
+    OpenClawApprovalIpc.Requested,
+    expect.anything(),
+  );
+});
+
+test('replays an approval requested during reconciliation after the snapshot', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as StopTestAdapter;
+  let resolveExecList: ((requests: unknown[]) => void) | undefined;
+  const execList = new Promise<unknown[]>(resolve => {
+    resolveExecList = resolve;
+  });
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn((method: string) => {
+      if (method === 'exec.approval.list') return execList;
+      if (method === 'plugin.approval.list') return Promise.resolve([]);
+      return Promise.resolve({});
+    }),
+  };
+
+  const reconciling = internals.reconcilePendingApprovals();
+  adapter.handleGatewayEvent({
+    event: 'exec.approval.requested',
+    payload: {
+      id: 'approval-during-list',
+      request: { command: 'git status' },
+      createdAtMs: 2,
+      expiresAtMs: Number.MAX_SAFE_INTEGER,
+    },
+  });
+  await vi.waitFor(() => expect(internals.approvalReconciliation?.events).toHaveLength(1));
+  resolveExecList?.([]);
+  await reconciling;
+
+  expect(sendToRenderer.mock.calls).toEqual([
+    [OpenClawApprovalIpc.Snapshot, []],
+    [
+      OpenClawApprovalIpc.Requested,
+      expect.objectContaining({ id: 'approval-during-list', kind: ApprovalKind.Exec }),
+    ],
+  ]);
 });
 
 test('preserves local running state when Gateway does not confirm the stop', async () => {

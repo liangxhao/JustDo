@@ -6,6 +6,13 @@ import { DeveloperConfigIpc } from '../shared/developerConfig';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
 import { LogIpc } from '../shared/logIpc';
 import {
+  type ApprovalDecision,
+  type ApprovalKind,
+  type ApprovalRequest,
+  type ApprovalResolved,
+  OpenClawApprovalIpc,
+} from '../shared/openclaw/approvals';
+import {
   CoworkInteractionIpc,
   type ExtensionDeleteRequest,
   type ExtensionImportProgress,
@@ -175,6 +182,29 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke(SessionTitleIpc.Generate, request),
   getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),
   openclaw: {
+    approvals: {
+      list: () => ipcRenderer.invoke(OpenClawApprovalIpc.List),
+      resolve: (id: string, decision: ApprovalDecision, kind: ApprovalKind) =>
+        ipcRenderer.invoke(OpenClawApprovalIpc.Resolve, { id, decision, kind }),
+      onRequested: (callback: (request: ApprovalRequest) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, request: ApprovalRequest) =>
+          callback(request);
+        ipcRenderer.on(OpenClawApprovalIpc.Requested, handler);
+        return () => ipcRenderer.removeListener(OpenClawApprovalIpc.Requested, handler);
+      },
+      onResolved: (callback: (resolved: ApprovalResolved) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, resolved: ApprovalResolved) =>
+          callback(resolved);
+        ipcRenderer.on(OpenClawApprovalIpc.Resolved, handler);
+        return () => ipcRenderer.removeListener(OpenClawApprovalIpc.Resolved, handler);
+      },
+      onSnapshot: (callback: (requests: ApprovalRequest[]) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, requests: ApprovalRequest[]) =>
+          callback(requests);
+        ipcRenderer.on(OpenClawApprovalIpc.Snapshot, handler);
+        return () => ipcRenderer.removeListener(OpenClawApprovalIpc.Snapshot, handler);
+      },
+    },
     engine: {
       getStatus: () => ipcRenderer.invoke('openclaw:engine:getStatus'),
       restartGateway: () => ipcRenderer.invoke('openclaw:engine:restartGateway'),

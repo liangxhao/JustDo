@@ -93,16 +93,19 @@ test('deletes the OpenClaw session transcript and matching cron run row', async 
     if (method === 'sessions.list') return { sessions: [] };
     return { archived: [archivedTranscript] };
   });
+  const clearSessionApprovalGrants = vi.fn();
   const service = new OpenClawCronRunCleanupService({
     getGatewayClient: () => ({ request }) as never,
     ensureGatewayReady: vi.fn(),
     getStateDir: () => fixture.stateDir,
     getDatabase: () => fixture.cleanupDatabase,
+    clearSessionApprovalGrants,
   });
 
   await service.deleteResultArtifacts(fixture.result);
 
   expect(fs.existsSync(archivedTranscript)).toBe(false);
+  expect(clearSessionApprovalGrants).toHaveBeenCalledWith(fixture.result.sessionKey);
   const db = new Database(fixture.databasePath, { readonly: true });
   expect(db.prepare('SELECT store_key FROM cron_run_logs').all()).toEqual([
     { store_key: 'another-cron-store' },

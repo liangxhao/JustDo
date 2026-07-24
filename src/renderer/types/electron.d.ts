@@ -21,6 +21,11 @@ type InstalledOpenClawExtension =
 type OpenClawSkillSource = import('../../shared/plugins/skills').OpenClawSkillSource;
 type SystemPromptReplacementRule =
   import('../../shared/openclaw/systemPromptReplacements').SystemPromptReplacementRule;
+type PermissionMode = import('../../shared/openclaw/approvals').PermissionMode;
+type ApprovalKind = import('../../shared/openclaw/approvals').ApprovalKind;
+type ApprovalRequest = import('../../shared/openclaw/approvals').ApprovalRequest;
+type ApprovalResolved = import('../../shared/openclaw/approvals').ApprovalResolved;
+type ApprovalDecision = import('../../shared/openclaw/approvals').ApprovalDecision;
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -109,10 +114,11 @@ interface CoworkConfig {
   workingDirectory: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   agentEngine: 'openclaw';
+  permissionMode: PermissionMode;
 }
 
 type CoworkConfigUpdate = Partial<
-  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine'>
+  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine' | 'permissionMode'>
 >;
 
 interface CoworkInteractionRequest {
@@ -471,6 +477,21 @@ interface IElectronAPI {
   generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   openclaw: {
+    approvals: {
+      list: () => Promise<{
+        success: boolean;
+        requests: ApprovalRequest[];
+        error?: string;
+      }>;
+      resolve: (
+        id: string,
+        decision: ApprovalDecision,
+        kind: ApprovalKind,
+      ) => Promise<{ success: boolean; error?: string }>;
+      onRequested: (callback: (request: ApprovalRequest) => void) => () => void;
+      onResolved: (callback: (resolved: ApprovalResolved) => void) => () => void;
+      onSnapshot: (callback: (requests: ApprovalRequest[]) => void) => () => void;
+    };
     engine: {
       getStatus: () => Promise<{ success: boolean; status?: OpenClawEngineStatus; error?: string }>;
       restartGateway: () => Promise<{
@@ -675,7 +696,9 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; error?: string }>;
     replayPendingInteractions: () => Promise<{ success: boolean; count: number }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
-    setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;
+    setConfig: (
+      config: CoworkConfigUpdate,
+    ) => Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }>;
     setDefaultModel: (options: {
       modelId: string;
       providerKey?: string;

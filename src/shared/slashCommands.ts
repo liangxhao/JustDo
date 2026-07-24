@@ -5,6 +5,7 @@ export const SlashCommandIpc = {
 const SLASH_COMMAND_PATTERN = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/;
 
 export const SlashCommandExecution = {
+  Blocked: 'blocked',
   Gateway: 'gateway',
   Local: 'local',
 } as const;
@@ -33,6 +34,18 @@ export interface SlashCommandBehavior {
 const DEFAULT_SLASH_COMMAND_BEHAVIOR: Readonly<SlashCommandBehavior> = {
   execution: SlashCommandExecution.Gateway,
 };
+
+const MANAGED_SLASH_COMMANDS = new Set([
+  'allowlist',
+  'approve',
+  'config',
+  'cron',
+  'elev',
+  'elevated',
+  'exec',
+  'node',
+  'nodes',
+]);
 
 /**
  * Only commands whose transport differs from a normal Gateway chat message
@@ -65,7 +78,9 @@ export const resolveSlashCommandBehavior = (
   if (!command) return null;
   return {
     ...command,
-    ...(SPECIAL_SLASH_COMMAND_BEHAVIORS[command.name] ?? DEFAULT_SLASH_COMMAND_BEHAVIOR),
+    ...(MANAGED_SLASH_COMMANDS.has(command.name)
+      ? { execution: SlashCommandExecution.Blocked }
+      : (SPECIAL_SLASH_COMMAND_BEHAVIORS[command.name] ?? DEFAULT_SLASH_COMMAND_BEHAVIOR)),
   };
 };
 

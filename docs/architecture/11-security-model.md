@@ -12,15 +12,16 @@ JustDo 的安全边界建立在 Electron 进程隔离、Preload 最小 API、Mai
 
 ## 关键文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `src/main/preload.ts` | Renderer API surface |
-| `src/main/core/contentSecurityPolicy.ts` | CSP 注册 |
-| `src/main/core/localFileProtocol.ts` | `localfile://` 安全本地文件协议 |
-| `src/main/ipc/payloadSanitizer.ts` | IPC payload sanitizer |
-| `src/main/ipc/app/shell.ts` | shell/path 操作 |
-| `src/main/cowork/providerApiConfig.ts` | provider/API 配置读取 |
-| `src/renderer/features/cowork/components/CoworkInteractionModal.tsx` | ask-user 交互 UI |
+| 文件                                                                 | 作用                            |
+| -------------------------------------------------------------------- | ------------------------------- |
+| `src/main/preload.ts`                                                | Renderer API surface            |
+| `src/main/core/contentSecurityPolicy.ts`                             | CSP 注册                        |
+| `src/main/core/localFileProtocol.ts`                                 | `localfile://` 安全本地文件协议 |
+| `src/main/ipc/payloadSanitizer.ts`                                   | IPC payload sanitizer           |
+| `src/main/ipc/app/shell.ts`                                          | shell/path 操作                 |
+| `src/main/cowork/providerApiConfig.ts`                               | provider/API 配置读取           |
+| `src/renderer/features/cowork/components/CoworkInteractionModal.tsx` | ask-user 交互 UI                |
+| `src/renderer/features/cowork/components/ExecApprovalModal.tsx`      | 命令与文件修改审批 UI           |
 
 ## Electron 安全
 
@@ -33,7 +34,25 @@ Linux/Windows 当前会设置 Chromium `no-sandbox`，用于桌面应用兼容�
 
 ## 工具执行
 
-JustDo 不实现 OpenClaw 命令审批和工具权限管理。OpenClaw/Gateway owns tool execution policy；JustDo 仅保留 extension ask-user 交互桥接。
+OpenClaw/Gateway 负责命令策略、workspace enforcement、approval transport 和最终执行。
+JustDo 提供 `ask`、`auto`、`full` 三档产品预设，提交 npm runtime 已公开支持的
+`tools.exec.mode` 与 `tools.fs.workspaceOnly`，并通过 Gateway `exec.approvals.get/set`
+更新 host policy。写入使用 Gateway 返回的 `baseHash`，JustDo 不直接访问 approvals 文件。
+
+npm OpenClaw v2026.6.11 尚无独立文件 mode。JustDo 因此维护
+`file-permission-policy` bundled compatibility extension，通过公开的
+`registerTrustedToolPolicy` 接口在已审计的 core 文件修改工具执行前请求 plugin approval。
+该适配器与 `package.json.openclaw.version` 一起版本锁定；升级 OpenClaw 时必须重新审计精确的
+core 工具 ID 和 manifest contract。该适配器是版本锁定的兼容层，不构成 active-policy
+readiness 证明。
+扩展的 `filePermissionPolicy.info` 只证明扩展代码已加载并读到了指定配置，不证明 trusted
+policy 已进入 OpenClaw active registry。当前 OpenClaw 没有公开权威 effective permission
+snapshot。产品选择继续使用该版本锁定适配器提供文件审批功能：`ask` 与 `auto` 的文件修改
+进入人工审批，`full` 跳过文件审批。adapter info 不参与 Gateway readiness；真实 packaged
+runtime 的副作用前审批 smoke test 是每次 OpenClaw 升级和发布前的兼容门槛。
+
+当前审批覆盖 host exec 和适配器中已审计的文件变更工具，但仍不等于所有工具权限。Browser、消息、定时任务、
+第三方 MCP/插件副作用与 sandbox/tool policy 仍是独立安全层。
 
 需要谨慎处理的能力：
 
@@ -66,12 +85,12 @@ Main 进程负责系统代理偏好、outbound header proxy 和 Gateway localhos
 
 JustDo 的主要风险来自四类边界：
 
-| 边界 | 风险 | 防护 |
-| --- | --- | --- |
-| Renderer -> Main | 恶意/损坏 UI 请求本地能力 | preload 窄 API、Main 校验 |
-| Model/Gateway -> Tools | 模型请求执行危险动作 | Gateway/OpenClaw policy |
-| Local files | 任意路径读取/打开/泄漏 | dialog 用户选择、localfile protocol、path normalization |
-| Plugins/MCP/Skills | 第三方能力执行 | 安装确认、配置同步、运行时权限、日志 |
+| 边界                   | 风险                      | 防护                                                    |
+| ---------------------- | ------------------------- | ------------------------------------------------------- |
+| Renderer -> Main       | 恶意/损坏 UI 请求本地能力 | preload 窄 API、Main 校验                               |
+| Model/Gateway -> Tools | 模型请求执行危险动作      | Gateway/OpenClaw policy                                 |
+| Local files            | 任意路径读取/打开/泄漏    | dialog 用户选择、localfile protocol、path normalization |
+| Plugins/MCP/Skills     | 第三方能力执行            | 安装确认、配置同步、运行时权限、日志                    |
 
 ## Renderer Isolation
 
@@ -109,11 +128,11 @@ Renderer install click
 
 文件访问分三类：
 
-| 类型 | 推荐入口 | 说明 |
-| --- | --- | --- |
-| 用户选择文件 | `dialog.selectFile/selectFiles` | 明确用户授权 |
+| 类型          | 推荐入口                                          | 说明                    |
+| ------------- | ------------------------------------------------- | ----------------------- |
+| 用户选择文件  | `dialog.selectFile/selectFiles`                   | 明确用户授权            |
 | 预览/打开文件 | `shell.readPreviewFile/openPath/showItemInFolder` | Main 检查路径和工作目录 |
-| 渲染本地资源 | `localfile://` | 自定义协议限制读取方式 |
+| 渲染本地资源  | `localfile://`                                    | 自定义协议限制读取方式  |
 
 新增文件能力时要明确是否允许目录、是否递归、是否读取内容、最大大小，以及错误如何反馈。
 
@@ -128,7 +147,43 @@ Renderer install click
 - 是否跨 workspace。
 - 是否长期运行或后台运行。
 
-Renderer 不应自己判断命令是否安全。JustDo 配置 OpenClaw exec approvals 为关闭状态，避免桌面端承担命令审批职责。
+Renderer 不判断命令是否安全，也不自行解析命令决定放行。Main 校验 approval id、kind 和
+产品级 decision 后调用对应的 `exec.approval.resolve` 或 `plugin.approval.resolve`。
+普通审批 UI 只提供“允许一次”“本会话允许相同命令”和“拒绝”，不会向 Gateway 发送
+`allow-always`。Gateway client 必须显式申请
+`operator.approvals`；renderer 只能使用 list/resolve 和 requested/resolved 四个窄接口。
+
+“本会话允许相同命令”由 Main 的内存 grant 实现，不写 OpenClaw 的 agent 持久化 allowlist。
+grant 以 Gateway 提供的精确 `sessionKey` 隔离，并匹配 command、argv、cwd、host、agent、
+env binding、resolved path、system-run plan、security、ask 和来源上下文；Gateway host 只提供
+env key 而没有值时不允许建立会话 grant。命中后仍仅向 Gateway 提交 `allow-once`。Main 不做 shell
+语义解析，也不把一条命令扩展成“类似命令”。新会话不会继承，session reset/delete 和应用退出
+都会清除；JustDo 与 Gateway 的 delete/reset 事件以及 cron artifact cleanup 都显式清理。升级同步
+权限策略时会通过 CAS 移除 Gateway host 上 `source=allow-always` 的持久化项，同时保留其他来源的
+人工 allowlist 配置。JustDo 固定 `tools.exec.host=gateway`，禁用 OpenClaw 的 `nodes` 工具，也不调用
+node approvals RPC；远程 node 不是 JustDo 的产品能力。
+
+默认策略为 `security=allowlist`、`ask=on-miss`、`askFallback=deny`。用户从消息输入区附件按钮
+右侧的权限选择器切换 `ask`、`auto` 或 `full`。切换会持久化应用级产品偏好，热更新 OpenClaw
+config，再通过 Gateway CAS 更新 host policy并回读 defaults 和所有受管 agent entry。已有待审批
+请求不自动放行。所有配置同步在 Main 内串行；成功前会回读 tools exec/fs、文件权限插件和
+host approvals。权限配置写入、reload、回读或回滚无法确认时，Main 立即断开并
+停止 Gateway，将 engine 标记为权限同步错误。
+
+开启 `full` 前必须由用户在权限选择器中二次确认；core 文件修改与主机命令都不再审批。
+定时任务不继承交互会话 grant，也不会触发全局权限切换。Full 下任务按 Full 无人值守执行；
+Ask/Smart 下产生的命令、文件或第三方插件审批保持交互式，超时默认拒绝。Main 不把 cron-shaped
+session key 当作可信运行证明：OpenClaw v2026.6.11 的公开 API 只能证明 job 存在，不能证明 approval
+来自该 job 的真实 active run，自动放行会允许伪造 session 获得 run-scoped Full。
+受管插件在所有权限模式下阻断 Agent 使用原生 cron 工具的 add/update/remove/run，JustDo UI 通过
+Main RPC 管理任务。Gateway operator、CLI 和 scheduler state 仍是外部信任边界；完整隔离依赖未来的
+独立执行凭据与状态目录保护。`full` 仍是非持久化运行期状态，应用启动前降级为 `ask`。
+
+权限选择器只展示三档产品行为和可执行错误，不展示或推导 workspace、sandbox、
+effective policy、运行时快照或配置同步进度。
+
+当前没有为 `ls`、PowerShell alias、`rg` 或 Git 查询配置宽泛 safe-bin 白名单。默认 safe-bin
+profile 只适合窄的 stdin filter；参数级只读 profile 完成前，这些命令仍可能请求批准。
 
 ## Plugin Security
 

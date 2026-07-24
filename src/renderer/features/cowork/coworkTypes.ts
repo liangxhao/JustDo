@@ -114,10 +114,11 @@ export interface CoworkConfig {
   workingDirectory: string;
   executionMode: CoworkExecutionMode;
   agentEngine: CoworkAgentEngine;
+  permissionMode: PermissionMode;
 }
 
 export type CoworkConfigUpdate = Partial<
-  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine'>
+  Pick<CoworkConfig, 'workingDirectory' | 'executionMode' | 'agentEngine' | 'permissionMode'>
 >;
 
 export interface CoworkApiConfig {
@@ -237,3 +238,4 @@ export interface CoworkStreamEvent {
     error?: string;
   };
 }
+import type { PermissionMode } from '@shared/openclaw/approvals';

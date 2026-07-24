@@ -6,6 +6,12 @@ JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据�
 
 开发者功能的可见性是一个独立的启动期文件配置，不存入 SQLite。Main process 每次启动读取 `<userData>/developer/config.json`（Windows 默认为 `%APPDATA%/<package.json.productName>/developer/config.json`）；文件不存在时自动创建 `{ "showDeveloperMode": false }`。只有 `showDeveloperMode` 为 JSON 布尔值 `true` 时，Renderer 才展示“开发者模式”选项及其已启用的开发入口。文件缺失、解析失败或任何其他值都按隐藏处理，运行期间修改需重启应用生效。
 
+权限模式的产品默认值保存在 SQLite `cowork_config.permissionMode`。Main 通过 OpenClaw
+公开的 `tools.exec.mode`、`tools.fs.workspaceOnly` 与 Gateway
+`exec.approvals.get/set` 配置 npm runtime；写入 host exec policy 时使用 `baseHash` 并发保护。
+JustDo 不创建 `permission-policy.json`，也不直接读写 `exec-approvals.json`。文件修改审批由
+JustDo 自有、版本锁定的 bundled extension 通过 OpenClaw 公开 trusted tool policy 接口完成。
+
 `productName` 必须是长度 1–64 的单个英文单词，只允许 ASCII 字母 `A-Z` / `a-z`。构建配置和运行时都会校验该约束。更换它会直接使用新的 `userData` 和默认工程目录，不提供旧品牌目录的兼容或迁移。
 
 ## SQLite 初始化
@@ -41,17 +47,17 @@ flowchart TB
 
 ## 当前核心表
 
-| 表 | 用途 |
-| --- | --- |
-| `kv` | 通用 key/value 配置 |
-| `cowork_sessions` | Cowork 会话 UI 元数据和 Gateway session id 映射 |
-| `cowork_messages` | Cowork 消息 UI cache |
-| `cowork_config` | Cowork 配置 |
-| `agents` | Agent 定义、模型、技能绑定 |
-| `mcp_servers` | MCP server 配置 |
-| `openclaw_hooks` | OpenClaw hook 配置 |
-| `session_groups` | 会话分组 |
-| `scheduled_task_run_receipts` | 定时任务结果快照与持久已读回执 |
+| 表                | 用途                                                      |
+| ----------------- | --------------------------------------------------------- |
+| `kv`              | 通用 key/value 配置                                       |
+| `cowork_sessions` | Cowork 会话 UI 元数据和 Gateway session id 映射           |
+| `cowork_messages` | Cowork 消息 UI cache                                      |
+| `cowork_config`   | Cowork 配置，包括工作目录、engine 和默认 `permissionMode` |
+| `agents`          | Agent 定义、模型、技能绑定                                |
+| `mcp_servers`     | MCP server 配置                                           |
+| `openclaw_hooks`  | OpenClaw hook 配置                                        |
+| `session_groups`  | 会话分组                                                  |
+| `scheduled_task_run_receipts` | 定时任务结果快照与持久已读回执                   |
 | `scheduled_task_result_cleanup` | 跨 OpenClaw 删除失败时的 transcript 清理续传状态 |
 
 ```mermaid
@@ -135,14 +141,14 @@ erDiagram
 
 ## Store 层
 
-| 文件 | 作用 |
-| --- | --- |
-| `sqliteStore.ts` | DB 初始化、kv store、migration |
-| `coworkStore.ts` | Cowork sessions/messages/agents CRUD |
-| `groupStore.ts` | session group CRUD |
-| `scheduledTaskResultStore.ts` | 定时任务结果 upsert、分页、未读统计和 read receipt |
-| `plugins/mcp/mcpStore.ts` | MCP server store |
-| `plugins/hooks/openclawHookStore.ts` | hook store |
+| 文件                                 | 作用                                 |
+| ------------------------------------ | ------------------------------------ |
+| `sqliteStore.ts`                     | DB 初始化、kv store、migration       |
+| `coworkStore.ts`                     | Cowork sessions/messages/agents CRUD |
+| `groupStore.ts`                      | session group CRUD                   |
+| `scheduledTaskResultStore.ts`        | 定时任务结果 upsert、分页、未读统计和 read receipt |
+| `plugins/mcp/mcpStore.ts`            | MCP server store                     |
+| `plugins/hooks/openclawHookStore.ts` | hook store                           |
 
 ## 权威边界
 
@@ -185,11 +191,11 @@ OpenClaw run/session/transcript 和本地结果清理完成后，该续传记录
 
 通用配置表，存储 JSON 序列化值。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `key` | TEXT PRIMARY KEY | 配置键 |
-| `value` | TEXT | JSON string |
-| `updated_at` | INTEGER | 更新时间戳 |
+| 字段         | 类型             | 说明        |
+| ------------ | ---------------- | ----------- |
+| `key`        | TEXT PRIMARY KEY | 配置键      |
+| `value`      | TEXT             | JSON string |
+| `updated_at` | INTEGER          | 更新时间戳  |
 
 典型数据包括 app config、auto launch 初始化标记、防休眠设置等。`SqliteStore.get/set/delete` 会触发 in-process change event，供 Main 内部监听配置变化。
 

@@ -680,6 +680,10 @@ export class CronJobService {
   }
 
   async addJob(input: ScheduledTaskInput): Promise<ScheduledTask> {
+    return this.addJobLocked(input);
+  }
+
+  private async addJobLocked(input: ScheduledTaskInput): Promise<ScheduledTask> {
     console.log('[CronJobService][addJob] full input:', JSON.stringify(input, null, 2));
     console.log(
       '[CronJobService][addJob] delivery details:',
@@ -720,6 +724,13 @@ export class CronJobService {
   }
 
   async updateJob(id: string, input: Partial<ScheduledTaskInput>): Promise<ScheduledTask> {
+    return this.updateJobLocked(id, input);
+  }
+
+  private async updateJobLocked(
+    id: string,
+    input: Partial<ScheduledTaskInput>,
+  ): Promise<ScheduledTask> {
     console.log('[CronJobService][updateJob] id:', id, 'input:', JSON.stringify(input, null, 2));
     console.log(
       '[CronJobService][updateJob] delivery details:',
@@ -802,6 +813,10 @@ export class CronJobService {
   }
 
   async toggleJob(id: string, enabled: boolean): Promise<ScheduledTask> {
+    return this.toggleJobLocked(id, enabled);
+  }
+
+  private async toggleJobLocked(id: string, enabled: boolean): Promise<ScheduledTask> {
     const client = await this.client();
     const job = await this.withTaskMutation(id, () =>
       client.request<GatewayJob>('cron.update', { id, patch: { enabled } }),
@@ -810,6 +825,10 @@ export class CronJobService {
   }
 
   async runJob(id: string): Promise<void> {
+    return this.runJobLocked(id);
+  }
+
+  private async runJobLocked(id: string): Promise<void> {
     const client = await this.client();
     await client.request('cron.run', { id });
   }

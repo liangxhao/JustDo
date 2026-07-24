@@ -41,6 +41,7 @@ scripts/patches/v2026.6.11/
 | `015-final-system-prompt-replacements.cjs` | Apply JustDo-managed ordered regex rules to the final system prompt |
 | `016-litellm-session-id.cjs` | Forward the active OpenClaw session UUID as `metadata.session_id` on chat and safeguard-compaction OpenAI-compatible model requests |
 | `017-tool-error-reasoning-recovery.cjs` | Retry reasoning-only post-tool-error turns with bounded request-only user recovery messages |
+| `018-persistent-interactive-approvals.cjs` | Keep interactive approvals pending until a decision, preserve timeout-free Gateway waits, suppress the suspended turn's duplicate reply, and resume webchat exec work with a hidden internal prompt only after a real decision |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -163,6 +164,7 @@ Patch removal is a real change:
 | `015-final-system-prompt-replacements.cjs` | Missing final prompt transform | Remove when Gateway exposes a final, system-only prompt transform hook |
 | `016-litellm-session-id.cjs` | Missing provider request correlation | Remove when OpenClaw forwards its session UUID as OpenAI-compatible request metadata |
 | `017-tool-error-reasoning-recovery.cjs` | Reasoning-only turns silently stop after tool errors | Remove when OpenClaw supports bounded request-only recovery messages without transcript persistence |
+| `018-persistent-interactive-approvals.cjs` | Interactive approval lifetime and run suspension | Remove when OpenClaw preserves timeout-free approval waits and resumes approved webchat exec work outside the originating run lifetime only after a real decision |
 
 ### Compaction patch upgrade warning
 

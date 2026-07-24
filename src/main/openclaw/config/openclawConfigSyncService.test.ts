@@ -133,6 +133,9 @@ describe('OpenClawConfigSyncService', () => {
     previousSecrets?: Record<string, string>;
     nextSecrets?: Record<string, string>;
     configPath?: string;
+    permissionMode?: 'ask' | 'auto' | 'full';
+    reportedPermissionMode?: 'ask' | 'auto' | 'full';
+    syncError?: string;
   } = {}) => {
     let phase = options.phase ?? 'running';
     let processGeneration = 1;
@@ -156,28 +159,85 @@ describe('OpenClawConfigSyncService', () => {
       getSecretEnvVars: vi.fn(() => options.previousSecrets ?? {}),
       setSecretEnvVars: vi.fn(),
       getGatewayProcessGeneration: vi.fn(() => processGeneration),
+      getDesiredVersion: vi.fn(() => 'v2026.6.11'),
       startGateway,
       stopGateway,
-      setExternalError: vi.fn(),
+      setExternalError: vi.fn((message: string) => {
+        phase = 'error';
+        return { ...runningStatus, phase, message };
+      }),
     };
     const disconnectGatewayClient = vi.fn();
+    const connectGatewayClient = vi.fn(async () => {});
+    let approvalHash = 'approval-hash';
+    let approvalFile = {
+      version: 1,
+      defaults: {} as Record<string, unknown>,
+      agents: {
+        helper: {
+          allowlist: [
+            { pattern: 'npm run build', source: 'allow-always' },
+            { pattern: 'git diff', source: 'manual' },
+          ],
+        },
+      },
+    };
+    const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'exec.approvals.get') {
+        return {
+          hash: approvalHash,
+          file: approvalFile,
+        };
+      }
+      if (method === 'exec.approvals.set') {
+        approvalFile = (params as { file: typeof approvalFile }).file;
+        approvalHash = 'next-approval-hash';
+        return { hash: approvalHash };
+      }
+      if (method === 'config.get') {
+        const permissionMode = options.reportedPermissionMode ?? options.permissionMode ?? 'ask';
+        return {
+          config: {
+            tools: {
+              exec: { host: 'gateway', mode: permissionMode },
+              fs: { workspaceOnly: permissionMode !== 'full' },
+            },
+          },
+        };
+      }
+      if (method === 'filePermissionPolicy.info') {
+        return {
+          loaded: true,
+          configuredMode: options.reportedPermissionMode ?? options.permissionMode ?? 'ask',
+        };
+      }
+      throw new Error(`Unexpected Gateway method: ${method}`);
+    });
     const service = new OpenClawConfigSyncService({
-      getCoworkStore: vi.fn(),
+      getCoworkStore: () => ({
+        getConfig: () => ({ permissionMode: options.permissionMode ?? 'ask' }),
+      }),
       getOpenClawEngineManager: () => engineManager,
       getAskUserExtensionConfig: vi.fn(),
       getMcpStore: vi.fn(),
       getHookStore: vi.fn(),
       hasActiveGatewayWorkloads: vi.fn(() => activeWorkloads),
       disconnectGatewayClient,
+      connectGatewayClient,
+      requestGateway,
     } as never);
     const configSync = {
-      sync: vi.fn(() => ({
-        ok: true,
-        changed: true,
-        configChanged: true,
-        requiresGatewayRestart: false,
-        configPath: options.configPath ?? 'openclaw.json',
-      })),
+      sync: vi.fn(() =>
+        options.syncError
+          ? { ok: false, error: options.syncError }
+          : {
+              ok: true,
+              changed: true,
+              configChanged: true,
+              requiresGatewayRestart: false,
+              configPath: options.configPath ?? 'openclaw.json',
+            },
+      ),
       collectSecretEnvVars: vi.fn(() => options.nextSecrets ?? {}),
     };
     (
@@ -193,6 +253,9 @@ describe('OpenClawConfigSyncService', () => {
       startGateway,
       stopGateway,
       disconnectGatewayClient,
+      connectGatewayClient,
+      requestGateway,
+      configSync,
       setPhase: (nextPhase: typeof phase) => {
         phase = nextPhase;
       },
@@ -262,7 +325,196 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
     expect(harness.stopGateway).toHaveBeenCalledOnce();
     expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
   });
+
+  it('fails closed when the approval event bridge cannot reconnect after restart', async () => {
+    const harness = createHarness({ waitForReload: false });
+    harness.connectGatewayClient.mockRejectedValueOnce(new Error('bridge unavailable'));
+
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+      success: false,
+      configSynced: false,
+      error: expect.stringContaining('Gateway was stopped'),
+    });
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.disconnectGatewayClient).toHaveBeenCalledTimes(2);
+    expect(harness.stopGateway).toHaveBeenCalledTimes(2);
+  });
+
+  it('restores the approval event bridge when an errored Gateway is started', async () => {
+    const harness = createHarness({ phase: 'error' });
+    const restartGatewayOrDefer = (
+      harness.service as unknown as {
+        restartGatewayOrDefer: (
+          reason: string,
+          changed: boolean,
+          restartAfterInFlightStart: boolean,
+        ) => Promise<unknown>;
+      }
+    ).restartGatewayOrDefer.bind(harness.service);
+
+    await expect(restartGatewayOrDefer('test', true, false)).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+      status: { phase: 'running' },
+    });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+  });
+
+  it('restores the approval event bridge after an in-flight Gateway start', async () => {
+    const harness = createHarness({ phase: 'starting' });
+    const restartGatewayOrDefer = (
+      harness.service as unknown as {
+        restartGatewayOrDefer: (
+          reason: string,
+          changed: boolean,
+          restartAfterInFlightStart: boolean,
+        ) => Promise<unknown>;
+      }
+    ).restartGatewayOrDefer.bind(harness.service);
+
+    await expect(restartGatewayOrDefer('test', true, false)).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+      status: { phase: 'running' },
+    });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+  });
+
+  it('stops the Gateway when a hot-only config change cannot be confirmed', async () => {
+    const harness = createHarness({ waitForReload: false });
+
+    await expect(
+      harness.service.syncConfig({
+        reason: 'cowork-config-change',
+        restartGatewayIfRunning: false,
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      configSynced: false,
+      error: expect.stringContaining('Gateway was stopped'),
+    });
+    expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('verifies the active runtime and compatibility policy after reload', async () => {
+    const harness = createHarness({ waitForReload: true });
+
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+    });
+    expect(harness.requestGateway).toHaveBeenCalledWith('exec.approvals.get');
+    expect(harness.requestGateway).toHaveBeenCalledWith(
+      'exec.approvals.set',
+      expect.objectContaining({ baseHash: 'approval-hash' }),
+    );
+    expect(harness.requestGateway).toHaveBeenCalledWith('config.get');
+    expect(harness.requestGateway).toHaveBeenCalledWith('filePermissionPolicy.info');
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('applies a restricted host policy before writing and reloading restricted config', async () => {
+    const harness = createHarness({ permissionMode: 'ask', waitForReload: true });
+
+    await expect(harness.service.syncConfig({ reason: 'cowork-config-change' })).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+    });
+
+    const firstApprovalSetOrder = harness.requestGateway.mock.invocationCallOrder.find(
+      (_order, index) => harness.requestGateway.mock.calls[index]?.[0] === 'exec.approvals.set',
+    );
+    expect(firstApprovalSetOrder).toBeDefined();
+    expect(firstApprovalSetOrder).toBeLessThan(harness.configSync.sync.mock.invocationCallOrder[0]);
+  });
+
+  it('serializes all config sync callers inside the service', async () => {
+    const harness = createHarness();
+    let releaseFirst: ((result: { success: boolean; changed: boolean; configSynced: boolean }) => void)
+      | undefined;
+    const firstResult = new Promise<{
+      success: boolean;
+      changed: boolean;
+      configSynced: boolean;
+    }>(resolve => {
+      releaseFirst = resolve;
+    });
+    const internals = harness.service as unknown as {
+      syncConfigExclusive: (options: { reason: string }) => Promise<{
+        success: boolean;
+        changed: boolean;
+        configSynced: boolean;
+      }>;
+    };
+    const exclusive = vi
+      .spyOn(internals, 'syncConfigExclusive')
+      .mockImplementationOnce(() => firstResult)
+      .mockResolvedValueOnce({ success: true, changed: true, configSynced: true });
+
+    const first = harness.service.syncConfig({ reason: 'first' });
+    const second = harness.service.syncConfig({ reason: 'second' });
+    await vi.waitFor(() => expect(exclusive).toHaveBeenCalledTimes(1));
+
+    releaseFirst?.({ success: true, changed: true, configSynced: true });
+    await first;
+    await second;
+    expect(exclusive).toHaveBeenNthCalledWith(2, { reason: 'second' });
+  });
+
+  it('removes legacy allow-always grants while preserving manually managed allowlist entries', async () => {
+    const harness = createHarness({ waitForReload: true });
+
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+    });
+
+    expect(harness.requestGateway).toHaveBeenCalledWith(
+      'exec.approvals.set',
+      expect.objectContaining({
+        file: expect.objectContaining({
+          agents: {
+            helper: expect.objectContaining({
+              allowlist: [{ pattern: 'git diff', source: 'manual' }],
+            }),
+          },
+        }),
+      }),
+    );
+  });
+
+  it('fails closed when the runtime reports a stale permission mode', async () => {
+    const harness = createHarness({ permissionMode: 'auto', reportedPermissionMode: 'ask' });
+
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+      success: false,
+      configSynced: false,
+      error: expect.stringContaining('Gateway was stopped'),
+    });
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it.each(['running', 'ready'] as const)(
+    'fails closed from %s when the initial config write cannot be confirmed',
+    async phase => {
+      const harness = createHarness({ phase, syncError: 'disk full' });
+
+      await expect(harness.service.syncConfig({ reason: 'startup' })).resolves.toMatchObject({
+        success: false,
+        configSynced: false,
+        error: expect.stringContaining('runtime permission state was not confirmed'),
+      });
+      expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
+      expect(harness.stopGateway).toHaveBeenCalledOnce();
+      expect(harness.startGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it('waits for an in-flight start then restarts when secrets changed', async () => {
     const harness = createHarness({
@@ -292,6 +544,27 @@ describe('OpenClawConfigSyncService', () => {
 
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the approval bridge cannot reconnect after a deferred restart', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({
+      activeWorkloads: true,
+      nextSecrets: { API_TOKEN: 'changed' },
+    });
+    harness.connectGatewayClient.mockRejectedValueOnce(new Error('bridge unavailable'));
+
+    await harness.service.syncConfig({ reason: 'test' });
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.disconnectGatewayClient).toHaveBeenCalledTimes(2);
+    expect(harness.stopGateway).toHaveBeenCalledTimes(2);
+    expect(harness.engineManager.setExternalError).toHaveBeenCalledWith(
+      expect.stringContaining('Gateway was stopped'),
+    );
   });
 
   it('rejects logout before changing secrets or restarting when the file still has built-in config', async () => {
@@ -324,7 +597,7 @@ describe('OpenClawConfigSyncService', () => {
         error: expect.stringContaining('built-in API key placeholder remains'),
       });
       expect(harness.engineManager.setSecretEnvVars).not.toHaveBeenCalled();
-      expect(harness.stopGateway).not.toHaveBeenCalled();
+      expect(harness.stopGateway).toHaveBeenCalledOnce();
       expect(harness.startGateway).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+import type { PermissionMode } from '../../../shared/openclaw/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 import type {
   OpenClawEngineManager,
@@ -20,10 +21,13 @@ type OpenClawConfigSyncServiceDeps = {
   getHookStore: () => OpenClawHookStore;
   hasActiveGatewayWorkloads: () => boolean;
   disconnectGatewayClient: () => void;
+  connectGatewayClient: () => Promise<void>;
+  requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
 };
 
 type SyncOpenClawConfigOptions = {
   reason: string;
+  restartGatewayIfRunning?: boolean;
 };
 
 type SyncOpenClawConfigResult = {
@@ -32,6 +36,56 @@ type SyncOpenClawConfigResult = {
   configSynced: boolean;
   status?: OpenClawEngineStatus;
   error?: string;
+};
+
+type ExecApprovalsFile = {
+  version?: number;
+  defaults?: Record<string, unknown>;
+  agents?: Record<string, Record<string, unknown>>;
+  [key: string]: unknown;
+};
+
+type ExecApprovalsSnapshot = {
+  hash?: string;
+  file?: ExecApprovalsFile;
+};
+
+const resolveExecApprovalFields = (mode: PermissionMode) => {
+  if (mode === 'full') {
+    return { security: 'full', ask: 'off', askFallback: 'full' };
+  }
+  return { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' };
+};
+
+type ConfigSnapshot = {
+  config?: {
+    tools?: {
+      exec?: { host?: unknown; mode?: unknown };
+      fs?: { workspaceOnly?: unknown };
+    };
+  };
+};
+
+type FilePermissionPolicyInfo = {
+  loaded?: boolean;
+  configuredMode?: unknown;
+};
+
+const removePersistentApprovalGrants = (
+  entry: Record<string, unknown>,
+): Record<string, unknown> => {
+  const allowlist = entry.allowlist;
+  if (!Array.isArray(allowlist)) return entry;
+  return {
+    ...entry,
+    allowlist: allowlist.filter(
+      item =>
+        !item ||
+        typeof item !== 'object' ||
+        Array.isArray(item) ||
+        (item as Record<string, unknown>).source !== 'allow-always',
+    ),
+  };
 };
 
 const DEFERRED_RESTART_POLL_MS = 3_000;
@@ -85,49 +139,84 @@ export class OpenClawConfigSyncService {
   private deferredRestartTimer: ReturnType<typeof setInterval> | null = null;
   private deferredRestartTimeout: ReturnType<typeof setTimeout> | null = null;
   private deferredRestartGeneration: number | null = null;
+  private syncTail: Promise<void> = Promise.resolve();
 
   constructor(deps: OpenClawConfigSyncServiceDeps) {
     this.deps = deps;
   }
 
-  async syncConfig(
+  syncConfig(
     options: SyncOpenClawConfigOptions = { reason: 'unknown' },
+  ): Promise<SyncOpenClawConfigResult> {
+    return this.enqueueSyncOperation(() => this.syncConfigExclusive(options));
+  }
+
+  private enqueueSyncOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.syncTail.then(operation, operation);
+    this.syncTail = result.then(
+      (): void => undefined,
+      (): void => undefined,
+    );
+    return result;
+  }
+
+  private async syncConfigExclusive(
+    options: SyncOpenClawConfigOptions,
   ): Promise<SyncOpenClawConfigResult> {
     console.log(`[OpenClaw] syncOpenClawConfig: called (reason: ${options.reason})`);
 
     const engineManager = this.deps.getOpenClawEngineManager();
     const statusBeforeSync = engineManager.getStatus();
-    const isAuthLifecycleSync =
-      options.reason === BuiltinModelSyncReason.AuthLogin ||
-      options.reason === BuiltinModelSyncReason.AuthLogout;
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
+    const expectedPermissionMode = this.deps.getCoworkStore().getConfig().permissionMode;
+    if (statusBeforeSync.phase === 'running' && expectedPermissionMode !== 'full') {
+      try {
+        const restrictedPolicyApplied = await this.applyExecApprovalPolicy(expectedPermissionMode);
+        if (!restrictedPolicyApplied) {
+          return this.failClosedConfigApplication(
+            {
+              success: false,
+              changed: false,
+              configSynced: false,
+              status: statusBeforeSync,
+            },
+            'The restricted host execution policy could not be applied before reloading OpenClaw configuration.',
+          );
+        }
+      } catch (error) {
+        return this.failClosedConfigApplication(
+          {
+            success: false,
+            changed: false,
+            configSynced: false,
+            status: statusBeforeSync,
+          },
+          `Failed to restrict host execution before reloading OpenClaw configuration: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
     const syncResult = this.getConfigSync().sync(options.reason);
     if (!syncResult.ok) {
-      const status = isAuthLifecycleSync
-        ? statusBeforeSync
-        : engineManager.setExternalError(
-            `OpenClaw config sync failed: ${syncResult.error || 'unknown error'}`,
-          );
-      return {
+      return this.failClosedConfigApplication({
         success: false,
         changed: false,
         configSynced: false,
-        status,
         error: syncResult.error,
-      };
+      }, `OpenClaw config sync failed: ${syncResult.error || 'unknown error'}`);
     }
 
     if (options.reason === BuiltinModelSyncReason.AuthLogout) {
       const verification = verifyLoggedOutOpenClawConfig(syncResult.configPath);
       if (!verification.ok) {
         const error = verification.error || 'OpenClaw logout config verification failed.';
-        return {
+        return this.failClosedConfigApplication({
           success: false,
           changed: syncResult.changed,
           configSynced: false,
-          status: statusBeforeSync,
           error,
-        };
+        }, error);
       }
       console.log(`[OpenClaw] Verified logged-out config at ${syncResult.configPath}`);
     }
@@ -152,22 +241,22 @@ export class OpenClawConfigSyncService {
         });
 
     if (applyMode === 'none') {
-      return {
+      return this.verifySuccessfulConfigApplication({
         success: true,
         changed: syncResult.changed,
         configSynced: true,
-      };
+      });
     }
 
     if (applyMode === 'native-reload') {
       const reloaded = await engineManager.waitForGatewayConfigReload(reloadGeneration);
       if (reloaded) {
-        return {
+        return this.verifySuccessfulConfigApplication({
           success: true,
           changed: syncResult.changed,
           configSynced: true,
           status: engineManager.getStatus(),
-        };
+        });
       }
       if (isAuthLogout) {
         console.warn(
@@ -181,16 +270,173 @@ export class OpenClawConfigSyncService {
           error: 'OpenClaw logout config was written, but native reload did not complete.',
         };
       }
+      if (options.restartGatewayIfRunning === false) {
+        return this.failClosedConfigApplication({
+          success: false,
+          changed: syncResult.changed,
+          configSynced: true,
+          status: engineManager.getStatus(),
+        }, 'OpenClaw config was written, but native reload did not complete.');
+      }
       console.warn(
         `[OpenClaw] syncOpenClawConfig: native reload did not complete; falling back to a hard restart (reason: ${options.reason})`,
       );
     }
 
-    return this.restartGatewayOrDefer(
+    if (applyMode === 'hard-restart' && options.restartGatewayIfRunning === false) {
+      return this.failClosedConfigApplication({
+        success: false,
+        changed: syncResult.changed,
+        configSynced: true,
+        status: engineManager.getStatus(),
+      }, 'OpenClaw config change requires a Gateway restart.');
+    }
+
+    const restartResult = await this.restartGatewayOrDefer(
       options.reason,
       syncResult.changed,
       applyMode === 'hard-restart',
     );
+    return restartResult.success
+      ? this.verifySuccessfulConfigApplication(restartResult)
+      : restartResult;
+  }
+
+  verifyActivePermissionPolicy(): Promise<SyncOpenClawConfigResult> {
+    return this.enqueueSyncOperation(() =>
+      this.verifySuccessfulConfigApplication({
+        success: true,
+        changed: false,
+        configSynced: true,
+        status: this.deps.getOpenClawEngineManager().getStatus(),
+      }),
+    );
+  }
+
+  private async verifySuccessfulConfigApplication(
+    result: SyncOpenClawConfigResult,
+  ): Promise<SyncOpenClawConfigResult> {
+    const engineManager = this.deps.getOpenClawEngineManager();
+    if (engineManager.getStatus().phase !== 'running') return result;
+
+    try {
+      const expectedMode = this.deps.getCoworkStore().getConfig().permissionMode;
+      const runtimeConfigApplied = await this.verifyRuntimePermissionConfig(expectedMode);
+      const execPolicyApplied = await this.applyExecApprovalPolicy(expectedMode);
+      if (runtimeConfigApplied && execPolicyApplied) return result;
+
+      const error = 'The OpenClaw host execution policy could not be verified.';
+      return this.failClosedConfigApplication(result, error);
+    } catch (error) {
+      const message = `Failed to apply or verify the active OpenClaw permission state: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      return this.failClosedConfigApplication(result, message);
+    }
+  }
+
+  private async verifyRuntimePermissionConfig(mode: PermissionMode): Promise<boolean> {
+    const [snapshot, pluginInfo] = await Promise.all([
+      this.deps.requestGateway<ConfigSnapshot>('config.get'),
+      this.deps.requestGateway<FilePermissionPolicyInfo>('filePermissionPolicy.info'),
+    ]);
+    const expectedWorkspaceOnly = mode !== 'full';
+    return (
+      snapshot.config?.tools?.exec?.host === 'gateway' &&
+      snapshot.config.tools.exec.mode === mode &&
+      snapshot.config?.tools?.fs?.workspaceOnly === expectedWorkspaceOnly &&
+      pluginInfo.loaded === true &&
+      pluginInfo.configuredMode === mode
+    );
+  }
+
+  private async applyExecApprovalPolicy(mode: PermissionMode): Promise<boolean> {
+    const current =
+      await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
+    const file: ExecApprovalsFile = {
+      ...(current.file ?? {}),
+      version: 1,
+    };
+    const policy = resolveExecApprovalFields(mode);
+    file.defaults = { ...(file.defaults ?? {}), ...policy };
+    file.agents = Object.fromEntries(
+      Object.entries(file.agents ?? {}).map(([agentId, entry]) => [
+        agentId,
+        removePersistentApprovalGrants({ ...entry, ...policy }),
+      ]),
+    );
+    const submitted = await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.set', {
+      file,
+      ...(current.hash ? { baseHash: current.hash } : {}),
+    });
+    const applied =
+      await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
+    const expected = resolveExecApprovalFields(mode);
+    const defaults = applied.file?.defaults;
+    const agentsMatch = Object.keys(file.agents ?? {}).every(agentId => {
+      const agent = applied.file?.agents?.[agentId];
+      return (
+        agent?.security === expected.security &&
+        agent.ask === expected.ask &&
+        agent.askFallback === expected.askFallback
+      );
+    });
+    const hostApplied = (
+      typeof submitted.hash === 'string' &&
+      submitted.hash.length > 0 &&
+      applied.hash === submitted.hash &&
+      defaults?.security === expected.security &&
+      defaults.ask === expected.ask &&
+      defaults.askFallback === expected.askFallback &&
+      agentsMatch &&
+      !this.hasPersistentApprovalGrants(applied.file)
+    );
+    return hostApplied;
+  }
+
+  private hasPersistentApprovalGrants(file: ExecApprovalsFile | undefined): boolean {
+    return Object.values(file?.agents ?? {}).some(entry =>
+      Array.isArray(entry.allowlist)
+        ? entry.allowlist.some(
+            item =>
+              item !== null &&
+              typeof item === 'object' &&
+              !Array.isArray(item) &&
+              (item as Record<string, unknown>).source === 'allow-always',
+          )
+        : false,
+    );
+  }
+
+  private async failClosedConfigApplication(
+    result: SyncOpenClawConfigResult,
+    error: string,
+  ): Promise<SyncOpenClawConfigResult> {
+    const engineManager = this.deps.getOpenClawEngineManager();
+    this.deps.disconnectGatewayClient();
+    let stopError: string | undefined;
+    try {
+      await engineManager.stopGateway();
+    } catch (cause) {
+      stopError = cause instanceof Error ? cause.message : String(cause);
+    }
+    const status = engineManager.setExternalError(
+      stopError
+        ? `Permission synchronization is unverified and the Gateway stop failed: ${stopError}`
+        : `Permission synchronization is unverified; the Gateway was stopped. ${error}`,
+    );
+    return {
+      ...result,
+      success: false,
+      configSynced: false,
+      status,
+      error:
+        `The product preference may have been persisted, but the runtime permission state was not confirmed. ` +
+        (stopError
+          ? `The Gateway stop failed after the app disconnected from it: ${stopError}. `
+          : 'The Gateway was stopped to fail closed. ') +
+        error,
+    };
   }
 
   private async restartGatewayOrDefer(
@@ -214,32 +460,32 @@ export class OpenClawConfigSyncService {
         };
       }
       if (!restartAfterInFlightStart) {
-        return {
+        return this.restoreGatewayBridgeOrFailClosed({
           success: true,
           changed,
           configSynced: true,
           status,
-        };
+        });
       }
     }
     if (status.phase === 'error') {
       const started = await engineManager.startGateway();
-      return started.phase === 'running'
-        ? {
+      if (started.phase === 'running') {
+        return this.restoreGatewayBridgeOrFailClosed({
           success: true,
           changed,
           configSynced: true,
           status: started,
-        }
-        : {
-            success: false,
-            changed,
-            configSynced: true,
-            status: started,
-            error:
-              started.message ||
-              'Failed to start OpenClaw gateway after config application failed.',
-          };
+        });
+      }
+      return {
+        success: false,
+        changed,
+        configSynced: true,
+        status: started,
+        error:
+          started.message || 'Failed to start OpenClaw gateway after config application failed.',
+      };
     }
     if (status.phase !== 'running') {
       return {
@@ -281,12 +527,30 @@ export class OpenClawConfigSyncService {
         error: restarted.message || 'Failed to restart OpenClaw gateway after config sync.',
       };
     }
-    return {
+    return this.restoreGatewayBridgeOrFailClosed({
       success: true,
       changed,
       configSynced: true,
       status: restarted,
-    };
+    });
+  }
+
+  private async restoreGatewayBridgeOrFailClosed(
+    result: SyncOpenClawConfigResult,
+  ): Promise<SyncOpenClawConfigResult> {
+    try {
+      await this.deps.connectGatewayClient();
+      return result;
+    } catch (error) {
+      return this.failClosedConfigApplication(
+        {
+          ...result,
+          success: false,
+          configSynced: false,
+        },
+        `Failed to restore the approval event bridge after Gateway start: ${String(error)}`,
+      );
+    }
   }
 
   private getConfigSync(): OpenClawConfigSync {
@@ -341,6 +605,18 @@ export class OpenClawConfigSyncService {
     if (status.phase !== 'running') {
       console.error(
         `[OpenClaw] executeDeferredGatewayRestart: gateway restart failed (reason: ${reason}): ${status.message || status.phase}`,
+      );
+      return;
+    }
+    const bridgeResult = await this.restoreGatewayBridgeOrFailClosed({
+      success: true,
+      changed: true,
+      configSynced: true,
+      status,
+    });
+    if (!bridgeResult.success) {
+      console.error(
+        `[OpenClaw] executeDeferredGatewayRestart: runtime adapter reconnect failed and Gateway was failed closed (reason: ${reason}): ${bridgeResult.error ?? 'unknown error'}`,
       );
     }
   }

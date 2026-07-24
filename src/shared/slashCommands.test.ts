@@ -32,6 +32,16 @@ describe('slash command behavior', () => {
       hasSlashCommandBeforeSendHook('/goal ship it', SlashCommandBeforeSendHook.EnsureSessionEntry),
     ).toBe(true);
   });
+
+  it.each(['exec', 'elevated', 'elev', 'config', 'allowlist', 'approve', 'cron', 'node', 'nodes'])(
+    'blocks the app-managed /%s command from Gateway delivery',
+    name => {
+      expect(resolveSlashCommandBehavior(`/${name} full`)).toMatchObject({
+        name,
+        execution: 'blocked',
+      });
+    },
+  );
 });
 
 describe('parseGoalStartObjective', () => {

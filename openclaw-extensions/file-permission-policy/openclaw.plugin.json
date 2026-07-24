@@ -1,0 +1,18 @@
+{
+  "id": "file-permission-policy",
+  "name": "File Permission Policy",
+  "description": "Policy for file-changing tools and native cron tool blocking.",
+  "contracts": {
+    "trustedToolPolicies": ["core-file-mutation-v2026-6-11"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["ask", "auto", "full"]
+      }
+    }
+  }
+}

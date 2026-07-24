@@ -1,3 +1,4 @@
+export { registerOpenClawApprovalHandlers } from './approvals';
 export { registerOpenClawEngineHandlers } from './engine';
 export { registerExtensionHandlers } from './extensions';
 export { registerOpenClawHistoryHandlers } from './history';

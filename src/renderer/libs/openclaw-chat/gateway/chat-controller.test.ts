@@ -207,9 +207,7 @@ test('keeps fallback snapshots isolated by session and does not truncate 100,000
   ]);
   await controller.switchSession(firstSessionKey);
   expect(controller.getLoadedMessages()).toHaveLength(100_000);
-  expect(controller.getLoadedMessages()[0]).toEqual(
-    expect.objectContaining({ id: 'message-0' }),
-  );
+  expect(controller.getLoadedMessages()[0]).toEqual(expect.objectContaining({ id: 'message-0' }));
 });
 
 test('clears active sending state when switching between existing sessions', async () => {
@@ -880,6 +878,25 @@ test('compacts while intentionally ignoring unsupported /compact arguments', asy
   expect(controller.state.lastError).toBeNull();
 });
 
+test.each([
+  '/exec gateway full off',
+  '/elevated full',
+  '/config set tools.exec.mode full',
+  '/cron list',
+  '/nodes',
+])('does not send the app-managed command %s to Gateway', async message => {
+  const request = vi.fn();
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await expect(controller.sendMessage(message)).rejects.toThrow('managed by the application');
+
+  expect(request).not.toHaveBeenCalled();
+  expect(controller.state.chatMessages).toEqual([]);
+});
+
 test('renders an error result and does not refresh history when session compaction fails', async () => {
   const request = vi.fn().mockRejectedValue(new Error('compact unavailable'));
   const controller = new ChatController();
@@ -1340,8 +1357,7 @@ test('skips duplicate older pages until a page adds visible history', async () =
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase =
-    'http://127.0.0.1:4173';
+  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase = 'http://127.0.0.1:4173';
   await controller.loadHistory();
 
   await expect(controller.loadOlderHistory()).resolves.toBe(true);
@@ -1442,8 +1458,7 @@ test('preserves an existing older-page cursor across a transient paging failure'
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase =
-    'http://127.0.0.1:4173';
+  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase = 'http://127.0.0.1:4173';
 
   await controller.loadHistory();
   await controller.loadHistory();
@@ -2870,8 +2885,7 @@ test('does not apply the lifecycle end fallback while compaction is in flight', 
   expect(
     controller.state.chatMessages.filter(
       message =>
-        (message as { __openclaw?: { kind?: string } }).__openclaw?.kind ===
-        'compaction-status',
+        (message as { __openclaw?: { kind?: string } }).__openclaw?.kind === 'compaction-status',
     ),
   ).toEqual([
     expect.objectContaining({

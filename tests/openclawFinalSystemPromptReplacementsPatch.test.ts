@@ -5,15 +5,16 @@ import { pathToFileURL } from 'node:url';
 
 import { afterEach, expect, test } from 'vitest';
 
-const { applyPatch } =
+const { applyPatch: applyFinalSystemPromptPatch } =
   require('../scripts/patches/v2026.6.11/015-final-system-prompt-replacements.cjs') as {
     applyPatch: (runtimeDir: string) => string[];
   };
-const {
-  __testing: { PATCHED_ATTEMPT_START: LIVE_CONTEXT_PATCHED_ATTEMPT_START },
-} = require('../scripts/patches/v2026.6.11/014-live-context-budget-status.cjs') as {
-  __testing: { PATCHED_ATTEMPT_START: string };
-};
+const { applyPatch: applyLiveContextPatch, __testing: LIVE_CONTEXT_TESTING } =
+  require('../scripts/patches/v2026.6.11/014-live-context-budget-status.cjs') as {
+    applyPatch: (runtimeDir: string) => string[];
+    __testing: Record<string, string>;
+  };
+const LIVE_CONTEXT_PATCHED_ATTEMPT_START = LIVE_CONTEXT_TESTING.PATCHED_ATTEMPT_START;
 
 const originalRulesPath = process.env.JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH;
 
@@ -67,8 +68,8 @@ test('applies ordered regex rules to the final system prompt only', async () => 
     );
     process.env.JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH = rulesPath;
 
-    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
-    expect(applyPatch(runtimeDir)).toEqual([]);
+    expect(applyFinalSystemPromptPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    expect(applyFinalSystemPromptPatch(runtimeDir)).toEqual([]);
 
     const moduleUrl = `${pathToFileURL(bundlePath).href}?test=${Date.now()}`;
     const runtime = (await import(moduleUrl)) as {
@@ -92,7 +93,9 @@ test('fails loudly when the upstream finalization anchor changes', () => {
       'async function persistJustDoLiveContextBudgetStatus(params) {}\nasync function runEmbeddedAttempt(params) {}',
       'utf8',
     );
-    expect(() => applyPatch(runtimeDir)).toThrow(/final system prompt replacement.*not found/i);
+    expect(() => applyFinalSystemPromptPatch(runtimeDir)).toThrow(
+      /final system prompt replacement.*not found/i,
+    );
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
@@ -115,8 +118,38 @@ test('preserves the adjacent live-context patch anchor', () => {
       'utf8',
     );
 
-    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    expect(applyFinalSystemPromptPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
     expect(fs.readFileSync(bundlePath, 'utf8')).toContain(LIVE_CONTEXT_PATCHED_ATTEMPT_START);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('keeps the live-context publisher idempotent after helper insertion', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-patch-order-'));
+  try {
+    const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+    fs.writeFileSync(
+      bundlePath,
+      `${LIVE_CONTEXT_PATCHED_ATTEMPT_START}
+  let systemPromptText = params.systemPrompt;
+  const setActiveSessionSystemPrompt = (nextSystemPrompt) => {
+    systemPromptText = nextSystemPrompt;
+  };
+          const systemPromptForHook = systemPromptText;
+}
+${LIVE_CONTEXT_TESTING.PATCHED_MIDTURN_PUBLISH}
+${LIVE_CONTEXT_TESTING.PATCHED_MIDTURN_OPTIONS}
+${LIVE_CONTEXT_TESTING.PATCHED_INITIAL_PUBLISH}
+`,
+      'utf8',
+    );
+
+    expect(applyFinalSystemPromptPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    expect(applyLiveContextPatch(runtimeDir)).toEqual([]);
+
+    const patched = fs.readFileSync(bundlePath, 'utf8');
+    expect(patched.match(/async function persistJustDoLiveContextBudgetStatus/g)).toHaveLength(1);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }

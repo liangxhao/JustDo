@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   __openClawExtensionImportTestUtils,
@@ -18,6 +19,25 @@ describe('OpenClawExtensionImportService', () => {
 
   afterEach(() => {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('prevents disabling, deleting, or reconfiguring the permission policy extension', async () => {
+    const runCommand = vi.fn();
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      runCommand,
+    });
+
+    await expect(
+      service.setEnabled(OpenClawExtensionId.PERMISSION_POLICY, false),
+    ).resolves.toMatchObject({ success: false });
+    await expect(service.delete(OpenClawExtensionId.PERMISSION_POLICY)).resolves.toMatchObject({
+      success: false,
+    });
+    await expect(
+      service.updateConfiguration(OpenClawExtensionId.PERMISSION_POLICY, { mode: 'full' }),
+    ).resolves.toMatchObject({ success: false });
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it('installs a native OpenClaw extension through the bundled CLI and restarts Gateway', async () => {

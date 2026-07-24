@@ -20,6 +20,7 @@ export interface CronJobServiceDeps {
     getGatewayClient: () => GatewayClientLike | null;
     ensureReady: () => Promise<void>;
     hasActiveSessions?: () => boolean;
+    clearSessionExecApprovalGrants?: (sessionKey: string) => void;
   } | null;
   getDatabase: () => Database.Database;
   getOpenClawStateDir: () => string;
@@ -58,6 +59,8 @@ export function getCronJobService(): CronJobService {
       ensureGatewayReady: () => adapter.ensureReady(),
       getStateDir: deps.getOpenClawStateDir,
       getDatabase: deps.getDatabase,
+      clearSessionApprovalGrants: sessionKey =>
+        adapter.clearSessionExecApprovalGrants?.(sessionKey),
     });
     let createdCronService: CronJobService;
     createdCronService = new CronJobService({

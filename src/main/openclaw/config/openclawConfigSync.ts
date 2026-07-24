@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+import { PermissionMode, type PermissionMode as PermissionModeValue } from '../../../shared/openclaw/approvals';
+import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
@@ -339,9 +341,31 @@ export const mergeOpenClawPluginConfig = (
     ...(isRecord(existingPlugins.entries) ? existingPlugins.entries : {}),
     ...managedEntries,
   };
-  return Object.keys(mergedEntries).length > 0
-    ? { ...existingPlugins, entries: mergedEntries }
-    : existingPlugins;
+  if (Object.keys(mergedEntries).length === 0) return existingPlugins;
+
+  const protectsPermissionPolicy = Object.hasOwn(
+    managedEntries,
+    OpenClawExtensionId.PERMISSION_POLICY,
+  );
+  if (!protectsPermissionPolicy) return { ...existingPlugins, entries: mergedEntries };
+
+  const existingAllow = Array.isArray(existingPlugins.allow)
+    ? existingPlugins.allow.filter((value): value is string => typeof value === 'string')
+    : null;
+  const existingDeny = Array.isArray(existingPlugins.deny)
+    ? existingPlugins.deny.filter((value): value is string => typeof value === 'string')
+    : null;
+  return {
+    ...existingPlugins,
+    enabled: true,
+    ...(existingAllow
+      ? { allow: [...new Set([...existingAllow, OpenClawExtensionId.PERMISSION_POLICY])] }
+      : {}),
+    ...(existingDeny
+      ? { deny: existingDeny.filter(id => id !== OpenClawExtensionId.PERMISSION_POLICY) }
+      : {}),
+    entries: mergedEntries,
+  };
 };
 
 export const mergeOpenClawSkillConfig = (
@@ -371,6 +395,9 @@ const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-
       return 'off';
   }
 };
+
+export const resolveFileToolsWorkspaceOnly = (mode: PermissionModeValue): boolean =>
+  mode !== PermissionMode.Full;
 
 /**
  * Default agent timeout in seconds written to openclaw config.
@@ -580,9 +607,6 @@ const verifyOpenClawConfigMatches = (
   return { ok: true };
 };
 
-export const resolveOpenClawExecApprovalsPath = (stateDir: string): string =>
-  path.join(stateDir, 'exec-approvals.json');
-
 const ensureDir = (dirPath: string): void => {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -791,6 +815,24 @@ export const buildProviderSelection = (options: {
   };
 };
 
+export const resolvePermissionPolicy = (mode: PermissionModeValue) => {
+  switch (mode) {
+    case PermissionMode.Full:
+      return {
+        security: 'full' as const,
+        ask: 'off' as const,
+        askFallback: 'full' as const,
+      };
+    case PermissionMode.Auto:
+    case PermissionMode.Ask:
+      return {
+        security: 'allowlist' as const,
+        ask: 'on-miss' as const,
+        askFallback: 'deny' as const,
+      };
+  }
+};
+
 export const buildBuiltinMemorySearchConfig = (
   providers: ProviderRawConfig[],
 ): { enabled: true; provider: string; model: string } | { enabled: false } => {
@@ -852,7 +894,6 @@ const readPreinstalledPluginIds = (): string[] => {
 const isBundledPluginAvailable = (pluginId: string): boolean => {
   return hasBundledOpenClawExtension(pluginId);
 };
-
 export type OpenClawConfigSyncResult = {
   ok: boolean;
   changed: boolean;
@@ -1050,12 +1091,16 @@ export class OpenClawConfigSync {
     );
     const askUserConfig = this.getAskUserExtensionConfig?.() ?? null;
     const bundledExtensionEntries = buildBundledExtensionEntries(
-      { askUser: askUserConfig },
+      {
+        askUser: askUserConfig,
+        permissionMode: coworkConfig.permissionMode,
+      },
       isBundledPluginAvailable,
     );
     const mcpServers = buildOpenClawMcpServers(this.getMcpServers?.() ?? []);
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig();
+    const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
 
     const managedModels: Record<string, unknown> = {
       mode: 'replace',
@@ -1140,7 +1185,16 @@ export class OpenClawConfigSync {
       ...hookConfig,
       update: connectivityConfig.update,
       tools: {
-        ...connectivityConfig.tools,
+        ...connectivityTools,
+        fs: {
+          ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
+          workspaceOnly: resolveFileToolsWorkspaceOnly(coworkConfig.permissionMode),
+        },
+        exec: {
+          ...(isRecord(connectivityTools.exec) ? connectivityTools.exec : {}),
+          host: 'gateway',
+          mode: coworkConfig.permissionMode,
+        },
         // OpenClaw applies an additional tool gate to sandboxed turns. Native
         // MCP tools belong to bundle-mcp, so explicitly allow that owner when
         // executionMode maps to `all` or `non-main`. This is harmless when the
@@ -1198,7 +1252,10 @@ export class OpenClawConfigSync {
     const extensionContractsChanged = isAuthLifecycleSync
       ? false
       : buildBundledExtensionToolContracts(
-          { askUser: askUserConfig },
+          {
+            askUser: askUserConfig,
+            permissionMode: coworkConfig.permissionMode,
+          },
           isBundledPluginAvailable,
         ).reduce(
           (changed, contract) =>
@@ -1241,10 +1298,6 @@ export class OpenClawConfigSync {
       : false;
 
     if (!isAuthLifecycleSync) {
-      // JustDo does not implement command approval UI. Keep OpenClaw exec
-      // approvals disabled so command execution policy stays inside OpenClaw.
-      this.ensureExecApprovalDefaults();
-
       // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
       this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
     }
@@ -1350,53 +1403,6 @@ export class OpenClawConfigSync {
     // IM channel secrets removed — channels disabled pending future adaptation
 
     return env;
-  }
-
-  /**
-   * Ensures <managed state dir>/exec-approvals.json has security=full + ask=off.
-   * JustDo does not consume exec approval events.
-   */
-  private ensureExecApprovalDefaults(): void {
-    const filePath = resolveOpenClawExecApprovalsPath(this.engineManager.getStateDir());
-
-    type AgentEntry = { security?: string; ask?: string; [key: string]: unknown };
-    type ApprovalsFile = {
-      version: number;
-      agents?: Record<string, AgentEntry>;
-      [key: string]: unknown;
-    };
-
-    let file: ApprovalsFile;
-    try {
-      if (fs.existsSync(filePath)) {
-        file = JSON.parse(fs.readFileSync(filePath, 'utf8')) as ApprovalsFile;
-        if (file?.version !== 1) file = { version: 1 };
-      } else {
-        file = { version: 1 };
-      }
-    } catch {
-      file = { version: 1 };
-    }
-
-    if (!file.agents) file.agents = {};
-    if (!file.agents.main) file.agents.main = {};
-    const agent = file.agents.main;
-
-    if (agent.security === 'full' && agent.ask === 'off') return;
-
-    agent.security = 'full';
-    agent.ask = 'off';
-
-    try {
-      const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      this.atomicWriteFile(filePath, `${JSON.stringify(file, null, 2)}\n`);
-      console.log('[OpenClawConfigSync] set exec-approvals security=full ask=off');
-    } catch (error) {
-      console.warn('[OpenClawConfigSync] failed to write exec-approvals.json:', error);
-    }
   }
 
   private syncManagedSessionStore(
@@ -1652,8 +1658,17 @@ export class OpenClawConfigSync {
    * user sets up a model in the UI.
    */
   private writeMinimalConfig(configPath: string, reason: string): OpenClawConfigSyncResult {
+    const coworkConfig = this.getCoworkConfig();
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig();
+    const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
+    const bundledExtensionEntries = buildBundledExtensionEntries(
+      {
+        askUser: this.getAskUserExtensionConfig?.() ?? null,
+        permissionMode: coworkConfig.permissionMode,
+      },
+      isBundledPluginAvailable,
+    );
     const minimalConfig: Record<string, unknown> = withDisabledMemorySearch({
       gateway: {
         mode: 'local',
@@ -1680,11 +1695,22 @@ export class OpenClawConfigSync {
       },
       ...connectivityConfig,
       ...hookConfig,
+      tools: {
+        ...connectivityTools,
+        fs: {
+          ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
+          workspaceOnly: resolveFileToolsWorkspaceOnly(coworkConfig.permissionMode),
+        },
+        exec: {
+          ...(isRecord(connectivityTools.exec) ? connectivityTools.exec : {}),
+          host: 'gateway',
+          mode: coworkConfig.permissionMode,
+        },
+      },
+      plugins: mergeOpenClawPluginConfig({}, bundledExtensionEntries),
       meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
-      // Don't enable plugins in minimal config — plugin loading via jiti happens
-      // synchronously BEFORE the HTTP server binds, and can block gateway startup
-      // for minutes on a fresh install.  Plugins will be enabled when the user
-      // configures an API model and a full config sync runs.
+      // The managed permission extension is part of Gateway readiness even
+      // before a model is configured. Runtime extensions are precompiled.
     });
 
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
@@ -1747,6 +1773,10 @@ export class OpenClawConfigSync {
             const existingDefaults = isRecord(existingAgents.defaults)
               ? existingAgents.defaults
               : {};
+            const existingTools = isRecord(existing.tools) ? existing.tools : {};
+            const existingFileTools = isRecord(existingTools.fs) ? existingTools.fs : {};
+            const existingExecTools = isRecord(existingTools.exec) ? existingTools.exec : {};
+            const existingPlugins = isRecord(existing.plugins) ? existing.plugins : {};
             const mergedConfig = withDisabledMemorySearch({
               ...existing,
               diagnostics: {
@@ -1765,6 +1795,19 @@ export class OpenClawConfigSync {
               },
               update: connectivityConfig.update,
               ...hookConfig,
+              tools: {
+                ...existingTools,
+                fs: {
+                  ...existingFileTools,
+                  workspaceOnly: resolveFileToolsWorkspaceOnly(coworkConfig.permissionMode),
+                },
+                exec: {
+                  ...existingExecTools,
+                  host: 'gateway',
+                  mode: coworkConfig.permissionMode,
+                },
+              },
+              plugins: mergeOpenClawPluginConfig(existingPlugins, bundledExtensionEntries),
               meta: minimalConfig.meta,
             });
             const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;

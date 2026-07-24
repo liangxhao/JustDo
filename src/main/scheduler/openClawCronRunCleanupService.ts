@@ -18,6 +18,7 @@ export interface OpenClawCronRunCleanupDeps {
   ensureGatewayReady: () => Promise<void>;
   getStateDir: () => string;
   getDatabase: () => Database.Database;
+  clearSessionApprovalGrants?: (sessionKey: string) => void;
 }
 
 interface CronRunLogKey {
@@ -104,6 +105,7 @@ export class OpenClawCronRunCleanupService {
         key: sessionKey,
         deleteTranscript: true,
       });
+      this.deps.clearSessionApprovalGrants?.(sessionKey);
       const archivedPaths = (deleted.archived ?? []).filter(
         (value): value is string => typeof value === 'string' && value.trim().length > 0,
       );
@@ -214,9 +216,9 @@ export class OpenClawCronRunCleanupService {
         )
         .get(cronStoreKey, result.taskId, result.id, startedAt) as CronRunLogKey | undefined;
       if (!row) return;
-      const deleted = db.prepare(
-        'DELETE FROM cron_run_logs WHERE store_key = ? AND job_id = ? AND seq = ?',
-      ).run(row.store_key, row.job_id, row.seq);
+      const deleted = db
+        .prepare('DELETE FROM cron_run_logs WHERE store_key = ? AND job_id = ? AND seq = ?')
+        .run(row.store_key, row.job_id, row.seq);
       if (deleted.changes !== 1) {
         throw new Error('OpenClaw cron run changed during deletion');
       }

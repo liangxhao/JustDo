@@ -63,6 +63,11 @@ const PATCHED_ATTEMPT_START = `async function persistJustDoLiveContextBudgetStat
   }
 }
 async function runEmbeddedAttempt(params) {`;
+const LEGACY_PUBLISHER_SOURCE = LEGACY_PATCHED_ATTEMPT_START.slice(
+  0,
+  -ORIGINAL_ATTEMPT_START.length,
+);
+const PUBLISHER_SOURCE = PATCHED_ATTEMPT_START.slice(0, -ORIGINAL_ATTEMPT_START.length);
 
 const ORIGINAL_MIDTURN_PUBLISH = `        log41.debug(\`[context-overflow-midturn-precheck] tool-result-guard check route=\${precheck.route} messages=\${contextMessages.length} prePromptMessageCount=\${prePromptMessageCount} estimatedPromptTokens=\${precheck.estimatedPromptTokens} promptBudgetBeforeReserve=\${precheck.promptBudgetBeforeReserve} overflowTokens=\${precheck.overflowTokens}\`);
         if (request5) {`;
@@ -160,22 +165,56 @@ function replaceExactlyOnce(content, original, replacement, description, filePat
   return content.replace(original, replacement);
 }
 
+function countOccurrences(content, value) {
+  return content.split(value).length - 1;
+}
+
+function normalizePublisher(content, filePath) {
+  let normalized = content;
+  let changed = false;
+
+  if (normalized.includes(LEGACY_PUBLISHER_SOURCE)) {
+    normalized = normalized.split(LEGACY_PUBLISHER_SOURCE).join(PUBLISHER_SOURCE);
+    changed = true;
+  }
+
+  const publisherCount = countOccurrences(normalized, PUBLISHER_SOURCE);
+  if (publisherCount === 0) {
+    normalized = replaceExactlyOnce(
+      normalized,
+      ORIGINAL_ATTEMPT_START,
+      `${PUBLISHER_SOURCE}${ORIGINAL_ATTEMPT_START}`,
+      'live context publisher',
+      filePath,
+    );
+    changed = true;
+  } else if (publisherCount > 1) {
+    const firstPublisherIndex = normalized.indexOf(PUBLISHER_SOURCE);
+    const prefixEnd = firstPublisherIndex + PUBLISHER_SOURCE.length;
+    normalized =
+      normalized.slice(0, prefixEnd) + normalized.slice(prefixEnd).split(PUBLISHER_SOURCE).join('');
+    changed = true;
+  }
+
+  return { content: normalized, changed };
+}
+
 function patchFile(filePath) {
   let content = fs.readFileSync(filePath, 'utf8');
+  const publisherResult = normalizePublisher(content, filePath);
+  content = publisherResult.content;
   const upgrades = [
-    [LEGACY_PATCHED_ATTEMPT_START, PATCHED_ATTEMPT_START, 'legacy live context publisher'],
     [LEGACY_PATCHED_MIDTURN_PUBLISH, PATCHED_MIDTURN_PUBLISH, 'legacy mid-turn context publish'],
     [LEGACY_PATCHED_MIDTURN_OPTIONS, PATCHED_MIDTURN_OPTIONS, 'legacy mid-turn context callback'],
     [LEGACY_PATCHED_INITIAL_PUBLISH, PATCHED_INITIAL_PUBLISH, 'legacy initial context publish'],
   ];
   const targets = [
-    [ORIGINAL_ATTEMPT_START, PATCHED_ATTEMPT_START, 'live context publisher'],
     [ORIGINAL_MIDTURN_PUBLISH, PATCHED_MIDTURN_PUBLISH, 'mid-turn context publish'],
     [ORIGINAL_MIDTURN_OPTIONS, PATCHED_MIDTURN_OPTIONS, 'mid-turn context callback'],
     [ORIGINAL_INITIAL_PUBLISH, PATCHED_INITIAL_PUBLISH, 'initial context publish'],
   ];
 
-  let changed = false;
+  let changed = publisherResult.changed;
   for (const [legacy, replacement, description] of upgrades) {
     if (!content.includes(legacy)) continue;
     content = replaceExactlyOnce(content, legacy, replacement, description, filePath);

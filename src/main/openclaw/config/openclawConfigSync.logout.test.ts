@@ -133,12 +133,22 @@ const writeExistingMixedProviderConfig = (): string => {
   return configPath;
 };
 
-const writeMinimalConfig = (configPath: string, reason: string): OpenClawConfigSyncResult => {
+const writeMinimalConfig = (
+  configPath: string,
+  reason: string,
+  permissionMode: 'ask' | 'auto' | 'full' = 'ask',
+): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
     engineManager: {
       getDesiredVersion: () => '2026.6.11',
+      getStateDir: () => path.dirname(configPath),
     },
-    getCoworkConfig: () => ({}),
+    getCoworkConfig: () => ({
+      workingDirectory: '',
+      executionMode: 'local',
+      agentEngine: 'openclaw',
+      permissionMode,
+    }),
   } as never);
   return (
     sync as unknown as {
@@ -166,6 +176,51 @@ describe('OpenClaw auth logout config sync', () => {
       },
     });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
+  });
+
+  test('minimal config enables the JustDo permission policy before model setup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-policy-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+
+    const result = writeMinimalConfig(configPath, 'startup');
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['file-permission-policy']).toEqual({
+      enabled: true,
+      config: { mode: 'ask' },
+    });
+    expect(config.tools.fs.mode).toBeUndefined();
+    expect(config.tools.fs.workspaceOnly).toBe(true);
+    expect(config.tools.exec.mode).toBe('ask');
+  });
+
+  test('a second no-model sync force-merges the latest managed permission preset', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-policy-switch-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+
+    expect(writeMinimalConfig(configPath, 'startup', 'ask').ok).toBe(true);
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.plugins.enabled = false;
+    existing.plugins.allow = ['custom-plugin'];
+    existing.plugins.deny = ['file-permission-policy', 'other-denied-plugin'];
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    const result = writeMinimalConfig(configPath, 'cowork-config-change', 'full');
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.tools.exec.mode).toBe('full');
+    expect(config.tools.fs.workspaceOnly).toBe(false);
+    expect(config.plugins.enabled).toBe(true);
+    expect(config.plugins.allow).toEqual(['custom-plugin', 'file-permission-policy']);
+    expect(config.plugins.deny).toEqual(['other-denied-plugin']);
+    expect(config.plugins.entries['file-permission-policy']).toEqual({
+      enabled: true,
+      config: { mode: 'full' },
+    });
   });
 
   test('removes the built-in provider placeholder before its environment variable is revoked', () => {

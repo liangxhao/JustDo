@@ -42,9 +42,7 @@ function createMissingChannelJob(delivery?: {
 describe('shouldRepairInAppOnlyDeliveryBackoff', () => {
   test('repairs a missing-channel backoff for an in-app-only job', () => {
     expect(
-      shouldRepairInAppOnlyDeliveryBackoff(
-        createMissingChannelJob({ mode: DeliveryMode.None }),
-      ),
+      shouldRepairInAppOnlyDeliveryBackoff(createMissingChannelJob({ mode: DeliveryMode.None })),
     ).toBe(true);
     expect(shouldRepairInAppOnlyDeliveryBackoff(createMissingChannelJob())).toBe(true);
   });
@@ -203,9 +201,7 @@ describe('mapGatewayRun', () => {
 
   test('prefers a native run ID and falls back to a stable start timestamp', () => {
     expect(mapGatewayRun({ ...baseEntry, runId: 'native-run' }).id).toBe('native-run');
-    expect(mapGatewayRun({ ...baseEntry, runAtMs: undefined }).id).toBe(
-      'job-1:1700000000000',
-    );
+    expect(mapGatewayRun({ ...baseEntry, runAtMs: undefined }).id).toBe('job-1:1700000000000');
   });
 
   test('uses the completion timestamp when a start timestamp is malformed', () => {

@@ -63,6 +63,7 @@ const initialState: CoworkState = {
     workingDirectory: '',
     executionMode: 'local',
     agentEngine: 'openclaw',
+    permissionMode: 'ask',
   },
   thinkingExpanded: false, // Default to collapsed (浅蓝色)
   toolExpanded: true, // Default to expanded (浅蓝色)

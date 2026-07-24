@@ -9,6 +9,16 @@ import {
   type NormalizedAgentEvent,
 } from '../../../shared/openclaw/agentEvent';
 import {
+  ApprovalDecision,
+  type ApprovalDecision as ApprovalDecisionValue,
+  ApprovalKind,
+  type ApprovalRequest,
+  ExecApprovalDecision,
+  type ExecApprovalRequest,
+  OpenClawApprovalIpc,
+  type PluginApprovalRequest,
+} from '../../../shared/openclaw/approvals';
+import {
   classifyAgentEvent,
   classifyChatEvent,
   normalizeMessageSessionKey,
@@ -33,6 +43,10 @@ import type {
   CoworkStore,
 } from '../../data/coworkStore';
 import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
+import {
+  buildSessionExecApprovalFingerprint,
+  SessionExecApprovalGrants,
+} from '../../openclaw/permissions/sessionExecApprovalGrants';
 import {
   OpenClawEngineManager,
   type OpenClawGatewayConnectionInfo,
@@ -82,6 +96,7 @@ import {
 
 const NO_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const STOP_COOLDOWN_MS = 10_000;
+const STOP_CANCEL_EXEC_APPROVAL_DECISION = 'deny-justdo-stop';
 const RACE_RESOLUTION_MS = 1_000;
 const FULL_HISTORY_SYNC_LIMIT = 1000;
 const TICK_WATCHDOG_INTERVAL_MS = 60_000;
@@ -254,6 +269,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly gatewayHistoryCountBySession = new Map<string, number>();
   private readonly latestTurnTokenBySession = new Map<string, number>();
   private readonly pendingSessionMessageReloadSessionIds = new Set<string>();
+  private readonly sessionExecApprovalGrants = new SessionExecApprovalGrants();
+  private readonly approvalResolutionByKey = new Map<string, Promise<void>>();
+  private approvalReconciliation: {
+    generation: number;
+    events: Array<{ channel: string; payload: Record<string, unknown> }>;
+  } | null = null;
   private readonly subagentStatusCache = new Map<
     string,
     {
@@ -448,9 +469,71 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const failure = results.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );
+    let approvalCleanupError: unknown;
+    try {
+      await this.denyPendingApprovalsForSessionKeys(client, [
+        ...parentKeys,
+        ...subagentKeys,
+      ]);
+    } catch (error) {
+      approvalCleanupError = error;
+    }
     if (failure) throw failure.reason;
     if (subagentDiscoveryError) throw subagentDiscoveryError;
+    if (approvalCleanupError) throw approvalCleanupError;
     this.subagentStatusCache.delete(sessionId);
+  }
+
+  private async denyPendingApprovalsForSessionKeys(
+    client: GatewayClientLike,
+    sessionKeys: string[],
+  ): Promise<void> {
+    const targetKeys = new Set(sessionKeys.filter(Boolean));
+    if (targetKeys.size === 0) return;
+    const listMatching = async () => {
+      const [execRequests, pluginRequests] = await Promise.all([
+        client.request<ExecApprovalRequest[]>('exec.approval.list'),
+        client.request<PluginApprovalRequest[]>('plugin.approval.list'),
+      ]);
+      return [
+        ...(Array.isArray(execRequests)
+          ? execRequests.map(request => ({ kind: ApprovalKind.Exec, request }))
+          : []),
+        ...(Array.isArray(pluginRequests)
+          ? pluginRequests.map(request => ({ kind: ApprovalKind.Plugin, request }))
+          : []),
+      ].filter(({ request }) => {
+        const sessionKey = request.request.sessionKey;
+        return typeof sessionKey === 'string' && targetKeys.has(sessionKey);
+      });
+    };
+    const denyAll = (pending: Awaited<ReturnType<typeof listMatching>>) =>
+      Promise.allSettled(
+        pending.map(({ kind, request }) =>
+          client.request(
+            kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve',
+            {
+              id: request.id,
+              decision:
+                kind === ApprovalKind.Exec
+                  ? STOP_CANCEL_EXEC_APPROVAL_DECISION
+                  : ExecApprovalDecision.Deny,
+            },
+          ),
+        ),
+      );
+
+    await denyAll(await listMatching());
+    let remaining = await listMatching();
+    if (remaining.length > 0) {
+      await denyAll(remaining);
+      remaining = await listMatching();
+    }
+    if (remaining.length > 0) {
+      throw new Error(
+        `Gateway still has ${remaining.length} pending approval(s) for the stopped session.`,
+      );
+    }
   }
 
   private async collectRunningSubagentSessionKeys(
@@ -678,6 +761,26 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (event.event === 'session.message') {
       this.handleSessionMessageEvent(event.payload);
+      return;
+    }
+
+    if (event.event === 'exec.approval.requested') {
+      void this.handleExecApprovalRequested(event.payload);
+      return;
+    }
+
+    if (event.event === 'exec.approval.resolved') {
+      this.broadcastApproval(OpenClawApprovalIpc.Resolved, ApprovalKind.Exec, event.payload);
+      return;
+    }
+
+    if (event.event === 'plugin.approval.requested') {
+      void this.handlePluginApprovalRequested(event.payload);
+      return;
+    }
+
+    if (event.event === 'plugin.approval.resolved') {
+      this.broadcastApproval(OpenClawApprovalIpc.Resolved, ApprovalKind.Plugin, event.payload);
       return;
     }
 
@@ -1209,10 +1312,172 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     void this.historyReconciler.reconcileWithHistory(sessionId, sessionKey).catch(() => {});
   }
 
+  private broadcastApproval(channel: string, kind: ApprovalKind, payload: unknown): void {
+    if (!isRecord(payload)) return;
+    const normalizedPayload = { ...payload, kind };
+    const reconciliation = this.approvalReconciliation;
+    if (reconciliation?.generation === this.gatewayClientGeneration) {
+      reconciliation.events.push({ channel, payload: normalizedPayload });
+      return;
+    }
+    this.sendApprovalPayload(channel, normalizedPayload);
+  }
+
+  private sendApprovalPayload(channel: string, payload: unknown): void {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(channel, payload);
+    }
+  }
+
+  private normalizeExecApprovalRequest(payload: unknown): ExecApprovalRequest | null {
+    if (!isRecord(payload) || typeof payload.id !== 'string' || !isRecord(payload.request)) {
+      return null;
+    }
+    return payload as unknown as ExecApprovalRequest;
+  }
+
+  private async tryAutoResolveSessionApproval(request: ExecApprovalRequest): Promise<boolean> {
+    if (!this.sessionExecApprovalGrants.matches(request)) return false;
+    try {
+      await this.resolveApprovalAllowOnce(ApprovalKind.Exec, request.id);
+      return true;
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to apply session exec approval grant', {
+        approvalId: request.id,
+        sessionKey: request.request.sessionKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  private resolveApprovalAllowOnce(kind: ApprovalKind, id: string): Promise<void> {
+    const key = `${kind}:${id}`;
+    const current = this.approvalResolutionByKey.get(key);
+    if (current) return current;
+    const client = this.gatewayClient;
+    if (!client) return Promise.reject(new Error('OpenClaw Gateway is unavailable.'));
+    const resolving = client
+      .request(kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve', {
+        id,
+        decision: ExecApprovalDecision.AllowOnce,
+      })
+      .then((): void => undefined)
+      .finally((): void => {
+        this.approvalResolutionByKey.delete(key);
+      });
+    this.approvalResolutionByKey.set(key, resolving);
+    return resolving;
+  }
+
+  private async handleExecApprovalRequested(payload: unknown): Promise<void> {
+    const request = this.normalizeExecApprovalRequest(payload);
+    if (!request || !(await this.tryAutoResolveSessionApproval(request))) {
+      this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Exec, payload);
+    }
+  }
+
+  private handlePluginApprovalRequested(payload: unknown): void {
+    this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Plugin, payload);
+  }
+
+  async listPendingApprovals(): Promise<ApprovalRequest[]> {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    const [execRequests, pluginRequests] = await Promise.all([
+      client.request<ExecApprovalRequest[]>('exec.approval.list'),
+      client.request<PluginApprovalRequest[]>('plugin.approval.list'),
+    ]);
+    const requests: ApprovalRequest[] = [];
+    for (const request of Array.isArray(execRequests) ? execRequests : []) {
+      if (!(await this.tryAutoResolveSessionApproval(request))) {
+        requests.push({ ...request, kind: ApprovalKind.Exec });
+      }
+    }
+    for (const request of Array.isArray(pluginRequests) ? pluginRequests : []) {
+      requests.push({ ...request, kind: ApprovalKind.Plugin });
+    }
+    return requests.sort((a, b) => a.createdAtMs - b.createdAtMs);
+  }
+
+  async resolveApproval(
+    id: string,
+    decision: ApprovalDecisionValue,
+    kind: ApprovalKind,
+  ): Promise<void> {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    if (decision !== ApprovalDecision.AllowForSession) {
+      if (decision === ApprovalDecision.AllowOnce) {
+        await this.resolveApprovalAllowOnce(kind, id);
+        return;
+      }
+      await client.request(
+        kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve',
+        { id, decision },
+      );
+      return;
+    }
+    if (kind !== ApprovalKind.Exec) {
+      throw new Error('Session approval is only available for host commands.');
+    }
+
+    const pending = await client.request<ExecApprovalRequest[]>('exec.approval.list');
+    const request = Array.isArray(pending) ? pending.find(item => item.id === id) : undefined;
+    if (!request || !buildSessionExecApprovalFingerprint(request)) {
+      throw new Error('The pending command cannot be granted for this session.');
+    }
+    await this.resolveApprovalAllowOnce(ApprovalKind.Exec, id);
+    this.sessionExecApprovalGrants.grant(request);
+  }
+
+  clearSessionExecApprovalGrants(sessionKey: string): void {
+    this.sessionExecApprovalGrants.clearSession(sessionKey);
+  }
+
+  private async reconcilePendingApprovals(
+    expectedGeneration = this.gatewayClientGeneration,
+  ): Promise<void> {
+    const reconciliation = { generation: expectedGeneration, events: [] as Array<{
+      channel: string;
+      payload: Record<string, unknown>;
+    }> };
+    this.approvalReconciliation = reconciliation;
+    try {
+      const requests = await this.listPendingApprovals();
+      if (expectedGeneration !== this.gatewayClientGeneration) return;
+      this.sendApprovalPayload(OpenClawApprovalIpc.Snapshot, requests);
+      if (this.approvalReconciliation === reconciliation) {
+        this.approvalReconciliation = null;
+        for (const event of reconciliation.events) {
+          this.sendApprovalPayload(event.channel, event.payload);
+        }
+      }
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to reconcile pending approvals', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (this.approvalReconciliation === reconciliation) {
+        this.approvalReconciliation = null;
+        if (expectedGeneration === this.gatewayClientGeneration) {
+          for (const event of reconciliation.events) {
+            this.sendApprovalPayload(event.channel, event.payload);
+          }
+        }
+      }
+    }
+  }
+
   private handleSessionOperationEvent(payload: unknown): void {
-    if (!isRecord(payload) || payload.operation !== 'compact') return;
+    if (!isRecord(payload)) return;
     const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
     if (!sessionKey) return;
+    if (payload.operation === 'reset' || payload.operation === 'delete') {
+      this.sessionExecApprovalGrants.clearSession(sessionKey);
+      return;
+    }
+    if (payload.operation !== 'compact') return;
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
     if (!sessionId) return;
     const phase = typeof payload.phase === 'string' ? payload.phase : '';
@@ -1249,6 +1514,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       (typeof payload.key === 'string' && payload.key.trim()) ||
       '';
     if (!sessionKey) return;
+    const reason = typeof payload.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
+    if (reason === 'delete' || reason === 'reset' || reason === 'new') {
+      this.sessionExecApprovalGrants.clearSession(sessionKey);
+    }
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
     if (!sessionId) return;
 
@@ -2395,7 +2664,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       mode: 'backend',
       caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP],
       role: 'operator',
-      scopes: ['operator.admin'],
+      scopes: ['operator.admin', 'operator.approvals'],
       // JustDo authenticates this loopback backend client with the managed
       // gateway token. Avoid OpenClaw creating a second device identity under
       // the Electron main process's default ~/.openclaw state directory.
@@ -2418,6 +2687,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.lastTickTimestamp = Date.now();
         this.startTickWatchdog();
         void this.subscribeGatewaySessions();
+        void this.reconcilePendingApprovals(generation);
       },
       onConnectError: (error: Error) => settleReject(error),
       onClose: (_code: number, reason: string) => {
@@ -2729,7 +2999,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       removedKeys.push(this.toSessionKey(sessionId, effectiveAgentId));
     }
 
-    for (const key of removedKeys) this.deletedChannelKeys.add(key);
+    for (const key of removedKeys) {
+      this.deletedChannelKeys.add(key);
+      this.sessionExecApprovalGrants.clearSession(key);
+    }
     this.knownChannelSessionIds.delete(sessionId);
     this.fullySyncedSessions.delete(sessionId);
     this.channelSyncCursor.delete(sessionId);
@@ -2783,6 +3056,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         await this.deleteSessionTree(client, child.key);
       if (!sessionKey.endsWith(':main')) {
         await client.request('sessions.delete', { key: sessionKey, deleteTranscript: true });
+        this.sessionExecApprovalGrants.clearSession(sessionKey);
       }
     } catch {
       // Keep recursive cleanup best-effort so a missing child transcript does not abort siblings.

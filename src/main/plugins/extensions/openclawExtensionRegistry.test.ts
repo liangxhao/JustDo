@@ -10,6 +10,7 @@ describe('openclawExtensionRegistry', () => {
   it('configures only the AskUser extension callback', () => {
     const entries = buildBundledExtensionEntries(
       {
+        permissionMode: 'ask',
         askUser: {
           askUserCallbackUrl: 'http://127.0.0.1:1234/askuser',
           secret: 'runtime-secret',
@@ -26,10 +27,22 @@ describe('openclawExtensionRegistry', () => {
           secret: '${JUSTDO_ASK_USER_SECRET}',
         },
       },
+      [OpenClawExtensionId.PERMISSION_POLICY]: {
+        enabled: true,
+        config: { mode: 'ask' },
+      },
     });
   });
 
   it('does not declare MCP bridge tool contracts', () => {
-    expect(buildBundledExtensionToolContracts({ askUser: null }, () => true)).toEqual([]);
+    expect(
+      buildBundledExtensionToolContracts(
+        {
+          askUser: null,
+          permissionMode: 'ask',
+        },
+        () => true,
+      ),
+    ).toEqual([]);
   });
 });

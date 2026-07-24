@@ -1,5 +1,10 @@
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { BuiltinModelIpc } from '@shared/builtinModels';
+import {
+  type ApprovalDecision,
+  type ApprovalRequest,
+  type ApprovalResolved,
+} from '@shared/openclaw/approvals';
 import { CoworkInteractionKind } from '@shared/openclaw/extensions';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -9,10 +14,18 @@ import Sidebar from '@/app/shell/Sidebar';
 import Toast from '@/app/shell/Toast';
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { agentService } from '@/features/agents/agentService';
+import {
+  loadPendingApprovalsWithRetry,
+  markApprovalResolved,
+  reconcilePendingApprovalSnapshot,
+  removePendingApproval,
+  upsertPendingApproval,
+} from '@/features/cowork/approvalQueue';
 import { CoworkView } from '@/features/cowork/components';
 import CoworkInteractionModal from '@/features/cowork/components/CoworkInteractionModal';
 import CoworkQuestionWizard from '@/features/cowork/components/CoworkQuestionWizard';
 import EngineStartupStatusBar from '@/features/cowork/components/EngineStartupStatusBar';
+import ExecApprovalModal from '@/features/cowork/components/ExecApprovalModal';
 import {
   selectCurrentSessionId,
   selectFirstPendingInteraction,
@@ -44,6 +57,8 @@ const App: React.FC = () => {
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [developerModeAvailable, setDeveloperModeAvailable] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
+  const resolvedApprovalIdsRef = useRef(new Map<string, number>());
   const toastTimerRef = useRef<number | null>(null);
   const hasInitialized = useRef(false);
   const dispatch = useDispatch();
@@ -51,6 +66,29 @@ const App: React.FC = () => {
   const currentSessionId = useSelector(selectCurrentSessionId);
   const pendingInteraction = useSelector(selectFirstPendingInteraction);
   const isWindows = window.electron.platform === 'win32';
+
+  const dismissApproval = useCallback((approval: Pick<ApprovalRequest, 'id' | 'kind'>) => {
+    markApprovalResolved(resolvedApprovalIdsRef.current, approval);
+    setPendingApprovals(current => removePendingApproval(current, approval));
+  }, []);
+
+  const enqueueApproval = useCallback((request: ApprovalRequest) => {
+    if (
+      !request?.id ||
+      !request.request ||
+      !Number.isFinite(request.expiresAtMs) ||
+      request.expiresAtMs <= Date.now()
+    ) {
+      return;
+    }
+    setPendingApprovals(current =>
+      upsertPendingApproval(current, request, resolvedApprovalIdsRef.current),
+    );
+  }, []);
+
+  const applyApprovalSnapshot = useCallback((requests: ApprovalRequest[]) => {
+    setPendingApprovals(reconcilePendingApprovalSnapshot(requests, resolvedApprovalIdsRef.current));
+  }, []);
 
   const waitWithTimeout = useCallback(
     async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
@@ -207,6 +245,61 @@ const App: React.FC = () => {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    const approvals = window.electron.openclaw.approvals;
+    type ApprovalEvent =
+      | { type: 'requested'; request: ApprovalRequest }
+      | { type: 'resolved'; resolved: ApprovalResolved }
+      | { type: 'snapshot'; requests: ApprovalRequest[] };
+    const bufferedEvents: ApprovalEvent[] = [];
+    let loadingInitialSnapshot = true;
+    const remove = (resolved: ApprovalResolved) => {
+      if (!resolved?.id) return;
+      dismissApproval(resolved);
+    };
+    const dispatchApprovalEvent = (event: ApprovalEvent) => {
+      if (event.type === 'requested') enqueueApproval(event.request);
+      else if (event.type === 'resolved') remove(event.resolved);
+      else applyApprovalSnapshot(event.requests);
+    };
+    const receiveApprovalEvent = (event: ApprovalEvent) => {
+      if (loadingInitialSnapshot) bufferedEvents.push(event);
+      else dispatchApprovalEvent(event);
+    };
+    const stopRequested = approvals.onRequested(request =>
+      receiveApprovalEvent({ type: 'requested', request }),
+    );
+    const stopResolved = approvals.onResolved(resolved =>
+      receiveApprovalEvent({ type: 'resolved', resolved }),
+    );
+    const stopSnapshot = approvals.onSnapshot(requests =>
+      receiveApprovalEvent({ type: 'snapshot', requests }),
+    );
+    let cancelled = false;
+    const loadPendingApprovals = async () => {
+      const result = await loadPendingApprovalsWithRetry({
+        list: approvals.list,
+        wait: delayMs => new Promise(resolve => window.setTimeout(resolve, delayMs)),
+        isCancelled: () => cancelled,
+      });
+      if (!result) return;
+      if (result.success) {
+        applyApprovalSnapshot(result.requests);
+      } else {
+        console.error('[App] Failed to load pending approvals:', result.error);
+      }
+      loadingInitialSnapshot = false;
+      bufferedEvents.splice(0).forEach(dispatchApprovalEvent);
+    };
+    void loadPendingApprovals();
+    return () => {
+      cancelled = true;
+      stopRequested();
+      stopResolved();
+      stopSnapshot();
+    };
+  }, [applyApprovalSnapshot, dismissApproval, enqueueApproval]);
 
   useEffect(() => {
     const unsubscribe = window.electron.ipcRenderer.on(BuiltinModelIpc.Changed, () => {
@@ -370,7 +463,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || isShortcutInputActive()) return;
+      if (event.repeat || pendingApprovals.length > 0 || isShortcutInputActive()) return;
 
       const { shortcuts } = configService.getConfig();
       const activeShortcuts = {
@@ -398,7 +491,7 @@ const App: React.FC = () => {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleShowSettings, handleNewChat]);
+  }, [handleShowSettings, handleNewChat, pendingApprovals.length]);
 
   useEffect(() => {
     return () => {
@@ -463,7 +556,29 @@ const App: React.FC = () => {
     );
   }, [pendingInteraction, handleInteractionResponse]);
 
-  const isOverlayActive = showSettings || pendingInteraction !== null;
+  const activeApproval = pendingApprovals[0] ?? null;
+  const isOverlayActive = showSettings || pendingInteraction !== null || activeApproval !== null;
+
+  const resolveExecApproval = useCallback(
+    async (decision: ApprovalDecision) => {
+      if (!activeApproval) return;
+      const result = await window.electron.openclaw.approvals.resolve(
+        activeApproval.id,
+        decision,
+        activeApproval.kind,
+      );
+      if (!result.success) {
+        const message = result.error || i18nService.t('execApprovalFailed');
+        if (/unknown|expired|not found|already resolved/i.test(message)) {
+          dismissApproval(activeApproval);
+          return;
+        }
+        throw new Error(message);
+      }
+      dismissApproval(activeApproval);
+    },
+    [activeApproval, dismissApproval],
+  );
   const windowsStandaloneTitleBar = isWindows ? (
     <div className="draggable relative h-9 shrink-0 bg-surface-raised">
       <WindowTitleBar isOverlayActive={isOverlayActive} />
@@ -571,6 +686,13 @@ const App: React.FC = () => {
         />
       )}
       {interactionModal}
+      {activeApproval && (
+        <ExecApprovalModal
+          approval={activeApproval}
+          onExpire={() => dismissApproval(activeApproval)}
+          onResolve={resolveExecApproval}
+        />
+      )}
     </div>
   );
 };

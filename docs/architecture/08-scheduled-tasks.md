@@ -4,15 +4,15 @@ JustDo 的定时任务 UI 在 renderer 中实现，Main 进程通过 OpenClaw cr
 
 ## 关键文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `src/renderer/features/scheduled-tasks/` | 定时任务 UI、service、Redux slice |
-| `src/shared/scheduledTask/` | IPC constants、types、reminder text |
-| `src/main/ipc/scheduledTask/` | 定时任务 IPC handlers 和 service manager |
-| `src/main/scheduler/cronJobService.ts` | OpenClaw cron adapter/polling |
-| `src/main/scheduler/scheduledTaskResultSyncService.ts` | Durable result reconciliation |
-| `src/main/data/scheduledTaskResultStore.ts` | Result pagination and read receipts |
-| `src/main/scheduler/enginePrompt.ts` | 执行 prompt 构造 |
+| 文件                                                   | 作用                                     |
+| ------------------------------------------------------ | ---------------------------------------- |
+| `src/renderer/features/scheduled-tasks/`               | 定时任务 UI、service、Redux slice        |
+| `src/shared/scheduledTask/`                            | IPC constants、types、reminder text      |
+| `src/main/ipc/scheduledTask/`                          | 定时任务 IPC handlers 和 service manager |
+| `src/main/scheduler/cronJobService.ts`                 | OpenClaw cron adapter/polling            |
+| `src/main/scheduler/scheduledTaskResultSyncService.ts` | Durable result reconciliation            |
+| `src/main/data/scheduledTaskResultStore.ts`            | Result pagination and read receipts      |
+| `src/main/scheduler/enginePrompt.ts`                   | 执行 prompt 构造                         |
 
 ## Preload API
 
@@ -70,22 +70,22 @@ sequenceDiagram
 
 ## UI 组件
 
-| 组件 | 作用 |
-| --- | --- |
-| `CronView.tsx` | 主视图 |
+| 组件                  | 作用                 |
+| --------------------- | -------------------- |
+| `CronView.tsx`        | 主视图               |
 | `RunSessionModal.tsx` | 查看任务运行关联会话 |
-| `TaskRunHistory.tsx` | 运行历史 |
-| `utils.ts` | UI 辅助函数 |
+| `TaskRunHistory.tsx`  | 运行历史             |
+| `utils.ts`            | UI 辅助函数          |
 
 ## 数据边界
 
-| 数据 | 权威来源 | JustDo 角色 |
-| --- | --- | --- |
-| Cron 执行 | OpenClaw Gateway | 发起、展示、轮询 |
-| 任务列表 | Gateway cron runtime + 本地 UI state | 管理 UI |
-| Run session | Gateway session key | 解析和打开会话 |
-| Result inbox | SQLite snapshot + Gateway run facts | 持久化摘要、状态和已读回执 |
-| Reminder text | `src/shared/scheduledTask/reminderText.ts` | UI/Prompt 共享文本 |
+| 数据          | 权威来源                                   | JustDo 角色                |
+| ------------- | ------------------------------------------ | -------------------------- |
+| Cron 执行     | OpenClaw Gateway                           | 发起、展示、轮询           |
+| 任务列表      | Gateway cron runtime + 本地 UI state       | 管理 UI                    |
+| Run session   | Gateway session key                        | 解析和打开会话             |
+| Result inbox  | SQLite snapshot + Gateway run facts        | 持久化摘要、状态和已读回执 |
+| Reminder text | `src/shared/scheduledTask/reminderText.ts` | UI/Prompt 共享文本         |
 
 ## 维护规则
 
@@ -100,14 +100,14 @@ sequenceDiagram
 
 核心概念：
 
-| 概念 | 说明 |
-| --- | --- |
-| Schedule | 任务触发时间，可以是一次性、固定间隔或 cron |
-| Payload | 执行内容，通常是一次 agent turn 或 system event |
-| Delivery | 运行结果是否投递到外部 channel |
-| Session target | 在已有会话执行，还是创建隔离会话 |
-| Wake mode | 立即唤醒或等待下一次 runtime heartbeat |
-| Run history | 每次执行的状态、错误、耗时、关联 session |
+| 概念           | 说明                                            |
+| -------------- | ----------------------------------------------- |
+| Schedule       | 任务触发时间，可以是一次性、固定间隔或 cron     |
+| Payload        | 执行内容，通常是一次 agent turn 或 system event |
+| Delivery       | 运行结果是否投递到外部 channel                  |
+| Session target | 在已有会话执行，还是创建隔离会话                |
+| Wake mode      | 立即唤醒或等待下一次 runtime heartbeat          |
+| Run history    | 每次执行的状态、错误、耗时、关联 session        |
 
 JustDo 只为主 Agent 配置 30 分钟 heartbeat，使 `main + systemEvent` 任务可以在
 `wakeMode: "now"` 时立即唤醒主会话；自定义 Agent 不继承该周期。主 Agent 同时保留
@@ -164,6 +164,21 @@ JustDo 的内置 Gateway 会在原生 `cron` 工具边界为省略 `delivery` �
 `agentTurn` 任务补上 `{ mode: "none" }`。这适用于该 Gateway 服务的所有
 Agent 会话；显式传入的 `announce` 和 `webhook` 保持不变。这样“仅在应用内”
 是可靠的产品默认值，而不只依赖模型遵循 prompt。
+
+### 无人值守权限
+
+任务执行读取当前全局 Ask/Smart/Full 配置，但不继承交互会话的临时授权，也不会为了运行任务
+切换全局权限。Full 下任务可以无人值守使用主机命令和文件修改；Ask/Smart 下若任务触发审批，
+请求仍按普通交互审批处理，无人响应时会按 deny 超时。因此，需要受限操作且必须完整无人值守的任务
+当前应由用户明确选择 Full。
+
+JustDo 不再根据 `agent:<agentId>:cron:<jobId>:run:<runId>` session key 和 job existence 自动放行。
+session key 可由 Gateway 客户端构造，而 OpenClaw v2026.6.11 的公开 API 没有提供可与 approval 绑定的
+可信 active-run attestation；在该证明缺失时自动 `allow-once` 会形成权限提升边界。
+
+Agent 在所有模式下都不能通过原生 cron 工具调用 add/update/remove/run；用户操作通过 JustDo
+scheduled-task IPC 直接调用 Gateway。Gateway operator、CLI、状态目录以及 Full 模式下的 host exec
+仍属于受信任边界，完整隔离需要 OpenClaw 提供独立凭据和不可写的 scheduler state。
 
 ```mermaid
 flowchart TB
@@ -272,14 +287,14 @@ OpenClaw 原始消息的标准化、时间线投影和最终渲染。这样 Gate
 
 ## 失败处理
 
-| 场景 | 处理 |
-| --- | --- |
-| Gateway 未运行 | 返回 engine not ready，不创建假任务 |
-| Cron 表达式无效 | Main 返回 validation failure，Renderer 标记字段错误 |
-| 手动运行失败 | 记录 run error，保留任务定义 |
-| run session 无法解析 | 历史仍显示，但打开按钮禁用或提示不可用 |
-| polling 失败 | 写日志，下一轮重试，UI 保留上次状态 |
-| renderer reload | Main 继续持久化，renderer 通过 `listResults` 重建列表 |
+| 场景                 | 处理                                                  |
+| -------------------- | ----------------------------------------------------- |
+| Gateway 未运行       | 返回 engine not ready，不创建假任务                   |
+| Cron 表达式无效      | Main 返回 validation failure，Renderer 标记字段错误   |
+| 手动运行失败         | 记录 run error，保留任务定义                          |
+| run session 无法解析 | 历史仍显示，但打开按钮禁用或提示不可用                |
+| polling 失败         | 写日志，下一轮重试，UI 保留上次状态                   |
+| renderer reload      | Main 继续持久化，renderer 通过 `listResults` 重建列表 |
 
 ## 测试建议
 

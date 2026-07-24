@@ -448,12 +448,7 @@ export class ChatController {
   ): void {
     const activeTurn = this.state.transcript.activeTurn;
     if (activeTurn?.status !== 'running') this.cacheCurrentTurnTiming();
-    this.finishTurnTimingForSession(
-      this.state.sessionKey,
-      status,
-      runId,
-      activeTurn?.endedAt,
-    );
+    this.finishTurnTimingForSession(this.state.sessionKey, status, runId, activeTurn?.endedAt);
   }
 
   private finishTurnTimingForSession(
@@ -462,13 +457,11 @@ export class ChatController {
     runId?: string | null,
     endedAt = Date.now(),
   ): void {
-    const timingKey =
-      this.turnTimingBySession.has(sessionKey)
-        ? sessionKey
-        : [...this.turnTimingBySession.keys()].find(
-            key =>
-              normalizeTranscriptSessionKey(key) === normalizeTranscriptSessionKey(sessionKey),
-          );
+    const timingKey = this.turnTimingBySession.has(sessionKey)
+      ? sessionKey
+      : [...this.turnTimingBySession.keys()].find(
+          key => normalizeTranscriptSessionKey(key) === normalizeTranscriptSessionKey(sessionKey),
+        );
     if (!timingKey) return;
     const cached = this.turnTimingBySession.get(timingKey);
     if (!cached || cached.status !== 'running') return;
@@ -507,8 +500,7 @@ export class ChatController {
       return cached;
     }
 
-    const canResumeCachedStart =
-      cached?.status === 'running' && cached.runId === activeTurn.runId;
+    const canResumeCachedStart = cached?.status === 'running' && cached.runId === activeTurn.runId;
     return {
       runId: activeTurn.runId,
       status: activeTurn.status,
@@ -582,7 +574,10 @@ export class ChatController {
       this.deferredHistoryReloadAttempts.delete(sessionKey);
       return messages;
     }
-    return [...messages.filter(message => !isLocalCompactionStatus(message, status.id)), status.message];
+    return [
+      ...messages.filter(message => !isLocalCompactionStatus(message, status.id)),
+      status.message,
+    ];
   }
 
   private beginLocalCompactionStatus(
@@ -591,11 +586,7 @@ export class ChatController {
   ): LocalCompactionStatus {
     const existing = this.localCompactionStatusBySession.get(sessionKey);
     if (existing?.message.__openclaw.phase === 'in-progress') return existing;
-    if (
-      existing?.completedAt &&
-      !options.forceNew &&
-      Date.now() - existing.completedAt < 5000
-    ) {
+    if (existing?.completedAt && !options.forceNew && Date.now() - existing.completedAt < 5000) {
       return existing;
     }
     if (existing) {
@@ -752,8 +743,7 @@ export class ChatController {
       messages: projectedMessages,
       requestStartMessages: previousMessages,
       currentMessages: this.state.chatMessages,
-      activeRun:
-        this.state.chatSending || this.state.transcript.activeTurn?.status === 'running',
+      activeRun: this.state.chatSending || this.state.transcript.activeTurn?.status === 'running',
       isVisibleMessage: message => !shouldHideMessage(message),
     });
     if (!reconciliation.accepted) return false;
@@ -1301,11 +1291,7 @@ export class ChatController {
           normalizeTranscriptSessionKey(payload.sessionKey) ===
           normalizeTranscriptSessionKey(this.state.sessionKey);
         if (!matchesSelectedSession && payload.state !== 'delta') {
-          this.finishTurnTimingForSession(
-            payload.sessionKey,
-            payload.state,
-            payload.runId,
-          );
+          this.finishTurnTimingForSession(payload.sessionKey, payload.state, payload.runId);
           return;
         }
         if (
@@ -1963,8 +1949,7 @@ export class ChatController {
       const hydratedMessages = await hydrateGatewayHistoryForDisplay(projectedMessages, {
         sessionKey,
         lastError: this.state.lastError,
-        enrichCompactionMarkers: (messages, key) =>
-          this.enrichCompactionMarkers(messages, key),
+        enrichCompactionMarkers: (messages, key) => this.enrichCompactionMarkers(messages, key),
       });
       if (!requestStillCurrent()) {
         debugLog('[ChatCtrl] loadHistory ABORT identity changed during normalization', {
@@ -2009,10 +1994,7 @@ export class ChatController {
       if (this.state.pendingUserMessage) {
         const p = this.state.pendingUserMessage;
         pendingUserMessageFoundIndex = messages.findIndex((message: unknown) =>
-          isPendingUserMessageMatch(
-            message as GatewayMessage,
-            p as unknown as GatewayMessage,
-          ),
+          isPendingUserMessageMatch(message as GatewayMessage, p as unknown as GatewayMessage),
         );
         if (pendingUserMessageFoundIndex >= 0) {
           if (Array.isArray(p.content)) {
@@ -2071,9 +2053,7 @@ export class ChatController {
         activeTurnTakeover: reconciliation.activeTurnTakeover,
       });
       this.state.chatLoading = false;
-      this.state.historyHasMore = pagedHistory
-        ? pagedHistory.hasMore
-        : previousHistoryHasMore;
+      this.state.historyHasMore = pagedHistory ? pagedHistory.hasMore : previousHistoryHasMore;
       this.state.historyNextCursor = this.state.historyHasMore
         ? (pagedHistory?.nextCursor ?? previousHistoryNextCursor)
         : null;
@@ -2457,6 +2437,14 @@ export class ChatController {
     if (this.state.chatSending) return;
 
     const slashCommand = resolveSlashCommandBehavior(message);
+    if (slashCommand?.execution === SlashCommandExecution.Blocked) {
+      const error = new Error(
+        `/${slashCommand.name} is managed by the application and cannot be sent as a chat command.`,
+      );
+      this.state.lastError = error.message;
+      this.notify();
+      throw error;
+    }
     if (slashCommand?.execution === SlashCommandExecution.Local) {
       const handler = this.localSlashCommandHandlers.get(slashCommand.name);
       if (!handler) {
@@ -2810,8 +2798,7 @@ export class ChatController {
         __openclaw: {
           ...marker,
           checkpointId: checkpoint.checkpointId,
-          summary:
-            readNonBlankString(checkpoint.summary) ?? readNonBlankString(marker.summary),
+          summary: readNonBlankString(checkpoint.summary) ?? readNonBlankString(marker.summary),
           tokensBefore: checkpoint.tokensBefore ?? marker.tokensBefore,
           tokensAfter: checkpoint.tokensAfter ?? marker.tokensAfter,
         },

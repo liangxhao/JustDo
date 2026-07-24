@@ -13,6 +13,7 @@ import type {
   InstalledOpenClawExtension,
   OpenClawExtensionConfigurationField,
 } from '../../../shared/openclaw/extensions';
+import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 
 const OPENCLAW_PLUGIN_MANIFEST = 'openclaw.plugin.json';
@@ -22,6 +23,8 @@ const MAX_COMMAND_OUTPUT_CHARS = 64_000;
 const OPENCLAW_UNINSTALL_SUCCESS_PATTERN = /(?:^|\r?\n)Uninstalled plugin\s+['"][^'"\r\n]+['"]/i;
 const OPENCLAW_TOGGLE_SUCCESS_PATTERN =
   /(?:^|\r?\n)(?:Enabled|Disabled) plugin\s+['"][^'"\r\n]+['"]/i;
+const isProtectedExtension = (extensionId: string): boolean =>
+  extensionId === OpenClawExtensionId.PERMISSION_POLICY;
 
 const createInstallSuccessPattern = (extensionId: string | undefined): RegExp | undefined =>
   extensionId
@@ -512,6 +515,9 @@ export class OpenClawExtensionImportService {
     extensionId: string,
     values: Record<string, string>,
   ): Promise<{ success: boolean; error?: string }> {
+    if (isProtectedExtension(extensionId)) {
+      return { success: false, error: 'This extension is managed by the application.' };
+    }
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
 
@@ -576,6 +582,9 @@ export class OpenClawExtensionImportService {
   }
 
   async delete(extensionId: string): Promise<{ success: boolean; error?: string }> {
+    if (isProtectedExtension(extensionId)) {
+      return { success: false, error: 'This extension is required by the permission system.' };
+    }
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
 
@@ -632,6 +641,9 @@ export class OpenClawExtensionImportService {
     extensionId: string,
     enabled: boolean,
   ): Promise<{ success: boolean; error?: string }> {
+    if (isProtectedExtension(extensionId) && !enabled) {
+      return { success: false, error: 'This extension is required by the permission system.' };
+    }
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
     if (installed.enabled === enabled) return { success: true };

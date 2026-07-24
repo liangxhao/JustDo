@@ -74,6 +74,7 @@ import {
   registerHookHandlers,
   registerMarketplaceHandlers,
   registerMcpHandlers,
+  registerOpenClawApprovalHandlers,
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
   registerOpenClawMemoryHandlers,
@@ -92,6 +93,7 @@ import type { AskUserExtensionConfig } from './openclaw/config/openclawConfigSyn
 import { buildProviderSelection } from './openclaw/config/openclawConfigSync';
 import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
 import { resolveQualifiedAgentModelRef } from './openclaw/models/openclawAgentModels';
+import { downgradePersistedFullPermissionMode } from './openclaw/permissions/permissionStartupPolicy';
 import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
@@ -427,16 +429,32 @@ const ensureOpenClawRunningForCowork = async () => {
   });
   if (!syncResult.success) {
     console.error('[OpenClaw] ensureRunning: config sync failed:', syncResult.error);
+    return (
+      syncResult.status ??
+      manager.setExternalError(syncResult.error || 'OpenClaw configuration could not be verified.')
+    );
   }
 
   const status = manager.getStatus();
   if (status.phase === 'running') {
-    return status;
+    const verification = await getOpenClawConfigSyncService().verifyActivePermissionPolicy();
+    return verification.success
+      ? status
+      : manager.setExternalError(
+          verification.error || 'The active Gateway permission policy is unavailable.',
+        );
   }
 
   // Reuse an in-flight start when the Gateway is already starting. Calling
   // startGateway() is intentional: the manager deduplicates concurrent starts.
-  return manager.startGateway();
+  const started = await manager.startGateway();
+  if (started.phase !== 'running') return started;
+  const verification = await getOpenClawConfigSyncService().verifyActivePermissionPolicy();
+  return verification.success
+    ? started
+    : manager.setExternalError(
+        verification.error || 'The active Gateway permission policy is unavailable.',
+      );
 };
 
 const getCoworkStore = () => {
@@ -465,13 +483,17 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       getHookStore,
       hasActiveGatewayWorkloads: () => getCoworkEngineService().hasActiveSessions(),
       disconnectGatewayClient: () => getCoworkEngineService().disconnectGatewayClient(),
+      connectGatewayClient: () => getCoworkEngineService().connectGatewayClient(),
+      requestGateway: <T>(method: string, params?: unknown) =>
+        getCoworkEngineService().requestGateway<T>(method, params),
     });
   }
   return openClawConfigSyncService;
 };
 
-const syncOpenClawConfig = (options: { reason: string } = { reason: 'unknown' }) =>
-  getOpenClawConfigSyncService().syncConfig(options);
+const syncOpenClawConfig = (
+  options: { reason: string; restartGatewayIfRunning?: boolean } = { reason: 'unknown' },
+) => getOpenClawConfigSyncService().syncConfig(options);
 
 const notifyBuiltinModelsChanged = (): void => {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -756,6 +778,7 @@ if (!gotTheLock) {
     },
   );
   registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });
+  registerOpenClawApprovalHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawMemoryHandlers({ getManager: getOpenClawEngineManager });
 
   registerSlashCommandHandlers({
@@ -976,6 +999,11 @@ if (!gotTheLock) {
     registerLocalFileProtocol();
 
     store = await initStore();
+    if (downgradePersistedFullPermissionMode(getCoworkStore())) {
+      console.warn(
+        '[OpenClaw] Persisted full access was downgraded to ask before Gateway startup.',
+      );
+    }
 
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them on startup.
@@ -1023,17 +1051,19 @@ if (!gotTheLock) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
 
-    void ensureOpenClawRunningForCowork()
-      .then(() => {
-        try {
-          getCronJobService().startPolling();
-        } catch {
-          // CronJobService not available after OpenClaw startup.
-        }
-      })
-      .catch(error => {
-        console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
-      });
+    if (startupSync.success) {
+      void ensureOpenClawRunningForCowork()
+        .then(() => {
+          try {
+            getCronJobService().startPolling();
+          } catch {
+            // CronJobService not available after OpenClaw startup.
+          }
+        })
+        .catch(error => {
+          console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
+        });
+    }
 
     try {
       const runtimeResult = await ensurePythonRuntimeReady();
@@ -1101,7 +1131,26 @@ if (!gotTheLock) {
             // old socket closes asynchronously and leaves gatewayReadyPromise rejected,
             // so requests made during the restart can observe a permanently stale client.
             getOpenClawRuntimeAdapter()?.disconnectGatewayClient();
-            void getOpenClawEngineManager().restartGateway();
+            void getOpenClawEngineManager()
+              .restartGateway()
+              .then(status => {
+                if (status.phase !== 'running') return;
+                return getCoworkEngineService().connectGatewayClient();
+              })
+              .catch(async error => {
+                console.error(
+                  '[OpenClaw] Failed to reconnect runtime adapter after proxy restart:',
+                  error,
+                );
+                await getOpenClawEngineManager()
+                  .stopGateway()
+                  .catch(stopError => {
+                    console.error(
+                      '[OpenClaw] Failed to stop Gateway after runtime adapter reconnect failure:',
+                      stopError,
+                    );
+                  });
+              });
           }
         });
       }

@@ -1,5 +1,6 @@
 export const OpenClawExtensionId = {
   ASK_USER_QUESTION: 'ask-user-question',
+  PERMISSION_POLICY: 'file-permission-policy',
 } as const;
 
 export const OpenClawToolName = {

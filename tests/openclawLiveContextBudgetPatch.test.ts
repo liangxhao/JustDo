@@ -67,6 +67,33 @@ test('upgrades the earlier freshness-mutating patch revision', () => {
   }
 });
 
+test('repairs a duplicate live context publisher left by an earlier patch rerun', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-live-context-repair-'));
+  try {
+    const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+    fs.writeFileSync(
+      bundlePath,
+      [
+        __testing.PATCHED_ATTEMPT_START.replace(
+          __testing.ORIGINAL_ATTEMPT_START,
+          __testing.PATCHED_ATTEMPT_START,
+        ),
+        __testing.PATCHED_MIDTURN_PUBLISH,
+        __testing.PATCHED_MIDTURN_OPTIONS,
+        __testing.PATCHED_INITIAL_PUBLISH,
+      ].join('\n'),
+      'utf8',
+    );
+
+    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    const repaired = fs.readFileSync(bundlePath, 'utf8');
+    expect(repaired.match(/async function persistJustDoLiveContextBudgetStatus/g)).toHaveLength(1);
+    expect(applyPatch(runtimeDir)).toEqual([]);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
 test('live context publisher rejects a stale session id', async () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-live-context-publisher-'));
   try {

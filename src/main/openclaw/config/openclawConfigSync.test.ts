@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
+import { PermissionMode } from '../../../shared/openclaw/approvals';
 import {
   OpenClawApi,
   OpenClawProviderId,
@@ -21,7 +22,8 @@ import {
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
   OPENCLAW_STUCK_SESSION_ABORT_MS,
   OPENCLAW_STUCK_SESSION_WARN_MS,
-  resolveOpenClawExecApprovalsPath,
+  resolveFileToolsWorkspaceOnly,
+  resolvePermissionPolicy,
 } from './openclawConfigSync';
 
 const providerApiKeyEnvVar = (providerName: string): string => {
@@ -252,14 +254,52 @@ describe('OpenClaw managed compaction config', () => {
   });
 });
 
-describe('OpenClaw exec approval path', () => {
-  test('keeps approvals inside the managed state directory', () => {
-    expect(resolveOpenClawExecApprovalsPath('D:\\JustDo\\openclaw\\state')).toBe(
-      'D:\\JustDo\\openclaw\\state\\exec-approvals.json',
-    );
+describe('OpenClaw managed heartbeat config', () => {
+  test('enables heartbeat wake-ups without injecting heartbeat instructions', () => {
+    expect(buildManagedOpenClawHeartbeatConfig()).toEqual({
+      every: '30m',
+      includeSystemPromptSection: false,
+    });
+  });
+
+  test('enables managed heartbeat only for the main agent', () => {
+    expect(applyManagedOpenClawHeartbeatConfig({ id: 'main', default: true })).toEqual({
+      id: 'main',
+      default: true,
+      heartbeat: {
+        every: '30m',
+        includeSystemPromptSection: false,
+      },
+    });
+    expect(applyManagedOpenClawHeartbeatConfig({ id: 'researcher' })).toEqual({
+      id: 'researcher',
+    });
   });
 });
 
+describe('OpenClaw permission policy', () => {
+  test.each([
+    [
+      PermissionMode.Ask,
+      { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
+    ],
+    [
+      PermissionMode.Auto,
+      { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
+    ],
+    [PermissionMode.Full, { security: 'full', ask: 'off', askFallback: 'full' }],
+  ])('maps %s to the matching host approval policy', (mode, expected) => {
+    expect(resolvePermissionPolicy(mode)).toEqual(expected);
+  });
+
+  test.each([
+    [PermissionMode.Ask, true],
+    [PermissionMode.Auto, true],
+    [PermissionMode.Full, false],
+  ])('maps %s to workspace-only file tools=%s', (mode, expected) => {
+    expect(resolveFileToolsWorkspaceOnly(mode)).toBe(expected);
+  });
+});
 describe('OpenClaw managed connectivity config', () => {
   test('keeps intranet web tools while disabling unused tools and update checks', () => {
     expect(buildManagedOpenClawConnectivityConfig()).toEqual({
@@ -307,29 +347,6 @@ describe('OpenClaw managed connectivity config', () => {
           dangerouslyAllowPrivateNetwork: true,
         },
       },
-    });
-  });
-});
-
-describe('OpenClaw managed heartbeat config', () => {
-  test('enables heartbeat wake-ups without injecting heartbeat instructions', () => {
-    expect(buildManagedOpenClawHeartbeatConfig()).toEqual({
-      every: '30m',
-      includeSystemPromptSection: false,
-    });
-  });
-
-  test('enables managed heartbeat only for the main agent', () => {
-    expect(applyManagedOpenClawHeartbeatConfig({ id: 'main', default: true })).toEqual({
-      id: 'main',
-      default: true,
-      heartbeat: {
-        every: '30m',
-        includeSystemPromptSection: false,
-      },
-    });
-    expect(applyManagedOpenClawHeartbeatConfig({ id: 'researcher' })).toEqual({
-      id: 'researcher',
     });
   });
 });

@@ -815,24 +815,37 @@ class CoworkService {
   }
 
   async updateConfig(config: CoworkConfigUpdate): Promise<boolean> {
+    return (await this.updateConfigResult(config)).success;
+  }
+
+  async updateConfigResult(
+    config: CoworkConfigUpdate,
+  ): Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }> {
     const cowork = window.electron?.cowork;
-    if (!cowork) return false;
+    if (!cowork) return { success: false };
 
     const currentConfig = store.getState().cowork.config;
     const engineChanged =
       config.agentEngine !== undefined && config.agentEngine !== currentConfig.agentEngine;
     const result = await cowork.setConfig(config);
     if (result.success) {
-      store.dispatch(setConfig({ ...currentConfig, ...config }));
+      const authoritative = await cowork.getConfig();
+      store.dispatch(
+        setConfig(
+          authoritative.success && authoritative.config
+            ? authoritative.config
+            : { ...store.getState().cowork.config, ...config },
+        ),
+      );
       if (engineChanged) {
         store.dispatch(clearPendingInteractions());
         store.dispatch(setStreaming(false));
       }
-      return true;
+      return result;
     }
 
     console.error('Failed to update config:', result.error);
-    return false;
+    return result;
   }
 
   async getApiConfig(): Promise<CoworkApiConfig | null> {

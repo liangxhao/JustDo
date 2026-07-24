@@ -1,8 +1,10 @@
+import type { PermissionMode } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import type { AskUserExtensionConfig } from '../../openclaw/config/openclawConfigSync';
 
 export type OpenClawExtensionContext = {
   askUser: AskUserExtensionConfig | null;
+  permissionMode: PermissionMode;
 };
 
 export type OpenClawExtensionDescriptor = {
@@ -26,6 +28,13 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
             },
           }
         : {}),
+    }),
+  },
+  {
+    id: OpenClawExtensionId.PERMISSION_POLICY,
+    buildEntry: ({ permissionMode }) => ({
+      enabled: true,
+      config: { mode: permissionMode },
     }),
   },
 ] as const;
