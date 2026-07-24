@@ -112,6 +112,64 @@ test('imports a skill whose name starts with import-', () => {
   expect(fs.existsSync(path.join(managed, 'import-smoke-test', 'SKILL.md'))).toBe(true);
 });
 
+test('replaces an imported skill with the same name and removes files from the old version', () => {
+  const oldSource = makeTempDir();
+  const newSource = makeTempDir();
+  const managed = makeTempDir();
+  fs.writeFileSync(
+    path.join(oldSource, 'SKILL.md'),
+    '---\nname: replaceable-skill\ndescription: old\n---\n',
+  );
+  fs.writeFileSync(path.join(oldSource, 'obsolete.md'), 'old version only');
+  fs.writeFileSync(
+    path.join(newSource, 'SKILL.md'),
+    '---\nname: replaceable-skill\ndescription: new\n---\n',
+  );
+  fs.writeFileSync(path.join(newSource, 'current.md'), 'new version only');
+  const files = new OpenClawSkillFiles(managed);
+
+  expect(files.importDirectory(oldSource)).toEqual({
+    success: true,
+    skillId: 'replaceable-skill',
+  });
+  const result = files.importDirectory(newSource);
+
+  const installedDir = path.join(managed, 'replaceable-skill');
+  expect(result).toEqual({ success: true, skillId: 'replaceable-skill' });
+  expect(fs.readFileSync(path.join(installedDir, 'SKILL.md'), 'utf8')).toContain(
+    'description: new',
+  );
+  expect(fs.readFileSync(path.join(installedDir, 'current.md'), 'utf8')).toBe('new version only');
+  expect(fs.existsSync(path.join(installedDir, 'obsolete.md'))).toBe(false);
+});
+
+test('retries a transient permission error while replacing an imported skill', () => {
+  const source = makeTempDir();
+  const managed = makeTempDir();
+  const target = path.join(managed, 'replaceable-skill');
+  fs.writeFileSync(
+    path.join(source, 'SKILL.md'),
+    '---\nname: replaceable-skill\ndescription: new\n---\n',
+  );
+  fs.mkdirSync(target);
+  fs.writeFileSync(
+    path.join(target, 'SKILL.md'),
+    '---\nname: replaceable-skill\ndescription: old\n---\n',
+  );
+  const renameSync = fs.renameSync.bind(fs);
+  vi.spyOn(fs, 'renameSync')
+    .mockImplementationOnce(() => {
+      throw Object.assign(new Error('directory temporarily locked'), { code: 'EPERM' });
+    })
+    .mockImplementation(renameSync);
+
+  const result = new OpenClawSkillFiles(managed).importDirectory(source);
+
+  expect(result).toEqual({ success: true, skillId: 'replaceable-skill' });
+  expect(fs.readFileSync(path.join(target, 'SKILL.md'), 'utf8')).toContain('description: new');
+  expect(fs.renameSync).toHaveBeenCalledTimes(3);
+});
+
 test('can delete a skill after importing it', () => {
   const source = makeTempDir();
   const managed = makeTempDir();

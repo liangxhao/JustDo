@@ -10,8 +10,8 @@ import { t } from '../../core/i18n';
 
 const SKILL_FILE_NAME = 'SKILL.md';
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
-const WINDOWS_FS_RETRY_COUNT = 5;
-const WINDOWS_FS_RETRY_DELAY_MS = 200;
+const FILE_SYSTEM_RETRY_COUNT = 5;
+const FILE_SYSTEM_RETRY_DELAY_MS = 200;
 const MAX_SKILL_NAME_LENGTH = 64;
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const WINDOWS_RESERVED_NAME_PATTERN = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
@@ -22,9 +22,7 @@ export type LocalSkillFileResult = {
   error?: string;
 };
 
-type SkillIdResult =
-  | { skillId: string; error?: never }
-  | { skillId?: never; error: string };
+type SkillIdResult = { skillId: string; error?: never } | { skillId?: never; error: string };
 
 const validateSkillName = (name: unknown): SkillIdResult => {
   if (
@@ -59,8 +57,8 @@ const removeDirectory = (directory: string): void => {
   fs.rmSync(directory, {
     recursive: true,
     force: true,
-    maxRetries: process.platform === 'win32' ? WINDOWS_FS_RETRY_COUNT : 0,
-    retryDelay: process.platform === 'win32' ? WINDOWS_FS_RETRY_DELAY_MS : 0,
+    maxRetries: process.platform === 'win32' ? FILE_SYSTEM_RETRY_COUNT : 0,
+    retryDelay: process.platform === 'win32' ? FILE_SYSTEM_RETRY_DELAY_MS : 0,
   });
 };
 
@@ -87,6 +85,34 @@ const pathExists = (targetPath: string): boolean => {
   }
 };
 
+const waitForFileSystemRetry = (): void => {
+  Atomics.wait(
+    new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+    0,
+    0,
+    FILE_SYSTEM_RETRY_DELAY_MS,
+  );
+};
+
+const renameDirectory = (sourceDir: string, targetDir: string): void => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.renameSync(sourceDir, targetDir);
+      return;
+    } catch (error) {
+      const code =
+        error instanceof Error && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : '';
+      const canRetry =
+        attempt < FILE_SYSTEM_RETRY_COUNT &&
+        (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY');
+      if (!canRetry) throw error;
+      waitForFileSystemRetry();
+    }
+  }
+};
+
 const replaceDirectory = (sourceDir: string, targetDir: string): void => {
   // On Windows, stage under the current user's temp directory so the completed
   // directory has a user-owned ACL before it is moved into the managed root.
@@ -103,16 +129,16 @@ const replaceDirectory = (sourceDir: string, targetDir: string): void => {
     fs.accessSync(path.join(stagedDir, SKILL_FILE_NAME), fs.constants.R_OK);
 
     if (pathExists(targetDir)) {
-      fs.renameSync(targetDir, backupDir);
+      renameDirectory(targetDir, backupDir);
       targetBackedUp = true;
     }
 
     try {
-      fs.renameSync(stagedDir, targetDir);
+      renameDirectory(stagedDir, targetDir);
     } catch (error) {
       if (targetBackedUp) {
         try {
-          fs.renameSync(backupDir, targetDir);
+          renameDirectory(backupDir, targetDir);
           targetBackedUp = false;
         } catch (restoreError) {
           const restoreMessage =
@@ -143,10 +169,7 @@ const replaceDirectory = (sourceDir: string, targetDir: string): void => {
         removeDirectory(transactionDir);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'unknown error';
-        console.warn(
-          '[OpenClawSkillFiles] Failed to clean skill staging directory:',
-          errorMessage,
-        );
+        console.warn('[OpenClawSkillFiles] Failed to clean skill staging directory:', errorMessage);
       }
     }
   }
