@@ -4,16 +4,19 @@ JustDo 的聊天渲染由 React 容器和 Lit 自定义元素共同完成。Reac
 
 ## 关键文件
 
-| 文件                                                             | 作用                                       |
-| ---------------------------------------------------------------- | ------------------------------------------ |
-| `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`  | React wrapper                              |
-| `src/renderer/features/cowork/components/ChatMessageDisplay.tsx` | Cowork message display integration         |
-| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`      | Lit custom element                         |
-| `src/renderer/libs/openclaw-chat/gateway/client.ts`              | Gateway WebSocket client                   |
-| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts`     | chat controller                            |
-| `src/renderer/libs/openclaw-chat/pipeline/`                      | message normalization/build/render helpers |
-| `src/renderer/libs/openclaw-chat/components/markdown.ts`         | Markdown renderer                          |
-| `src/renderer/libs/openclaw-chat/components/tool-display.ts`     | tool display                               |
+| 文件                                                             | 作用                                   |
+| ---------------------------------------------------------------- | -------------------------------------- |
+| `src/renderer/features/cowork/components/JustDoChatWrapper.tsx`  | React wrapper                          |
+| `src/renderer/features/cowork/components/ChatMessageDisplay.tsx` | Cowork message display integration     |
+| `src/renderer/libs/openclaw-chat/components/justdo-chat.ts`      | Lit custom element                     |
+| `src/renderer/libs/openclaw-chat/gateway/client.ts`              | Gateway WebSocket client               |
+| `src/renderer/libs/openclaw-chat/gateway/chat-controller.ts`     | chat controller                        |
+| `src/shared/openclaw/agentEvent.ts`                              | Agent/chat event 协议归一化            |
+| `src/renderer/libs/openclaw-chat/model/`                         | live transcript reducer、对账与投影    |
+| `src/renderer/libs/openclaw-chat/controllers/`                   | render 调度与滚动状态                  |
+| `src/renderer/libs/openclaw-chat/pipeline/`                      | persisted history normalization/render |
+| `src/renderer/libs/openclaw-chat/components/markdown.ts`         | Markdown renderer                      |
+| `src/renderer/libs/openclaw-chat/components/tool-display.ts`     | tool display                           |
 
 ## 渲染流程
 
@@ -24,9 +27,14 @@ flowchart LR
   Element --> Controller["ChatController"]
   Controller --> Client["GatewayClient"]
   Client --> WS["OpenClaw Gateway WebSocket"]
-  WS --> Controller
-  Controller --> Pipeline["message pipeline"]
-  Pipeline --> Render["Lit render"]
+  WS --> Normalize["shared event normalizer"]
+  Normalize --> Controller
+  Controller --> Reducer["sequence-ordered transcript reducer"]
+  Reducer --> Projection["flat timeline projection"]
+  Controller --> History["Gateway history reconciler"]
+  History --> Pipeline["persisted message pipeline"]
+  Pipeline --> Render["keyed Lit render"]
+  Projection --> Render
 ```
 
 ## Pipeline
@@ -57,9 +65,28 @@ Markdown renderer 使用：
 
 渲染输出必须经过 sanitizer，避免把模型输出直接作为可信 HTML。
 
-## Thinking Stream
+## Live timeline
 
-Thinking/reasoning 内容通过 Gateway stream 和 runtime patch 支持。Renderer 不维护独立 thinking 状态机；它把 stream delta 交给 chat pipeline 展示。
+Thinking/reasoning、Tool 和 Content 由 renderer-owned canonical transcript reducer
+按 `runId + payload.seq` 排序。Gateway frame `seq` 只用于 transport 诊断，
+`chat` event 的状态序列也不与 Agent sequence 比较。当前 bundled runtime 若只提供
+`aseq`，shared normalizer 会走显式兼容回退。
+
+Reducer 保留完整的 flat `TurnItem[]`；展示 selector 才把连续成功的 Thinking/Tool
+压缩为 process summary。Content、用户消息、divider、terminal 和 run/session
+边界都会结束 summary。运行中和失败/取消/中断的过程项保持可见。点击 summary
+会通过原地 disclosure 在其时间线位置按稳定 item ID 和原始
+顺序展开已归档的 Thinking/Tool；相邻 Content 保持在原位置，因此展开后仍能直接
+阅读真实发生顺序。这是唯一的折叠层；旧的 `N tools: Tool1、Tool2` 二级分组及
+Thinking/Tools 嵌套 cluster 已删除，不得由 persisted Content renderer 重新生成。
+summary 折叠时 Tool input/output 不进入主时间线 DOM；用户原地展开 summary 后，
+每个 Tool 才以独立详情项展示参数和有界结果。展开项不显示序号或逐项耗时。
+persisted history 与 active-turn 投影在组成完整可见时间线后再合并相邻 summary，
+合并时保留第一个归档项派生的稳定 key；Content 等真实边界始终阻止合并。
+
+`message-render.ts` 仅负责普通用户/助手 Content、附件、Canvas、头像和 footer
+布局能力。它不得渲染 Thinking 或 Tool，也不得包含这两类过程项的
+`details`/`summary` disclosure；过程项的唯一展开状态由 `process-summary` 持有。
 
 相关文档：`docs/features/thinking-stream-implementation.md`。
 
@@ -99,7 +126,17 @@ Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产�
 
 ## 工具显示
 
-工具调用通过 pipeline 归一化为 tool cards/activity groups。工具输入等敏感历史数据通过 Main IPC 从 Gateway state/history 读取，不由 renderer 直接访问 runtime 文件。
+live 工具调用以 `runId + toolCallId` 更新 canonical ToolItem；缺少名称时使用
+`tool`，result-before-start 也会建立项目。冷历史中的工具仍由 persisted
+pipeline 归一化。工具输入等敏感历史数据通过 Main IPC 从 Gateway state/history
+读取，不由 renderer 直接访问 runtime 文件。成功 Tool 完成后归档到相邻 process
+summary；运行中或失败的 Tool 保持可见，失败项可直接打开所在 summary 的详情。
+
+增量事件和冷历史共同复用 `model/tool-message-adapter.ts` 的兼容规则，包括
+OpenClaw message envelope、Tool ID/名称字段别名、metadata、`partialArgs`、
+独立 `tool_use`/`tool_result`、附加 Tool 消息、对象/空结果和结构化错误。新增
+Tool 数据形态时必须先扩展该适配器及双路径一致性测试，不能在两个投影入口分别
+增加临时解析分支。
 
 ## 维护规则
 
@@ -144,7 +181,7 @@ Controller 是 Gateway event 到 Lit state 的协调层。它不应该知道 Rea
 
 主要职责：
 
-- 维护当前 chat session 的展示状态。
+- 维护当前 session 的 Gateway-backed persisted history 和 canonical active turn。
 - 接收 stream event。
 - 调用 pipeline 构建 render items。
 - 处理 history load 和 incremental update。
@@ -153,7 +190,9 @@ Controller 是 Gateway event 到 Lit state 的协调层。它不应该知道 Rea
 
 - 切换 session 时先取消上一 session 的 message subscription，再订阅目标 session。
 - optimistic user message、live final 和 history apply 都要同步更新对应 session 的内存缓存。
-- active run 拥有实时展示状态；并发 history 结果不能回退 stream、thinking、tool 或可见消息。
+- active run 拥有实时展示状态；并发 history 结果不能回退 process item 或可见 Content。
+- `sessionKey`、`sessionId`、Gateway lifecycle generation 与 run tombstone 共同隔离延迟事件。
+- 只有当前 history generation 的成功 Gateway 响应有权证明持久化覆盖；SQLite/optimistic projection 不能清除 live tail。
 - history 的附件合并先于异步图片解析，异步结果只允许提交到发起时的 session 和消息版本。
 - `chat.send` ack 前使用本地临时 runId；首个同 session Gateway event 可以将其绑定为真实 runId。
 
@@ -163,15 +202,15 @@ Pipeline 的目标是把 Gateway/raw/cached message 统一成可渲染 chat item
 
 ```mermaid
 flowchart LR
-  Raw["Gateway/raw/cache messages"] --> Extract["message-extract"]
+  Raw["Persisted Gateway/raw/cache messages"] --> Extract["message-extract"]
   Extract --> Normalize["message-normalizer"]
   Normalize --> Role["role-normalizer"]
   Role --> UserContent["user-message-content"]
   UserContent --> Stream["stream-text"]
   Stream --> Tools["tool-cards/tool-helpers"]
   Tools --> Build["build-chat-items"]
-  Build --> Grouped["grouped-render"]
-  Grouped --> DOM["Lit DOM"]
+  Build --> MessageRender["message-render"]
+  MessageRender --> DOM["Persisted Lit DOM"]
 ```
 
 各层职责：
@@ -185,17 +224,18 @@ flowchart LR
 | `tool-cards.ts`         | 生成工具调用展示模型                          |
 | `heartbeat-display.ts`  | 处理 Gateway heartbeat/活动提示               |
 | `build-chat-items.ts`   | 生成最终 render item 列表                     |
-| `grouped-render.ts`     | 把连续消息分组渲染                            |
+| `message-render.ts`     | 渲染普通 Content、附件、Canvas、头像和 footer |
 
 ## History Loading
 
-聊天视图可能来自三种输入：
+聊天视图可能来自三种 history 输入，另有 canonical active-turn tail：
 
 1. Gateway live stream。
 2. Gateway `chat.history`。
 3. SQLite message cache。
 
-优先级是 Gateway live/history 高于 SQLite cache。SQLite cache 适合快速首屏和离线/故障降级，但恢复后应由 Gateway history 校正。
+优先级是 active live state > Gateway history > SQLite fallback > optimistic。
+SQLite cache 适合快速首屏和离线/故障降级，但不能作为 prune live state 的证据。
 
 ```mermaid
 flowchart TD
@@ -242,13 +282,22 @@ Renderer 只负责构建 JSON；文件路径由系统另存为对话框选择，
 ## 性能考虑
 
 - 长历史应分页或限制渲染数量。
-- 流式 delta 更新应避免重建整棵 DOM。
+- persisted history projection 与 active-turn projection 分开；流式 delta 不重建 persisted history。
+- stream visual publish 由 animation-frame scheduler 合并，terminal/state notification 可立即发布。
+- active timeline 使用稳定 source ID 和 Lit keyed `repeat`，summary count 更新不会替换 DOM identity。
+- Tool 至少展示 500 ms；计时器只延迟 presentation archive，不改变 reducer status。
+- 滚动由 Lit 侧单一 controller 持有；用户一旦向上滚动即进入 paused，只有显式“跳到最新消息”恢复 follow。
 - 大型 code block/mermaid 图要考虑懒渲染。
 - Search highlight 不应改变 message identity。
 
 ## 测试重点
 
-- grouped render。
+- Agent/chat event normalization 和 sequence isolation。
+- active-turn reducer permutations、terminal preservation 和 run tombstone。
+- process summary 的 Content hard boundary、stable key 和 inline disclosure。
+- history authority/generation/regressive-tail reconciliation。
+- scroll follow/paused/jump-to-latest。
+- persisted grouped render。
 - markdown task list/math/code。
 - message normalization。
 - Gateway client reconnect。

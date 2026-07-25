@@ -68,19 +68,6 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       attributeFilter: ['class'],
     });
 
-    const followLatestMessage = () => {
-      const isNearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 200;
-      if (isNearBottom) {
-        requestAnimationFrame(() => {
-          chat.scrollTop = chat.scrollHeight;
-        });
-      }
-    };
-    const contentObserver = new MutationObserver(followLatestMessage);
-    if (chat.shadowRoot) {
-      contentObserver.observe(chat.shadowRoot, { childList: true, subtree: true });
-    }
-
     const handleSearchMatchCountChange = (event: Event) => {
       const detail = (event as CustomEvent<{ total?: number; index?: number }>).detail;
       onSearchMatchCountChange?.(detail?.total ?? 0, detail?.index ?? -1);
@@ -89,7 +76,6 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
 
     return () => {
       themeObserver.disconnect();
-      contentObserver.disconnect();
       chat.removeEventListener('search-match-count-change', handleSearchMatchCountChange);
       chat.controller = null;
       chat.remove();
@@ -125,18 +111,6 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     const result = chat.navigateSearch(searchNavigationDirection);
     onSearchMatchCountChange?.(result.total, result.index);
   }, [onSearchMatchCountChange, searchNavigationDirection, searchNavigationToken]);
-
-  useEffect(() => {
-    const chat = chatRef.current;
-    if (!chat) return;
-
-    const shouldFollow = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 200;
-    if (shouldFollow) {
-      requestAnimationFrame(() => {
-        chat.scrollTop = chat.scrollHeight;
-      });
-    }
-  }, [gatewayMessages, isStreaming]);
 
   return (
     <div

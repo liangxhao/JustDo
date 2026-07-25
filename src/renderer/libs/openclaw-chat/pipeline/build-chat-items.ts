@@ -182,213 +182,6 @@ function findNearestAssistantMessageIndex(
   return assistantEntries[assistantEntries.length - 1]?.index ?? null;
 }
 
-function findPreviousAssistantMessageIndex(
-  items: ChatItem[],
-  toolTimestamp: number | null,
-): number | null {
-  let fallbackIndex: number | null = null;
-  let previousIndex: number | null = null;
-  let previousTimestamp = Number.NEGATIVE_INFINITY;
-
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    if (item?.kind !== 'message') {
-      continue;
-    }
-    const message = item.message as Record<string, unknown>;
-    const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
-    if (role !== 'assistant') {
-      continue;
-    }
-    fallbackIndex = index;
-    if (toolTimestamp == null) {
-      continue;
-    }
-    const timestamp = safeNormalizeMessage(item.message)?.timestamp ?? null;
-    if (timestamp != null && timestamp <= toolTimestamp && timestamp >= previousTimestamp) {
-      previousIndex = index;
-      previousTimestamp = timestamp;
-    }
-  }
-
-  return previousIndex ?? fallbackIndex;
-}
-
-function getAttachedToolMessages(message: unknown): unknown[] {
-  const attached = asRecord(message)?.__justdoAttachedToolMessages;
-  return Array.isArray(attached) ? attached : [];
-}
-
-function extractToolCallId(message: unknown): string | null {
-  const raw = asRecord(message);
-  if (!raw) {
-    return null;
-  }
-  const direct = [
-    raw.toolCallId,
-    raw.tool_call_id,
-    raw.toolUseId,
-    raw.tool_use_id,
-  ].find(value => typeof value === 'string' && value.trim()) as string | undefined;
-  if (direct) {
-    return direct.trim();
-  }
-
-  const content = Array.isArray(raw.content) ? raw.content : [];
-  for (const block of content) {
-    const item = asRecord(block);
-    if (!item) {
-      continue;
-    }
-    const nested = [item.toolCallId, item.tool_call_id, item.toolUseId, item.tool_use_id, item.id]
-      .find(value => typeof value === 'string' && value.trim()) as string | undefined;
-    if (nested) {
-      return nested.trim();
-    }
-  }
-  return null;
-}
-
-function findAssistantWithAttachedToolIndex(items: ChatItem[], toolMessage: unknown): number | null {
-  const toolCallId = extractToolCallId(toolMessage);
-  if (!toolCallId) {
-    return null;
-  }
-
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    if (item?.kind !== 'message') {
-      continue;
-    }
-    const attached = getAttachedToolMessages(item.message);
-    if (attached.some(message => extractToolCallId(message) === toolCallId)) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function findAssistantWithToolCallContentIndex(items: ChatItem[], toolMessage: unknown): number | null {
-  const toolCallId = extractToolCallId(toolMessage);
-  if (!toolCallId) {
-    return null;
-  }
-
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    if (item?.kind !== 'message') {
-      continue;
-    }
-    const raw = asRecord(item.message);
-    if (!raw || typeof raw.role !== 'string' || raw.role.toLowerCase() !== 'assistant') {
-      continue;
-    }
-    const content = Array.isArray(raw.content) ? raw.content : [];
-    const hasMatchingToolCall = content.some(block => {
-      const itemRecord = asRecord(block);
-      if (!itemRecord) return false;
-      const type = typeof itemRecord.type === 'string' ? itemRecord.type.toLowerCase() : '';
-      if (!['toolcall', 'tool_call', 'tooluse', 'tool_use'].includes(type)) return false;
-      const nestedId = [
-        itemRecord.id,
-        itemRecord.toolCallId,
-        itemRecord.tool_call_id,
-        itemRecord.toolUseId,
-        itemRecord.tool_use_id,
-      ].find(value => typeof value === 'string' && value.trim()) as string | undefined;
-      return nestedId?.trim() === toolCallId;
-    });
-    if (hasMatchingToolCall) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function hasActiveToolTimeline(toolMessages: unknown[]): boolean {
-  const activeByToolId = new Map<string, boolean>();
-  let anonymousActive = false;
-
-  for (const message of toolMessages) {
-    const toolCallId = extractToolCallId(message);
-    const isActive = isLiveToolMessage(message);
-    if (toolCallId) {
-      activeByToolId.set(toolCallId, isActive);
-    } else if (isActive) {
-      anonymousActive = true;
-    }
-  }
-
-  return anonymousActive || [...activeByToolId.values()].some(Boolean);
-}
-
-function hasToolTimelineContent(message: unknown): boolean {
-  const raw = asRecord(message);
-  if (!raw) {
-    return false;
-  }
-  if (getAttachedToolMessages(raw).length > 0) {
-    return true;
-  }
-  const content = Array.isArray(raw.content) ? raw.content : [];
-  return content.some(block => {
-    const item = asRecord(block);
-    if (!item) return false;
-    const type = typeof item.type === 'string' ? item.type.toLowerCase() : '';
-    return ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(
-      type,
-    );
-  });
-}
-
-function withAttachedToolMessage(
-  message: unknown,
-  toolMessage: unknown,
-  options: { keepTimelineOpen?: boolean } = {},
-): unknown {
-  const raw = asRecord(message) ?? {};
-  const wasTimelineOpen = raw.__justdoToolTimelineOpen === true;
-  const hadToolTimelineContent = hasToolTimelineContent(raw);
-  const { __justdoToolTimelineOpen: _ignoredTimelineOpen, ...rest } = raw;
-  const attachedToolMessages = [...getAttachedToolMessages(raw), toolMessage];
-  const keepTimelineOpen =
-    (wasTimelineOpen && hasActiveToolTimeline(attachedToolMessages)) ||
-    (options.keepTimelineOpen === true && !hadToolTimelineContent);
-  return {
-    ...rest,
-    __justdoAttachedToolMessages: attachedToolMessages,
-    ...(keepTimelineOpen ? { __justdoToolTimelineOpen: true } : {}),
-  };
-}
-
-function attachToolToAssistantAtIndex(
-  items: ChatItem[],
-  assistantIndex: number,
-  toolMessage: unknown,
-  options: { keepTimelineOpen?: boolean } = {},
-): boolean {
-  const item = items[assistantIndex];
-  if (item?.kind !== 'message') {
-    return false;
-  }
-  items[assistantIndex] = {
-    ...item,
-    message: withAttachedToolMessage(item.message, toolMessage, options),
-  };
-  return true;
-}
-
-function withStreamToolMessage(item: Extract<ChatItem, { kind: 'stream' }>, toolMessage: unknown) {
-  return {
-    ...item,
-    toolMessages: [...(item.toolMessages ?? []), toolMessage],
-  };
-}
-
-function isLiveToolMessage(toolMessage: unknown): boolean {
-  return asRecord(toolMessage)?.__justdoToolActive === true;
-}
-
 function isLiveThinkingOnlyMessage(
   item: ChatItem | undefined,
 ): item is Extract<ChatItem, { kind: 'message' }> {
@@ -414,9 +207,6 @@ function popMergeableLiveThinkingTail(
 ): Extract<ChatItem, { kind: 'message' }> | null {
   const tail = items[items.length - 1];
   if (!isLiveThinkingOnlyMessage(tail)) {
-    return null;
-  }
-  if (getAttachedToolMessages(tail.message).length > 0) {
     return null;
   }
   items.pop();
@@ -496,95 +286,6 @@ function isToolMessageRole(message: unknown): boolean {
     }
   }
   return hasToolBlock;
-}
-
-function appendSyntheticAssistantToolMessage(
-  items: ChatItem[],
-  toolMessage: unknown,
-  options: { keepTimelineOpen?: boolean } = {},
-): void {
-  const normalized = safeNormalizeMessage(toolMessage);
-  items.push({
-    kind: 'message',
-    key: `assistant-tools:${messageKey(toolMessage, items.length)}`,
-    message: {
-      role: 'assistant',
-      content: [],
-      timestamp: normalized?.timestamp ?? Date.now(),
-      __justdoAttachedToolMessages: [toolMessage],
-      ...(options.keepTimelineOpen ? { __justdoToolTimelineOpen: true } : {}),
-    },
-  });
-}
-
-function attachToolToNearestAssistant(items: ChatItem[], toolMessage: unknown): void {
-  const existingToolIndex = findAssistantWithAttachedToolIndex(items, toolMessage);
-  if (
-    existingToolIndex != null &&
-    attachToolToAssistantAtIndex(items, existingToolIndex, toolMessage)
-  ) {
-    return;
-  }
-
-  const ownerToolIndex = findAssistantWithToolCallContentIndex(items, toolMessage);
-  if (
-    ownerToolIndex != null &&
-    attachToolToAssistantAtIndex(items, ownerToolIndex, toolMessage)
-  ) {
-    return;
-  }
-
-  const timestamp = safeNormalizeMessage(toolMessage)?.timestamp ?? null;
-  const assistantIndex = findPreviousAssistantMessageIndex(items, timestamp);
-  if (assistantIndex == null) {
-    appendSyntheticAssistantToolMessage(items, toolMessage);
-    return;
-  }
-  if (!attachToolToAssistantAtIndex(items, assistantIndex, toolMessage)) {
-    appendSyntheticAssistantToolMessage(items, toolMessage);
-  }
-}
-
-function attachLiveToolToVisibleTail(items: ChatItem[], toolMessage: unknown): void {
-  const keepTimelineOpen = isLiveToolMessage(toolMessage);
-  const existingToolIndex = findAssistantWithAttachedToolIndex(items, toolMessage);
-  if (
-    existingToolIndex != null &&
-    attachToolToAssistantAtIndex(items, existingToolIndex, toolMessage, { keepTimelineOpen })
-  ) {
-    return;
-  }
-
-  const timestamp = safeNormalizeMessage(toolMessage)?.timestamp ?? null;
-  const assistantIndex = findPreviousAssistantMessageIndex(items, timestamp);
-  if (
-    assistantIndex != null &&
-    attachToolToAssistantAtIndex(items, assistantIndex, toolMessage, { keepTimelineOpen })
-  ) {
-    return;
-  }
-
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
-    if (!item) {
-      continue;
-    }
-    if (item.kind === 'stream') {
-      items[index] = withStreamToolMessage(item, toolMessage);
-      return;
-    }
-    if (item.kind === 'message') {
-      const raw = asRecord(item.message);
-      if (raw?.__justdoToolTimelineOpen === true) {
-        items[index] = {
-          ...item,
-          message: withAttachedToolMessage(item.message, toolMessage, { keepTimelineOpen }),
-        };
-        return;
-      }
-    }
-  }
-  appendSyntheticAssistantToolMessage(items, toolMessage, { keepTimelineOpen });
 }
 
 function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
@@ -853,9 +554,6 @@ function collapseSequentialDuplicateMessages(items: ChatItem[]): ChatItem[] {
 }
 
 function hasRenderableNormalizedMessage(message: unknown): boolean {
-  if (getAttachedToolMessages(message).length > 0) {
-    return true;
-  }
   if (extractThinkingCached(message)) {
     return true;
   }
@@ -1313,9 +1011,6 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     }
 
     if (isToolMessageRole(msg)) {
-      if (props.showToolCalls) {
-        attachToolToNearestAssistant(items, msg);
-      }
       continue;
     }
 
@@ -1387,10 +1082,7 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
         previousAccumulatedStreamText = text;
       }
       if (visibleText.length > 0) {
-        const willAttachToolAtThisIndex = props.showToolCalls && i < tools.length;
-        const liveThinkingTail = willAttachToolAtThisIndex
-          ? null
-          : popMergeableLiveThinkingTail(items);
+        const liveThinkingTail = popMergeableLiveThinkingTail(items);
         items.push({
           kind: 'message',
           key: `stream-seg:${props.sessionKey}:${i}`,
@@ -1403,9 +1095,6 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
               },
         });
       }
-    }
-    if (i < tools.length && props.showToolCalls) {
-      attachLiveToolToVisibleTail(items, tools[i]);
     }
   }
 

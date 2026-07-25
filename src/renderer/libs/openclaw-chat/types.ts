@@ -1,6 +1,6 @@
 /**
  * Gateway message format types matching OpenClaw's internal types.
- * These are the types used by the rendering pipeline (buildChatItems, renderMessageGroup).
+ * These are the types used by the rendering pipeline and ordinary Content renderer.
  */
 
 // ─── ChatItem (rendering pipeline output) ───────────────────────────────────
@@ -25,7 +25,6 @@ export type ChatItem =
       thinkingText?: string | null;
       startedAt: number;
       isStreaming: boolean;
-      toolMessages?: unknown[];
     }
   | { kind: 'reading-indicator'; key: string };
 

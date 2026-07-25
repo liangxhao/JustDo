@@ -1,0 +1,169 @@
+import type { TemplateResult } from 'lit';
+import { describe, expect, test, vi } from 'vitest';
+
+vi.mock('./markdown', () => ({
+  toSanitizedMarkdownHtml: (text: string) => text,
+  toStreamingMarkdownHtml: (text: string) => text,
+}));
+
+import type { ProcessSummaryTimelineItem } from '../model/project-turn-items';
+import { renderTimelineItem } from './active-turn-timeline';
+
+function flatten(value: unknown): string {
+  if (value == null || value === false) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (Array.isArray(value)) return value.map(flatten).join('');
+  if (typeof value === 'object' && 'strings' in value && 'values' in value) {
+    const template = value as TemplateResult;
+    return template.strings.reduce(
+      (result, string, index) => `${result}${string}${flatten(template.values[index])}`,
+      '',
+    );
+  }
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>)
+      .map(flatten)
+      .join('');
+  }
+  return '';
+}
+
+function summary(): ProcessSummaryTimelineItem {
+  return {
+    kind: 'process-summary',
+    key: 'process:run-1:0:thinking-1',
+    runId: 'run-1',
+    thinkingCount: 1,
+    toolCount: 1,
+    errorCount: 0,
+    interruptedCount: 0,
+    items: [
+      {
+        id: 'thinking-1',
+        runId: 'run-1',
+        firstSeq: 1,
+        lastSeq: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        type: 'thinking',
+        status: 'completed',
+        text: 'private reasoning',
+      },
+      {
+        id: 'tool-1',
+        runId: 'run-1',
+        firstSeq: 2,
+        lastSeq: 3,
+        startedAt: 2,
+        updatedAt: 3,
+        type: 'tool',
+        status: 'completed',
+        toolCallId: 'call-1',
+        name: 'request',
+        input: { apiKey: 'secret-value', query: 'safe' },
+        output: 'result',
+      },
+    ],
+  };
+}
+
+describe('active turn timeline', () => {
+  test('does not put archived details or Tool input into the main timeline DOM', () => {
+    const rendered = flatten(renderTimelineItem(summary()));
+
+    expect(rendered).toContain('data-process-summary-key');
+    expect(rendered).not.toContain('private reasoning');
+    expect(rendered).not.toContain('secret-value');
+  });
+
+  test('expands archived Thinking and Tool inline in chronological order', () => {
+    const rendered = flatten(renderTimelineItem(summary(), 100, true));
+
+    expect(rendered.indexOf('private reasoning')).toBeLessThan(rendered.indexOf('Request'));
+    expect(rendered).toContain('secret-value');
+    expect(rendered).toContain('result');
+    expect(rendered).not.toContain('process-summary__item-index');
+    expect(rendered).not.toContain('1.0s');
+    expect(rendered).not.toContain('process-drawer');
+  });
+
+  test('keeps archived details out of the DOM while the summary is collapsed', () => {
+    const rendered = flatten(renderTimelineItem(summary(), 100, false));
+
+    expect(rendered).not.toContain('private reasoning');
+    expect(rendered).not.toContain('secret-value');
+    expect(rendered).not.toContain('result');
+  });
+
+  test('uses the process summary as the outer disclosure and each Tool as a detail disclosure', () => {
+    const collapsed = flatten(renderTimelineItem(summary(), 100, false));
+    const expanded = flatten(renderTimelineItem(summary(), 100, true));
+
+    expect(collapsed).toContain('class="process-summary"');
+    expect(collapsed).toContain('aria-expanded=');
+    expect(collapsed).not.toContain('<details');
+    expect(collapsed).not.toContain('<summary');
+    expect(expanded).toContain('<details class="process-summary__tool">');
+    expect(expanded).toContain('<summary class="process-summary__tool-title">');
+    expect(expanded).toContain('Request');
+    expect(expanded).toContain('apiKey');
+  });
+
+  test('shows the assistant avatar only when requested by the turn-level renderer', () => {
+    const first = flatten(renderTimelineItem(summary(), 100, false, true));
+    const continuation = flatten(renderTimelineItem(summary(), 100, false, false));
+
+    expect(first).toContain('chat-avatar assistant');
+    expect(first).not.toContain('chat-group--continuation');
+    expect(continuation).not.toContain('chat-avatar assistant');
+    expect(continuation).toContain('chat-group--continuation');
+  });
+
+  test('gives failed Tools a direct details action without a token live region', () => {
+    const failed = summary().items[1];
+    if (failed.type !== 'tool') throw new Error('Expected Tool fixture');
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'tool',
+        key: failed.id,
+        item: { ...failed, status: 'failed', error: 'exit 1' },
+      }),
+    );
+
+    expect(rendered).toContain('data-process-details-id');
+    expect(rendered).not.toContain('aria-live');
+  });
+
+  test.each([
+    ['streaming', true],
+    ['completed', false],
+  ] as const)(
+    'renders %s active Content with the persisted assistant bubble structure',
+    (status, streaming) => {
+      const rendered = flatten(
+        renderTimelineItem({
+          kind: 'content',
+          key: `content:${status}`,
+          item: {
+            id: `content:${status}`,
+            runId: 'run-1',
+            firstSeq: 1,
+            lastSeq: 1,
+            startedAt: 1,
+            updatedAt: 1,
+            type: 'content',
+            status,
+            text: 'visible answer',
+            sourceMode: 'delta',
+          },
+        }),
+      );
+
+      expect(rendered).toContain('chat-group--assistant');
+      expect(rendered).toContain('chat-bubble--assistant');
+      expect(rendered).toContain('visible answer');
+      expect(rendered).not.toContain('timeline-content');
+      expect(rendered.includes('chat-group--streaming')).toBe(streaming);
+    },
+  );
+});

@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 
-import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
+import {
+  resolveAgentModelSelection,
+  resolveAutomaticAgentModelRepair,
+} from '@/features/cowork/components/agentModelSelection';
 import type { Model } from '@/features/models/modelSlice';
 
 const models: Model[] = [
@@ -48,7 +51,7 @@ describe('resolveAgentModelSelection', () => {
     expect(result.hasInvalidExplicitModel).toBe(false);
   });
 
-  test('marks invalid explicit model as fallback to global model', () => {
+  test('falls back to an available global model when the explicit model is invalid', () => {
     const result = resolveAgentModelSelection({
       agentModel: 'deleted-model',
       availableModels: models,
@@ -70,5 +73,50 @@ describe('resolveAgentModelSelection', () => {
     expect(result.selectedModel?.id).toBe('gpt-4o');
     expect(result.usesFallback).toBe(true);
     expect(result.hasInvalidExplicitModel).toBe(true);
+  });
+
+  test('falls back to the first available model when the global selection is unavailable', () => {
+    const result = resolveAgentModelSelection({
+      agentModel: 'deleted-provider/deleted-model',
+      availableModels: models,
+      fallbackModel: {
+        id: 'also-deleted',
+        name: 'Also deleted',
+        providerKey: 'deleted-provider',
+      },
+    });
+
+    expect(result.selectedModel).toBe(models[0]);
+    expect(result.hasInvalidExplicitModel).toBe(true);
+  });
+
+  test('returns no selection when no models are available', () => {
+    const result = resolveAgentModelSelection({
+      agentModel: 'deleted-provider/deleted-model',
+      availableModels: [],
+      fallbackModel: models[0],
+    });
+
+    expect(result.selectedModel).toBeNull();
+    expect(result.usesFallback).toBe(true);
+    expect(result.hasInvalidExplicitModel).toBe(true);
+  });
+});
+
+describe('resolveAutomaticAgentModelRepair', () => {
+  test('repairs any unavailable explicit binding with the selected available model', () => {
+    const customModel: Model = {
+      id: 'custom-chat',
+      name: 'Custom Chat',
+      providerKey: 'custom_0',
+    };
+
+    expect(resolveAutomaticAgentModelRepair('deleted_provider/removed-model', customModel)).toBe(
+      customModel,
+    );
+  });
+
+  test('does not repair when no model is available', () => {
+    expect(resolveAutomaticAgentModelRepair('custom_0/deleted-model', null)).toBeNull();
   });
 });

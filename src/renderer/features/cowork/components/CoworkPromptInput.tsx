@@ -9,7 +9,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux';
 
 import { updateAgent } from '@/features/agents/agentSlice';
-import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
+import {
+  resolveAgentModelSelection,
+  resolveAutomaticAgentModelRepair,
+} from '@/features/cowork/components/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
 import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
@@ -227,7 +230,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const confirmedSessionModelRef = useRef<Model | null>(agentSelectedModel);
     const modelSelectionContextRef = useRef(0);
     const modelSelectionQueueRef = useRef(new LatestSerialTaskQueue());
+    const automaticModelRepairKeyRef = useRef('');
     const effectiveSelectedModel = optimisticSessionModel ?? agentSelectedModel;
+    const hasNoAvailableModels = !remoteManaged && availableModels.length === 0;
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const [value, setValue] = useState(draftPrompt);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
@@ -267,6 +272,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     useEffect(() => {
       modelSelectionContextRef.current += 1;
       modelSelectionQueueRef.current.invalidate();
+      automaticModelRepairKeyRef.current = '';
       optimisticSessionModelRef.current = null;
       confirmedSessionModelRef.current = agentSelectedModelRef.current;
       setOptimisticSessionModel(null);
@@ -275,6 +281,68 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       sessionGoalRef.current = null;
       setPendingGoalObjective(null);
     }, [sessionId, effectiveAgentId]);
+
+    useEffect(() => {
+      if (!agentModelIsInvalid || remoteManaged) return;
+      const repairModel = resolveAutomaticAgentModelRepair(
+        currentAgent?.model ?? '',
+        agentSelectedModel,
+      );
+      if (!repairModel) return;
+
+      const modelRef = toOpenClawModelRef(repairModel);
+      if (!modelRef) return;
+      const repairKey = [
+        effectiveAgentId,
+        sessionId ?? '',
+        currentAgent?.model ?? '',
+        modelRef,
+      ].join(':');
+      if (automaticModelRepairKeyRef.current === repairKey) return;
+      automaticModelRepairKeyRef.current = repairKey;
+
+      void (async () => {
+        try {
+          if (sessionId) {
+            const sessionResult = await coworkService.patchSessionModel({
+              sessionId,
+              model: modelRef,
+              agentId: effectiveAgentId,
+            });
+            if (!sessionResult.success) {
+              throw new Error(sessionResult.error || 'patchSessionModel failed');
+            }
+          }
+
+          const defaultResult = await coworkService.setDefaultModel({
+            modelId: repairModel.id,
+            providerKey: repairModel.providerKey,
+            agentId: effectiveAgentId,
+          });
+          if (!defaultResult.success) {
+            throw new Error(defaultResult.error || 'setDefaultModel failed');
+          }
+          if (automaticModelRepairKeyRef.current !== repairKey) return;
+
+          dispatch(updateAgent({ id: effectiveAgentId, updates: { model: modelRef } }));
+          dispatch(setSelectedModel(repairModel));
+        } catch (error) {
+          console.warn('[CoworkPromptInput] Failed to repair unavailable Agent model', {
+            agentId: effectiveAgentId,
+            sessionId,
+            error,
+          });
+        }
+      })();
+    }, [
+      agentModelIsInvalid,
+      currentAgent?.model,
+      dispatch,
+      effectiveAgentId,
+      agentSelectedModel,
+      remoteManaged,
+      sessionId,
+    ]);
 
     useEffect(() => {
       if (initialGoalObjective && !sessionGoal) {
@@ -1337,7 +1405,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ];
     }, [disabled, isStreaming, value, contextMenuPos]);
 
-    const canSubmit = !disabled && !agentModelIsInvalid && !!value.trim();
+    const canSubmit = !disabled && !hasNoAvailableModels && !!value.trim();
     const enhancedContainerClass = isDraggingFiles
       ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
       : containerClass;
@@ -1710,9 +1778,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                           }
                         }}
                       />
-                      {agentModelIsInvalid && (
+                      {hasNoAvailableModels && (
                         <span className="max-w-60 text-[11px] leading-4 text-red-500">
-                          {i18nService.t('agentModelInvalidHint')}
+                          {i18nService.t('noModelAvailableHint')}
                         </span>
                       )}
                     </div>

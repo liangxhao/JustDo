@@ -1,4 +1,4 @@
-import type { Model } from '@/features/models/modelSlice';
+import { isSameModelIdentity, type Model } from '@/features/models/modelSlice';
 import { resolveOpenClawModelRef } from '@/features/models/openclawModelRef';
 
 type ResolveAgentModelSelectionInput = {
@@ -18,6 +18,10 @@ export function resolveAgentModelSelection({
   availableModels,
   fallbackModel,
 }: ResolveAgentModelSelectionInput): ResolveAgentModelSelectionResult {
+  const resolvedFallback =
+    availableModels.find(model => isSameModelIdentity(model, fallbackModel ?? undefined)) ??
+    availableModels[0] ??
+    null;
   const normalizedAgentModel = agentModel.trim();
   if (normalizedAgentModel) {
     const explicitModel = resolveOpenClawModelRef(normalizedAgentModel, availableModels) ?? null;
@@ -25,8 +29,16 @@ export function resolveAgentModelSelection({
       return { selectedModel: explicitModel, usesFallback: false, hasInvalidExplicitModel: false };
     }
 
-    return { selectedModel: fallbackModel, usesFallback: true, hasInvalidExplicitModel: true };
+    return { selectedModel: resolvedFallback, usesFallback: true, hasInvalidExplicitModel: true };
   }
 
-  return { selectedModel: fallbackModel, usesFallback: true, hasInvalidExplicitModel: false };
+  return { selectedModel: resolvedFallback, usesFallback: true, hasInvalidExplicitModel: false };
+}
+
+export function resolveAutomaticAgentModelRepair(
+  agentModel: string,
+  fallbackModel: Model | null,
+): Model | null {
+  if (!agentModel.trim() || !fallbackModel?.id) return null;
+  return fallbackModel;
 }

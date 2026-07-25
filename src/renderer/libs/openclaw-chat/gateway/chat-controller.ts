@@ -18,6 +18,12 @@ import {
   toGatewayAttachment,
 } from '@shared/cowork/attachments';
 import {
+  normalizeAgentEvent,
+  normalizeChatEvent,
+  type NormalizedAgentEvent,
+  type NormalizedChatEvent,
+} from '@shared/openclaw/agentEvent';
+import {
   resolveSlashCommandBehavior,
   SlashCommandBeforeSendHook,
   SlashCommandExecution,
@@ -29,6 +35,15 @@ import type {
   GatewayEventFrame,
   GatewayHelloOk,
 } from '@/libs/openclaw-chat/gateway/client';
+import { reduceAgentEvent, reduceChatEvent } from '@/libs/openclaw-chat/model/agent-event-reducer';
+import {
+  beginAssistantTurn,
+  type ChatTranscriptState,
+  createChatTranscriptState,
+  resetChatTranscriptState,
+  type TranscriptReducerDependencies,
+} from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { reconcileHistory } from '@/libs/openclaw-chat/model/history-reconciler';
 import { i18nService } from '@/services/i18n';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -59,20 +74,13 @@ export interface ChatState {
     text: string;
     timestamp: number;
   } | null;
-}
-
-export interface ChatEventPayload {
-  runId?: string;
-  sessionKey: string;
-  agentId?: string;
-  state: 'delta' | 'final' | 'aborted' | 'error';
-  message?: unknown;
-  deltaText?: string;
-  replace?: boolean;
-  errorMessage?: string;
+  /** Canonical, sequence-ordered live display state. */
+  transcript: ChatTranscriptState;
 }
 
 export type ChatStateListener = (state: ChatState) => void;
+export type ChatStreamUpdateKind = 'stream' | 'tool-partial' | 'terminal';
+export type ChatStreamListener = (kind: ChatStreamUpdateKind) => void;
 
 type ToolContentBlock = {
   type: 'toolcall' | 'toolresult';
@@ -358,7 +366,7 @@ export class ChatController {
   private transcriptImageReadWaiters: Array<() => void> = [];
   readonly state: ChatState;
   private listeners: Set<ChatStateListener> = new Set();
-  private streamListeners: Set<() => void> = new Set();
+  private streamListeners: Set<ChatStreamListener> = new Set();
   private lifecycleEndFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private postFinalHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
   private deferredHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -369,6 +377,11 @@ export class ChatController {
   private subscribedMessageSessionKey: string | null = null;
   private messageSubscriptionSeq = 0;
   private terminalLifecycleSeen = false;
+  private transcriptIdSequence = 0;
+  private readonly transcriptDependencies: TranscriptReducerDependencies = {
+    now: () => Date.now(),
+    createId: prefix => `${prefix}-${++this.transcriptIdSequence}`,
+  };
 
   /** Compact state snapshot for diagnostic logging */
   private _snap(): Record<string, unknown> {
@@ -417,6 +430,7 @@ export class ChatController {
       lastError: null,
       hello: null,
       pendingUserMessage: null,
+      transcript: createChatTranscriptState(),
     };
   }
 
@@ -454,7 +468,7 @@ export class ChatController {
   }
 
   /** Subscribe to stream updates (for real-time rendering) */
-  onStream(listener: () => void): () => void {
+  onStream(listener: ChatStreamListener): () => void {
     this.streamListeners.add(listener);
     return () => this.streamListeners.delete(listener);
   }
@@ -464,9 +478,9 @@ export class ChatController {
     for (const listener of this.listeners) listener(this.state);
   }
 
-  private notifyStream(): void {
+  private notifyStream(kind: ChatStreamUpdateKind = 'stream'): void {
     debugLog('[ChatCtrl] ▶ notifyStream', this._snap());
-    for (const listener of this.streamListeners) listener();
+    for (const listener of this.streamListeners) listener(kind);
   }
 
   private cacheSessionMessages(sessionKey: string, messages: unknown[]): void {
@@ -481,7 +495,18 @@ export class ChatController {
 
   private setCurrentSessionMessages(messages: unknown[]): void {
     this.state.chatMessages = messages;
+    this.state.transcript.persistedMessages = messages;
     this.cacheSessionMessages(this.state.sessionKey, messages);
+  }
+
+  private ensureTranscriptSessionIdentity(): void {
+    if (this.state.transcript.sessionKey === this.state.sessionKey) return;
+    resetChatTranscriptState(
+      this.state.transcript,
+      this.state.sessionKey,
+      this.state.currentSessionId,
+    );
+    this.state.transcript.persistedMessages = this.state.chatMessages;
   }
 
   private async syncMessageSessionSubscription(sessionKey: string): Promise<void> {
@@ -553,6 +578,19 @@ export class ChatController {
         return;
       }
       debugLog('[ChatCtrl] ▶ lifecycle:end fallback', this._snap());
+      reduceChatEvent(
+        this.state.transcript,
+        {
+          runId: endingRunId,
+          sessionKey: this.state.sessionKey,
+          sessionId: this.state.currentSessionId,
+          lifecycleGeneration: this.state.transcript.activeTurn?.lifecycleGeneration ?? null,
+          frameSeq: null,
+          state: 'final',
+          replace: false,
+        },
+        this.transcriptDependencies,
+      );
       this.state.chatSending = false;
       this.state.chatRunId = null;
       this.terminalLifecycleSeen = false;
@@ -896,8 +934,10 @@ export class ChatController {
 
     this.state.sessionKey = sessionKey;
     this.state.currentSessionId = null;
+    resetChatTranscriptState(this.state.transcript, sessionKey, null);
     this.state.chatLoading = true;
     this.state.chatMessages = this.chatMessagesBySession.get(sessionKey) ?? [];
+    this.state.transcript.persistedMessages = this.state.chatMessages;
     this.state.chatThinkingMessages = [];
     this.state.chatToolMessages = [];
     this.state.chatStreamSegments = [];
@@ -937,6 +977,18 @@ export class ChatController {
     });
     this.state.sessionKey = sessionKey;
     this.state.currentSessionId = null;
+    if (isTempSessionPromotion) {
+      this.state.transcript.sessionKey = sessionKey;
+      this.state.transcript.sessionId = null;
+      this.state.transcript.historyGeneration += 1;
+      if (this.state.transcript.activeTurn) {
+        this.state.transcript.activeTurn.sessionKey = sessionKey;
+        this.state.transcript.activeTurn.sessionId = null;
+      }
+      this.state.transcript.revision += 1;
+    } else {
+      resetChatTranscriptState(this.state.transcript, sessionKey, null);
+    }
     // Only preserve the optimistic prompt while replacing the temporary UI
     // session with the persisted JustDo session. For normal user-initiated
     // switches, clear the active run state so the target session can load its
@@ -946,6 +998,7 @@ export class ChatController {
       this.state.pendingUserMessage = null;
     }
     this.state.chatMessages = this.chatMessagesBySession.get(sessionKey) ?? [];
+    this.state.transcript.persistedMessages = this.state.chatMessages;
     this.state.chatThinkingMessages = [];
     this.state.chatToolMessages = [];
     this.state.chatStreamSegments = [];
@@ -1004,6 +1057,22 @@ export class ChatController {
   }
 
   private handleClose(): void {
+    if (this.state.transcript.activeTurn?.status === 'running') {
+      reduceChatEvent(
+        this.state.transcript,
+        {
+          runId: this.state.transcript.activeTurn.runId,
+          sessionKey: this.state.sessionKey,
+          sessionId: this.state.currentSessionId,
+          lifecycleGeneration: this.state.transcript.activeTurn.lifecycleGeneration,
+          frameSeq: null,
+          state: 'aborted',
+          replace: false,
+          errorMessage: i18nService.t('coworkConnectionInterrupted'),
+        },
+        this.transcriptDependencies,
+      );
+    }
     this.state.connected = false;
     this.state.chatSending = false;
     this.state.compactionInFlight = false;
@@ -1015,14 +1084,48 @@ export class ChatController {
 
   private handleEvent(event: GatewayEventFrame): void {
     if (event.event === 'chat') {
-      const payload = event.payload as ChatEventPayload | undefined;
-      if (payload) this.handleChatEvent(payload);
+      const payload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
+      if (payload) {
+        reduceChatEvent(this.state.transcript, payload, this.transcriptDependencies);
+        this.handleChatEvent(payload);
+      }
       return;
     }
 
     // Agent / session.tool events — handle tool streams AND assistant streaming
     if (event.event === 'agent' || event.event === 'session.tool') {
-      this.handleAgentEvent(event.payload as Record<string, unknown> | undefined, event.event);
+      const normalized = normalizeAgentEvent({
+        deliveryEvent: event.event,
+        payload: event.payload,
+        frameSeq: event.seq,
+      });
+      if (!normalized.event) {
+        debugLog('[ChatCtrl] Agent event rejected during normalization', {
+          reason: normalized.reason,
+          frameSeq: event.seq ?? null,
+        });
+        if (normalized.reason === 'missing-sequence' && asRecord(event.payload)) {
+          // Keep the retired overlay adapter tolerant for old gateways and
+          // diagnostics. The canonical transcript reducer remains untouched.
+          this.handleAgentEvent(asRecord(event.payload)!, true);
+        }
+        return;
+      }
+      const reduceResult = reduceAgentEvent(
+        this.state.transcript,
+        normalized.event,
+        this.transcriptDependencies,
+      );
+      if (reduceResult === 'applied') {
+        this.handleAgentEvent(normalized.event);
+      } else {
+        debugLog('[ChatCtrl] Agent event ignored by ordered reducer', {
+          runId: normalized.event.runId.slice(0, 12),
+          agentSeq: normalized.event.agentSeq,
+          stream: normalized.event.stream,
+          result: reduceResult,
+        });
+      }
       return;
     }
 
@@ -1300,6 +1403,7 @@ export class ChatController {
     if (!client || !this.state.connected) return false;
 
     const sessionKey = this.state.sessionKey;
+    this.ensureTranscriptSessionIdentity();
     if (this.historyLoadsInFlight.has(sessionKey)) {
       if (queueIfBusy) this.historyReloadRequested.add(sessionKey);
       debugLog('[ChatCtrl] loadHistory SKIP busy', {
@@ -1312,6 +1416,8 @@ export class ChatController {
       return false;
     }
     const loadSeq = ++this.historyLoadSeq;
+    let transcriptHistoryGeneration = this.state.transcript.historyGeneration;
+    let requestedSessionId = this.state.transcript.sessionId;
     this.historyLoadsInFlight.add(sessionKey);
     const previousMessages = this.state.chatMessages;
     debugLog('[ChatCtrl] loadHistory START', {
@@ -1370,9 +1476,20 @@ export class ChatController {
         return false;
       }
 
-      this.state.currentSessionId = normalizeSessionId(
+      const loadedSessionId = normalizeSessionId(
         result?.sessionInfo?.sessionId ?? result?.sessionId,
       );
+      if (
+        loadedSessionId &&
+        this.state.transcript.sessionId &&
+        loadedSessionId !== this.state.transcript.sessionId
+      ) {
+        resetChatTranscriptState(this.state.transcript, sessionKey, loadedSessionId);
+        transcriptHistoryGeneration = this.state.transcript.historyGeneration;
+        requestedSessionId = loadedSessionId;
+      }
+      this.state.currentSessionId = loadedSessionId;
+      this.state.transcript.sessionId = loadedSessionId;
 
       const pagedMessages = await this.loadPagedHistoryFromRest(sessionKey).catch(error => {
         debugLog('[ChatCtrl] paged history unavailable, using RPC history', {
@@ -1598,7 +1715,24 @@ export class ChatController {
         });
       }
 
-      this.setCurrentSessionMessages(messages);
+      const reconciliation = reconcileHistory(this.state.transcript, {
+        request: {
+          sessionKey,
+          sessionId: requestedSessionId,
+          historyGeneration: transcriptHistoryGeneration,
+        },
+        source: 'gateway',
+        messages,
+      });
+      if (!reconciliation.accepted) {
+        debugLog('[ChatCtrl] loadHistory rejected by transcript reconciler', {
+          seq: loadSeq,
+          sessionKey,
+          reason: reconciliation.reason,
+        });
+        return false;
+      }
+      this.setCurrentSessionMessages(reconciliation.messages);
       void this.resolveManagedHistoryImages(messages).then(resolvedMessages => {
         if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
         this.setCurrentSessionMessages(resolvedMessages);
@@ -1641,7 +1775,7 @@ export class ChatController {
 
   // ─── Chat Event Handling ──────────────────────────────────────────────
 
-  private handleChatEvent(payload: ChatEventPayload): void {
+  private handleChatEvent(payload: NormalizedChatEvent): void {
     // Only handle events for our session
     if (payload.sessionKey !== this.state.sessionKey) return;
     if (!this.acceptRunId(payload.runId)) {
@@ -1669,7 +1803,7 @@ export class ChatController {
     }
   }
 
-  private handleDelta(payload: ChatEventPayload): void {
+  private handleDelta(payload: NormalizedChatEvent): void {
     if (
       this.assistantSnapshotRunId &&
       (!payload.runId || payload.runId === this.assistantSnapshotRunId)
@@ -1723,7 +1857,7 @@ export class ChatController {
     this.notifyStream();
   }
 
-  private handleFinal(payload: ChatEventPayload): void {
+  private handleFinal(payload: NormalizedChatEvent): void {
     this.clearLifecycleEndFallback();
     this.commitActiveThinking('final');
     const message = stripAssistantSilentReplySuffix(payload.message);
@@ -1784,7 +1918,7 @@ export class ChatController {
     this.notify();
   }
 
-  private handleAborted(payload: ChatEventPayload): void {
+  private handleAborted(payload: NormalizedChatEvent): void {
     this.clearLifecycleEndFallback();
     const message = payload.message;
     debugLog('[ChatCtrl] ▶ chat.aborted', { hasMessage: !!message, ...this._snap() });
@@ -1806,7 +1940,7 @@ export class ChatController {
     this.notify();
   }
 
-  private handleError(payload: ChatEventPayload): void {
+  private handleError(payload: NormalizedChatEvent): void {
     this.clearLifecycleEndFallback();
     this.state.lastError = payload.errorMessage ?? 'Unknown error';
     this.state.chatStream = null;
@@ -1840,36 +1974,47 @@ export class ChatController {
    * Handle `agent` / `session.tool` events.
    * Processes assistant streaming (stream=assistant) and tool streams (stream=tool).
    *
-   * Gateway event structure (from gateway-bundle.mjs):
-   *   payload = { runId, stream, session, agentId, aseq, data: { text, delta, phase, name, ... } }
-   * All content fields live inside `payload.data`, not directly on `payload`.
+   * The shared normalizer keeps the outer frame sequence separate from the
+   * canonical per-run Agent sequence before this display adapter is called.
    */
   private handleAgentEvent(
-    payload: Record<string, unknown> | undefined,
-    sourceEvent = 'agent',
+    incoming: NormalizedAgentEvent | Record<string, unknown>,
+    legacyOnly = false,
   ): void {
+    this.ensureTranscriptSessionIdentity();
+    const wasNormalized = typeof incoming.agentSeq === 'number';
+    const rawIncoming = incoming as Record<string, unknown>;
+    const payload = wasNormalized
+      ? (incoming as NormalizedAgentEvent)
+      : normalizeAgentEvent({
+          deliveryEvent: 'agent',
+          payload: {
+            ...rawIncoming,
+            seq:
+              rawIncoming.seq ??
+              rawIncoming.aseq ??
+              (this.state.transcript.activeTurn?.lastAgentSeq ?? -1) + 1,
+          },
+        }).event;
     if (!payload) return;
-
-    const stream = typeof payload.stream === 'string' ? payload.stream : '';
-    const runId = typeof payload.runId === 'string' ? payload.runId : null;
-    const aseq = typeof payload.aseq === 'number' ? payload.aseq : null;
-
-    // All content fields are nested inside payload.data
-    const data = (
-      typeof payload.data === 'object' && payload.data !== null ? payload.data : {}
-    ) as Record<string, unknown>;
+    if (!wasNormalized && !legacyOnly) {
+      const reduceResult = reduceAgentEvent(
+        this.state.transcript,
+        payload,
+        this.transcriptDependencies,
+      );
+      if (reduceResult !== 'applied') return;
+    }
+    const sourceEvent = payload.deliveryEvent;
+    const stream = payload.stream;
+    const runId = payload.runId;
+    const agentSeq = payload.agentSeq;
+    const data = payload.data;
 
     // Match session: gateway agent events may expose the session on either the
     // top-level payload or data. If it is absent, runId isolation below still
     // prevents title/subtask runs from mutating the active chat surface.
-    const eventSession =
-      stringField(payload, 'session') ??
-      stringField(payload, 'sessionKey') ??
-      stringField(payload, 'key') ??
-      stringField(data, 'session') ??
-      stringField(data, 'sessionKey') ??
-      stringField(data, 'key') ??
-      '';
+    const eventSession = payload.sessionKey ?? '';
     if (
       eventSession &&
       eventSession !== this.state.sessionKey &&
@@ -1917,7 +2062,7 @@ export class ChatController {
       debugLog('[ChatCtrl] ▶ thinking', {
         sourceEvent,
         runId,
-        aseq,
+        agentSeq,
         textLen: text.length,
         previousLen,
         wasSending,
@@ -1956,7 +2101,7 @@ export class ChatController {
       debugLog('[ChatCtrl] ▶ assistant', {
         sourceEvent,
         runId,
-        aseq,
+        agentSeq,
         wasSending,
         textLen: text.length,
         textTail: text.slice(-40),
@@ -1970,7 +2115,7 @@ export class ChatController {
       debugLog('[ChatCtrl] ▶ item → deferred history reload', {
         sourceEvent,
         runId,
-        aseq,
+        agentSeq,
         ...this._snap(),
       });
       this.scheduleDeferredHistoryReload(this.state.sessionKey, 'agent-item');
@@ -2030,6 +2175,20 @@ export class ChatController {
           error: errorMessage,
           timestamp: Date.now(),
         });
+        reduceChatEvent(
+          this.state.transcript,
+          {
+            runId,
+            sessionKey: this.state.sessionKey,
+            sessionId: payload.sessionId,
+            lifecycleGeneration: payload.lifecycleGeneration,
+            frameSeq: payload.frameSeq,
+            state: 'error',
+            replace: false,
+            errorMessage,
+          },
+          this.transcriptDependencies,
+        );
         this.state.chatStream = null;
         this.state.chatStreamStartedAt = null;
         this.state.chatThinkingStream = null;
@@ -2058,15 +2217,14 @@ export class ChatController {
     if (stream !== 'tool') return;
 
     const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : null;
-    const name = typeof data.name === 'string' ? data.name : '';
+    const name = typeof data.name === 'string' && data.name.trim() ? data.name : 'tool';
     const phase = typeof data.phase === 'string' ? data.phase : '';
     const args = data.args;
 
-    if (!toolCallId || !name) {
-      debugLog('[ChatCtrl] ▶ tool (ignored, missing toolCallId/name)', {
+    if (!toolCallId) {
+      debugLog('[ChatCtrl] ▶ tool (ignored, missing toolCallId)', {
         stream,
         toolCallId,
-        name,
       });
       return;
     }
@@ -2074,7 +2232,7 @@ export class ChatController {
     debugLog('[ChatCtrl] ▶ tool', {
       sourceEvent,
       runId,
-      aseq,
+      agentSeq,
       toolCallId,
       name,
       phase,
@@ -2147,7 +2305,9 @@ export class ChatController {
       partialResultType: typeof data.partialResult,
       errorType: typeof data.error,
     });
-    this.notifyStream();
+    this.notifyStream(
+      hasPartialResult && !isTerminalToolEvent ? 'tool-partial' : 'terminal',
+    );
   }
 
   private clearHiddenActiveStream(source: string): boolean {
@@ -2184,6 +2344,7 @@ export class ChatController {
     }
 
     const sessionKey = this.state.sessionKey;
+    this.ensureTranscriptSessionIdentity();
 
     try {
       for (const hook of slashCommand?.beforeSend ?? []) {
@@ -2221,6 +2382,15 @@ export class ChatController {
       timestamp: Date.now(),
     };
     this.setCurrentSessionMessages([...this.state.chatMessages, userMessage]);
+    beginAssistantTurn(
+      this.state.transcript,
+      {
+        runId,
+        sessionId: this.state.currentSessionId,
+        startedAt: Date.now(),
+      },
+      this.transcriptDependencies,
+    );
     this.state.chatThinkingMessages = [];
     this.state.chatToolMessages = [];
     this.state.chatStreamSegments = [];
@@ -2254,6 +2424,19 @@ export class ChatController {
         this.state.chatRunId === runId ||
         (typeof ack?.runId === 'string' && this.state.chatRunId === ack.runId);
       if (ack?.status === 'ok' && this.state.sessionKey === sessionKey && ackMatchesActiveRun) {
+        reduceChatEvent(
+          this.state.transcript,
+          {
+            runId: ack.runId ?? runId,
+            sessionKey,
+            sessionId: this.state.currentSessionId,
+            lifecycleGeneration: null,
+            frameSeq: null,
+            state: 'final',
+            replace: false,
+          },
+          this.transcriptDependencies,
+        );
         this.state.chatSending = false;
         this.state.chatRunId = null;
         this.resetAssistantSnapshotSource();
@@ -2262,6 +2445,20 @@ export class ChatController {
       }
     } catch (err) {
       if (this.state.sessionKey !== sessionKey || this.state.chatRunId !== runId) return;
+      reduceChatEvent(
+        this.state.transcript,
+        {
+          runId,
+          sessionKey,
+          sessionId: this.state.currentSessionId,
+          lifecycleGeneration: null,
+          frameSeq: null,
+          state: 'error',
+          replace: false,
+          errorMessage: (err as Error).message,
+        },
+        this.transcriptDependencies,
+      );
       this.state.chatSending = false;
       this.state.chatRunId = null;
       this.resetAssistantSnapshotSource();
@@ -2510,11 +2707,6 @@ export class ChatController {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-function stringField(record: Record<string, unknown>, key: string): string | null {
-  const value = record[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
 
 function formatI18n(key: string, params: Record<string, string>): string {
   return Object.entries(params).reduce(

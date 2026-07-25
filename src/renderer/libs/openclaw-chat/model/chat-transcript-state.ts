@@ -1,0 +1,194 @@
+import type { NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
+
+export type TurnStatus = 'running' | 'final' | 'aborted' | 'error';
+export type ProcessStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+export type HistorySource = 'gateway' | 'sqlite-fallback' | 'optimistic';
+
+export interface BaseTurnItem {
+  id: string;
+  runId: string;
+  firstSeq: number;
+  lastSeq: number;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface ThinkingItem extends BaseTurnItem {
+  type: 'thinking';
+  status: ProcessStatus;
+  text: string;
+}
+
+export interface ToolItem extends BaseTurnItem {
+  type: 'tool';
+  status: ProcessStatus;
+  toolCallId: string;
+  name: string;
+  input?: unknown;
+  output?: string;
+  error?: string;
+}
+
+export interface ContentItem extends BaseTurnItem {
+  type: 'content';
+  status: 'streaming' | 'completed' | 'interrupted';
+  text: string;
+  sourceMode: 'delta' | 'snapshot' | 'replaceable';
+  followingToolCallId?: string;
+}
+
+export interface TerminalItem extends BaseTurnItem {
+  type: 'terminal';
+  status: 'aborted' | 'error';
+  message: string;
+}
+
+export type TurnItem = ThinkingItem | ToolItem | ContentItem | TerminalItem;
+
+export interface AssistantTurn {
+  id: string;
+  runId: string;
+  sessionId: string | null;
+  lifecycleGeneration: string | null;
+  sessionKey: string;
+  status: TurnStatus;
+  lastAgentSeq: number;
+  startedAt: number;
+  endedAt?: number;
+  items: TurnItem[];
+  toolById: Map<string, ToolItem>;
+}
+
+export interface RecentRunState {
+  runId: string;
+  sessionId: string | null;
+  lifecycleGeneration: string | null;
+  lastAgentSeq: number;
+  terminalStatus: Exclude<TurnStatus, 'running'> | null;
+  expiresAt: number;
+}
+
+export interface ChatTranscriptState {
+  sessionKey: string;
+  sessionId: string | null;
+  persistedMessages: unknown[];
+  historySource: HistorySource;
+  historyGeneration: number;
+  activeTurn: AssistantTurn | null;
+  recentRuns: Map<string, RecentRunState>;
+  revision: number;
+}
+
+export interface TranscriptReducerDependencies {
+  now: () => number;
+  createId: (prefix: string) => string;
+}
+
+export const MAX_LIVE_TOOL_OUTPUT_CHARS = 120_000;
+export const MAX_RECENT_RUNS = 24;
+export const RECENT_RUN_RETENTION_MS = 5 * 60 * 1000;
+
+export function createChatTranscriptState(
+  sessionKey = '',
+  sessionId: string | null = null,
+): ChatTranscriptState {
+  return {
+    sessionKey,
+    sessionId,
+    persistedMessages: [],
+    historySource: 'optimistic',
+    historyGeneration: 0,
+    activeTurn: null,
+    recentRuns: new Map(),
+    revision: 0,
+  };
+}
+
+export function resetChatTranscriptState(
+  state: ChatTranscriptState,
+  sessionKey: string,
+  sessionId: string | null,
+): void {
+  state.sessionKey = sessionKey;
+  state.sessionId = sessionId;
+  state.persistedMessages = [];
+  state.historySource = 'optimistic';
+  state.historyGeneration += 1;
+  state.activeTurn = null;
+  state.recentRuns.clear();
+  state.revision += 1;
+}
+
+export function beginAssistantTurn(
+  state: ChatTranscriptState,
+  params: {
+    runId: string;
+    sessionId?: string | null;
+    lifecycleGeneration?: string | null;
+    startedAt?: number;
+  },
+  dependencies: TranscriptReducerDependencies,
+): AssistantTurn {
+  const turn: AssistantTurn = {
+    id: dependencies.createId('turn'),
+    runId: params.runId,
+    sessionId: params.sessionId ?? state.sessionId,
+    lifecycleGeneration: params.lifecycleGeneration ?? null,
+    sessionKey: state.sessionKey,
+    status: 'running',
+    lastAgentSeq: -1,
+    startedAt: params.startedAt ?? dependencies.now(),
+    items: [],
+    toolById: new Map(),
+  };
+  state.activeTurn = turn;
+  state.revision += 1;
+  return turn;
+}
+
+export function bindAssistantTurnRunId(
+  state: ChatTranscriptState,
+  provisionalRunId: string,
+  runId: string,
+): boolean {
+  const turn = state.activeTurn;
+  if (!turn || turn.runId !== provisionalRunId || !provisionalRunId.startsWith('justdo-')) {
+    return false;
+  }
+  turn.runId = runId;
+  for (const item of turn.items) item.runId = runId;
+  state.revision += 1;
+  return true;
+}
+
+export function eventMatchesTranscriptSession(
+  state: ChatTranscriptState,
+  event: Pick<NormalizedAgentEvent, 'sessionKey' | 'sessionId'>,
+): boolean {
+  if (event.sessionId && state.sessionId && event.sessionId !== state.sessionId) return false;
+  if (!event.sessionKey) return true;
+  return normalizeTranscriptSessionKey(event.sessionKey) ===
+    normalizeTranscriptSessionKey(state.sessionKey);
+}
+
+/**
+ * Gateway events may use either `justdo:<id>` or
+ * `agent:<agent-id>:justdo:<id>` for the same managed session. No other suffix
+ * relationship is an alias.
+ */
+export function normalizeTranscriptSessionKey(sessionKey: string): string {
+  const trimmed = sessionKey.trim();
+  const managed = /^(?:agent:[^:]+:)?justdo:([^:]+)$/.exec(trimmed);
+  return managed ? `justdo:${managed[1]}` : trimmed;
+}
+
+export function pruneRecentRuns(state: ChatTranscriptState, now: number): void {
+  for (const [runId, run] of state.recentRuns) {
+    if (run.expiresAt <= now) state.recentRuns.delete(runId);
+  }
+  while (state.recentRuns.size > MAX_RECENT_RUNS) {
+    const oldest = state.recentRuns.keys().next().value as string | undefined;
+    if (!oldest) break;
+    state.recentRuns.delete(oldest);
+  }
+}
