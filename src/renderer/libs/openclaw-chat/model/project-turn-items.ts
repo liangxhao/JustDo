@@ -4,7 +4,6 @@ import type {
   TerminalItem,
   ThinkingItem,
   ToolItem,
-  TurnItem,
 } from './chat-transcript-state';
 
 export interface ProcessSummaryTimelineItem {
@@ -16,18 +15,6 @@ export interface ProcessSummaryTimelineItem {
   toolCount: number;
   errorCount: number;
   interruptedCount: number;
-}
-
-export interface ThinkingTimelineItem {
-  kind: 'thinking';
-  key: string;
-  item: ThinkingItem;
-}
-
-export interface ToolTimelineItem {
-  kind: 'tool';
-  key: string;
-  item: ToolItem;
 }
 
 export interface ContentTimelineItem {
@@ -43,50 +30,9 @@ export interface TerminalTimelineItem {
 }
 
 export type ActiveTurnTimelineItem =
-  | ProcessSummaryTimelineItem
-  | ThinkingTimelineItem
-  | ToolTimelineItem
-  | ContentTimelineItem
-  | TerminalTimelineItem;
+  ProcessSummaryTimelineItem | ContentTimelineItem | TerminalTimelineItem;
 
-export interface TimelinePresentationState {
-  visibleSince: ReadonlyMap<string, number>;
-  dismissedDiagnosticIds?: ReadonlySet<string>;
-  now: number;
-  minimumToolVisibleMs?: number;
-}
-
-export function recordToolVisibility(
-  turn: AssistantTurn | null,
-  visibleSince: Map<string, number>,
-  now: number,
-): void {
-  if (!turn) return;
-  for (const item of turn.items) {
-    if (item.type === 'tool' && !visibleSince.has(item.id)) {
-      visibleSince.set(item.id, now);
-    }
-  }
-}
-
-function isSuccessfulProcess(item: TurnItem): item is ThinkingItem | ToolItem {
-  return (item.type === 'thinking' || item.type === 'tool') && item.status === 'completed';
-}
-
-function canArchive(
-  item: ThinkingItem | ToolItem,
-  presentation: TimelinePresentationState,
-): boolean {
-  if (item.type !== 'tool') return true;
-  const visibleSince = presentation.visibleSince.get(item.id);
-  if (visibleSince === undefined) return true;
-  return presentation.now - visibleSince >= (presentation.minimumToolVisibleMs ?? 500);
-}
-
-export function projectTurnItems(
-  turn: AssistantTurn | null,
-  presentation: TimelinePresentationState,
-): ActiveTurnTimelineItem[] {
+export function projectTurnItems(turn: AssistantTurn | null): ActiveTurnTimelineItem[] {
   if (!turn) return [];
   const projected: ActiveTurnTimelineItem[] = [];
   let archived: Array<ThinkingItem | ToolItem> = [];
@@ -112,33 +58,13 @@ export function projectTurnItems(
   };
 
   for (const item of turn.items) {
-    const dismissed = presentation.dismissedDiagnosticIds?.has(item.id) === true;
-    const diagnostic =
-      (item.type === 'thinking' || item.type === 'tool') &&
-      (item.status === 'failed' || item.status === 'cancelled' || item.status === 'interrupted');
-    if (diagnostic) {
+    if (item.type === 'thinking' || item.type === 'tool') {
       archived.push(item);
-      flushSummary();
-      if (!dismissed) {
-        projected.push(
-          item.type === 'thinking'
-            ? { kind: 'thinking', key: item.id, item }
-            : { kind: 'tool', key: item.id, item },
-        );
-      }
-      continue;
-    }
-    if (isSuccessfulProcess(item) && canArchive(item, presentation)) {
-      if (item.type === 'thinking' || item.type === 'tool') archived.push(item);
       continue;
     }
 
     flushSummary();
-    if (item.type === 'thinking') {
-      projected.push({ kind: 'thinking', key: item.id, item });
-    } else if (item.type === 'tool') {
-      projected.push({ kind: 'tool', key: item.id, item });
-    } else if (item.type === 'content') {
+    if (item.type === 'content') {
       projected.push({ kind: 'content', key: item.id, item });
       summarySegment += 1;
     } else {

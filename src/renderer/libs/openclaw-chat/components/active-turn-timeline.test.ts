@@ -119,20 +119,23 @@ describe('active turn timeline', () => {
     expect(continuation).toContain('chat-group--continuation');
   });
 
-  test('gives failed Tools a direct details action without a token live region', () => {
-    const failed = summary().items[1];
-    if (failed.type !== 'tool') throw new Error('Expected Tool fixture');
-    const rendered = flatten(
-      renderTimelineItem({
-        kind: 'tool',
-        key: failed.id,
-        item: { ...failed, status: 'failed', error: 'exit 1' },
-      }),
-    );
+  test.each(['running', 'completed', 'failed', 'cancelled', 'interrupted'] as const)(
+    'shows a %s status dot before the Tool title',
+    status => {
+      const fixture = summary();
+      const tool = fixture.items[1];
+      if (tool.type !== 'tool') throw new Error('Expected Tool fixture');
+      fixture.items[1] = { ...tool, status };
+      const rendered = flatten(renderTimelineItem(fixture, 100, true));
 
-    expect(rendered).toContain('data-process-details-id');
-    expect(rendered).not.toContain('aria-live');
-  });
+      expect(rendered).toContain(`process-summary__tool-status--${status}`);
+      expect(rendered.indexOf('process-summary__tool-status')).toBeLessThan(
+        rendered.indexOf('<strong>Request</strong>'),
+      );
+      expect(rendered).not.toContain('data-process-details-id');
+      expect(rendered).not.toContain('data-dismiss-process-id');
+    },
+  );
 
   test.each([
     ['streaming', true],

@@ -21,9 +21,7 @@ import {
 } from './tool-message-adapter';
 
 export type PersistedTimelineItem =
-  | { kind: 'history-message'; key: string; message: GatewayMessage }
-  | { kind: 'tool'; key: string; item: ToolItem }
-  | ProcessSummaryTimelineItem;
+  { kind: 'history-message'; key: string; message: GatewayMessage } | ProcessSummaryTimelineItem;
 
 const THINKING_TYPES = new Set(['thinking', 'reasoning']);
 const TOOL_RESULT_ROLES = new Set(['tool', 'toolresult', 'tool_result', 'function']);
@@ -89,7 +87,6 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
   let archived: Array<ThinkingItem | ToolItem> = [];
   let segment = 0;
   const toolById = new Map<string, ToolItem>();
-  const emittedDiagnosticIds = new Set<string>();
 
   const flushSummary = () => {
     if (archived.length === 0) return;
@@ -111,14 +108,6 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
   const emitMessage = (message: GatewayMessage, key: string) => {
     flushSummary();
     projected.push({ kind: 'history-message', key, message });
-    segment += 1;
-  };
-
-  const emitDiagnostic = (tool: ToolItem) => {
-    if (emittedDiagnosticIds.has(tool.id)) return;
-    flushSummary();
-    projected.push({ kind: 'tool', key: `${tool.id}:diagnostic`, item: tool });
-    emittedDiagnosticIds.add(tool.id);
     segment += 1;
   };
 
@@ -200,7 +189,6 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
     tool.status = error.failed ? 'failed' : 'completed';
     if (output !== null) tool.output = boundedOutput(output);
     if (error.message !== null) tool.error = boundedOutput(error.message);
-    if (tool.status === 'failed') emitDiagnostic(tool);
     return tool;
   };
 

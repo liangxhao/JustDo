@@ -37,7 +37,7 @@ describe('projectPersistedTimeline', () => {
     );
   });
 
-  test('keeps a failed persisted Tool visible and records it in the summary', () => {
+  test('keeps a failed persisted Tool only inside its process summary', () => {
     const result = projectPersistedTimeline([
       {
         role: 'assistant',
@@ -54,11 +54,10 @@ describe('projectPersistedTimeline', () => {
       },
     ]);
 
-    expect(result.map(item => item.kind)).toEqual(['process-summary', 'tool']);
+    expect(result.map(item => item.kind)).toEqual(['process-summary']);
     expect(result[0]).toMatchObject({ toolCount: 1, errorCount: 1 });
-    expect(result[1]).toMatchObject({
-      kind: 'tool',
-      item: { status: 'failed', output: 'Process exited with code 1' },
+    expect(result[0]).toMatchObject({
+      items: [{ status: 'failed', output: 'Process exited with code 1' }],
     });
   });
 
@@ -147,14 +146,10 @@ describe('projectPersistedTimeline', () => {
       },
     ]);
 
-    expect(result.map(item => item.kind)).toEqual(['process-summary', 'tool']);
+    expect(result.map(item => item.kind)).toEqual(['process-summary']);
     expect(result[0]).toMatchObject({
       errorCount: 1,
       items: [{ status: 'failed', output: 'Process exited with code 1' }],
-    });
-    expect(result[1]).toMatchObject({
-      kind: 'tool',
-      item: { status: 'failed', output: 'Process exited with code 1' },
     });
   });
 

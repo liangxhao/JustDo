@@ -1,6 +1,5 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { i18nService } from '@/services/i18n';
 
@@ -10,7 +9,6 @@ import type {
   ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
 import { renderChatAvatar } from './chat-avatar';
-import { toStreamingMarkdownHtml } from './markdown';
 import { renderAssistantTimelineContent } from './message-render';
 import { resolveToolDisplay } from './tool-display';
 
@@ -48,6 +46,18 @@ function toolSummaryInput(value: unknown): string {
   const compact = readableValue(value).trim().replace(/\s+/g, ' ');
   if (!compact) return '';
   return compact.length <= 160 ? compact : `${compact.slice(0, 159)}…`;
+}
+
+function toolStateLabel(tool: ToolItem): string {
+  const stateKey =
+    tool.status === 'running'
+      ? 'coworkToolRunning'
+      : tool.status === 'failed'
+        ? 'coworkStatusError'
+        : tool.status === 'completed'
+          ? 'coworkStatusCompleted'
+          : 'coworkProcessInterrupted';
+  return i18nService.t(stateKey);
 }
 
 function renderAssistantTimelineRow(content: TemplateResult, showAvatar: boolean): TemplateResult {
@@ -95,33 +105,31 @@ export function renderTimelineItem(
                           data-inline-process-id=${process.id}
                           tabindex="-1"
                         >
-                          <div class="process-summary__item-heading">
-                            ${
-                              process.type === 'thinking'
-                                ? html`<strong>${i18nService.t('coworkThinkingLabel')}</strong>`
-                                : nothing
-                            }
-                            ${
-                              process.type === 'tool' &&
-                              (process.status === 'running' || process.status === 'failed')
-                                ? html`<span
-                                    >${i18nService.t(
-                                      process.status === 'running'
-                                        ? 'coworkToolRunning'
-                                        : 'coworkStatusError',
-                                    )}</span
-                                  >`
-                                : nothing
-                            }
-                          </div>
+                          ${
+                            process.type === 'thinking'
+                              ? html`
+                                  <div class="process-summary__item-heading">
+                                    <strong>${i18nService.t('coworkThinkingLabel')}</strong>
+                                  </div>
+                                `
+                              : nothing
+                          }
                           ${
                             process.type === 'thinking'
                               ? html` <div class="process-summary__thinking">${process.text}</div> `
                               : html`
                                   <details class="process-summary__tool">
                                     <summary class="process-summary__tool-title">
+                                      <span
+                                        class="process-summary__tool-status process-summary__tool-status--${process.status}"
+                                        role="img"
+                                        aria-label=${toolStateLabel(process)}
+                                        title=${toolStateLabel(process)}
+                                      ></span>
                                       <strong>${resolveToolDisplay(process.name).title}</strong>
-                                      <span>${toolSummaryInput(process.input)}</span>
+                                      <span class="process-summary__tool-input"
+                                        >${toolSummaryInput(process.input)}</span
+                                      >
                                     </summary>
                                     <div class="process-summary__tool-detail">
                                       <div class="process-summary__detail-label">
@@ -149,82 +157,6 @@ ${toolResult(process)}</pre>
                     )}
                   </ol>
                 `
-              : nothing
-          }
-        </section>
-      `,
-      showAvatar,
-    );
-  }
-  if (item.kind === 'thinking') {
-    return renderAssistantTimelineRow(
-      html`
-        <section
-          class="process-row process-row--thinking process-row--${item.item.status}"
-          data-process-id=${item.item.id}
-        >
-          <div class="process-row__heading">
-            <span class="process-row__status" aria-hidden="true"></span>
-            <span>${i18nService.t('coworkThinkingLabel')}</span>
-            <span class="process-row__state"
-              >${i18nService.t(
-                item.item.status === 'running' ? 'coworkStatusRunning' : 'coworkProcessInterrupted',
-              )}</span
-            >
-          </div>
-          <div class="process-row__thinking">
-            ${unsafeHTML(toStreamingMarkdownHtml(item.item.text))}
-          </div>
-        </section>
-      `,
-      showAvatar,
-    );
-  }
-  if (item.kind === 'tool') {
-    const stateKey =
-      item.item.status === 'running'
-        ? 'coworkToolRunning'
-        : item.item.status === 'failed'
-          ? 'coworkStatusError'
-          : item.item.status === 'completed'
-            ? 'coworkStatusCompleted'
-            : 'coworkProcessInterrupted';
-    return renderAssistantTimelineRow(
-      html`
-        <section
-          class="process-row process-row--tool process-row--${item.item.status}"
-          data-process-id=${item.item.id}
-        >
-          <div class="process-row__heading">
-            <span class="process-row__status" aria-hidden="true"></span>
-            <span class="process-row__tool-name">${resolveToolDisplay(item.item.name).title}</span>
-            <span class="process-row__state">${i18nService.t(stateKey)}</span>
-            ${
-              item.item.status === 'failed' ||
-              item.item.status === 'cancelled' ||
-              item.item.status === 'interrupted'
-                ? html`
-                    <button
-                      type="button"
-                      class="process-row__details"
-                      data-process-details-id=${item.item.id}
-                    >
-                      ${i18nService.t('coworkProcessViewDetails')}
-                    </button>
-                    <button
-                      type="button"
-                      class="process-row__dismiss"
-                      data-dismiss-process-id=${item.item.id}
-                    >
-                      ${i18nService.t('coworkProcessDismiss')}
-                    </button>
-                  `
-                : nothing
-            }
-          </div>
-          ${
-            item.item.error
-              ? html`<div class="process-row__error">${item.item.error}</div>`
               : nothing
           }
         </section>

@@ -24,6 +24,10 @@ import {
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import {
+  type ChatMinimapEntry,
+  projectChatMinimapEntries,
+} from '@/libs/openclaw-chat/model/chat-minimap';
 import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { coalesceAdjacentProcessSummaries } from '@/libs/openclaw-chat/model/coalesce-process-summaries';
 import { PersistedTimelineCache } from '@/libs/openclaw-chat/model/persisted-timeline-cache';
@@ -33,9 +37,7 @@ import {
 } from '@/libs/openclaw-chat/model/project-history-timeline';
 import {
   type ActiveTurnTimelineItem,
-  type ProcessSummaryTimelineItem,
   projectTurnItems,
-  recordToolVisibility,
 } from '@/libs/openclaw-chat/model/project-turn-items';
 import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
@@ -48,6 +50,7 @@ import { renderMermaidSvg } from './mermaidRenderer';
 const MERMAID_BUBBLE_MIN_WIDTH = 500;
 const MERMAID_BUBBLE_MAX_WIDTH = 820;
 const MERMAID_BUBBLE_HORIZONTAL_PADDING = 64;
+const MINIMAP_VISIBLE_ENTRY_THRESHOLD = 2;
 
 @customElement('justdo-chat')
 export class JustDoChatElement extends LitElement {
@@ -83,15 +86,21 @@ export class JustDoChatElement extends LitElement {
   @state()
   declare private openProcessSummaryKey: string | null;
 
-  private readonly processVisibleSince = new Map<string, number>();
-  private readonly dismissedProcessIds = new Set<string>();
-  private readonly processArchiveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  @state()
+  declare private currentMinimapKey: string | null;
+
+  @state()
+  declare private hoveredMinimapKey: string | null;
+
   private readonly chatScrollController = new ChatScrollController(() => this.requestUpdate());
   private readonly streamRenderScheduler = new StreamRenderScheduler(() => this.requestUpdate());
   private readonly persistedTimelineCache = new PersistedTimelineCache();
-  private latestProcessSummaries = new Map<string, ProcessSummaryTimelineItem>();
   private lastSearchEnhancementKey = '';
   private lastMermaidEnhancementKey = '';
+  private lastMinimapSyncKey = '';
+  private latestMinimapEntries: ChatMinimapEntry[] = [];
+  private minimapEntriesSignature = '';
+  private minimapPreviewTop = 0;
   private mermaidScrollFrame: number | null = null;
 
   constructor() {
@@ -105,6 +114,8 @@ export class JustDoChatElement extends LitElement {
     this.searchQuery = '';
     this.searchCaseSensitive = false;
     this.openProcessSummaryKey = null;
+    this.currentMinimapKey = null;
+    this.hoveredMinimapKey = null;
   }
 
   /** ChatController reference (preferred — connects directly to gateway) */
@@ -153,6 +164,148 @@ export class JustDoChatElement extends LitElement {
         box-sizing: border-box;
         margin: 0 auto;
         padding: 16px 0;
+      }
+
+      .chat-minimap {
+        position: sticky;
+        top: 50%;
+        z-index: 20;
+        float: left;
+        display: flex;
+        width: 32px;
+        max-height: min(68vh, 560px);
+        box-sizing: border-box;
+        margin-left: 16px;
+        transform: translateY(-50%);
+        color: #a3a3a3;
+      }
+
+      .chat-minimap__track {
+        width: 32px;
+        max-height: min(68vh, 560px);
+        box-sizing: border-box;
+        padding: 7px 0 7px 8px;
+        overflow-y: auto;
+        border-left: 1px solid rgba(163, 163, 163, 0.28);
+        scrollbar-width: none;
+      }
+
+      .chat-minimap__track::-webkit-scrollbar {
+        display: none;
+      }
+
+      .chat-minimap__item {
+        display: flex;
+        align-items: center;
+        width: 23px;
+        height: 14px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+
+      .chat-minimap__line {
+        display: block;
+        width: var(--minimap-line-width, 7px);
+        height: 1px;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.62;
+        transition:
+          width 120ms ease,
+          height 120ms ease,
+          color 120ms ease,
+          opacity 120ms ease;
+      }
+
+      .chat-minimap__item:hover .chat-minimap__line,
+      .chat-minimap__item:focus-visible .chat-minimap__line {
+        width: 16px;
+        height: 2px;
+        opacity: 0.92;
+      }
+
+      .chat-minimap__item--active {
+        color: #525252;
+      }
+
+      .chat-minimap__item--active .chat-minimap__line {
+        width: 18px;
+        height: 2px;
+        opacity: 1;
+      }
+
+      .chat-minimap__item:focus-visible {
+        outline: none;
+      }
+
+      .chat-minimap__preview {
+        position: absolute;
+        left: 38px;
+        top: 0;
+        width: min(320px, calc(100vw - 96px));
+        box-sizing: border-box;
+        padding: 10px 12px;
+        transform: translateY(-50%);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+        pointer-events: none;
+      }
+
+      .chat-minimap__preview-user,
+      .chat-minimap__preview-assistant {
+        display: -webkit-box;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        word-break: break-word;
+      }
+
+      .chat-minimap__preview-user {
+        -webkit-line-clamp: 1;
+        color: #262626;
+        font-size: 13px;
+        font-weight: 650;
+        line-height: 1.45;
+      }
+
+      .chat-minimap__preview-assistant {
+        margin-top: 4px;
+        -webkit-line-clamp: 2;
+        color: #a3a3a3;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      :host(.dark) .chat-minimap,
+      :host([data-theme='dark']) .chat-minimap {
+        color: #737373;
+      }
+
+      :host(.dark) .chat-minimap__item--active,
+      :host([data-theme='dark']) .chat-minimap__item--active {
+        color: #d4d4d4;
+      }
+
+      :host(.dark) .chat-minimap__preview,
+      :host([data-theme='dark']) .chat-minimap__preview {
+        border-color: rgba(255, 255, 255, 0.06);
+        background: rgba(38, 38, 38, 0.98);
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
+      }
+
+      :host(.dark) .chat-minimap__preview-user,
+      :host([data-theme='dark']) .chat-minimap__preview-user {
+        color: #f5f5f5;
+      }
+
+      :host(.dark) .chat-minimap__preview-assistant,
+      :host([data-theme='dark']) .chat-minimap__preview-assistant {
+        color: #a3a3a3;
       }
       .sr-only {
         position: absolute;
@@ -1308,16 +1461,37 @@ export class JustDoChatElement extends LitElement {
       .process-summary__tool-title {
         display: flex;
         min-width: 0;
-        align-items: baseline;
+        align-items: center;
         gap: 7px;
         color: var(--justdo-chat-text, #111827);
         cursor: pointer;
         list-style-position: outside;
       }
+      .process-summary__tool-status {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: #f59e0b;
+      }
+      .process-summary__tool-status--running {
+        background: #3b82f6;
+        animation: process-pulse 1.4s ease-in-out infinite;
+      }
+      .process-summary__tool-status--completed {
+        background: #22c55e;
+      }
+      .process-summary__tool-status--failed {
+        background: #ef4444;
+      }
+      .process-summary__tool-status--cancelled,
+      .process-summary__tool-status--interrupted {
+        background: #f59e0b;
+      }
       .process-summary__tool-title strong {
         flex: 0 0 auto;
       }
-      .process-summary__tool-title span {
+      .process-summary__tool-input {
         min-width: 0;
         overflow: hidden;
         color: var(--justdo-chat-muted, #64748b);
@@ -1353,85 +1527,11 @@ export class JustDoChatElement extends LitElement {
         white-space: pre-wrap;
         overflow-wrap: anywhere;
       }
-      .process-row {
-        border: 1px solid rgba(148, 163, 184, 0.26);
-        border-radius: 10px;
-        padding: 9px 11px;
-        background: rgba(248, 250, 252, 0.72);
-        font-size: 13px;
-      }
-      .process-row__heading {
-        display: flex;
-        min-width: 0;
-        align-items: center;
-        gap: 8px;
-        font-weight: 600;
-      }
-      .process-row__status {
-        width: 7px;
-        height: 7px;
-        flex: 0 0 auto;
-        border-radius: 999px;
-        background: #3b82f6;
-      }
-      .process-row--running .process-row__status {
-        animation: process-pulse 1.4s ease-in-out infinite;
-      }
-      .process-row--failed {
-        border-color: rgba(239, 68, 68, 0.38);
-        background: rgba(254, 242, 242, 0.74);
-      }
-      .process-row--failed .process-row__status,
-      .process-row--cancelled .process-row__status,
-      .process-row--interrupted .process-row__status {
-        background: #ef4444;
-      }
-      .process-row__tool-name {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .process-row__state {
-        margin-left: auto;
-        color: var(--justdo-chat-muted, #64748b);
-        font-size: 12px;
-        font-weight: 500;
-      }
-      .process-row__dismiss,
-      .process-row__details {
-        border: 0;
-        background: transparent;
-        color: var(--justdo-chat-muted, #64748b);
-        cursor: pointer;
-        font: inherit;
-        font-size: 12px;
-      }
-      .process-row__details {
-        color: var(--justdo-chat-accent, #2563eb);
-      }
-      .process-row__thinking {
-        display: -webkit-box;
-        max-height: 9em;
-        margin-top: 7px;
-        overflow: hidden;
-        color: var(--justdo-chat-muted, #64748b);
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 6;
-        line-clamp: 6;
-      }
-      .process-row__thinking > :first-child,
       .timeline-content__body > :first-child {
         margin-top: 0;
       }
-      .process-row__thinking > :last-child,
       .timeline-content__body > :last-child {
         margin-bottom: 0;
-      }
-      .process-row__error {
-        margin-top: 7px;
-        color: #b91c1c;
-        white-space: pre-wrap;
       }
       .timeline-content {
         width: 100%;
@@ -1454,27 +1554,53 @@ export class JustDoChatElement extends LitElement {
         position: sticky;
         z-index: 12;
         bottom: 14px;
-        display: block;
-        width: fit-content;
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
         margin: 8px auto 0;
-        border: 1px solid rgba(59, 130, 246, 0.25);
+        border: 1px solid rgba(100, 116, 139, 0.2);
         border-radius: 999px;
-        padding: 7px 12px;
-        background: #2563eb;
-        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.24);
-        color: #fff;
-        font: inherit;
-        font-size: 12px;
+        padding: 0;
+        background: rgba(248, 250, 252, 0.92);
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.1);
+        color: #64748b;
         cursor: pointer;
+        transition:
+          background 120ms ease,
+          color 120ms ease,
+          transform 120ms ease;
+        backdrop-filter: blur(8px);
       }
-      :host(.dark) .process-row {
-        background: rgba(30, 41, 59, 0.64);
-        border-color: rgba(148, 163, 184, 0.2);
+      .new-messages-indicator:hover,
+      .new-messages-indicator:focus-visible {
+        background: rgba(241, 245, 249, 0.98);
+        color: #475569;
+        outline: none;
+        transform: translateY(-1px);
       }
-      :host(.dark) .process-row--failed,
+      .new-messages-indicator svg {
+        width: 17px;
+        height: 17px;
+        fill: none;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.8;
+      }
       :host(.dark) .process-terminal {
         background: rgba(127, 29, 29, 0.2);
         color: #fca5a5;
+      }
+      :host(.dark) .new-messages-indicator {
+        border-color: rgba(148, 163, 184, 0.18);
+        background: rgba(30, 41, 59, 0.88);
+        color: #94a3b8;
+      }
+      :host(.dark) .new-messages-indicator:hover,
+      :host(.dark) .new-messages-indicator:focus-visible {
+        background: rgba(51, 65, 85, 0.94);
+        color: #cbd5e1;
       }
       @keyframes process-pulse {
         50% {
@@ -1483,13 +1609,20 @@ export class JustDoChatElement extends LitElement {
         }
       }
       @media (max-width: 760px) {
+        .chat-minimap {
+          display: none;
+        }
+
         .process-summary__items {
           margin-left: 8px;
         }
       }
       @media (prefers-reduced-motion: reduce) {
-        .process-row--running .process-row__status {
+        .process-summary__tool-status--running {
           animation: none;
+        }
+        .new-messages-indicator {
+          transition: none;
         }
       }
     `,
@@ -1574,9 +1707,10 @@ export class JustDoChatElement extends LitElement {
         PersistedTimelineItem | ActiveTurnTimelineItem
       >([...historyTimeline, ...activeTimeline]);
       const visibleRows = prepareVisibleTimelineRows(visibleTimeline);
-      this.rememberProcessSummaries(visibleTimeline);
+      const minimapEntries = projectChatMinimapEntries(visibleTimeline);
       return html`
         <div class="chat-shell">
+          ${this.renderMinimap(minimapEntries)}
           <div class="chat-container" role="log" aria-busy=${activeTurn?.status === 'running'}>
             <div class="sr-only" role="status" aria-live="polite">
               ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
@@ -1603,13 +1737,16 @@ export class JustDoChatElement extends LitElement {
             ${
               this.chatScrollController.state.mode === 'paused'
                 ? html`
-                    <button type="button" class="new-messages-indicator" data-jump-to-latest>
-                      ${i18nService.t('coworkJumpToLatest')}
-                      ${
-                        this.chatScrollController.state.unseenRevisions > 0
-                          ? ` · ${this.chatScrollController.state.unseenRevisions}`
-                          : ''
-                      }
+                    <button
+                      type="button"
+                      class="new-messages-indicator"
+                      data-jump-to-latest
+                      aria-label=${i18nService.t('coworkJumpToLatest')}
+                      title=${i18nService.t('coworkJumpToLatest')}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 9l6 6 6-6"></path>
+                      </svg>
                     </button>
                   `
                 : nothing
@@ -1622,9 +1759,10 @@ export class JustDoChatElement extends LitElement {
     if (!isStreaming && !stream) {
       const historyTimeline = getHistoryTimeline();
       const visibleRows = prepareVisibleTimelineRows(historyTimeline);
-      this.rememberProcessSummaries(historyTimeline);
+      const minimapEntries = projectChatMinimapEntries(historyTimeline);
       return html`
         <div class="chat-shell">
+          ${this.renderMinimap(minimapEntries)}
           <div class="chat-container" role="log">
             ${repeat(
               visibleRows,
@@ -1660,9 +1798,14 @@ export class JustDoChatElement extends LitElement {
     const displayStream = shouldRenderWaitingStream ? '' : stream;
     const items = this.buildItems(timelineMessages, toolMessages, streamSegments, displayStream);
     const hasLiveStreamItem = items.some(item => item.kind === 'stream' && item.isStreaming);
+    const minimapEntries = projectChatMinimapEntries(
+      getHistoryTimeline(),
+      displayStream || thinkingForStreamingGroup,
+    );
     // Always render the chat container — never show "No messages"
     return html`
       <div class="chat-shell">
+        ${this.renderMinimap(minimapEntries)}
         <div class="chat-container">
           ${this.renderItems(items, thinkingForStreamingGroup)}
           ${
@@ -1685,6 +1828,7 @@ export class JustDoChatElement extends LitElement {
     this.renderRoot?.addEventListener('click', this.handleMarkdownClick);
     this.renderRoot?.addEventListener('keydown', this.handleTimelineKeyDown);
     this.addEventListener('scroll', this.handleMermaidVisibilityScroll, { passive: true });
+    this.addEventListener('scroll', this.handleMinimapScroll, { passive: true });
   }
 
   disconnectedCallback(): void {
@@ -1695,14 +1839,14 @@ export class JustDoChatElement extends LitElement {
     this.renderRoot?.removeEventListener('click', this.handleMarkdownClick);
     this.renderRoot?.removeEventListener('keydown', this.handleTimelineKeyDown);
     this.removeEventListener('scroll', this.handleMermaidVisibilityScroll);
+    this.removeEventListener('scroll', this.handleMinimapScroll);
     if (this.mermaidScrollFrame !== null) cancelAnimationFrame(this.mermaidScrollFrame);
     this.mermaidScrollFrame = null;
-    for (const timer of this.processArchiveTimers.values()) clearTimeout(timer);
-    this.processArchiveTimers.clear();
     this.unsubscribeController();
   }
 
   protected firstUpdated(): void {
+    requestAnimationFrame(() => this.updateCurrentMinimapEntry());
     requestAnimationFrame(() => void this.renderMermaidDiagrams());
   }
 
@@ -1735,6 +1879,11 @@ export class JustDoChatElement extends LitElement {
       this.lastMermaidEnhancementKey = mermaidEnhancementKey;
       requestAnimationFrame(() => void this.renderMermaidDiagrams());
     }
+    const minimapSyncKey = `${transcriptRevision}:${this.minimapEntriesSignature}`;
+    if (minimapSyncKey !== this.lastMinimapSyncKey) {
+      this.lastMinimapSyncKey = minimapSyncKey;
+      requestAnimationFrame(() => this.updateCurrentMinimapEntry());
+    }
   }
 
   private scrollStreamingThinkingToBottom(): void {
@@ -1759,30 +1908,8 @@ export class JustDoChatElement extends LitElement {
       this.openProcessSummaryKey = this.openProcessSummaryKey === summaryKey ? null : summaryKey;
       return;
     }
-    const processDetailsButton = element?.closest<HTMLElement>('[data-process-details-id]');
-    if (processDetailsButton?.dataset.processDetailsId) {
-      const itemId = processDetailsButton.dataset.processDetailsId;
-      const summary = [...this.latestProcessSummaries.values()].find(candidate =>
-        candidate.items.some(item => item.id === itemId),
-      );
-      if (summary) {
-        this.openProcessSummaryKey = summary.key;
-        void this.updateComplete.then(() => {
-          this.shadowRoot
-            ?.querySelector<HTMLElement>(`[data-inline-process-id="${CSS.escape(itemId)}"]`)
-            ?.focus();
-        });
-      }
-      return;
-    }
     if (element?.closest('[data-jump-to-latest]')) {
       this.chatScrollController.jumpToLatest();
-      return;
-    }
-    const dismissButton = element?.closest<HTMLElement>('[data-dismiss-process-id]');
-    if (dismissButton?.dataset.dismissProcessId) {
-      this.dismissedProcessIds.add(dismissButton.dataset.dismissProcessId);
-      this.requestUpdate();
       return;
     }
     const copyTarget = event
@@ -2054,16 +2181,6 @@ export class JustDoChatElement extends LitElement {
     }
   }
 
-  private rememberProcessSummaries(
-    items: Array<PersistedTimelineItem | ReturnType<typeof projectTurnItems>[number]>,
-  ): void {
-    this.latestProcessSummaries = new Map(
-      items
-        .filter((item): item is ProcessSummaryTimelineItem => item.kind === 'process-summary')
-        .map(item => [item.key, item]),
-    );
-  }
-
   private activeTurnStatusKey(turn: AssistantTurn): string {
     if (turn.status === 'final') return 'coworkRunStateDone';
     if (turn.status === 'aborted' || turn.status === 'error') {
@@ -2105,7 +2222,7 @@ export class JustDoChatElement extends LitElement {
   ): TemplateResult | typeof nothing {
     if (item.kind === 'history-message') {
       return html`
-        <div data-history-key=${item.key}>
+        <div data-history-key=${item.key} data-minimap-anchor=${item.key}>
           ${this.renderItems(this.buildItems([item.message], [], [], null), null, showAvatar)}
         </div>
       `;
@@ -2118,56 +2235,150 @@ export class JustDoChatElement extends LitElement {
     );
   }
 
+  private renderMinimap(entries: ChatMinimapEntry[]): TemplateResult | typeof nothing {
+    this.latestMinimapEntries = entries;
+    this.minimapEntriesSignature = entries.map(entry => entry.key).join('|');
+    if (entries.length < MINIMAP_VISIBLE_ENTRY_THRESHOLD) return nothing;
+
+    const hoveredEntry = entries.find(entry => entry.key === this.hoveredMinimapKey) ?? null;
+    return html`
+      <nav
+        class="chat-minimap"
+        aria-label=${i18nService.t('coworkMinimapLabel')}
+        @mouseleave=${() => {
+          this.hoveredMinimapKey = null;
+        }}
+      >
+        <div class="chat-minimap__track">
+          ${repeat(
+            entries,
+            entry => entry.key,
+            entry => {
+              const active = entry.key === this.currentMinimapKey;
+              const lineWidth = Math.min(
+                12,
+                5 + Math.ceil((entry.userText.length + entry.assistantText.length) / 64),
+              );
+              return html`
+                <button
+                  type="button"
+                  class=${`chat-minimap__item${active ? ' chat-minimap__item--active' : ''}`}
+                  aria-current=${active ? 'true' : nothing}
+                  aria-label=${entry.userText || i18nService.t('coworkMinimapUserMessage')}
+                  @click=${() => this.scrollToMinimapEntry(entry)}
+                  @mouseenter=${(event: MouseEvent) => this.showMinimapPreview(entry, event)}
+                  @focus=${(event: FocusEvent) => this.showMinimapPreview(entry, event)}
+                  @blur=${() => {
+                    this.hoveredMinimapKey = null;
+                  }}
+                >
+                  <span
+                    class="chat-minimap__line"
+                    style=${`--minimap-line-width: ${lineWidth}px`}
+                    aria-hidden="true"
+                  ></span>
+                </button>
+              `;
+            },
+          )}
+        </div>
+        ${
+          hoveredEntry
+            ? html`
+                <div
+                  class="chat-minimap__preview"
+                  style=${`top: ${this.minimapPreviewTop}px`}
+                  aria-hidden="true"
+                >
+                  <div class="chat-minimap__preview-user">
+                    ${hoveredEntry.userText || i18nService.t('coworkMinimapUserMessage')}
+                  </div>
+                  ${
+                    hoveredEntry.assistantText
+                      ? html`
+                          <div class="chat-minimap__preview-assistant">
+                            ${hoveredEntry.assistantText}
+                          </div>
+                        `
+                      : nothing
+                  }
+                </div>
+              `
+            : nothing
+        }
+      </nav>
+    `;
+  }
+
+  private scrollToMinimapEntry(entry: ChatMinimapEntry): void {
+    const entryIndex = this.latestMinimapEntries.findIndex(
+      candidate => candidate.key === entry.key,
+    );
+    const target = this.resolveMinimapAnchor(entry, entryIndex);
+    if (!target) return;
+
+    const hostTop = this.getBoundingClientRect().top;
+    const targetTop = target.getBoundingClientRect().top;
+    const nextScrollTop = Math.max(0, this.scrollTop + targetTop - hostTop - 16);
+    this.currentMinimapKey = entry.key;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    this.scrollTo({ top: nextScrollTop, behavior: reduceMotion ? 'auto' : 'smooth' });
+  }
+
+  private readonly handleMinimapScroll = (): void => {
+    this.updateCurrentMinimapEntry();
+  };
+
+  private updateCurrentMinimapEntry(): void {
+    const entries = this.latestMinimapEntries;
+    if (entries.length < MINIMAP_VISIBLE_ENTRY_THRESHOLD) {
+      if (this.currentMinimapKey !== null) this.currentMinimapKey = null;
+      return;
+    }
+
+    const hostRect = this.getBoundingClientRect();
+    const activationTop = hostRect.top + Math.min(120, Math.max(48, this.clientHeight * 0.18));
+    let current = entries[0] ?? null;
+    for (const [index, entry] of entries.entries()) {
+      const anchor = this.resolveMinimapAnchor(entry, index);
+      if (!anchor) continue;
+      if (anchor.getBoundingClientRect().top <= activationTop) current = entry;
+      else break;
+    }
+    if (this.scrollHeight - this.scrollTop - this.clientHeight <= 1) {
+      current = entries[entries.length - 1] ?? current;
+    }
+    const nextKey = current?.key ?? null;
+    if (nextKey !== this.currentMinimapKey) this.currentMinimapKey = nextKey;
+  }
+
+  private resolveMinimapAnchor(entry: ChatMinimapEntry, entryIndex: number): HTMLElement | null {
+    const keyedAnchor = this.renderRoot.querySelector<HTMLElement>(
+      `[data-minimap-anchor="${CSS.escape(entry.anchorKey)}"]`,
+    );
+    if (keyedAnchor) return keyedAnchor;
+    if (entryIndex < 0) return null;
+    return (
+      this.renderRoot.querySelectorAll<HTMLElement>('.chat-container .chat-group--user')[
+        entryIndex
+      ] ?? null
+    );
+  }
+
+  private showMinimapPreview(entry: ChatMinimapEntry, event: Event): void {
+    const target = event.currentTarget as HTMLElement;
+    const minimap = target.closest<HTMLElement>('.chat-minimap');
+    if (!minimap) return;
+    const targetRect = target.getBoundingClientRect();
+    const minimapRect = minimap.getBoundingClientRect();
+    const targetCenter = targetRect.top + targetRect.height / 2 - minimapRect.top;
+    this.minimapPreviewTop = Math.max(28, Math.min(minimapRect.height - 28, targetCenter));
+    this.hoveredMinimapKey = entry.key;
+  }
+
   private projectActiveTimeline() {
     const turn = this._controller?.state.transcript.activeTurn ?? null;
-    const now = Date.now();
-    recordToolVisibility(turn, this.processVisibleSince, now);
-    const activeIds = new Set(turn?.items.map(item => item.id) ?? []);
-    for (const [itemId, timer] of this.processArchiveTimers) {
-      if (activeIds.has(itemId)) continue;
-      clearTimeout(timer);
-      this.processArchiveTimers.delete(itemId);
-    }
-    for (const itemId of this.processVisibleSince.keys()) {
-      if (!activeIds.has(itemId)) this.processVisibleSince.delete(itemId);
-    }
-    for (const itemId of this.dismissedProcessIds) {
-      if (!activeIds.has(itemId)) this.dismissedProcessIds.delete(itemId);
-    }
-    if (turn) {
-      for (const item of turn.items) {
-        if (item.type === 'thinking' && item.status === 'running') {
-          this.processVisibleSince.set(item.id, this.processVisibleSince.get(item.id) ?? now);
-        }
-        if (item.type === 'tool' && item.status === 'completed') {
-          const visibleSince = this.processVisibleSince.get(item.id);
-          const remaining =
-            visibleSince === undefined ? 0 : Math.max(0, 500 - (now - visibleSince));
-          if (remaining > 0 && !this.processArchiveTimers.has(item.id)) {
-            const timer = setTimeout(() => {
-              this.processArchiveTimers.delete(item.id);
-              const activeElement = this.shadowRoot?.activeElement as HTMLElement | null;
-              const shouldRestoreFocus =
-                activeElement?.closest<HTMLElement>('[data-process-id]')?.dataset.processId ===
-                item.id;
-              this.requestUpdate();
-              if (shouldRestoreFocus) {
-                void this.updateComplete.then(() => {
-                  this.shadowRoot?.querySelector<HTMLButtonElement>('.process-summary')?.focus();
-                });
-              }
-            }, remaining);
-            this.processArchiveTimers.set(item.id, timer);
-          }
-        }
-      }
-    }
-    return projectTurnItems(turn, {
-      visibleSince: this.processVisibleSince,
-      dismissedDiagnosticIds: this.dismissedProcessIds,
-      now,
-      minimumToolVisibleMs: 500,
-    });
+    return projectTurnItems(turn);
   }
 
   private renderItem(

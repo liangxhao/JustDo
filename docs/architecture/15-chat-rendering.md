@@ -287,6 +287,7 @@ Renderer 只负责构建 JSON；文件路径由系统另存为对话框选择，
 - active timeline 使用稳定 source ID 和 Lit keyed `repeat`，summary count 更新不会替换 DOM identity。
 - Tool 至少展示 500 ms；计时器只延迟 presentation archive，不改变 reducer status。
 - 滚动由 Lit 侧单一 controller 持有；用户一旦向上滚动即进入 paused，只有显式“跳到最新消息”恢复 follow。
+- 左侧 Minimap 每轮用户对话只生成一个条目，以用户消息的真实 `data-history-key` DOM 节点作为导航锚点；流式 Content 只更新该条目的助手摘要，不按消息数量估算滚动位置。
 - 大型 code block/mermaid 图要考虑懒渲染。
 - Search highlight 不应改变 message identity。
 
@@ -297,6 +298,7 @@ Renderer 只负责构建 JSON；文件路径由系统另存为对话框选择，
 - process summary 的 Content hard boundary、stable key 和 inline disclosure。
 - history authority/generation/regressive-tail reconciliation。
 - scroll follow/paused/jump-to-latest。
+- Minimap 的用户/助手摘要分组、增量 Content 更新、真实 DOM 锚点导航和当前条目高亮。
 - persisted grouped render。
 - markdown task list/math/code。
 - message normalization。

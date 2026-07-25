@@ -26,7 +26,7 @@ function flatten(value: unknown): string {
   return '';
 }
 
-function incrementalSummary(): ProcessSummaryTimelineItem {
+function incrementalSummary(failed = false): ProcessSummaryTimelineItem {
   const state = createChatTranscriptState('justdo:session-1', 'session-1');
   let id = 0;
   const dependencies = {
@@ -69,21 +69,19 @@ function incrementalSummary(): ProcessSummaryTimelineItem {
         phase: 'result',
         toolCallId: 'call-1',
         name: 'exec',
-        result: '761 tests passed',
+        result: failed ? 'Process exited with code 1' : '761 tests passed',
+        isError: failed,
       },
     },
     dependencies,
   );
 
-  const item = projectTurnItems(state.activeTurn, {
-    visibleSince: new Map(),
-    now: 3,
-  })[0];
+  const item = projectTurnItems(state.activeTurn)[0];
   if (item?.kind !== 'process-summary') throw new Error('Expected incremental Tool summary');
   return item;
 }
 
-function refreshedSummary(): ProcessSummaryTimelineItem {
+function refreshedSummary(failed = false): ProcessSummaryTimelineItem {
   const item = projectPersistedTimeline([
     {
       role: 'assistant',
@@ -100,8 +98,8 @@ function refreshedSummary(): ProcessSummaryTimelineItem {
       role: 'toolResult',
       toolCallId: 'call-1',
       toolName: 'exec',
-      content: [{ type: 'text', text: '761 tests passed' }],
-      isError: false,
+      content: [{ type: 'text', text: failed ? 'Process exited with code 1' : '761 tests passed' }],
+      isError: failed,
     },
   ])[0];
   if (item?.kind !== 'process-summary') throw new Error('Expected refreshed Tool summary');
@@ -109,18 +107,26 @@ function refreshedSummary(): ProcessSummaryTimelineItem {
 }
 
 describe('Tool timeline consistency', () => {
-  test('renders incremental and fully refreshed Tools with the same detail structure', () => {
-    const incremental = flatten(renderTimelineItem(incrementalSummary(), 3, true));
-    const refreshed = flatten(renderTimelineItem(refreshedSummary(), 3, true));
+  test.each([
+    ['completed', false, '761 tests passed'],
+    ['failed', true, 'Process exited with code 1'],
+  ] as const)(
+    'renders incremental and fully refreshed %s Tools with the same status and detail structure',
+    (status, failed, output) => {
+      const incremental = flatten(renderTimelineItem(incrementalSummary(failed), 3, true));
+      const refreshed = flatten(renderTimelineItem(refreshedSummary(failed), 3, true));
 
-    for (const rendered of [incremental, refreshed]) {
-      expect(rendered).toContain('process-summary__item--tool');
-      expect(rendered).toContain('<details class="process-summary__tool">');
-      expect(rendered).toContain('process-summary__tool-title');
-      expect(rendered).toContain('process-summary__tool-detail');
-      expect(rendered).toContain('Bash');
-      expect(rendered).toContain('npm test');
-      expect(rendered).toContain('761 tests passed');
-    }
-  });
+      for (const rendered of [incremental, refreshed]) {
+        expect(rendered).toContain('process-summary__item--tool');
+        expect(rendered).toContain('<details class="process-summary__tool">');
+        expect(rendered).toContain('process-summary__tool-title');
+        expect(rendered).toContain(`process-summary__tool-status--${status}`);
+        expect(rendered).toContain('process-summary__tool-detail');
+        expect(rendered).toContain('Bash');
+        expect(rendered).toContain('npm test');
+        expect(rendered).toContain(output);
+        expect(rendered).not.toContain('process-row--tool');
+      }
+    },
+  );
 });

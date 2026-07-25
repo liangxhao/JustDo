@@ -1216,19 +1216,22 @@ Remove the React `MutationObserver` auto-scroll path from
 
 ### Minimap
 
-Remove the current Minimap in the first refactor release.
+Retain the Minimap as a left-side turn navigation rail, but replace its old
+message-count positioning:
 
-Reasons:
+- Create one entry for each user turn.
+- Show the user message as the bold first line in the preview and the associated
+  assistant response as subdued text below it.
+- Bind each entry to the real user-message `data-history-key` DOM anchor.
+- Resolve the active entry from anchor positions in the scroll viewport.
+- Update the current assistant preview during incremental Content without
+  creating a second entry.
+- Keep Tool and Thinking content out of the compact text preview.
+- Hide the rail on narrow viewports where it would overlap the transcript.
 
-- It appears after only four entries.
-- It estimates position from message count rather than actual DOM position.
-- It performs work on every scroll and stream render.
-- Tool/Thinking compaction changes visual height independently of entry count.
-- It competes with the new-message affordance.
-
-If a navigation rail is later restored, it must use actual Turn DOM anchors and
-should be evaluated as a separate feature after the base scroll behavior is
-stable.
+This avoids the old proportional scroll estimate, remains stable when
+Tool/Thinking disclosure changes height, and coexists with the jump-to-latest
+affordance.
 
 ### Search
 
@@ -1585,7 +1588,7 @@ Exit criteria:
 - Add one Lit-owned scroll controller.
 - Remove React mutation-based auto-scroll.
 - Add new-message/jump-to-latest affordance.
-- Remove the current Minimap.
+- Replace the old Minimap with left-side, real-DOM-anchor turn navigation.
 - Add keyed `repeat` and `guard`.
 - Cache persisted transcript projection.
 - Batch stream rendering.
