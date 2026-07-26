@@ -10,6 +10,7 @@ import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   buildBuiltinMemorySearchConfig,
   buildManagedOpenClawConnectivityConfig,
+  buildManagedOpenClawHeartbeatConfig,
   buildOpenClawConfigMeta,
   buildProviderSelection,
   hasOpenClawConfigChanged,
@@ -232,7 +233,7 @@ describe('OpenClaw exec approval path', () => {
 });
 
 describe('OpenClaw managed connectivity config', () => {
-  test('keeps intranet web tools while disabling public search and update checks', () => {
+  test('keeps intranet web tools while disabling unused tools and update checks', () => {
     expect(buildManagedOpenClawConnectivityConfig()).toEqual({
       update: {
         checkOnStart: false,
@@ -241,7 +242,18 @@ describe('OpenClaw managed connectivity config', () => {
         },
       },
       tools: {
-        deny: ['web_search'],
+        deny: [
+          'web_search',
+          'skill_workshop',
+          'tts',
+          'message',
+          'nodes',
+          'gateway',
+          'file_fetch',
+          'dir_list',
+          'dir_fetch',
+          'file_write',
+        ],
         web: {
           search: {
             enabled: false,
@@ -261,6 +273,15 @@ describe('OpenClaw managed connectivity config', () => {
           dangerouslyAllowPrivateNetwork: true,
         },
       },
+    });
+  });
+});
+
+describe('OpenClaw managed heartbeat config', () => {
+  test('disables heartbeat runs and prompt injection', () => {
+    expect(buildManagedOpenClawHeartbeatConfig()).toEqual({
+      every: '0m',
+      includeSystemPromptSection: false,
     });
   });
 });

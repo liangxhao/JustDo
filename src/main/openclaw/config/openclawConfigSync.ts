@@ -382,6 +382,11 @@ export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 
+export const buildManagedOpenClawHeartbeatConfig = () => ({
+  every: '0m',
+  includeSystemPromptSection: false,
+});
+
 export const buildManagedOpenClawConnectivityConfig = () => ({
   update: {
     checkOnStart: false,
@@ -390,7 +395,18 @@ export const buildManagedOpenClawConnectivityConfig = () => ({
     },
   },
   tools: {
-    deny: ['web_search'],
+    deny: [
+      'web_search',
+      'skill_workshop',
+      'tts',
+      'message',
+      'nodes',
+      'gateway',
+      'file_fetch',
+      'dir_list',
+      'dir_fetch',
+      'file_write',
+    ],
     web: {
       search: {
         enabled: false,
@@ -1024,6 +1040,7 @@ export class OpenClawConfigSync {
           sandbox: {
             mode: sandboxMode,
           },
+          heartbeat: buildManagedOpenClawHeartbeatConfig(),
           workspace: resolvedWorkspaceDir,
           subagents: {
             maxSpawnDepth: 1,
@@ -1582,6 +1599,11 @@ export class OpenClawConfigSync {
       diagnostics: {
         otel: {
           enabled: false,
+        },
+      },
+      agents: {
+        defaults: {
+          heartbeat: buildManagedOpenClawHeartbeatConfig(),
         },
       },
       ...connectivityConfig,
