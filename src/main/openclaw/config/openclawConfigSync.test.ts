@@ -248,11 +248,18 @@ describe('OpenClaw managed connectivity config', () => {
           },
           fetch: {
             enabled: true,
+            useTrustedEnvProxy: true,
+            ssrfPolicy: {
+              allowRfc2544BenchmarkRange: true,
+            },
           },
         },
       },
       browser: {
         enabled: true,
+        ssrfPolicy: {
+          dangerouslyAllowPrivateNetwork: true,
+        },
       },
     });
   });

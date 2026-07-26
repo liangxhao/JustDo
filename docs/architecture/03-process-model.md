@@ -152,9 +152,12 @@ env-proxy 无法精确表达“同一 loopback 主机只有某个端口经过代
 
 JustDo 生成的 OpenClaw 配置关闭启动版本检查、自动更新、远程模型价格目录、
 `web_search` 和 OTEL 导出。Gateway 环境同时设置 `OPENCLAW_OFFLINE=1`，避免缺少
-`fd`/`rg` 时从 GitHub 自动下载。`web_fetch` 与 browser 保持开启，用于内网站点；
-它们不是公网隔离边界，严格内网部署仍须由防火墙或出口网关限制可达目标。模型 API、
-用户启用的 MCP 以及 tool/skill 子进程沿用该部署环境允许的网络范围。
+`fd`/`rg` 时从 GitHub 自动下载。`web_fetch` 与 browser 保持开启；`web_fetch` 使用
+JustDo 传给 Gateway 的受信任出口代理解析域名，并额外兼容 RFC 2544 的
+`198.18.0.0/15` Fake-IP 范围。browser 允许私网和特殊地址，以兼容 Clash/Surge 等
+代理的非标准 Fake-IP 地址池，并与本地命令、Python、MCP 和 skill 子进程已有的网络
+能力保持一致。这些应用层配置不是网络隔离边界；需要限制公网或内网访问的部署必须
+使用防火墙、出口网关或受控代理统一限制所有进程。
 
 ## IPC API 详细说明
 

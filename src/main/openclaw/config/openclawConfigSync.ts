@@ -397,11 +397,28 @@ export const buildManagedOpenClawConnectivityConfig = () => ({
       },
       fetch: {
         enabled: true,
+        // JustDo already passes its operator-controlled outbound proxy to the
+        // Gateway. Let that proxy resolve hostnames so Fake-IP DNS does not
+        // fail OpenClaw's pre-connect address checks.
+        useTrustedEnvProxy: true,
+        ssrfPolicy: {
+          // Clash/Surge-style fake-IP DNS maps public hostnames into the
+          // RFC 2544 benchmark range. OpenClaw blocks that range by default,
+          // so opt into its narrow compatibility exception without allowing
+          // private, loopback, link-local, or arbitrary reserved addresses.
+          allowRfc2544BenchmarkRange: true,
+        },
       },
     },
   },
   browser: {
     enabled: true,
+    // Local execution can already reach the user's network through command
+    // tools. Keep browser behavior consistent and allow proxy Fake-IP ranges
+    // plus user-authorized LAN destinations without requiring hidden setup.
+    ssrfPolicy: {
+      dangerouslyAllowPrivateNetwork: true,
+    },
   },
 });
 
