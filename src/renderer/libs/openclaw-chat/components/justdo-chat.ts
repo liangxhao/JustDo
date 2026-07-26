@@ -30,6 +30,8 @@ import {
 } from '@/libs/openclaw-chat/model/chat-minimap';
 import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { coalesceAdjacentProcessSummaries } from '@/libs/openclaw-chat/model/coalesce-process-summaries';
+import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/optimistic-history-tail';
+import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/optimistic-user-message';
 import { PersistedTimelineCache } from '@/libs/openclaw-chat/model/persisted-timeline-cache';
 import {
   type PersistedTimelineItem,
@@ -41,7 +43,6 @@ import {
 } from '@/libs/openclaw-chat/model/project-turn-items';
 import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
-import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import type { ChatItem, GatewayMessage, MessageGroup } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
@@ -439,6 +440,10 @@ export class JustDoChatElement extends LitElement {
         min-width: 0;
       }
 
+      .chat-group--assistant .chat-group__content {
+        margin-right: 44px;
+      }
+
       .chat-group__footer {
         font-size: 11px;
         color: var(--justdo-chat-text-secondary, #9ca3af);
@@ -557,11 +562,18 @@ export class JustDoChatElement extends LitElement {
         text-decoration: underline;
       }
 
+      .chat-bubble__content {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: 8px;
+      }
+
       .chat-bubble__images {
         display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-bottom: 8px;
+        width: 100%;
+        justify-content: center;
+        margin: 0;
       }
 
       .chat-bubble__images:last-child {
@@ -569,14 +581,13 @@ export class JustDoChatElement extends LitElement {
       }
 
       .chat-bubble__images--assistant {
-        margin-top: 8px;
-        margin-bottom: 0;
+        margin: 0;
       }
 
       .chat-bubble__image {
         display: block;
-        max-width: min(360px, 100%);
-        max-height: 360px;
+        max-width: min(520px, 100%);
+        max-height: 520px;
         border-radius: 8px;
         object-fit: contain;
       }
@@ -585,7 +596,7 @@ export class JustDoChatElement extends LitElement {
         background: var(--justdo-chat-assistant-bg, #ffffff);
         color: var(--justdo-chat-assistant-text, inherit);
         border-bottom-left-radius: 4px;
-        max-width: calc(100% - 44px);
+        max-width: 100%;
         width: fit-content;
       }
 
@@ -834,30 +845,32 @@ export class JustDoChatElement extends LitElement {
         flex-flow: row wrap;
         gap: 6px;
         max-width: 100%;
-        margin-top: 8px;
+        margin: 0;
       }
 
       .message-attachment {
         display: flex;
         align-items: center;
-        gap: 7px;
+        gap: 6px;
         min-width: 0;
-        max-width: min(240px, 100%);
-        padding: 6px 9px 6px 6px;
+        width: fit-content;
+        max-width: min(320px, 100%);
+        padding: 4px 7px 4px 5px;
         color: var(--text-primary);
         text-align: left;
-        background: var(--surface-raised, rgba(127, 127, 127, 0.08));
-        border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.2));
-        border-radius: 10px;
+        background: color-mix(in srgb, var(--surface-raised, #ffffff) 45%, transparent);
+        border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+        border-radius: 7px;
         cursor: pointer;
         transition:
           border-color 120ms ease,
-          background 120ms ease;
+          background 120ms ease,
+          color 120ms ease;
       }
 
       .message-attachment:hover {
-        background: var(--surface-hover, rgba(127, 127, 127, 0.13));
-        border-color: var(--border-default, rgba(127, 127, 127, 0.36));
+        background: var(--surface-hover, rgba(127, 127, 127, 0.1));
+        border-color: color-mix(in srgb, var(--accent, #4f7cff) 28%, transparent);
       }
 
       .message-attachment:focus-visible {
@@ -867,21 +880,27 @@ export class JustDoChatElement extends LitElement {
 
       .message-attachment__icon {
         display: grid;
-        flex: 0 0 26px;
-        width: 26px;
-        height: 26px;
+        flex: 0 0 22px;
+        width: 22px;
+        height: 22px;
         color: var(--accent, #4f7cff);
-        background: color-mix(in srgb, currentColor 12%, transparent);
-        border-radius: 8px;
+        background: color-mix(in srgb, currentColor 8%, transparent);
+        border-radius: 6px;
         place-items: center;
       }
 
       .message-attachment__icon svg {
-        width: 15px;
-        height: 15px;
-        stroke-width: 1.8;
+        width: 13px;
+        height: 13px;
+        stroke-width: 1.7;
         stroke-linecap: round;
         stroke-linejoin: round;
+      }
+
+      .message-attachment__content {
+        overflow: hidden;
+        min-width: 0;
+        flex: 1;
       }
 
       .message-attachment__name {
@@ -896,7 +915,13 @@ export class JustDoChatElement extends LitElement {
       .message-attachment__open {
         flex: 0 0 auto;
         color: var(--text-secondary);
-        font-size: 12px;
+        font-size: 11px;
+        opacity: 0.45;
+        transition: opacity 120ms ease;
+      }
+
+      .message-attachment:hover .message-attachment__open {
+        opacity: 0.9;
       }
 
       .mermaid-toggle {
@@ -1206,7 +1231,7 @@ export class JustDoChatElement extends LitElement {
 
       .chat-thinking {
         width: fit-content;
-        max-width: calc(100% - 44px);
+        max-width: 100%;
         margin: 1px 0 4px;
         box-sizing: border-box;
       }
@@ -1428,10 +1453,26 @@ export class JustDoChatElement extends LitElement {
       }
       .process-summary__item-heading {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: 9px minmax(0, 1fr);
         gap: 7px;
-        align-items: baseline;
+        align-items: center;
         color: var(--justdo-chat-muted, #64748b);
+      }
+      .process-summary__thinking-marker {
+        width: 9px;
+        height: 9px;
+        background: var(--justdo-chat-accent, #6366f1);
+        clip-path: polygon(50% 0, 61% 36%, 100% 50%, 61% 64%, 50% 100%, 39% 64%, 0 50%, 39% 36%);
+      }
+      .process-summary__thinking-marker--running {
+        animation: thinking-pulse 1.5s infinite ease-in-out;
+      }
+      .process-summary__thinking-marker--failed {
+        background: #ef4444;
+      }
+      .process-summary__thinking-marker--cancelled,
+      .process-summary__thinking-marker--interrupted {
+        background: #f59e0b;
       }
       .process-summary__item-heading strong {
         overflow: hidden;
@@ -1527,6 +1568,16 @@ export class JustDoChatElement extends LitElement {
         white-space: pre-wrap;
         overflow-wrap: anywhere;
       }
+      .process-live {
+        width: min(100%, 680px);
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: var(--justdo-chat-process-bg, rgba(248, 250, 252, 0.58));
+        font-size: 12px;
+      }
+      .process-live__tool > summary {
+        list-style-position: outside;
+      }
       .timeline-content__body > :first-child {
         margin-top: 0;
       }
@@ -1618,6 +1669,7 @@ export class JustDoChatElement extends LitElement {
         }
       }
       @media (prefers-reduced-motion: reduce) {
+        .process-summary__thinking-marker--running,
         .process-summary__tool-status--running {
           animation: none;
         }
@@ -1634,8 +1686,8 @@ export class JustDoChatElement extends LitElement {
     // Use controller state if available, otherwise use direct properties
     const ctrl = this._controller;
     const persistedMessages = ctrl ? (ctrl.state.chatMessages as GatewayMessage[]) : this.messages;
-    let messages = persistedMessages;
     const activeTurn = ctrl?.state.transcript.activeTurn ?? null;
+    let messages = projectPersistedMessagesForActiveTurn(persistedMessages, activeTurn);
     const thinkingMessages = ctrl ? ctrl.state.chatThinkingMessages : [];
     const toolMessages = ctrl ? ctrl.state.chatToolMessages : [];
     const streamSegments = ctrl ? ctrl.state.chatStreamSegments : [];
@@ -1643,42 +1695,9 @@ export class JustDoChatElement extends LitElement {
     const thinkingStream = ctrl ? ctrl.state.chatThinkingStream : null;
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
 
-    // Append pending user message (optimistic display during session transitions)
+    // Merge the optimistic prompt in turn order during session transitions.
     const pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
-    if (pendingMessage) {
-      const pending = pendingMessage;
-      const alreadyInHistory = messages.some(
-        m =>
-          (m as Record<string, unknown>).role === 'user' &&
-          (m as Record<string, unknown>).content === pending.content &&
-          (m as Record<string, unknown>).timestamp === pending.timestamp,
-      );
-      if (!alreadyInHistory) {
-        messages = [...messages, pending];
-      }
-    }
-
-    if (activeTurn && activeTurn.status !== 'running') {
-      const activeContent = activeTurn.items
-        .flatMap(item => (item.type === 'content' ? [item.text] : []))
-        .join('\n')
-        .trim();
-      const lastIndex = messages.length - 1;
-      const lastMessage = messages[lastIndex];
-      const lastRole = String(
-        (lastMessage as Record<string, unknown> | undefined)?.role ?? '',
-      ).toLowerCase();
-      const lastText = (extractTextCached(lastMessage) ?? '').trim();
-      if (
-        lastRole === 'assistant' &&
-        activeContent &&
-        (lastText === activeContent ||
-          lastText.includes(activeContent) ||
-          activeContent.includes(lastText))
-      ) {
-        messages = messages.slice(0, lastIndex);
-      }
-    }
+    messages = mergePendingUserMessageForDisplay(messages, pendingMessage);
 
     const terminalProjectionVariant =
       activeTurn && activeTurn.status !== 'running'
@@ -1706,7 +1725,9 @@ export class JustDoChatElement extends LitElement {
       const visibleTimeline = coalesceAdjacentProcessSummaries<
         PersistedTimelineItem | ActiveTurnTimelineItem
       >([...historyTimeline, ...activeTimeline]);
-      const visibleRows = prepareVisibleTimelineRows(visibleTimeline);
+      const visibleRows = prepareVisibleTimelineRows(visibleTimeline, {
+        suppressTrailingAssistantFooter: activeTurn !== null || isStreaming,
+      });
       const minimapEntries = projectChatMinimapEntries(visibleTimeline);
       return html`
         <div class="chat-shell">
@@ -1718,10 +1739,10 @@ export class JustDoChatElement extends LitElement {
             ${repeat(
               visibleRows,
               row => row.item.key,
-              row => this.renderVisibleTimelineItem(row.item, row.showAvatar),
+              row => this.renderVisibleTimelineItem(row.item, row.showAvatar, row.showFooter),
             )}
             ${
-              activeTurn
+              activeTurn && activeTurn.status !== 'running'
                 ? html`
                     <section
                       class="active-turn chat-group chat-group--assistant chat-group--continuation"
@@ -1767,7 +1788,7 @@ export class JustDoChatElement extends LitElement {
             ${repeat(
               visibleRows,
               row => row.item.key,
-              row => this.renderVisibleTimelineItem(row.item, row.showAvatar),
+              row => this.renderVisibleTimelineItem(row.item, row.showAvatar, row.showFooter),
             )}
           </div>
         </div>
@@ -2219,11 +2240,17 @@ export class JustDoChatElement extends LitElement {
   private renderVisibleTimelineItem(
     item: PersistedTimelineItem | ActiveTurnTimelineItem,
     showAvatar: boolean,
+    showFooter: boolean,
   ): TemplateResult | typeof nothing {
     if (item.kind === 'history-message') {
       return html`
         <div data-history-key=${item.key} data-minimap-anchor=${item.key}>
-          ${this.renderItems(this.buildItems([item.message], [], [], null), null, showAvatar)}
+          ${this.renderItems(
+            this.buildItems([item.message], [], [], null),
+            null,
+            showAvatar,
+            showFooter,
+          )}
         </div>
       `;
     }
@@ -2445,6 +2472,7 @@ export class JustDoChatElement extends LitElement {
     items: Array<ChatItem | MessageGroup>,
     thinkingStream: string | null = null,
     initialAssistantAvatar?: boolean,
+    allowFooter = true,
   ): Array<TemplateResult | typeof nothing> {
     const rendered: Array<TemplateResult | typeof nothing> = [];
 
@@ -2478,7 +2506,8 @@ export class JustDoChatElement extends LitElement {
         rendered.push(
           renderMessageBlock(item as MessageGroup, {
             searchQuery: this.searchQuery,
-            showFooter: shouldRenderGroupFooterByNextItem(item as MessageGroup, next),
+            showFooter:
+              allowFooter && shouldRenderGroupFooterByNextItem(item as MessageGroup, next),
             showAvatar,
             assistantName: this.assistantName,
             workingDirectory: this.workingDirectory,

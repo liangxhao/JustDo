@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -817,6 +818,73 @@ test('preserves the just-finished terminal message when refreshed history has no
   await controller.loadHistory();
 
   expect(controller.state.chatMessages).toEqual([userMessage, terminalMessage]);
+});
+
+test('lets authoritative media history retire the completed active turn', async () => {
+  const userMessage = {
+    role: 'user',
+    content: '使用 MEDIA: 方式汇总一下文件',
+    timestamp: 1000,
+  };
+  const optimisticTerminalMessage = {
+    role: 'assistant',
+    content: '工作区文件汇总\nMEDIA:C:\\workspace\\visualization_demo.png',
+    timestamp: 2000,
+    __justdoOptimisticHistoryTail: true,
+  };
+  const persistedMediaMessage = {
+    role: 'assistant',
+    provider: 'openclaw',
+    model: 'gateway-injected',
+    content: [
+      { type: 'text', text: '工作区文件汇总' },
+      {
+        type: 'image',
+        url: '/api/chat/media/outgoing/session/image/full',
+        mimeType: 'image/png',
+      },
+    ],
+    timestamp: 2100,
+  };
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [userMessage, persistedMediaMessage],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = [userMessage, optimisticTerminalMessage];
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 1, createId: prefix => `${prefix}-1` },
+  );
+  turn.status = 'final';
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([userMessage, persistedMediaMessage]);
+  expect(controller.state.transcript.activeTurn).toBeNull();
+});
+
+test('marks an aborted terminal message as the active turn fallback', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  (
+    controller as unknown as {
+      handleAborted(payload: { message: unknown }): void;
+    }
+  ).handleAborted({
+    message: { role: 'assistant', content: 'Stopped after partial output.' },
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      __justdoOptimisticHistoryTail: true,
+    }),
+  ]);
 });
 
 test('preserves optimistic terminal content when refreshed history advanced without it', async () => {

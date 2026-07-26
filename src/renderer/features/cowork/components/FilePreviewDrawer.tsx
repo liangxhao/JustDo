@@ -1,4 +1,5 @@
 import 'katex/dist/katex.min.css';
+import './FilePreviewDrawer.css';
 
 import mermaid from 'mermaid';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,6 +23,7 @@ const DRAWER_MIN_WIDTH = 360;
 const DRAWER_MAX_WIDTH = 1200;
 const DRAWER_WINDOW_MARGIN = 16;
 const MARKDOWN_CONTENT_MAX_WIDTH = 920;
+const MARKDOWN_DOCUMENT_PARSE_LIMIT = 140_000;
 const COPY_FEEDBACK_DURATION_MS = 1600;
 const COPY_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"/></svg>';
@@ -50,7 +52,10 @@ const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose 
     }
   }, [isJson, preview.content]);
   const markdownHtml = useMemo(
-    () => (isPreformatted ? '' : toSanitizedMarkdownHtml(content)),
+    () =>
+      isPreformatted
+        ? ''
+        : toSanitizedMarkdownHtml(content, { parseLimit: MARKDOWN_DOCUMENT_PARSE_LIMIT }),
     [content, isPreformatted],
   );
 
@@ -67,7 +72,7 @@ const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose 
       label.style.display = 'none';
     });
     root.querySelectorAll<HTMLButtonElement>('.code-block-copy').forEach(button => {
-      const label = i18nService.t('copy');
+      const label = i18nService.t('copyToClipboard');
       button.setAttribute('aria-label', label);
       button.title = label;
     });
@@ -203,7 +208,7 @@ const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose 
         ) : (
           <article
             ref={markdownRef}
-            className="mx-auto w-full text-[15px] leading-7 text-foreground [&_.code-block-copy]:inline-flex [&_.code-block-copy]:h-7 [&_.code-block-copy]:w-7 [&_.code-block-copy]:cursor-pointer [&_.code-block-copy]:items-center [&_.code-block-copy]:justify-center [&_.code-block-copy]:rounded [&_.code-block-copy]:border [&_.code-block-copy]:border-border [&_.code-block-copy]:text-muted [&_.code-block-copy:hover]:bg-surface-raised [&_.code-block-copy:hover]:text-foreground [&_.code-block-copy_svg]:h-4 [&_.code-block-copy_svg]:w-4 [&_.code-block-copy_svg]:fill-none [&_.code-block-copy_svg]:stroke-current [&_.code-block-copy_svg]:stroke-2 [&_.code-block-copy_svg]:[stroke-linecap:round] [&_.code-block-copy_svg]:[stroke-linejoin:round] [&_.katex-display]:my-6 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.markdown-inline-image]:mx-auto [&_.markdown-inline-image]:my-5 [&_.markdown-inline-image]:max-w-full [&_.mermaid-block]:my-6 [&_.mermaid-block]:overflow-hidden [&_.mermaid-block]:rounded-lg [&_.mermaid-block]:border [&_.mermaid-block]:border-border [&_.mermaid-block]:bg-surface/50 [&_.mermaid-error]:p-4 [&_.mermaid-error]:text-danger [&_.mermaid-preview]:flex [&_.mermaid-preview]:justify-center [&_.mermaid-preview]:overflow-auto [&_.mermaid-preview]:p-5 [&_.mermaid-preview_svg]:h-auto [&_.mermaid-preview_svg]:max-w-full [&_.mermaid-source]:border-t [&_.mermaid-source]:border-border [&_.mermaid-toggle]:rounded [&_.mermaid-toggle]:px-2 [&_.mermaid-toggle]:text-muted [&_.mermaid-toggle:hover]:bg-surface-raised [&_.code-block-header]:flex [&_.code-block-header]:items-center [&_.code-block-header]:justify-between [&_.code-block-header]:border-b [&_.code-block-header]:border-border [&_.code-block-header]:px-3 [&_.code-block-header]:py-1.5 [&_.code-block-lang]:font-mono [&_.code-block-lang]:text-xs [&_.code-block-lang]:text-muted [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-secondary [&_code]:rounded [&_code]:bg-surface-raised [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.9em] [&_del]:text-muted [&_details]:my-4 [&_h1]:mb-4 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2 [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:mb-3 [&_h2]:mt-8 [&_h2]:border-b [&_h2]:border-border [&_h2]:pb-2 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-6 [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:mb-2 [&_h4]:mt-5 [&_h4]:text-lg [&_h4]:font-semibold [&_hr]:my-7 [&_hr]:border-border [&_li]:my-1 [&_li]:ml-6 [&_ol]:my-4 [&_ol]:list-decimal [&_p]:my-4 [&_pre]:m-0 [&_pre]:overflow-auto [&_pre]:bg-surface-raised [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_table]:my-5 [&_table]:w-full [&_table]:border-collapse [&_tbody_tr:nth-child(even)]:bg-surface/60 [&_td]:border [&_td]:border-border [&_td]:p-2.5 [&_th]:border [&_th]:border-border [&_th]:bg-surface-raised [&_th]:p-2.5 [&_th]:font-semibold [&_ul]:my-4 [&_ul]:list-disc"
+            className="file-preview-markdown mx-auto w-full text-foreground"
             style={{ maxWidth: MARKDOWN_CONTENT_MAX_WIDTH }}
             onClick={handleMarkdownClick}
             dangerouslySetInnerHTML={{ __html: markdownHtml }}

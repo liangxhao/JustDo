@@ -23,17 +23,38 @@ export interface ContentTimelineItem {
   item: ContentItem;
 }
 
+export interface LiveProcessTimelineItem {
+  kind: 'live-process';
+  key: string;
+  item: ThinkingItem | ToolItem;
+}
+
 export interface TerminalTimelineItem {
   kind: 'terminal';
   key: string;
   item: TerminalItem;
 }
 
+export interface WaitingTimelineItem {
+  kind: 'waiting';
+  key: string;
+}
+
 export type ActiveTurnTimelineItem =
-  ProcessSummaryTimelineItem | ContentTimelineItem | TerminalTimelineItem;
+  | ProcessSummaryTimelineItem
+  | LiveProcessTimelineItem
+  | ContentTimelineItem
+  | TerminalTimelineItem
+  | WaitingTimelineItem;
 
 export function projectTurnItems(turn: AssistantTurn | null): ActiveTurnTimelineItem[] {
   if (!turn) return [];
+  if (turn.status === 'running' && turn.items.length === 0) {
+    return [{ kind: 'waiting', key: `waiting:${turn.runId}` }];
+  }
+  const hasFailedTool = turn.items.some(
+    item => item.type === 'tool' && item.status === 'failed',
+  );
   const projected: ActiveTurnTimelineItem[] = [];
   let archived: Array<ThinkingItem | ToolItem> = [];
   let summarySegment = 0;
@@ -59,7 +80,13 @@ export function projectTurnItems(turn: AssistantTurn | null): ActiveTurnTimeline
 
   for (const item of turn.items) {
     if (item.type === 'thinking' || item.type === 'tool') {
-      archived.push(item);
+      if (item.status === 'running') {
+        flushSummary();
+        projected.push({ kind: 'live-process', key: item.id, item });
+        summarySegment += 1;
+      } else {
+        archived.push(item);
+      }
       continue;
     }
 
@@ -68,6 +95,10 @@ export function projectTurnItems(turn: AssistantTurn | null): ActiveTurnTimeline
       projected.push({ kind: 'content', key: item.id, item });
       summarySegment += 1;
     } else {
+      // A failed Tool already has a red status indicator and expandable error
+      // details. Do not repeat the same failure as a terminal banner after the
+      // assistant message.
+      if (item.status === 'error' && hasFailedTool) continue;
       projected.push({ kind: 'terminal', key: item.id, item });
       summarySegment += 1;
     }

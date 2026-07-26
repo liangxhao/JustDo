@@ -9,7 +9,11 @@ import type {
   ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
 import { renderChatAvatar } from './chat-avatar';
-import { renderAssistantTimelineContent } from './message-render';
+import {
+  renderAssistantTimelineContent,
+  renderReadingIndicatorGroup,
+  renderStreamingThinkingGroup,
+} from './message-render';
 import { resolveToolDisplay } from './tool-display';
 
 function summaryLabel(item: ProcessSummaryTimelineItem): string {
@@ -39,7 +43,11 @@ function boundedDetail(value: unknown): string {
 function toolResult(tool: ToolItem): string {
   if (tool.output !== undefined) return boundedDetail(tool.output);
   if (tool.error !== undefined) return boundedDetail(tool.error);
-  return i18nService.t(tool.status === 'running' ? 'coworkToolRunning' : 'coworkToolNoOutput');
+  return i18nService.t('coworkToolNoOutput');
+}
+
+function hasToolResult(tool: ToolItem): boolean {
+  return tool.status !== 'running' || tool.output !== undefined || tool.error !== undefined;
 }
 
 function toolSummaryInput(value: unknown): string {
@@ -79,6 +87,47 @@ export function renderTimelineItem(
   expanded = false,
   showAvatar = true,
 ): TemplateResult {
+  if (item.kind === 'waiting') {
+    return renderReadingIndicatorGroup({ showAvatar });
+  }
+  if (item.kind === 'live-process') {
+    if (item.item.type === 'thinking') {
+      return renderStreamingThinkingGroup(item.item.text, { showAvatar });
+    }
+    const tool = item.item;
+    return renderAssistantTimelineRow(
+      html`
+        <section class="process-live process-live--tool" data-live-process-id=${tool.id}>
+          <details class="process-summary__tool process-live__tool">
+            <summary class="process-summary__tool-title">
+              <span
+                class="process-summary__tool-status process-summary__tool-status--${tool.status}"
+                role="img"
+                aria-label=${toolStateLabel(tool)}
+              ></span>
+              <strong>${resolveToolDisplay(tool.name).title}</strong>
+              <span class="process-summary__tool-input">${toolSummaryInput(tool.input)}</span>
+            </summary>
+            <div class="process-summary__tool-detail">
+              <div class="process-summary__detail-label">${i18nService.t('coworkToolInput')}</div>
+              <pre>${boundedDetail(tool.input) || i18nService.t('coworkToolNoOutput')}</pre>
+              ${
+                hasToolResult(tool)
+                  ? html`
+                      <div class="process-summary__detail-label">
+                        ${i18nService.t('coworkToolResult')}
+                      </div>
+                      <pre>${toolResult(tool)}</pre>
+                    `
+                  : nothing
+              }
+            </div>
+          </details>
+        </section>
+      `,
+      showAvatar,
+    );
+  }
   if (item.kind === 'process-summary') {
     return renderAssistantTimelineRow(
       html`
@@ -109,6 +158,10 @@ export function renderTimelineItem(
                             process.type === 'thinking'
                               ? html`
                                   <div class="process-summary__item-heading">
+                                    <span
+                                      class="process-summary__thinking-marker process-summary__thinking-marker--${process.status}"
+                                      aria-hidden="true"
+                                    ></span>
                                     <strong>${i18nService.t('coworkThinkingLabel')}</strong>
                                   </div>
                                 `
@@ -124,7 +177,6 @@ export function renderTimelineItem(
                                         class="process-summary__tool-status process-summary__tool-status--${process.status}"
                                         role="img"
                                         aria-label=${toolStateLabel(process)}
-                                        title=${toolStateLabel(process)}
                                       ></span>
                                       <strong>${resolveToolDisplay(process.name).title}</strong>
                                       <span class="process-summary__tool-input"
@@ -137,17 +189,23 @@ export function renderTimelineItem(
                                       </div>
                                       <pre>
 ${boundedDetail(process.input) || i18nService.t('coworkToolNoOutput')}</pre>
-                                      <div class="process-summary__detail-label">
-                                        ${i18nService.t('coworkToolResult')}
-                                      </div>
-                                      <pre
-                                        class=${
-                                          process.status === 'failed'
-                                            ? 'process-summary__error'
-                                            : ''
-                                        }
-                                      >
+                                      ${
+                                        hasToolResult(process)
+                                          ? html`
+                                              <div class="process-summary__detail-label">
+                                                ${i18nService.t('coworkToolResult')}
+                                              </div>
+                                              <pre
+                                                class=${
+                                                  process.status === 'failed'
+                                                    ? 'process-summary__error'
+                                                    : ''
+                                                }
+                                              >
 ${toolResult(process)}</pre>
+                                            `
+                                          : nothing
+                                      }
                                     </div>
                                   </details>
                                 `

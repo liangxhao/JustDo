@@ -42,16 +42,16 @@ const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v5';
+const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v6';
 const INLINE_DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CONTAINER_PREFIX_RE = /^[ \t]{0,3}(?:(?:>\s?)|(?:(?:[-+*]|\d{1,9}[.)])[ \t]+))/;
 
 const allowedTags = [
   'a', 'b', 'blockquote', 'br', 'button', 'code', 'del', 'details', 'div',
-  'em', 'h1', 'h2', 'h3', 'h4', 'hr', 'i', 'input', 'li', 'ol', 'p', 'pre',
-  's', 'span', 'strong', 'summary', 'table', 'tbody', 'td', 'th', 'thead',
-  'tr', 'ul', 'img',
+  'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'input', 'li', 'ol',
+  'p', 'pre', 's', 'span', 'strong', 'summary', 'table', 'tbody', 'td', 'th',
+  'thead', 'tr', 'ul', 'img',
 ];
 
 const allowedAttrs = [
@@ -415,14 +415,22 @@ function toEscapedPlainTextHtml(value: string): string {
   return `<div class="markdown-plain-text-fallback">${escapeHtml(value.replace(/\r\n?/g, '\n'))}</div>`;
 }
 
-export function toSanitizedMarkdownHtml(text: string): string {
+export interface MarkdownRenderOptions {
+  parseLimit?: number;
+}
+
+export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOptions = {}): string {
   if (!text) return '';
   installHooks();
 
   const input = text.trim().replace(/\r\n?/g, '\n');
   if (!input) return '';
+  const parseLimit = Math.min(
+    Math.max(options.parseLimit ?? MARKDOWN_PARSE_LIMIT, 1),
+    MARKDOWN_CHAR_LIMIT,
+  );
 
-  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${i18nService.getLanguage()}:${input}`;
+  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${parseLimit}:${i18nService.getLanguage()}:${input}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;
@@ -433,7 +441,7 @@ export function toSanitizedMarkdownHtml(text: string): string {
     ? `\n\n… truncated (${truncated.total} chars, showing first ${truncated.text.length}).`
     : '';
 
-  if (truncated.text.length > MARKDOWN_PARSE_LIMIT) {
+  if (truncated.text.length > parseLimit) {
     const html = toEscapedPlainTextHtml(`${truncated.text}${suffix}`);
     const sanitized = DOMPurify.sanitize(html, sanitizeOptions) as unknown as string;
     if (input.length <= MARKDOWN_CACHE_MAX_CHARS) setCachedMarkdown(cacheKey, sanitized);

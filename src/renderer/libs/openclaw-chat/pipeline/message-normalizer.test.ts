@@ -100,7 +100,7 @@ describe('normalizeMessage assistant media', () => {
     ]);
   });
 
-  test('labels an HTTPS MEDIA URL with its protocol', () => {
+  test('labels an HTTPS MEDIA URL with its file name', () => {
     const message = normalizeMessage({
       role: 'assistant',
       content: '文件已生成：\nMEDIA:https://container/report.pdf',
@@ -113,14 +113,14 @@ describe('normalizeMessage assistant media', () => {
         attachment: {
           url: 'https://container/report.pdf',
           kind: 'document',
-          label: 'https',
+          label: 'report.pdf',
           mimeType: 'application/pdf',
         },
       },
     ]);
   });
 
-  test('labels an HTTP MEDIA URL with its protocol', () => {
+  test('labels an HTTP MEDIA URL with its host name', () => {
     const message = normalizeMessage({
       role: 'assistant',
       content: 'MEDIA:http://container',
@@ -132,7 +132,7 @@ describe('normalizeMessage assistant media', () => {
         attachment: {
           url: 'http://container',
           kind: 'document',
-          label: 'http',
+          label: 'container',
           mimeType: undefined,
         },
       },

@@ -44,6 +44,11 @@ import {
   type TranscriptReducerDependencies,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { reconcileHistory } from '@/libs/openclaw-chat/model/history-reconciler';
+import {
+  isLocallyOptimisticHistoryTail,
+  markOptimisticHistoryTail,
+  retireSettledActiveTurn,
+} from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { i18nService } from '@/services/i18n';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -155,7 +160,6 @@ const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
 const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
 const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-const LOCAL_OPTIMISTIC_MESSAGE_FLAG = '__justdoOptimisticHistoryTail';
 const POST_FINAL_HISTORY_RELOAD_DELAY_MS = 1500;
 const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
 const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
@@ -1732,6 +1736,7 @@ export class ChatController {
         });
         return false;
       }
+      retireSettledActiveTurn(this.state.transcript, messages);
       this.setCurrentSessionMessages(reconciliation.messages);
       void this.resolveManagedHistoryImages(messages).then(resolvedMessages => {
         if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
@@ -1923,7 +1928,10 @@ export class ChatController {
     const message = payload.message;
     debugLog('[ChatCtrl] ▶ chat.aborted', { hasMessage: !!message, ...this._snap() });
     if (message && !shouldHideMessage(message)) {
-      this.setCurrentSessionMessages([...this.state.chatMessages, message]);
+      this.setCurrentSessionMessages([
+        ...this.state.chatMessages,
+        markOptimisticHistoryTail(message),
+      ]);
     }
     this.state.chatStream = null;
     this.state.chatStreamStartedAt = null;
@@ -3062,25 +3070,6 @@ function appendTerminalMessage(messages: unknown[], terminal: unknown): unknown[
 
   result.push(terminal);
   return result;
-}
-
-function markOptimisticHistoryTail(message: unknown): unknown {
-  if (!message || typeof message !== 'object' || Array.isArray(message)) {
-    return message;
-  }
-  return {
-    ...(message as Record<string, unknown>),
-    [LOCAL_OPTIMISTIC_MESSAGE_FLAG]: true,
-  };
-}
-
-function isLocallyOptimisticHistoryTail(message: unknown): boolean {
-  return Boolean(
-    message &&
-    typeof message === 'object' &&
-    !Array.isArray(message) &&
-    (message as Record<string, unknown>)[LOCAL_OPTIMISTIC_MESSAGE_FLAG] === true,
-  );
 }
 
 function messageTimestampMs(message: unknown): number | null {

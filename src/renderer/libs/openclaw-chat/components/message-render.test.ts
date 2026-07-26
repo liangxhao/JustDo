@@ -317,6 +317,68 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('MEDIA:');
   });
 
+  test('renders assistant MEDIA content at its original position inside the bubble', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        kind: 'group',
+        key: 'assistant-inline-media-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-inline-media-msg',
+            message: {
+              role: 'assistant',
+              content:
+                '图片之前\nMEDIA:https://container/generated/image.png\n图片之后\nMEDIA:https://example.com/report.pdf\n文件之后',
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    const beforeImage = rendered.indexOf('图片之前');
+    const image = rendered.indexOf('https://container/generated/image.png');
+    const afterImage = rendered.indexOf('图片之后');
+    const file = rendered.indexOf('https://example.com/report.pdf');
+    const afterFile = rendered.indexOf('文件之后');
+
+    expect(rendered.match(/chat-bubble--assistant/g)).toHaveLength(1);
+    expect(beforeImage).toBeLessThan(image);
+    expect(image).toBeLessThan(afterImage);
+    expect(afterImage).toBeLessThan(file);
+    expect(file).toBeLessThan(afterFile);
+    expect(rendered).not.toContain('message-attachment__detail');
+  });
+
+  test('renders user MEDIA content in text order inside the user bubble', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        kind: 'group',
+        key: 'user-inline-media-group',
+        role: 'user',
+        messages: [
+          {
+            key: 'user-inline-media-msg',
+            message: {
+              role: 'user',
+              content: '文件之前\nMEDIA:C:\\openclaw\\media\\brief.pdf\n文件之后',
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered.match(/chat-bubble--user/g)).toHaveLength(1);
+    expect(rendered.indexOf('文件之前')).toBeLessThan(rendered.indexOf('brief.pdf'));
+    expect(rendered.indexOf('brief.pdf')).toBeLessThan(rendered.indexOf('文件之后'));
+  });
+
   test('resolves a relative assistant MEDIA image against the working directory', () => {
     const rendered = stringifyTemplate(
       renderMessageBlock(

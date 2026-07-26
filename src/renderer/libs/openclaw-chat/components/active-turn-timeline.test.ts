@@ -68,6 +68,72 @@ function summary(): ProcessSummaryTimelineItem {
 }
 
 describe('active turn timeline', () => {
+  test('renders the assistant avatar and animated indicator while waiting for the first event', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'waiting',
+        key: 'waiting:run-1',
+      }),
+    );
+
+    expect(rendered).toContain('chat-avatar assistant');
+    expect(rendered).toContain('chat-reading-indicator');
+    expect(rendered).not.toContain('active-turn__footer');
+  });
+
+  test('renders running Thinking as an independently streaming block', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'live-process',
+        key: 'thinking-live',
+        item: {
+          id: 'thinking-live',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 2,
+          startedAt: 1,
+          updatedAt: 2,
+          type: 'thinking',
+          status: 'running',
+          text: 'streamed reasoning',
+        },
+      }),
+    );
+
+    expect(rendered).toContain('chat-group--streaming-thinking');
+    expect(rendered).toContain('streamed reasoning');
+    expect(rendered).not.toContain('data-process-summary-key');
+  });
+
+  test('renders a running Tool independently from the archived summary', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'live-process',
+        key: 'tool-live',
+        item: {
+          id: 'tool-live',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+          type: 'tool',
+          status: 'running',
+          toolCallId: 'call-live',
+          name: 'exec',
+          input: { command: 'npm test' },
+        },
+      }),
+    );
+
+    expect(rendered).toContain('data-live-process-id');
+    expect(rendered).toContain('process-summary__tool-status--running');
+    expect(rendered).toContain('npm test');
+    expect(rendered).not.toContain('process-live__status');
+    expect(rendered).not.toContain('<div class="process-summary__detail-label">Result</div>');
+    expect(rendered).not.toContain('data-process-summary-key');
+  });
+
   test('does not put archived details or Tool input into the main timeline DOM', () => {
     const rendered = flatten(renderTimelineItem(summary()));
 
@@ -80,6 +146,12 @@ describe('active turn timeline', () => {
     const rendered = flatten(renderTimelineItem(summary(), 100, true));
 
     expect(rendered.indexOf('private reasoning')).toBeLessThan(rendered.indexOf('Request'));
+    expect(rendered).toContain(
+      'process-summary__thinking-marker process-summary__thinking-marker--completed',
+    );
+    expect(rendered.indexOf('process-summary__thinking-marker')).toBeLessThan(
+      rendered.indexOf('<strong>Thinking</strong>'),
+    );
     expect(rendered).toContain('secret-value');
     expect(rendered).toContain('result');
     expect(rendered).not.toContain('process-summary__item-index');

@@ -13,18 +13,9 @@ import {
   toSanitizedMarkdownHtml,
   toStreamingMarkdownHtml,
 } from '@/libs/openclaw-chat/components/markdown';
-import {
-  normalizeMessage,
-  stripMessageDisplayMetadataText,
-  stripUnreliableGoalZeroUsageText,
-} from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
-import {
-  extractCanvasShortcodes,
-  parseInlineDirectives,
-  splitMediaFromOutput,
-} from '@/libs/openclaw-chat/shims/backend-helpers';
 import type {
   ChatItem,
   MessageContentItem,
@@ -100,30 +91,6 @@ function renderCopyButton(text: string): TemplateResult {
   `;
 }
 
-function contentBlockType(value: unknown): string {
-  const block = asRecord(value);
-  return typeof block?.type === 'string' ? block.type.toLowerCase() : '';
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function renderAssistantTextBlock(text: string): TemplateResult | typeof nothing {
-  if (!text) return nothing;
-  const dir = detectTextDirection(text);
-  return html`
-    <div class="chat-bubble chat-bubble--assistant">
-      ${renderCopyButton(text)}
-      <div class="chat-bubble__text markdown-content" dir=${dir}>
-        ${unsafeHTML(toSanitizedMarkdownHtml(text))}
-      </div>
-    </div>
-  `;
-}
-
 function safeCanvasUrl(value: string | undefined): string | null {
   const url = value?.trim();
   return url && /^https?:\/\//i.test(url) ? url : null;
@@ -158,45 +125,6 @@ function renderAssistantCanvas(item: AssistantCanvasItem): TemplateResult {
       }
     </section>
   `;
-}
-
-function extractCanvasItem(block: Record<string, unknown>): AssistantCanvasItem | null {
-  if (contentBlockType(block) !== 'canvas') return null;
-  const normalized = normalizeMessage({ role: 'assistant', content: [block], timestamp: 0 });
-  return (
-    normalized.content.find((item): item is AssistantCanvasItem => item.type === 'canvas') ?? null
-  );
-}
-
-function cleanOrderedAssistantText(
-  text: string,
-  goalReplyContext: string,
-): {
-  text: string;
-  canvases: AssistantCanvasItem[];
-} {
-  const extracted = extractCanvasShortcodes(text);
-  const directives = parseInlineDirectives(stripDeliveredAttachmentLines(extracted.text), {
-    stripAudioTag: true,
-    stripReplyTags: true,
-  });
-  const visibleText = stripUnreliableGoalZeroUsageText(
-    stripMessageDisplayMetadataText(directives.text),
-    goalReplyContext,
-  );
-  return {
-    text: visibleText,
-    canvases: extracted.previews.map(preview => ({ type: 'canvas', preview, rawText: null })),
-  };
-}
-
-function stripDeliveredAttachmentLines(text: string): string {
-  const parsed = splitMediaFromOutput(text);
-  return (parsed.segments ?? [])
-    .filter((segment): segment is { type: 'text'; text: string } => segment.type === 'text')
-    .map(segment => segment.text)
-    .join('\n')
-    .trim();
 }
 
 const ATTACHMENT_ICON = html`
@@ -335,7 +263,9 @@ function renderAssistantAttachments(
               void showAttachmentContextMenu(event, attachment.url, workingDirectory)}
           >
             <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
-            <span class="message-attachment__name">${attachment.label}</span>
+            <span class="message-attachment__content">
+              <span class="message-attachment__name">${attachment.label}</span>
+            </span>
             <span class="message-attachment__open" aria-hidden="true">↗</span>
           </button>
         `,
@@ -390,55 +320,48 @@ function resolveImageSourceUrl(url: string, workingDirectory?: string): string {
   return `localfile:///${encodedPath.replace(/^\/+/, '')}`;
 }
 
-function renderAssistantMessageInContentOrder(
-  rawMessage: unknown,
-): Array<TemplateResult | typeof nothing> | null {
-  const raw = asRecord(rawMessage);
-  const content = Array.isArray(raw?.content) ? raw.content : null;
-  if (!content) return null;
-  const goalReplyContext = content
-    .map(block => {
-      const record = asRecord(block);
-      return record?.type === 'text' && typeof record.text === 'string' ? record.text : '';
-    })
+type BubbleContentItem =
+  | { type: 'text'; text?: string; name?: string; args?: unknown }
+  | Extract<MessageContentItem, { type: 'attachment' }>;
+
+function renderOrderedBubble(
+  items: BubbleContentItem[],
+  role: 'user' | 'assistant',
+  workingDirectory?: string,
+): TemplateResult | typeof nothing {
+  if (items.length === 0) return nothing;
+  const text = items
+    .filter((item): item is Extract<BubbleContentItem, { type: 'text' }> => item.type === 'text')
+    .map(item => item.text ?? '')
+    .filter(Boolean)
     .join('\n');
+  const dir = detectTextDirection(text);
 
-  const ordered: Array<TemplateResult | typeof nothing> = [];
-
-  for (let index = 0; index < content.length; index += 1) {
-    const block = asRecord(content[index]);
-    if (!block) continue;
-    const type = typeof block.type === 'string' ? block.type.toLowerCase() : '';
-
-    if (type === 'thinking' || type === 'reasoning') {
-      // The canonical timeline exclusively owns Thinking presentation.
-      continue;
-    }
-
-    if (type === 'text') {
-      const cleaned = cleanOrderedAssistantText(
-        typeof block.text === 'string' ? block.text : '',
-        goalReplyContext,
-      );
-      ordered.push(renderAssistantTextBlock(cleaned.text));
-      ordered.push(...cleaned.canvases.map(renderAssistantCanvas));
-      continue;
-    }
-
-    if (type === 'canvas') {
-      const canvas = extractCanvasItem(block);
-      if (canvas) ordered.push(renderAssistantCanvas(canvas));
-      continue;
-    }
-
-    if (
-      ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(type)
-    ) {
-      continue;
-    }
-  }
-
-  return ordered.length > 0 ? ordered : null;
+  return html`
+    <div class=${`chat-bubble chat-bubble--${role}`} dir=${dir}>
+      ${text ? renderCopyButton(text) : nothing}
+      <div class="chat-bubble__content">
+        ${items.map(item => {
+          if (item.type === 'text') {
+            if (!item.text) return nothing;
+            return html`
+              <div class="chat-bubble__text markdown-content" dir=${detectTextDirection(item.text)}>
+                ${unsafeHTML(toSanitizedMarkdownHtml(item.text))}
+              </div>
+            `;
+          }
+          if (item.attachment.kind === 'image') {
+            return renderMessageImages(
+              [item.attachment],
+              role === 'assistant',
+              workingDirectory,
+            );
+          }
+          return renderAssistantAttachments([item.attachment], workingDirectory);
+        })}
+      </div>
+    </div>
+  `;
 }
 
 // ─── Message Group Rendering ────────────────────────────────────────────────
@@ -538,85 +461,59 @@ function renderUserMessage(
   rawMessage: unknown,
   workingDirectory?: string,
 ): TemplateResult {
-  const textContent = msg.content.filter(
-    (c): c is { type: 'text'; text?: string } => c.type === 'text',
+  const hasImage = msg.content.some(
+    item => item.type === 'attachment' && item.attachment.kind === 'image',
   );
-  const rawText = textContent.map(c => c.text ?? '').join('\n');
-  const text =
-    rawText.trim() === '[User sent media without caption]' &&
-    msg.content.some(item => item.type === 'attachment' && item.attachment.kind === 'image')
-      ? ''
-      : rawText;
-  const dir = detectTextDirection(text);
-  const htmlContent = toSanitizedMarkdownHtml(text);
-  const images = msg.content
-    .filter(
-      (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
-        item.type === 'attachment' && item.attachment.kind === 'image',
-    )
-    .map(item => item.attachment);
-  const attachments = msg.content
-    .filter(
-      (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
-        item.type === 'attachment' && item.attachment.kind !== 'image',
-    )
-    .map(item => item.attachment);
-  const visibleAttachments = [...attachments, ...extractTranscriptAttachments(rawMessage)];
+  const content = msg.content.flatMap<BubbleContentItem>(item => {
+    if (item.type === 'attachment') return [item];
+    if (item.type !== 'text') return [];
+    if (hasImage && item.text?.trim() === '[User sent media without caption]') return [];
+    return [{ type: 'text', text: item.text }];
+  });
+  const transcriptAttachments = extractTranscriptAttachments(rawMessage).map(attachment => ({
+    type: 'attachment' as const,
+    attachment,
+  }));
 
-  return html`
-    <div class="chat-bubble chat-bubble--user" dir=${dir}>
-      ${renderCopyButton(text)} ${renderMessageImages(images, false, workingDirectory)}
-      ${renderAssistantAttachments(visibleAttachments, workingDirectory)}
-      ${
-        text
-          ? html`<div class="chat-bubble__text markdown-content">${unsafeHTML(htmlContent)}</div>`
-          : nothing
-      }
-    </div>
-  `;
+  return renderOrderedBubble(
+    [...content, ...transcriptAttachments],
+    'user',
+    workingDirectory,
+  ) as TemplateResult;
 }
 
 // ─── Assistant Message ──────────────────────────────────────────────────────
 
 function renderAssistantMessage(
   msg: NormalizedMessage,
-  rawMessage: unknown,
+  _rawMessage: unknown,
   workingDirectory?: string,
 ): TemplateResult {
-  const orderedBlocks = renderAssistantMessageInContentOrder(rawMessage);
-  const images = msg.content
-    .filter(
-      (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
-        item.type === 'attachment' && item.attachment.kind === 'image',
-    )
-    .map(item => item.attachment);
-  const attachments = msg.content
-    .filter(
-      (item): item is Extract<MessageContentItem, { type: 'attachment' }> =>
-        item.type === 'attachment' && item.attachment.kind !== 'image',
-    )
-    .map(item => item.attachment);
-  const canvases = msg.content.filter(
-    (item): item is AssistantCanvasItem => item.type === 'canvas',
-  );
-  if (orderedBlocks) {
-    return html`${orderedBlocks}${renderMessageImages(
-      images,
-      true,
-      workingDirectory,
-    )}${renderAssistantAttachments(attachments, workingDirectory)}`;
+  const sections: Array<TemplateResult | typeof nothing> = [];
+  let bubbleItems: BubbleContentItem[] = [];
+  const flushBubble = () => {
+    if (bubbleItems.length === 0) return;
+    sections.push(renderOrderedBubble(bubbleItems, 'assistant', workingDirectory));
+    bubbleItems = [];
+  };
+
+  for (const item of msg.content) {
+    if (item.type === 'attachment') {
+      bubbleItems.push(item);
+      continue;
+    }
+    if (item.type === 'text') {
+      bubbleItems.push({ type: 'text', text: item.text });
+      continue;
+    }
+    if (item.type === 'canvas') {
+      flushBubble();
+      sections.push(renderAssistantCanvas(item));
+    }
   }
+  flushBubble();
 
-  const textContent = msg.content.filter(
-    (c): c is { type: 'text'; text?: string } => c.type === 'text',
-  );
-  const text = textContent.map(c => c.text ?? '').join('\n');
-
-  return html`
-    ${renderAssistantTextBlock(text)} ${canvases.map(renderAssistantCanvas)}
-    ${renderMessageImages(images, true, workingDirectory)}
-    ${renderAssistantAttachments(attachments, workingDirectory)}
-  `;
+  return html`${sections}`;
 }
 
 /**

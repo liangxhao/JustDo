@@ -35,6 +35,7 @@ describe('timeline avatar state', () => {
     ]);
 
     expect(rows.map(row => row.showAvatar)).toEqual([true, true, false, false, false]);
+    expect(rows.map(row => row.showFooter)).toEqual([true, false, false, false, true]);
   });
 
   test('starts a new assistant avatar after the next user message', () => {
@@ -47,5 +48,33 @@ describe('timeline avatar state', () => {
     ]);
 
     expect(rows.map(row => row.showAvatar)).toEqual([true, false, true, true, false]);
+    expect(rows.map(row => row.showFooter)).toEqual([false, true, true, false, true]);
+  });
+
+  test('shows the assistant footer only on the last persisted message in a turn', () => {
+    const rows = prepareVisibleTimelineRows([
+      history('user-1', 'user'),
+      history('content-1', 'assistant'),
+      summary('summary-1'),
+      history('content-2', 'assistant'),
+      history('content-3', 'assistant'),
+    ]);
+
+    expect(rows.map(row => row.showFooter)).toEqual([true, false, false, false, true]);
+  });
+
+  test('hides the trailing persisted footer while an active turn is still updating', () => {
+    const rows = prepareVisibleTimelineRows(
+      [
+        history('user-1', 'user'),
+        history('content-1', 'assistant'),
+        history('user-2', 'user'),
+        history('content-2', 'assistant'),
+        summary('active-summary'),
+      ],
+      { suppressTrailingAssistantFooter: true },
+    );
+
+    expect(rows.map(row => row.showFooter)).toEqual([true, true, true, false, false]);
   });
 });

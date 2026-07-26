@@ -191,6 +191,9 @@ Controller 是 Gateway event 到 Lit state 的协调层。它不应该知道 Rea
 - 切换 session 时先取消上一 session 的 message subscription，再订阅目标 session。
 - optimistic user message、live final 和 history apply 都要同步更新对应 session 的内存缓存。
 - active run 拥有实时展示状态；并发 history 结果不能回退 process item 或可见 Content。
+- 终态 active turn 与其 optimistic history fallback 是同一轮的互斥投影；fallback
+  尚未被持久化覆盖时只显示 active turn，当前 generation 的 Gateway history
+  接管后撤销 active turn，只显示权威历史。
 - `sessionKey`、`sessionId`、Gateway lifecycle generation 与 run tombstone 共同隔离延迟事件。
 - 只有当前 history generation 的成功 Gateway 响应有权证明持久化覆盖；SQLite/optimistic projection 不能清除 live tail。
 - history 的附件合并先于异步图片解析，异步结果只允许提交到发起时的 session 和消息版本。

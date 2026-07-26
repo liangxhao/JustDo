@@ -152,7 +152,8 @@ function inferAttachmentKind(url: string): {
     try {
       if (/^https?:\/\//i.test(url)) {
         const parsed = new URL(url);
-        return parsed.protocol.slice(0, -1).toLowerCase();
+        const pathName = parsed.pathname.split('/').pop()?.trim();
+        return pathName ? decodeURIComponent(pathName) : parsed.hostname;
       }
     } catch {
       const name = url.split(/[\\/]/).pop()?.trim();
