@@ -9,54 +9,32 @@ export interface GoalRunProgress {
   toolName?: string;
 }
 
-type GoalActivityState = Pick<
-  ChatState,
-  | 'chatSending'
-  | 'compactionInFlight'
-  | 'chatStreamStartedAt'
-  | 'chatStream'
-  | 'chatThinkingStream'
-  | 'chatThinkingMessages'
-  | 'chatToolMessages'
->;
-
-const readToolName = (message: unknown): string | undefined => {
-  if (!message || typeof message !== 'object' || Array.isArray(message)) return undefined;
-  const record = message as Record<string, unknown>;
-  for (const candidate of [record.toolName, record.tool_name, record.name]) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
-  }
-  const content = Array.isArray(record.content) ? record.content : [];
-  for (let index = content.length - 1; index >= 0; index -= 1) {
-    const block = content[index];
-    if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
-    const name = (block as Record<string, unknown>).name;
-    if (typeof name === 'string' && name.trim()) return name.trim();
-  }
-  return undefined;
-};
+type GoalActivityState = Pick<ChatState, 'chatSending' | 'compactionInFlight' | 'transcript'>;
 
 export const buildGoalRunProgress = (state: GoalActivityState): GoalRunProgress | null => {
   if (!state.chatSending) return null;
-  const toolCount = state.chatToolMessages.length;
+  const turn = state.transcript.activeTurn;
+  const items = turn?.items ?? [];
+  const tools = items.filter(item => item.type === 'tool');
+  const toolCount = tools.length;
   const base = {
-    startedAt: state.chatStreamStartedAt ?? Date.now(),
+    startedAt: turn?.startedAt ?? Date.now(),
     toolCount,
   };
   if (state.compactionInFlight) {
     return { ...base, phase: 'compacting' };
   }
-  if (state.chatStream) {
+  if (items.some(item => item.type === 'content' && item.text.length > 0)) {
     return { ...base, phase: 'responding' };
   }
   if (toolCount > 0) {
     return {
       ...base,
       phase: 'tool',
-      toolName: readToolName(state.chatToolMessages[toolCount - 1]),
+      toolName: tools[toolCount - 1]?.name,
     };
   }
-  if (state.chatThinkingStream || state.chatThinkingMessages.length > 0) {
+  if (items.some(item => item.type === 'thinking' && item.text.length > 0)) {
     return { ...base, phase: 'thinking' };
   }
   return { ...base, phase: 'starting' };

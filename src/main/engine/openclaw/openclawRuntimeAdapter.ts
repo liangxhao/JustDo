@@ -3,6 +3,17 @@ import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
+import {
+  normalizeAgentEvent,
+  normalizeChatEvent,
+  type NormalizedAgentEvent,
+} from '../../../shared/openclaw/agentEvent';
+import {
+  classifyAgentEvent,
+  classifyChatEvent,
+  normalizeMessageSessionKey,
+  normalizeToolEvent,
+} from '../../../shared/openclaw/messageDomain';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
   hasSlashCommandBeforeSendHook,
@@ -41,8 +52,6 @@ import {
 } from '../gateway/helpers';
 import { SessionRpc } from '../gateway/sessionRpc';
 import type {
-  AgentEventPayload,
-  ChatEventPayload,
   GatewayClientCtor,
   GatewayClientLike,
   GatewayEventFrame,
@@ -195,6 +204,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly pendingSessionModelPatches = new Map<string, PendingSessionModelPatch>();
   private readonly visibleRunStreams = new Map<string, VisibleRunStreamState>();
   private readonly terminalLifecycleSessionIds = new Set<string>();
+  private readonly recentTerminalRunIds = new Map<string, number>();
   private readonly compactionInFlightSessionIds = new Set<string>();
   private readonly lifecycleEndFallbackTimers = new Map<
     string,
@@ -217,6 +227,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // Tick watchdog
   private lastTickTimestamp = 0;
   private lastAgentActivityTimestamp = 0;
+  private legacyAgentSequence = 0;
   private tickWatchdogTimer: ReturnType<typeof setInterval> | null = null;
 
   // MessageUpdate throttle
@@ -558,6 +569,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       sessionId,
       sessionKey,
       runId,
+      gatewaySessionId: null,
+      lifecycleGeneration: null,
+      lastAgentSeq: -1,
+      status: 'running',
       turnToken,
       chatStream: '',
       agentAssistantStreamSeen: false,
@@ -638,13 +653,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (event.event === 'agent') {
       this.lastAgentActivityTimestamp = Date.now();
-      this.handleAgentEvent(event.payload, event.seq);
+      this.handleAgentEvent('agent', event.payload, event.seq);
       return;
     }
 
     if (event.event === 'session.tool') {
       this.lastAgentActivityTimestamp = Date.now();
-      this.handleAgentEvent(event.payload, event.seq);
+      this.handleAgentEvent('session.tool', event.payload, event.seq);
       return;
     }
 
@@ -666,11 +681,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // ─── Chat Event Handling (aligned with webchat) ─────────────────────────
 
-  private handleChatEvent(payload: unknown, _seq?: number): void {
-    if (!isRecord(payload)) return;
-    const p = payload as ChatEventPayload;
-    const sessionKey = typeof p.sessionKey === 'string' ? p.sessionKey.trim() : '';
-    const runId = typeof p.runId === 'string' ? p.runId.trim() : '';
+  private handleChatEvent(payload: unknown, frameSeq?: number): void {
+    const p = normalizeChatEvent({ payload, frameSeq });
+    if (!p) return;
+    const sessionKey = p.sessionKey;
+    const runId = p.runId ?? '';
     const state = p.state;
 
     // Resolve sessionId from runId or sessionKey
@@ -700,7 +715,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const turn = this.activeTurns.get(sessionId);
     if (!turn) {
-      if (state === 'final') {
+      if (state === 'final' && (!runId || !this.isRecentTerminalRun(runId))) {
         this.appendExternalFinalAssistantMessage(
           sessionId,
           this.resolveSessionModelName(sessionId),
@@ -709,6 +724,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       return;
     }
+
+    const admission = classifyChatEvent({
+      selected: { sessionKey: turn.sessionKey, sessionId: turn.gatewaySessionId },
+      activeRun: turn,
+      event: p,
+    });
+    if (admission === 'ignored-session') return;
 
     if (runId && turn.runId !== runId && this.isAnnounceRunId(runId)) {
       // OpenClaw webchat ignores deltas from non-active announce runs and only
@@ -753,11 +775,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
-    if (runId && turn.runId !== runId && !turn.knownRunIds.has(runId)) return;
+    if (admission === 'ignored-run') return;
+    if (admission === 'bind-provisional-run' && runId) {
+      this.sessionIdByRunId.delete(turn.runId);
+      turn.runId = runId;
+      turn.knownRunIds.add(runId);
+      this.sessionIdByRunId.set(runId, sessionId);
+    }
+    if (!turn.gatewaySessionId && p.sessionId) turn.gatewaySessionId = p.sessionId;
+    if (!turn.lifecycleGeneration && p.lifecycleGeneration) {
+      turn.lifecycleGeneration = p.lifecycleGeneration;
+    }
 
     // Terminal event helper (aligned with webchat reconcileTerminalRun)
     const reconcileTerminalRun = (sessionStatus: 'idle' | 'completed' | 'error') => {
       const hadToolStream = turn.toolStreamOrder.length > 0;
+      this.rememberTerminalRun(turn.runId);
       this.cleanupSessionTurn(sessionId!);
       this.store.updateSession(sessionId!, { status: sessionStatus });
       this.terminalLifecycleSessionIds.add(sessionId!);
@@ -903,17 +936,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // ─── Agent Event Handling (tool stream) ─────────────────────────────────
 
-  private handleAgentEvent(payload: unknown, _seq?: number): void {
-    if (!isRecord(payload)) return;
-    const p = payload as AgentEventPayload;
-    const runId = typeof p.runId === 'string' ? p.runId.trim() : '';
-    const sessionKey =
-      typeof p.sessionKey === 'string'
-        ? p.sessionKey.trim()
-        : typeof p.session === 'string'
-          ? p.session.trim()
-          : '';
-    const stream = typeof p.stream === 'string' ? p.stream : '';
+  private handleAgentEvent(
+    deliveryEvent: 'agent' | 'session.tool',
+    payload: unknown,
+    frameSeq?: number,
+  ): void {
+    let normalized = normalizeAgentEvent({ deliveryEvent, payload, frameSeq });
+    if (normalized.reason === 'missing-sequence' && isRecord(payload)) {
+      // Older Gateway builds omitted the inner agent seq. Preserve compatibility
+      // while still routing the event through the canonical normalizer.
+      normalized = normalizeAgentEvent({
+        deliveryEvent,
+        payload: {
+          ...payload,
+          seq: frameSeq ?? ++this.legacyAgentSequence,
+        },
+        frameSeq,
+      });
+    }
+    const p = normalized.event;
+    if (!p) return;
+    const runId = p.runId;
+    const sessionKey = p.sessionKey ?? '';
+    const stream = p.stream;
 
     // Resolve sessionId
     let sessionId = runId ? (this.sessionIdByRunId.get(runId) ?? null) : null;
@@ -932,7 +977,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (runId && turn.runId !== runId && this.isAnnounceRunId(runId)) {
-      const data = isRecord(p.data) ? p.data : {};
+      const data = p.data;
       if (stream === 'thinking') {
         this.handleVisibleRunThinkingSnapshot(sessionId, sessionKey, runId, turn.modelName, data);
       } else if (stream === 'assistant') {
@@ -959,15 +1004,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
-    if (runId && turn.runId !== runId && !turn.knownRunIds.has(runId)) return;
-
-    // Register runId if new
-    if (runId && !turn.knownRunIds.has(runId)) {
-      turn.knownRunIds.add(runId);
-      this.sessionIdByRunId.set(runId, sessionId);
+    const admission = this.classifyMainAgentEvent(turn, p);
+    if (
+      admission === 'ignored-session' ||
+      admission === 'ignored-run' ||
+      admission === 'ignored-sequence' ||
+      admission === 'ignored-terminal'
+    ) {
+      return;
     }
+    if (admission === 'bind-provisional-run') {
+      this.sessionIdByRunId.delete(turn.runId);
+      turn.runId = runId;
+    }
+    if (!turn.gatewaySessionId && p.sessionId) turn.gatewaySessionId = p.sessionId;
+    if (!turn.lifecycleGeneration && p.lifecycleGeneration) {
+      turn.lifecycleGeneration = p.lifecycleGeneration;
+    }
+    turn.lastAgentSeq = p.agentSeq;
+    turn.knownRunIds.add(runId);
+    this.sessionIdByRunId.set(runId, sessionId);
 
-    const data = isRecord(p.data) ? p.data : {};
+    const data = p.data;
 
     // Thinking stream — OpenClaw's `text` is the reliable accumulated snapshot.
     // Its `delta` can be provider-shaped, so compute our own UI delta from the snapshot.
@@ -1621,19 +1679,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     modelName: string,
     data: Record<string, unknown>,
   ): void {
-    const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+    const normalized = normalizeToolEvent(data);
+    const toolCallId = normalized.toolCallId ?? '';
     if (!toolCallId) return;
 
     const stream = this.getVisibleRunStream(sessionId, sessionKey, runId, modelName);
-    const name = typeof data.name === 'string' ? data.name : 'tool';
+    const name = normalized.name;
     const phase = typeof data.phase === 'string' ? data.phase : '';
-    const args = phase === 'start' ? data.args : undefined;
-    const output =
-      phase === 'result'
-        ? this.formatToolOutput(data.result)
-        : phase === 'update'
-          ? this.formatToolOutput(data.partialResult)
-          : undefined;
+    const args = normalized.input;
+    const output = normalized.output ?? undefined;
     const now = Date.now();
     let entry = stream.toolStreamById.get(toolCallId);
 
@@ -1730,18 +1784,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     turn: SessionTurn,
     data: Record<string, unknown>,
   ): void {
-    const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+    const normalized = normalizeToolEvent(data);
+    const toolCallId = normalized.toolCallId ?? '';
     if (!toolCallId) return;
 
-    const name = typeof data.name === 'string' ? data.name : 'tool';
+    const name = normalized.name;
     const phase = typeof data.phase === 'string' ? data.phase : '';
-    const args = phase === 'start' ? data.args : undefined;
-    const output =
-      phase === 'result'
-        ? this.formatToolOutput(data.result)
-        : phase === 'update'
-          ? this.formatToolOutput(data.partialResult)
-          : undefined;
+    const args = normalized.input;
+    const output = normalized.output ?? undefined;
 
     const now = Date.now();
     let entry = turn.toolStreamById.get(toolCallId);
@@ -1814,7 +1864,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     beforeFirstTool: () => void;
   }): void {
     const { sessionId, runId, sessionKey, data, toolStreamById, beforeFirstTool } = options;
-    const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
+    const normalized = normalizeToolEvent(data);
+    const toolCallId = normalized.toolCallId ?? '';
     if (!toolCallId) return;
 
     const kind = typeof data.kind === 'string' ? data.kind : '';
@@ -1824,17 +1875,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const phase = typeof data.phase === 'string' ? data.phase : '';
     const now = Date.now();
     const name =
-      typeof data.name === 'string' && data.name.trim()
-        ? data.name
+      normalized.name !== 'tool'
+        ? normalized.name
         : kind === 'command'
           ? 'exec'
           : kind === 'patch'
             ? 'apply_patch'
             : 'tool';
     const output =
-      this.formatToolOutput(data.output) ??
-      this.formatToolOutput(data.summary) ??
-      this.formatToolOutput(data.error) ??
+      normalized.output ??
+      normalized.error ??
       (phase === 'end' && typeof data.status === 'string' ? data.status : undefined);
     let entry = toolStreamById.get(toolCallId);
 
@@ -1921,33 +1971,42 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  private formatToolOutput(value: unknown): string | null {
-    if (value === null || value === undefined) return null;
-    if (typeof value === 'string') return value;
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    if (isRecord(value)) {
-      if (typeof value.text === 'string') return value.text;
-      if (typeof value.output === 'string') return value.output;
-      if (Array.isArray(value.content)) {
-        const parts = value.content
-          .filter(
-            (b): b is Record<string, unknown> =>
-              isRecord(b) && b.type === 'text' && typeof b.text === 'string',
-          )
-          .map(b => b.text as string);
-        if (parts.length > 0) return parts.join('\n');
-      }
-    }
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return String(value);
-    }
-  }
-
   // ─── Approval ───────────────────────────────────────────────────────────
 
   // ─── Turn Lifecycle Helpers ─────────────────────────────────────────────
+
+  private classifyMainAgentEvent(turn: SessionTurn, event: NormalizedAgentEvent) {
+    return classifyAgentEvent({
+      selected: { sessionKey: turn.sessionKey, sessionId: turn.gatewaySessionId },
+      activeRun: turn,
+      event,
+      terminalRun: this.isRecentTerminalRun(event.runId),
+    });
+  }
+
+  private rememberTerminalRun(runId: string): void {
+    if (!runId) return;
+    const now = Date.now();
+    for (const [knownRunId, expiresAt] of this.recentTerminalRunIds) {
+      if (expiresAt <= now) this.recentTerminalRunIds.delete(knownRunId);
+    }
+    this.recentTerminalRunIds.set(runId, now + 5 * 60 * 1000);
+    while (this.recentTerminalRunIds.size > 24) {
+      const oldest = this.recentTerminalRunIds.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.recentTerminalRunIds.delete(oldest);
+    }
+  }
+
+  private isRecentTerminalRun(runId: string): boolean {
+    const expiresAt = this.recentTerminalRunIds.get(runId);
+    if (!expiresAt) return false;
+    if (expiresAt <= Date.now()) {
+      this.recentTerminalRunIds.delete(runId);
+      return false;
+    }
+    return true;
+  }
 
   private cleanupSessionTurn(sessionId: string): void {
     const lifecycleEndFallbackTimer = this.lifecycleEndFallbackTimers.get(sessionId);
@@ -2040,6 +2099,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       sessionId,
       sessionKey,
       runId: turnRunId,
+      gatewaySessionId: null,
+      lifecycleGeneration: null,
+      lastAgentSeq: -1,
+      status: 'running',
       turnToken,
       chatStream: '',
       agentAssistantStreamSeen: false,
@@ -2120,7 +2183,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private resolveSessionIdBySessionKey(sessionKey: string): string | null {
-    return this.sessionIdBySessionKey.get(sessionKey) ?? null;
+    const exact = this.sessionIdBySessionKey.get(sessionKey);
+    if (exact) return exact;
+    const normalized = normalizeMessageSessionKey(sessionKey);
+    for (const [knownKey, sessionId] of this.sessionIdBySessionKey) {
+      if (normalizeMessageSessionKey(knownKey) === normalized) return sessionId;
+    }
+    return null;
   }
 
   private findSessionKeyBySessionId(sessionId: string): string {

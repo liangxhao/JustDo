@@ -23,16 +23,42 @@ function messageTimestamp(message: GatewayMessage): number | null {
   return null;
 }
 
+function messageText(message: GatewayMessage): string {
+  const record = messageRecord(message);
+  if (typeof record.content === 'string') return record.content.trim();
+  if (typeof record.text === 'string') return record.text.trim();
+  if (!Array.isArray(record.content)) return '';
+  return record.content
+    .map(block => {
+      if (!block || typeof block !== 'object' || Array.isArray(block)) return '';
+      const value = block as Record<string, unknown>;
+      return typeof value.text === 'string' ? value.text : '';
+    })
+    .join('')
+    .trim();
+}
+
+export function isPendingUserMessageMatch(
+  message: GatewayMessage,
+  pending: GatewayMessage,
+): boolean {
+  const pendingText = messageText(pending);
+  const pendingTimestamp = messageTimestamp(pending);
+  if (messageRole(message) !== 'user' || messageText(message) !== pendingText) return false;
+
+  const timestamp = messageTimestamp(message);
+  // The temporary Cowork message, pending Lit projection, and Gateway record
+  // are created independently for the same submission, so their timestamps
+  // are close but not byte-identical.
+  return (
+    timestamp === null ||
+    pendingTimestamp === null ||
+    Math.abs(timestamp - pendingTimestamp) < 60_000
+  );
+}
+
 function hasPendingMessage(messages: GatewayMessage[], pending: GatewayMessage): boolean {
-  const pendingRecord = messageRecord(pending);
-  return messages.some(message => {
-    const record = messageRecord(message);
-    return (
-      messageRole(message) === 'user' &&
-      record.content === pendingRecord.content &&
-      record.timestamp === pendingRecord.timestamp
-    );
-  });
+  return messages.some(message => isPendingUserMessageMatch(message, pending));
 }
 
 /**

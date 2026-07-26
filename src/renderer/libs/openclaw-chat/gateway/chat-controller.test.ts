@@ -8,6 +8,190 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test('renders a SQLite fallback immediately and lets Gateway history replace it', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+
+  expect(
+    controller.admitFallbackHistory(sessionKey, [
+      { id: 'message-1', role: 'user', content: 'cached prompt', timestamp: 1000 },
+      { id: 'message-2', role: 'assistant', content: 'cached answer', timestamp: 2000 },
+    ]),
+  ).toBe(true);
+  expect(controller.state.chatMessages).toHaveLength(2);
+  expect(controller.state.transcript.historySource).toBe('sqlite-fallback');
+
+  const request = vi.fn().mockResolvedValue({
+    messages: [
+      { id: 'message-1', role: 'user', content: 'cached prompt', timestamp: 1000 },
+      { id: 'message-2', role: 'assistant', content: 'authoritative answer', timestamp: 2000 },
+    ],
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ id: 'message-1', content: 'cached prompt' }),
+    expect.objectContaining({ id: 'message-2', content: 'authoritative answer' }),
+  ]);
+  expect(controller.state.transcript.historySource).toBe('gateway');
+  expect(
+    controller.admitFallbackHistory(sessionKey, [
+      { id: 'message-2', role: 'assistant', content: 'late stale cache' },
+    ]),
+  ).toBe(false);
+  expect(controller.state.chatMessages).toHaveLength(2);
+  expect(controller.state.chatMessages[1]).toEqual(
+    expect.objectContaining({ id: 'message-2', content: 'authoritative answer' }),
+  );
+});
+
+test('keeps the SQLite fallback when Gateway history fails', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.admitFallbackHistory(sessionKey, [
+    { id: 'message-1', role: 'assistant', content: 'offline cached answer' },
+  ]);
+  controller.state.client = {
+    request: vi.fn().mockRejectedValue(new Error('gateway unavailable')),
+  } as never;
+  controller.state.connected = true;
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  await expect(controller.loadHistory()).resolves.toBe(false);
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ id: 'message-1', content: 'offline cached answer' }),
+  ]);
+  expect(controller.state.transcript.historySource).toBe('sqlite-fallback');
+  error.mockRestore();
+});
+
+test('does not let a limited RPC snapshot truncate a complete SQLite fallback', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const messages = Array.from({ length: 100_000 }, (_, index) => ({
+    id: `message-${index}`,
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `cached ${index}`,
+  }));
+  const rpcTail = messages.slice(-1000).map(message => ({
+    ...message,
+    content: `${message.content} authoritative`,
+  }));
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: {
+        getPagedHistory: vi.fn().mockResolvedValue({
+          success: false,
+          error: 'temporary IPC failure',
+        }),
+      },
+    },
+  });
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.admitFallbackHistory(sessionKey, messages);
+  controller.state.client = {
+    request: vi.fn().mockResolvedValue({ messages: rpcTail }),
+  } as never;
+  controller.state.connected = true;
+
+  await expect(controller.loadHistory()).resolves.toBe(true);
+
+  expect(controller.getLoadedMessages()).toHaveLength(100_000);
+  expect(controller.getLoadedMessages()[0]).toEqual(
+    expect.objectContaining({ id: 'message-0', content: 'cached 0' }),
+  );
+  expect(controller.getLoadedMessages()[99_999]).toEqual(
+    expect.objectContaining({
+      id: 'message-99999',
+      content: 'cached 99999 authoritative',
+    }),
+  );
+});
+
+test('keeps a complete fallback when a limited RPC snapshot has no safe overlap', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.admitFallbackHistory(sessionKey, [
+    { id: 'cached-1', role: 'user', content: 'cached prompt' },
+    { id: 'cached-2', role: 'assistant', content: 'cached answer' },
+  ]);
+  controller.state.client = {
+    request: vi.fn().mockResolvedValue({
+      messages: [{ id: 'rpc-1', role: 'assistant', content: 'unrelated limited snapshot' }],
+    }),
+  } as never;
+  controller.state.connected = true;
+
+  await expect(controller.loadHistory()).resolves.toBe(false);
+
+  expect(controller.getLoadedMessages()).toEqual([
+    expect.objectContaining({ id: 'cached-1' }),
+    expect.objectContaining({ id: 'cached-2' }),
+  ]);
+  expect(controller.state.transcript.historySource).toBe('sqlite-fallback');
+});
+
+test('never lets a SQLite fallback retire an active live turn', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.admitFallbackHistory(sessionKey, [
+    { id: 'message-1', role: 'user', content: 'cached prompt' },
+  ]);
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 1, createId: prefix => `${prefix}-1` },
+  );
+
+  expect(
+    controller.admitFallbackHistory(sessionKey, [
+      { id: 'message-1', role: 'user', content: 'stale cached prompt' },
+    ]),
+  ).toBe(false);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ content: 'cached prompt' }),
+  ]);
+  expect(controller.state.transcript.activeTurn).toBe(turn);
+  expect(controller.state.transcript.activeTurn?.status).toBe('running');
+});
+
+test('keeps fallback snapshots isolated by session and does not truncate 100,000 messages', async () => {
+  const firstSessionKey = 'agent:main:justdo:session-1';
+  const secondSessionKey = 'agent:main:justdo:session-2';
+  const controller = new ChatController();
+  controller.state.sessionKey = firstSessionKey;
+  const messages = Array.from({ length: 100_000 }, (_, index) => ({
+    id: `message-${index}`,
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `message ${index}`,
+  }));
+
+  controller.admitFallbackHistory(firstSessionKey, messages);
+  controller.admitFallbackHistory(secondSessionKey, [
+    { id: 'other-message', role: 'assistant', content: 'other session' },
+  ]);
+
+  expect(controller.getLoadedMessages()).toHaveLength(100_000);
+  expect(controller.state.visibleChatMessages).toHaveLength(750);
+  await controller.switchSession(secondSessionKey);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ id: 'other-message', content: 'other session' }),
+  ]);
+  await controller.switchSession(firstSessionKey);
+  expect(controller.getLoadedMessages()).toHaveLength(100_000);
+  expect(controller.getLoadedMessages()[0]).toEqual(
+    expect.objectContaining({ id: 'message-0' }),
+  );
+});
+
 test('clears active sending state when switching between existing sessions', async () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:running-session';
@@ -150,6 +334,40 @@ test('moves the message subscription when switching connected sessions', async (
   });
 });
 
+test('cleans up a stale subscription that resolves after a newer session subscribe', async () => {
+  let resolveFirstSubscribe: (() => void) | undefined;
+  const request = vi.fn().mockImplementation((method: string, params: { key?: string }) => {
+    if (method === 'sessions.messages.subscribe' && params.key?.endsWith('session-1')) {
+      return new Promise<void>(resolve => {
+        resolveFirstSubscribe = resolve;
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  const sync = (
+    controller as unknown as {
+      syncMessageSessionSubscription(sessionKey: string): Promise<void>;
+    }
+  ).syncMessageSessionSubscription.bind(controller);
+
+  const first = sync('agent:main:justdo:session-1');
+  await Promise.resolve();
+  await sync('agent:main:justdo:session-2');
+  resolveFirstSubscribe?.();
+  await first;
+
+  expect(request).toHaveBeenCalledWith('sessions.messages.unsubscribe', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(
+    (controller as unknown as { subscribedMessageSessionKey: string | null })
+      .subscribedMessageSessionKey,
+  ).toBe('agent:main:justdo:session-2');
+});
+
 test('binds the real run id when an agent event arrives before chat.send acknowledges', async () => {
   let resolveSend: ((value: { runId: string }) => void) | undefined;
   const request = vi.fn().mockImplementation(
@@ -166,17 +384,23 @@ test('binds the real run id when an agent event arrives before chat.send acknowl
   const sending = controller.sendMessage('hello');
   (
     controller as unknown as {
-      handleAgentEvent(payload: Record<string, unknown>): void;
+      handleEvent(event: { event: string; payload: unknown }): void;
     }
-  ).handleAgentEvent({
-    runId: 'gateway-run-1',
-    stream: 'assistant',
-    session: 'agent:main:justdo:session-1',
-    data: { text: 'first response chunk' },
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      runId: 'gateway-run-1',
+      seq: 1,
+      stream: 'assistant',
+      session: 'agent:main:justdo:session-1',
+      data: { text: 'first response chunk' },
+    },
   });
 
   expect(controller.state.chatRunId).toBe('gateway-run-1');
-  expect(controller.state.chatStream).toBe('first response chunk');
+  expect(controller.state.transcript.activeTurn?.items).toEqual([
+    expect.objectContaining({ type: 'content', text: 'first response chunk' }),
+  ]);
 
   resolveSend?.({ runId: 'gateway-run-1' });
   await sending;
@@ -199,20 +423,26 @@ test('keeps a real run active when chat.send rejects after streaming has started
   const sending = controller.sendMessage('hello');
   (
     controller as unknown as {
-      handleAgentEvent(payload: Record<string, unknown>): void;
+      handleEvent(event: { event: string; payload: unknown }): void;
     }
-  ).handleAgentEvent({
-    runId: 'gateway-run-1',
-    stream: 'assistant',
-    session: 'agent:main:justdo:session-1',
-    data: { text: 'still running' },
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      runId: 'gateway-run-1',
+      seq: 1,
+      stream: 'assistant',
+      session: 'agent:main:justdo:session-1',
+      data: { text: 'still running' },
+    },
   });
   rejectSend?.(new Error('request timeout: chat.send'));
   await sending;
 
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.chatRunId).toBe('gateway-run-1');
-  expect(controller.state.chatStream).toBe('still running');
+  expect(controller.state.transcript.activeTurn?.items).toEqual([
+    expect.objectContaining({ type: 'content', text: 'still running' }),
+  ]);
   expect(controller.state.lastError).toBeNull();
 });
 
@@ -706,7 +936,7 @@ test('does not shift an older positioned checkpoint onto a newer marker', async 
   ]);
 });
 
-test('loads older history pages from the OpenClaw REST cursor API', async () => {
+test('loads the latest history page first and prepends older history on demand', async () => {
   const request = vi.fn().mockResolvedValueOnce({
     messages: [{ role: 'assistant', content: 'rpc fallback' }],
   });
@@ -747,21 +977,294 @@ test('loads older history pages from the OpenClaw REST cursor API', async () => 
 
   expect(fetchMock).toHaveBeenNthCalledWith(
     1,
-    'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=1000',
+    'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=250',
     expect.anything(),
   );
+  expect(controller.state.historyHasMore).toBe(true);
+  expect(
+    controller.state.chatMessages.map(message => (message as { content?: unknown }).content),
+  ).toEqual(['recent 1', 'recent 2']);
+
+  await controller.loadOlderHistory();
+
   expect(fetchMock).toHaveBeenNthCalledWith(
     2,
-    'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=1000&cursor=2',
+    'http://127.0.0.1:4173/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=250&cursor=2',
     expect.anything(),
   );
   expect(
-    controller.state.chatMessages.map(message => (message as { content?: unknown }).content),
+    controller.getLoadedMessages().map(message => (message as { content?: unknown }).content),
   ).toEqual(['older', 'recent 1', 'recent 2']);
+  expect(controller.state.chatMessages).toHaveLength(2);
+  expect(controller.state.loadedMessageCount).toBe(3);
+  expect(controller.state.historyHasMore).toBe(false);
+});
+
+test('skips duplicate older pages until a page adds visible history', async () => {
+  const request = vi.fn().mockResolvedValueOnce({
+    messages: [{ role: 'assistant', content: 'rpc fallback' }],
+  });
+  const recent = {
+    role: 'assistant',
+    content: 'recent',
+    __openclaw: { id: 'recent-1' },
+  };
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages: [recent],
+          hasMore: true,
+          nextCursor: 'duplicate-page',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages: [recent],
+          hasMore: true,
+          nextCursor: 'older-page',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages: [
+            {
+              role: 'user',
+              content: 'older visible message',
+              __openclaw: { id: 'older-1' },
+            },
+          ],
+          hasMore: false,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+  vi.stubGlobal('fetch', fetchMock);
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase =
+    'http://127.0.0.1:4173';
+  await controller.loadHistory();
+
+  await expect(controller.loadOlderHistory()).resolves.toBe(true);
+
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(
+    controller.getLoadedMessages().map(message => (message as { content?: unknown }).content),
+  ).toEqual(['older visible message', 'recent']);
+  expect(controller.state.historyHasMore).toBe(false);
+  expect(controller.state.historyNextCursor).toBeNull();
+});
+
+test('continues duplicate-only history pages in bounded automatic batches', async () => {
+  vi.useFakeTimers();
+  const recent = {
+    role: 'assistant',
+    content: 'recent',
+    __openclaw: { id: 'recent-1' },
+  };
+  let olderRequestCount = 0;
+  const getPagedHistory = vi.fn().mockImplementation(({ cursor }: { cursor?: string }) => {
+    if (!cursor) {
+      return Promise.resolve({
+        success: true,
+        messages: [recent],
+        hasMore: true,
+        nextCursor: 'duplicate-0',
+      });
+    }
+    olderRequestCount += 1;
+    if (olderRequestCount <= 8) {
+      return Promise.resolve({
+        success: true,
+        messages: [recent],
+        hasMore: true,
+        nextCursor: `duplicate-${olderRequestCount}`,
+      });
+    }
+    return Promise.resolve({
+      success: true,
+      messages: [
+        {
+          role: 'user',
+          content: 'older visible message',
+          __openclaw: { id: 'older-1' },
+        },
+      ],
+      hasMore: false,
+    });
+  });
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: { getPagedHistory },
+    },
+  });
+  const controller = new ChatController();
+  controller.state.client = {
+    request: vi.fn().mockResolvedValue({ messages: [recent] }),
+  } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  await controller.loadHistory();
+
+  await expect(controller.loadOlderHistory()).resolves.toBe(false);
+
+  expect(olderRequestCount).toBe(8);
+  expect(controller.state.historyNextCursor).toBe('duplicate-8');
+  await vi.runAllTimersAsync();
+  expect(
+    controller.getLoadedMessages().map(message => (message as { content?: unknown }).content),
+  ).toEqual(['older visible message', 'recent']);
+  expect(olderRequestCount).toBe(9);
+  expect(controller.state.historyHasMore).toBe(false);
+});
+
+test('preserves an existing older-page cursor across a transient paging failure', async () => {
+  const recent = {
+    role: 'assistant',
+    content: 'recent',
+    __openclaw: { id: 'recent-1' },
+  };
+  const request = vi.fn().mockResolvedValue({ messages: [recent] });
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages: [recent],
+          hasMore: true,
+          nextCursor: 'older-page',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    .mockRejectedValueOnce(new Error('temporary paging failure'));
+  vi.stubGlobal('fetch', fetchMock);
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase =
+    'http://127.0.0.1:4173';
+
+  await controller.loadHistory();
+  await controller.loadHistory();
+
+  expect(controller.state.historyHasMore).toBe(true);
+  expect(controller.state.historyNextCursor).toBe('older-page');
+});
+
+test('does not truncate loaded history or hide an older cursor', async () => {
+  const request = vi.fn().mockResolvedValueOnce({ messages: [] });
+  const messages = Array.from({ length: 2105 }, (_, index) => ({
+    role: 'assistant',
+    content: `message-${index}`,
+    __openclaw: { id: `message-${index}` },
+  }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages,
+          hasMore: true,
+          nextCursor: 'older',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    ),
+  );
+
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase = 'http://127.0.0.1:4173';
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toHaveLength(2105);
+  expect((controller.state.chatMessages[0] as { content: string }).content).toBe('message-0');
+  expect(controller.state.visibleChatMessages).toHaveLength(750);
+  expect(controller.state.historyHasMore).toBe(true);
+  expect(controller.state.historyNextCursor).toBe('older');
+});
+
+test('deduplicates an RPC fallback snapshot against already loaded older pages', async () => {
+  const messages = Array.from({ length: 1000 }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `message-${index}`,
+    __openclaw: { id: `message-${index}` },
+  }));
+  let pagingAvailable = true;
+  const getPagedHistory = vi.fn().mockImplementation(({ cursor }: { cursor?: string }) => {
+    if (!pagingAvailable) {
+      return Promise.resolve({ success: false, error: 'temporary paging failure' });
+    }
+    const end = cursor ? Number(cursor) : messages.length;
+    const start = Math.max(0, end - 250);
+    return Promise.resolve({
+      success: true,
+      messages: messages.slice(start, end),
+      hasMore: start > 0,
+      nextCursor: start > 0 ? String(start) : undefined,
+    });
+  });
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: { getPagedHistory },
+    },
+  });
+  const request = vi.fn().mockResolvedValue({
+    messages: messages.map(message => ({
+      ...message,
+      content: `${message.content} authoritative`,
+    })),
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+  await controller.loadOlderHistory();
+  await controller.loadOlderHistory();
+  await controller.loadOlderHistory();
+  expect(controller.getLoadedMessages()).toHaveLength(1000);
+
+  pagingAvailable = false;
+  await expect(controller.loadHistory()).resolves.toBe(true);
+
+  const loaded = controller.getLoadedMessages() as Array<{
+    content: string;
+    __openclaw: { id: string };
+  }>;
+  expect(loaded).toHaveLength(1000);
+  expect(new Set(loaded.map(message => message.__openclaw.id)).size).toBe(1000);
+  expect(loaded[0]?.content).toBe('message-0 authoritative');
+  expect(loaded[999]?.content).toBe('message-999 authoritative');
+  expect(controller.state.loadedMessageCount).toBe(1000);
 });
 
 test('loads paged REST history for Electron loopback gateway sessions', async () => {
-  vi.stubGlobal('window', { electron: {} });
+  const getPagedHistory = vi.fn().mockResolvedValue({
+    success: false,
+    error: 'temporary IPC failure',
+  });
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: { getPagedHistory },
+    },
+  });
   const request = vi.fn().mockResolvedValueOnce({
     messages: [{ role: 'assistant', content: 'rpc fallback' }],
   });
@@ -785,8 +1288,13 @@ test('loads paged REST history for Electron loopback gateway sessions', async ()
 
   await controller.loadHistory();
 
+  expect(getPagedHistory).toHaveBeenCalledWith({
+    sessionKey: 'agent:main:justdo:session-1',
+    cursor: undefined,
+    limit: 250,
+  });
   expect(fetchMock).toHaveBeenCalledWith(
-    'http://127.0.0.1:42871/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=1000',
+    'http://127.0.0.1:42871/sessions/agent%3Amain%3Ajustdo%3Asession-1/history?limit=250',
     expect.anything(),
   );
   expect(controller.state.chatMessages).toEqual([
@@ -1150,6 +1658,7 @@ test('keeps live tool messages until delayed post-final history catches up', asy
     payload: {
       session: 'agent:main:justdo:session-1',
       runId: 'run-1',
+      seq: 1,
       stream: 'tool',
       data: {
         phase: 'start',
@@ -1173,15 +1682,14 @@ test('keeps live tool messages until delayed post-final history catches up', asy
     },
   });
 
-  expect(controller.state.chatToolMessages).toHaveLength(1);
-  expect(controller.state.chatToolMessages[0]).toEqual(
-    expect.objectContaining({ __justdoToolActive: false }),
+  expect(controller.state.transcript.activeTurn?.items).toEqual(
+    expect.arrayContaining([expect.objectContaining({ type: 'tool', status: 'completed' })]),
   );
   expect(request).not.toHaveBeenCalled();
 
   await vi.runOnlyPendingTimersAsync();
 
-  expect(controller.state.chatToolMessages).toHaveLength(0);
+  expect(controller.state.transcript.activeTurn).toBeNull();
   expect(controller.state.chatMessages).toEqual([persistedFinal]);
 });
 
@@ -1283,12 +1791,13 @@ test('does not retain NO_REPLY assistant streams for later lifecycle renders', (
     payload: {
       session: 'justdo:session-1',
       runId: 'run-1',
+      seq: 1,
       stream: 'assistant',
       data: { text: 'NO_REPLY' },
     },
   });
 
-  expect(controller.state.chatStream).toBeNull();
+  expect(controller.state.transcript.activeTurn).toBeNull();
   expect(streamListener).not.toHaveBeenCalled();
 
   (
@@ -1300,13 +1809,331 @@ test('does not retain NO_REPLY assistant streams for later lifecycle renders', (
     payload: {
       session: 'justdo:session-1',
       runId: 'run-1',
+      seq: 2,
       stream: 'lifecycle',
       data: { phase: 'finishing' },
     },
   });
 
-  expect(controller.state.chatStream).toBeNull();
+  expect(controller.state.transcript.activeTurn?.items ?? []).toHaveLength(0);
   expect(streamListener).toHaveBeenCalledTimes(1);
+});
+
+test('does not revive a completed chat for a silent subagent announce run', () => {
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const runId = 'announce:v1:agent:main:subagent:child-run';
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 2,
+      stream: 'assistant',
+      data: { text: 'NO_RE' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 4,
+      stream: 'assistant',
+      data: { text: 'NO_REPLY' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 6,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  expect(streamListener).not.toHaveBeenCalled();
+});
+
+test('starts a dormant subagent announce when it produces visible content', () => {
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const runId = 'announce:v1:agent:main:subagent:child-run';
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 2,
+      stream: 'assistant',
+      data: { text: '子代理结果已经汇总完成。' },
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe(runId);
+  expect(controller.state.transcript.activeTurn).toMatchObject({
+    runId,
+    items: [expect.objectContaining({ type: 'content', text: '子代理结果已经汇总完成。' })],
+  });
+  expect(streamListener).toHaveBeenCalledTimes(1);
+});
+
+test('does not create visible state from Agent events without a canonical sequence', () => {
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      stream: 'assistant',
+      data: { text: 'unordered legacy content' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(streamListener).not.toHaveBeenCalled();
+});
+
+test('rejected chat finals cannot mutate visible or sending state', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'sid-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.transcript.sessionId = 'sid-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', sessionId: 'sid-1', lifecycleGeneration: 'life-1' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'sid-other',
+      lifecycleGeneration: 'life-1',
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: 'wrong session' },
+    },
+  });
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'sid-1',
+      lifecycleGeneration: 'life-old',
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: 'stale lifecycle' },
+    },
+  });
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'sid-1',
+      lifecycleGeneration: 'life-1',
+      runId: 'run-2',
+      state: 'final',
+      message: { role: 'assistant', content: 'other run' },
+    },
+  });
+
+  expect(controller.state.chatMessages).toEqual([]);
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('run-1');
+  expect(controller.state.transcript.activeTurn?.status).toBe('running');
+});
+
+test('keeps a live run suspended across transport loss and accepts later updates', () => {
+  const controller = new ChatController();
+  controller.state.client = {} as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+
+  (controller as unknown as { handleClose(): void }).handleClose();
+  expect(controller.state.transportStatus).toBe('reconnecting');
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.transcript.activeTurn?.status).toBe('running');
+  expect(controller.state.transcript.recentRuns.has('run-1')).toBe(false);
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      state: 'delta',
+      deltaText: 'continued',
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toEqual([
+    expect.objectContaining({ type: 'content', text: 'continued' }),
+  ]);
+});
+
+test('creates one interruption only after reconnect confirms the run is inactive', async () => {
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') return Promise.resolve({ messages: [] });
+    if (method === 'sessions.list') {
+      return Promise.resolve({
+        sessions: [{ key: 'agent:main:justdo:session-1', hasActiveRun: false }],
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+
+  (controller as unknown as { handleClose(): void }).handleClose();
+  controller.state.connected = true;
+  await (
+    controller as unknown as { reconcileSuspendedRun(): Promise<void> }
+  ).reconcileSuspendedRun();
+  await (
+    controller as unknown as { reconcileSuspendedRun(): Promise<void> }
+  ).reconcileSuspendedRun();
+
+  expect(controller.state.transcript.activeTurn?.status).toBe('aborted');
+  expect(
+    controller.state.transcript.activeTurn?.items.filter(item => item.type === 'terminal'),
+  ).toHaveLength(1);
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test('invalidates in-flight history when sessions.changed rotates the session id', () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'sid-old';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.transcript.sessionId = 'sid-old';
+  const generation = controller.state.transcript.historyGeneration;
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'sid-new',
+      reason: 'reset',
+    },
+  });
+
+  expect(controller.state.currentSessionId).toBe('sid-new');
+  expect(controller.state.transcript.historyGeneration).toBe(generation + 1);
+  expect(controller.state.transcript.activeTurn).toBeNull();
+});
+
+test('appends a selected-session external final once when no run is active', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const event = {
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'external-run',
+      state: 'final',
+      message: { role: 'assistant', content: 'injected answer' },
+    },
+  };
+
+  handleEvent(event);
+  handleEvent(event);
+
+  expect(controller.state.chatMessages).toHaveLength(1);
+  expect(controller.state.chatMessages[0]).toMatchObject({ content: 'injected answer' });
 });
 
 test('drops stale optimistic wait messages once persisted history has advanced past them', async () => {
@@ -1580,87 +2407,6 @@ test('hydrates OpenClaw transcript MediaPaths as image blocks', async () => {
   expect(readFileAsDataUrl).toHaveBeenCalledTimes(1);
 });
 
-test('clears stream overlays and completes live tools after a renderable final', () => {
-  const controller = new ChatController();
-  controller.state.sessionKey = 'agent:main:justdo:session-1';
-  controller.state.chatSending = true;
-  controller.state.chatRunId = 'run-1';
-  controller.state.chatMessages = [
-    {
-      role: 'assistant',
-      content: 'previous content',
-      timestamp: 1000,
-    },
-  ];
-  controller.state.chatThinkingMessages = [
-    {
-      role: 'assistant',
-      content: [{ type: 'thinking', thinking: 'thinking 1' }],
-      timestamp: 1100,
-      __openclawLiveThinking: true,
-    },
-    {
-      role: 'assistant',
-      content: [{ type: 'thinking', thinking: 'thinking 2' }],
-      timestamp: 1300,
-      __openclawLiveThinking: true,
-    },
-  ];
-  controller.state.chatToolMessages = [
-    {
-      role: 'assistant',
-      toolCallId: 'tool-1',
-      toolName: 'Read',
-      timestamp: 1200,
-      content: [{ type: 'toolcall', toolCallId: 'tool-1', name: 'Read' }],
-    },
-    {
-      role: 'assistant',
-      toolCallId: 'tool-2',
-      toolName: 'Write',
-      timestamp: 1400,
-      content: [{ type: 'toolcall', toolCallId: 'tool-2', name: 'Write' }],
-    },
-  ];
-  controller.state.chatStreamSegments = [
-    { text: 'content 1', ts: 1250 },
-    { text: 'content 2', ts: 1450 },
-  ];
-  controller.state.chatStream = 'final content';
-  controller.state.chatThinkingStream = 'thinking 3';
-
-  (
-    controller as unknown as {
-      handleFinal(payload: {
-        sessionKey: string;
-        state: 'final';
-        runId: string;
-        message: unknown;
-      }): void;
-    }
-  ).handleFinal({
-    sessionKey: 'agent:main:justdo:session-1',
-    state: 'final',
-    runId: 'run-1',
-    message: {
-      role: 'assistant',
-      content: 'final content',
-      timestamp: 1500,
-    },
-  });
-
-  expect(controller.state.chatSending).toBe(false);
-  expect(controller.state.chatStream).toBeNull();
-  expect(controller.state.chatThinkingStream).toBeNull();
-  expect(controller.state.chatThinkingMessages).toHaveLength(0);
-  expect(controller.state.chatToolMessages).toHaveLength(2);
-  expect(controller.state.chatToolMessages).toEqual([
-    expect.objectContaining({ toolCallId: 'tool-1', __justdoToolActive: false }),
-    expect.objectContaining({ toolCallId: 'tool-2', __justdoToolActive: false }),
-  ]);
-  expect(controller.state.chatStreamSegments).toHaveLength(0);
-});
-
 test('dedupes a final message already present at the history tail', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:session-1';
@@ -1678,14 +2424,30 @@ test('dedupes a final message already present at the history tail', () => {
       timestamp: 1400,
     },
   ];
-  controller.state.chatThinkingMessages = [
-    {
-      role: 'assistant',
-      content: [{ type: 'thinking', thinking: '确认文件已经写入，然后汇报结果。' }],
-      timestamp: 1300,
-      __openclawLiveThinking: true,
-    },
-  ];
+  controller.state.transcript.activeTurn = {
+    id: 'turn-1',
+    runId: 'run-1',
+    sessionId: null,
+    lifecycleGeneration: null,
+    sessionKey: controller.state.sessionKey,
+    status: 'final',
+    lastAgentSeq: 1,
+    startedAt: 1200,
+    items: [
+      {
+        id: 'thinking-1',
+        runId: 'run-1',
+        firstSeq: 1,
+        lastSeq: 1,
+        startedAt: 1200,
+        updatedAt: 1300,
+        type: 'thinking',
+        status: 'completed',
+        text: '确认文件已经写入，然后汇报结果。',
+      },
+    ],
+    toolById: new Map(),
+  };
 
   (
     controller as unknown as {
@@ -1718,77 +2480,6 @@ test('dedupes a final message already present at the history tail', () => {
     { type: 'thinking', thinking: '确认文件已经写入，然后汇报结果。' },
     { type: 'text', text: '已生成介绍文档：文件包含了思源笔记的基本信息。' },
   ]);
-});
-
-test('backfills live thinking from history while preserving an active run display', async () => {
-  const visibleMessage = {
-    role: 'assistant',
-    content: 'previous content',
-    timestamp: 1000,
-  };
-  const persistedLiveMessage = {
-    role: 'assistant',
-    content: [
-      { type: 'thinking', thinking: 'history thinking for live announce' },
-      { type: 'text', text: 'Group2 也完成了（但内容截断）。继续等待 group1 和 group4：' },
-    ],
-    timestamp: 2000,
-  };
-  const request = vi.fn().mockResolvedValueOnce({
-    messages: [visibleMessage, persistedLiveMessage],
-  });
-  const controller = new ChatController();
-  controller.state.client = { request } as never;
-  controller.state.connected = true;
-  controller.state.sessionKey = 'agent:main:justdo:session-1';
-  controller.state.chatSending = true;
-  controller.state.chatRunId = 'announce:v1:agent:main:subagent:child:run-1';
-  controller.state.chatMessages = [visibleMessage];
-  controller.state.chatStream = 'Group2 也完成了（但内容截断）。继续等待 group1 和 group4：';
-
-  await controller.loadHistory();
-
-  expect(controller.state.chatMessages).toEqual([visibleMessage]);
-  expect(controller.state.chatThinkingStream).toBe('history thinking for live announce');
-  expect(controller.state.chatSending).toBe(true);
-});
-
-test('merges later non-empty tool arguments over an earlier empty tool call', () => {
-  const controller = new ChatController();
-  const merged = (
-    controller as unknown as {
-      mergeToolMessageContent(existingContent: unknown, nextContent: unknown): unknown[];
-    }
-  ).mergeToolMessageContent(
-    [
-      {
-        type: 'toolcall',
-        toolCallId: 'tool-1',
-        name: 'exec',
-        arguments: {},
-      },
-    ],
-    [
-      {
-        type: 'toolcall',
-        toolCallId: 'tool-1',
-        name: 'exec',
-        arguments: { command: 'Remove-Item tmp.js', timeout: 5 },
-      },
-      {
-        type: 'toolresult',
-        toolCallId: 'tool-1',
-        name: 'exec',
-        text: '(no output)',
-      },
-    ],
-  );
-
-  expect((merged[0] as Record<string, unknown>).arguments).toEqual({
-    command: 'Remove-Item tmp.js',
-    timeout: 5,
-  });
-  expect((merged[1] as Record<string, unknown>).text).toBe('(no output)');
 });
 
 test('captures the gateway detail when a lifecycle run fails', () => {

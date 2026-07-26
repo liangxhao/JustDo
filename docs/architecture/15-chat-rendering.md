@@ -23,8 +23,10 @@ JustDo 的聊天渲染由 React 容器和 Lit 自定义元素共同完成。Reac
 ```mermaid
 flowchart LR
   Cowork["React Cowork View"] --> Wrapper["JustDoChatWrapper"]
+  ReduxCache["Redux session snapshot\nloaded from SQLite"] --> Wrapper
   Wrapper --> Element["<justdo-chat>\nLit element"]
   Element --> Controller["ChatController"]
+  Wrapper -->|sqlite-fallback| Controller
   Controller --> Client["GatewayClient"]
   Client --> WS["OpenClaw Gateway WebSocket"]
   WS --> Normalize["shared event normalizer"]
@@ -68,9 +70,29 @@ Markdown renderer 使用：
 ## Live timeline
 
 Thinking/reasoning、Tool 和 Content 由 renderer-owned canonical transcript reducer
-按 `runId + payload.seq` 排序。Gateway frame `seq` 只用于 transport 诊断，
+按 `runId + payload.seq` 排序。Renderer 中 Gateway frame `seq` 只用于 transport 诊断，
 `chat` event 的状态序列也不与 Agent sequence 比较。当前 bundled runtime 若只提供
-`aseq`，shared normalizer 会走显式兼容回退。
+`aseq`，shared normalizer 会走显式兼容回退。缺少 canonical Agent sequence 的事件
+不会进入 live display state，也不存在绕过 reducer 的旧 overlay fallback。
+
+Main 与 Renderer 的 Gateway 连接保留各自的副作用适配器，但共享
+`src/shared/openclaw/messageDomain.ts` 的纯协议核心：managed-session alias、
+session/run/lifecycle admission、Agent sequence 去重、Tool 字段别名与 Tool 终态
+都只能在该核心定义。Renderer 将 admitted transition 投影为 `TurnItem`；Main
+将同一判定转换为 SQLite 和 IPC effect。Main 对缺少 inner Agent sequence 的旧
+Gateway frame 保留兼容路径：优先使用 outer frame sequence，否则使用
+process-local monotonic sequence；正常协议仍以 `payload.seq` 为准。共享事件语料
+必须同时验证两种适配器的语义快照。
+
+所有 `chat` 可见/持久化副作用必须先通过 canonical reducer 的 session、run 和
+lifecycle admission；被拒绝的 final/error 不得清空当前 run 或写入 history。
+Renderer 不再维护 `chatThinkingMessages`、`chatToolMessages`、`chatStreamSegments`
+或独立 stream/thinking 字段；Goal、Lit timeline 与 final Thinking preservation
+都读取 `transcript.activeTurn`。managed session alias 只允许显式
+`justdo:<id>` / `agent:<agent-id>:justdo:<id>` 归一化，不允许任意 suffix 匹配。
+短暂 WebSocket 断开只把 transport 标为 `reconnecting`，保留 active turn 且不创建
+run tombstone。重连后先用 Gateway history 接管已完成 turn，再以 `sessions.list`
+的 `hasActiveRun` 确认无活动 run 后才生成一次 interruption。
 
 Reducer 保留完整的 flat `TurnItem[]`；展示 selector 才把连续成功的 Thinking/Tool
 压缩为 process summary。Content、用户消息、divider、terminal 和 run/session
@@ -97,7 +119,7 @@ persisted history 与 active-turn 投影在组成完整可见时间线后再合�
 - 覆盖 `active`、`paused`、`blocked`、`usage_limited`、`budget_limited`、`complete` 全部状态。
 - renderer 在提交创建型 `/goal` 命令时先从命令参数生成仅用于展示的 optimistic objective，因此首页首轮切换到临时 session 后也会立即出现卡片；一旦 Gateway 返回权威 `goal`，立即替换 optimistic 状态。
 - 运行期间每 1.5 秒读取一次 `sessions.list` 中的 Goal，空闲但 Goal 仍为 `active` 时降频到每 5 秒；运行状态查询不得因 session active 而被主进程拒绝。终态停止轮询，后续控制命令和新一轮运行会重新触发刷新。
-- `ChatController` 的 live state 被投影为 `starting`、`thinking`、`tool`、`responding`、`compacting` 五种瞬时执行阶段，卡片显示当前阶段、已执行工具数量和本轮耗时。它们是运行活动提示，不伪装成可量化的任务完成百分比。
+- `ChatController.transcript.activeTurn` 被纯 selector 投影为 `starting`、`thinking`、`tool`、`responding`、`compacting` 五种瞬时执行阶段，卡片显示当前阶段、已执行工具数量和本轮耗时。Goal UI 不读取旧 Thinking/Tool/stream overlay。它们是运行活动提示，不伪装成可量化的任务完成百分比。
 - 展示 objective、最后状态备注、token 使用量及预算进度。
 - OpenClaw 在缺少 fresh token baseline 时会把首个 Goal 回合结束后的快照作为基线，此时自动回复可能产生不可靠的 `Tokens used: 0`；JustDo 会隐藏该零值及零进度，取得正数用量后再展示。
 - 根据当前状态提供 pause、resume、complete 或 clear 快捷操作；操作仍以 `/goal` 命令交给 Gateway 执行。
@@ -131,6 +153,9 @@ live 工具调用以 `runId + toolCallId` 更新 canonical ToolItem；缺少名�
 pipeline 归一化。工具输入等敏感历史数据通过 Main IPC 从 Gateway state/history
 读取，不由 renderer 直接访问 runtime 文件。成功 Tool 完成后归档到相邻 process
 summary；运行中或失败的 Tool 保持可见，失败项可直接打开所在 summary 的详情。
+Main 必须先由 `sessionKey` 定位对应 agent 的 `sessions.json` entry，再只异步流式
+读取该 entry 的 transcript，以及同一 transcript basename 的 `.reset.`/`.bak.`
+归档；禁止同步递归扫描整个 OpenClaw agents state。
 
 增量事件和冷历史共同复用 `model/tool-message-adapter.ts` 的兼容规则，包括
 OpenClaw message envelope、Tool ID/名称字段别名、metadata、`partialArgs`、
@@ -182,6 +207,7 @@ Controller 是 Gateway event 到 Lit state 的协调层。它不应该知道 Rea
 主要职责：
 
 - 维护当前 session 的 Gateway-backed persisted history 和 canonical active turn。
+- 接收 Wrapper 已转换为 Gateway message shape 的 SQLite fallback snapshot。
 - 接收 stream event。
 - 调用 pipeline 构建 render items。
 - 处理 history load 和 incremental update。
@@ -189,12 +215,35 @@ Controller 是 Gateway event 到 Lit state 的协调层。它不应该知道 Rea
 状态协调必须遵守以下约束：
 
 - 切换 session 时先取消上一 session 的 message subscription，再订阅目标 session。
+- subscribe 异步完成时若 session 已再次切换，必须显式反订阅刚刚成功的陈旧 key；
+  本地 sequence guard 本身不能撤销 Gateway 的 many-to-many subscription。
 - optimistic user message、live final 和 history apply 都要同步更新对应 session 的内存缓存。
+- Wrapper 在首次连接、切换会话或 SQLite snapshot 更新时调用
+  `admitFallbackHistory()`；controller 按 session 缓存 source authority。
+  `gateway > sqlite-fallback > optimistic`，因此 Gateway 一旦成功接管，
+  后续缓存更新不能覆盖它。
 - active run 拥有实时展示状态；并发 history 结果不能回退 process item 或可见 Content。
+- `loadHistory()` 只协调 RPC、分页、compaction enrichment、Tool input hydration 和
+  结果提交；optimistic tail 保留、并发陈旧响应、regressive tail、active-run
+  admission、materialized fallback 保护及 deferred catch-up 全部由
+  `history-reconciler` 作出一次性决定，controller 不维护第二套接纳启发式。
 - 终态 active turn 与其 optimistic history fallback 是同一轮的互斥投影；fallback
   尚未被持久化覆盖时只显示 active turn，当前 generation 的 Gateway history
-  接管后撤销 active turn，只显示权威历史。
-- `sessionKey`、`sessionId`、Gateway lifecycle generation 与 run tombstone 共同隔离延迟事件。
+  接管后由 reconciler 同步撤销 active turn，只显示权威历史。
+- `sessionKey`、`sessionId`、run ID、Agent sequence 与 run tombstone 是 Renderer
+  隔离延迟事件的主要依据。`lifecycleGeneration` 在当前 Gateway 公共事件中通常不
+  序列化，只是可选附加判据：缺失时不拒绝事件，仅当 active run 和 event 都提供且
+  值冲突时拒绝。Renderer 正确性不得依赖该字段存在；服务端 stale-lifecycle
+  suppression 仍由 OpenClaw 负责。
+- `announce:v1:` 子代理完成通知复用父 session key，但不是新的用户回合。空闲状态下
+  的 announce lifecycle/thinking 不能单独创建 active turn；只有可见 assistant 或
+  Tool 内容才接管展示。流式 `NO_REPLY` 的中间前缀也必须在 reducer 前过滤，避免
+  `NO_RE` 短暂闪现并把已完成会话反复置为运行中。
+- `sessions.changed` 报告选中 key 的 `sessionId` 轮换时立即递增 history generation；
+  paged history、compaction enrichment 和 Tool input hydration 每个 await 后都要复核
+  generation/session identity。
+- persisted message key 优先使用 `__openclaw.id`，其次使用 `__openclaw.seq`，再回退到
+  provider 顶层 durable ID；加载更旧页面或同一 transcript entry 文本更新不得改变 key。
 - 只有当前 history generation 的成功 Gateway 响应有权证明持久化覆盖；SQLite/optimistic projection 不能清除 live tail。
 - history 的附件合并先于异步图片解析，异步结果只允许提交到发起时的 session 和消息版本。
 - `chat.send` ack 前使用本地临时 runId；首个同 session Gateway event 可以将其绑定为真实 runId。
@@ -239,6 +288,16 @@ flowchart LR
 
 优先级是 active live state > Gateway history > SQLite fallback > optimistic。
 SQLite cache 适合快速首屏和离线/故障降级，但不能作为 prune live state 的证据。
+生产路径由 `JustDoChatWrapper` 将 Redux 中已加载的 `CoworkMessage[]` 转换后调用
+`ChatController.admitFallbackHistory()`。Controller 不读取 Redux 或 SQLite，
+只接收规范化快照；快照按 session 隔离并复用与 Gateway history 相同的 reconciler。
+Gateway 请求失败时保留 fallback，成功后 source authority 升为 `gateway`，同一
+controller 生命周期内不再接受该 session 的低权威缓存覆盖。canonical active
+turn 为 running 时 fallback admission 会被拒绝。
+分页 IPC 暂时失败时继续尝试 loopback REST；若两者均不可用，最多 1,000 条的
+RPC history 只被视为有限 recent snapshot。它必须通过 durable transcript identity
+与较大的 SQLite fallback 证明安全的尾部重叠后才能接管，否则保留完整 fallback，
+避免以“更高权威但不完整”的响应截断历史。
 
 ```mermaid
 flowchart TD
@@ -253,6 +312,59 @@ flowchart TD
   Fallback -->|yes| Degraded["Keep degraded cache view"]
   Fallback -->|no| Error["Show recoverable error"]
 ```
+
+Gateway REST history is cursor-paged. Main IPC and the browser fallback return
+one page per request rather than draining the complete transcript. The initial
+view requests the latest 250 messages; `ChatController` retains `nextCursor`,
+and `ChatScrollController` requests an older page when paused scrolling reaches
+the top region. Older messages are prepended under the existing semantic anchor
+capture so the visible row does not jump. Loaded history is not truncated and
+an available older cursor is never retired because of a renderer message or
+byte threshold: a user can continue paging through a transcript containing
+100,000 or more messages.
+
+旧页经过隐藏规则和 identity 去重后可能不增加任何可见消息。Controller 会继续推进
+cursor，跳过连续空页/重复页，直到加入可见消息、cursor 耗尽，或发现 cursor 循环。
+为避免一次顶部滚动串行占用大量 Gateway 请求，每批最多处理 8 个空页；批次间通过
+零延迟任务主动续取，并校验 session key、session ID、history generation 与 cursor，
+因此既会让出事件循环，也不依赖第二次 scroll 事件。分页暂时失败时不会清除此前
+可用的 `nextCursor`。
+
+Loaded pages remain immutable chunks in `ChunkedMessageHistory`; admitting an
+older page does not spread or copy the pages already in memory. The controller
+keeps the newest chunk separately as its reconciliation/live-tail snapshot, so
+a settled live message replaces only that chunk while all older chunks remain
+reachable. If a wider RPC recent snapshot overlaps already loaded older chunks,
+the newer snapshot wins by durable transcript identity and the overlapped older
+copies are removed, preventing duplicate rendering, counts, and export rows.
+Window reads slice across chunk boundaries. Full flattening is reserved for
+explicit whole-session operations such as export.
+
+Rendering is independently bounded by a 750-message sliding window. Reaching
+the top moves that window toward older loaded messages (or fetches the next
+page); reaching its bottom moves it toward newer loaded messages. A 250-message
+overlap keeps semantic anchors alive while the window moves. “Jump to latest”
+selects the newest window and restores follow mode. Thus transcript
+reachability is unbounded by the DOM window, while projection, minimap, and Lit
+`repeat` work stay bounded. Session switches and transcript generation changes
+invalidate an in-flight older-page result.
+
+Within that window, persisted timeline derivations are cached separately from
+the active turn. The cache owns coalesced persisted rows, both trailing-footer
+variants, assistant-turn/avatar state, and minimap entries. A stream revision
+only projects the active items, merges the final persisted/active summary seam
+when necessary, and clones the final minimap entry for new Content text.
+Persisted rows, the optional seam row, and active rows are emitted as separate
+keyed Lit segments, so an active delta does not spread or rescan the persisted
+row list.
+
+Active process summary 与 authoritative history summary 的 key 来源不同。
+`ProcessSummaryTakeoverTracker` 只记住当前展开项，并在接管时按显式 run ID、
+Tool call ID、稳定 process item ID 或精确 Thinking 文本寻找唯一候选。
+找到唯一候选后，Lit 用新 history key 保持 disclosure 展开，并在原按钮拥有焦点时
+把焦点恢复到替换按钮；候选冲突或切换 session 时清空状态，不做猜测性迁移。
+Tracker 的隔离 identity 由 session key、backing session ID 和 history generation
+共同组成，因此同 key 的 session ID rotation 或 transcript reset 也会清空状态。
 
 ## Tool Cards
 
@@ -284,8 +396,13 @@ Renderer 只负责构建 JSON；文件路径由系统另存为对话框选择，
 
 ## 性能考虑
 
-- 长历史应分页或限制渲染数量。
-- persisted history projection 与 active-turn projection 分开；流式 delta 不重建 persisted history。
+- 长历史按 cursor 向上分页，单页最多 250 条；历史数据不因 renderer 阈值截断，
+  10 万条以上的会话仍可持续向上加载。
+- timeline 仅投影和渲染 750 条消息的滑动窗口，每次按 250 条移动；窗口限制 DOM
+  与流式重绘成本，但不限制用户可访问的历史范围。
+- persisted history projection 与 active-turn projection 分开；持久行、头像/页脚状态和
+  Minimap 基础条目按 projection identity 缓存。流式 delta 只更新 active tail、
+  最后一条 summary seam 和最后一个 Minimap 条目，不重建或扫描持久历史。
 - stream visual publish 由 animation-frame scheduler 合并，terminal/state notification 可立即发布。
 - active timeline 使用稳定 source ID 和 Lit keyed `repeat`，summary count 更新不会替换 DOM identity。
 - Tool 至少展示 500 ms；计时器只延迟 presentation archive，不改变 reducer status。

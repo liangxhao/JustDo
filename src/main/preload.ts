@@ -12,7 +12,7 @@ import {
   type ExtensionSetEnabledRequest,
   type ExtensionUpdateConfigurationRequest,
 } from '../shared/openclaw/extensions';
-import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
+import { OpenClawHistoryIpc, type OpenClawPagedHistoryParams } from '../shared/openclaw/historyIpc';
 import { HookIpc } from '../shared/openclaw/hooks';
 import { MemoryIpc } from '../shared/openclaw/memory';
 import { UsageStatsIpc } from '../shared/openclaw/usage';
@@ -104,8 +104,10 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('mcp:config:syncStart', handler);
     },
     onConfigSyncDone: (callback: (data: { tools: number; error?: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { tools: number; error?: string }) =>
-        callback(data);
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { tools: number; error?: string },
+      ) => callback(data);
       ipcRenderer.on('mcp:config:syncDone', handler);
       return () => ipcRenderer.removeListener('mcp:config:syncDone', handler);
     },
@@ -180,7 +182,7 @@ contextBridge.exposeInMainWorld('electron', {
     history: {
       getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
-      getPagedHistory: (params: { sessionKey: string }) =>
+      getPagedHistory: (params: OpenClawPagedHistoryParams) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetPagedHistory, params),
     },
     memory: {
@@ -307,8 +309,7 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (
         _event: Electron.IpcRendererEvent,
         data: { sessionId: string; messageId: string },
-      ) =>
-        callback(data);
+      ) => callback(data);
       ipcRenderer.on('cowork:stream:messageDelete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:messageDelete', handler);
     },
@@ -330,8 +331,7 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (
         _event: Electron.IpcRendererEvent,
         data: { sessionId: string; finalStatus?: string },
-      ) =>
-        callback(data);
+      ) => callback(data);
       ipcRenderer.on('cowork:stream:complete', handler);
       return () => ipcRenderer.removeListener('cowork:stream:complete', handler);
     },

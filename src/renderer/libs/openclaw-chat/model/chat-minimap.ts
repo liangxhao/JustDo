@@ -87,3 +87,19 @@ export function projectChatMinimapEntries(
 
   return entries;
 }
+
+/**
+ * Updates only the open user turn represented by the persisted minimap tail.
+ * Active timelines cannot introduce a user turn, so no history scan is needed.
+ */
+export function projectChatMinimapTailEntry(
+  persistedTail: ChatMinimapEntry | null,
+  activeItems: readonly VisibleTimelineItem[],
+): ChatMinimapEntry | null {
+  if (!persistedTail) return null;
+  const tail = { ...persistedTail };
+  for (const item of activeItems) {
+    if (item.kind === 'content') appendAssistantText(tail, item.item.text);
+  }
+  return tail;
+}

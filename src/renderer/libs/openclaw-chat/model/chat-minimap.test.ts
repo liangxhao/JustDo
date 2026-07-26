@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { projectChatMinimapEntries } from './chat-minimap';
+import { projectChatMinimapEntries, projectChatMinimapTailEntry } from './chat-minimap';
 import type { ContentItem } from './chat-transcript-state';
 import type { VisibleTimelineItem } from './timeline-avatar-state';
 
@@ -102,5 +102,24 @@ describe('chat minimap projection', () => {
         content('content-1', 'orphan stream'),
       ]),
     ).toEqual([]);
+  });
+
+  test('updates only the persisted tail entry for active Content revisions', () => {
+    const persisted = projectChatMinimapEntries([
+      message('user-1', 'user', 'First'),
+      message('assistant-1', 'assistant', 'Done'),
+      message('user-2', 'user', 'Second'),
+    ]);
+
+    const tail = projectChatMinimapTailEntry(
+      persisted[1] ?? null,
+      [content('content-1', 'Streaming answer')],
+    );
+
+    expect(tail).toEqual({
+      ...persisted[1],
+      assistantText: 'Streaming answer',
+    });
+    expect(persisted[1]?.assistantText).toBe('');
   });
 });

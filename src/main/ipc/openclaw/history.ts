@@ -1,8 +1,13 @@
 import { ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 
-import { OpenClawHistoryIpc } from '../../../shared/openclaw/historyIpc';
+import {
+  OpenClawHistoryIpc,
+  type OpenClawPagedHistoryParams,
+  type OpenClawPagedHistoryResult,
+} from '../../../shared/openclaw/historyIpc';
 
 export type OpenClawToolInputLookup = Record<string, { name?: string; input: unknown }>;
 
@@ -17,13 +22,8 @@ type PagedHistoryPage = {
   nextCursor?: string;
 };
 
-export type OpenClawPagedHistoryResult = {
-  success: boolean;
-  messages?: unknown[];
-  error?: string;
-};
-
-const HISTORY_PAGE_LIMIT = 1000;
+const DEFAULT_HISTORY_PAGE_LIMIT = 250;
+const MAX_HISTORY_PAGE_LIMIT = 500;
 
 class OpenClawHistoryRestError extends Error {
   constructor(readonly status: number) {
@@ -105,32 +105,102 @@ export const collectToolInputsFromValue = (
   }
 };
 
-const collectSessionJsonlFiles = (rootDir: string): string[] => {
-  const files: string[] = [];
-  const stack = [rootDir];
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    if (!dir) continue;
-    let entries: fs.Dirent[];
+const normalizeSessionKey = (value: unknown): string => {
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+const readAgentId = (sessionKey: string): string => {
+  const match = /^agent:([^:]+):/.exec(sessionKey);
+  return match?.[1]?.trim() || 'main';
+};
+
+const isWithinDirectory = (candidate: string, directory: string): boolean => {
+  const relative = path.relative(path.resolve(directory), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..');
+};
+
+/**
+ * Resolve only the transcript owned by the requested OpenClaw session. Reset
+ * and backup artifacts are allowed solely when they share the same session id.
+ */
+export const resolveSessionTranscriptFiles = async (
+  stateDir: string,
+  sessionKey: string,
+): Promise<string[]> => {
+  const agentId = readAgentId(sessionKey);
+  const sessionsDir = path.join(stateDir, 'agents', agentId, 'sessions');
+  const storePath = path.join(sessionsDir, 'sessions.json');
+  let store: Record<string, unknown>;
+  try {
+    store = JSON.parse(await fs.promises.readFile(storePath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+
+  const alias =
+    sessionKey.startsWith('agent:') || agentId !== 'main'
+      ? sessionKey
+      : `agent:main:${sessionKey}`;
+  const rawEntry = store[sessionKey] ?? store[alias];
+  if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) return [];
+  const entry = rawEntry as Record<string, unknown>;
+  const sessionId = typeof entry.sessionId === 'string' ? entry.sessionId.trim() : '';
+  if (!sessionId) return [];
+
+  const configuredFile =
+    typeof entry.sessionFile === 'string' && entry.sessionFile.trim()
+      ? path.resolve(sessionsDir, entry.sessionFile.trim())
+      : path.join(sessionsDir, `${sessionId}.jsonl`);
+  if (!isWithinDirectory(configuredFile, sessionsDir)) return [];
+
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(sessionsDir);
+  } catch {
+    return [];
+  }
+  const primaryName = path.basename(configuredFile);
+  const archivePrefix = `${primaryName}.`;
+  return names
+    .filter(
+      name =>
+        name === primaryName ||
+        (name.startsWith(archivePrefix) &&
+          (name.includes('.reset.') || name.includes('.bak.'))),
+    )
+    .map(name => path.join(sessionsDir, name));
+};
+
+export const collectToolInputsFromFiles = async (
+  filePaths: string[],
+  targetIds: Set<string>,
+): Promise<OpenClawToolInputLookup> => {
+  const found: OpenClawToolInputLookup = {};
+  const targetIdList = [...targetIds];
+  for (const filePath of filePaths) {
+    if (Object.keys(found).length >= targetIds.size) break;
+    let input: fs.ReadStream;
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      input = fs.createReadStream(filePath, { encoding: 'utf-8' });
     } catch {
       continue;
     }
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        files.push(fullPath);
+    try {
+      const lines = readline.createInterface({ input, crlfDelay: Infinity });
+      for await (const line of lines) {
+        if (!line.trim() || !targetIdList.some(id => line.includes(id))) continue;
+        try {
+          collectToolInputsFromValue(JSON.parse(line), targetIds, found);
+        } catch {
+          continue;
+        }
+        if (Object.keys(found).length >= targetIds.size) break;
       }
+    } catch {
+      input.destroy();
     }
   }
-  return files;
-};
-
-const normalizeSessionKey = (value: unknown): string => {
-  return typeof value === 'string' ? value.trim() : '';
+  return found;
 };
 
 const normalizeCursor = (value: unknown): string | undefined => {
@@ -138,41 +208,46 @@ const normalizeCursor = (value: unknown): string | undefined => {
   return cursor || undefined;
 };
 
+const normalizeHistoryPageLimit = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_HISTORY_PAGE_LIMIT;
+  return Math.max(1, Math.min(MAX_HISTORY_PAGE_LIMIT, Math.floor(value)));
+};
+
 export const fetchPagedHistoryFromGateway = async (params: {
   sessionKey: string;
   port: number;
   token?: string | null;
+  cursor?: string;
+  limit?: number;
   fetchImpl?: typeof fetch;
-}): Promise<unknown[]> => {
+}): Promise<{
+  messages: unknown[];
+  hasMore: boolean;
+  nextCursor?: string;
+}> => {
   const fetcher = params.fetchImpl ?? fetch;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (params.token) headers.Authorization = `Bearer ${params.token}`;
 
-  let cursor: string | undefined;
-  const seenCursors = new Set<string>();
-  let messages: unknown[] = [];
-  do {
-    const query = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
-    if (cursor) query.set('cursor', cursor);
-    const url = `http://127.0.0.1:${params.port}/sessions/${encodeURIComponent(
-      params.sessionKey,
-    )}/history?${query}`;
-    const response = await fetcher(url, { headers });
-    if (!response.ok) {
-      throw new OpenClawHistoryRestError(response.status);
-    }
-    const body = (await response.json()) as PagedHistoryPage;
-    const pageMessages = Array.isArray(body.messages) ? body.messages : [];
-    messages = cursor ? [...pageMessages, ...messages] : pageMessages;
-    cursor = body.hasMore === true ? normalizeCursor(body.nextCursor) : undefined;
-    if (cursor && seenCursors.has(cursor)) {
-      console.warn('[OpenClawHistory] repeated paged history cursor:', cursor);
-      break;
-    }
-    if (cursor) seenCursors.add(cursor);
-  } while (cursor);
-
-  return messages;
+  const cursor = normalizeCursor(params.cursor);
+  const query = new URLSearchParams({
+    limit: String(normalizeHistoryPageLimit(params.limit)),
+  });
+  if (cursor) query.set('cursor', cursor);
+  const url = `http://127.0.0.1:${params.port}/sessions/${encodeURIComponent(
+    params.sessionKey,
+  )}/history?${query}`;
+  const response = await fetcher(url, { headers });
+  if (!response.ok) {
+    throw new OpenClawHistoryRestError(response.status);
+  }
+  const body = (await response.json()) as PagedHistoryPage;
+  const nextCursor = body.hasMore === true ? normalizeCursor(body.nextCursor) : undefined;
+  return {
+    messages: Array.isArray(body.messages) ? body.messages : [],
+    hasMore: Boolean(nextCursor),
+    nextCursor,
+  };
 };
 
 export const registerOpenClawHistoryHandlers = (
@@ -190,29 +265,12 @@ export const registerOpenClawHistoryHandlers = (
           ? params.toolCallIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
           : [];
         if (toolCallIds.length === 0) return { success: true, inputs: {} };
+        const sessionKey = normalizeSessionKey(params?.sessionKey);
+        if (!sessionKey) return { success: false, error: 'Missing session key' };
 
         const targetIds = new Set(toolCallIds);
-        const found: OpenClawToolInputLookup = {};
-        const sessionFiles = collectSessionJsonlFiles(path.join(getStateDir(), 'agents'));
-
-        for (const filePath of sessionFiles) {
-          if (Object.keys(found).length >= targetIds.size) break;
-          let text: string;
-          try {
-            text = fs.readFileSync(filePath, 'utf-8');
-          } catch {
-            continue;
-          }
-          if (!toolCallIds.some(id => text.includes(id))) continue;
-          for (const line of text.split(/\r?\n/)) {
-            if (!line.trim() || !toolCallIds.some(id => line.includes(id))) continue;
-            try {
-              collectToolInputsFromValue(JSON.parse(line), targetIds, found);
-            } catch {
-              continue;
-            }
-          }
-        }
+        const sessionFiles = await resolveSessionTranscriptFiles(getStateDir(), sessionKey);
+        const found = await collectToolInputsFromFiles(sessionFiles, targetIds);
         return { success: true, inputs: found };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -224,7 +282,10 @@ export const registerOpenClawHistoryHandlers = (
 
   ipcMain.handle(
     OpenClawHistoryIpc.GetPagedHistory,
-    async (_event, params: { sessionKey?: unknown }): Promise<OpenClawPagedHistoryResult> => {
+    async (
+      _event,
+      params: Partial<OpenClawPagedHistoryParams>,
+    ): Promise<OpenClawPagedHistoryResult> => {
       try {
         const sessionKey = normalizeSessionKey(params?.sessionKey);
         if (!sessionKey) return { success: false, error: 'Missing session key' };
@@ -234,12 +295,14 @@ export const registerOpenClawHistoryHandlers = (
           return { success: false, error: 'Gateway port not available' };
         }
 
-        const messages = await fetchPagedHistoryFromGateway({
+        const page = await fetchPagedHistoryFromGateway({
           sessionKey,
           port,
           token: connection?.token ?? null,
+          cursor: normalizeCursor(params?.cursor),
+          limit: normalizeHistoryPageLimit(params?.limit),
         });
-        return { success: true, messages };
+        return { success: true, ...page };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!isHistoryRestNotFound(error)) {

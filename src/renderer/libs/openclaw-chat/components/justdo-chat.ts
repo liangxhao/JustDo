@@ -29,10 +29,13 @@ import {
   projectChatMinimapEntries,
 } from '@/libs/openclaw-chat/model/chat-minimap';
 import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
-import { coalesceAdjacentProcessSummaries } from '@/libs/openclaw-chat/model/coalesce-process-summaries';
 import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/optimistic-user-message';
 import { PersistedTimelineCache } from '@/libs/openclaw-chat/model/persisted-timeline-cache';
+import {
+  createProcessSummarySessionIdentity,
+  ProcessSummaryTakeoverTracker,
+} from '@/libs/openclaw-chat/model/process-summary-takeover';
 import {
   type PersistedTimelineItem,
   projectPersistedTimeline,
@@ -42,6 +45,10 @@ import {
   projectTurnItems,
 } from '@/libs/openclaw-chat/model/project-turn-items';
 import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
+import {
+  PersistedTimelineRenderCache,
+  projectIncrementalTimelineView,
+} from '@/libs/openclaw-chat/model/timeline-render-cache';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import type { ChatItem, GatewayMessage, MessageGroup } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
@@ -93,13 +100,23 @@ export class JustDoChatElement extends LitElement {
   @state()
   declare private hoveredMinimapKey: string | null;
 
-  private readonly chatScrollController = new ChatScrollController(() => this.requestUpdate());
+  private readonly chatScrollController = new ChatScrollController(
+    () => this.requestUpdate(),
+    () => void this._controller?.showOlderHistory(),
+    () => this._controller?.showNewerHistory() ?? false,
+  );
   private readonly streamRenderScheduler = new StreamRenderScheduler(() => this.requestUpdate());
   private readonly persistedTimelineCache = new PersistedTimelineCache();
+  private readonly persistedTimelineRenderCache = new PersistedTimelineRenderCache();
+  private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
+  private renderedOpenProcessSummaryKey: string | null = null;
+  private focusedProcessSummaryKeyBeforeRender: string | null = null;
+  private processSummarySessionIdentity: string | null = null;
   private lastSearchEnhancementKey = '';
   private lastMermaidEnhancementKey = '';
   private lastMinimapSyncKey = '';
-  private latestMinimapEntries: ChatMinimapEntry[] = [];
+  private latestMinimapPrefix: readonly ChatMinimapEntry[] = [];
+  private latestMinimapTail: ChatMinimapEntry | null = null;
   private minimapEntriesSignature = '';
   private minimapPreviewTop = 0;
   private mermaidScrollFrame: number | null = null;
@@ -1685,14 +1702,11 @@ export class JustDoChatElement extends LitElement {
   render(): TemplateResult {
     // Use controller state if available, otherwise use direct properties
     const ctrl = this._controller;
-    const persistedMessages = ctrl ? (ctrl.state.chatMessages as GatewayMessage[]) : this.messages;
+    const persistedMessages = ctrl
+      ? (ctrl.state.visibleChatMessages as GatewayMessage[])
+      : this.messages;
     const activeTurn = ctrl?.state.transcript.activeTurn ?? null;
     let messages = projectPersistedMessagesForActiveTurn(persistedMessages, activeTurn);
-    const thinkingMessages = ctrl ? ctrl.state.chatThinkingMessages : [];
-    const toolMessages = ctrl ? ctrl.state.chatToolMessages : [];
-    const streamSegments = ctrl ? ctrl.state.chatStreamSegments : [];
-    const stream = ctrl ? ctrl.state.chatStream : this.stream;
-    const thinkingStream = ctrl ? ctrl.state.chatThinkingStream : null;
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
 
     // Merge the optimistic prompt in turn order during session transitions.
@@ -1722,22 +1736,50 @@ export class JustDoChatElement extends LitElement {
     if (ctrl) {
       const historyTimeline = getHistoryTimeline();
       const activeTimeline = this.projectActiveTimeline();
-      const visibleTimeline = coalesceAdjacentProcessSummaries<
-        PersistedTimelineItem | ActiveTurnTimelineItem
-      >([...historyTimeline, ...activeTimeline]);
-      const visibleRows = prepareVisibleTimelineRows(visibleTimeline, {
+      const timelineView = projectIncrementalTimelineView({
+        persisted: this.persistedTimelineRenderCache.get(historyTimeline),
+        activeTimeline,
         suppressTrailingAssistantFooter: activeTurn !== null || isStreaming,
       });
-      const minimapEntries = projectChatMinimapEntries(visibleTimeline);
+      this.resolveOpenProcessSummaryKey(
+        [
+          ...timelineView.persistedRows.map(row => row.item),
+          ...(timelineView.seamRow ? [timelineView.seamRow.item] : []),
+          ...timelineView.activeRows.map(row => row.item),
+        ],
+        createProcessSummarySessionIdentity({
+          sessionKey: ctrl.state.sessionKey,
+          sessionId: ctrl.state.currentSessionId ?? ctrl.state.transcript.sessionId,
+          historyGeneration: ctrl.state.transcript.historyGeneration,
+        }),
+      );
       return html`
         <div class="chat-shell">
-          ${this.renderMinimap(minimapEntries)}
+          ${this.renderMinimap(
+            timelineView.minimapPrefix,
+            timelineView.minimapTail,
+            timelineView.minimapKeySignature,
+          )}
           <div class="chat-container" role="log" aria-busy=${activeTurn?.status === 'running'}>
             <div class="sr-only" role="status" aria-live="polite">
               ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
             </div>
             ${repeat(
-              visibleRows,
+              timelineView.persistedRows,
+              row => row.item.key,
+              row => this.renderVisibleTimelineItem(row.item, row.showAvatar, row.showFooter),
+            )}
+            ${
+              timelineView.seamRow
+                ? this.renderVisibleTimelineItem(
+                    timelineView.seamRow.item,
+                    timelineView.seamRow.showAvatar,
+                    timelineView.seamRow.showFooter,
+                  )
+                : nothing
+            }
+            ${repeat(
+              timelineView.activeRows,
               row => row.item.key,
               row => this.renderVisibleTimelineItem(row.item, row.showAvatar, row.showFooter),
             )}
@@ -1764,6 +1806,7 @@ export class JustDoChatElement extends LitElement {
                       data-jump-to-latest
                       aria-label=${i18nService.t('coworkJumpToLatest')}
                       title=${i18nService.t('coworkJumpToLatest')}
+                      @click=${() => this._controller?.showLatestHistory()}
                     >
                       <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M6 9l6 6 6-6"></path>
@@ -1777,10 +1820,21 @@ export class JustDoChatElement extends LitElement {
       `;
     }
 
+    // Direct-property mode remains for standalone consumers without a controller.
+    const thinkingMessages: unknown[] = [];
+    const toolMessages: unknown[] = [];
+    const streamSegments: Array<{ text: string; ts: number }> = [];
+    const stream = this.stream;
+    const thinkingStream = null;
+
     if (!isStreaming && !stream) {
       const historyTimeline = getHistoryTimeline();
       const visibleRows = prepareVisibleTimelineRows(historyTimeline);
       const minimapEntries = projectChatMinimapEntries(historyTimeline);
+      this.resolveOpenProcessSummaryKey(
+        visibleRows.map(row => row.item),
+        'direct',
+      );
       return html`
         <div class="chat-shell">
           ${this.renderMinimap(minimapEntries)}
@@ -1857,6 +1911,10 @@ export class JustDoChatElement extends LitElement {
     this.chatScrollController.disconnect();
     this.streamRenderScheduler.dispose();
     this.persistedTimelineCache.clear();
+    this.persistedTimelineRenderCache.clear();
+    this.processSummaryTakeoverTracker.clear();
+    this.processSummarySessionIdentity = null;
+    this.renderedOpenProcessSummaryKey = null;
     this.renderRoot?.removeEventListener('click', this.handleMarkdownClick);
     this.renderRoot?.removeEventListener('keydown', this.handleTimelineKeyDown);
     this.removeEventListener('scroll', this.handleMermaidVisibilityScroll);
@@ -1872,10 +1930,31 @@ export class JustDoChatElement extends LitElement {
   }
 
   protected willUpdate(): void {
+    this.focusedProcessSummaryKeyBeforeRender =
+      this.renderRoot
+        ?.querySelector<HTMLElement>('[data-process-summary-key]:focus')
+        ?.dataset.processSummaryKey ?? null;
     this.chatScrollController.beforeRender();
   }
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
+    if (this.openProcessSummaryKey !== this.renderedOpenProcessSummaryKey) {
+      const nextOpenKey = this.renderedOpenProcessSummaryKey;
+      const shouldRestoreFocus =
+        this.focusedProcessSummaryKeyBeforeRender === this.openProcessSummaryKey &&
+        nextOpenKey !== null;
+      this.openProcessSummaryKey = nextOpenKey;
+      if (shouldRestoreFocus) {
+        void this.updateComplete.then(() => {
+          this.shadowRoot
+            ?.querySelector<HTMLElement>(
+              `[data-process-summary-key="${CSS.escape(nextOpenKey)}"]`,
+            )
+            ?.focus();
+        });
+      }
+    }
+    this.focusedProcessSummaryKeyBeforeRender = null;
     const transcriptRevision =
       this._controller?.state.transcript.revision ??
       this.messages.length + (this.stream?.length ?? 0);
@@ -1900,7 +1979,7 @@ export class JustDoChatElement extends LitElement {
       this.lastMermaidEnhancementKey = mermaidEnhancementKey;
       requestAnimationFrame(() => void this.renderMermaidDiagrams());
     }
-    const minimapSyncKey = `${transcriptRevision}:${this.minimapEntriesSignature}`;
+    const minimapSyncKey = `${this.persistedTimelineCache.revision}:${this.persistedTimelineRenderCache.revision}:${this.minimapEntriesSignature}`;
     if (minimapSyncKey !== this.lastMinimapSyncKey) {
       this.lastMinimapSyncKey = minimapSyncKey;
       requestAnimationFrame(() => this.updateCurrentMinimapEntry());
@@ -1920,13 +1999,30 @@ export class JustDoChatElement extends LitElement {
     }
   }
 
+  private resolveOpenProcessSummaryKey(
+    items: ReadonlyArray<PersistedTimelineItem | ActiveTurnTimelineItem>,
+    sessionIdentity: string,
+  ): void {
+    if (this.processSummarySessionIdentity !== sessionIdentity) {
+      this.processSummaryTakeoverTracker.clear();
+      this.processSummarySessionIdentity = sessionIdentity;
+      this.renderedOpenProcessSummaryKey = null;
+      return;
+    }
+    this.renderedOpenProcessSummaryKey = this.processSummaryTakeoverTracker.resolve(
+      this.openProcessSummaryKey,
+      items,
+    );
+  }
+
   private readonly handleMarkdownClick = (event: Event): void => {
     const element = event.composedPath().find(node => node instanceof HTMLElement) as
       HTMLElement | undefined;
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
     if (summaryButton) {
       const summaryKey = summaryButton.dataset.processSummaryKey ?? null;
-      this.openProcessSummaryKey = this.openProcessSummaryKey === summaryKey ? null : summaryKey;
+      this.openProcessSummaryKey =
+        this.renderedOpenProcessSummaryKey === summaryKey ? null : summaryKey;
       return;
     }
     if (element?.closest('[data-jump-to-latest]')) {
@@ -2190,7 +2286,7 @@ export class JustDoChatElement extends LitElement {
         messages: msgs,
         toolMessages: toolMessages ?? [],
         stream: stream ?? this.stream,
-        streamStartedAt: this._controller?.state.chatStreamStartedAt ?? this.streamStartedAt,
+        streamStartedAt: this.streamStartedAt,
         streamSegments: streamSegments ?? [],
         queue: [],
         showToolCalls: true,
@@ -2257,17 +2353,27 @@ export class JustDoChatElement extends LitElement {
     return renderTimelineItem(
       item,
       Date.now(),
-      item.kind === 'process-summary' && this.openProcessSummaryKey === item.key,
+      item.kind === 'process-summary' && this.renderedOpenProcessSummaryKey === item.key,
       showAvatar,
     );
   }
 
-  private renderMinimap(entries: ChatMinimapEntry[]): TemplateResult | typeof nothing {
-    this.latestMinimapEntries = entries;
-    this.minimapEntriesSignature = entries.map(entry => entry.key).join('|');
-    if (entries.length < MINIMAP_VISIBLE_ENTRY_THRESHOLD) return nothing;
+  private renderMinimap(
+    entries: readonly ChatMinimapEntry[],
+    tail: ChatMinimapEntry | null = null,
+    keySignature?: string,
+  ): TemplateResult | typeof nothing {
+    this.latestMinimapPrefix = entries;
+    this.latestMinimapTail = tail;
+    this.minimapEntriesSignature =
+      keySignature ??
+      [...entries.map(entry => entry.key), ...(tail ? [tail.key] : [])].join('|');
+    if (entries.length + (tail ? 1 : 0) < MINIMAP_VISIBLE_ENTRY_THRESHOLD) return nothing;
 
-    const hoveredEntry = entries.find(entry => entry.key === this.hoveredMinimapKey) ?? null;
+    const hoveredEntry =
+      (tail?.key === this.hoveredMinimapKey ? tail : null) ??
+      entries.find(entry => entry.key === this.hoveredMinimapKey) ??
+      null;
     return html`
       <nav
         class="chat-minimap"
@@ -2280,34 +2386,9 @@ export class JustDoChatElement extends LitElement {
           ${repeat(
             entries,
             entry => entry.key,
-            entry => {
-              const active = entry.key === this.currentMinimapKey;
-              const lineWidth = Math.min(
-                12,
-                5 + Math.ceil((entry.userText.length + entry.assistantText.length) / 64),
-              );
-              return html`
-                <button
-                  type="button"
-                  class=${`chat-minimap__item${active ? ' chat-minimap__item--active' : ''}`}
-                  aria-current=${active ? 'true' : nothing}
-                  aria-label=${entry.userText || i18nService.t('coworkMinimapUserMessage')}
-                  @click=${() => this.scrollToMinimapEntry(entry)}
-                  @mouseenter=${(event: MouseEvent) => this.showMinimapPreview(entry, event)}
-                  @focus=${(event: FocusEvent) => this.showMinimapPreview(entry, event)}
-                  @blur=${() => {
-                    this.hoveredMinimapKey = null;
-                  }}
-                >
-                  <span
-                    class="chat-minimap__line"
-                    style=${`--minimap-line-width: ${lineWidth}px`}
-                    aria-hidden="true"
-                  ></span>
-                </button>
-              `;
-            },
+            entry => this.renderMinimapEntry(entry),
           )}
+          ${tail ? this.renderMinimapEntry(tail) : nothing}
         </div>
         ${
           hoveredEntry
@@ -2337,10 +2418,52 @@ export class JustDoChatElement extends LitElement {
     `;
   }
 
+  private renderMinimapEntry(entry: ChatMinimapEntry): TemplateResult {
+    const active = entry.key === this.currentMinimapKey;
+    const lineWidth = Math.min(
+      12,
+      5 + Math.ceil((entry.userText.length + entry.assistantText.length) / 64),
+    );
+    return html`
+      <button
+        type="button"
+        class=${`chat-minimap__item${active ? ' chat-minimap__item--active' : ''}`}
+        aria-current=${active ? 'true' : nothing}
+        aria-label=${entry.userText || i18nService.t('coworkMinimapUserMessage')}
+        @click=${() => this.scrollToMinimapEntry(entry)}
+        @mouseenter=${(event: MouseEvent) => this.showMinimapPreview(entry, event)}
+        @focus=${(event: FocusEvent) => this.showMinimapPreview(entry, event)}
+        @blur=${() => {
+          this.hoveredMinimapKey = null;
+        }}
+      >
+        <span
+          class="chat-minimap__line"
+          style=${`--minimap-line-width: ${lineWidth}px`}
+          aria-hidden="true"
+        ></span>
+      </button>
+    `;
+  }
+
+  private minimapEntryCount(): number {
+    return this.latestMinimapPrefix.length + (this.latestMinimapTail ? 1 : 0);
+  }
+
+  private minimapEntryAt(index: number): ChatMinimapEntry | null {
+    if (index < this.latestMinimapPrefix.length) {
+      return this.latestMinimapPrefix[index] ?? null;
+    }
+    return index === this.latestMinimapPrefix.length ? this.latestMinimapTail : null;
+  }
+
   private scrollToMinimapEntry(entry: ChatMinimapEntry): void {
-    const entryIndex = this.latestMinimapEntries.findIndex(
+    let entryIndex = this.latestMinimapPrefix.findIndex(
       candidate => candidate.key === entry.key,
     );
+    if (entryIndex < 0 && this.latestMinimapTail?.key === entry.key) {
+      entryIndex = this.latestMinimapPrefix.length;
+    }
     const target = this.resolveMinimapAnchor(entry, entryIndex);
     if (!target) return;
 
@@ -2357,23 +2480,25 @@ export class JustDoChatElement extends LitElement {
   };
 
   private updateCurrentMinimapEntry(): void {
-    const entries = this.latestMinimapEntries;
-    if (entries.length < MINIMAP_VISIBLE_ENTRY_THRESHOLD) {
+    const entryCount = this.minimapEntryCount();
+    if (entryCount < MINIMAP_VISIBLE_ENTRY_THRESHOLD) {
       if (this.currentMinimapKey !== null) this.currentMinimapKey = null;
       return;
     }
 
     const hostRect = this.getBoundingClientRect();
     const activationTop = hostRect.top + Math.min(120, Math.max(48, this.clientHeight * 0.18));
-    let current = entries[0] ?? null;
-    for (const [index, entry] of entries.entries()) {
+    let current = this.minimapEntryAt(0);
+    for (let index = 0; index < entryCount; index += 1) {
+      const entry = this.minimapEntryAt(index);
+      if (!entry) continue;
       const anchor = this.resolveMinimapAnchor(entry, index);
       if (!anchor) continue;
       if (anchor.getBoundingClientRect().top <= activationTop) current = entry;
       else break;
     }
     if (this.scrollHeight - this.scrollTop - this.clientHeight <= 1) {
-      current = entries[entries.length - 1] ?? current;
+      current = this.minimapEntryAt(entryCount - 1) ?? current;
     }
     const nextKey = current?.key ?? null;
     if (nextKey !== this.currentMinimapKey) this.currentMinimapKey = nextKey;

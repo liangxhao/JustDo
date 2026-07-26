@@ -229,6 +229,34 @@ describe('projectPersistedTimeline', () => {
     });
   });
 
+  test('preserves an authoritative run ID for live-to-history summary correlation', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-shared',
+        content: [
+          { type: 'thinking', thinking: 'working' },
+          { type: 'toolCall', id: 'call-1', name: 'Read', arguments: {} },
+        ],
+      },
+    ]);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        kind: 'process-summary',
+        runId: 'run-shared',
+        items: [
+          expect.objectContaining({ type: 'thinking', runId: 'run-shared' }),
+          expect.objectContaining({
+            type: 'tool',
+            runId: 'run-shared',
+            toolCallId: 'call-1',
+          }),
+        ],
+      }),
+    ]);
+  });
+
   test('merges attached Tool call and empty result compatibility messages', () => {
     const result = projectPersistedTimeline([
       {

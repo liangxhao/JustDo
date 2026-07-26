@@ -1,4 +1,9 @@
 import type { NormalizedAgentEvent, NormalizedChatEvent } from '@shared/openclaw/agentEvent';
+import {
+  classifyAgentEvent,
+  classifyChatEvent,
+  normalizeToolEvent,
+} from '@shared/openclaw/messageDomain';
 
 import {
   type AssistantTurn,
@@ -16,13 +21,6 @@ import {
   type TurnItem,
   type TurnStatus,
 } from './chat-transcript-state';
-import {
-  readToolCallId,
-  readToolError,
-  readToolInput,
-  readToolName,
-  readToolOutput,
-} from './tool-message-adapter';
 
 export type TranscriptReduceResult =
   'applied' | 'ignored-session' | 'ignored-run' | 'ignored-sequence' | 'ignored-stream';
@@ -139,42 +137,25 @@ function reduceContent(
   turn.items.push(item);
 }
 
-function toolStatus(phase: string, failed: boolean): ToolItem['status'] {
-  if (failed) return 'failed';
-  if (phase === 'cancelled' || phase === 'canceled' || phase === 'aborted') return 'cancelled';
-  if (
-    phase === 'result' ||
-    phase === 'end' ||
-    phase === 'complete' ||
-    phase === 'completed' ||
-    phase === 'done'
-  ) {
-    return 'completed';
-  }
-  return 'running';
-}
-
 function reduceTool(
   turn: AssistantTurn,
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
 ): boolean {
-  const toolCallId = readToolCallId(event.data);
+  const normalized = normalizeToolEvent(event.data);
+  const toolCallId = normalized.toolCallId;
   if (!toolCallId) return false;
-  const phase = typeof event.data.phase === 'string' ? event.data.phase.trim().toLowerCase() : '';
   const existing = turn.toolById.get(toolCallId);
-  const name = readToolName(event.data, existing?.name ?? 'tool');
-  const input = readToolInput(event.data);
-  const output = readToolOutput(event.data);
-  const error = readToolError(event.data, output);
-  const status = toolStatus(phase, error.failed);
+  const resolved = normalizeToolEvent(event.data, existing?.name ?? 'tool');
 
   if (existing) {
-    existing.name = name;
-    if (input !== undefined && input !== null) existing.input = input;
-    if (output !== null) existing.output = boundOutput(output);
-    if (error.message !== null) existing.error = boundOutput(error.message);
-    existing.status = status;
+    existing.name = resolved.name;
+    if (resolved.input !== undefined && resolved.input !== null) existing.input = resolved.input;
+    if (resolved.output !== null) existing.output = boundOutput(resolved.output);
+    if (resolved.error !== null) existing.error = boundOutput(resolved.error);
+    if (existing.status === 'running' || resolved.status !== 'running') {
+      existing.status = resolved.status;
+    }
     existing.lastSeq = event.agentSeq;
     existing.updatedAt = event.timestamp;
     return true;
@@ -191,12 +172,14 @@ function reduceTool(
   const item: ToolItem = {
     ...createBase(turn, event, dependencies, 'tool'),
     type: 'tool',
-    status,
+    status: normalized.status,
     toolCallId,
-    name,
-    ...(input !== undefined && input !== null ? { input } : {}),
-    ...(output !== null ? { output: boundOutput(output) } : {}),
-    ...(error.message !== null ? { error: boundOutput(error.message) } : {}),
+    name: normalized.name,
+    ...(normalized.input !== undefined && normalized.input !== null
+      ? { input: normalized.input }
+      : {}),
+    ...(normalized.output !== null ? { output: boundOutput(normalized.output) } : {}),
+    ...(normalized.error !== null ? { error: boundOutput(normalized.error) } : {}),
   };
   turn.items.push(item);
   turn.toolById.set(toolCallId, item);
@@ -210,40 +193,41 @@ function admitTurn(
 ): AssistantTurn | null {
   pruneRecentRuns(state, dependencies.now());
   const tombstone = state.recentRuns.get(event.runId);
-  if (tombstone?.terminalStatus) return null;
-
   const active = state.activeTurn;
-  if (active) {
-    if (active.runId === event.runId) return active;
-    if (active.status !== 'running') {
-      return beginAssistantTurn(
-        state,
-        {
-          runId: event.runId,
-          sessionId: event.sessionId,
-          lifecycleGeneration: event.lifecycleGeneration,
-          startedAt: event.timestamp,
-        },
-        dependencies,
-      );
-    }
-    if (active.runId.startsWith('justdo-')) {
-      bindAssistantTurnRunId(state, active.runId, event.runId);
-      return state.activeTurn;
-    }
+  const admission = classifyAgentEvent({
+    selected: state,
+    activeRun: active,
+    event,
+    terminalRun: Boolean(tombstone?.terminalStatus),
+  });
+  if (
+    admission === 'ignored-session' ||
+    admission === 'ignored-run' ||
+    admission === 'ignored-sequence' ||
+    admission === 'ignored-terminal'
+  ) {
     return null;
   }
-  if (event.spawnedBy) return null;
-  return beginAssistantTurn(
-    state,
-    {
-      runId: event.runId,
-      sessionId: event.sessionId,
-      lifecycleGeneration: event.lifecycleGeneration,
-      startedAt: event.timestamp,
-    },
-    dependencies,
-  );
+  if (admission === 'bind-provisional-run' && active) {
+    bindAssistantTurnRunId(state, active.runId, event.runId);
+  } else if (admission === 'start-run') {
+    return beginAssistantTurn(
+      state,
+      {
+        runId: event.runId,
+        sessionId: event.sessionId,
+        lifecycleGeneration: event.lifecycleGeneration,
+        startedAt: event.timestamp,
+      },
+      dependencies,
+    );
+  }
+  const admitted = state.activeTurn;
+  if (admitted && !admitted.sessionId && event.sessionId) admitted.sessionId = event.sessionId;
+  if (admitted && !admitted.lifecycleGeneration && event.lifecycleGeneration) {
+    admitted.lifecycleGeneration = event.lifecycleGeneration;
+  }
+  return admitted;
 }
 
 export function reduceAgentEvent(
@@ -252,6 +236,16 @@ export function reduceAgentEvent(
   dependencies: TranscriptReducerDependencies,
 ): TranscriptReduceResult {
   if (!eventMatchesTranscriptSession(state, event)) return 'ignored-session';
+  const previousTurn = state.activeTurn;
+  const admission = classifyAgentEvent({
+    selected: state,
+    activeRun: previousTurn,
+    event,
+    terminalRun: Boolean(state.recentRuns.get(event.runId)?.terminalStatus),
+  });
+  if (admission === 'ignored-session') return 'ignored-session';
+  if (admission === 'ignored-sequence') return 'ignored-sequence';
+  if (admission === 'ignored-run' || admission === 'ignored-terminal') return 'ignored-run';
   const turn = admitTurn(state, event, dependencies);
   if (!turn) return 'ignored-run';
   if (turn.sessionId && event.sessionId && turn.sessionId !== event.sessionId) {
@@ -264,8 +258,6 @@ export function reduceAgentEvent(
   ) {
     return 'ignored-run';
   }
-  if (event.agentSeq <= turn.lastAgentSeq) return 'ignored-sequence';
-
   let applied = true;
   if (event.stream === 'thinking') {
     reduceThinking(turn, event, dependencies);
@@ -325,9 +317,14 @@ export function reduceChatEvent(
   event: NormalizedChatEvent,
   dependencies: TranscriptReducerDependencies,
 ): TranscriptReduceResult {
-  if (event.sessionKey !== state.sessionKey) return 'ignored-session';
+  const admission = classifyChatEvent({
+    selected: state,
+    activeRun: state.activeTurn,
+    event,
+  });
+  if (admission === 'ignored-session') return 'ignored-session';
   let turn = state.activeTurn;
-  if (!turn && event.runId && event.state === 'delta') {
+  if (admission === 'start-run' && event.runId) {
     turn = beginAssistantTurn(
       state,
       {
@@ -339,10 +336,11 @@ export function reduceChatEvent(
     );
   }
   if (!turn) return 'ignored-run';
-  if (event.runId && turn.runId !== event.runId) {
+  if (admission === 'bind-provisional-run' && event.runId) {
     if (!bindAssistantTurnRunId(state, turn.runId, event.runId)) return 'ignored-run';
     turn = state.activeTurn;
   }
+  if (admission === 'ignored-run') return 'ignored-run';
   if (!turn) return 'ignored-run';
   if (event.sessionId && turn.sessionId && event.sessionId !== turn.sessionId) {
     return 'ignored-session';

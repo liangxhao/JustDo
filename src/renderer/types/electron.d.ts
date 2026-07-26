@@ -496,9 +496,15 @@ interface IElectronAPI {
         inputs?: Record<string, { name?: string; input: unknown }>;
         error?: string;
       }>;
-      getPagedHistory: (params: { sessionKey: string }) => Promise<{
+      getPagedHistory: (params: {
+        sessionKey: string;
+        cursor?: string;
+        limit?: number;
+      }) => Promise<{
         success: boolean;
         messages?: unknown[];
+        hasMore?: boolean;
+        nextCursor?: string;
         error?: string;
       }>;
     };

@@ -1,4 +1,5 @@
 import type { NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
+import { messageSessionMatches, normalizeMessageSessionKey } from '@shared/openclaw/messageDomain';
 
 export type TurnStatus = 'running' | 'final' | 'aborted' | 'error';
 export type ProcessStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
@@ -165,10 +166,7 @@ export function eventMatchesTranscriptSession(
   state: ChatTranscriptState,
   event: Pick<NormalizedAgentEvent, 'sessionKey' | 'sessionId'>,
 ): boolean {
-  if (event.sessionId && state.sessionId && event.sessionId !== state.sessionId) return false;
-  if (!event.sessionKey) return true;
-  return normalizeTranscriptSessionKey(event.sessionKey) ===
-    normalizeTranscriptSessionKey(state.sessionKey);
+  return messageSessionMatches(state, event);
 }
 
 /**
@@ -177,9 +175,7 @@ export function eventMatchesTranscriptSession(
  * relationship is an alias.
  */
 export function normalizeTranscriptSessionKey(sessionKey: string): string {
-  const trimmed = sessionKey.trim();
-  const managed = /^(?:agent:[^:]+:)?justdo:([^:]+)$/.exec(trimmed);
-  return managed ? `justdo:${managed[1]}` : trimmed;
+  return normalizeMessageSessionKey(sessionKey);
 }
 
 export function pruneRecentRuns(state: ChatTranscriptState, now: number): void {

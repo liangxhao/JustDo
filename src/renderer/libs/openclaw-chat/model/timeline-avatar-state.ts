@@ -9,6 +9,11 @@ export interface VisibleTimelineRow {
   showFooter: boolean;
 }
 
+export interface TimelineRowProjectionOptions {
+  initialAssistantTurnOpen?: boolean;
+  suppressTrailingAssistantFooter?: boolean;
+}
+
 function historyMessageRole(item: Extract<PersistedTimelineItem, { kind: 'history-message' }>) {
   const outer = item.message as Record<string, unknown>;
   const nested =
@@ -24,9 +29,9 @@ function historyMessageRole(item: Extract<PersistedTimelineItem, { kind: 'histor
  */
 export function prepareVisibleTimelineRows(
   items: readonly VisibleTimelineItem[],
-  options?: { suppressTrailingAssistantFooter?: boolean },
+  options?: TimelineRowProjectionOptions,
 ) {
-  let assistantTurnOpen = false;
+  let assistantTurnOpen = options?.initialAssistantTurnOpen ?? false;
   const rows = items.map<VisibleTimelineRow>(item => {
     if (item.kind !== 'history-message') {
       const showAvatar = !assistantTurnOpen;

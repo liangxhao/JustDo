@@ -56,6 +56,34 @@ function timestampOf(outer: Record<string, unknown>, message: Record<string, unk
   return 0;
 }
 
+function runIdOf(
+  outer: Record<string, unknown>,
+  message: Record<string, unknown>,
+  fallback: string,
+): string {
+  const outerMetadata =
+    outer.metadata && typeof outer.metadata === 'object' && !Array.isArray(outer.metadata)
+      ? (outer.metadata as Record<string, unknown>)
+      : null;
+  const messageMetadata =
+    message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
+      ? (message.metadata as Record<string, unknown>)
+      : null;
+  for (const value of [
+    message.runId,
+    message.run_id,
+    messageMetadata?.runId,
+    messageMetadata?.run_id,
+    outer.runId,
+    outer.run_id,
+    outerMetadata?.runId,
+    outerMetadata?.run_id,
+  ]) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return fallback;
+}
+
 function visibleMessageWithContent(
   outer: GatewayMessage,
   message: Record<string, unknown>,
@@ -233,6 +261,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
     const message = unwrapToolMessage(outerMessage);
     if (!message) return;
     const messageKey = deterministicHistoryKey(outerMessage, messageIndex);
+    const runId = runIdOf(outer, message, messageKey);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
     const attachments = [
@@ -241,7 +270,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
     ];
 
     if (TOOL_RESULT_ROLES.has(role) || TOOL_CALL_ROLES.has(role)) {
-      applyToolOnlyMessage(message, `${messageKey}:tool`, messageKey, messageIndex, timestamp);
+      applyToolOnlyMessage(message, `${messageKey}:tool`, runId, messageIndex, timestamp);
       return;
     }
 
@@ -257,7 +286,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
         applyToolOnlyMessage(
           attached,
           `${messageKey}:attached:${index}`,
-          messageKey,
+          runId,
           messageIndex + index,
           timestamp,
         );
@@ -288,7 +317,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
         flushVisibleBlocks();
         archived.push({
           id: itemId,
-          runId: messageKey,
+          runId,
           firstSeq: blockIndex,
           lastSeq: blockIndex,
           startedAt: timestamp,
@@ -301,12 +330,12 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
       }
       if (isToolCallRecord(toolSource)) {
         flushVisibleBlocks();
-        applyToolCall(toolSource, itemId, messageKey, blockIndex, timestamp);
+        applyToolCall(toolSource, itemId, runId, blockIndex, timestamp);
         return;
       }
       if (isToolResultType(type)) {
         flushVisibleBlocks();
-        applyToolResult(toolSource, itemId, messageKey, blockIndex, timestamp);
+        applyToolResult(toolSource, itemId, runId, blockIndex, timestamp);
         return;
       }
 
@@ -320,7 +349,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
       applyToolOnlyMessage(
         attached,
         `${messageKey}:attached:${index}`,
-        messageKey,
+        runId,
         content.length + index,
         timestamp,
       );

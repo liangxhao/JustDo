@@ -43,6 +43,33 @@ describe('ChatScrollController', () => {
     expect(target.scrollTop).toBe(1000);
   });
 
+  test('requests an older page when the user scrolls near the top', () => {
+    const target = host();
+    const loadOlder = vi.fn();
+    const controller = new ChatScrollController(vi.fn(), loadOlder);
+    controller.connect(target as unknown as HTMLElement);
+
+    target.scrollTop = 120;
+    target.emitScroll();
+
+    expect(loadOlder).toHaveBeenCalledOnce();
+  });
+
+  test('keeps paused mode while a logical newer window replaces the rendered bottom', () => {
+    const target = host();
+    const showNewer = vi.fn().mockReturnValue(true);
+    const controller = new ChatScrollController(vi.fn(), undefined, showNewer);
+    controller.connect(target as unknown as HTMLElement);
+
+    target.scrollTop = 500;
+    target.emitScroll();
+    target.scrollTop = 700;
+    target.emitScroll();
+
+    expect(showNewer).toHaveBeenCalled();
+    expect(controller.state.mode).toBe('paused');
+  });
+
   test('preserves a paused anchor across asynchronous content height changes', () => {
     let resize: (() => void) | null = null;
     vi.stubGlobal(

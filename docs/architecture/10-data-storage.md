@@ -144,6 +144,11 @@ erDiagram
 ## 权威边界
 
 SQLite 不是 OpenClaw execution history 的权威。Gateway `chat.history` 是消息事实来源，SQLite 的 `cowork_messages` 是 UI cache，用于列表、搜索、快速恢复和展示。
+打开会话后，Main 已加载到 Redux 的 `cowork_messages` snapshot 会由
+`JustDoChatWrapper` 转换并作为 `sqlite-fallback` 注入 `ChatController`，用于
+Gateway history 返回前的快速首屏及请求失败时的降级展示。Controller 不直接访问
+SQLite；Gateway 成功历史始终升级为更高 authority，缓存快照不能覆盖 Gateway
+状态，也不能清除正在运行的 canonical live turn。
 
 ## 迁移规则
 

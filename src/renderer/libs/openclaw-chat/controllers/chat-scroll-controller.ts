@@ -1,6 +1,7 @@
 export type ChatScrollMode = 'follow' | 'paused';
 
 export class ChatScrollController {
+  private static readonly LOAD_OLDER_THRESHOLD_PX = 160;
   private host: HTMLElement | null = null;
   private mode: ChatScrollMode = 'follow';
   private programmatic = false;
@@ -11,7 +12,11 @@ export class ChatScrollController {
   private observedContent: Element | null = null;
   private pausedAnchors: Array<{ element: HTMLElement; offset: number }> = [];
 
-  constructor(private readonly onStateChange: () => void) {}
+  constructor(
+    private readonly onStateChange: () => void,
+    private readonly onNearTop?: () => void,
+    private readonly onNearBottom?: () => boolean,
+  ) {}
 
   get state(): { mode: ChatScrollMode; unseenRevisions: number } {
     return { mode: this.mode, unseenRevisions: this.unseenRevisions };
@@ -86,6 +91,11 @@ export class ChatScrollController {
     const host = this.host;
     if (!host || this.programmatic) return;
     const distance = host.scrollHeight - host.scrollTop - host.clientHeight;
+    if (distance <= ChatScrollController.LOAD_OLDER_THRESHOLD_PX && this.onNearBottom?.()) {
+      this.mode = 'paused';
+      this.pausedAnchors = this.captureVisibleAnchors(host);
+      return;
+    }
     const nextMode: ChatScrollMode = distance <= 0.5 ? 'follow' : 'paused';
     if (nextMode !== this.mode) {
       this.mode = nextMode;
@@ -93,6 +103,9 @@ export class ChatScrollController {
       this.onStateChange();
     }
     if (this.mode === 'paused') this.pausedAnchors = this.captureVisibleAnchors(host);
+    if (host.scrollTop <= ChatScrollController.LOAD_OLDER_THRESHOLD_PX) {
+      this.onNearTop?.();
+    }
   };
 
   private handleResize(): void {

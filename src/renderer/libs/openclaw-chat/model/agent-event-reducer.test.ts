@@ -230,6 +230,31 @@ describe('agent event reducer', () => {
     expect(state.activeTurn?.runId).toBe('run-1');
   });
 
+  test('backfills compatible session identity when joining a run mid-stream', () => {
+    const state = createChatTranscriptState('session-1');
+    reduceAgentEvent(
+      state,
+      agent(
+        1,
+        'thinking',
+        { text: 'attached' },
+        {
+          sessionId: null,
+          lifecycleGeneration: null,
+        },
+      ),
+      dependencies,
+    );
+
+    expect(reduceAgentEvent(state, agent(2, 'assistant', { text: 'bound' }), dependencies)).toBe(
+      'applied',
+    );
+    expect(state.activeTurn).toMatchObject({
+      sessionId: 'sid-1',
+      lifecycleGeneration: 'life-1',
+    });
+  });
+
   test('admits a new operator run after an interrupted run is tombstoned', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     reduceAgentEvent(state, agent(1, 'thinking', { text: 'partial' }), dependencies);

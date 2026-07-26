@@ -18,6 +18,7 @@ import {
 } from '@/features/cowork/components/goalRunProgress';
 import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
+import { coworkMessagesToGateway } from '@/libs/openclaw-chat/conversion/cowork-to-gateway';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 
 const DEBUG_CHAT_WRAPPER =
@@ -70,6 +71,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     ref,
   ) => {
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
+    const currentSessionId = currentSession?.id;
+    const currentSessionAgentId = currentSession?.agentId;
+    const currentSessionMessages = currentSession?.messages;
     const initialSessionRef = useRef(currentSession);
     const controllerRef = useRef<ChatController | null>(null);
     const [controller, setController] = useState<ChatController | null>(null);
@@ -94,7 +98,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         getExportSnapshot: () => {
           const controller = controllerRef.current;
           return {
-            messages: controller ? [...controller.state.chatMessages] : [],
+            messages: controller ? [...controller.getLoadedMessages()] : [],
             runtimeSessionId: controller?.state.currentSessionId ?? null,
             isLoading: !controller?.state.connected || controller.state.chatLoading,
           };
@@ -157,7 +161,12 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       const initialSession = initialSessionRef.current;
       if (initialSession) {
         const agentId = initialSession.agentId?.trim() || 'main';
-        controller.state.sessionKey = `agent:${agentId}:justdo:${initialSession.id}`;
+        const sessionKey = `agent:${agentId}:justdo:${initialSession.id}`;
+        controller.state.sessionKey = sessionKey;
+        controller.admitFallbackHistory(
+          sessionKey,
+          coworkMessagesToGateway(initialSession.messages),
+        );
       }
 
       // Cancellation flag: React StrictMode double-fires mount effects.
@@ -208,20 +217,35 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     // Handle session switching
     useEffect(() => {
       const controller = controllerRef.current;
-      if (!controller || !currentSession) return;
+      if (!controller || !currentSessionId || !currentSessionMessages) return;
 
       // Build the gateway session key (same format as openclawChannelSessionSync)
-      const agentId = currentSession.agentId?.trim() || 'main';
-      const sessionKey = `agent:${agentId}:justdo:${currentSession.id}`;
+      const agentId = currentSessionAgentId?.trim() || 'main';
+      const sessionKey = `agent:${agentId}:justdo:${currentSessionId}`;
 
-      if (connectedRef.current) {
-        controller.switchSession(sessionKey);
-      } else {
+      if (controller.state.sessionKey !== sessionKey) {
+        controller.admitFallbackHistory(
+          sessionKey,
+          coworkMessagesToGateway(currentSessionMessages),
+        );
+      }
+
+      if (connectedRef.current && controller.state.sessionKey !== sessionKey) {
+        void controller.switchSession(sessionKey);
+      } else if (!connectedRef.current && controller.state.sessionKey !== sessionKey) {
         // Not yet connected — set sessionKey so connect() picks it up
         controller.state.sessionKey = sessionKey;
+        controller.admitFallbackHistory(
+          sessionKey,
+          coworkMessagesToGateway(currentSessionMessages),
+        );
+      } else if (controller.state.transcript.historySource !== 'gateway') {
+        controller.admitFallbackHistory(
+          sessionKey,
+          coworkMessagesToGateway(currentSessionMessages),
+        );
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentSession?.id, currentSession?.agentId]);
+    }, [currentSessionAgentId, currentSessionId, currentSessionMessages]);
 
     if (connectionError) {
       return (

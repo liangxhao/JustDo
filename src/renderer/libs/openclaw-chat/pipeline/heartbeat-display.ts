@@ -103,10 +103,9 @@ export function isAssistantHeartbeatAckForDisplay(message: unknown): boolean {
   if (role !== 'assistant') return false;
   if (typeof entry.senderLabel === 'string' && entry.senderLabel.trim()) return false;
 
-  // Live-thinking messages are committed during streaming from the
-  // chatThinkingStream and carry only thinking blocks. They must never be
-  // filtered as heartbeats — otherwise thinking bubbles disappear each time a
-  // tool event flushes the stream into chatThinkingMessages.
+  // Older persisted live-thinking messages carry only thinking blocks. They
+  // must never be filtered as heartbeats when reading histories produced by a
+  // previous renderer implementation.
   if (entry.__openclawLiveThinking === true) return false;
 
   const content =

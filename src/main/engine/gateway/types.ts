@@ -78,6 +78,14 @@ export type SessionTurn = {
   sessionId: string;
   sessionKey: string;
   runId: string;
+  /** Gateway transcript identity learned from admitted events. */
+  gatewaySessionId: string | null;
+  /** Gateway lifecycle generation learned from admitted events. */
+  lifecycleGeneration: string | null;
+  /** Last admitted agent sequence for duplicate/out-of-order suppression. */
+  lastAgentSeq: number;
+  /** SessionTurn only exists while the Main-process run is active. */
+  status: 'running';
   turnToken: number;
   /** Full accumulated text from chat delta events (gateway sends snapshot, not增量). */
   chatStream: string;
