@@ -17,11 +17,21 @@ import {
 import { resolveToolDisplay } from './tool-display';
 
 function summaryLabel(item: ProcessSummaryTimelineItem): string {
-  const label = i18nService
-    .t('coworkThinkingToolsClusterSummary')
-    .replace('{thinkingCount}', String(item.thinkingCount))
-    .replace('{toolCount}', String(item.toolCount));
-  return label;
+  if (item.thinkingCount > 0 && item.toolCount > 0) {
+    return i18nService
+      .t('coworkThinkingToolsClusterSummary')
+      .replace('{thinkingCount}', String(item.thinkingCount))
+      .replace('{toolCount}', String(item.toolCount));
+  }
+  if (item.thinkingCount > 0) {
+    return i18nService
+      .t('coworkThinkingClusterSummary')
+      .replace('{count}', String(item.thinkingCount));
+  }
+  if (item.toolCount > 0) {
+    return i18nService.t('coworkToolClusterSummary').replace('{count}', String(item.toolCount));
+  }
+  return '';
 }
 
 function readableValue(value: unknown): string {

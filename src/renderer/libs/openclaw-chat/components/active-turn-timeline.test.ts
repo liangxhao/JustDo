@@ -142,6 +142,23 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('secret-value');
   });
 
+  test.each([
+    [0, 2, 'Tool × 2', 'Thinking ×'],
+    [3, 0, 'Thinking × 3', 'Tool ×'],
+  ] as const)(
+    'omits zero-count process types from the summary',
+    (thinkingCount, toolCount, visibleLabel, omittedPrefix) => {
+      const fixture = summary();
+      fixture.thinkingCount = thinkingCount;
+      fixture.toolCount = toolCount;
+
+      const rendered = flatten(renderTimelineItem(fixture));
+
+      expect(rendered).toContain(visibleLabel);
+      expect(rendered).not.toContain(omittedPrefix);
+    },
+  );
+
   test('expands archived Thinking and Tool inline in chronological order', () => {
     const rendered = flatten(renderTimelineItem(summary(), 100, true));
 

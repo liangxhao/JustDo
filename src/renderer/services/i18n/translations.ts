@@ -13,12 +13,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     optional: '可选',
     delete: '删除',
     create: '创建',
-    clear: '清除',
-    show: '显示',
     dismiss: '关闭',
     none: '无',
-    user: '用户',
-    commonComingSoon: '即将上线，敬请期待',
 
     // 记忆
     memoryTitle: '记忆',
@@ -116,7 +112,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     availableModels: '可用模型列表',
 
     // 模型提供商设置
-    disabled: '已禁用',
     modelProviders: '模型提供商',
     builtinModelsProvider: '内置模型',
     addModel: '添加模型',
@@ -166,10 +161,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     export: '导出',
     importProvidersFailed: '导入失败',
     exportProvidersFailed: '导出失败',
-    invalidProvidersFile: '导入文件格式不正确',
-
-    // 密码相关
-    password: '密码',
 
     // 快捷键
     keyboardShortcuts: '键盘快捷键',
@@ -192,14 +183,12 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     loading: '加载中...',
 
     // 侧边栏
-    conversations: '对话',
     renameConversation: '重命名',
     confirmDelete: '确认删除',
     searchConversations: '搜索任务...',
     searchNoResults: '未找到匹配任务',
 
     // 聊天窗口
-    sendMessage: '发送消息',
     copyToClipboard: '复制到剪贴板',
     showCode: '显示 Mermaid 源码',
     renderDiagram: '渲染 Mermaid 图表',
@@ -210,7 +199,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     justNow: '刚刚',
     minutesAgo: '分钟前',
     hoursAgo: '小时前',
-    thinking: '思考中...',
     coworkSearchInSession: '搜索当前会话',
     coworkSearchInSessionPlaceholder: '搜索当前会话...',
     coworkSearchMatchCount: '{current}/{total}，共 {total} 个',
@@ -228,7 +216,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkExportTooLarge: '导出内容超过 50 MB，请取消附带原始消息后重试',
     coworkExportHistoryLoading: '会话历史仍在加载，请稍后再试',
     coworkExportWaitForCompletion: '请等待当前回复完成后再导出',
-    reasoning: '思考过程',
 
     // 模型选择
 
@@ -238,7 +225,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     initializationError: '初始化应用程序失败。请检查您的配置。',
 
     // JustDo
-    cowork: PRODUCT_NAME,
     coworkHistory: '最近对话',
     groupedSessions: '对话分组',
     coworkNoSessions: '暂无最近对话',
@@ -267,7 +253,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenClawRestartGateway: '重新启动网关',
     coworkOpenClawReadyNotice: 'AI 引擎已就绪。开始任务时会自动启动网关。',
     coworkOpenClawStarting: 'AI 引擎正在启动网关...',
-    coworkOpenClawRunning: 'AI 引擎已就绪。',
     coworkOpenClawError: '网关未能在规定时间内启动成功。',
     openclawGatewayPortTitle: '网关端口',
     openclawGatewayPortEdit: '修改网关端口',
@@ -290,7 +275,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayRestarting: '正在重启...',
     openclawGatewayRestarted: '网关已重新启动',
     openclawGatewayRestartFailed: '网关重启失败',
-    coworkConfigSaveFailed: `保存 ${PRODUCT_NAME} 配置失败，请稍后重试。`,
     coworkStatusIdle: '已停止',
     coworkStatusRunning: '运行中',
     coworkInProgress: '进行中...',
@@ -306,13 +290,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkToolRunning: '执行中',
     coworkToolNoOutput: '无输出',
     coworkThinkingToolsClusterSummary: 'Thinking × {thinkingCount}, Tool × {toolCount}',
-    coworkProcessDetails: '过程详情',
+    coworkThinkingClusterSummary: 'Thinking × {count}',
+    coworkToolClusterSummary: 'Tool × {count}',
     coworkProcessOpenDetails: '打开过程详情',
     coworkProcessInterrupted: '已中断',
-    coworkProcessInterruptedCount: '中断 × {count}',
-    coworkProcessErrorCount: '错误 × {count}',
-    coworkProcessDismiss: '收起',
-    coworkProcessViewDetails: '查看详情',
     coworkRunStateStarting: '正在启动',
     coworkRunStateThinking: '正在思考',
     coworkRunStateTool: '正在使用工具',
@@ -389,7 +370,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkAttachmentRemove: '移除',
     coworkOpenAttachment: '打开附件',
     coworkAttachmentNotFound: '文件不存在：{filepath}',
-    coworkAttachmentReadFailed: '无法读取附件“{name}”，请检查文件是否存在或大小是否超限。',
     // Context menu
     contextMenuCut: '剪切',
     contextMenuCopy: '复制',
@@ -444,7 +424,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // Skills
     skills: '技能',
     searchSkills: '搜索技能',
-    manageSkills: '管理技能',
     noSkillsAvailable: '暂无可用技能',
     skillsDescriptionGateway: 'Skill 是一组可复用的任务能力，帮助智能体按特定流程完成工作',
     skillInstalled: '已安装',
@@ -508,7 +487,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillDeleteConfirm: '确定删除技能”{name}”吗？',
     skillDeleteFailed: '删除技能失败',
     skillDeleteSuccess: '技能”{name}”已删除',
-    skillBuiltInDeleteHint: '系统内置技能无法通过应用删除。请手动删除文件夹。',
     skillDeleteManualHint: '此技能无法通过应用删除，请在打开的文件夹中手动删除。',
     skillUpdateFailed: '更新技能失败',
     clearSkill: '清除技能',
@@ -556,7 +534,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // MCP 市场 & 注册表
     mcpInstalled: '已安装',
     mcpMarketplace: '市场',
-    mcpCustom: '自定义',
     mcpInstall: '安装',
     mcpRequiredConfig: '必填配置',
     mcpEnvRequired: '此字段为必填项',
@@ -580,11 +557,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     mcpProbeUnavailable: '不可用',
     mcpProbeStatusAvailable: '可用',
     mcpProbeFailed: '测试 MCP 服务失败',
-    mcpDetailServerInfo: '服务信息',
-    mcpDetailOverview: '概览',
-    mcpDetailCapabilityTools: '工具',
-    mcpDetailCapabilityResources: '资源',
-    mcpDetailCapabilityPrompts: '提示词',
     mcpDetailTransport: '连接方式',
     mcpDetailServerName: '服务名称',
     mcpDetailConnectionDetail: '启动命令',
@@ -595,15 +567,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     mcpDetailErrorEmpty: '未返回具体错误信息',
     mcpDetailInstructions: '说明',
     mcpDetailTitle: '标题',
-    mcpDetailTools: '接口',
-    mcpDetailResources: '资源',
-    mcpDetailPrompts: '提示词',
     mcpDetailInputSchema: '入参结构',
     mcpDetailOutputSchema: '返回结构',
     mcpDetailArguments: '参数',
-    mcpDetailMetadata: '原始元数据',
-    mcpDetailRequired: '必填',
-    mcpDetailOptional: '可选',
     mcpDetailEmpty: '暂无',
 
     // 文件操作
@@ -642,7 +608,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     extensionInstalled: '已安装',
     extensionMarketplace: '市场',
     searchExtensions: '搜索扩展',
-    customExtension: '自定义',
     importExtension: '导入扩展',
     importExtensionProgress: '导入中',
     importExtensionTooltip: '从本地文件夹或压缩文件导入扩展',
@@ -842,12 +807,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     optional: 'Optional',
     delete: 'Delete',
     create: 'Create',
-    clear: 'Clear',
-    show: 'Show',
     dismiss: 'Dismiss',
     none: 'None',
-    user: 'User',
-    commonComingSoon: 'Coming Soon',
 
     // Memory
     memoryTitle: 'Memory',
@@ -948,7 +909,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     availableModels: 'Available Models',
 
     // Model Provider Settings
-    disabled: 'Disabled',
     modelProviders: 'Model Providers',
     builtinModelsProvider: 'Built-in Models',
     addModel: 'Add Model',
@@ -998,10 +958,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     export: 'Export',
     importProvidersFailed: 'Failed to import providers',
     exportProvidersFailed: 'Failed to export providers',
-    invalidProvidersFile: 'Invalid providers file',
-
-    // Password related
-    password: 'Password',
 
     // Shortcuts
     keyboardShortcuts: 'Keyboard Shortcuts',
@@ -1024,14 +980,12 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     loading: 'Loading...',
 
     // Sidebar
-    conversations: 'Conversations',
     renameConversation: 'Rename',
     confirmDelete: 'Confirm Delete',
     searchConversations: 'Search tasks...',
     searchNoResults: 'No matching tasks',
 
     // Chat Window
-    sendMessage: 'Send Message',
     copyToClipboard: 'Copy to Clipboard',
     showCode: 'Show Mermaid source',
     renderDiagram: 'Render Mermaid diagram',
@@ -1042,7 +996,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     justNow: 'Just now',
     minutesAgo: 'minutes ago',
     hoursAgo: 'hours ago',
-    thinking: 'Thinking...',
     coworkSearchInSession: 'Search current session',
     coworkSearchInSessionPlaceholder: 'Search current session...',
     coworkSearchMatchCount: '{current}/{total}, {total} total',
@@ -1062,7 +1015,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkExportTooLarge: 'The export exceeds 50 MB. Try again without raw messages.',
     coworkExportHistoryLoading: 'Session history is still loading. Please try again shortly.',
     coworkExportWaitForCompletion: 'Wait for the current response to finish before exporting',
-    reasoning: 'Reasoning',
 
     // Model Selection
 
@@ -1072,7 +1024,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     initializationError: 'Failed to initialize application. Please check your configuration.',
 
     // JustDo
-    cowork: PRODUCT_NAME,
     coworkHistory: 'Recent Chats',
     groupedSessions: 'Groups',
     coworkNoSessions: 'No chats yet',
@@ -1102,7 +1053,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkOpenClawReadyNotice:
       'The AI engine is ready. The gateway will auto-start when you run a task.',
     coworkOpenClawStarting: 'AI engine is starting the gateway...',
-    coworkOpenClawRunning: 'AI engine is ready.',
     coworkOpenClawError: 'The gateway failed to become healthy in time.',
     openclawGatewayPortTitle: 'Gateway Port',
     openclawGatewayPortEdit: 'Edit gateway port',
@@ -1129,7 +1079,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     openclawGatewayRestarting: 'Restarting...',
     openclawGatewayRestarted: 'Gateway restarted',
     openclawGatewayRestartFailed: 'Failed to restart gateway',
-    coworkConfigSaveFailed: `Failed to save ${PRODUCT_NAME} settings. Please try again.`,
     coworkStatusIdle: 'Idle',
     coworkStatusRunning: 'Running',
     coworkInProgress: 'In Progress...',
@@ -1145,13 +1094,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkToolRunning: 'Running...',
     coworkToolNoOutput: 'No output',
     coworkThinkingToolsClusterSummary: 'Thinking × {thinkingCount}, Tool × {toolCount}',
-    coworkProcessDetails: 'Process details',
+    coworkThinkingClusterSummary: 'Thinking × {count}',
+    coworkToolClusterSummary: 'Tool × {count}',
     coworkProcessOpenDetails: 'Open process details',
     coworkProcessInterrupted: 'Interrupted',
-    coworkProcessInterruptedCount: 'Interrupted × {count}',
-    coworkProcessErrorCount: 'Error × {count}',
-    coworkProcessDismiss: 'Dismiss',
-    coworkProcessViewDetails: 'View details',
     coworkRunStateStarting: 'Starting',
     coworkRunStateThinking: 'Thinking',
     coworkRunStateTool: 'Using tool',
@@ -1228,8 +1174,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkAttachmentRemove: 'Remove',
     coworkOpenAttachment: 'Open attachment',
     coworkAttachmentNotFound: 'File does not exist: {filepath}',
-    coworkAttachmentReadFailed:
-      'Could not read attachment “{name}”. Check that the file exists and is within the size limit.',
     // Context menu
     contextMenuCut: 'Cut',
     contextMenuCopy: 'Copy',
@@ -1286,7 +1230,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // Skills
     skills: 'Skills',
     searchSkills: 'Search skills',
-    manageSkills: 'Manage Skills',
     noSkillsAvailable: 'No skills available',
     skillsDescriptionGateway:
       'Skills are reusable task capabilities that help agents complete work through specific workflows',
@@ -1355,8 +1298,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillDeleteConfirm: 'Delete skill "{name}"?',
     skillDeleteFailed: 'Failed to delete skill',
     skillDeleteSuccess: 'Skill "{name}" deleted',
-    skillBuiltInDeleteHint:
-      'Built-in skills cannot be deleted via the app. Please delete the folder manually.',
     skillDeleteManualHint:
       'This skill cannot be deleted via the app. Please delete it manually in the opened folder.',
     skillUpdateFailed: 'Failed to update skill',
@@ -1406,7 +1347,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // MCP Marketplace & Registry
     mcpInstalled: 'Installed',
     mcpMarketplace: 'Marketplace',
-    mcpCustom: 'Custom',
     mcpInstall: 'Install',
     mcpRequiredConfig: 'Required Configuration',
     mcpEnvRequired: 'This field is required',
@@ -1430,11 +1370,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     mcpProbeUnavailable: 'Unavailable',
     mcpProbeStatusAvailable: 'Available',
     mcpProbeFailed: 'Failed to test MCP server',
-    mcpDetailServerInfo: 'Server Info',
-    mcpDetailOverview: 'Overview',
-    mcpDetailCapabilityTools: 'Tools',
-    mcpDetailCapabilityResources: 'Resources',
-    mcpDetailCapabilityPrompts: 'Prompts',
     mcpDetailTransport: 'Transport',
     mcpDetailServerName: 'Server Name',
     mcpDetailConnectionDetail: 'Launch Command',
@@ -1445,15 +1380,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     mcpDetailErrorEmpty: 'No detailed error was returned',
     mcpDetailInstructions: 'Instructions',
     mcpDetailTitle: 'Title',
-    mcpDetailTools: 'Tools',
-    mcpDetailResources: 'Resources',
-    mcpDetailPrompts: 'Prompts',
     mcpDetailInputSchema: 'Input Schema',
     mcpDetailOutputSchema: 'Output Schema',
     mcpDetailArguments: 'Arguments',
-    mcpDetailMetadata: 'Raw Metadata',
-    mcpDetailRequired: 'Required',
-    mcpDetailOptional: 'Optional',
     mcpDetailEmpty: 'None',
 
     // File operations
@@ -1493,7 +1422,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     extensionInstalled: 'Installed',
     extensionMarketplace: 'Marketplace',
     searchExtensions: 'Search extensions',
-    customExtension: 'Custom',
     importExtension: 'Import Extension',
     importExtensionProgress: 'Importing',
     importExtensionTooltip: 'Import an extension from a local folder or archive',
