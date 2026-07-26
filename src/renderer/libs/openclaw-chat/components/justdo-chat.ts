@@ -1595,6 +1595,107 @@ export class JustDoChatElement extends LitElement {
       .process-live__tool > summary {
         list-style-position: outside;
       }
+      .execution-plan-update {
+        width: min(100%, 680px);
+        box-sizing: border-box;
+        border: 1px solid color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 82%, transparent);
+        border-left: 3px solid color-mix(in srgb, #22c55e 72%, #94a3b8);
+        border-radius: 8px;
+        padding: 10px 12px 11px;
+        background: color-mix(
+          in srgb,
+          var(--surface-raised, #ffffff) 88%,
+          var(--justdo-chat-process-bg, #f1f5f9)
+        );
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+        color: var(--justdo-chat-text, #111827);
+        font-size: 13px;
+      }
+      .execution-plan-update--failed {
+        border-left-color: #ef4444;
+      }
+      .execution-plan-update__header {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 7px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid
+          color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 60%, transparent);
+      }
+      .execution-plan-update__header strong {
+        font-size: 13px;
+        line-height: 1.3;
+      }
+      .execution-plan-update__count {
+        flex: 0 0 auto;
+        border-radius: 999px;
+        padding: 2px 7px;
+        background: color-mix(in srgb, #22c55e 10%, transparent);
+        color: color-mix(in srgb, #15803d 82%, var(--justdo-chat-text, #111827));
+        font-size: 11px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.4;
+      }
+      .execution-plan-update__explanation {
+        margin: 8px 1px 0;
+        color: var(--justdo-chat-muted, #64748b);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .execution-plan-update__steps {
+        display: grid;
+        gap: 3px;
+        margin: 8px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .execution-plan-update__step {
+        display: grid;
+        min-width: 0;
+        grid-template-columns: 15px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        border-radius: 6px;
+        padding: 4px 6px;
+        line-height: 1.5;
+      }
+      .execution-plan-update__marker {
+        display: inline-grid;
+        width: 13px;
+        height: 13px;
+        place-items: center;
+        margin-top: 3px;
+        border: 1px solid var(--justdo-chat-border, rgba(100, 116, 139, 0.55));
+        border-radius: 2px;
+        color: white;
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1;
+      }
+      .execution-plan-update__step--completed {
+        color: var(--justdo-chat-muted, #64748b);
+      }
+      .execution-plan-update__step--in_progress {
+        background: color-mix(in srgb, #3b82f6 8%, transparent);
+        color: var(--justdo-chat-text, #111827);
+        font-weight: 500;
+      }
+      .execution-plan-update__step--completed .execution-plan-update__marker {
+        border-color: #22c55e;
+        background: #22c55e;
+      }
+      .execution-plan-update__step--in_progress .execution-plan-update__marker {
+        border-color: #3b82f6;
+        border-radius: 999px;
+        background: #3b82f6;
+        animation: process-pulse 1.4s ease-in-out infinite;
+      }
+      .execution-plan-update__step-text {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
       .timeline-content__body > :first-child {
         margin-top: 0;
       }
@@ -1687,7 +1788,8 @@ export class JustDoChatElement extends LitElement {
       }
       @media (prefers-reduced-motion: reduce) {
         .process-summary__thinking-marker--running,
-        .process-summary__tool-status--running {
+        .process-summary__tool-status--running,
+        .execution-plan-update__step--in_progress .execution-plan-update__marker {
           animation: none;
         }
         .new-messages-indicator {
@@ -1931,9 +2033,8 @@ export class JustDoChatElement extends LitElement {
 
   protected willUpdate(): void {
     this.focusedProcessSummaryKeyBeforeRender =
-      this.renderRoot
-        ?.querySelector<HTMLElement>('[data-process-summary-key]:focus')
-        ?.dataset.processSummaryKey ?? null;
+      this.renderRoot?.querySelector<HTMLElement>('[data-process-summary-key]:focus')?.dataset
+        .processSummaryKey ?? null;
     this.chatScrollController.beforeRender();
   }
 
@@ -1947,9 +2048,7 @@ export class JustDoChatElement extends LitElement {
       if (shouldRestoreFocus) {
         void this.updateComplete.then(() => {
           this.shadowRoot
-            ?.querySelector<HTMLElement>(
-              `[data-process-summary-key="${CSS.escape(nextOpenKey)}"]`,
-            )
+            ?.querySelector<HTMLElement>(`[data-process-summary-key="${CSS.escape(nextOpenKey)}"]`)
             ?.focus();
         });
       }
@@ -2366,8 +2465,7 @@ export class JustDoChatElement extends LitElement {
     this.latestMinimapPrefix = entries;
     this.latestMinimapTail = tail;
     this.minimapEntriesSignature =
-      keySignature ??
-      [...entries.map(entry => entry.key), ...(tail ? [tail.key] : [])].join('|');
+      keySignature ?? [...entries.map(entry => entry.key), ...(tail ? [tail.key] : [])].join('|');
     if (entries.length + (tail ? 1 : 0) < MINIMAP_VISIBLE_ENTRY_THRESHOLD) return nothing;
 
     const hoveredEntry =
@@ -2458,9 +2556,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private scrollToMinimapEntry(entry: ChatMinimapEntry): void {
-    let entryIndex = this.latestMinimapPrefix.findIndex(
-      candidate => candidate.key === entry.key,
-    );
+    let entryIndex = this.latestMinimapPrefix.findIndex(candidate => candidate.key === entry.key);
     if (entryIndex < 0 && this.latestMinimapTail?.key === entry.key) {
       entryIndex = this.latestMinimapPrefix.length;
     }

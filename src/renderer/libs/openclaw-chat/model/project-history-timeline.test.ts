@@ -37,6 +37,44 @@ describe('projectPersistedTimeline', () => {
     );
   });
 
+  test('restores every valid update_plan call as a standalone timeline item', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        id: 'assistant-1',
+        content: [
+          { type: 'thinking', thinking: 'planning' },
+          {
+            type: 'tool_use',
+            id: 'plan-1',
+            name: 'update_plan',
+            input: { plan: [{ step: 'Inspect', status: 'completed' }] },
+          },
+          { type: 'tool_use', id: 'read-1', name: 'read', input: { path: 'README.md' } },
+          {
+            type: 'tool_use',
+            id: 'plan-2',
+            name: 'update_plan',
+            input: {
+              plan: [
+                { step: 'Inspect', status: 'completed' },
+                { step: 'Implement', status: 'in_progress' },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toEqual([
+      'process-summary',
+      'plan-update',
+      'process-summary',
+      'plan-update',
+    ]);
+    expect(result.filter(item => item.kind === 'plan-update')).toHaveLength(2);
+  });
+
   test('keeps a failed persisted Tool only inside its process summary', () => {
     const result = projectPersistedTimeline([
       {

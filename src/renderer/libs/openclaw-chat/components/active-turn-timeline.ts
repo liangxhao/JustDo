@@ -1,3 +1,8 @@
+import {
+  type ExecutionPlanStep,
+  ExecutionPlanStepStatus,
+  parseExecutionPlanUpdate,
+} from '@shared/openclaw/executionPlan';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 
@@ -78,6 +83,81 @@ function toolStateLabel(tool: ToolItem): string {
   return i18nService.t(stateKey);
 }
 
+function planStepStatusLabel(step: ExecutionPlanStep): string {
+  const key =
+    step.status === ExecutionPlanStepStatus.Completed
+      ? 'coworkExecutionPlanCompleted'
+      : step.status === ExecutionPlanStepStatus.InProgress
+        ? 'coworkExecutionPlanInProgress'
+        : 'coworkExecutionPlanPending';
+  return i18nService.t(key);
+}
+
+function renderPlanUpdate(tool: ToolItem, showAvatar: boolean): TemplateResult {
+  const update = parseExecutionPlanUpdate(tool.input);
+  if (!update) {
+    return renderAssistantTimelineRow(
+      html`<section class="process-live process-live--tool">${tool.name}</section>`,
+      showAvatar,
+    );
+  }
+  const completed = update.plan.filter(
+    step => step.status === ExecutionPlanStepStatus.Completed,
+  ).length;
+  return renderAssistantTimelineRow(
+    html`
+      <section
+        class="execution-plan-update execution-plan-update--${tool.status}"
+        data-plan-update-id=${tool.id}
+        aria-label=${i18nService.t('coworkExecutionPlanTitle')}
+      >
+        <header class="execution-plan-update__header">
+          <span
+            class="process-summary__tool-status process-summary__tool-status--${tool.status}"
+            role="img"
+            aria-label=${toolStateLabel(tool)}
+          ></span>
+          <strong>${i18nService.t('coworkExecutionPlanTitle')}</strong>
+          <span class="execution-plan-update__count"
+            >${i18nService
+              .t('coworkExecutionPlanCompletedCount')
+              .replace('{completed}', String(completed))
+              .replace('{total}', String(update.plan.length))}</span
+          >
+        </header>
+        ${
+          update.explanation
+            ? html`<p class="execution-plan-update__explanation">${update.explanation}</p>`
+            : nothing
+        }
+        <ol class="execution-plan-update__steps">
+          ${update.plan.map(
+            step => html`
+              <li class="execution-plan-update__step execution-plan-update__step--${step.status}">
+                <span
+                  class="execution-plan-update__marker"
+                  role="img"
+                  aria-label=${planStepStatusLabel(step)}
+                >
+                  ${
+                    step.status === ExecutionPlanStepStatus.Completed
+                      ? '✓'
+                      : step.status === ExecutionPlanStepStatus.InProgress
+                        ? '•'
+                        : ''
+                  }
+                </span>
+                <span class="execution-plan-update__step-text">${step.step}</span>
+              </li>
+            `,
+          )}
+        </ol>
+      </section>
+    `,
+    showAvatar,
+  );
+}
+
 function renderAssistantTimelineRow(content: TemplateResult, showAvatar: boolean): TemplateResult {
   return html`
     <div
@@ -99,6 +179,9 @@ export function renderTimelineItem(
 ): TemplateResult {
   if (item.kind === 'waiting') {
     return renderReadingIndicatorGroup({ showAvatar });
+  }
+  if (item.kind === 'plan-update') {
+    return renderPlanUpdate(item.item, showAvatar);
   }
   if (item.kind === 'live-process') {
     if (item.item.type === 'thinking') {

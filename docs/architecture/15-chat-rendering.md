@@ -106,6 +106,14 @@ summary 折叠时 Tool input/output 不进入主时间线 DOM；用户原地展�
 persisted history 与 active-turn 投影在组成完整可见时间线后再合并相邻 summary，
 合并时保留第一个归档项派生的稳定 key；Content 等真实边界始终阻止合并。
 
+`update_plan` 是 process summary 折叠规则的一个显式例外。实时与 persisted
+投影都先使用 `src/shared/openclaw/executionPlan.ts` 校验 `ToolItem.input`，再把
+每一次有效调用提升为独立 `plan-update` 时间线项。卡片按调用顺序展示该次完整
+快照、可选 explanation、完成数以及三种原生 step status；后续调用新增下一张卡，
+不会覆盖、合并或改写先前快照。无效输入不会产生半成品卡片，仍按普通 Tool 留在
+process summary 中供排查。该展示完全属于 Lit message pipeline，与 React 输入区
+的 Goal 生命周期及 `GoalStatusCard` 无关。
+
 `message-render.ts` 仅负责普通用户/助手 Content、附件、Canvas、头像和 footer
 布局能力。它不得渲染 Thinking 或 Tool，也不得包含这两类过程项的
 `details`/`summary` disclosure；过程项的唯一展开状态由 `process-summary` 持有。
@@ -162,6 +170,11 @@ OpenClaw message envelope、Tool ID/名称字段别名、metadata、`partialArgs
 独立 `tool_use`/`tool_result`、附加 Tool 消息、对象/空结果和结构化错误。新增
 Tool 数据形态时必须先扩展该适配器及双路径一致性测试，不能在两个投影入口分别
 增加临时解析分支。
+
+结构化 `update_plan` 输入同样只读取归一化后的 `ToolItem.input`，不解析 tool
+output、assistant prose、Markdown task list 或 `TodoWrite`。因此 live Tool event
+和 Gateway cold history 使用相同校验器与卡片渲染，不需要额外 Redux、SQLite 或
+IPC 状态。
 
 ## 维护规则
 

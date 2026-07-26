@@ -395,6 +395,9 @@ export const buildManagedOpenClawConnectivityConfig = () => ({
     },
   },
   tools: {
+    experimental: {
+      planTool: true,
+    },
     deny: [
       'web_search',
       'skill_workshop',

@@ -73,10 +73,7 @@ describe('projectTurnItems', () => {
 
   test('keeps a running Tool visible, then folds it into the previous summary', () => {
     const running = projectTurnItems(
-      turn([
-        item('tool-completed', 'tool', 'completed'),
-        item('tool-running', 'tool', 'running'),
-      ]),
+      turn([item('tool-completed', 'tool', 'completed'), item('tool-running', 'tool', 'running')]),
     );
     const completed = projectTurnItems(
       turn([
@@ -125,6 +122,53 @@ describe('projectTurnItems', () => {
     );
 
     expect(second[0].key).toBe(first[0].key);
+  });
+
+  test('keeps every valid update_plan call as a standalone timeline item', () => {
+    const result = projectTurnItems(
+      turn([
+        item('think-1', 'thinking', 'completed'),
+        item('plan-1', 'tool', 'completed', {
+          name: 'update_plan',
+          input: { plan: [{ step: 'Inspect', status: 'completed' }] },
+        }),
+        item('tool-1', 'tool', 'completed'),
+        item('plan-2', 'tool', 'running', {
+          name: 'UPDATE_PLAN',
+          input: {
+            explanation: 'Implementation started',
+            plan: [
+              { step: 'Inspect', status: 'completed' },
+              { step: 'Implement', status: 'in_progress' },
+            ],
+          },
+        }),
+      ]),
+    );
+
+    expect(result.map(entry => entry.kind)).toEqual([
+      'process-summary',
+      'plan-update',
+      'process-summary',
+      'plan-update',
+    ]);
+    expect(result.filter(entry => entry.kind === 'plan-update')).toMatchObject([
+      { item: { id: 'plan-1' } },
+      { item: { id: 'plan-2', status: 'running' } },
+    ]);
+  });
+
+  test('keeps malformed update_plan calls in the ordinary Tool timeline', () => {
+    const result = projectTurnItems(
+      turn([
+        item('plan-invalid', 'tool', 'completed', {
+          name: 'update_plan',
+          input: { plan: [] },
+        }),
+      ]),
+    );
+
+    expect(result.map(entry => entry.kind)).toEqual(['process-summary']);
   });
 
   test('does not repeat a Tool failure as a terminal banner after Content', () => {

@@ -242,6 +242,9 @@ describe('OpenClaw managed connectivity config', () => {
         },
       },
       tools: {
+        experimental: {
+          planTool: true,
+        },
         deny: [
           'web_search',
           'skill_workshop',

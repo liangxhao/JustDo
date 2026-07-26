@@ -1,3 +1,5 @@
+import { parseExecutionPlanUpdate } from '@shared/openclaw/executionPlan';
+
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import {
@@ -6,7 +8,7 @@ import {
   type ToolItem,
 } from './chat-transcript-state';
 import { deterministicHistoryKey } from './history-reconciler';
-import type { ProcessSummaryTimelineItem } from './project-turn-items';
+import type { PlanUpdateTimelineItem, ProcessSummaryTimelineItem } from './project-turn-items';
 import {
   asToolRecord,
   attachedToolMessages,
@@ -21,7 +23,9 @@ import {
 } from './tool-message-adapter';
 
 export type PersistedTimelineItem =
-  { kind: 'history-message'; key: string; message: GatewayMessage } | ProcessSummaryTimelineItem;
+  | { kind: 'history-message'; key: string; message: GatewayMessage }
+  | ProcessSummaryTimelineItem
+  | PlanUpdateTimelineItem;
 
 const THINKING_TYPES = new Set(['thinking', 'reasoning']);
 const TOOL_RESULT_ROLES = new Set(['tool', 'toolresult', 'tool_result', 'function']);
@@ -116,21 +120,47 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
   let segment = 0;
   const toolById = new Map<string, ToolItem>();
 
+  const isPlanUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
+    item.type === 'tool' &&
+    item.name.toLowerCase() === 'update_plan' &&
+    parseExecutionPlanUpdate(item.input) !== null;
+
   const flushSummary = () => {
     if (archived.length === 0) return;
-    const first = archived[0];
-    projected.push({
-      kind: 'process-summary',
-      key: `history-process:${segment}:${first.id}`,
-      runId: first.runId,
-      items: archived,
-      thinkingCount: archived.filter(item => item.type === 'thinking').length,
-      toolCount: archived.filter(item => item.type === 'tool').length,
-      errorCount: archived.filter(item => item.status === 'failed').length,
-      interruptedCount: 0,
-    });
+    let summaryItems: Array<ThinkingItem | ToolItem> = [];
+    const flushSummaryItems = () => {
+      if (summaryItems.length === 0) return;
+      const first = summaryItems[0];
+      projected.push({
+        kind: 'process-summary',
+        key: `history-process:${segment}:${first.id}`,
+        runId: first.runId,
+        items: summaryItems,
+        thinkingCount: summaryItems.filter(item => item.type === 'thinking').length,
+        toolCount: summaryItems.filter(item => item.type === 'tool').length,
+        errorCount: summaryItems.filter(item => item.status === 'failed').length,
+        interruptedCount: summaryItems.filter(
+          item => item.status === 'cancelled' || item.status === 'interrupted',
+        ).length,
+      });
+      summaryItems = [];
+      segment += 1;
+    };
+    for (const item of archived) {
+      if (isPlanUpdate(item)) {
+        flushSummaryItems();
+        projected.push({
+          kind: 'plan-update',
+          key: `history-plan:${segment}:${item.id}`,
+          item,
+        });
+        segment += 1;
+      } else {
+        summaryItems.push(item);
+      }
+    }
+    flushSummaryItems();
     archived = [];
-    segment += 1;
   };
 
   const emitMessage = (message: GatewayMessage, key: string) => {

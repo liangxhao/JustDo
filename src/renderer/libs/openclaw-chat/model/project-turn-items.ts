@@ -1,3 +1,5 @@
+import { parseExecutionPlanUpdate } from '@shared/openclaw/executionPlan';
+
 import type {
   AssistantTurn,
   ContentItem,
@@ -29,6 +31,12 @@ export interface LiveProcessTimelineItem {
   item: ThinkingItem | ToolItem;
 }
 
+export interface PlanUpdateTimelineItem {
+  kind: 'plan-update';
+  key: string;
+  item: ToolItem;
+}
+
 export interface TerminalTimelineItem {
   kind: 'terminal';
   key: string;
@@ -43,6 +51,7 @@ export interface WaitingTimelineItem {
 export type ActiveTurnTimelineItem =
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
+  | PlanUpdateTimelineItem
   | ContentTimelineItem
   | TerminalTimelineItem
   | WaitingTimelineItem;
@@ -52,12 +61,15 @@ export function projectTurnItems(turn: AssistantTurn | null): ActiveTurnTimeline
   if (turn.status === 'running' && turn.items.length === 0) {
     return [{ kind: 'waiting', key: `waiting:${turn.runId}` }];
   }
-  const hasFailedTool = turn.items.some(
-    item => item.type === 'tool' && item.status === 'failed',
-  );
+  const hasFailedTool = turn.items.some(item => item.type === 'tool' && item.status === 'failed');
   const projected: ActiveTurnTimelineItem[] = [];
   let archived: Array<ThinkingItem | ToolItem> = [];
   let summarySegment = 0;
+
+  const isPlanUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
+    item.type === 'tool' &&
+    item.name.toLowerCase() === 'update_plan' &&
+    parseExecutionPlanUpdate(item.input) !== null;
 
   const flushSummary = () => {
     if (archived.length === 0) return;
@@ -80,6 +92,12 @@ export function projectTurnItems(turn: AssistantTurn | null): ActiveTurnTimeline
 
   for (const item of turn.items) {
     if (item.type === 'thinking' || item.type === 'tool') {
+      if (isPlanUpdate(item)) {
+        flushSummary();
+        projected.push({ kind: 'plan-update', key: `plan:${item.id}`, item });
+        summarySegment += 1;
+        continue;
+      }
       if (item.status === 'running') {
         flushSummary();
         projected.push({ kind: 'live-process', key: item.id, item });

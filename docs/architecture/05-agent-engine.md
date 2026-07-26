@@ -89,6 +89,12 @@ JustDo 本地配置包括：
 启用配置优先原地热更新，Gateway 自身配置等不支持热更新的字段由 Gateway watcher
 触发 restart。
 
+JustDo 管理的配置默认写入 `tools.experimental.planTool: true`，使支持结构化
+tool calling 的模型可以调用 OpenClaw 原生 `update_plan`。该能力仍由 Gateway
+定义协议和执行语义；JustDo 不注册同名 MCP tool、不增加 provider allowlist，也不
+通过 runtime patch 模拟计划更新。配置合并 `sandbox` 和 `loopDetection` 时必须保留
+`tools.experimental`、既有 deny 列表和 web 配置。
+
 配置应用按所有权明确分为四类：
 
 | 变化                                                                         | 应用方式             | 生命周期所有者 |
