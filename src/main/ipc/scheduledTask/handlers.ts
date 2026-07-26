@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../../../shared/scheduledTask/constants';
+import type { ScheduledTaskInput } from '../../../shared/scheduledTask/types';
 import type { CronJobService } from '../../scheduler/cronJobService';
 import { listScheduledTaskChannels } from './helpers';
 
@@ -43,9 +44,9 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     }
   });
 
-  ipcMain.handle(ScheduledTaskIpc.Create, async (_event, input: any) => {
+  ipcMain.handle(ScheduledTaskIpc.Create, async (_event, input: ScheduledTaskInput) => {
     try {
-      const normalizedInput = input && typeof input === 'object' ? { ...input } : {};
+      const normalizedInput = { ...input };
       console.debug('[ScheduledTask] create input:', JSON.stringify(normalizedInput, null, 2));
 
       const task = await getCronJobService().addJob(normalizedInput);
@@ -59,9 +60,9 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     }
   });
 
-  ipcMain.handle(ScheduledTaskIpc.Update, async (_event, id: string, input: any) => {
+  ipcMain.handle(ScheduledTaskIpc.Update, async (_event, id: string, input: Partial<ScheduledTaskInput>) => {
     try {
-      const normalizedInput = input && typeof input === 'object' ? { ...input } : {};
+      const normalizedInput = { ...input };
       console.debug(
         '[ScheduledTask] update input id:',
         id,

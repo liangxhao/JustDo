@@ -10,6 +10,7 @@ import {
 import { localStore } from '@/services/store';
 
 const SUPPORTED_BUILTIN_PROVIDERS = new Set(['builtin_models']);
+type ProviderConfig = NonNullable<AppConfig['providers']>[string];
 
 const isSupportedProvider = (providerKey: string): boolean =>
   SUPPORTED_BUILTIN_PROVIDERS.has(providerKey) ||
@@ -76,7 +77,7 @@ const migrateCustomProviders = (config: AppConfig): AppConfig => {
   if ('custom' in providers && !isCustomProvider('custom')) {
     const legacyCustom = providers['custom'];
     if (legacyCustom) {
-      const updatedProviders = { ...providers } as Record<string, any>;
+      const updatedProviders = { ...providers } as Record<string, ProviderConfig>;
       updatedProviders['custom_0'] = { ...legacyCustom };
       delete updatedProviders['custom'];
       return {
@@ -105,7 +106,9 @@ class ConfigService {
                 .filter(([providerKey]) => isSupportedProvider(providerKey))
                 .map(([providerKey, providerConfig]) => {
                   const mergedProvider = {
-                    ...(defaultConfig.providers as Record<string, any>)?.[providerKey],
+                    ...(defaultConfig.providers as Record<string, ProviderConfig> | undefined)?.[
+                      providerKey
+                    ],
                     ...providerConfig,
                   };
                   return [

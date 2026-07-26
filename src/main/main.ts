@@ -11,8 +11,8 @@ import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
   USER_DATA_DIRECTORY_NAME,
 } from '../shared/productMetadata';
-import type { ProxySettings } from '../shared/proxy';
 import { ProviderName } from '../shared/providers';
+import type { ProxySettings } from '../shared/proxy';
 import { APP_NAME } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';

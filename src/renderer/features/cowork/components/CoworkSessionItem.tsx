@@ -1,6 +1,6 @@
 import { useDraggable } from '@dnd-kit/core';
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CoworkSessionStatus, CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
@@ -147,7 +147,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     setShowConfirmDelete(false);
   };
 
-  const closeMenu = () => {
+  const closeMenu = useCallback(() => {
     setMenuPosition(null);
     setShowConfirmDelete(false);
     setShowGroupSubMenu(false);
@@ -155,16 +155,16 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       clearTimeout(closeSubMenuTimerRef.current);
       closeSubMenuTimerRef.current = null;
     }
-  };
+  }, []);
 
-  const handleRenameClick = (e: React.MouseEvent) => {
+  const handleRenameClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     ignoreNextBlurRef.current = false;
     setIsRenaming(true);
     setShowConfirmDelete(false);
     setRenameValue(session.title);
     setMenuPosition(null);
-  };
+  }, [session.title]);
 
   const handleRenameSave = (e?: React.SyntheticEvent) => {
     e?.stopPropagation();
@@ -191,11 +191,11 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     handleRenameSave(event);
   };
 
-  const handleDeleteClick = (e: React.MouseEvent) => {
+  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setShowConfirmDelete(true);
     setMenuPosition(null);
-  };
+  }, []);
 
   const handleConfirmDelete = () => {
     onDelete();
@@ -207,11 +207,14 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     setShowConfirmDelete(false);
   };
 
-  const handleBatchClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    closeMenu();
-    onEnterBatchMode();
-  };
+  const handleBatchClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      closeMenu();
+      onEnterBatchMode();
+    },
+    [closeMenu, onEnterBatchMode],
+  );
 
   useEffect(() => {
     if (!menuPosition) return;
@@ -237,7 +240,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       window.removeEventListener('scroll', handleScroll, true);
       window.removeEventListener('resize', handleScroll);
     };
-  }, [menuPosition]);
+  }, [closeMenu, menuPosition]);
 
   useEffect(() => {
     if (!menuPosition) return;
@@ -249,7 +252,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         setMenuPosition(position);
       }
     }
-  }, [menuPosition, showConfirmDelete]);
+  }, [menuPosition, showBatchOption, showConfirmDelete]);
 
   useEffect(() => {
     if (!isRenaming) return;

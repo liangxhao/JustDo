@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo,useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CreateGroupInput } from '@/features/cowork/coworkTypes';
 import { GROUP_COLORS } from '@/features/cowork/coworkTypes';
@@ -37,9 +37,9 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
     if (isOpen) {
       inputRef.current?.focus();
       setName('');
-      setColor(getDefaultColor(existingColors));
+      setColor(defaultColor);
     }
-  }, [isOpen]);
+  }, [defaultColor, isOpen]);
 
   const handleCreate = () => {
     if (name.trim()) {

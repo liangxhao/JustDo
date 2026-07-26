@@ -903,7 +903,7 @@ export const CronView: React.FC<CronViewProps> = ({
       }
       setEditingJob(undefined);
     },
-    [editingJob],
+    [editingJob, t],
   );
 
   const handleToggle = useCallback(async (id: string, enabled: boolean) => {
@@ -919,7 +919,7 @@ export const CronView: React.FC<CronViewProps> = ({
         new CustomEvent('app:showToast', { detail: t('cronToastFailedUpdate') }),
       );
     }
-  }, []);
+  }, [t]);
 
   const handleDelete = useCallback(async () => {
     if (!jobToDelete) return;
@@ -932,7 +932,7 @@ export const CronView: React.FC<CronViewProps> = ({
       );
     }
     setJobToDelete(null);
-  }, [jobToDelete]);
+  }, [jobToDelete, t]);
 
   const activeJobs = tasks.filter(j => j.enabled);
   const pausedJobs = tasks.filter(j => !j.enabled);

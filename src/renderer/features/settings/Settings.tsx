@@ -272,13 +272,13 @@ const Settings: React.FC<SettingsProps> = ({
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const buildNoticeMessage = (): string | null => {
+  const buildNoticeMessage = useCallback((): string | null => {
     if (noticeI18nKey) {
       const base = i18nService.t(noticeI18nKey);
       return noticeExtra ? `${base} (${noticeExtra})` : base;
     }
     return notice ?? null;
-  };
+  }, [notice, noticeExtra, noticeI18nKey]);
 
   const [noticeMessage, setNoticeMessage] = useState<string | null>(() => buildNoticeMessage());
   const [testResult, setTestResult] = useState<ProviderConnectionTestResult | null>(null);
@@ -680,12 +680,15 @@ const Settings: React.FC<SettingsProps> = ({
   }, []);
 
   useEffect(() => {
+    const initialThemeId = initialThemeIdRef.current;
+    const initialTheme = initialThemeRef.current;
+    const initialLanguage = initialLanguageRef.current;
     return () => {
       if (didSaveRef.current) {
         return;
       }
-      themeService.restoreTheme(initialThemeIdRef.current, initialThemeRef.current);
-      i18nService.setLanguage(initialLanguageRef.current, { persist: false });
+      themeService.restoreTheme(initialThemeId, initialTheme);
+      i18nService.setLanguage(initialLanguage, { persist: false });
     };
   }, []);
 
@@ -698,7 +701,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   useEffect(() => {
     setNoticeMessage(buildNoticeMessage());
-  }, [notice, noticeI18nKey, noticeExtra]);
+  }, [buildNoticeMessage]);
 
   useEffect(() => {
     if (initialTab) {

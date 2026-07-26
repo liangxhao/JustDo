@@ -8,8 +8,8 @@ export interface LocalStore {
 class LocalStoreService implements LocalStore {
   async getItem<T>(key: string): Promise<T | null> {
     try {
-      const value = await window.electron.store.get(key);
-      return value || null;
+      const value = await window.electron.store.get<T>(key);
+      return value ?? null;
     } catch (error) {
       console.error('Failed to get item from store:', error);
       return null;
@@ -35,4 +35,4 @@ class LocalStoreService implements LocalStore {
   }
 }
 
-export const localStore = new LocalStoreService(); 
+export const localStore = new LocalStoreService();

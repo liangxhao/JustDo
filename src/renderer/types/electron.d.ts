@@ -18,12 +18,12 @@ type InstalledOpenClawExtension =
   import('../../shared/openclaw/extensions').InstalledOpenClawExtension;
 type OpenClawSkillSource = import('../../shared/plugins/skills').OpenClawSkillSource;
 
-interface ApiResponse {
+interface ApiResponse<T = unknown> {
   ok: boolean;
   status: number;
   statusText: string;
   headers: Record<string, string>;
-  data: any;
+  data: T;
   error?: string;
 }
 
@@ -309,13 +309,14 @@ import type {
 } from '@shared/scheduledTask/types';
 
 import type { Agent } from '@/features/agents/agentTypes';
+import type { McpServerFormData } from '@/features/plugins/types/mcp';
 
 interface IElectronAPI {
   platform: string;
   arch: string;
   store: {
-    get: (key: string) => Promise<any>;
-    set: (key: string, value: any) => Promise<void>;
+    get: <T = unknown>(key: string) => Promise<T>;
+    set: <T>(key: string, value: T) => Promise<void>;
     remove: (key: string) => Promise<void>;
   };
   marketplace: {
@@ -418,11 +419,11 @@ interface IElectronAPI {
       error?: string;
     }>;
     create: (
-      data: any,
+      data: McpServerFormData,
     ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     update: (
       id: string,
-      data: any,
+      data: Partial<McpServerFormData>,
     ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     delete: (
       id: string,
@@ -525,8 +526,8 @@ interface IElectronAPI {
     };
   };
   ipcRenderer: {
-    send: (channel: string, ...args: any[]) => void;
-    on: (channel: string, func: (...args: any[]) => void) => () => void;
+    send: (channel: string, ...args: unknown[]) => void;
+    on: (channel: string, func: (...args: unknown[]) => void) => () => void;
   };
   window: {
     minimize: () => void;

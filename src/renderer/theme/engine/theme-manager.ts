@@ -18,6 +18,12 @@ export interface ThemeManagerOptions {
   onChange?: (theme: ThemeDefinition) => void;
 }
 
+interface ThemeElectronBridge {
+  theme?: {
+    updateTitleBar?: (colors: { bg: string; symbol: string; windowBg: string }) => void;
+  };
+}
+
 export class ThemeManager {
   private themes: Map<string, ThemeDefinition>;
   private currentId: string;
@@ -118,7 +124,10 @@ export class ThemeManager {
 
       // Electron title-bar sync
       try {
-        const electronAPI = (window as any).electronAPI ?? (window as any).electron;
+        const legacyElectronAPI = (window as Window & { electronAPI?: ThemeElectronBridge })
+          .electronAPI;
+        const electronAPI =
+          legacyElectronAPI ?? (window.electron as typeof window.electron & ThemeElectronBridge);
         electronAPI?.theme?.updateTitleBar?.({
           bg: theme.tokens['surface'],
           symbol: theme.tokens['text-secondary'],
