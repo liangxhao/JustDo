@@ -68,11 +68,18 @@ function parseProxyRule(rule: string): string | null {
   return `http://${hostPort}`;
 }
 
+export const getNoProxyEntries = (env: NodeJS.ProcessEnv): string[] =>
+  Array.from(
+    new Set(
+      [env.NO_PROXY, env.no_proxy]
+        .flatMap(value => (value || '').split(','))
+        .map(entry => entry.trim())
+        .filter(Boolean),
+    ),
+  );
+
 function mergeNoProxyEntries(env: NodeJS.ProcessEnv, extraEntries: readonly string[]): void {
-  const existingEntries = (env.NO_PROXY || env.no_proxy || '')
-    .split(',')
-    .map(entry => entry.trim())
-    .filter(Boolean);
+  const existingEntries = getNoProxyEntries(env);
   const bypassEntries = Array.from(new Set([...existingEntries, ...extraEntries])).join(',');
 
   env.no_proxy = bypassEntries;
@@ -203,20 +210,34 @@ const doesNoProxyEntryMatchTarget = (entry: string, target: ForcedProxyTarget): 
   );
 };
 
+export const shouldBypassProxyForUrl = (
+  noProxyEntries: readonly string[],
+  targetUrl: string,
+): boolean => {
+  const [target] = getForcedProxyTargets([targetUrl]);
+  return !!target && noProxyEntries.some(entry => doesNoProxyEntryMatchTarget(entry, target));
+};
+
+export const getNoProxyConflictingEntries = (
+  noProxyEntries: readonly string[],
+  forcedBaseUrls: readonly string[],
+): string[] => {
+  const forcedTargets = getForcedProxyTargets(forcedBaseUrls);
+  return noProxyEntries.filter(entry =>
+    forcedTargets.some(target => doesNoProxyEntryMatchTarget(entry, target)),
+  );
+};
+
 export const configureForcedProxyRouting = (
   env: NodeJS.ProcessEnv,
   explicitBypassEntries: readonly string[],
   forcedBaseUrls: readonly string[],
 ): void => {
   addLoopbackProxyBypass(env);
-  const forcedTargets = getForcedProxyTargets(forcedBaseUrls);
-  const existingEntries = [env.NO_PROXY, env.no_proxy]
-    .flatMap(value => (value || '').split(','))
-    .map(entry => entry.trim())
-    .filter(
-      entry => entry && !forcedTargets.some(target => doesNoProxyEntryMatchTarget(entry, target)),
-    );
-  const bypassEntries = Array.from(new Set([...existingEntries, ...explicitBypassEntries])).join(
+  const existingEntries = getNoProxyEntries(env);
+  const conflictingEntries = new Set(getNoProxyConflictingEntries(existingEntries, forcedBaseUrls));
+  const filteredEntries = existingEntries.filter(entry => !conflictingEntries.has(entry));
+  const bypassEntries = Array.from(new Set([...filteredEntries, ...explicitBypassEntries])).join(
     ',',
   );
   env.no_proxy = bypassEntries;

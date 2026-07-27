@@ -567,9 +567,13 @@ spawnGateway({ env: gatewayEnv });
 - `buildGatewayNetworkEnvironment()` 是纯函数。
 - 返回新对象，不修改输入。
 - 一次性计算大小写 proxy 变量、NO_PROXY 和 CA 变量。
-- 保留普通 loopback/用户 bypass；白名单与既有 bypass 冲突时应显式报告。只有能被目标客户端准确表达的远程规则才能做最小化冲突消解。
-- Gateway generation N 从启动到退出始终持有同一 snapshot。
-- 配置更新生成 generation N+1，不修改 N。
+- 保留普通 loopback 和用户 bypass 的最终上游路由语义。Gateway 第一跳 `NO_PROXY`
+  只保留 loopback 和 Gateway 自身端口，所有远程用户 bypass 都由本地代理在上游路由层
+  恢复，使 generation 运行期间刷新的远程白名单也能到达注入代理；不能把这类分层配置
+  当作启动错误。
+- Gateway generation N 从启动到退出始终持有同一网络环境 snapshot。
+- 白名单、Header 名称和值的缓存刷新可以更新 N 的请求策略，但不修改网络环境 snapshot；
+  enabled 状态或其他网络设置变化由 generation N+1 生效。
 - Proxy 必须 ready 后才能创建引用它的 snapshot。
 
 ## 上游代理处理建议

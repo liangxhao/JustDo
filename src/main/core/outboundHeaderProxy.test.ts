@@ -713,7 +713,7 @@ test('accepts a dynamic upstream proxy resolver and user info path', () => {
   ).not.toThrow();
 });
 
-test('does not mutate the Main process environment when the proxy starts and stops', async () => {
+test('moves remote NO_PROXY entries behind the Gateway local proxy route', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-outbound-proxy-'));
   temporaryDirectories.push(directory);
   const userInfoPath = path.join(directory, 'user_info.json');
@@ -730,14 +730,31 @@ test('does not mutate the Main process environment when the proxy starts and sto
     userInfoPath,
     path.join(directory, 'ca'),
   );
+  const overlapLogSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
   try {
     await outboundProxy.start();
     expect(process.env).toEqual(before);
-    expect(() => outboundProxy.buildGatewayEnvironment({ NO_PROXY: 'example.com' })).toThrow(
-      /conflicts with NO_PROXY entry/i,
+    const baseEnv = {
+      NO_PROXY: '*.example.com,other.example.net',
+      no_proxy: '.internal.example',
+    };
+    const gatewayEnv = outboundProxy.buildGatewayEnvironment(baseEnv);
+    expect(gatewayEnv.NO_PROXY?.split(',')).not.toContain('*.example.com');
+    expect(gatewayEnv.NO_PROXY?.split(',')).not.toContain('other.example.net');
+    expect(gatewayEnv.NO_PROXY?.split(',')).not.toContain('.internal.example');
+    expect(gatewayEnv.NO_PROXY?.split(',')).toEqual(
+      expect.arrayContaining(['localhost', '127.0.0.1', '::1']),
+    );
+    expect(baseEnv).toEqual({
+      NO_PROXY: '*.example.com,other.example.net',
+      no_proxy: '.internal.example',
+    });
+    expect(overlapLogSpy).toHaveBeenCalledWith(
+      '[OutboundHeaderProxy] Reconciled Gateway NO_PROXY overlap: conflictingEntries=["*.example.com"] affectedHeaderNames=["X-User-Account"] disabledHeaderNames=[] action="route remote bypasses through local proxy, then preserve direct upstream bypass"; clients that set a conflicting NO_PROXY after startup may bypass local header injection.',
     );
   } finally {
+    overlapLogSpy.mockRestore();
     outboundProxy.stop();
   }
   expect(process.env).toEqual(before);
@@ -784,7 +801,7 @@ test.each(['http://127.0.0.2:4000/', 'http://[::ffff:127.0.0.1]:4000/'])(
 );
 
 test.skipIf(!NON_LOOPBACK_IPV4)(
-  'authenticates the Gateway proxy and injects headers into all concurrent HTTP requests',
+  'keeps runtime policy reloads reachable through the Gateway proxy',
   async () => {
     const targetHost = NON_LOOPBACK_IPV4!;
     const receivedHeaders: Array<string | undefined> = [];
@@ -820,20 +837,35 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
     fs.writeFileSync(userInfoPath, JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
     updateOutboundHeaderUserInfoCache(userInfoPath, [HEADER_NAMES.USER_ACCOUNT]);
     const targetUrl = `http://${targetHost}:${targetAddress.port}/protected`;
+    const upstreamProxyResolver = vi.fn(async () => 'http://127.0.0.1:1');
     const outboundProxy = new OutboundHeaderProxy(
       {
         enabled: true,
-        baseUrlWhitelist: [targetUrl],
+        baseUrlWhitelist: ['http://unrelated.example/protected'],
         headerNames: [HEADER_NAMES.USER_ACCOUNT],
       },
-      async () => null,
+      upstreamProxyResolver,
       userInfoPath,
       path.join(directory, 'ca'),
     );
 
     try {
       await outboundProxy.start();
-      const gatewayEnv = outboundProxy.buildGatewayEnvironment({});
+      const gatewayEnv = outboundProxy.buildGatewayEnvironment({ NO_PROXY: targetHost });
+      expect(gatewayEnv.NO_PROXY?.split(',')).not.toContain(targetHost);
+      (
+        outboundProxy as unknown as {
+          activePolicy: {
+            enabled: boolean;
+            baseUrlWhitelist: readonly string[];
+            headerNames: readonly string[];
+          };
+        }
+      ).activePolicy = Object.freeze({
+        enabled: true,
+        baseUrlWhitelist: Object.freeze([targetUrl]),
+        headerNames: Object.freeze([HEADER_NAMES.USER_ACCOUNT]),
+      });
       const proxyUrl = new URL(gatewayEnv.HTTP_PROXY!);
       const authorization = `Basic ${Buffer.from(
         `${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`,
@@ -851,6 +883,7 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
         ),
       ).toEqual([200, 200, 200]);
       expect(receivedHeaders).toEqual(['user-123', 'user-123', 'user-123']);
+      expect(upstreamProxyResolver).not.toHaveBeenCalled();
       expect(
         await requestThroughHttpProxy(
           proxyUrl,
@@ -874,7 +907,9 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
       await oldTunnelClosed;
       expect(await requestThroughHttpProxy(proxyUrl, targetUrl, authorization)).toBe(407);
       expect(receivedHeaders).toHaveLength(3);
-      const nextProxyUrl = new URL(outboundProxy.buildGatewayEnvironment({}).HTTP_PROXY!);
+      const nextProxyUrl = new URL(
+        outboundProxy.buildGatewayEnvironment({ NO_PROXY: targetHost }).HTTP_PROXY!,
+      );
       const nextAuthorization = `Basic ${Buffer.from(
         `${decodeURIComponent(nextProxyUrl.username)}:${decodeURIComponent(nextProxyUrl.password)}`,
       ).toString('base64')}`;

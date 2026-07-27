@@ -4,8 +4,11 @@ import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../cowork/builtinModelProviderCon
 import {
   applySystemProxyEnv,
   configureForcedProxyRouting,
+  getNoProxyConflictingEntries,
+  getNoProxyEntries,
   isLoopbackBaseUrl,
   setProcessProxyRouting,
+  shouldBypassProxyForUrl,
 } from './systemProxy';
 
 vi.mock('electron', () => ({
@@ -170,6 +173,24 @@ describe('process proxy bypass', () => {
     expect(env.NO_PROXY?.split(',')).toContain('[::1]:5000');
     expect(env.NO_PROXY?.split(',')).not.toContain('[::1]:4000');
     expect(env.NO_PROXY?.split(',')).not.toContain('::1');
+  });
+
+  test('uses the original bypass entries as an upstream routing policy', () => {
+    const entries = getNoProxyEntries({
+      NO_PROXY: '*.huawei.com,api.example.com:8443',
+      no_proxy: '.internal.example',
+    });
+
+    expect(shouldBypassProxyForUrl(entries, 'https://api.huawei.com/v1/models')).toBe(true);
+    expect(shouldBypassProxyForUrl(entries, 'https://api.example.com:8443/v1')).toBe(true);
+    expect(shouldBypassProxyForUrl(entries, 'https://api.example.com/v1')).toBe(false);
+    expect(shouldBypassProxyForUrl(entries, 'https://external.example/v1')).toBe(false);
+    expect(
+      getNoProxyConflictingEntries(entries, [
+        'https://api.huawei.com/v1/',
+        'https://external.example/v1/',
+      ]),
+    ).toEqual(['*.huawei.com']);
   });
 });
 

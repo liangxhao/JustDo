@@ -17,7 +17,14 @@ import {
   resolveOutboundHeaderUserInfoPath,
   updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
-import { getFixedProxyUrl, isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
+import {
+  getFixedProxyUrl,
+  getNoProxyConflictingEntries,
+  getNoProxyEntries,
+  isSystemProxyEnabled,
+  resolveSystemProxyUrl,
+  shouldBypassProxyForUrl,
+} from './systemProxy';
 import { buildOutboundHeaderTrustedCaBundle } from './trustedCertificates';
 
 const LOOPBACK_HOST = '127.0.0.1';
@@ -410,33 +417,6 @@ const excludeLoopbackWhitelistEntries = (
   return { ...config, baseUrlWhitelist };
 };
 
-const findWhitelistBypassConflict = (
-  config: OutboundHeaderProxyConfig,
-  env: NodeJS.ProcessEnv,
-): string | null => {
-  const entries = [env.NO_PROXY, env.no_proxy]
-    .flatMap(value => (value || '').split(','))
-    .map(value => value.trim().toLowerCase())
-    .filter(Boolean);
-  for (const baseUrl of config.baseUrlWhitelist) {
-    const url = new URL(baseUrl);
-    const hostname = url.hostname.toLowerCase();
-    const port = url.port || String(getDefaultPort(url.protocol));
-    const conflict = entries.find(entry => {
-      if (entry === '*') return true;
-      const lastColon = entry.lastIndexOf(':');
-      const hasPort = lastColon > 0 && /^\d+$/.test(entry.slice(lastColon + 1));
-      const entryHost = (hasPort ? entry.slice(0, lastColon) : entry)
-        .replace(/^\*\./, '')
-        .replace(/^\./, '');
-      if (hasPort && entry.slice(lastColon + 1) !== port) return false;
-      return hostname === entryHost || hostname.endsWith(`.${entryHost}`);
-    });
-    if (conflict) return conflict;
-  }
-  return null;
-};
-
 const isConnectInterceptionCandidate = (
   authority: ConnectAuthority,
   protocol: 'http:' | 'https:',
@@ -615,6 +595,7 @@ export class OutboundHeaderProxy {
   private capability: string | null = null;
   private activePolicy: OutboundHeaderProxyConfig | null = null;
   private activeHeaderValues: Readonly<Record<string, string>> = Object.freeze({});
+  private upstreamProxyBypassEntries: readonly string[] = Object.freeze([]);
   private readonly authenticatedConnectCapabilities = new WeakMap<http.IncomingMessage, string>();
   private readonly authenticatedConnectSockets = new Set<Duplex>();
   private readonly configuredPolicy: OutboundHeaderProxyConfig | null;
@@ -659,6 +640,15 @@ export class OutboundHeaderProxy {
     return this.configuredPolicy
       ? this.activeHeaderValues
       : getOutboundHeaderUserInfo(this.userInfoPath, policy.headerNames);
+  }
+
+  private async resolveGatewayUpstreamProxy(targetUrl: string): Promise<string | null> {
+    // NO_PROXY from the parent environment controls the upstream hop. A matching
+    // request still reaches this local proxy when Header injection requires it.
+    if (shouldBypassProxyForUrl(this.upstreamProxyBypassEntries, targetUrl)) {
+      return null;
+    }
+    return this.resolveUpstreamProxy(targetUrl);
   }
 
   setProxyBypassEntries(entries: readonly string[]): void {
@@ -732,7 +722,9 @@ export class OutboundHeaderProxy {
           proxyInternals._onHttpServerConnectData(request, socket, data);
           return;
         }
-        void this.resolveUpstreamProxy(`${protocol}//${authority.hostname}:${authority.port}/`)
+        void this.resolveGatewayUpstreamProxy(
+          `${protocol}//${authority.hostname}:${authority.port}/`,
+        )
           .then(upstreamProxyUrl =>
             connectRawTunnel(socket, data, authority, upstreamProxyUrl, true),
           )
@@ -802,7 +794,9 @@ export class OutboundHeaderProxy {
           delete upstreamHeaders['proxy-authorization'];
           delete upstreamHeaders['Proxy-Authorization'];
         }
-        await applyUpstreamProxyForRequest(requestContext, requestUrl, this.resolveUpstreamProxy);
+        await applyUpstreamProxyForRequest(requestContext, requestUrl, targetUrl =>
+          this.resolveGatewayUpstreamProxy(targetUrl),
+        );
         const activePolicy = this.getActiveRequestPolicy();
         const matched =
           !!activePolicy && shouldApplyOutboundHeadersForRequest(activePolicy, requestUrl);
@@ -880,6 +874,7 @@ export class OutboundHeaderProxy {
     this.capability = null;
     this.activePolicy = null;
     this.activeHeaderValues = Object.freeze({});
+    this.upstreamProxyBypassEntries = Object.freeze([]);
   }
 
   rotateGatewayCapability(): void {
@@ -898,20 +893,29 @@ export class OutboundHeaderProxy {
     if (!this.info || !this.capability || !this.activePolicy) {
       return { ...baseEnv };
     }
-    const bypassConflict = findWhitelistBypassConflict(
-      this.getActiveRequestPolicy() ?? this.activePolicy,
-      baseEnv,
+    const activePolicy = this.getActiveRequestPolicy() ?? this.activePolicy;
+    // Preserve the original bypass policy for local-proxy -> upstream routing,
+    // then keep all remote bypasses out of Gateway -> local routing so runtime
+    // whitelist refreshes cannot make the first-hop environment stale.
+    const upstreamProxyBypassEntries = getNoProxyEntries(baseEnv);
+    const conflictingEntries = getNoProxyConflictingEntries(
+      upstreamProxyBypassEntries,
+      activePolicy.baseUrlWhitelist,
     );
-    if (bypassConflict) {
-      throw new Error(
-        `Outbound Header Proxy whitelist conflicts with NO_PROXY entry: ${bypassConflict}`,
+    if (conflictingEntries.length > 0) {
+      console.warn(
+        `[OutboundHeaderProxy] Reconciled Gateway NO_PROXY overlap: conflictingEntries=${JSON.stringify(conflictingEntries)} affectedHeaderNames=${JSON.stringify(activePolicy.headerNames)} disabledHeaderNames=[] action="route remote bypasses through local proxy, then preserve direct upstream bypass"; clients that set a conflicting NO_PROXY after startup may bypass local header injection.`,
       );
     }
+    this.upstreamProxyBypassEntries = Object.freeze(upstreamProxyBypassEntries);
+    const gatewayBaseEnv = { ...baseEnv };
+    delete gatewayBaseEnv.NO_PROXY;
+    delete gatewayBaseEnv.no_proxy;
     const proxyUrl = new URL(this.info.proxyUrl);
     proxyUrl.username = LOCAL_PROXY_USERNAME;
     proxyUrl.password = this.capability;
     return buildGatewayNetworkEnvironment(
-      baseEnv,
+      gatewayBaseEnv,
       { proxyUrl: proxyUrl.toString(), caBundlePath: this.info.caBundlePath },
       this.bypassEntries,
     );

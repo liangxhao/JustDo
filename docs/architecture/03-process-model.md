@@ -141,6 +141,18 @@ flowchart LR
 `NO_PROXY` 中；当前 env-proxy 模式忽略 loopback 白名单，以免为了一个本地目标破坏全部
 本地服务访问。
 
+远程 Header 白名单与用户 `NO_PROXY` 属于不同代理层，不能把用户规则当作配置错误。
+Main 为 Gateway 构造环境快照时，第一跳 `NO_PROXY` 只保留 loopback 和 Gateway 自身端口，
+使当前白名单以及 generation 运行期间刷新的白名单都能到达本地代理；同时把未经修改的
+用户 `NO_PROXY` 保存为该 Gateway generation 的上游路由策略。本地代理完成选择性 Header
+注入后，命中原始用户 bypass 的请求仍然直连目标，不会转发给系统或自定义上游代理。由于
+`NO_PROXY` 不支持“域名后缀整体直连、其中一个 origin 先走本地代理”的反向例外，类似
+`*.huawei.com` 的远程 bypass 规则会让该后缀流量先经过本地 socket，但非白名单 HTTPS
+仍使用原始 raw tunnel，最终上游直连语义保持不变。启动时已知白名单发生重叠时，Main
+日志记录冲突的
+`NO_PROXY` 条目、涉及的 Header 名称、未禁用任何 Header 的处理结果，以及 Tool 在运行期
+重新设置冲突规则仍可能绕过注入的限制；日志不得包含 Header 值。
+
 关闭时先停止 Cowork 请求和 Gateway 进程树，最后关闭本地代理，避免仍在退出的 tool
 请求命中已经释放的代理端口。
 
