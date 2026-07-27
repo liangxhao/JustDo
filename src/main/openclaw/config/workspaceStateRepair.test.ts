@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { repairOpenClawWorkspaceState } from './workspaceStateRepair';
 
@@ -34,6 +34,7 @@ const createFixture = () => {
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -123,5 +124,34 @@ describe('repairOpenClawWorkspaceState', () => {
         new Date('2026-07-02T01:00:00.000Z'),
       ),
     ).toBe('reset-attestation-removed');
+  });
+
+  test('keeps the attestation when the workspace cannot be inspected', () => {
+    const fixture = createFixture();
+    const readdirError = Object.assign(new Error('access denied'), { code: 'EACCES' });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(fs, 'readdirSync').mockImplementation(() => {
+      throw readdirError;
+    });
+
+    expect(
+      repairOpenClawWorkspaceState(
+        fixture.workspaceDir,
+        fixture.stateDir,
+        new Date('2026-07-02T01:00:00.000Z'),
+      ),
+    ).toBe('none');
+    expect(
+      fs.existsSync(
+        path.join(
+          fixture.stateDir,
+          'workspace-attestations',
+          `${crypto
+            .createHash('sha256')
+            .update(path.resolve(fixture.workspaceDir))
+            .digest('hex')}.attested`,
+        ),
+      ),
+    ).toBe(true);
   });
 });

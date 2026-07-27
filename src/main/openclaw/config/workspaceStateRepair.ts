@@ -21,6 +21,16 @@ const resolveAttestationPath = (workspaceDir: string, stateDir: string): string 
   return path.join(stateDir, WORKSPACE_ATTESTATION_DIR, `${key}.attested`);
 };
 
+const workspaceWasReset = (workspaceDir: string): boolean => {
+  try {
+    const stat = fs.statSync(workspaceDir);
+    return stat.isDirectory() && fs.readdirSync(workspaceDir).length === 0;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    throw error;
+  }
+};
+
 /**
  * Reconciles OpenClaw's workspace attestation with the user's workspace.
  *
@@ -55,9 +65,7 @@ export const repairOpenClawWorkspaceState = (
     const lines = fs.readFileSync(attestationPath, 'utf8').split(/\r?\n/);
     if (lines[0] !== WORKSPACE_ATTESTATION_HEADER) return 'none';
 
-    const workspaceWasReset =
-      !fs.existsSync(workspaceDir) || fs.readdirSync(workspaceDir).length === 0;
-    if (workspaceWasReset) {
+    if (workspaceWasReset(workspaceDir)) {
       fs.rmSync(attestationPath, { force: true });
       return 'reset-attestation-removed';
     }
