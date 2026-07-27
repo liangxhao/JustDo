@@ -44,7 +44,9 @@ describe('repairOpenClawWorkspaceState', () => {
     const fixture = createFixture();
     const now = new Date('2026-07-02T01:00:00.000Z');
 
-    expect(repairOpenClawWorkspaceState(fixture.workspaceDir, fixture.stateDir, now)).toBe(true);
+    expect(repairOpenClawWorkspaceState(fixture.workspaceDir, fixture.stateDir, now)).toBe(
+      'state-repaired',
+    );
     expect(
       JSON.parse(
         fs.readFileSync(
@@ -60,6 +62,7 @@ describe('repairOpenClawWorkspaceState', () => {
 
   test('does not repair when an attested generated file was deleted', () => {
     const fixture = createFixture();
+    fs.writeFileSync(path.join(fixture.workspaceDir, 'user-file.txt'), 'keep me\n');
     fs.rmSync(path.join(fixture.workspaceDir, 'AGENTS.md'));
 
     expect(
@@ -68,7 +71,7 @@ describe('repairOpenClawWorkspaceState', () => {
         fixture.stateDir,
         new Date('2026-07-02T01:00:00.000Z'),
       ),
-    ).toBe(false);
+    ).toBe('none');
   });
 
   test('does not repair when an attested generated file was modified', () => {
@@ -81,6 +84,44 @@ describe('repairOpenClawWorkspaceState', () => {
         fixture.stateDir,
         new Date('2026-07-02T01:00:00.000Z'),
       ),
+    ).toBe('none');
+  });
+
+  test('removes a recent attestation when the workspace directory was deleted', () => {
+    const fixture = createFixture();
+    fs.rmSync(fixture.workspaceDir, { recursive: true });
+
+    expect(
+      repairOpenClawWorkspaceState(
+        fixture.workspaceDir,
+        fixture.stateDir,
+        new Date('2026-07-02T01:00:00.000Z'),
+      ),
+    ).toBe('reset-attestation-removed');
+    expect(
+      fs.existsSync(
+        path.join(
+          fixture.stateDir,
+          'workspace-attestations',
+          `${crypto
+            .createHash('sha256')
+            .update(path.resolve(fixture.workspaceDir))
+            .digest('hex')}.attested`,
+        ),
+      ),
     ).toBe(false);
+  });
+
+  test('removes a recent attestation when the workspace directory was emptied', () => {
+    const fixture = createFixture();
+    fs.rmSync(path.join(fixture.workspaceDir, 'AGENTS.md'));
+
+    expect(
+      repairOpenClawWorkspaceState(
+        fixture.workspaceDir,
+        fixture.stateDir,
+        new Date('2026-07-02T01:00:00.000Z'),
+      ),
+    ).toBe('reset-attestation-removed');
   });
 });

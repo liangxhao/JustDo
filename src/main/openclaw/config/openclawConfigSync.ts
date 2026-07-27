@@ -1546,9 +1546,14 @@ export class OpenClawConfigSync {
   }
 
   private repairWorkspaceState(workspaceDir: string): void {
-    if (repairOpenClawWorkspaceState(workspaceDir, this.engineManager.getStateDir())) {
+    const result = repairOpenClawWorkspaceState(workspaceDir, this.engineManager.getStateDir());
+    if (result === 'state-repaired') {
       console.warn(
         `[OpenClawConfigSync] Repaired missing workspace state for intact workspace: ${workspaceDir}`,
+      );
+    } else if (result === 'reset-attestation-removed') {
+      console.warn(
+        `[OpenClawConfigSync] Removed workspace attestation after user reset: ${workspaceDir}`,
       );
     }
   }
