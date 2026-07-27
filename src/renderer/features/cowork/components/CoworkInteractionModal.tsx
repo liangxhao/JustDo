@@ -357,12 +357,12 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                   </div>
                 </button>
                 {otherActive[questions[0].question] && (
-                  <input
-                    type="text"
+                  <textarea
+                    rows={3}
                     value={otherInputs[questions[0].question] || ''}
                     onChange={(event) => handleOtherInputChange(questions[0], event.target.value)}
                     placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
-                    className="mt-2 w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                    className="mt-2 w-full min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
                     autoFocus
                   />
                 )}
@@ -435,12 +435,12 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                         </div>
                       </button>
                       {otherActive[question.question] && (
-                        <input
-                          type="text"
+                        <textarea
+                          rows={3}
                           value={otherInputs[question.question] || ''}
                           onChange={(event) => handleOtherInputChange(question, event.target.value)}
                           placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
-                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                          className="w-full min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
                           autoFocus
                         />
                       )}

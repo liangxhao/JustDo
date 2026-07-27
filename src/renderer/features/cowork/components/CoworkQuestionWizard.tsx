@@ -474,14 +474,14 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
               </button>
             </div>
 
-            <div className="mt-4 flex items-center gap-3">
+            <div className="mt-4 flex items-start gap-3">
               {otherActive[currentStep] && (
-                <input
-                  type="text"
+                <textarea
+                  rows={3}
                   value={otherInputs[currentStep] || ''}
                   onChange={(e) => handleOtherInputChange(e.target.value)}
                   placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
-                  className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                  className="flex-1 min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
                   autoFocus
                 />
               )}

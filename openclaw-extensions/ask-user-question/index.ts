@@ -161,26 +161,26 @@ const parsePluginConfig = (value: unknown): PluginConfig => {
 };
 
 const QuestionOptionSchema = Type.Object({
-  label: Type.String({ description: 'Display text for this option (1-5 words).' }),
-  description: Type.Optional(Type.String({ description: 'Explanation of what this option means.' })),
+  label: Type.String({ description: 'Option label (1-5 words).' }),
+  description: Type.Optional(Type.String({ description: 'Short explanation or tradeoff.' })),
 });
 
 const QuestionSchema = Type.Object({
-  question: Type.String({ description: 'The user-facing question. Use for any situation where the user needs to make a choice from predefined options.' }),
-  header: Type.Optional(Type.String({ description: 'Short label displayed as a tag (max 12 chars). Examples: "Mode", "Scope", "Confirm".' })),
+  question: Type.String({ description: 'Question shown to the user.' }),
+  header: Type.Optional(Type.String({ description: 'Short tag (max 12 characters).' })),
   options: Type.Array(QuestionOptionSchema, {
     minItems: 2,
     maxItems: 4,
-    description: 'Mutually exclusive choices for the user to pick from (2-4 options).',
+    description: 'Available choices (2-4 options).',
   }),
-  multiSelect: Type.Optional(Type.Boolean({ description: 'Allow selecting multiple options when more than one choice may apply.' })),
+  multiSelect: Type.Optional(Type.Boolean({ description: 'Allow multiple selections.' })),
 });
 
 const AskUserQuestionSchema = Type.Object({
   questions: Type.Array(QuestionSchema, {
     minItems: 1,
     maxItems: 4,
-    description: 'Questions to ask the user (1-4 questions).',
+    description: 'Questions to show (1-4).',
   }),
 });
 
@@ -259,13 +259,9 @@ const plugin = {
       return {
         name: 'AskUserQuestion',
         label: 'Ask User Question',
-        description: [
-        'Ask the user to choose from predefined options and wait for their response.',
-        'Prefer this tool whenever the user needs to make any choice, decision, confirmation, or selection from predefined options.',
-        'Use it by default instead of asking a free-form chat question whenever you can present 2-4 clear options.',
-        'Also use this tool before high-risk destructive actions such as rm, trash, rmdir, unlink, or git clean.',
-        'Do not use it for purely informational updates or questions that have no clear predefined options.',
-      ].join(' '),
+        description:
+          'Ask the user to choose from 2-4 predefined options and wait for the response. '
+          + 'Prefer this tool whenever the user needs to choose, decide, confirm, or select and clear options can be provided.',
       parameters: AskUserQuestionSchema,
       async execute(_id: string, params: unknown) {
         const input = {
