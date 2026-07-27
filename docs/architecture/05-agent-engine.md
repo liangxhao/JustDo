@@ -95,6 +95,15 @@ tool calling 的模型可以调用 OpenClaw 原生 `update_plan`。该能力仍�
 通过 runtime patch 模拟计划更新。配置合并 `sandbox` 和 `loopDetection` 时必须保留
 `tools.experimental`、既有 deny 列表和 web 配置。
 
+JustDo 同时启用 OpenClaw 原生 `tools.toolSearch.mode: "directory"`，并通过
+`010-defer-selected-tool-schemas.cjs` 将其 catalog predicate 收窄到显式名单，目前为
+原生 `browser`、`cron`、`get_goal`、`create_goal`、`update_goal`、`memory_search`
+和 `memory_get` tool。其他授权工具仍直接暴露；普通请求只看到精简目录项和 Tool Search
+控制工具，相关请求则由 Gateway 加载对应完整 schema。工具最终仍通过 Gateway 的正常
+权限、审批、Hook、日志与 telemetry 路径执行，JustDo 不实现绕过 schema 校验的代理
+tool。OpenClaw 提供受支持的 per-tool defer 名单后，应删除此版本级 patch 并改用原生
+配置。
+
 配置应用按所有权明确分为四类：
 
 | 变化                                                                         | 应用方式             | 生命周期所有者 |

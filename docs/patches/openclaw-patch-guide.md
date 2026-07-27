@@ -33,6 +33,7 @@ scripts/patches/v2026.6.11/
 | `007-allow-managed-pip-config-env.cjs` | JustDo-managed pip config env passthrough |
 | `008-dedupe-visible-subagent-announces.cjs` | Deduplicate sibling completion announces already visible in parent history |
 | `009-reply-session-init-conflict-retry.cjs` | Fresh writer snapshots, key-order-independent revisions, and bounded retry for reply initialization conflicts |
+| `010-defer-selected-tool-schemas.cjs` | Defer selected heavyweight native schemas through directory-mode Tool Search |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -137,6 +138,7 @@ Patch removal is a real change:
 | `007-allow-managed-pip-config-env.cjs` | Managed dependency config passthrough | Remove when upstream supports scoped dependency manager env passthrough |
 | `008-dedupe-visible-subagent-announces.cjs` | Subagent completion delivery compatibility | Remove when upstream coalesces sibling announces or credits results already visible in parent history |
 | `009-reply-session-init-conflict-retry.cjs` | Runtime session concurrency guard | Remove when upstream aligns reply snapshot/commit cache consistency, uses key-order-independent revisions, and retries genuine conflicts |
+| `010-defer-selected-tool-schemas.cjs` | Tool context compaction | Remove when upstream supports a configurable per-tool Tool Search defer list |
 
 ## Version Upgrade Process
 

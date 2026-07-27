@@ -398,6 +398,14 @@ export const buildManagedOpenClawConnectivityConfig = () => ({
     experimental: {
       planTool: true,
     },
+    // A version-scoped runtime patch catalogs selected heavyweight native tools
+    // (currently browser, cron, goal lifecycle, and memory retrieval tools) in
+    // directory mode. Their full schemas are hydrated for relevant requests or
+    // remain available through Tool Search, while all other authorized tools
+    // stay directly exposed.
+    toolSearch: {
+      mode: 'directory',
+    },
     deny: [
       'web_search',
       'skill_workshop',
