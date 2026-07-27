@@ -5,6 +5,7 @@ import {
 } from '@shared/openclaw/executionPlan';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
+import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { i18nService } from '@/services/i18n';
 
@@ -14,6 +15,7 @@ import type {
   ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
 import { renderChatAvatar } from './chat-avatar';
+import { toSanitizedMarkdownHtml } from './markdown';
 import {
   renderAssistantTimelineContent,
   renderReadingIndicatorGroup,
@@ -262,7 +264,11 @@ export function renderTimelineItem(
                           }
                           ${
                             process.type === 'thinking'
-                              ? html` <div class="process-summary__thinking">${process.text}</div> `
+                              ? html`
+                                  <div class="process-summary__thinking markdown-content">
+                                    ${unsafeHTML(toSanitizedMarkdownHtml(process.text))}
+                                  </div>
+                                `
                               : html`
                                   <details class="process-summary__tool">
                                     <summary class="process-summary__tool-title">

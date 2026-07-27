@@ -2,7 +2,7 @@ import type { TemplateResult } from 'lit';
 import { describe, expect, test, vi } from 'vitest';
 
 vi.mock('./markdown', () => ({
-  toSanitizedMarkdownHtml: (text: string) => text,
+  toSanitizedMarkdownHtml: (text: string) => `<p>${text}</p>`,
   toStreamingMarkdownHtml: (text: string) => text,
 }));
 
@@ -216,6 +216,8 @@ describe('active turn timeline', () => {
     expect(rendered.indexOf('process-summary__thinking-marker')).toBeLessThan(
       rendered.indexOf('<strong>Thinking</strong>'),
     );
+    expect(rendered).toContain('class="process-summary__thinking markdown-content"');
+    expect(rendered).toContain('<p>private reasoning</p>');
     expect(rendered).toContain('secret-value');
     expect(rendered).toContain('result');
     expect(rendered).not.toContain('process-summary__item-index');

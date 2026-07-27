@@ -115,6 +115,11 @@ const RUNTIME_STATUS_WARNING_INTERVAL_MS = 30_000;
 
 const isNoReply = (text: string): boolean => NO_REPLY_PATTERN.test(text);
 
+const isPendingNoReplySnapshot = (text: string): boolean => {
+  const normalized = text.trim().toUpperCase();
+  return normalized.length > 0 && 'NO_REPLY'.startsWith(normalized);
+};
+
 export const ensureSlashCommandSession = async (
   client: GatewayClientLike,
   sessionKey: string,
@@ -817,7 +822,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       const rawText = extractAssistantText(p.message);
       const text = this.prepareAssistantSnapshot(turn, rawText);
-      if (text && !isNoReply(text)) {
+      if (text && !isPendingNoReplySnapshot(text)) {
         turn.chatStream = text; // Full replacement (webchat pattern)
         // Emit streaming update
         if (turn.assistantMessageId) {
@@ -845,7 +850,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     } else if (state === 'final') {
       const rawText = extractAssistantText(p.message);
       const text =
-        turn.agentAssistantStreamSeen && (!runId || runId === turn.runId)
+        turn.agentAssistantStreamSeen && turn.chatStream && (!runId || runId === turn.runId)
           ? turn.chatStream
           : this.prepareAssistantSnapshot(turn, rawText);
       const finalText = text || turn.chatStream;
@@ -1075,7 +1080,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       turn.agentAssistantStreamSeen = true;
       const rawText = typeof data.text === 'string' ? data.text : '';
       const text = this.prepareAssistantSnapshot(turn, rawText);
-      if (text && !isNoReply(text)) {
+      if (text && !isPendingNoReplySnapshot(text)) {
         turn.chatStream = text;
         if (turn.assistantMessageId) {
           this.throttledEmitMessageUpdate(sessionId, turn.assistantMessageId, text);
@@ -1492,14 +1497,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     snapshot: string,
     final: boolean,
   ): void {
-    if (!snapshot || isNoReply(snapshot)) {
+    if (!snapshot || isPendingNoReplySnapshot(snapshot)) {
       if (final) this.finalizeVisibleRun(runId);
       return;
     }
 
     const stream = this.getVisibleRunStream(sessionId, sessionKey, runId, modelName);
     const text = this.prepareVisibleAssistantSnapshot(stream, snapshot);
-    if (!text || isNoReply(text)) return;
+    if (!text || isPendingNoReplySnapshot(text)) return;
 
     const metadata = { isStreaming: !final, isFinal: final, modelName: stream.modelName };
     if (stream.assistantMessageId) {

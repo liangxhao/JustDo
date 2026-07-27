@@ -71,6 +71,26 @@ test('keeps the SQLite fallback when Gateway history fails', async () => {
   error.mockRestore();
 });
 
+test('hides persisted partial NO_REPLY artifacts without hiding legitimate NO text', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+
+  controller.admitFallbackHistory(sessionKey, [
+    { id: 'message-1', role: 'assistant', content: 'cached answer' },
+    { id: 'message-2', role: 'assistant', content: 'NO_RE' },
+    { id: 'message-3', role: 'assistant', content: 'NO_REPLY' },
+    { id: 'message-4', role: 'assistant', content: 'NO' },
+    { id: 'message-5', role: 'user', content: 'NO_RE' },
+  ]);
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ id: 'message-1', content: 'cached answer' }),
+    expect.objectContaining({ id: 'message-4', content: 'NO' }),
+    expect.objectContaining({ id: 'message-5', content: 'NO_RE' }),
+  ]);
+});
+
 test('does not let a limited RPC snapshot truncate a complete SQLite fallback', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const messages = Array.from({ length: 100_000 }, (_, index) => ({

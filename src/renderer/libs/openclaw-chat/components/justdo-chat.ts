@@ -1258,9 +1258,12 @@ export class JustDoChatElement extends LitElement {
         background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.02));
         border-radius: 8px;
         font-size: 13px;
+        line-height: 1.5;
         color: var(--justdo-chat-text-secondary, #6b7280);
         margin-top: 2px;
         border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.04));
+        max-height: 7.5em;
+        overflow-y: auto;
       }
 
       .chat-thinking__content p,
@@ -1275,11 +1278,6 @@ export class JustDoChatElement extends LitElement {
       .chat-thinking__content ol + p,
       .chat-thinking__content pre + p {
         margin-top: 2px;
-      }
-
-      .chat-thinking--streaming .chat-thinking__content {
-        max-height: 200px;
-        overflow-y: auto;
       }
 
       .chat-thinking__header {
@@ -1500,6 +1498,9 @@ export class JustDoChatElement extends LitElement {
       .process-summary__thinking {
         margin-top: 5px;
         color: var(--justdo-chat-muted, #64748b);
+        line-height: 1.5;
+        max-height: 7.5em;
+        overflow-y: auto;
       }
       .process-summary__thinking > :first-child {
         margin-top: 0;

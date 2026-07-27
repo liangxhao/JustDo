@@ -636,6 +636,77 @@ test('announce run events follow webchat chat-final and tool-stream split', () =
   );
 });
 
+test('does not persist partial NO_REPLY snapshots from a detached announce run', () => {
+  const { session, store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const emittedMessages: Array<Record<string, unknown>> = [];
+  adapter.on('message', (_sessionId, message) => emittedMessages.push(message));
+
+  const sessionKey = 'agent:main:justdo:session-1';
+  const runId = 'announce:v1:agent:main:subagent:child-run';
+  adapter.rememberSessionKey(session.id, sessionKey);
+
+  for (const text of ['N', 'NO', 'NO_', 'NO_RE', 'NO_REPLY']) {
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId,
+        sessionKey,
+        stream: 'assistant',
+        data: { text },
+      },
+    });
+  }
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    },
+  });
+
+  expect(emittedMessages).toEqual([]);
+  expect(session.messages).toEqual([]);
+});
+
+test('keeps a legitimate final NO reply after suppressing its live prefix', () => {
+  const { session, store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = 'agent:main:justdo:session-1';
+  const runId = 'main-run';
+
+  adapter.rememberSessionKey(session.id, sessionKey);
+  adapter.ensureActiveTurn(session.id, sessionKey, runId);
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    payload: {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: 'NO' },
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'chat',
+    payload: {
+      runId,
+      sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: 'NO' },
+    },
+  });
+
+  expect(session.messages).toEqual([
+    expect.objectContaining({
+      type: 'assistant',
+      content: 'NO',
+      metadata: expect.objectContaining({ isFinal: true }),
+    }),
+  ]);
+});
+
 test('announce item and command_output events render tool messages', () => {
   const session = {
     id: 'session-1',

@@ -2903,7 +2903,7 @@ function shouldHideMessage(message: unknown): boolean {
   // Hide NO_REPLY assistant messages
   if (role === 'assistant') {
     const text = extractSnapshotText(message);
-    if (text && SILENT_REPLY_PATTERN.test(text.trim())) return true;
+    if (text && isPersistedSilentReplyArtifactText(text)) return true;
   }
 
   // Hide heartbeat messages
@@ -2913,6 +2913,13 @@ function shouldHideMessage(message: unknown): boolean {
   }
 
   return false;
+}
+
+function isPersistedSilentReplyArtifactText(text: string): boolean {
+  const trimmed = text.trim();
+  if (SILENT_REPLY_PATTERN.test(trimmed)) return true;
+  const upper = trimmed.toUpperCase();
+  return upper.startsWith('NO_') && 'NO_REPLY'.startsWith(upper);
 }
 
 function isCompactionMarker(message: unknown): boolean {
