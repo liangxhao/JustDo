@@ -7,7 +7,7 @@ read_when:
 
 # HEARTBEAT.md 模板
 
-`HEARTBEAT.md` 位于智能体工作区中。若希望 OpenClaw 跳过心跳模型调用，请保持此文件为空，或只保留 Markdown 注释和标题。
+`HEARTBEAT.md` 位于智能体工作区中。若希望跳过心跳模型调用，请保持此文件为空，或只保留 Markdown 注释和标题。
 
 默认运行时模板可以保持为：
 
