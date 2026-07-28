@@ -56,8 +56,13 @@ export type ActiveTurnTimelineItem =
   | TerminalTimelineItem
   | WaitingTimelineItem;
 
-export function projectTurnItems(turn: AssistantTurn | null): ActiveTurnTimelineItem[] {
-  if (!turn) return [];
+export function projectTurnItems(
+  turn: AssistantTurn | null,
+  isAwaitingTurn = false,
+): ActiveTurnTimelineItem[] {
+  if (!turn) {
+    return isAwaitingTurn ? [{ kind: 'waiting', key: 'waiting:pending-turn' }] : [];
+  }
   if (turn.status === 'running' && turn.items.length === 0) {
     return [{ kind: 'waiting', key: `waiting:${turn.runId}` }];
   }

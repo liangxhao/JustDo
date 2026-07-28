@@ -1863,7 +1863,11 @@ export class JustDoChatElement extends LitElement {
             timelineView.minimapTail,
             timelineView.minimapKeySignature,
           )}
-          <div class="chat-container" role="log" aria-busy=${activeTurn?.status === 'running'}>
+          <div
+            class="chat-container"
+            role="log"
+            aria-busy=${activeTurn?.status === 'running' || isStreaming}
+          >
             <div class="sr-only" role="status" aria-live="polite">
               ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
             </div>
@@ -2627,7 +2631,7 @@ export class JustDoChatElement extends LitElement {
 
   private projectActiveTimeline() {
     const turn = this._controller?.state.transcript.activeTurn ?? null;
-    return projectTurnItems(turn);
+    return projectTurnItems(turn, this._controller?.state.chatSending ?? false);
   }
 
   private renderItem(

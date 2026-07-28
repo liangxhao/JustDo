@@ -42,6 +42,12 @@ function turn(items: TurnItem[]): AssistantTurn {
 }
 
 describe('projectTurnItems', () => {
+  test('shows a waiting row as soon as sending starts before a turn exists', () => {
+    expect(projectTurnItems(null, true)).toEqual([
+      { kind: 'waiting', key: 'waiting:pending-turn' },
+    ]);
+  });
+
   test('shows a waiting row before the first assistant event arrives', () => {
     expect(
       projectTurnItems({
