@@ -1,3 +1,4 @@
+import childProcess from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -183,6 +184,41 @@ test('can delete a skill after importing it', () => {
   files.delete('deletable-skill');
 
   expect(fs.existsSync(path.join(managed, 'deletable-skill'))).toBe(false);
+});
+
+test('repairs inherited Windows ACLs before retrying a permission-blocked deletion', () => {
+  const managed = makeTempDir();
+  const skillDir = path.join(managed, 'permission-blocked-skill');
+  fs.mkdirSync(skillDir);
+  fs.writeFileSync(
+    path.join(skillDir, 'SKILL.md'),
+    '---\nname: permission-blocked-skill\ndescription: demo\n---\n',
+  );
+  const rmSync = fs.rmSync.bind(fs);
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  vi.spyOn(fs, 'rmSync')
+    .mockImplementationOnce(() => {
+      throw Object.assign(new Error('permission denied'), { code: 'EPERM' });
+    })
+    .mockImplementation(rmSync);
+  vi.spyOn(childProcess, 'spawnSync').mockReturnValue({
+    pid: 1,
+    output: [],
+    stdout: null,
+    stderr: null,
+    status: 0,
+    signal: null,
+  });
+
+  new OpenClawSkillFiles(managed).delete('permission-blocked-skill');
+
+  expect(childProcess.spawnSync).toHaveBeenCalledWith(
+    expect.stringMatching(/[\\/]icacls\.exe$|^icacls\.exe$/),
+    [skillDir, '/reset', '/T', '/C', '/Q', '/L'],
+    expect.objectContaining({ windowsHide: true, stdio: 'ignore' }),
+  );
+  expect(fs.rmSync).toHaveBeenCalledTimes(2);
+  expect(fs.existsSync(skillDir)).toBe(false);
 });
 
 test('does not leave a partial managed skill when copying fails', () => {

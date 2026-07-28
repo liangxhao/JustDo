@@ -1,3 +1,4 @@
+import childProcess from 'child_process';
 import extractZip from 'extract-zip';
 import fs from 'fs';
 import yaml from 'js-yaml';
@@ -53,18 +54,44 @@ const readSkillId = (skillDir: string): SkillIdResult => {
   }
 };
 
+const getFileSystemErrorCode = (error: unknown): string =>
+  error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : '';
+
+const resetWindowsDirectoryAcl = (directory: string): void => {
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  const executable = systemRoot ? path.join(systemRoot, 'System32', 'icacls.exe') : 'icacls.exe';
+  childProcess.spawnSync(executable, [directory, '/reset', '/T', '/C', '/Q', '/L'], {
+    windowsHide: true,
+    stdio: 'ignore',
+  });
+};
+
 const removeDirectory = (directory: string): void => {
-  fs.rmSync(directory, {
+  const options: fs.RmOptions = {
     recursive: true,
     force: true,
     maxRetries: process.platform === 'win32' ? FILE_SYSTEM_RETRY_COUNT : 0,
     retryDelay: process.platform === 'win32' ? FILE_SYSTEM_RETRY_DELAY_MS : 0,
-  });
+  };
+  try {
+    fs.rmSync(directory, options);
+  } catch (error) {
+    const code = getFileSystemErrorCode(error);
+    if (process.platform !== 'win32' || (code !== 'EACCES' && code !== 'EPERM')) {
+      throw error;
+    }
+
+    // Imported directories can contain child ACLs that no longer grant the
+    // current Windows user traversal rights. rmSync retries cannot repair that
+    // state, so restore inherited ACLs and make one final removal attempt.
+    resetWindowsDirectoryAcl(directory);
+    fs.rmSync(directory, options);
+  }
 };
 
 const formatFileSystemError = (error: unknown, targetDir: string): string => {
   if (!(error instanceof Error)) return 'Failed to update skill files';
-  const code = 'code' in error && typeof error.code === 'string' ? error.code : '';
+  const code = getFileSystemErrorCode(error);
   if (code !== 'EACCES' && code !== 'EPERM' && code !== 'EEXIST') return error.message;
   return `Cannot access the skill directory "${targetDir}". Check its Windows owner and permissions, close processes using it, and try again. (${error.message})`;
 };
@@ -100,10 +127,7 @@ const renameDirectory = (sourceDir: string, targetDir: string): void => {
       fs.renameSync(sourceDir, targetDir);
       return;
     } catch (error) {
-      const code =
-        error instanceof Error && 'code' in error && typeof error.code === 'string'
-          ? error.code
-          : '';
+      const code = getFileSystemErrorCode(error);
       const canRetry =
         attempt < FILE_SYSTEM_RETRY_COUNT &&
         (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY');
