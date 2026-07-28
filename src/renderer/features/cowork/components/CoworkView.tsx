@@ -893,7 +893,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           <div className="shrink-0 pb-4 pt-2">
             <div
               className="mx-auto min-w-0 space-y-1.5"
-              style={{ width: 'clamp(320px, 75%, 1120px)', maxWidth: 'calc(100% - 32px)' }}
+              style={{ width: 'clamp(320px, 85%, 1280px)', maxWidth: 'calc(100% - 32px)' }}
             >
               <div className="shadow-glow-accent rounded-2xl">
                 <CoworkPromptInput

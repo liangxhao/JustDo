@@ -20,9 +20,8 @@ interface FilePreviewDrawerProps {
 
 const DRAWER_DEFAULT_WIDTH = 736;
 const DRAWER_MIN_WIDTH = 360;
-const DRAWER_MAX_WIDTH = 1200;
 const DRAWER_WINDOW_MARGIN = 16;
-const MARKDOWN_CONTENT_MAX_WIDTH = 920;
+const MARKDOWN_CONTENT_MAX_WIDTH = 1280;
 const MARKDOWN_DOCUMENT_PARSE_LIMIT = 140_000;
 const COPY_FEEDBACK_DURATION_MS = 1600;
 const COPY_ICON =
@@ -32,7 +31,7 @@ const COPY_DONE_ICON =
 
 const clampDrawerWidth = (width: number): number => {
   const viewportMax = Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN);
-  return Math.min(Math.max(width, DRAWER_MIN_WIDTH), Math.min(DRAWER_MAX_WIDTH, viewportMax));
+  return Math.min(Math.max(width, DRAWER_MIN_WIDTH), viewportMax);
 };
 
 const FilePreviewDrawer: React.FC<FilePreviewDrawerProps> = ({ preview, onClose }) => {

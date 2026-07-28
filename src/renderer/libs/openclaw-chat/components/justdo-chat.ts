@@ -198,7 +198,7 @@ export class JustDoChatElement extends LitElement {
       }
 
       .chat-container {
-        width: clamp(320px, 75%, 1120px);
+        width: clamp(320px, 85%, 1280px);
         max-width: calc(100% - 32px);
         box-sizing: border-box;
         margin: 0 auto;

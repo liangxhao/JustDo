@@ -12,7 +12,6 @@ import { reconcileSubagentLabel } from './subagentLabel';
 
 const DRAWER_DEFAULT_WIDTH = 672;
 const DRAWER_MIN_WIDTH = 360;
-const DRAWER_MAX_WIDTH = 960;
 const DRAWER_WINDOW_MARGIN = 16;
 
 interface SubagentMessageDrawerProps {
@@ -23,7 +22,7 @@ interface SubagentMessageDrawerProps {
 
 const clampDrawerWidth = (width: number): number => {
   const viewportMax = Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN);
-  return Math.min(Math.max(width, DRAWER_MIN_WIDTH), Math.min(DRAWER_MAX_WIDTH, viewportMax));
+  return Math.min(Math.max(width, DRAWER_MIN_WIDTH), viewportMax);
 };
 
 const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
