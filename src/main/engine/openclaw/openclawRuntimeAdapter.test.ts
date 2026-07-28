@@ -152,7 +152,7 @@ test('preserves local running state when Gateway does not confirm the stop', asy
   expect(stopped).not.toHaveBeenCalled();
 });
 
-test('stops running child and descendant subagents when the parent turn is idle', async () => {
+test('stops a recovered active descendant through an idle child session', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const internals = adapter as unknown as StopTestAdapter;
@@ -164,12 +164,12 @@ test('stops running child and descendant subagents when the parent turn is idle'
     if (method === 'sessions.list') {
       if (input.spawnedBy === parentKey) {
         return Promise.resolve({
-          sessions: [{ key: childKey, hasActiveSubagentRun: true }],
+          sessions: [{ key: childKey, status: 'done', hasActiveRun: false }],
         });
       }
       if (input.spawnedBy === childKey) {
         return Promise.resolve({
-          sessions: [{ key: grandchildKey, hasActiveSubagentRun: true }],
+          sessions: [{ key: grandchildKey, status: 'done', hasActiveRun: true }],
         });
       }
       return Promise.resolve({ sessions: [] });
@@ -186,7 +186,7 @@ test('stops running child and descendant subagents when the parent turn is idle'
   const abortedKeys = request.mock.calls
     .filter(([method]) => method === 'sessions.abort')
     .map(([, params]) => (params as { key: string }).key);
-  expect(abortedKeys).toEqual(expect.arrayContaining([parentKey, childKey, grandchildKey]));
+  expect(abortedKeys).toEqual([parentKey, grandchildKey]);
 });
 
 test('creates or reuses the OpenClaw session before a goal command', async () => {

@@ -468,10 +468,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         includeStructuredTool: false,
       });
       for (const subagent of subagents) {
-        if (subagent.status !== SUBAGENT_STATUSES.RUNNING) continue;
-        if (!runningKeys.has(subagent.sessionKey)) {
-          runningKeys.add(subagent.sessionKey);
+        if (!visitedParentKeys.has(subagent.sessionKey)) {
           pendingParentKeys.push(subagent.sessionKey);
+        }
+        if (
+          subagent.status === SUBAGENT_STATUSES.RUNNING &&
+          !runningKeys.has(subagent.sessionKey)
+        ) {
+          runningKeys.add(subagent.sessionKey);
         }
       }
     }

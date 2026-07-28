@@ -33,7 +33,11 @@ const isSubagentStatus = (value: unknown): value is SubagentStatus =>
   Object.values(SUBAGENT_STATUSES).includes(value as SubagentStatus);
 
 const resolveStatus = (row: Record<string, unknown>): SubagentStatus => {
-  if (row.hasActiveSubagentRun === true || row.subagentRunState === 'active') {
+  if (
+    row.hasActiveRun === true ||
+    row.hasActiveSubagentRun === true ||
+    row.subagentRunState === 'active'
+  ) {
     return SUBAGENT_STATUSES.RUNNING;
   }
   if (isSubagentStatus(row.status)) return row.status;

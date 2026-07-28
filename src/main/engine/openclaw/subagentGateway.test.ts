@@ -311,6 +311,35 @@ test('can skip persisted history lookup for lightweight runtime polling', async 
   });
 });
 
+test('maps a recovered active child session to running', async () => {
+  const client = {
+    request: vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          key: 'agent:main:subagent:recovered-child',
+          spawnedBy: 'agent:main:cowork:parent',
+          status: 'done',
+          hasActiveRun: true,
+        },
+      ],
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({
+      client,
+      parentKeys: ['agent:main:cowork:parent'],
+      includePersistedHistory: false,
+      includeStructuredTool: false,
+    }),
+  ).resolves.toMatchObject([
+    {
+      sessionKey: 'agent:main:subagent:recovered-child',
+      status: 'running',
+    },
+  ]);
+});
+
 test('maps interrupted registry rows to failed', async () => {
   const client = {
     request: vi.fn().mockResolvedValue({
