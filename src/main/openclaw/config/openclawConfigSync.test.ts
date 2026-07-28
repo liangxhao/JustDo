@@ -9,6 +9,7 @@ import {
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   buildBuiltinMemorySearchConfig,
+  buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawHeartbeatConfig,
   buildOpenClawConfigMeta,
@@ -221,6 +222,32 @@ describe('OpenClaw managed config metadata', () => {
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe('OpenClaw managed compaction config', () => {
+  test('uses the safeguard hook with Codex-style handoff retention', () => {
+    const compaction = buildManagedOpenClawCompactionConfig();
+
+    expect(compaction).toMatchObject({
+      mode: 'safeguard',
+      recentTurnsPreserve: 0,
+      identifierPolicy: 'off',
+      qualityGuard: {
+        enabled: false,
+        maxRetries: 2,
+      },
+      midTurnPrecheck: {
+        enabled: true,
+      },
+    });
+    expect(compaction.reserveTokens).toBe(24_000);
+    expect(compaction).not.toHaveProperty('keepRecentTokens');
+    expect(compaction.customInstructions).toContain(
+      'You are performing a CONTEXT CHECKPOINT COMPACTION.',
+    );
+    expect(compaction.customInstructions).not.toContain('## Goal');
+    expect(compaction.customInstructions.length).toBeLessThanOrEqual(800);
   });
 });
 

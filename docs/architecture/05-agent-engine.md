@@ -104,6 +104,45 @@ JustDo 同时启用 OpenClaw 原生 `tools.toolSearch.mode: "directory"`，并�
 tool。OpenClaw 提供受支持的 per-tool defer 名单后，应删除此版本级 patch 并改用原生
 配置。
 
+JustDo 通过受支持的 `agents.defaults.compaction` 配置启用 OpenClaw 内置
+`compaction-safeguard` hook，而不复制压缩引擎。策略借鉴 Codex 的 continuation
+handoff 思路：摘要强调用户意图、约束、已验证进度、未完成事项和精确标识符；关闭会
+重复占用 16,000-character 摘要预算的 preserved-turn suffix。OpenClaw 的结构化质量
+校验会强制恢复其 `##` 模板，因此 Codex 模式下关闭该校验。配置刻意不写
+`keepRecentTokens`：自动压缩仍继承 OpenClaw 的安全 recent-tail
+默认值，而手动 `/compact` 会启用 `v2026.6.11` 的强化边界，真正丢弃旧工具结果，
+形成接近 Codex 的“用户原话 + 摘要”检查点。mid-turn precheck 会在长工具循环中提前
+检查上下文压力。
+
+OpenClaw 的公开 compaction provider 可以替换摘要，但拿不到当前模型认证；公开
+`before_compaction` / `after_compaction` hook 又不能修改压缩结果。因此
+`012-retain-user-messages-across-compaction.cjs` 只补足原生 hook 无法表达的一层：
+从整个压缩前有效分支提取真实 user 文本，在 compaction details 中跨轮滚动保存，并在
+后续模型上下文中重放。完整性标记让重复压缩只追加上次边界之后的新输入，并能从旧版
+不完整 metadata 补收 recent tail 中的用户原话。手动压缩的顺序是“用户原话 → 摘要”；
+自动或 mid-turn 压缩则只回放 native recent tail 之前的用户原话，再接上 OpenClaw 为
+安全连续执行而保留的 recent tail，避免 tail 内用户输入重复。用户原话预算与 Codex
+一致，约为 20,000 tokens；超限时优先保留较新的完整输入，只截断最老的边界输入。摘要生成仍
+完全走 OpenClaw 原生 safeguard hook，但会把 cut point 后的 user、assistant 和 tool
+消息按原顺序追加到摘要材料。split-turn 会保持“旧历史 → turn prefix → recent
+suffix”顺序，避免 tool result 排在对应 tool call 之前；重复压缩继续以 previous
+summary 为基础，再合并本轮全部新回复。Tool result 和 bash output 单条最多保留 6,000
+characters，每段摘要输入合计最多保留 24,000 characters；从最新结果向前分配预算，超额的旧
+结果合并成一个有界省略标记。这确保最后一条用户消息和最近助手回复参与摘要，而大型
+工具输出不会挤占全部摘要上下文。对升级前已经存在、尚无 retention metadata 的
+compaction entry，重放层会从 JSONL 中仍保留的旧 message entries 回填一次用户原话。
+
+`013-codex-compaction-template.cjs` 替换 SDK 内建的首次、重复和 split-turn 摘要提示词、
+摘要 system wording 与回放前缀，并旁路 safeguard 强制的 `## Goal` / `## Progress`
+等结构与诊断后缀。用户原话仍由 `012` 作为独立 user 消息重放，不重复塞入 summary
+正文；assistant thinking 随完整 assistant 消息参与摘要，压缩后只保留其归纳结果。
+
+`012` 和 `013` 都是仅针对 OpenClaw `v2026.6.11` 生成 bundle 的精确文本 patch，并
+故意在锚点变化时失败。升级 OpenClaw 时不得把它们原样复制到新版本目录：先检查上游
+是否已提供用户原话重放、可替换摘要模板和 replay wrapper；仍需 patch 时，必须根据
+新 bundle 重新定位并重写锚点，再分别验证手动、threshold/overflow、mid-turn、重复
+压缩和 split-turn。`../openclaw` 只用于源码比对，不参与 JustDo 打包。
+
 配置应用按所有权明确分为四类：
 
 | 变化                                                                         | 应用方式             | 生命周期所有者 |

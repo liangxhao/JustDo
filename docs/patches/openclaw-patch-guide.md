@@ -34,8 +34,15 @@ scripts/patches/v2026.6.11/
 | `008-dedupe-visible-subagent-announces.cjs` | Deduplicate sibling completion announces already visible in parent history |
 | `009-reply-session-init-conflict-retry.cjs` | Fresh writer snapshots, key-order-independent revisions, and bounded retry for reply initialization conflicts |
 | `010-defer-selected-tool-schemas.cjs` | Defer selected heavyweight native schemas through directory-mode Tool Search |
+| `011-trim-runtime-system-prompt.cjs` | Remove redundant runtime metadata and normalize injected context line endings |
+| `012-retain-user-messages-across-compaction.cjs` | Persist and replay original user text across repeated compactions with a rolling 20k-token budget |
+| `013-codex-compaction-template.cjs` | Replace OpenClaw's compaction prompts, replay wrapper, and forced suffixes with Codex handoff semantics |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
+
+`013` depends on the sanitization helper injected by `012`; the numeric
+filenames are the required application order. Reassess this dependency before
+removing either patch.
 
 ## Required Patch Header
 
@@ -139,6 +146,27 @@ Patch removal is a real change:
 | `008-dedupe-visible-subagent-announces.cjs` | Subagent completion delivery compatibility | Remove when upstream coalesces sibling announces or credits results already visible in parent history |
 | `009-reply-session-init-conflict-retry.cjs` | Runtime session concurrency guard | Remove when upstream aligns reply snapshot/commit cache consistency, uses key-order-independent revisions, and retries genuine conflicts |
 | `010-defer-selected-tool-schemas.cjs` | Tool context compaction | Remove when upstream supports a configurable per-tool Tool Search defer list |
+| `011-trim-runtime-system-prompt.cjs` | Runtime prompt compatibility | Remove when upstream supports configuring redundant runtime prompt fields |
+| `012-retain-user-messages-across-compaction.cjs` | Compaction fidelity | Remove when upstream persists and replays retained user messages across compaction entries |
+| `013-codex-compaction-template.cjs` | Compaction fidelity | Remove when upstream supports replacing the compaction template, replay wrapper, and suffix assembly |
+
+### Compaction patch upgrade warning
+
+`012` and `013` match exact text emitted by the OpenClaw `v2026.6.11` bundle.
+They intentionally fail loudly when those anchors change. On every OpenClaw
+upgrade:
+
+1. Do not copy either patch unchanged into the new version directory.
+2. Check whether upstream now persists/replays user originals and exposes full
+   replacement hooks for the compaction prompt, replay wrapper, and suffixes.
+3. If patches remain necessary, inspect the new generated bundle and rewrite
+   every exact anchor. Do not broaden matching merely to make the patch apply.
+4. Compare the prompt and replacement-history behavior with the current
+   `../codex` source; that checkout is reference-only and is not packaged.
+5. Exercise manual `/compact`, threshold and overflow auto-compaction,
+   mid-turn/split-turn recovery, and at least two consecutive compactions.
+   Confirm user-message deduplication, latest-assistant inclusion, bounded tool
+   results, and patch idempotence.
 
 ## Version Upgrade Process
 

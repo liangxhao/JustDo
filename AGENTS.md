@@ -129,7 +129,9 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 `008-dedupe-visible-subagent-announces.cjs`,
 `009-reply-session-init-conflict-retry.cjs`,
 `010-defer-selected-tool-schemas.cjs`,
-`011-trim-runtime-system-prompt.cjs`.
+`011-trim-runtime-system-prompt.cjs`,
+`012-retain-user-messages-across-compaction.cjs`,
+`013-codex-compaction-template.cjs`.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 

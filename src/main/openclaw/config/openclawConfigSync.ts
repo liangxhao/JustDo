@@ -233,6 +233,12 @@ const buildAuthScopedOpenClawConfig = (
     : {};
   const managedDefaults = isRecord(managedAgents.defaults) ? managedAgents.defaults : {};
   const defaults = { ...existingDefaults };
+  if (Object.prototype.hasOwnProperty.call(managedDefaults, 'compaction')) {
+    // Compaction is JustDo-managed policy. Replace the whole object so removed
+    // keys (notably the legacy explicit keepRecentTokens) do not survive an
+    // auth-only config sync.
+    defaults.compaction = managedDefaults.compaction;
+  }
   const managedDefaultModel = isRecord(managedDefaults.model)
     ? managedDefaults.model
     : undefined;
@@ -385,6 +391,38 @@ export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 export const buildManagedOpenClawHeartbeatConfig = () => ({
   every: '0m',
   includeSystemPromptSection: false,
+});
+
+/**
+ * Keep compaction useful as a continuation handoff instead of reducing the
+ * session to a lossy synopsis. Safeguard mode is OpenClaw's existing
+ * session_before_compact hook, so this stays on the supported config surface.
+ *
+ * Do not explicitly set keepRecentTokens. OpenClaw v2026.6.11 treats the mere
+ * presence of that property as a request for manual /compact to preserve the
+ * recent tail, which defeats an explicit checkpoint. Automatic compaction
+ * still inherits OpenClaw's safe recent-tail default.
+ */
+export const buildManagedOpenClawCompactionConfig = () => ({
+  mode: 'safeguard',
+  reserveTokens: 24_000,
+  reserveTokensFloor: 24_000,
+  maxHistoryShare: 0.65,
+  recentTurnsPreserve: 0,
+  // The Codex prompt asks for critical references itself. Avoid injecting
+  // OpenClaw's separate identifier-preservation prompt into the LLM request.
+  identifierPolicy: 'off',
+  qualityGuard: {
+    // OpenClaw's quality guard requires its own ##-section contract. The
+    // versioned runtime patch uses Codex's free-form handoff prompt instead.
+    enabled: false,
+    maxRetries: 2,
+  },
+  midTurnPrecheck: {
+    enabled: true,
+  },
+  customInstructions:
+    'You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\n\nInclude:\n- Current progress and key decisions made\n- Important context, constraints, or user preferences\n- What remains to be done (clear next steps)\n- Any critical data, examples, or references needed to continue\n\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.',
 });
 
 export const buildManagedOpenClawConnectivityConfig = () => ({
@@ -1052,6 +1090,7 @@ export class OpenClawConfigSync {
             mode: sandboxMode,
           },
           heartbeat: buildManagedOpenClawHeartbeatConfig(),
+          compaction: buildManagedOpenClawCompactionConfig(),
           workspace: resolvedWorkspaceDir,
           subagents: {
             maxSpawnDepth: 1,
@@ -1620,6 +1659,7 @@ export class OpenClawConfigSync {
       agents: {
         defaults: {
           heartbeat: buildManagedOpenClawHeartbeatConfig(),
+          compaction: buildManagedOpenClawCompactionConfig(),
         },
       },
       ...connectivityConfig,
@@ -1687,12 +1727,24 @@ export class OpenClawConfigSync {
             const existingDiagnostics = isRecord(existing.diagnostics)
               ? existing.diagnostics
               : {};
+            const existingAgents = isRecord(existing.agents) ? existing.agents : {};
+            const existingDefaults = isRecord(existingAgents.defaults)
+              ? existingAgents.defaults
+              : {};
             const mergedConfig = withDisabledMemorySearch({
               ...existing,
               diagnostics: {
                 ...existingDiagnostics,
                 otel: {
                   enabled: false,
+                },
+              },
+              agents: {
+                ...existingAgents,
+                defaults: {
+                  ...existingDefaults,
+                  // Replace rather than deep-merge so stale managed keys are removed.
+                  compaction: buildManagedOpenClawCompactionConfig(),
                 },
               },
               update: connectivityConfig.update,

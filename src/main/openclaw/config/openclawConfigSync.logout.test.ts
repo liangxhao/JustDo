@@ -54,6 +54,10 @@ const writeExistingBuiltinConfig = (): string => {
         defaults: {
           model: { primary: 'builtin_models/chat-model' },
           timeoutSeconds: 120,
+          compaction: {
+            mode: 'safeguard',
+            keepRecentTokens: 20_000,
+          },
         },
         list: [
           {
@@ -144,6 +148,26 @@ const writeMinimalConfig = (configPath: string, reason: string): OpenClawConfigS
 };
 
 describe('OpenClaw auth logout config sync', () => {
+  test('writes the managed safeguard compaction policy before model setup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-compaction-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+
+    const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh);
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.compaction).toMatchObject({
+      mode: 'safeguard',
+      recentTurnsPreserve: 0,
+      qualityGuard: {
+        enabled: false,
+        maxRetries: 2,
+      },
+    });
+    expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
+  });
+
   test('removes the built-in provider placeholder before its environment variable is revoked', () => {
     const configPath = writeExistingBuiltinConfig();
 
@@ -158,6 +182,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.defaults.memorySearch).toEqual({ enabled: false });
     expect(config.agents.defaults.timeoutSeconds).toBe(120);
+    expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.agents.list).toEqual([
       {
         id: 'main',
@@ -179,7 +204,11 @@ describe('OpenClaw auth logout config sync', () => {
     const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh);
 
     expect(result.ok).toBe(true);
-    expect(fs.readFileSync(configPath, 'utf8')).toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
+    const content = fs.readFileSync(configPath, 'utf8');
+    expect(content).toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
+    expect(JSON.parse(content).agents.defaults.compaction).not.toHaveProperty(
+      'keepRecentTokens',
+    );
   });
 
   test('minimal logout removes only built-in model config and preserves custom selections', () => {
@@ -427,6 +456,10 @@ describe('OpenClaw auth logout config sync', () => {
         agents: {
           defaults: {
             model: { primary: 'custom-provider/custom-model' },
+            compaction: {
+              mode: 'safeguard',
+              keepRecentTokens: 20_000,
+            },
           },
         },
       }),
@@ -488,6 +521,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.models.pricing).toEqual({ enabled: true });
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
     expect(config.customFeature).toEqual({ enabled: true });
   });
