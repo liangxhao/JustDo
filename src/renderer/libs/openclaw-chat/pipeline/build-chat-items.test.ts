@@ -146,3 +146,30 @@ test('builds a compaction divider with token counts and summary', () => {
   expect(divider?.label).toContain('4,000');
   expect(divider?.summary).toBe('Earlier work was compacted.');
 });
+
+test('builds an English in-progress divider for local compaction status', () => {
+  const items = build({
+    messages: [
+      {
+        role: 'system',
+        timestamp: 1,
+        __openclaw: {
+          kind: 'compaction-status',
+          id: 'local-compact-1',
+          phase: 'in-progress',
+        },
+      },
+    ],
+  });
+  const divider = items.find(
+    (item): item is Extract<ChatItem, { kind: 'divider' }> => item.kind === 'divider',
+  );
+
+  expect(divider).toEqual(
+    expect.objectContaining({
+      key: 'divider:compaction-status:local-compact-1',
+      label: 'Compacting...',
+      expandable: false,
+    }),
+  );
+});

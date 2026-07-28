@@ -545,6 +545,82 @@ test('compacts the current session instead of sending /compact as chat', async (
   ]);
 });
 
+test('shows compaction progress immediately and replaces it with the authoritative marker', async () => {
+  let resolveCompact:
+    | ((value: {
+        compacted: boolean;
+        result: { tokensBefore: number; tokensAfter: number };
+      }) => void)
+    | undefined;
+  const request = vi.fn((method: string) => {
+    if (method === 'sessions.compact') {
+      return new Promise(resolve => {
+        resolveCompact = resolve;
+      });
+    }
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'system',
+            timestamp: 2000,
+            __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
+          },
+        ],
+      });
+    }
+    if (method === 'sessions.compaction.list') {
+      return Promise.resolve({
+        checkpoints: [
+          {
+            checkpointId: 'checkpoint-1',
+            summary: 'Compacted summary.',
+            tokensBefore: 100,
+            tokensAfter: 20,
+            postCompaction: { entryId: 'compaction-entry-1' },
+          },
+        ],
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  const compactPromise = controller.sendMessage('/compact');
+
+  expect(controller.state.compactionInFlight).toBe(true);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'system',
+      __openclaw: expect.objectContaining({
+        kind: 'compaction-status',
+        phase: 'in-progress',
+      }),
+    }),
+  ]);
+
+  resolveCompact?.({
+    compacted: true,
+    result: { tokensBefore: 100, tokensAfter: 20 },
+  });
+  await compactPromise;
+
+  expect(controller.state.compactionInFlight).toBe(false);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({
+        kind: 'compaction',
+        id: 'compaction-entry-1',
+        tokensBefore: 100,
+        tokensAfter: 20,
+      }),
+    }),
+  ]);
+});
+
 test('sends and optimistically renders image attachments in an existing session', async () => {
   const request = vi.fn().mockResolvedValue({ runId: 'run-1' });
   const controller = new ChatController();
@@ -2553,10 +2629,27 @@ test('does not apply the lifecycle end fallback while compaction is in flight', 
     session: 'agent:main:justdo:session-1',
     data: { phase: 'start' },
   });
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: 'agent:main:justdo:session-1',
+    data: { phase: 'start' },
+  });
   await vi.advanceTimersByTimeAsync(2000);
 
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.compactionInFlight).toBe(true);
+  expect(
+    controller.state.chatMessages.filter(
+      message =>
+        (message as { __openclaw?: { kind?: string } }).__openclaw?.kind ===
+        'compaction-status',
+    ),
+  ).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({ phase: 'in-progress' }),
+    }),
+  ]);
 
   handleAgentEvent({
     runId: 'run-1',
@@ -2568,6 +2661,165 @@ test('does not apply the lifecycle end fallback while compaction is in flight', 
 
   expect(controller.state.chatSending).toBe(false);
   expect(controller.state.compactionInFlight).toBe(false);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({
+        kind: 'compaction-status',
+        phase: 'completed',
+      }),
+    }),
+  ]);
+});
+
+test('ignores a duplicate compaction start that arrives after completion', () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const handleAgentEvent = (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent.bind(controller);
+  const event = (phase: 'start' | 'end') => ({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: controller.state.sessionKey,
+    data: { phase },
+  });
+
+  handleAgentEvent(event('start'));
+  handleAgentEvent(event('end'));
+  handleAgentEvent(event('start'));
+
+  expect(controller.state.compactionInFlight).toBe(false);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({
+        kind: 'compaction-status',
+        phase: 'completed',
+      }),
+    }),
+  ]);
+});
+
+test('does not consume compaction history retries while the active turn is still sending', async () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.connected = true;
+  controller.state.chatSending = true;
+  const request = vi.fn();
+  controller.state.client = { request } as never;
+  const handleCompactionPhase = (
+    controller as unknown as {
+      handleCompactionPhase(phase: string): void;
+    }
+  ).handleCompactionPhase.bind(controller);
+
+  handleCompactionPhase('start');
+  handleCompactionPhase('end');
+  await vi.advanceTimersByTimeAsync(10_000);
+
+  const attempts = (
+    controller as unknown as {
+      deferredHistoryReloadAttempts: Map<string, number>;
+    }
+  ).deferredHistoryReloadAttempts;
+  expect(attempts.get(controller.state.sessionKey)).toBeUndefined();
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('removes automatic compaction progress when the lifecycle fails', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  const handleAgentEvent = (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent.bind(controller);
+
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: controller.state.sessionKey,
+    data: { phase: 'start' },
+  });
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'lifecycle',
+    session: controller.state.sessionKey,
+    data: { phase: 'error', error: 'automatic compaction failed' },
+  });
+
+  expect(controller.state.compactionInFlight).toBe(false);
+  expect(controller.state.chatMessages).toEqual([]);
+});
+
+test('completes automatic compaction for a session while another session is selected', async () => {
+  const originalSession = 'agent:main:justdo:session-1';
+  const otherSession = 'agent:main:justdo:session-2';
+  const controller = new ChatController();
+  controller.state.sessionKey = originalSession;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'start', sessionKey: originalSession },
+  });
+  await controller.switchSession(otherSession);
+  handleEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'end', sessionKey: originalSession },
+  });
+  await controller.switchSession(originalSession);
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({
+        kind: 'compaction-status',
+        phase: 'completed',
+      }),
+    }),
+  ]);
+});
+
+test('keeps compaction progress when history only contains an existing legacy marker', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const legacyMarker = {
+    role: 'system',
+    timestamp: 1000,
+    __openclaw: { kind: 'compaction' },
+  };
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.state.chatMessages = [legacyMarker];
+  (
+    controller as unknown as {
+      handleCompactionPhase(phase: string): void;
+    }
+  ).handleCompactionPhase('start');
+
+  const projected = (
+    controller as unknown as {
+      projectLocalCompactionStatus(sessionKey: string, messages: unknown[]): unknown[];
+    }
+  ).projectLocalCompactionStatus(sessionKey, [legacyMarker]);
+
+  expect(projected).toEqual([
+    legacyMarker,
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({
+        kind: 'compaction-status',
+        phase: 'in-progress',
+      }),
+    }),
+  ]);
 });
 
 test('restores a persisted lifecycle failure after the controller restarts', async () => {

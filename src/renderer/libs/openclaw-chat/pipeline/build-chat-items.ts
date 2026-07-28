@@ -957,6 +957,27 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     }
     const raw = asRecord(msg) ?? {};
     const marker = raw['__openclaw'] as Record<string, unknown> | undefined;
+    if (marker && marker.kind === 'compaction-status') {
+      const tokensBefore =
+        typeof marker.tokensBefore === 'number' ? marker.tokensBefore : undefined;
+      const tokensAfter =
+        typeof marker.tokensAfter === 'number' ? marker.tokensAfter : undefined;
+      const completed = marker.phase === 'completed';
+      items.push({
+        kind: 'divider',
+        key:
+          typeof marker.id === 'string'
+            ? `divider:compaction-status:${marker.id}`
+            : `divider:compaction-status:${normalized.timestamp}:${i}`,
+        label:
+          completed && tokensBefore !== undefined && tokensAfter !== undefined
+            ? `${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens`
+            : i18nService.t(completed ? 'coworkCompacted' : 'coworkCompactionInProgress'),
+        expandable: false,
+        timestamp: normalized.timestamp ?? Date.now(),
+      });
+      continue;
+    }
     if (marker && marker.kind === 'compaction-skipped') {
       items.push({
         kind: 'divider',

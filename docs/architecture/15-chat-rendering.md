@@ -152,7 +152,8 @@ Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产�
 - checkpoint 优先通过 `postCompaction.entryId` 或 `postCompaction.leafId` 与 marker 精确关联。只有缺少 transcript 位置的旧 checkpoint 才允许按时间顺序回退配对。
 - checkpoint 持久化是可失败的附加能力；没有 checkpoint 的 marker 仍应显示为普通压缩分隔线，不能借用其他压缩的摘要。
 - `session.operation` 和 agent `compaction` start/end 共同维护 `compactionInFlight`。压缩期间暂停缺少 `chat.final` 时的终态计时，压缩结束后再恢复收敛。
-- 手动压缩成功后必须以重新加载的 Gateway history 为准。刷新失败时保留现有历史并显示错误，不追加本地伪造 marker。
+- 手动 `/compact` 发起或自动压缩 `start` 事件到达时，立即在当前会话追加仅用于 UI 的 `compaction-status` 分隔线，显示英文 `Compacting...`。手动 RPC 或自动压缩 `end` 完成后先原位更新状态（有 token 信息时一并显示），再由重新加载的 Gateway history 中的正式 compaction marker 替换。`session.operation` 和 Agent stream 的重复事件复用同一临时 marker；切换会话时该状态随会话缓存保留。
+- 手动压缩成功后的持久化结果仍必须以重新加载的 Gateway history 为准。刷新失败时移除临时状态、保留现有历史并显示错误，不把临时状态冒充正式 compaction marker。
 
 ## 工具显示
 

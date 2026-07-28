@@ -120,6 +120,23 @@ type CompactionCheckpoint = {
   postCompaction?: CompactionTranscriptReference;
 };
 
+type LocalCompactionStatus = {
+  id: string;
+  markerFingerprintsBefore: Set<string>;
+  completedAt?: number;
+  message: {
+    role: 'system';
+    timestamp: number;
+    __openclaw: {
+      kind: 'compaction-status';
+      id: string;
+      phase: 'in-progress' | 'completed';
+      tokensBefore?: number;
+      tokensAfter?: number;
+    };
+  };
+};
+
 type OpenClawHistoryBridge = {
   getToolInputs?: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
     success?: boolean;
@@ -389,6 +406,7 @@ export class ChatController {
   private deferredHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
   private olderHistoryContinuationTimer: ReturnType<typeof setTimeout> | null = null;
   private deferredHistoryReloadAttempts = new Map<string, number>();
+  private localCompactionStatusBySession = new Map<string, LocalCompactionStatus>();
   private assistantSnapshotRunId: string | null = null;
   private ignoredDeltaAfterAssistantSnapshotCount = 0;
   private historyLoadSeq = 0;
@@ -538,6 +556,116 @@ export class ChatController {
     );
     this.state.transcript.persistedMessages = messages;
     this.cacheSessionMessages(this.state.sessionKey);
+  }
+
+  private updateLocalCompactionMessage(
+    sessionKey: string,
+    statusId: string,
+    replacement: unknown | null,
+  ): void {
+    const history =
+      this.state.sessionKey === sessionKey
+        ? this.state.chatMessages
+        : this.chatMessagesBySession.get(sessionKey)?.recentMessages;
+    if (!history) return;
+    const nextMessages = history.flatMap(message =>
+      isLocalCompactionStatus(message, statusId)
+        ? replacement === null
+          ? []
+          : [replacement]
+        : [message],
+    );
+    if (this.state.sessionKey === sessionKey) {
+      this.setCurrentSessionMessages(nextMessages);
+      return;
+    }
+    this.chatMessagesBySession.get(sessionKey)?.replaceRecent(nextMessages);
+  }
+
+  private projectLocalCompactionStatus(sessionKey: string, messages: unknown[]): unknown[] {
+    const status = this.localCompactionStatusBySession.get(sessionKey);
+    if (!status) return messages;
+    const hasAuthoritativeMarker = messages.some(message => {
+      const fingerprint = readCompactionMarkerFingerprint(message);
+      return fingerprint !== null && !status.markerFingerprintsBefore.has(fingerprint);
+    });
+    if (hasAuthoritativeMarker) {
+      this.localCompactionStatusBySession.delete(sessionKey);
+      this.deferredHistoryReloadAttempts.delete(sessionKey);
+      return messages;
+    }
+    return [...messages.filter(message => !isLocalCompactionStatus(message, status.id)), status.message];
+  }
+
+  private beginLocalCompactionStatus(
+    sessionKey: string,
+    options: { forceNew?: boolean } = {},
+  ): LocalCompactionStatus {
+    const existing = this.localCompactionStatusBySession.get(sessionKey);
+    if (existing?.message.__openclaw.phase === 'in-progress') return existing;
+    if (
+      existing?.completedAt &&
+      !options.forceNew &&
+      Date.now() - existing.completedAt < 5000
+    ) {
+      return existing;
+    }
+    if (existing) {
+      this.updateLocalCompactionMessage(sessionKey, existing.id, null);
+    }
+    const startedAt = Date.now();
+    const id = `local-compaction-${startedAt}-${this.transcriptIdSequence++}`;
+    const status: LocalCompactionStatus = {
+      id,
+      markerFingerprintsBefore: new Set(
+        this.state.chatMessages
+          .map(readCompactionMarkerFingerprint)
+          .filter((fingerprint): fingerprint is string => fingerprint !== null),
+      ),
+      message: {
+        role: 'system',
+        timestamp: startedAt,
+        __openclaw: {
+          kind: 'compaction-status',
+          id,
+          phase: 'in-progress',
+        },
+      },
+    };
+    this.deferredHistoryReloadAttempts.delete(sessionKey);
+    this.localCompactionStatusBySession.set(sessionKey, status);
+    if (this.state.sessionKey === sessionKey) {
+      this.setCurrentSessionMessages([...this.state.chatMessages, status.message]);
+    }
+    return status;
+  }
+
+  private completeLocalCompactionStatus(
+    sessionKey: string,
+    tokens?: { before?: number; after?: number },
+  ): LocalCompactionStatus | null {
+    const status = this.localCompactionStatusBySession.get(sessionKey);
+    if (!status) return null;
+    status.message = {
+      ...status.message,
+      __openclaw: {
+        ...status.message.__openclaw,
+        phase: 'completed',
+        tokensBefore: tokens?.before ?? status.message.__openclaw.tokensBefore,
+        tokensAfter: tokens?.after ?? status.message.__openclaw.tokensAfter,
+      },
+    };
+    status.completedAt ??= Date.now();
+    this.updateLocalCompactionMessage(sessionKey, status.id, status.message);
+    return status;
+  }
+
+  private clearLocalCompactionStatus(sessionKey: string): void {
+    const status = this.localCompactionStatusBySession.get(sessionKey);
+    if (!status) return;
+    this.localCompactionStatusBySession.delete(sessionKey);
+    this.deferredHistoryReloadAttempts.delete(sessionKey);
+    this.updateLocalCompactionMessage(sessionKey, status.id, null);
   }
 
   private applyHistoryWindow(window: { start: number; end: number }): boolean {
@@ -757,17 +885,36 @@ export class ChatController {
     this.notifyStream();
   }
 
-  private handleCompactionPhase(phase: string): void {
+  private handleCompactionPhase(phase: string, sessionKey = this.state.sessionKey): void {
+    const isCurrentSession = sessionKey === this.state.sessionKey;
     if (phase === 'start') {
+      const status = this.beginLocalCompactionStatus(sessionKey);
+      if (status.message.__openclaw.phase === 'completed' || !isCurrentSession) return;
       this.state.compactionInFlight = true;
       this.clearLifecycleEndFallback();
       this.notifyStream();
       this.notify();
       return;
     }
+    if (phase === 'error' || phase === 'failed') {
+      this.clearLocalCompactionStatus(sessionKey);
+      if (!isCurrentSession) return;
+      this.state.compactionInFlight = false;
+      this.notifyStream();
+      this.notify();
+      return;
+    }
     if (phase !== 'end') return;
+    const wasInProgress =
+      this.localCompactionStatusBySession.get(sessionKey)?.message.__openclaw.phase ===
+      'in-progress';
+    const status = this.completeLocalCompactionStatus(sessionKey);
+    if (!isCurrentSession) return;
     this.state.compactionInFlight = false;
     if (this.terminalLifecycleSeen) this.scheduleChatLifecycleEndFallback();
+    if (status && wasInProgress) {
+      this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
+    }
     this.notifyStream();
     this.notify();
   }
@@ -861,6 +1008,19 @@ export class ChatController {
         return;
       }
 
+      if (reason === 'compaction-marker-pending') {
+        const attempts = (this.deferredHistoryReloadAttempts.get(sessionKey) ?? 0) + 1;
+        if (attempts > MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS) {
+          this.historyReloadRequested.delete(sessionKey);
+          debugLog('[ChatCtrl] compaction marker reload suppressed after retry limit', {
+            sessionKey,
+            attempts,
+            ...this._snap(),
+          });
+          return;
+        }
+        this.deferredHistoryReloadAttempts.set(sessionKey, attempts);
+      }
       this.historyReloadRequested.delete(sessionKey);
       debugLog('[ChatCtrl] deferred history reload → loadHistory', {
         sessionKey,
@@ -1027,6 +1187,9 @@ export class ChatController {
     this.clearPostFinalHistoryReload();
     this.clearDeferredHistoryReload();
     this.clearOlderHistoryContinuation();
+    for (const sessionKey of [...this.localCompactionStatusBySession.keys()]) {
+      this.clearLocalCompactionStatus(sessionKey);
+    }
     this.state.client?.stop();
     this.state.client = null;
     this.state.connected = false;
@@ -1322,14 +1485,20 @@ export class ChatController {
 
     if (event.event === 'session.operation') {
       const payload = asRecord(event.payload);
+      if (payload?.operation !== 'compact') {
+        return;
+      }
+      const eventSessionKey =
+        typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
+      const sessionKey = eventSessionKey || this.state.sessionKey;
       if (
-        payload?.operation !== 'compact' ||
-        (typeof payload.sessionKey === 'string' && payload.sessionKey !== this.state.sessionKey)
+        sessionKey !== this.state.sessionKey &&
+        !this.localCompactionStatusBySession.has(sessionKey)
       ) {
         return;
       }
       const phase = typeof payload.phase === 'string' ? payload.phase : '';
-      this.handleCompactionPhase(phase);
+      this.handleCompactionPhase(phase, sessionKey);
     }
   }
 
@@ -1829,8 +1998,11 @@ export class ChatController {
         });
         return false;
       }
-      let messages = hydratedMessages.map(message =>
-        normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
+      let messages = this.projectLocalCompactionStatus(
+        sessionKey,
+        hydratedMessages.map(message =>
+          normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
+        ),
       );
       if (pagedHistory) {
         messages = mergeRefreshedHistoryWindow(previousMessages, messages);
@@ -1927,7 +2099,6 @@ export class ChatController {
         preservedOptimisticTailCount: reconciliation.preservedOptimisticTailCount,
         activeTurnTakeover: reconciliation.activeTurnTakeover,
       });
-      this.deferredHistoryReloadAttempts.delete(sessionKey);
       this.state.chatLoading = false;
       this.state.historyHasMore = pagedHistory
         ? pagedHistory.hasMore
@@ -1944,6 +2115,12 @@ export class ChatController {
         this.state.pendingUserMessage = null;
       }
       this.setCurrentSessionMessages(messages);
+      const pendingCompaction = this.localCompactionStatusBySession.get(sessionKey);
+      if (pendingCompaction?.message.__openclaw.phase === 'completed') {
+        this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
+      } else {
+        this.deferredHistoryReloadAttempts.delete(sessionKey);
+      }
       void this.resolveManagedHistoryImages(messages).then(resolvedMessages => {
         if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
         this.setCurrentSessionMessages(resolvedMessages);
@@ -1962,6 +2139,12 @@ export class ChatController {
         error: err instanceof Error ? err.message : String(err),
         ...this._snap(),
       });
+      if (
+        this.localCompactionStatusBySession.get(sessionKey)?.message.__openclaw.phase ===
+        'completed'
+      ) {
+        this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
+      }
       this.notify();
       return false;
     } finally {
@@ -2259,6 +2442,7 @@ export class ChatController {
         );
         this.state.chatSending = false;
         this.state.compactionInFlight = false;
+        this.clearLocalCompactionStatus(this.state.sessionKey);
         this.terminalLifecycleSeen = false;
         this.state.chatRunId = null;
         this.resetAssistantSnapshotSource();
@@ -2453,18 +2637,14 @@ export class ChatController {
     // and its Control UI also ignores inline /compact arguments. Keep that behavior
     // intentionally for now. Re-check the RPC schema and upstream UI when upgrading
     // OpenClaw; if customInstructions becomes supported, forward _argumentsText here.
-    const markerIdsBefore = new Set(
-      this.state.chatMessages
-        .filter(isCompactionMarker)
-        .map(message => {
-          const marker = (message as Record<string, unknown>).__openclaw as Record<string, unknown>;
-          return typeof marker.id === 'string' ? marker.id : '';
-        })
-        .filter(Boolean),
-    );
+    const localStatus = this.beginLocalCompactionStatus(sessionKey, { forceNew: true });
+    const statusId = localStatus.id;
+    const markerFingerprintsBefore = localStatus.markerFingerprintsBefore;
 
     this.state.chatSending = true;
+    this.state.compactionInFlight = true;
     this.state.lastError = null;
+    this.notifyStream();
     this.notify();
 
     try {
@@ -2473,27 +2653,35 @@ export class ChatController {
         reason?: string;
         result?: { tokensBefore?: number; tokensAfter?: number };
       }>('sessions.compact', { key: sessionKey });
-      if (this.state.sessionKey !== sessionKey) return;
-      this.state.chatSending = false;
-      this.state.compactionInFlight = false;
       const before = result?.result?.tokensBefore;
       const after = result?.result?.tokensAfter;
       if (result?.compacted) {
+        this.completeLocalCompactionStatus(sessionKey, { before, after });
+        if (this.state.sessionKey !== sessionKey) return;
+        this.state.chatSending = false;
+        this.state.compactionInFlight = false;
+        this.notifyStream();
+        this.notify();
         const historyLoaded = await this.loadHistory();
         if (this.state.sessionKey !== sessionKey) return;
-        if (!historyLoaded) return;
+        if (!historyLoaded) {
+          this.localCompactionStatusBySession.delete(sessionKey);
+          this.deferredHistoryReloadAttempts.delete(sessionKey);
+          this.updateLocalCompactionMessage(sessionKey, statusId, null);
+          this.notify();
+          return;
+        }
         let newMarkerIndex = -1;
         for (let index = this.state.chatMessages.length - 1; index >= 0; index--) {
           const message = this.state.chatMessages[index];
           if (!isCompactionMarker(message)) continue;
-          const marker = (message as Record<string, unknown>).__openclaw as Record<string, unknown>;
-          if (typeof marker.id === 'string' && !markerIdsBefore.has(marker.id)) {
+          const fingerprint = readCompactionMarkerFingerprint(message);
+          if (fingerprint && !markerFingerprintsBefore.has(fingerprint)) {
             newMarkerIndex = index;
             break;
           }
         }
         if (newMarkerIndex < 0) {
-          this.scheduleDeferredHistoryReload(sessionKey, 'compact-marker-pending');
           return;
         }
         this.setCurrentSessionMessages(
@@ -2514,31 +2702,36 @@ export class ChatController {
         this.notify();
         return;
       }
-      this.setCurrentSessionMessages([
-        ...this.state.chatMessages,
-        {
-          role: 'system',
-          timestamp: Date.now(),
-          __openclaw: {
-            kind: 'compaction-skipped',
-            reason: result?.reason,
-          },
+      this.localCompactionStatusBySession.delete(sessionKey);
+      this.deferredHistoryReloadAttempts.delete(sessionKey);
+      const skippedMessage = {
+        role: 'system',
+        timestamp: localStatus.message.timestamp,
+        __openclaw: {
+          kind: 'compaction-skipped',
+          reason: result?.reason,
         },
-      ]);
-      this.notify();
-    } catch (err) {
+      };
+      this.updateLocalCompactionMessage(sessionKey, statusId, skippedMessage);
       if (this.state.sessionKey !== sessionKey) return;
       this.state.chatSending = false;
       this.state.compactionInFlight = false;
-      this.state.lastError = (err as Error).message;
-      this.setCurrentSessionMessages([
-        ...this.state.chatMessages,
-        {
-          role: 'system',
-          content: formatI18n('coworkCompactFailed', { error: (err as Error).message }),
-          timestamp: Date.now(),
-        },
-      ]);
+      this.notifyStream();
+      this.notify();
+    } catch (err) {
+      this.localCompactionStatusBySession.delete(sessionKey);
+      this.deferredHistoryReloadAttempts.delete(sessionKey);
+      const errorMessage = (err as Error).message;
+      this.updateLocalCompactionMessage(sessionKey, statusId, {
+        role: 'system',
+        content: formatI18n('coworkCompactFailed', { error: errorMessage }),
+        timestamp: localStatus.message.timestamp,
+      });
+      if (this.state.sessionKey !== sessionKey) return;
+      this.state.chatSending = false;
+      this.state.compactionInFlight = false;
+      this.state.lastError = errorMessage;
+      this.notifyStream();
       this.notify();
     }
   }
@@ -2929,6 +3122,29 @@ function isCompactionMarker(message: unknown): boolean {
     Boolean(marker) &&
     typeof marker === 'object' &&
     (marker as Record<string, unknown>).kind === 'compaction'
+  );
+}
+
+function readCompactionMarkerFingerprint(message: unknown): string | null {
+  if (!isCompactionMarker(message)) return null;
+  const record = message as Record<string, unknown>;
+  const marker = record.__openclaw as Record<string, unknown>;
+  if (typeof marker.id === 'string' && marker.id) return `id:${marker.id}`;
+  const timestamp =
+    typeof record.timestamp === 'number' || typeof record.timestamp === 'string'
+      ? String(record.timestamp)
+      : '';
+  return `legacy:${timestamp}`;
+}
+
+function isLocalCompactionStatus(message: unknown, id: string): boolean {
+  if (!message || typeof message !== 'object') return false;
+  const marker = (message as Record<string, unknown>).__openclaw;
+  return (
+    Boolean(marker) &&
+    typeof marker === 'object' &&
+    (marker as Record<string, unknown>).kind === 'compaction-status' &&
+    (marker as Record<string, unknown>).id === id
   );
 }
 
