@@ -389,9 +389,24 @@ export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
+  every: '30m',
+  includeSystemPromptSection: false,
+});
+
+const buildDisabledOpenClawHeartbeatConfig = () => ({
   every: '0m',
   includeSystemPromptSection: false,
 });
+
+export const applyManagedOpenClawHeartbeatConfig = (
+  agent: Record<string, unknown>,
+): Record<string, unknown> =>
+  agent.id === 'main'
+    ? {
+        ...agent,
+        heartbeat: buildManagedOpenClawHeartbeatConfig(),
+      }
+    : agent;
 
 /**
  * Keep compaction useful as a continuation handoff instead of reducing the
@@ -1089,7 +1104,7 @@ export class OpenClawConfigSync {
           sandbox: {
             mode: sandboxMode,
           },
-          heartbeat: buildManagedOpenClawHeartbeatConfig(),
+          heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           workspace: resolvedWorkspaceDir,
           subagents: {
@@ -1573,13 +1588,14 @@ export class OpenClawConfigSync {
         fallbackPrimaryModel: defaultPrimaryModel,
         displayNameMap,
       }),
-    ].map(entry =>
-      constrainAgentEntryToAvailableModels(
+    ].map(entry => {
+      const constrainedEntry = constrainAgentEntryToAvailableModels(
         entry,
         defaultPrimaryModel,
         availableModelRefs,
-      ),
-    );
+      );
+      return applyManagedOpenClawHeartbeatConfig(constrainedEntry);
+    });
 
     return list.length > 0 ? { list } : {};
   }
@@ -1658,7 +1674,7 @@ export class OpenClawConfigSync {
       },
       agents: {
         defaults: {
-          heartbeat: buildManagedOpenClawHeartbeatConfig(),
+          heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
         },
       },

@@ -8,6 +8,7 @@ import {
 } from '../../../shared/providers';
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
+  applyManagedOpenClawHeartbeatConfig,
   buildBuiltinMemorySearchConfig,
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
@@ -311,10 +312,24 @@ describe('OpenClaw managed connectivity config', () => {
 });
 
 describe('OpenClaw managed heartbeat config', () => {
-  test('disables heartbeat runs and prompt injection', () => {
+  test('enables heartbeat wake-ups without injecting heartbeat instructions', () => {
     expect(buildManagedOpenClawHeartbeatConfig()).toEqual({
-      every: '0m',
+      every: '30m',
       includeSystemPromptSection: false,
+    });
+  });
+
+  test('enables managed heartbeat only for the main agent', () => {
+    expect(applyManagedOpenClawHeartbeatConfig({ id: 'main', default: true })).toEqual({
+      id: 'main',
+      default: true,
+      heartbeat: {
+        every: '30m',
+        includeSystemPromptSection: false,
+      },
+    });
+    expect(applyManagedOpenClawHeartbeatConfig({ id: 'researcher' })).toEqual({
+      id: 'researcher',
     });
   });
 });

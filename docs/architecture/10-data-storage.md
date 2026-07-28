@@ -51,6 +51,8 @@ flowchart TB
 | `mcp_servers` | MCP server 配置 |
 | `openclaw_hooks` | OpenClaw hook 配置 |
 | `session_groups` | 会话分组 |
+| `scheduled_task_run_receipts` | 定时任务结果快照与持久已读回执 |
+| `scheduled_task_result_cleanup` | 跨 OpenClaw 删除失败时的 transcript 清理续传状态 |
 
 ```mermaid
 erDiagram
@@ -138,6 +140,7 @@ erDiagram
 | `sqliteStore.ts` | DB 初始化、kv store、migration |
 | `coworkStore.ts` | Cowork sessions/messages/agents CRUD |
 | `groupStore.ts` | session group CRUD |
+| `scheduledTaskResultStore.ts` | 定时任务结果 upsert、分页、未读统计和 read receipt |
 | `plugins/mcp/mcpStore.ts` | MCP server store |
 | `plugins/hooks/openclawHookStore.ts` | hook store |
 
@@ -149,6 +152,25 @@ SQLite 不是 OpenClaw execution history 的权威。Gateway `chat.history` 是�
 Gateway history 返回前的快速首屏及请求失败时的降级展示。Controller 不直接访问
 SQLite；Gateway 成功历史始终升级为更高 authority，缓存快照不能覆盖 Gateway
 状态，也不能清除正在运行的 canonical live turn。
+
+`scheduled_task_run_receipts` 同样不是完整 transcript 的权威；它保存 Gateway
+run facts 的本地投影（状态、摘要、执行/投递错误、session identifiers）和 JustDo
+拥有的 `observed_at` / `read_at`。任务名称按首次观察时快照保存，任务删除不会级联
+删除结果。首次基线导入和 `kv` 中的初始化标记在同一个 SQLite transaction 内提交。
+初始化标记的 `updated_at` 同时作为升级基线水位，避免未进入有限基线窗口的旧任务
+在后续启动时被误判为新未读。超过单批同步上限时，`kv` 还持久化每任务的 catch-up
+边界、旧水位和分页位置；完整追到旧水位后删除该 checkpoint。
+
+`scheduled_task_result_cleanup` 只在删除执行结果的跨存储流程尚未完成时存在。
+Gateway 将 transcript 改名为 `.deleted.*` 后，JustDo 会先持久化精确归档路径，
+再物理删除文件；如果中途失败或应用退出，用户重试删除时会先恢复这一步。全部
+OpenClaw run/session/transcript 和本地结果清理完成后，该续传记录立即删除。
+
+结果分页按 `(started_at DESC, run_id DESC)` 使用 Main 生成的不透明 cursor。关键索引：
+
+- `idx_scheduled_task_results_started`
+- `idx_scheduled_task_results_task_started`
+- `idx_scheduled_task_results_unread`
 
 ## 迁移规则
 

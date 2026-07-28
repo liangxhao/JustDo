@@ -77,14 +77,36 @@ export interface ScheduledTaskRun {
   sessionId: string | null;
   sessionKey: string | null;
   status: TaskStatus;
+  summary: string | null;
   startedAt: string;
   finishedAt: string | null;
   durationMs: number | null;
   error: string | null;
+  deliveryStatus: string | null;
+  deliveryError: string | null;
 }
 
 export interface ScheduledTaskRunWithName extends ScheduledTaskRun {
   taskName: string;
+}
+
+export interface ScheduledTaskResult extends ScheduledTaskRun {
+  taskName: string;
+  observedAt: string;
+  readAt: string | null;
+}
+
+export interface ScheduledTaskResultQuery {
+  taskId?: string;
+  unreadOnly?: boolean;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface ScheduledTaskResultPage {
+  results: ScheduledTaskResult[];
+  nextCursor: string | null;
+  unreadCount: number;
 }
 
 export interface ScheduledTaskInput {
@@ -107,6 +129,15 @@ export interface ScheduledTaskStatusEvent {
 
 export interface ScheduledTaskRunEvent {
   run: ScheduledTaskRunWithName;
+}
+
+export interface ScheduledTaskResultUpsertedEvent {
+  result: ScheduledTaskResult;
+  isNewUnread: boolean;
+}
+
+export interface ScheduledTaskUnreadCountEvent {
+  unreadCount: number;
 }
 
 export interface ScheduledTaskChannelOption {

@@ -1,5 +1,7 @@
 import type { GatewayClientLike } from '../gateway/types';
 
+export type GatewayRequestClient = Pick<GatewayClientLike, 'request'>;
+
 export const SUBAGENT_STATUSES = {
   RUNNING: 'running',
   DONE: 'done',
@@ -164,8 +166,8 @@ const addToolSubagents = (
   }
 };
 
-const listPersistedSessions = async (
-  client: GatewayClientLike,
+export const listPersistedGatewaySessions = async (
+  client: GatewayRequestClient,
 ): Promise<Array<Record<string, unknown>>> => {
   const sessions: Array<Record<string, unknown>> = [];
   let offset = 0;
@@ -257,7 +259,7 @@ export const listGatewaySubagents = async (options: {
     // visible when archiveAfterMinutes is configured as 0.
     const parentKeySet = new Set(options.parentKeys);
     try {
-      for (const row of await listPersistedSessions(options.client)) {
+      for (const row of await listPersistedGatewaySessions(options.client)) {
         const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
         if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
         if (!rowBelongsToParent(row, parentKeySet)) continue;

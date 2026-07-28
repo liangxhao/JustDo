@@ -169,6 +169,27 @@ export class JustDoChatElement extends LitElement {
         background: var(--justdo-chat-bg, transparent);
         overflow-y: auto;
         height: 100%;
+        scrollbar-width: thin;
+        scrollbar-color: var(--justdo-scroll-thumb, rgba(148, 163, 184, 0.55)) transparent;
+        scrollbar-gutter: stable;
+      }
+
+      :host::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+
+      :host::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      :host::-webkit-scrollbar-thumb {
+        background-color: var(--justdo-scroll-thumb, rgba(148, 163, 184, 0.55));
+        border-radius: 3px;
+      }
+
+      :host::-webkit-scrollbar-thumb:hover {
+        background-color: var(--justdo-scroll-thumb-hover, rgba(100, 116, 139, 0.75));
       }
 
       .chat-shell {

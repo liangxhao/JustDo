@@ -303,9 +303,14 @@ import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
   ScheduledTaskInput,
+  ScheduledTaskResult,
+  ScheduledTaskResultPage,
+  ScheduledTaskResultQuery,
+  ScheduledTaskResultUpsertedEvent,
   ScheduledTaskRun,
   ScheduledTaskRunEvent,
   ScheduledTaskStatusEvent,
+  ScheduledTaskUnreadCountEvent,
 } from '@shared/scheduledTask/types';
 
 import type { Agent } from '@/features/agents/agentTypes';
@@ -859,6 +864,34 @@ interface IElectronAPI {
     }>;
     onStatusUpdate: (callback: (data: ScheduledTaskStatusEvent) => void) => () => void;
     onRunUpdate: (callback: (data: ScheduledTaskRunEvent) => void) => () => void;
+    listResults: (query?: ScheduledTaskResultQuery) => Promise<{
+      success: boolean;
+      page?: ScheduledTaskResultPage;
+      error?: string;
+    }>;
+    markResultRead: (runId: string) => Promise<{
+      success: boolean;
+      result?: ScheduledTaskResult;
+      unreadCount?: number;
+      error?: string;
+    }>;
+    markAllResultsRead: (taskId?: string) => Promise<{
+      success: boolean;
+      unreadCount?: number;
+      error?: string;
+    }>;
+    deleteResult: (runId: string) => Promise<{
+      success: boolean;
+      unreadCount?: number;
+      error?: string;
+    }>;
+    reconcileResults: () => Promise<{ success: boolean; error?: string }>;
+    onResultUpserted: (
+      callback: (data: ScheduledTaskResultUpsertedEvent) => void,
+    ) => () => void;
+    onUnreadCountChanged: (
+      callback: (data: ScheduledTaskUnreadCountEvent) => void,
+    ) => () => void;
     onRefresh: (callback: () => void) => () => void;
   };
   permissions: {

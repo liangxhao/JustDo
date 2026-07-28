@@ -10,6 +10,8 @@ JustDo 的定时任务 UI 在 renderer 中实现，Main 进程通过 OpenClaw cr
 | `src/shared/scheduledTask/` | IPC constants、types、reminder text |
 | `src/main/ipc/scheduledTask/` | 定时任务 IPC handlers 和 service manager |
 | `src/main/scheduler/cronJobService.ts` | OpenClaw cron adapter/polling |
+| `src/main/scheduler/scheduledTaskResultSyncService.ts` | Durable result reconciliation |
+| `src/main/data/scheduledTaskResultStore.ts` | Result pagination and read receipts |
 | `src/main/scheduler/enginePrompt.ts` | 执行 prompt 构造 |
 
 ## Preload API
@@ -29,6 +31,13 @@ JustDo 的定时任务 UI 在 renderer 中实现，Main 进程通过 OpenClaw cr
 - `onStatusUpdate(callback)`
 - `onRunUpdate(callback)`
 - `onRefresh(callback)`
+- `listResults(query?)`
+- `markResultRead(runId)`
+- `markAllResultsRead(taskId?)`
+- `deleteResult(runId)`
+- `reconcileResults()`
+- `onResultUpserted(callback)`
+- `onUnreadCountChanged(callback)`
 
 IPC channel 常量位于 `src/shared/scheduledTask/constants.ts`。
 
@@ -52,7 +61,8 @@ sequenceDiagram
   loop polling
     Service->>GW: query task/run status
     GW-->>Service: status changes
-    Service-->>UI: StatusUpdate/RunUpdate/Refresh
+    Service->>Service: reconcile durable result snapshots
+    Service-->>UI: StatusUpdate/ResultUpserted/UnreadCountChanged
   end
 ```
 
@@ -74,6 +84,7 @@ sequenceDiagram
 | Cron 执行 | OpenClaw Gateway | 发起、展示、轮询 |
 | 任务列表 | Gateway cron runtime + 本地 UI state | 管理 UI |
 | Run session | Gateway session key | 解析和打开会话 |
+| Result inbox | SQLite snapshot + Gateway run facts | 持久化摘要、状态和已读回执 |
 | Reminder text | `src/shared/scheduledTask/reminderText.ts` | UI/Prompt 共享文本 |
 
 ## 维护规则
@@ -98,6 +109,11 @@ sequenceDiagram
 | Wake mode | 立即唤醒或等待下一次 runtime heartbeat |
 | Run history | 每次执行的状态、错误、耗时、关联 session |
 
+JustDo 只为主 Agent 配置 30 分钟 heartbeat，使 `main + systemEvent` 任务可以在
+`wakeMode: "now"` 时立即唤醒主会话；自定义 Agent 不继承该周期。主 Agent 同时保留
+OpenClaw 的常规 heartbeat 检查；`includeSystemPromptSection` 保持关闭，避免向普通
+会话注入 heartbeat 说明。
+
 共享 constants 中的 discriminant 必须使用 `as const` 对象，避免 renderer/main 写出不同字符串。
 
 ## Renderer 设计
@@ -120,6 +136,8 @@ Renderer 只负责：
 - 展示 next run、last run、last error。
 - 订阅状态事件并刷新。
 - 打开 run 对应的会话。
+- 展示 SQLite 权威的未读数和分页结果列表。
+- 按本地日期将结果组织为时间轴，并允许用户删除单条结果。
 
 Renderer 不负责解析 Gateway cron 内部状态，也不直接访问 Gateway。
 
@@ -134,12 +152,18 @@ src/main/ipc/scheduledTask/
 
 src/main/scheduler/
   cronJobService.ts
+  scheduledTaskResultSyncService.ts
   enginePrompt.ts
 ```
 
 `cronJobServiceManager` 负责在 Gateway adapter 可用后提供 `CronJobService`。这样应用启动早期即使 Gateway 未 ready，IPC handler 也可以返回清晰的“runtime not ready”状态。
 
 `enginePrompt.ts` 负责把用户任务描述构造成 Gateway 执行 prompt。此处的变更会影响任务实际行为，应有测试覆盖。
+
+JustDo 的内置 Gateway 会在原生 `cron` 工具边界为省略 `delivery` 的
+`agentTurn` 任务补上 `{ mode: "none" }`。这适用于该 Gateway 服务的所有
+Agent 会话；显式传入的 `announce` 和 `webhook` 保持不变。这样“仅在应用内”
+是可靠的产品默认值，而不只依赖模型遵循 prompt。
 
 ```mermaid
 flowchart TB
@@ -181,12 +205,31 @@ flowchart TB
 
 ```text
 CronJobService.startPolling()
-  -> periodically query Gateway
-  -> compare task/run status
-  -> BrowserWindow.webContents.send(StatusUpdate/RunUpdate/Refresh)
+  -> periodically query Gateway cron.list
+  -> compare task state with local result cursors
+  -> reconcile bounded cron.runs pages into SQLite
+  -> BrowserWindow.webContents.send(StatusUpdate/ResultUpserted/UnreadCountChanged)
 ```
 
-Polling 的好处是对 Gateway event 支持要求低；缺点是实时性受间隔影响。若未来 Gateway 提供稳定 push event，可以在 Main 内部替换实现，保持 preload API 不变。
+首次启用结果收件箱时，Main 最多导入 200 条全局历史并在同一事务中标记为已读；
+之后启动/重连使用全局增量同步，普通轮询只对 `lastRunAtMs` 推进的任务读取历史。
+每任务单次 reconciliation 最多导入 100 条。Renderer 不增加 timer。
+
+删除单条结果时，Main 会先暂停该 run 的 reconciliation 投影。对于 OpenClaw
+为该 cron run 独立创建的 session，Main 会递归调用 `sessions.delete` 清理
+关联 session/子 session，并删除 Gateway 生成的 transcript 归档；共享 main
+session 不会随单条结果一起删除。随后 Main 从
+OpenClaw state SQLite 精确删除对应的 `cron_run_logs` 行，最后物理删除 JustDo
+SQLite 中的结果并更新全局未读数。任何 OpenClaw 清理错误都会保留 JustDo
+结果，避免界面显示“已删除”但原始数据仍存在。当前固定 OpenClaw 版本没有公开
+单条 cron run 删除 RPC，因此 state SQLite 删除逻辑必须按 `job_id` 和
+`run_id`（旧记录使用 `run_at_ms/ts`）精确匹配，并有版本升级回归测试。
+
+Gateway 可能把应用内任务残留的“缺少 channel”投递错误计入退避。
+`CronJobService` 只对已经明确为 `delivery.mode = none`（或完全缺少 delivery）
+的任务重新提交 schedule，让 Gateway 按正常周期重算 `nextRunAtMs`。任何
+`announce` 或 `webhook` 都视为外部投递意图，不会被静默改写；编辑界面也要求
+`announce` 必须选择通道。
 
 ## Manual Run
 
@@ -227,6 +270,7 @@ sequenceDiagram
 | 手动运行失败 | 记录 run error，保留任务定义 |
 | run session 无法解析 | 历史仍显示，但打开按钮禁用或提示不可用 |
 | polling 失败 | 写日志，下一轮重试，UI 保留上次状态 |
+| renderer reload | Main 继续持久化，renderer 通过 `listResults` 重建列表 |
 
 ## 测试建议
 

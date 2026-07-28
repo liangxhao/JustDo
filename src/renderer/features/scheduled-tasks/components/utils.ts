@@ -237,7 +237,10 @@ export function formatScheduleLabel(schedule: Schedule): string {
     if (everyMs % 3_600_000 === 0) {
       return `${i18nService.t('scheduledTasksScheduleEvery')} ${everyMs / 3_600_000} ${i18nService.t('scheduledTasksFormIntervalHours')}`;
     }
-    return `${i18nService.t('scheduledTasksScheduleEvery')} ${Math.max(1, Math.round(everyMs / 60_000))} ${i18nService.t('scheduledTasksFormIntervalMinutes')}`;
+    if (everyMs % 60_000 === 0) {
+      return `${i18nService.t('scheduledTasksScheduleEvery')} ${everyMs / 60_000} ${i18nService.t('scheduledTasksFormIntervalMinutes')}`;
+    }
+    return `${i18nService.t('scheduledTasksScheduleEvery')} ${everyMs / 1000} ${i18nService.t('scheduledTasksFormIntervalSeconds')}`;
   }
 
   return formatCronExpr(schedule);

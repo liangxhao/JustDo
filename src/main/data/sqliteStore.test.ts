@@ -65,6 +65,16 @@ test('deletes legacy schema database and creates a fresh database', () => {
   const legacyRow = migratedDb
     .prepare("SELECT id FROM cowork_sessions WHERE id = 'legacy-session'")
     .get();
+  const resultTable = migratedDb
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_run_receipts'",
+    )
+    .get();
+  const cleanupTable = migratedDb
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_result_cleanup'",
+    )
+    .get();
 
   expect(columns.map(column => column.name)).toEqual(
     expect.arrayContaining(['agent_id', 'group_id', 'pinned', 'active_skill_ids']),
@@ -72,6 +82,8 @@ test('deletes legacy schema database and creates a fresh database', () => {
   expect(columns.map(column => column.name)).not.toContain('claude_session_id');
   expect(indexes.map(index => index.name)).toContain('idx_cowork_sessions_agent_order');
   expect(legacyRow).toBeUndefined();
+  expect(resultTable).toEqual({ name: 'scheduled_task_run_receipts' });
+  expect(cleanupTable).toEqual({ name: 'scheduled_task_result_cleanup' });
 
   store.close();
 });

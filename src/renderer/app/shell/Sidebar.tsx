@@ -47,6 +47,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const sessions = useSelector(selectCoworkSessions);
   const currentSessionId = useSelector(selectCurrentSessionId);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
+  const unreadScheduledTaskResults = useSelector(
+    (state: import('@/store').RootState) => state.scheduledTask.unreadResultCount,
+  );
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -272,7 +275,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={onNewChat}
-            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+            className={`relative w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               activeView === 'cowork'
                 ? 'bg-primary/10 text-primary hover:bg-primary/20'
                 : 'text-secondary hover:text-foreground hover:bg-surface-raised'
@@ -287,6 +290,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowScheduledTasks();
             }}
+            aria-label={`${i18nService.t('scheduledTasks')}${
+              unreadScheduledTaskResults
+                ? `, ${unreadScheduledTaskResults} ${i18nService.t('scheduledTasksResultsUnreadLabel')}`
+                : ''
+            }`}
             className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               activeView === 'scheduledTasks'
                 ? 'bg-primary/10 text-primary hover:bg-primary/20'
@@ -295,6 +303,11 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <ClockIcon className="h-4 w-4" />
             {i18nService.t('scheduledTasks')}
+            {unreadScheduledTaskResults > 0 && (
+              <span className="ml-auto text-[11px] font-semibold leading-none tabular-nums text-primary/85">
+                {unreadScheduledTaskResults > 99 ? '99+' : unreadScheduledTaskResults}
+              </span>
+            )}
           </button>
           <button
             type="button"

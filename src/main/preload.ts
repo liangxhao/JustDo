@@ -27,8 +27,11 @@ import type { OpenClawSkillSource } from '../shared/plugins/skills';
 import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
 import type {
   ScheduledTaskInput,
+  ScheduledTaskResultQuery,
+  ScheduledTaskResultUpsertedEvent,
   ScheduledTaskRunEvent,
   ScheduledTaskStatusEvent,
+  ScheduledTaskUnreadCountEvent,
 } from '../shared/scheduledTask/types';
 import { SlashCommandIpc } from '../shared/slashCommands';
 
@@ -457,6 +460,31 @@ contextBridge.exposeInMainWorld('electron', {
         callback(data);
       ipcRenderer.on(ScheduledTaskIpc.RunUpdate, handler);
       return () => ipcRenderer.removeListener(ScheduledTaskIpc.RunUpdate, handler);
+    },
+    listResults: (query?: ScheduledTaskResultQuery) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.ListResults, query),
+    markResultRead: (runId: string) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.MarkResultRead, runId),
+    markAllResultsRead: (taskId?: string) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.MarkAllResultsRead, taskId),
+    deleteResult: (runId: string) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.DeleteResult, runId),
+    reconcileResults: () => ipcRenderer.invoke(ScheduledTaskIpc.ReconcileResults),
+    onResultUpserted: (callback: (data: ScheduledTaskResultUpsertedEvent) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: ScheduledTaskResultUpsertedEvent,
+      ) => callback(data);
+      ipcRenderer.on(ScheduledTaskIpc.ResultUpserted, handler);
+      return () => ipcRenderer.removeListener(ScheduledTaskIpc.ResultUpserted, handler);
+    },
+    onUnreadCountChanged: (callback: (data: ScheduledTaskUnreadCountEvent) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: ScheduledTaskUnreadCountEvent,
+      ) => callback(data);
+      ipcRenderer.on(ScheduledTaskIpc.UnreadCountChanged, handler);
+      return () => ipcRenderer.removeListener(ScheduledTaskIpc.UnreadCountChanged, handler);
     },
     onRefresh: (callback: () => void) => {
       const handler = () => callback();

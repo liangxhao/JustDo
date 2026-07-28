@@ -222,6 +222,41 @@ export class SqliteStore {
     `);
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS scheduled_task_run_receipts (
+        run_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        task_name TEXT NOT NULL,
+        session_id TEXT,
+        session_key TEXT,
+        status TEXT NOT NULL,
+        summary TEXT,
+        error TEXT,
+        delivery_status TEXT,
+        delivery_error TEXT,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER,
+        duration_ms INTEGER,
+        observed_at INTEGER NOT NULL,
+        read_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_scheduled_task_results_started
+        ON scheduled_task_run_receipts(started_at DESC, run_id DESC);
+      CREATE INDEX IF NOT EXISTS idx_scheduled_task_results_task_started
+        ON scheduled_task_run_receipts(task_id, started_at DESC, run_id DESC);
+      CREATE INDEX IF NOT EXISTS idx_scheduled_task_results_unread
+        ON scheduled_task_run_receipts(read_at, started_at DESC)
+        WHERE read_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS scheduled_task_result_cleanup (
+        run_id TEXT PRIMARY KEY,
+        archived_paths_json TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL
+      );
+    `);
+
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_sequence
       ON cowork_messages(session_id, sequence, created_at);
     `);

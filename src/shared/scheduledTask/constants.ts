@@ -65,4 +65,11 @@ export const IpcChannel = {
   StatusUpdate: 'scheduledTask:statusUpdate',
   RunUpdate: 'scheduledTask:runUpdate',
   Refresh: 'scheduledTask:refresh',
+  ListResults: 'scheduledTask:listResults',
+  MarkResultRead: 'scheduledTask:markResultRead',
+  MarkAllResultsRead: 'scheduledTask:markAllResultsRead',
+  DeleteResult: 'scheduledTask:deleteResult',
+  ReconcileResults: 'scheduledTask:reconcileResults',
+  ResultUpserted: 'scheduledTask:resultUpserted',
+  UnreadCountChanged: 'scheduledTask:unreadCountChanged',
 } as const;

@@ -7,8 +7,10 @@ test('openclaw prompt points scheduled task requests to the native cron tool', (
 
   expect(prompt).toMatch(/native `cron` tool/i);
   expect(prompt).toMatch(/action: "add".*cron\.add/i);
-  expect(prompt).toMatch(/active conversation context/i);
   expect(prompt).toMatch(/follow the native `cron` tool schema/i);
+  expect(prompt).toMatch(/always retains.*in-app result inbox/i);
+  expect(prompt).toMatch(/unless the user explicitly asks.*external.*delivery.*mode: "none"/i);
+  expect(prompt).toMatch(/never use `announce` merely.*visible inside JustDo/i);
   expect(prompt).toMatch(
     /one-time reminders .*future iso timestamp with an explicit timezone offset/i,
   );

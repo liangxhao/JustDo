@@ -7,7 +7,6 @@ import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 
 interface RunSessionModalProps {
-  sessionId?: string | null;
   sessionKey?: string | null;
   onClose: () => void;
 }
@@ -82,7 +81,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionKey, onClose }
 
       {/* Modal */}
       <div
-        className="relative w-full max-w-3xl mx-4 max-h-[80vh] flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
+        className="relative w-full max-w-3xl h-[80vh] max-h-[800px] mx-4 flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

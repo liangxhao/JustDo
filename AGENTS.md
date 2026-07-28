@@ -116,7 +116,8 @@ Do not document/use unmounted slices as active state.
 
 SQLite core tables in `src/main/data/sqliteStore.ts`:
 `kv`, `cowork_sessions`, `cowork_messages`, `cowork_config`, `agents`,
-`mcp_servers`, `openclaw_hooks`, `session_groups`.
+`mcp_servers`, `openclaw_hooks`, `session_groups`, `scheduled_task_run_receipts`,
+`scheduled_task_result_cleanup`.
 
 Built-in skills are declared in `resources/builtin-skills.json`: **15 skills**,
 **14 enabled** by default, `agent-browser` disabled.
@@ -131,7 +132,8 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 `010-defer-selected-tool-schemas.cjs`,
 `011-trim-runtime-system-prompt.cjs`,
 `012-retain-user-messages-across-compaction.cjs`,
-`013-codex-compaction-template.cjs`.
+`013-codex-compaction-template.cjs`,
+`014-default-cron-delivery-none.cjs`.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 

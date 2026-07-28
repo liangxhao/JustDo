@@ -83,6 +83,8 @@ import {
 } from './ipc/openclaw';
 import {
   getCronJobService,
+  getScheduledTaskResultStore,
+  getScheduledTaskResultSyncService,
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
@@ -842,10 +844,14 @@ if (!gotTheLock) {
 
   initCronJobServiceManager({
     getOpenClawRuntimeAdapter,
+    getDatabase: () => getStore().getDatabase(),
+    getOpenClawStateDir: () => getOpenClawEngineManager().getStateDir(),
   });
   registerScheduledTaskHandlers({
     getCronJobService,
     getOpenClawRuntimeAdapter,
+    getResultStore: getScheduledTaskResultStore,
+    getResultSyncService: getScheduledTaskResultSyncService,
   });
 
   registerCalendarPermissionHandlers(isDev);

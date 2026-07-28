@@ -2,7 +2,10 @@ import { ipcMain } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../../../shared/scheduledTask/constants';
 import type { ScheduledTaskInput } from '../../../shared/scheduledTask/types';
+import type { ScheduledTaskResultQuery } from '../../../shared/scheduledTask/types';
+import type { ScheduledTaskResultStore } from '../../data/scheduledTaskResultStore';
 import type { CronJobService } from '../../scheduler/cronJobService';
+import type { ScheduledTaskResultSyncService } from '../../scheduler/scheduledTaskResultSyncService';
 import { listScheduledTaskChannels } from './helpers';
 
 export interface ScheduledTaskHandlerDeps {
@@ -11,6 +14,8 @@ export interface ScheduledTaskHandlerDeps {
     getGatewayClient: () => unknown;
     fetchSessionByKey: (sessionKey: string) => Promise<unknown>;
   } | null;
+  getResultStore?: () => ScheduledTaskResultStore;
+  getResultSyncService?: () => ScheduledTaskResultSyncService;
 }
 
 export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): void {
@@ -152,6 +157,97 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
         success: false,
         error: error instanceof Error ? error.message : 'Failed to list channels',
       };
+    }
+  });
+
+  ipcMain.handle(
+    ScheduledTaskIpc.ListResults,
+    async (_event, rawQuery?: ScheduledTaskResultQuery) => {
+      try {
+        if (!deps.getResultStore) throw new Error('Result store is unavailable');
+        const taskId =
+          typeof rawQuery?.taskId === 'string' ? rawQuery.taskId.trim() : '';
+        const cursor = typeof rawQuery?.cursor === 'string' ? rawQuery.cursor : '';
+        const rawLimit =
+          typeof rawQuery?.limit === 'number' && Number.isFinite(rawQuery.limit)
+            ? rawQuery.limit
+            : 30;
+        const query: ScheduledTaskResultQuery = {
+          ...(taskId ? { taskId } : {}),
+          ...(rawQuery?.unreadOnly === true ? { unreadOnly: true } : {}),
+          ...(cursor ? { cursor } : {}),
+          limit: Math.min(100, Math.max(1, Math.floor(rawLimit))),
+        };
+        return { success: true, page: deps.getResultStore().listResults(query) };
+      } catch {
+        return { success: false, error: 'Failed to list scheduled task results' };
+      }
+    },
+  );
+
+  ipcMain.handle(ScheduledTaskIpc.MarkResultRead, async (_event, rawRunId: string) => {
+    try {
+      if (!deps.getResultStore) throw new Error('Result store is unavailable');
+      const runId = typeof rawRunId === 'string' ? rawRunId.trim() : '';
+      if (!runId) return { success: false, error: 'A non-empty run ID is required' };
+      const store = deps.getResultStore();
+      const result = store.markRead(runId);
+      if (!result) return { success: false, error: 'Scheduled task result was not found' };
+      const unreadCount = store.countUnread();
+      deps.getResultSyncService?.().updateUnreadCount(unreadCount);
+      return { success: true, result, unreadCount };
+    } catch {
+      return { success: false, error: 'Failed to mark scheduled task result read' };
+    }
+  });
+
+  ipcMain.handle(ScheduledTaskIpc.MarkAllResultsRead, async (_event, rawTaskId?: string) => {
+    try {
+      if (!deps.getResultStore) throw new Error('Result store is unavailable');
+      const taskId = typeof rawTaskId === 'string' ? rawTaskId.trim() || undefined : undefined;
+      const store = deps.getResultStore();
+      store.markAllRead(Date.now(), taskId);
+      const unreadCount = store.countUnread();
+      deps.getResultSyncService?.().updateUnreadCount(unreadCount);
+      return { success: true, unreadCount };
+    } catch {
+      return { success: false, error: 'Failed to mark scheduled task results read' };
+    }
+  });
+
+  ipcMain.handle(ScheduledTaskIpc.DeleteResult, async (_event, rawRunId: string) => {
+    try {
+      const runId = typeof rawRunId === 'string' ? rawRunId.trim() : '';
+      if (!runId) return { success: false, error: 'A non-empty run ID is required' };
+      if (!deps.getResultStore) throw new Error('Result store is unavailable');
+      if (!deps.getResultSyncService) throw new Error('Result sync is unavailable');
+      const store = deps.getResultStore();
+      const deleted = await deps
+        .getResultSyncService()
+        .deleteResult(runId, result => getCronJobService().deleteRunArtifacts(result));
+      if (!deleted) {
+        return { success: false, error: 'Scheduled task result was not found' };
+      }
+      const unreadCount = store.countUnread();
+      deps.getResultSyncService?.().updateUnreadCount(unreadCount);
+      return { success: true, unreadCount };
+    } catch (error) {
+      console.error(
+        '[ScheduledTask] Failed to delete result and OpenClaw artifacts:',
+        error instanceof Error ? error.message : String(error),
+      );
+      return { success: false, error: 'Failed to delete scheduled task result' };
+    }
+  });
+
+  ipcMain.handle(ScheduledTaskIpc.ReconcileResults, async () => {
+    try {
+      if (!deps.getResultSyncService) throw new Error('Result sync is unavailable');
+      const jobs = await getCronJobService().listJobs();
+      await deps.getResultSyncService().reconcile(jobs, true);
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Failed to refresh scheduled task results' };
     }
   });
 }
