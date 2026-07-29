@@ -37,7 +37,7 @@ scripts/patches/v2026.6.11/
 | `011-trim-runtime-system-prompt.cjs` | Remove redundant runtime metadata and normalize injected context line endings |
 | `012-retain-user-messages-across-compaction.cjs` | Persist and replay original user text across repeated compactions with a rolling 20k-token budget |
 | `013-codex-compaction-template.cjs` | Replace OpenClaw's compaction prompts, replay wrapper, and forced suffixes with Codex handoff semantics |
-| `014-default-cron-delivery-none.cjs` | Default native-tool agent-turn cron jobs across the bundled Gateway to in-app delivery when the model omits `delivery` |
+| `014-default-cron-delivery-none.cjs` | Normalize native-tool agent-turn cron add/update requests to in-app delivery when `delivery` is omitted or a targetless `announce` cannot resolve an external destination |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
