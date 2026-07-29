@@ -29,7 +29,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     askUserCanceledMessage: '我取消了请求。',
     askUserAnswerLabel: '用户选择',
     skillInvalidName:
-      'SKILL.md 的“name”必须为 1–64 个字符，且只能包含小写字母、数字和单个连字符。',
+      'SKILL.md 的“name”必须为 1–64 个字符，可包含英文字母、数字、空格、连字符、下划线、圆括号和句点；不能以空格或句点开头或结尾。',
     skillWindowsReservedName: 'SKILL.md 的“name”不能使用 Windows 保留目录名“{name}”。',
     skillInvalidFrontmatter: 'SKILL.md 必须包含有效的 YAML frontmatter。',
     skillInvalidFrontmatterName: 'SKILL.md 必须包含有效的 YAML frontmatter 和“name”字段。',
@@ -48,7 +48,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     askUserCanceledMessage: 'I canceled the request.',
     askUserAnswerLabel: 'User answer',
     skillInvalidName:
-      'SKILL.md "name" must be 1-64 characters and contain only lowercase letters, numbers, and single hyphens.',
+      'SKILL.md "name" must be 1-64 characters and may contain letters, numbers, spaces, hyphens, underscores, parentheses, and periods; it cannot start or end with a space or period.',
     skillWindowsReservedName:
       'SKILL.md "name" cannot be the Windows reserved directory name "{name}".',
     skillInvalidFrontmatter: 'SKILL.md must have a valid YAML frontmatter block.',

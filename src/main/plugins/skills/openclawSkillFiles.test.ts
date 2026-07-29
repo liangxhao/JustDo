@@ -40,17 +40,39 @@ afterEach(() => {
   }
 });
 
-test('accepts only skill names that are safe directory names on Windows', () => {
+test('accepts common skill names that are safe directory names on Windows', () => {
   expect(__openClawSkillFilesTestUtils.validateSkillName('import-smoke-test')).toEqual({
     skillId: 'import-smoke-test',
   });
-  expect(__openClawSkillFilesTestUtils.validateSkillName('My Useful Skill').error).toContain(
-    'lowercase letters',
+  expect(__openClawSkillFilesTestUtils.validateSkillName('My Useful Skill (v2)_beta')).toEqual({
+    skillId: 'My Useful Skill (v2)_beta',
+  });
+  expect(__openClawSkillFilesTestUtils.validateSkillName('node.js tools')).toEqual({
+    skillId: 'node.js tools',
+  });
+  expect(__openClawSkillFilesTestUtils.validateSkillName('../').error).toContain('1-64 characters');
+  expect(__openClawSkillFilesTestUtils.validateSkillName('trailing-space ').error).toContain(
+    '1-64 characters',
   );
-  expect(__openClawSkillFilesTestUtils.validateSkillName('../').error).toContain(
-    'lowercase letters',
+  expect(__openClawSkillFilesTestUtils.validateSkillName(' leading-space').error).toContain(
+    '1-64 characters',
+  );
+  expect(__openClawSkillFilesTestUtils.validateSkillName('.hidden-skill').error).toContain(
+    '1-64 characters',
+  );
+  expect(__openClawSkillFilesTestUtils.validateSkillName('skill/name').error).toContain(
+    '1-64 characters',
+  );
+  expect(__openClawSkillFilesTestUtils.validateSkillName('skill\\name').error).toContain(
+    '1-64 characters',
+  );
+  expect(__openClawSkillFilesTestUtils.validateSkillName('skill:name').error).toContain(
+    '1-64 characters',
   );
   expect(__openClawSkillFilesTestUtils.validateSkillName('con').error).toContain(
+    'Windows reserved',
+  );
+  expect(__openClawSkillFilesTestUtils.validateSkillName('CON.txt').error).toContain(
     'Windows reserved',
   );
   expect(__openClawSkillFilesTestUtils.validateSkillName('a'.repeat(65)).error).toContain(
@@ -83,7 +105,7 @@ test('rejects an invalid skill name before creating its managed directory', () =
   const result = new OpenClawSkillFiles(managed).importDirectory(source);
 
   expect(result.success).toBe(false);
-  expect(result.error).toContain('lowercase letters');
+  expect(result.error).toContain('letters, numbers, spaces');
   expect(fs.readdirSync(managed)).toEqual([]);
 });
 
@@ -174,16 +196,17 @@ test('retries a transient permission error while replacing an imported skill', (
 test('can delete a skill after importing it', () => {
   const source = makeTempDir();
   const managed = makeTempDir();
+  const skillId = 'Deletable Skill (v2)_beta';
   fs.writeFileSync(
     path.join(source, 'SKILL.md'),
-    '---\nname: deletable-skill\ndescription: demo\n---\n',
+    `---\nname: ${skillId}\ndescription: demo\n---\n`,
   );
   const files = new OpenClawSkillFiles(managed);
 
-  expect(files.importDirectory(source).success).toBe(true);
-  files.delete('deletable-skill');
+  expect(files.importDirectory(source)).toEqual({ success: true, skillId });
+  files.delete(skillId);
 
-  expect(fs.existsSync(path.join(managed, 'deletable-skill'))).toBe(false);
+  expect(fs.existsSync(path.join(managed, skillId))).toBe(false);
 });
 
 test('repairs inherited Windows ACLs before retrying a permission-blocked deletion', () => {

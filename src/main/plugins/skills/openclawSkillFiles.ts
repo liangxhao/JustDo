@@ -14,8 +14,9 @@ const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 const FILE_SYSTEM_RETRY_COUNT = 5;
 const FILE_SYSTEM_RETRY_DELAY_MS = 200;
 const MAX_SKILL_NAME_LENGTH = 64;
-const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const WINDOWS_RESERVED_NAME_PATTERN = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const SKILL_NAME_PATTERN = /^(?=.*[a-z0-9])[a-z0-9_()-](?:[a-z0-9_(). -]*[a-z0-9_()-])?$/i;
+const WINDOWS_RESERVED_NAME_PATTERN =
+  /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 export type LocalSkillFileResult = {
   success: boolean;
