@@ -92,6 +92,154 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
   ...overrides,
 });
 
+test('returns raw gateway history without projecting message fields', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const messages = [
+    {
+      role: 'assistant',
+      model: 'hdp/MiniMax-M2.7',
+      content: [
+        { type: 'thinking', thinking: 'Inspect first.' },
+        { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'result.txt' } },
+      ],
+      futureGatewayField: { retained: true },
+    },
+  ];
+  const request = vi.fn().mockResolvedValue({ messages });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(
+    adapter.fetchSessionHistoryByKey('agent:main:cron:job-1:run:1'),
+  ).resolves.toEqual({
+    sessionKey: 'agent:main:cron:job-1:run:1',
+    messages,
+  });
+});
+
+test('resolves a persisted session by gateway session ID when its run key has no history', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn((method: string, params: Record<string, unknown>) => {
+    if (method === 'chat.history' && params.sessionKey === 'agent:main:cron:job-1:run:1') {
+      return Promise.resolve({ messages: [] });
+    }
+    if (method === 'sessions.resolve') {
+      return Promise.resolve({ ok: true, key: 'agent:main:cron:job-1:run:canonical' });
+    }
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [{ role: 'assistant', content: 'completed result' }],
+      });
+    }
+    return Promise.resolve({});
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  const session = await adapter.fetchSessionByKey(
+    'agent:main:cron:job-1:run:1',
+    'gateway-session-1',
+  );
+
+  expect(request).toHaveBeenCalledWith('sessions.resolve', {
+    sessionId: 'gateway-session-1',
+    allowMissing: true,
+    includeUnknown: true,
+  });
+  expect(session?.messages).toEqual([
+    expect.objectContaining({ type: 'assistant', content: 'completed result' }),
+  ]);
+});
+
+test('falls back to raw persisted messages when display history is empty', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn((method: string) => {
+    if (method === 'chat.history') return Promise.resolve({ messages: [] });
+    if (method === 'sessions.get') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'assistant',
+            model: 'hdp/MiniMax-M2.7',
+            content: [
+              { type: 'thinking', thinking: 'stored thinking' },
+              {
+                type: 'toolCall',
+                id: 'call-1',
+                name: 'read',
+                arguments: { path: 'result.txt' },
+              },
+            ],
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-1',
+            toolName: 'read',
+            content: 'stored result',
+          },
+          {
+            role: 'assistant',
+            model: 'hdp/MiniMax-M2.7',
+            content: [{ type: 'text', text: 'final answer' }],
+          },
+        ],
+      });
+    }
+    return Promise.resolve({});
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  const session = await adapter.fetchSessionByKey('agent:main:cron:job-1:run:1');
+
+  expect(request).toHaveBeenCalledWith('sessions.get', {
+    key: 'agent:main:cron:job-1:run:1',
+    limit: expect.any(Number),
+  });
+  expect(session?.messages).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        type: 'assistant',
+        thinkingContent: 'stored thinking',
+        modelName: 'hdp/MiniMax-M2.7',
+      }),
+      expect.objectContaining({
+        type: 'tool_use',
+        metadata: expect.objectContaining({
+          toolName: 'read',
+          toolInput: { path: 'result.txt' },
+          toolUseId: 'call-1',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'tool_result',
+        metadata: expect.objectContaining({
+          toolName: 'read',
+          toolUseId: 'call-1',
+          toolResult: 'stored result',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'assistant',
+        content: 'final answer',
+        modelName: 'hdp/MiniMax-M2.7',
+      }),
+    ]),
+  );
+});
+
 type StopTestAdapter = {
   activeTurns: Map<string, SessionTurn>;
   gatewayClient: GatewayClientLike | null;

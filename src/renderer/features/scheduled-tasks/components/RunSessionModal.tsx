@@ -1,9 +1,13 @@
 import { ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import type { ScheduledTaskRun } from '@shared/scheduledTask/types';
+import type {
+  ScheduledTaskRun,
+  ScheduledTaskSessionHistory,
+} from '@shared/scheduledTask/types';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
-import type { CoworkSession } from '@/features/cowork/coworkTypes';
+import { normalizeGatewayHistoryForDisplay } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
 interface RunSessionModalProps {
@@ -16,7 +20,7 @@ const MAX_RETRIES = 5;
 const RETRY_INTERVAL_MS = 3000;
 
 const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }) => {
-  const [session, setSession] = useState<CoworkSession | null>(null);
+  const [history, setHistory] = useState<ScheduledTaskSessionHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -31,17 +35,21 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
       try {
         const result = await window.electron?.scheduledTasks?.resolveSession(
           sessionKey,
-          reportUnavailable
-            ? {
-                runId: run.id,
-                status: run.status,
-                reason: 'retry-exhausted',
-              }
-            : undefined,
+          {
+            runId: run.id,
+            status: run.status,
+            sessionId: run.sessionId,
+            ...(reportUnavailable ? { reason: 'retry-exhausted' as const } : {}),
+          },
         );
         if (requestGenerationRef.current !== requestGeneration) return false;
-        if (result?.success && result.session?.messages.length) {
-          setSession(result.session);
+        if (result?.success && result.history?.messages.length) {
+          const messages = await normalizeGatewayHistoryForDisplay(result.history.messages, {
+            sessionKey: result.history.sessionKey,
+          });
+          if (requestGenerationRef.current !== requestGeneration) return false;
+          if (messages.length === 0) return false;
+          setHistory({ ...result.history, messages });
           setLoading(false);
           setUnavailable(false);
           return true;
@@ -51,13 +59,13 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
       }
       return false;
     },
-    [run.id, run.sessionKey, run.status],
+    [run.id, run.sessionId, run.sessionKey, run.status],
   );
 
   useEffect(() => {
     const requestGeneration = requestGenerationRef.current + 1;
     requestGenerationRef.current = requestGeneration;
-    setSession(null);
+    setHistory(null);
     setLoading(true);
     setUnavailable(false);
     setRetryCount(0);
@@ -75,7 +83,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
   }, [loadSession]);
 
   useEffect(() => {
-    if (retryCount === 0 || retryCount > MAX_RETRIES || session) return;
+    if (retryCount === 0 || retryCount > MAX_RETRIES || history) return;
     const requestGeneration = requestGenerationRef.current;
 
     retryTimerRef.current = setTimeout(async () => {
@@ -98,12 +106,12 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
         retryTimerRef.current = null;
       }
     };
-  }, [loadSession, retryCount, session]);
+  }, [history, loadSession, retryCount]);
 
   const handleManualRetry = () => {
     const requestGeneration = requestGenerationRef.current + 1;
     requestGenerationRef.current = requestGeneration;
-    setSession(null);
+    setHistory(null);
     setLoading(true);
     setUnavailable(false);
     setRetryCount(0);
@@ -185,7 +193,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
             </div>
           )}
 
-          {!session && hasSavedResult && (
+          {!history && hasSavedResult && (
             <div className="mx-5 mb-5 overflow-y-auto rounded-xl border border-border bg-surface p-4">
               <p className="mb-2 text-xs font-medium text-secondary">
                 {i18nService.t('scheduledTasksSavedResultFallback')}
@@ -201,13 +209,18 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
             </div>
           )}
 
-          {!session && !loading && !hasSavedResult && (
+          {!history && !loading && !hasSavedResult && (
             <div className="px-6 pb-8 text-center text-sm text-secondary">
               {i18nService.t('scheduledTasksFullResultEmpty')}
             </div>
           )}
 
-          {session && <ChatMessageDisplay messages={session.messages} fullWidth />}
+          {history && (
+            <ChatMessageDisplay
+              gatewayMessages={history.messages as GatewayMessage[]}
+              fullWidth
+            />
+          )}
         </div>
       </div>
     </div>

@@ -2998,7 +2998,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.runtimeSessionSnapshotPromise;
   }
 
-  async fetchSessionByKey(sessionKey: string): Promise<CoworkSession | null> {
+  async fetchSessionByKey(
+    sessionKey: string,
+    fallbackSessionId?: string | null,
+  ): Promise<CoworkSession | null> {
     if (sessionKey.startsWith('managed:')) {
       const parts = sessionKey.split(':');
       if (parts.length >= 2) {
@@ -3015,41 +3018,91 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
+    const history = await this.fetchSessionHistoryByKey(sessionKey, fallbackSessionId);
+    if (!history) return null;
+
+    const now = Date.now();
+    const messages: CoworkMessage[] = [];
+    let msgIndex = 0;
+    for (const entry of extractGatewayHistoryEntries(history.messages)) {
+      messages.push({
+        id: `transient-${msgIndex++}`,
+        type: entry.role,
+        content: entry.text,
+        timestamp: now,
+        metadata: {
+          ...(entry.metadata ?? {}),
+          ...(entry.role === 'assistant' ? { isStreaming: false, isFinal: true } : {}),
+        },
+        ...(entry.thinking ? { thinkingContent: entry.thinking } : {}),
+        ...(entry.modelName ? { modelName: entry.modelName } : {}),
+      });
+    }
+    if (messages.length === 0) return null;
+
+    return {
+      id: `transient-${history.sessionKey}`,
+      title: history.sessionKey.split(':').pop() || 'Cron Session',
+      status: 'completed' as CoworkSessionStatus,
+      pinned: false,
+      cwd: '',
+      executionMode: 'local' as CoworkExecutionMode,
+      activeSkillIds: [],
+      messages,
+      agentId: 'main',
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async fetchSessionHistoryByKey(
+    sessionKey: string,
+    fallbackSessionId?: string | null,
+  ): Promise<{ sessionKey: string; messages: unknown[] } | null> {
     const client = this.gatewayClient;
     if (!client) return null;
     try {
-      const history = await client.request<{ messages?: unknown[] }>('chat.history', {
-        sessionKey,
-        limit: FULL_HISTORY_SYNC_LIMIT,
-      });
-      if (!Array.isArray(history?.messages) || history.messages.length === 0) return null;
-
-      const now = Date.now();
-      const messages: CoworkMessage[] = [];
-      let msgIndex = 0;
-      for (const entry of extractGatewayHistoryEntries(history.messages)) {
-        messages.push({
-          id: `transient-${msgIndex++}`,
-          type: entry.role,
-          content: entry.text,
-          timestamp: now,
-          metadata: entry.role === 'assistant' ? { isStreaming: false, isFinal: true } : {},
+      const fetchHistory = (key: string) =>
+        client.request<{ messages?: unknown[] }>('chat.history', {
+          sessionKey: key,
+          limit: FULL_HISTORY_SYNC_LIMIT,
         });
+      let resolvedSessionKey = sessionKey;
+      let history = await fetchHistory(resolvedSessionKey);
+
+      if (
+        (!Array.isArray(history?.messages) || history.messages.length === 0) &&
+        fallbackSessionId?.trim()
+      ) {
+        const resolved = await client
+          .request<{ ok?: boolean; key?: string }>('sessions.resolve', {
+            sessionId: fallbackSessionId.trim(),
+            allowMissing: true,
+            includeUnknown: true,
+          })
+          .catch((): null => null);
+        const canonicalKey =
+          resolved?.ok === true && typeof resolved.key === 'string' ? resolved.key.trim() : '';
+        if (canonicalKey && canonicalKey !== resolvedSessionKey) {
+          resolvedSessionKey = canonicalKey;
+          history = await fetchHistory(resolvedSessionKey);
+        }
       }
-      if (messages.length === 0) return null;
+
+      if (!Array.isArray(history?.messages) || history.messages.length === 0) {
+        const stored = await client
+          .request<{ messages?: unknown[] }>('sessions.get', {
+            key: resolvedSessionKey,
+            limit: FULL_HISTORY_SYNC_LIMIT,
+          })
+          .catch((): null => null);
+        history = { messages: stored?.messages };
+      }
+      if (!Array.isArray(history.messages) || history.messages.length === 0) return null;
 
       return {
-        id: `transient-${sessionKey}`,
-        title: sessionKey.split(':').pop() || 'Cron Session',
-        status: 'completed' as CoworkSessionStatus,
-        pinned: false,
-        cwd: '',
-        executionMode: 'local' as CoworkExecutionMode,
-        activeSkillIds: [],
-        messages,
-        agentId: 'main',
-        createdAt: now,
-        updatedAt: now,
+        sessionKey: resolvedSessionKey,
+        messages: history.messages,
       };
     } catch {
       return null;

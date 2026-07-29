@@ -10,6 +10,8 @@ export interface GatewayHistoryEntry {
   role: GatewayHistoryRole;
   text: string;
   metadata?: Record<string, unknown>;
+  thinking?: string;
+  modelName?: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -30,6 +32,11 @@ const collectTextChunks = (value: unknown): string[] => {
     return [];
   }
 
+  const blockType = typeof value.type === 'string' ? value.type.trim().toLowerCase() : '';
+  if (blockType === 'thinking' || blockType === 'reasoning') {
+    return [];
+  }
+
   const chunks: string[] = [];
   if (typeof value.text === 'string') {
     const text = value.text.trim();
@@ -46,6 +53,106 @@ const collectTextChunks = (value: unknown): string[] => {
   }
 
   return chunks;
+};
+
+const pickTrimmedString = (...values: unknown[]): string | undefined => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+};
+
+const extractAssistantThinking = (message: Record<string, unknown>): string | undefined => {
+  if (!Array.isArray(message.content)) return undefined;
+  const chunks = message.content.flatMap(block => {
+    if (!isRecord(block)) return [];
+    const type = typeof block.type === 'string' ? block.type.trim().toLowerCase() : '';
+    if (type !== 'thinking' && type !== 'reasoning') return [];
+    return collectTextChunks(block.thinking ?? block.text ?? block.content);
+  });
+  return chunks.length > 0 ? chunks.join('\n') : undefined;
+};
+
+const resolveAssistantModelName = (
+  message: Record<string, unknown>,
+  metadata?: Record<string, unknown>,
+): string | undefined => {
+  return pickTrimmedString(
+    message.modelName,
+    metadata?.modelName,
+    message.model,
+    message.modelId,
+    metadata?.model,
+    metadata?.modelId,
+  );
+};
+
+const extractEmbeddedToolUseEntries = (message: unknown): GatewayHistoryEntry[] => {
+  if (!isRecord(message)) return [];
+  const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
+  if (role !== 'assistant' || !Array.isArray(message.content)) return [];
+
+  return message.content.flatMap(block => {
+    if (!isRecord(block)) return [];
+    const blockType = typeof block.type === 'string' ? block.type.trim().toLowerCase() : '';
+    if (
+      ![
+        'toolcall',
+        'tool_call',
+        'tooluse',
+        'tool_use',
+        'functioncall',
+        'function_call',
+      ].includes(blockType)
+    ) {
+      return [];
+    }
+
+    const nestedFunction = isRecord(block.function) ? block.function : undefined;
+    const toolName = pickTrimmedString(
+      block.name,
+      block.toolName,
+      block.tool_name,
+      nestedFunction?.name,
+    );
+    if (!toolName) return [];
+
+    const toolInput =
+      block.input ??
+      block.args ??
+      block.arguments ??
+      nestedFunction?.arguments ??
+      {};
+    const toolUseId = pickTrimmedString(
+      block.toolUseId,
+      block.tool_use_id,
+      block.toolCallId,
+      block.tool_call_id,
+      block.id,
+    );
+    let text: string;
+    if (typeof toolInput === 'string') {
+      text = toolInput;
+    } else {
+      try {
+        text = JSON.stringify(toolInput);
+      } catch {
+        text = '';
+      }
+    }
+
+    return [
+      {
+        role: 'tool_use' as const,
+        text,
+        metadata: {
+          toolName,
+          toolInput,
+          ...(toolUseId ? { toolUseId } : {}),
+        },
+      },
+    ];
+  });
 };
 
 export const extractGatewayMessageText = (message: unknown): string => {
@@ -226,8 +333,13 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
     };
   }
 
-  // For user/assistant/system, skip empty text
-  if (!text) {
+  const thinking = normalizedRole === 'assistant' ? extractAssistantThinking(message) : undefined;
+  const modelName =
+    normalizedRole === 'assistant' ? resolveAssistantModelName(message, metadata) : undefined;
+
+  // Keep thinking-only assistant turns (for example, a reasoning block followed
+  // directly by a tool call), while still filtering genuinely empty messages.
+  if (!text && !thinking) {
     return null;
   }
 
@@ -235,11 +347,14 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
     role: normalizedRole as GatewayHistoryRole,
     text,
     metadata,
+    ...(thinking ? { thinking } : {}),
+    ...(modelName ? { modelName } : {}),
   };
 };
 
 export const extractGatewayHistoryEntries = (messages: unknown[]): GatewayHistoryEntry[] => {
-  return messages
-    .map(message => extractGatewayHistoryEntry(message))
-    .filter((entry): entry is GatewayHistoryEntry => entry !== null);
+  return messages.flatMap(message => {
+    const primary = extractGatewayHistoryEntry(message);
+    return [...(primary ? [primary] : []), ...extractEmbeddedToolUseEntries(message)];
+  });
 };

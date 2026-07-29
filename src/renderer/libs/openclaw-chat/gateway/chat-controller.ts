@@ -64,6 +64,15 @@ import {
 } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { isPendingUserMessageMatch } from '@/libs/openclaw-chat/model/optimistic-user-message';
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
+import {
+  hydrateGatewayHistoryForDisplay,
+  normalizeGatewayHistoryForDisplay,
+  persistFailedRun,
+  projectGatewayHistoryForDisplay,
+  shouldHideMessage,
+  stripAssistantSilentReplySuffix,
+  stripSilentReplySuffixFromText,
+} from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
@@ -188,9 +197,6 @@ const HISTORY_LIMIT = 1000;
 const HISTORY_PAGE_LIMIT = 250;
 const MAX_EMPTY_HISTORY_PAGES_PER_BATCH = 8;
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
-const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
-const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
-const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const POST_FINAL_HISTORY_RELOAD_DELAY_MS = 1500;
 const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
 const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
@@ -234,205 +240,8 @@ function mergeRefreshedHistoryWindow(current: unknown[], recent: unknown[]): unk
   return overlapIndex > 0 ? [...current.slice(0, overlapIndex), ...recent] : recent;
 }
 
-type FailedRunRecord = {
-  sessionKey: string;
-  runId: string | null;
-  error: string;
-  timestamp: number;
-};
-
-function readFailedRuns(): FailedRunRecord[] {
-  if (typeof localStorage === 'undefined') return [];
-  try {
-    const value = JSON.parse(localStorage.getItem(FAILED_RUN_STORAGE_KEY) ?? '[]');
-    if (!Array.isArray(value)) return [];
-    const cutoff = Date.now() - FAILED_RUN_RETENTION_MS;
-    return value.filter(
-      (item): item is FailedRunRecord =>
-        typeof item?.sessionKey === 'string' &&
-        (typeof item.runId === 'string' || item.runId === null) &&
-        typeof item.error === 'string' &&
-        typeof item.timestamp === 'number' &&
-        item.timestamp >= cutoff,
-    );
-  } catch {
-    return [];
-  }
-}
-
-function persistFailedRun(record: FailedRunRecord): void {
-  if (typeof localStorage === 'undefined') return;
-  const records = readFailedRuns().filter(
-    item => !(record.runId && item.sessionKey === record.sessionKey && item.runId === record.runId),
-  );
-  try {
-    localStorage.setItem(FAILED_RUN_STORAGE_KEY, JSON.stringify([...records, record].slice(-100)));
-  } catch {
-    // A storage failure must not interfere with chat error handling.
-  }
-}
-
-function findFailedRunError(message: Record<string, unknown>, sessionKey: string): string | null {
-  const runId = typeof message.runId === 'string' ? message.runId : null;
-  const timestamp = typeof message.timestamp === 'number' ? message.timestamp : null;
-  const candidates = readFailedRuns().filter(item => item.sessionKey === sessionKey);
-  const exact = runId ? candidates.find(item => item.runId === runId) : null;
-  if (exact) return exact.error;
-  if (timestamp === null) return candidates[candidates.length - 1]?.error ?? null;
-  return (
-    candidates
-      .filter(item => Math.abs(item.timestamp - timestamp) < 60_000)
-      .sort(
-        (left, right) =>
-          Math.abs(left.timestamp - timestamp) - Math.abs(right.timestamp - timestamp),
-      )[0]?.error ?? null
-  );
-}
-
-function normalizeFailedRunMessage(
-  message: unknown,
-  sessionKey: string,
-  errorMessage: string | null,
-): unknown {
-  const raw = asRecord(message);
-  if (
-    raw?.role !== 'assistant' ||
-    messageText(raw.content).trim() !== AGENT_RUN_FAILED_BEFORE_REPLY
-  ) {
-    return message;
-  }
-
-  return {
-    ...raw,
-    role: 'system',
-    content:
-      errorMessage?.trim() || findFailedRunError(raw, sessionKey) || AGENT_RUN_FAILED_BEFORE_REPLY,
-    isError: true,
-  };
-}
-
-function getToolResultId(message: unknown): string | null {
-  const raw = asRecord(message);
-  if (!raw) return null;
-  const id = [raw.toolCallId, raw.tool_call_id, raw.toolUseId, raw.tool_use_id].find(
-    value => typeof value === 'string' && value.trim(),
-  );
-  return typeof id === 'string' ? id : null;
-}
-
-function hasMessageToolInput(message: unknown): boolean {
-  const raw = asRecord(message);
-  if (!raw) return false;
-  for (const value of [raw.toolInput, raw.tool_input, raw.arguments, raw.args, raw.input]) {
-    if (hasMeaningfulToolInput(value)) return true;
-  }
-  return false;
-}
-
-async function hydrateMissingToolInputsFromLocalState(
-  sessionKey: string,
-  messages: unknown[],
-): Promise<unknown[]> {
-  const missingIds = Array.from(
-    new Set(
-      messages
-        .filter(message => {
-          const raw = asRecord(message);
-          const role = typeof raw?.role === 'string' ? raw.role.toLowerCase() : '';
-          return ['toolresult', 'tool_result', 'tool', 'function'].includes(role);
-        })
-        .filter(message => !hasMessageToolInput(message))
-        .map(getToolResultId)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  );
-  if (missingIds.length === 0) return messages;
-
-  const result = await getOpenClawHistoryBridge()?.getToolInputs?.({
-    sessionKey,
-    toolCallIds: missingIds,
-  });
-  const inputs = result?.success && result.inputs ? result.inputs : {};
-  if (Object.keys(inputs).length === 0) return messages;
-
-  return messages.map(message => {
-    const raw = asRecord(message);
-    if (!raw || hasMessageToolInput(raw)) return message;
-    const id = getToolResultId(raw);
-    const hydrated = id ? inputs[id] : undefined;
-    if (!hydrated || !hasMeaningfulToolInput(hydrated.input)) return message;
-    return {
-      ...raw,
-      toolName: raw.toolName ?? raw.tool_name ?? hydrated.name,
-      toolInput: hydrated.input,
-    };
-  });
-}
-
-async function hydrateMissingCompactionDetailsFromLocalState(
-  sessionKey: string,
-  messages: unknown[],
-): Promise<unknown[]> {
-  const missingEntryIds = Array.from(
-    new Set(
-      messages.flatMap(message => {
-        const raw = asRecord(message);
-        const marker = asRecord(raw?.__openclaw);
-        if (marker?.kind !== 'compaction' || typeof marker.id !== 'string') return [];
-        return readNonBlankString(marker.summary) ? [] : [marker.id];
-      }),
-    ),
-  );
-  if (missingEntryIds.length === 0) return messages;
-
-  let result:
-    | {
-        success?: boolean;
-        details?: Record<
-          string,
-          { summary?: string; tokensBefore?: number; tokensAfter?: number }
-        >;
-      }
-    | undefined;
-  try {
-    result = await getOpenClawHistoryBridge()?.getCompactionDetails?.({
-      sessionKey,
-      entryIds: missingEntryIds,
-    });
-  } catch {
-    return messages;
-  }
-  const details = result?.success && result.details ? result.details : {};
-  if (Object.keys(details).length === 0) return messages;
-
-  return messages.map(message => {
-    const raw = asRecord(message);
-    const marker = asRecord(raw?.__openclaw);
-    const id = typeof marker?.id === 'string' ? marker.id : '';
-    const detail = id ? details[id] : undefined;
-    if (marker?.kind !== 'compaction' || !detail) return message;
-    return {
-      ...raw,
-      __openclaw: {
-        ...marker,
-        summary: readNonBlankString(marker.summary) ?? readNonBlankString(detail.summary),
-        tokensBefore: marker.tokensBefore ?? detail.tokensBefore,
-        tokensAfter: marker.tokensAfter ?? detail.tokensAfter,
-      },
-    };
-  });
-}
-
 function readNonBlankString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function hasMeaningfulToolInput(value: unknown): boolean {
-  if (value === undefined || value === null) return false;
-  if (typeof value === 'string') return value.trim().length > 0 && value.trim() !== '{}';
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === 'object') return Object.keys(value).length > 0;
-  return true;
 }
 
 // ─── ChatController ─────────────────────────────────────────────────────────
@@ -902,10 +711,7 @@ export class ChatController {
    */
   admitFallbackHistory(sessionKey: string, messages: unknown[]): boolean {
     if (!sessionKey) return false;
-    const projectedMessages = messages
-      .map(stripAssistantSilentReplySuffix)
-      .filter(message => !shouldHideMessage(message))
-      .filter(message => !asRecord(message)?.__openclawStreamFallback);
+    const projectedMessages = projectGatewayHistoryForDisplay(messages);
 
     if (sessionKey !== this.state.sessionKey) {
       const existingSource = this.historySourceBySession.get(sessionKey) ?? 'optimistic';
@@ -1907,25 +1713,12 @@ export class ChatController {
   }
 
   private async normalizeHistoryPage(messages: unknown[], sessionKey: string): Promise<unknown[]> {
-    const projectedMessages = messages
-      .map(stripAssistantSilentReplySuffix)
-      .filter(message => !shouldHideMessage(message))
-      .filter(message => !(message as Record<string, unknown>)?.__openclawStreamFallback);
-    const messagesWithCompactionDetails = await this.enrichCompactionMarkers(
-      projectedMessages,
+    return normalizeGatewayHistoryForDisplay(messages, {
       sessionKey,
-    );
-    const messagesWithLocalCompactionDetails = await hydrateMissingCompactionDetailsFromLocalState(
-      sessionKey,
-      messagesWithCompactionDetails,
-    );
-    const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
-      sessionKey,
-      messagesWithLocalCompactionDetails,
-    );
-    return hydratedMessages.map(message =>
-      normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
-    );
+      lastError: this.state.lastError,
+      enrichCompactionMarkers: (projectedMessages, key) =>
+        this.enrichCompactionMarkers(projectedMessages, key),
+    });
   }
 
   async loadOlderHistory(): Promise<boolean> {
@@ -2158,10 +1951,7 @@ export class ChatController {
       });
       // Remove stream-fallback messages — the real persisted message from the
       // gateway will replace them, preventing content duplication.
-      const projectedMessages = rawMessages
-        .map(stripAssistantSilentReplySuffix)
-        .filter(m => !shouldHideMessage(m))
-        .filter(m => !(m as Record<string, unknown>)?.__openclawStreamFallback);
+      const projectedMessages = projectGatewayHistoryForDisplay(rawMessages);
       debugLog('[ChatCtrl] loadHistory PROJECTED', {
         seq: loadSeq,
         sessionKey,
@@ -2170,19 +1960,12 @@ export class ChatController {
         hiddenCount: rawMessages.length - projectedMessages.length,
         projectedSummary: summarizeHistoryForDebug(projectedMessages),
       });
-      const messagesWithCompactionDetails = await this.enrichCompactionMarkers(
-        projectedMessages,
+      const hydratedMessages = await hydrateGatewayHistoryForDisplay(projectedMessages, {
         sessionKey,
-      );
-      const messagesWithLocalCompactionDetails =
-        await hydrateMissingCompactionDetailsFromLocalState(
-          sessionKey,
-          messagesWithCompactionDetails,
-        );
-      const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
-        sessionKey,
-        messagesWithLocalCompactionDetails,
-      );
+        lastError: this.state.lastError,
+        enrichCompactionMarkers: (messages, key) =>
+          this.enrichCompactionMarkers(messages, key),
+      });
       if (!requestStillCurrent()) {
         debugLog('[ChatCtrl] loadHistory ABORT identity changed during normalization', {
           seq: loadSeq,
@@ -2191,12 +1974,7 @@ export class ChatController {
         });
         return false;
       }
-      let messages = this.projectLocalCompactionStatus(
-        sessionKey,
-        hydratedMessages.map(message =>
-          normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
-        ),
-      );
+      let messages = this.projectLocalCompactionStatus(sessionKey, hydratedMessages);
       if (pagedHistory) {
         messages = mergeRefreshedHistoryWindow(previousMessages, messages);
       } else if (
@@ -3189,54 +2967,6 @@ function extractSnapshotText(message: unknown): string | null {
   return null;
 }
 
-function messageText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .map(item => {
-      if (!item || typeof item !== 'object') return '';
-      const text = (item as Record<string, unknown>).text;
-      return typeof text === 'string' ? text : '';
-    })
-    .join('\n');
-}
-
-function stripSilentReplySuffixFromText(text: string): string {
-  if (SILENT_REPLY_PATTERN.test(text.trim())) return text;
-  return text.replace(/\s*NO_REPLY\s*$/i, '').trimEnd();
-}
-
-function stripAssistantSilentReplySuffix(message: unknown): unknown {
-  const record = asRecord(message);
-  if (!record || String(record.role ?? '').toLowerCase() !== 'assistant') return message;
-
-  if (typeof record.content === 'string') {
-    const stripped = stripSilentReplySuffixFromText(record.content);
-    return stripped === record.content ? message : { ...record, content: stripped };
-  }
-
-  if (typeof record.text === 'string') {
-    const stripped = stripSilentReplySuffixFromText(record.text);
-    return stripped === record.text ? message : { ...record, text: stripped };
-  }
-
-  const originalContent = record.content;
-  if (!Array.isArray(originalContent)) return message;
-
-  let changed = false;
-  const content = originalContent.map((item, index) => {
-    const block = asRecord(item);
-    if (!block || block.type !== 'text' || typeof block.text !== 'string') return item;
-    if (index !== originalContent.length - 1) return item;
-    const stripped = stripSilentReplySuffixFromText(block.text);
-    if (stripped === block.text) return item;
-    changed = true;
-    return { ...block, text: stripped };
-  });
-
-  return changed ? { ...record, content } : message;
-}
-
 function collectActiveThinkingText(turn: AssistantTurn | null): string | null {
   const text = (turn?.items ?? [])
     .filter(item => item.type === 'thinking')
@@ -3286,33 +3016,6 @@ function withThinkingContent(message: unknown, thinkingText: string): unknown {
     ...record,
     content: [thinkingBlock],
   };
-}
-
-function shouldHideMessage(message: unknown): boolean {
-  if (!message || typeof message !== 'object') return false;
-  const m = message as Record<string, unknown>;
-  const role = typeof m.role === 'string' ? m.role.toLowerCase() : '';
-
-  // Hide NO_REPLY assistant messages
-  if (role === 'assistant') {
-    const text = extractSnapshotText(message);
-    if (text && isPersistedSilentReplyArtifactText(text)) return true;
-  }
-
-  // Hide heartbeat messages
-  if (role === 'assistant') {
-    const text = extractSnapshotText(message);
-    if (text && text.includes('HEARTBEAT_OK')) return true;
-  }
-
-  return false;
-}
-
-function isPersistedSilentReplyArtifactText(text: string): boolean {
-  const trimmed = text.trim();
-  if (SILENT_REPLY_PATTERN.test(trimmed)) return true;
-  const upper = trimmed.toUpperCase();
-  return upper.startsWith('NO_') && 'NO_REPLY'.startsWith(upper);
 }
 
 function isCompactionMarker(message: unknown): boolean {

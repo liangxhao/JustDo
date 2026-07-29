@@ -27,7 +27,7 @@ test('loads persisted tasks through the service while the gateway is still conne
     getCronJobService: () => ({ listJobs }) as unknown as CronJobService,
     getOpenClawRuntimeAdapter: () => ({
       getGatewayClient: () => null,
-      fetchSessionByKey: vi.fn(),
+      fetchSessionHistoryByKey: vi.fn(),
     }),
   });
 
@@ -64,13 +64,13 @@ test('caps result page limits and normalizes an empty task filter', async () => 
 
 test('logs one content-free diagnostic when full result retries are exhausted', async () => {
   const sessionKey = 'agent:main:cron:task-1:run:session-secret';
-  const fetchSessionByKey = vi.fn().mockResolvedValue(null);
+  const fetchSessionHistoryByKey = vi.fn().mockResolvedValue(null);
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   registerScheduledTaskHandlers({
     getCronJobService: () => ({}) as CronJobService,
     getOpenClawRuntimeAdapter: () => ({
       getGatewayClient: () => null,
-      fetchSessionByKey,
+      fetchSessionHistoryByKey,
     }),
   });
 
@@ -78,11 +78,12 @@ test('logs one content-free diagnostic when full result retries are exhausted', 
     handlers.get(ScheduledTaskIpc.ResolveSession)?.({}, sessionKey, {
       runId: 'run-1',
       status: 'success',
+      sessionId: 'gateway-session-1',
       reason: 'retry-exhausted',
     }),
-  ).resolves.toEqual({ success: true, session: null });
+  ).resolves.toEqual({ success: true, history: null });
 
-  expect(fetchSessionByKey).toHaveBeenCalledWith(sessionKey);
+  expect(fetchSessionHistoryByKey).toHaveBeenCalledWith(sessionKey, 'gateway-session-1');
   expect(warn).toHaveBeenCalledOnce();
   expect(warn).toHaveBeenCalledWith(
     '[ScheduledTask] Full result unavailable after retries',
@@ -91,16 +92,16 @@ test('logs one content-free diagnostic when full result retries are exhausted', 
       status: 'success',
       sessionKind: 'cron-run',
       sessionFingerprint: expect.stringMatching(/^[a-f0-9]{12}$/),
+      hasSessionId: true,
     }),
   );
   expect(JSON.stringify(warn.mock.calls)).not.toContain(sessionKey);
   warn.mockRestore();
 });
 
-test('logs the final diagnostic when a resolved session has no messages', async () => {
-  const fetchSessionByKey = vi.fn().mockResolvedValue({
-    id: 'session-1',
-    title: 'Session',
+test('logs the final diagnostic when resolved history has no messages', async () => {
+  const fetchSessionHistoryByKey = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:cron:task-1:run:run-1',
     messages: [],
   });
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -108,7 +109,7 @@ test('logs the final diagnostic when a resolved session has no messages', async 
     getCronJobService: () => ({}) as CronJobService,
     getOpenClawRuntimeAdapter: () => ({
       getGatewayClient: () => null,
-      fetchSessionByKey,
+      fetchSessionHistoryByKey,
     }),
   });
 
@@ -122,7 +123,7 @@ test('logs the final diagnostic when a resolved session has no messages', async 
     },
   );
 
-  expect(result).toMatchObject({ success: true, session: { messages: [] } });
+  expect(result).toMatchObject({ success: true, history: { messages: [] } });
   expect(warn).toHaveBeenCalledOnce();
   expect(warn).toHaveBeenCalledWith(
     '[ScheduledTask] Full result unavailable after retries',

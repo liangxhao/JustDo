@@ -255,11 +255,20 @@ sequenceDiagram
 
 ## Session Resolution
 
-`resolveSession(sessionKey)` 用于把 Gateway run 结果关联到 JustDo 可展示会话。可能情况：
+`resolveSession(sessionKey)` 用于把 Gateway run 结果关联到可展示的 OpenClaw 历史。Main
+只负责按 `sessionKey` 加载历史，并在必要时通过 `sessionId` 解析规范 key 或通过
+`sessions.get` 读取持久化 transcript。返回的原始 Gateway 消息直接进入与普通会话
+相同的 `justdo-chat` / `projectPersistedTimeline`，不经过
+`Gateway -> CoworkMessage -> Gateway` 往返转换。
 
-- session 已在本地 `cowork_sessions` 中存在。
-- session 只有 Gateway history，需要创建/补全本地 UI cache。
+- session 可直接通过 Gateway `chat.history` 加载。
+- run key 已变化，但可通过 Gateway session ID 找到规范 key。
+- display history 为空，但持久化 transcript 仍可通过 `sessions.get` 加载。
 - session 已被 Gateway 清理，UI 展示不可打开状态。
+
+定时任务弹窗保持只读，不复用普通会话的发送、实时订阅和 Redux 生命周期；两者仅共享
+OpenClaw 原始消息的标准化、时间线投影和最终渲染。这样 Gateway 新增消息字段时，定时
+任务不会因为中间字段白名单而单独丢失。
 
 ## 失败处理
 

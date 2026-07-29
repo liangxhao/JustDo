@@ -865,7 +865,7 @@ interface IElectronAPI {
       context?: import('@shared/scheduledTask/types').ScheduledTaskSessionResolveContext,
     ) => Promise<{
       success: boolean;
-      session?: import('./cowork').CoworkSession | null;
+      history?: import('@shared/scheduledTask/types').ScheduledTaskSessionHistory | null;
       error?: string;
     }>;
     listChannels: () => Promise<{

@@ -99,7 +99,13 @@ export interface ScheduledTaskResult extends ScheduledTaskRun {
 export interface ScheduledTaskSessionResolveContext {
   runId: string;
   status: TaskStatus;
-  reason: 'retry-exhausted';
+  sessionId?: string | null;
+  reason?: 'retry-exhausted';
+}
+
+export interface ScheduledTaskSessionHistory {
+  sessionKey: string;
+  messages: unknown[];
 }
 
 export interface ScheduledTaskResultQuery {

@@ -18,10 +18,16 @@ import type { GatewayContentBlock, GatewayMessage } from '@/libs/openclaw-chat/t
  * Convert a single CoworkMessage to a GatewayMessage.
  */
 export function coworkMessageToGateway(msg: CoworkMessage): GatewayMessage {
+  const metadataModelName =
+    typeof msg.metadata?.modelName === 'string' && msg.metadata.modelName.trim()
+      ? msg.metadata.modelName.trim()
+      : undefined;
+  const modelName = msg.modelName?.trim() || metadataModelName;
   const base: GatewayMessage = {
     role: mapRole(msg.type),
     timestamp: msg.timestamp,
     id: msg.id,
+    ...(modelName ? { modelName } : {}),
   };
 
   switch (msg.type) {
@@ -91,6 +97,13 @@ export function coworkMessageToGateway(msg: CoworkMessage): GatewayMessage {
  */
 export function coworkMessagesToGateway(messages: CoworkMessage[]): GatewayMessage[] {
   return messages.map(coworkMessageToGateway);
+}
+
+export function resolveChatDisplayMessages(
+  messages: CoworkMessage[],
+  gatewayMessages?: GatewayMessage[],
+): GatewayMessage[] {
+  return gatewayMessages ?? coworkMessagesToGateway(messages);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

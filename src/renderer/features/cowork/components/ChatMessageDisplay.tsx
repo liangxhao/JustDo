@@ -4,13 +4,15 @@ import { useEffect, useMemo, useRef } from 'react';
 
 import type { CoworkMessage } from '@/features/cowork/coworkTypes';
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
-import { coworkMessagesToGateway } from '@/libs/openclaw-chat/conversion/cowork-to-gateway';
+import { resolveChatDisplayMessages } from '@/libs/openclaw-chat/conversion/cowork-to-gateway';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 interface ChatMessageDisplayProps {
   className?: string;
   controller?: ChatController | null;
   messages?: CoworkMessage[];
+  gatewayMessages?: GatewayMessage[];
   isStreaming?: boolean;
   fullWidth?: boolean;
   assistantName?: string;
@@ -31,6 +33,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   className,
   controller = null,
   messages = [],
+  gatewayMessages,
   isStreaming = false,
   fullWidth = false,
   assistantName,
@@ -43,7 +46,10 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<JustDoChatElement | null>(null);
-  const gatewayMessages = useMemo(() => coworkMessagesToGateway(messages), [messages]);
+  const displayedMessages = useMemo(
+    () => resolveChatDisplayMessages(messages, gatewayMessages),
+    [gatewayMessages, messages],
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -88,12 +94,12 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     if (!chat) return;
     chat.controller = controller;
     if (!controller) {
-      chat.messages = gatewayMessages;
+      chat.messages = displayedMessages;
       chat.isStreaming = isStreaming;
     }
     chat.assistantName = assistantName ?? '';
     chat.workingDirectory = workingDirectory;
-  }, [assistantName, controller, gatewayMessages, isStreaming, workingDirectory]);
+  }, [assistantName, controller, displayedMessages, isStreaming, workingDirectory]);
 
   useEffect(() => {
     const chat = chatRef.current;

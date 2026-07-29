@@ -17,7 +17,10 @@ export interface ScheduledTaskHandlerDeps {
   getCronJobService: () => CronJobService;
   getOpenClawRuntimeAdapter: () => {
     getGatewayClient: () => unknown;
-    fetchSessionByKey: (sessionKey: string) => Promise<unknown>;
+    fetchSessionHistoryByKey: (
+      sessionKey: string,
+      sessionId?: string | null,
+    ) => Promise<unknown>;
   } | null;
   getResultStore?: () => ScheduledTaskResultStore;
   getResultSyncService?: () => ScheduledTaskResultSyncService;
@@ -46,9 +49,9 @@ function normalizeDiagnosticStatus(value: unknown): string {
     : 'unknown';
 }
 
-function sessionHasMessages(session: unknown): boolean {
-  if (!session || typeof session !== 'object') return false;
-  const messages = Reflect.get(session, 'messages');
+function historyHasMessages(history: unknown): boolean {
+  if (!history || typeof history !== 'object') return false;
+  const messages = Reflect.get(history, 'messages');
   return Array.isArray(messages) && messages.length > 0;
 }
 
@@ -174,18 +177,26 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     async (_event, rawSessionKey: string, context?: ScheduledTaskSessionResolveContext) => {
       const sessionKey = typeof rawSessionKey === 'string' ? rawSessionKey.trim() : '';
       try {
-        if (!sessionKey) return { success: true, session: null };
-        // Fetch session history from OpenClaw (returns transient session, not persisted).
-        const session = await getOpenClawRuntimeAdapter()?.fetchSessionByKey(sessionKey);
-        if (!sessionHasMessages(session) && context?.reason === 'retry-exhausted') {
+        if (!sessionKey) return { success: true, history: null };
+        // Fetch raw OpenClaw history so the renderer uses the canonical chat projection.
+        const sessionId =
+          typeof context?.sessionId === 'string' && context.sessionId.trim()
+            ? context.sessionId.trim()
+            : null;
+        const history = await getOpenClawRuntimeAdapter()?.fetchSessionHistoryByKey(
+          sessionKey,
+          sessionId,
+        );
+        if (!historyHasMessages(history) && context?.reason === 'retry-exhausted') {
           console.warn('[ScheduledTask] Full result unavailable after retries', {
             runId: normalizeDiagnosticRunId(context.runId),
             status: normalizeDiagnosticStatus(context.status),
             sessionKind: sessionKeyKind(sessionKey),
             sessionFingerprint: sessionKeyFingerprint(sessionKey),
+            hasSessionId: Boolean(sessionId),
           });
         }
-        return { success: true, session: session ?? null };
+        return { success: true, history: history ?? null };
       } catch (error) {
         if (context?.reason === 'retry-exhausted') {
           console.warn('[ScheduledTask] Full result lookup failed after retries', {
@@ -193,6 +204,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
             status: normalizeDiagnosticStatus(context.status),
             sessionKind: sessionKeyKind(sessionKey),
             sessionFingerprint: sessionKeyFingerprint(sessionKey),
+            hasSessionId: Boolean(context.sessionId),
             errorType: error instanceof Error ? error.name : 'unknown',
           });
         }
