@@ -111,6 +111,13 @@ const ResultInbox: React.FC = () => {
   const allSelectableResultsSelected =
     selectableResultIds.length > 0 &&
     selectableResultIds.every(resultId => selectedResultIds.has(resultId));
+  const getResultTitle = (result: ScheduledTaskResult): string => {
+    const currentTaskName = tasks.find(task => task.id === result.taskId)?.name.trim();
+    if (currentTaskName) return currentTaskName;
+    const storedTaskName = result.taskName.trim();
+    if (storedTaskName && storedTaskName !== result.taskId) return storedTaskName;
+    return t('scheduledTasksResultsDeletedTaskTitle');
+  };
 
   useEffect(() => {
     const visibleResultIds = new Set(results.map(result => result.id));
@@ -354,7 +361,9 @@ const ResultInbox: React.FC = () => {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start gap-2">
                               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                                <h3 className="font-medium text-foreground">{result.taskName}</h3>
+                                <h3 className="font-medium text-foreground">
+                                  {getResultTitle(result)}
+                                </h3>
                                 {!tasks.some(task => task.id === result.taskId) && (
                                   <span className="text-xs text-secondary">
                                     {t('scheduledTasksResultsDeletedTask')}
@@ -468,7 +477,8 @@ const ResultInbox: React.FC = () => {
 
       {viewingResult?.status !== 'skipped' && viewingResult?.sessionKey && (
         <RunSessionModal
-          sessionKey={viewingResult.sessionKey}
+          run={viewingResult}
+          title={getResultTitle(viewingResult)}
           onClose={() => setViewingResult(null)}
         />
       )}

@@ -96,6 +96,12 @@ export interface ScheduledTaskResult extends ScheduledTaskRun {
   readAt: string | null;
 }
 
+export interface ScheduledTaskSessionResolveContext {
+  runId: string;
+  status: TaskStatus;
+  reason: 'retry-exhausted';
+}
+
 export interface ScheduledTaskResultQuery {
   taskId?: string;
   unreadOnly?: boolean;

@@ -180,6 +180,45 @@ describe('ScheduledTaskResultSyncService', () => {
     expect(RESULT_BASELINE_LIMIT).toBe(200);
   });
 
+  test('uses the local task title when a global run only contains the job ID', async () => {
+    const initializeBaseline = vi.fn();
+    const gatewayRun = {
+      ...run('baseline', '2026-07-28T08:00:00.000Z'),
+      taskName: 'task-1',
+    };
+    const cronJobService = {
+      listAllRuns: vi.fn().mockResolvedValue({ runs: [gatewayRun], nextOffset: null }),
+    } as unknown as CronJobService;
+    const resultStore = {
+      hasInitializedBaseline: () => false,
+      initializeBaseline,
+      countUnread: () => 0,
+    } as unknown as ScheduledTaskResultStore;
+    const service = new ScheduledTaskResultSyncService({
+      cronJobService,
+      resultStore,
+      emitResultUpserted: vi.fn(),
+      emitUnreadCountChanged: vi.fn(),
+    });
+    const job = {
+      id: 'task-1',
+      name: 'Daily report',
+      state: { lastRunAtMs: Date.parse(gatewayRun.startedAt) },
+    } as ScheduledTask;
+
+    await service.reconcile([job]);
+
+    expect(initializeBaseline.mock.calls[0]?.[0]).toEqual([
+      {
+        run: { ...gatewayRun, taskName: 'Daily report' },
+        taskName: 'Daily report',
+      },
+    ]);
+    expect(initializeBaseline.mock.calls[0]?.[2]).toEqual([
+      { taskId: 'task-1', lastRunAtMs: Date.parse(gatewayRun.startedAt) },
+    ]);
+  });
+
   test('catches up multiple missed runs oldest first and only once', async () => {
     const older = run('older', '2026-07-28T08:00:00.000Z');
     const newer = run('newer', '2026-07-28T09:00:00.000Z');

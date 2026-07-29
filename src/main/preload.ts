@@ -445,8 +445,10 @@ contextBridge.exposeInMainWorld('electron', {
     // Run history
     listRuns: (taskId: string, limit?: number, offset?: number) =>
       ipcRenderer.invoke(ScheduledTaskIpc.ListRuns, taskId, limit, offset),
-    resolveSession: (sessionKey: string) =>
-      ipcRenderer.invoke(ScheduledTaskIpc.ResolveSession, sessionKey),
+    resolveSession: (
+      sessionKey: string,
+      context?: import('../shared/scheduledTask/types').ScheduledTaskSessionResolveContext,
+    ) => ipcRenderer.invoke(ScheduledTaskIpc.ResolveSession, sessionKey, context),
 
     // Delivery channels
     listChannels: () => ipcRenderer.invoke(ScheduledTaskIpc.ListChannels),

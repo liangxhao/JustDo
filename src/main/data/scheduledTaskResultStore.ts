@@ -255,7 +255,12 @@ export class ScheduledTaskResultStore {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id) DO UPDATE SET
           task_id = excluded.task_id,
-          task_name = scheduled_task_run_receipts.task_name,
+          task_name = CASE
+            WHEN scheduled_task_run_receipts.task_name = scheduled_task_run_receipts.task_id
+              AND excluded.task_name <> excluded.task_id
+              THEN excluded.task_name
+            ELSE scheduled_task_run_receipts.task_name
+          END,
           session_id = excluded.session_id,
           session_key = excluded.session_key,
           status = excluded.status,

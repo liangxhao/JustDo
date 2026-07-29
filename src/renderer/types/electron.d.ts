@@ -857,7 +857,10 @@ interface IElectronAPI {
       runs?: ScheduledTaskRun[];
       error?: string;
     }>;
-    resolveSession: (sessionKey: string) => Promise<{
+    resolveSession: (
+      sessionKey: string,
+      context?: import('@shared/scheduledTask/types').ScheduledTaskSessionResolveContext,
+    ) => Promise<{
       success: boolean;
       session?: import('./cowork').CoworkSession | null;
       error?: string;

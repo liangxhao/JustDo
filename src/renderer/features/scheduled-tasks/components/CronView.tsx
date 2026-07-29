@@ -1337,7 +1337,11 @@ export const CronView: React.FC<CronViewProps> = ({
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              <TaskRunHistory taskId={historyTaskId} runs={historyRuns} />
+              <TaskRunHistory
+                taskId={historyTaskId}
+                taskName={historyJob?.name}
+                runs={historyRuns}
+              />
             </div>
           </div>
         </div>

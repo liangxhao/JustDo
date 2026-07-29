@@ -1,108 +1,147 @@
 import { ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useState } from 'react';
+import type { ScheduledTaskRun } from '@shared/scheduledTask/types';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
-import { connectToGateway } from '@/features/cowork/components/JustDoChatWrapper';
-import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import type { CoworkSession } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 
 interface RunSessionModalProps {
-  sessionKey?: string | null;
+  run: ScheduledTaskRun;
+  title?: string;
   onClose: () => void;
 }
 
 const MAX_RETRIES = 5;
 const RETRY_INTERVAL_MS = 3000;
 
-const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionKey, onClose }) => {
-  const [controller, setController] = useState<ChatController | null>(null);
+const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }) => {
+  const [session, setSession] = useState<CoworkSession | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestGenerationRef = useRef(0);
 
-  useEffect(() => {
-    if (!sessionKey) {
-      setLoading(false);
-      setError(i18nService.t('scheduledTasksSessionNotSynced'));
-      return;
-    }
+  const loadSession = useCallback(
+    async (requestGeneration: number, reportUnavailable = false): Promise<boolean> => {
+      const sessionKey = run.sessionKey?.trim();
+      if (!sessionKey) return false;
 
-    const nextController = new ChatController();
-    nextController.state.sessionKey = sessionKey;
-    let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-    setController(nextController);
-    setLoading(true);
-    setError(null);
-    setRetryCount(0);
-
-    const connect = async (attempt: number): Promise<void> => {
       try {
-        const success = await connectToGateway(nextController);
-        if (cancelled) return;
-        if (success) {
+        const result = await window.electron?.scheduledTasks?.resolveSession(
+          sessionKey,
+          reportUnavailable
+            ? {
+                runId: run.id,
+                status: run.status,
+                reason: 'retry-exhausted',
+              }
+            : undefined,
+        );
+        if (requestGenerationRef.current !== requestGeneration) return false;
+        if (result?.success && result.session?.messages.length) {
+          setSession(result.session);
           setLoading(false);
-          setError(null);
-          return;
+          setUnavailable(false);
+          return true;
         }
       } catch {
-        // Retry below while the scheduled session is still being registered.
+        // The final failed attempt is logged once in Main through resolveSession.
       }
-      if (cancelled) return;
-      if (attempt >= MAX_RETRIES) {
-        setLoading(false);
-        setError(i18nService.t('scheduledTasksSessionNotSynced'));
-        return;
-      }
-      setRetryCount(attempt + 1);
-      retryTimer = setTimeout(() => void connect(attempt + 1), RETRY_INTERVAL_MS);
-    };
+      return false;
+    },
+    [run.id, run.sessionKey, run.status],
+  );
 
-    void connect(0);
+  useEffect(() => {
+    const requestGeneration = requestGenerationRef.current + 1;
+    requestGenerationRef.current = requestGeneration;
+    setSession(null);
+    setLoading(true);
+    setUnavailable(false);
+    setRetryCount(0);
+
+    void loadSession(requestGeneration).then(success => {
+      if (!success && requestGenerationRef.current === requestGeneration) setRetryCount(1);
+    });
 
     return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      nextController.disconnect();
-      setController(current => (current === nextController ? null : current));
+      if (requestGenerationRef.current === requestGeneration) {
+        requestGenerationRef.current += 1;
+      }
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
-  }, [connectionAttempt, sessionKey]);
+  }, [loadSession]);
 
-  const handleManualRetry = useCallback(() => {
-    setConnectionAttempt(attempt => attempt + 1);
-  }, []);
+  useEffect(() => {
+    if (retryCount === 0 || retryCount > MAX_RETRIES || session) return;
+    const requestGeneration = requestGenerationRef.current;
+
+    retryTimerRef.current = setTimeout(async () => {
+      if (requestGenerationRef.current !== requestGeneration) return;
+      const finalAttempt = retryCount >= MAX_RETRIES;
+      const success = await loadSession(requestGeneration, finalAttempt);
+      if (requestGenerationRef.current !== requestGeneration || success) return;
+
+      if (finalAttempt) {
+        setLoading(false);
+        setUnavailable(true);
+      } else {
+        setRetryCount(current => current + 1);
+      }
+    }, RETRY_INTERVAL_MS);
+
+    return () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [loadSession, retryCount, session]);
+
+  const handleManualRetry = () => {
+    const requestGeneration = requestGenerationRef.current + 1;
+    requestGenerationRef.current = requestGeneration;
+    setSession(null);
+    setLoading(true);
+    setUnavailable(false);
+    setRetryCount(0);
+    void loadSession(requestGeneration).then(success => {
+      if (!success && requestGenerationRef.current === requestGeneration) setRetryCount(1);
+    });
+  };
+
+  const hasSavedResult = Boolean(run.summary?.trim() || run.error?.trim());
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center" onClick={onClose}>
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
-
-      {/* Modal */}
       <div
-        className="relative w-full max-w-3xl h-[80vh] max-h-[800px] mx-4 flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
-        onClick={e => e.stopPropagation()}
+        className="relative mx-4 flex h-[80vh] max-h-[800px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+        onClick={event => event.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle bg-surface/50 shrink-0">
-          <h3 className="text-sm font-semibold text-foreground truncate">
-            {i18nService.t('scheduledTasksViewSession')}
+        <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-surface/50 px-5 py-3">
+          <h3
+            className="truncate text-sm font-semibold text-foreground"
+            title={title?.trim() || undefined}
+          >
+            {title?.trim() || i18nService.t('scheduledTasksViewSession')}
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+            className="rounded-lg p-1 text-secondary transition-colors hover:bg-surface-raised"
+            aria-label={i18nService.t('close')}
           >
-            <XMarkIcon className="w-5 h-5" />
+            <XMarkIcon className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {loading && (
-            <div className="flex flex-col items-center justify-center py-16 gap-3">
-              <svg className="w-5 h-5 animate-spin text-secondary" viewBox="0 0 24 24" fill="none">
+            <div className="flex shrink-0 flex-col items-center justify-center gap-3 px-6 py-8">
+              <svg className="h-5 w-5 animate-spin text-secondary" viewBox="0 0 24 24" fill="none">
                 <circle
                   cx="12"
                   cy="12"
@@ -127,21 +166,48 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionKey, onClose }
             </div>
           )}
 
-          {error && (
-            <div className="flex flex-col items-center justify-center py-16 gap-3">
-              <span className="text-sm text-secondary">{error}</span>
+          {unavailable && (
+            <div className="flex shrink-0 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
+              <p className="text-sm font-medium text-foreground">
+                {i18nService.t('scheduledTasksFullResultUnavailableTitle')}
+              </p>
+              <p className="max-w-lg text-sm text-secondary">
+                {i18nService.t('scheduledTasksFullResultUnavailableDescription')}
+              </p>
               <button
                 type="button"
                 onClick={handleManualRetry}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-primary hover:bg-surface-raised transition-colors"
+                className="mt-1 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-primary transition-colors hover:bg-surface-raised"
               >
-                <ArrowPathIcon className="w-3.5 h-3.5" />
+                <ArrowPathIcon className="h-3.5 w-3.5" />
                 {i18nService.t('scheduledTasksSessionRetry')}
               </button>
             </div>
           )}
 
-          {!loading && !error && <ChatMessageDisplay controller={controller} fullWidth />}
+          {!session && hasSavedResult && (
+            <div className="mx-5 mb-5 overflow-y-auto rounded-xl border border-border bg-surface p-4">
+              <p className="mb-2 text-xs font-medium text-secondary">
+                {i18nService.t('scheduledTasksSavedResultFallback')}
+              </p>
+              {run.summary?.trim() && (
+                <p className="whitespace-pre-wrap text-sm text-foreground">{run.summary}</p>
+              )}
+              {run.error?.trim() && (
+                <p className="mt-2 whitespace-pre-wrap text-sm text-red-600 dark:text-red-400">
+                  {run.error}
+                </p>
+              )}
+            </div>
+          )}
+
+          {!session && !loading && !hasSavedResult && (
+            <div className="px-6 pb-8 text-center text-sm text-secondary">
+              {i18nService.t('scheduledTasksFullResultEmpty')}
+            </div>
+          )}
+
+          {session && <ChatMessageDisplay messages={session.messages} fullWidth />}
         </div>
       </div>
     </div>

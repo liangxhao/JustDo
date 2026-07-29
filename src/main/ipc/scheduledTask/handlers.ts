@@ -1,8 +1,13 @@
+import { createHash } from 'node:crypto';
+
 import { ipcMain } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../../../shared/scheduledTask/constants';
-import type { ScheduledTaskInput } from '../../../shared/scheduledTask/types';
-import type { ScheduledTaskResultQuery } from '../../../shared/scheduledTask/types';
+import type {
+  ScheduledTaskInput,
+  ScheduledTaskResultQuery,
+  ScheduledTaskSessionResolveContext,
+} from '../../../shared/scheduledTask/types';
 import type { ScheduledTaskResultStore } from '../../data/scheduledTaskResultStore';
 import type { CronJobService } from '../../scheduler/cronJobService';
 import type { ScheduledTaskResultSyncService } from '../../scheduler/scheduledTaskResultSyncService';
@@ -16,6 +21,35 @@ export interface ScheduledTaskHandlerDeps {
   } | null;
   getResultStore?: () => ScheduledTaskResultStore;
   getResultSyncService?: () => ScheduledTaskResultSyncService;
+}
+
+function sessionKeyKind(sessionKey: string): string {
+  if (/^(?:agent:[^:]+:)?cron:[^:]+:run:[^:]+/i.test(sessionKey)) return 'cron-run';
+  if (/^(?:agent:[^:]+:)?cron:[^:]+/i.test(sessionKey)) return 'cron';
+  if (sessionKey.startsWith('managed:') || sessionKey.includes(':justdo:')) return 'managed';
+  return 'other';
+}
+
+function sessionKeyFingerprint(sessionKey: string): string {
+  return createHash('sha256').update(sessionKey).digest('hex').slice(0, 12);
+}
+
+function normalizeDiagnosticRunId(value: unknown): string {
+  if (typeof value !== 'string') return 'unknown';
+  const normalized = value.trim().replace(/\s+/g, '_');
+  return normalized ? normalized.slice(0, 128) : 'unknown';
+}
+
+function normalizeDiagnosticStatus(value: unknown): string {
+  return value === 'success' || value === 'error' || value === 'skipped' || value === 'running'
+    ? value
+    : 'unknown';
+}
+
+function sessionHasMessages(session: unknown): boolean {
+  if (!session || typeof session !== 'object') return false;
+  const messages = Reflect.get(session, 'messages');
+  return Array.isArray(messages) && messages.length > 0;
 }
 
 export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): void {
@@ -135,19 +169,40 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
     },
   );
 
-  ipcMain.handle(ScheduledTaskIpc.ResolveSession, async (_event, sessionKey: string) => {
-    try {
-      if (!sessionKey) return { success: true, session: null };
-      // Fetch session history from OpenClaw (returns transient session, not persisted)
-      const session = await getOpenClawRuntimeAdapter()?.fetchSessionByKey(sessionKey);
-      return { success: true, session: session ?? null };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to resolve session',
-      };
-    }
-  });
+  ipcMain.handle(
+    ScheduledTaskIpc.ResolveSession,
+    async (_event, rawSessionKey: string, context?: ScheduledTaskSessionResolveContext) => {
+      const sessionKey = typeof rawSessionKey === 'string' ? rawSessionKey.trim() : '';
+      try {
+        if (!sessionKey) return { success: true, session: null };
+        // Fetch session history from OpenClaw (returns transient session, not persisted).
+        const session = await getOpenClawRuntimeAdapter()?.fetchSessionByKey(sessionKey);
+        if (!sessionHasMessages(session) && context?.reason === 'retry-exhausted') {
+          console.warn('[ScheduledTask] Full result unavailable after retries', {
+            runId: normalizeDiagnosticRunId(context.runId),
+            status: normalizeDiagnosticStatus(context.status),
+            sessionKind: sessionKeyKind(sessionKey),
+            sessionFingerprint: sessionKeyFingerprint(sessionKey),
+          });
+        }
+        return { success: true, session: session ?? null };
+      } catch (error) {
+        if (context?.reason === 'retry-exhausted') {
+          console.warn('[ScheduledTask] Full result lookup failed after retries', {
+            runId: normalizeDiagnosticRunId(context.runId),
+            status: normalizeDiagnosticStatus(context.status),
+            sessionKind: sessionKeyKind(sessionKey),
+            sessionFingerprint: sessionKeyFingerprint(sessionKey),
+            errorType: error instanceof Error ? error.name : 'unknown',
+          });
+        }
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to resolve session',
+        };
+      }
+    },
+  );
 
   ipcMain.handle(ScheduledTaskIpc.ListChannels, async () => {
     try {

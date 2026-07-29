@@ -96,6 +96,17 @@ describe('ScheduledTaskResultStore', () => {
     expect(store.countUnread()).toBe(0);
   });
 
+  test('repairs a job ID placeholder without overwriting a real historical title', () => {
+    store.initializeBaseline([], 1000);
+    store.upsertResult(run('repair-title'), 'task-1');
+
+    store.upsertResult(run('repair-title'), 'Daily report');
+    expect(store.getResult('repair-title')?.taskName).toBe('Daily report');
+
+    store.upsertResult(run('repair-title'), 'task-1');
+    expect(store.getResult('repair-title')?.taskName).toBe('Daily report');
+  });
+
   test('creates unread only when a running result becomes terminal', () => {
     store.initializeBaseline([], 1000);
     expect(store.upsertResult(run('transition', TaskStatus.Running), 'Task').isNewUnread).toBe(

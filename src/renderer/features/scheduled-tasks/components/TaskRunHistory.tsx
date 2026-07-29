@@ -10,6 +10,7 @@ import { RootState } from '@/store';
 
 interface TaskRunHistoryProps {
   taskId: string;
+  taskName?: string;
   runs: ScheduledTaskRun[];
 }
 
@@ -20,7 +21,7 @@ const statusIcons: Record<string, { icon: string; color: string }> = {
   running: { icon: '●', color: 'text-blue-500' },
 };
 
-const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ taskId, runs }) => {
+const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ taskId, taskName, runs }) => {
   const hasMore = useSelector(
     (state: RootState) => state.scheduledTask.runsHasMore[taskId] ?? false,
   );
@@ -87,7 +88,8 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({ taskId, runs }) => {
       )}
       {viewingRun && (
         <RunSessionModal
-          sessionKey={viewingRun.sessionKey}
+          run={viewingRun}
+          title={taskName}
           onClose={() => setViewingRun(null)}
         />
       )}

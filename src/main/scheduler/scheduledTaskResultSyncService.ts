@@ -83,6 +83,7 @@ export class ScheduledTaskResultSyncService {
   }
 
   private async reconcileInternal(jobs: ScheduledTask[], forceGlobal: boolean): Promise<void> {
+    const taskNames = new Map(jobs.map(job => [job.id, job.name]));
     const activeJobIds = new Set(jobs.map(job => job.id));
     for (const taskId of this.catchUps.keys()) {
       if (!activeJobIds.has(taskId)) {
@@ -94,7 +95,7 @@ export class ScheduledTaskResultSyncService {
     if (!this.deps.resultStore.hasInitializedBaseline()) {
       const baselineAt = Date.now();
       const counts = new Map<string, number>();
-      const baseline = (await this.fetchGlobal(RESULT_BASELINE_LIMIT)).filter(run => {
+      const baseline = (await this.fetchGlobal(RESULT_BASELINE_LIMIT, taskNames)).filter(run => {
         const count = counts.get(run.taskId) ?? 0;
         if (count >= RESULT_BASELINE_PER_TASK_LIMIT) return false;
         counts.set(run.taskId, count + 1);
@@ -117,7 +118,7 @@ export class ScheduledTaskResultSyncService {
       );
       // Re-upsert the bounded recent window so corrected mapping rules repair
       // durable projections without deleting read receipts.
-      this.upsertChronologically(await this.fetchGlobal(RESULT_RECONCILE_LIMIT));
+      this.upsertChronologically(await this.fetchGlobal(RESULT_RECONCILE_LIMIT, taskNames));
       for (const job of jobs) {
         const stopAt = previousLatest.get(job.id) ?? null;
         if (
@@ -185,7 +186,10 @@ export class ScheduledTaskResultSyncService {
     } while (this.catchUps.has(job.id));
   }
 
-  private async fetchGlobal(limit: number): Promise<ScheduledTaskRunWithName[]> {
+  private async fetchGlobal(
+    limit: number,
+    taskNames: ReadonlyMap<string, string>,
+  ): Promise<ScheduledTaskRunWithName[]> {
     const collected: ScheduledTaskRunWithName[] = [];
     let offset = 0;
     while (collected.length < limit) {
@@ -194,7 +198,10 @@ export class ScheduledTaskResultSyncService {
         offset,
       );
       for (const run of page.runs) {
-        collected.push(run);
+        collected.push({
+          ...run,
+          taskName: taskNames.get(run.taskId)?.trim() || run.taskName,
+        });
         if (collected.length >= limit) break;
       }
       if (page.nextOffset === null || page.runs.length === 0) break;

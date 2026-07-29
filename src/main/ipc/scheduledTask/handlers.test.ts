@@ -62,6 +62,75 @@ test('caps result page limits and normalizes an empty task filter', async () => 
   expect(listResults).toHaveBeenCalledWith({ limit: 100 });
 });
 
+test('logs one content-free diagnostic when full result retries are exhausted', async () => {
+  const sessionKey = 'agent:main:cron:task-1:run:session-secret';
+  const fetchSessionByKey = vi.fn().mockResolvedValue(null);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  registerScheduledTaskHandlers({
+    getCronJobService: () => ({}) as CronJobService,
+    getOpenClawRuntimeAdapter: () => ({
+      getGatewayClient: () => null,
+      fetchSessionByKey,
+    }),
+  });
+
+  await expect(
+    handlers.get(ScheduledTaskIpc.ResolveSession)?.({}, sessionKey, {
+      runId: 'run-1',
+      status: 'success',
+      reason: 'retry-exhausted',
+    }),
+  ).resolves.toEqual({ success: true, session: null });
+
+  expect(fetchSessionByKey).toHaveBeenCalledWith(sessionKey);
+  expect(warn).toHaveBeenCalledOnce();
+  expect(warn).toHaveBeenCalledWith(
+    '[ScheduledTask] Full result unavailable after retries',
+    expect.objectContaining({
+      runId: 'run-1',
+      status: 'success',
+      sessionKind: 'cron-run',
+      sessionFingerprint: expect.stringMatching(/^[a-f0-9]{12}$/),
+    }),
+  );
+  expect(JSON.stringify(warn.mock.calls)).not.toContain(sessionKey);
+  warn.mockRestore();
+});
+
+test('logs the final diagnostic when a resolved session has no messages', async () => {
+  const fetchSessionByKey = vi.fn().mockResolvedValue({
+    id: 'session-1',
+    title: 'Session',
+    messages: [],
+  });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  registerScheduledTaskHandlers({
+    getCronJobService: () => ({}) as CronJobService,
+    getOpenClawRuntimeAdapter: () => ({
+      getGatewayClient: () => null,
+      fetchSessionByKey,
+    }),
+  });
+
+  const result = await handlers.get(ScheduledTaskIpc.ResolveSession)?.(
+    {},
+    'agent:main:cron:task-1:run:run-1',
+    {
+      runId: 'run-1',
+      status: 'success',
+      reason: 'retry-exhausted',
+    },
+  );
+
+  expect(result).toMatchObject({ success: true, session: { messages: [] } });
+  expect(warn).toHaveBeenCalledOnce();
+  expect(warn).toHaveBeenCalledWith(
+    '[ScheduledTask] Full result unavailable after retries',
+    expect.any(Object),
+  );
+  warn.mockRestore();
+});
+
 test('marks one result read and returns the durable global unread count', async () => {
   const updateUnreadCount = vi.fn();
   const storedResult = { id: 'run-1', readAt: '2026-07-28T00:00:00.000Z' };
