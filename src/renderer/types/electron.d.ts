@@ -762,6 +762,9 @@ interface IElectronAPI {
   };
   shell: {
     showAttachmentContextMenu: () => Promise<'open' | 'open-with-system' | 'show-in-folder' | null>;
+    showImageContextMenu: (
+      imageUrl: string,
+    ) => Promise<{ success: boolean; error?: string }>;
     openPath: (
       filePath: string,
       workingDirectory?: string,

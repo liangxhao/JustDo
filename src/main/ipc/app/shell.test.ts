@@ -8,7 +8,7 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn(), showItemInFolder: vi.fn(), openExternal: vi.fn() },
 }));
 
-import { resolveShellOpenPath } from './shell';
+import { isDownloadableImageUrl, resolveShellOpenPath } from './shell';
 
 const temporaryDirectories: string[] = [];
 
@@ -42,3 +42,20 @@ test('keeps a missing relative attachment path unchanged', () => {
 
   expect(resolveShellOpenPath(relativePath, workingDirectory)).toBe(relativePath);
 });
+
+test.each([
+  'https://example.com/image.png',
+  'data:image/png;base64,YWJj',
+  'blob:file:///generated-image',
+  'localfile:///C:/workspace/image.png',
+  'file:///tmp/image.png',
+])('allows saving a rendered image URL with a supported protocol: %s', imageUrl => {
+  expect(isDownloadableImageUrl(imageUrl)).toBe(true);
+});
+
+test.each(['javascript:alert(1)', 'data:text/html;base64,YWJj', '/relative/image.png', 'not a URL'])(
+  'rejects an unsupported image download URL: %s',
+  imageUrl => {
+    expect(isDownloadableImageUrl(imageUrl)).toBe(false);
+  },
+);

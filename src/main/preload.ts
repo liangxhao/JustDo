@@ -394,6 +394,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   shell: {
     showAttachmentContextMenu: () => ipcRenderer.invoke('shell:showAttachmentContextMenu'),
+    showImageContextMenu: (imageUrl: string) =>
+      ipcRenderer.invoke('shell:showImageContextMenu', imageUrl),
     openPath: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke('shell:openPath', filePath, workingDirectory),
     readPreviewFile: (filePath: string, workingDirectory?: string) =>

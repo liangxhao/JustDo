@@ -282,18 +282,45 @@ function renderMessageImages(
   if (images.length === 0) return nothing;
   return html`
     <div class=${`chat-bubble__images${assistant ? ' chat-bubble__images--assistant' : ''}`}>
-      ${images.map(
-        image => html`
+      ${images.map(image => {
+        const sourceUrl = resolveImageSourceUrl(image.url, workingDirectory);
+        return html`
           <img
             class="chat-bubble__image"
-            src=${resolveImageSourceUrl(image.url, workingDirectory)}
+            src=${sourceUrl}
             alt=${image.label}
             title=${image.label}
+            @contextmenu=${(event: Event) => void showImageContextMenu(event, sourceUrl)}
           />
-        `,
-      )}
+        `;
+      })}
     </div>
   `;
+}
+
+export async function showImageContextMenu(event: Event, sourceUrl: string): Promise<void> {
+  event.preventDefault();
+  event.stopPropagation();
+
+  const image = event.currentTarget;
+  const imageUrl = image instanceof HTMLImageElement ? image.currentSrc || image.src : sourceUrl;
+  try {
+    const result = await window.electron.shell.showImageContextMenu(imageUrl);
+    if (result.success) return;
+    window.dispatchEvent(
+      new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkSaveImageFailed'),
+      }),
+    );
+    console.error('[GroupedRender] Failed to save image', result.error);
+  } catch (error) {
+    window.dispatchEvent(
+      new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkSaveImageFailed'),
+      }),
+    );
+    console.error('[GroupedRender] Failed to show image context menu', error);
+  }
 }
 
 function resolveImageSourceUrl(url: string, workingDirectory?: string): string {

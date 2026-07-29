@@ -20,6 +20,7 @@ import {
   renderStreamingThinkingGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
+  showImageContextMenu,
 } from '@/libs/openclaw-chat/components/message-render';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
@@ -2039,6 +2040,7 @@ export class JustDoChatElement extends LitElement {
     super.connectedCallback();
     this.chatScrollController.connect(this);
     this.renderRoot?.addEventListener('click', this.handleMarkdownClick);
+    this.renderRoot?.addEventListener('contextmenu', this.handleInlineImageContextMenu);
     this.renderRoot?.addEventListener('keydown', this.handleTimelineKeyDown);
     this.addEventListener('scroll', this.handleMermaidVisibilityScroll, { passive: true });
     this.addEventListener('scroll', this.handleMinimapScroll, { passive: true });
@@ -2054,6 +2056,7 @@ export class JustDoChatElement extends LitElement {
     this.processSummarySessionIdentity = null;
     this.renderedOpenProcessSummaryKey = null;
     this.renderRoot?.removeEventListener('click', this.handleMarkdownClick);
+    this.renderRoot?.removeEventListener('contextmenu', this.handleInlineImageContextMenu);
     this.renderRoot?.removeEventListener('keydown', this.handleTimelineKeyDown);
     this.removeEventListener('scroll', this.handleMermaidVisibilityScroll);
     this.removeEventListener('scroll', this.handleMinimapScroll);
@@ -2196,6 +2199,16 @@ export class JustDoChatElement extends LitElement {
     const buttonLabel = i18nService.t(showSource ? 'renderDiagram' : 'showCode');
     target.setAttribute('aria-label', buttonLabel);
     target.title = buttonLabel;
+  };
+
+  private readonly handleInlineImageContextMenu = (event: Event): void => {
+    const image = event
+      .composedPath()
+      .find(
+        node => node instanceof HTMLImageElement && node.classList.contains('markdown-inline-image'),
+      ) as HTMLImageElement | undefined;
+    if (!image) return;
+    void showImageContextMenu(event, image.currentSrc || image.src);
   };
 
   private readonly handleTimelineKeyDown = (event: Event): void => {

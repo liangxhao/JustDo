@@ -11,6 +11,25 @@ const AttachmentMenuAction = {
   SHOW_IN_FOLDER: 'show-in-folder',
 } as const;
 
+const DOWNLOADABLE_IMAGE_PROTOCOLS = new Set([
+  'blob:',
+  'data:',
+  'file:',
+  'http:',
+  'https:',
+  'localfile:',
+]);
+
+export const isDownloadableImageUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'data:') return /^data:image\/[a-z0-9.+-]+[;,]/i.test(value);
+    return DOWNLOADABLE_IMAGE_PROTOCOLS.has(url.protocol);
+  } catch {
+    return false;
+  }
+};
+
 const safeDecodeURIComponent = (value: string): string => {
   try {
     return decodeURIComponent(value);
@@ -88,6 +107,32 @@ export const registerShellHandlers = (): void => {
       menu.popup({
         window: BrowserWindow.fromWebContents(event.sender) ?? undefined,
         callback: () => resolve(selectedAction),
+      });
+    });
+  });
+
+  ipcMain.handle('shell:showImageContextMenu', (event, imageUrl: string) => {
+    return new Promise<{ success: boolean; error?: string }>(resolve => {
+      let result: { success: boolean; error?: string } = { success: true };
+      const menu = Menu.buildFromTemplate([
+        {
+          label: t('imageMenuSaveAs'),
+          enabled: typeof imageUrl === 'string' && isDownloadableImageUrl(imageUrl),
+          click: () => {
+            try {
+              event.sender.downloadURL(imageUrl);
+            } catch (error) {
+              result = {
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to save image',
+              };
+            }
+          },
+        },
+      ]);
+      menu.popup({
+        window: BrowserWindow.fromWebContents(event.sender) ?? undefined,
+        callback: () => resolve(result),
       });
     });
   });

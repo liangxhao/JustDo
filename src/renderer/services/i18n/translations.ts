@@ -375,6 +375,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkAttachmentRemove: '移除',
     coworkOpenAttachment: '打开附件',
     coworkAttachmentNotFound: '文件不存在：{filepath}',
+    coworkSaveImageFailed: '保存图片失败，请稍后重试',
     // Context menu
     contextMenuCut: '剪切',
     contextMenuCopy: '复制',
@@ -1224,6 +1225,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkAttachmentRemove: 'Remove',
     coworkOpenAttachment: 'Open attachment',
     coworkAttachmentNotFound: 'File does not exist: {filepath}',
+    coworkSaveImageFailed: 'Failed to save the image. Please try again.',
     // Context menu
     contextMenuCut: 'Cut',
     contextMenuCopy: 'Copy',
