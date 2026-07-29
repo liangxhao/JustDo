@@ -142,6 +142,10 @@ type OpenClawHistoryBridge = {
     success?: boolean;
     inputs?: Record<string, { name?: string; input?: unknown }>;
   }>;
+  getCompactionDetails?: (params: { sessionKey: string; entryIds: string[] }) => Promise<{
+    success?: boolean;
+    details?: Record<string, { summary?: string; tokensBefore?: number; tokensAfter?: number }>;
+  }>;
   getPagedHistory?: (
     params: OpenClawPagedHistoryParams,
   ) => Promise<Partial<OpenClawPagedHistoryResult>>;
@@ -362,6 +366,64 @@ async function hydrateMissingToolInputsFromLocalState(
       toolInput: hydrated.input,
     };
   });
+}
+
+async function hydrateMissingCompactionDetailsFromLocalState(
+  sessionKey: string,
+  messages: unknown[],
+): Promise<unknown[]> {
+  const missingEntryIds = Array.from(
+    new Set(
+      messages.flatMap(message => {
+        const raw = asRecord(message);
+        const marker = asRecord(raw?.__openclaw);
+        if (marker?.kind !== 'compaction' || typeof marker.id !== 'string') return [];
+        return readNonBlankString(marker.summary) ? [] : [marker.id];
+      }),
+    ),
+  );
+  if (missingEntryIds.length === 0) return messages;
+
+  let result:
+    | {
+        success?: boolean;
+        details?: Record<
+          string,
+          { summary?: string; tokensBefore?: number; tokensAfter?: number }
+        >;
+      }
+    | undefined;
+  try {
+    result = await getOpenClawHistoryBridge()?.getCompactionDetails?.({
+      sessionKey,
+      entryIds: missingEntryIds,
+    });
+  } catch {
+    return messages;
+  }
+  const details = result?.success && result.details ? result.details : {};
+  if (Object.keys(details).length === 0) return messages;
+
+  return messages.map(message => {
+    const raw = asRecord(message);
+    const marker = asRecord(raw?.__openclaw);
+    const id = typeof marker?.id === 'string' ? marker.id : '';
+    const detail = id ? details[id] : undefined;
+    if (marker?.kind !== 'compaction' || !detail) return message;
+    return {
+      ...raw,
+      __openclaw: {
+        ...marker,
+        summary: readNonBlankString(marker.summary) ?? readNonBlankString(detail.summary),
+        tokensBefore: marker.tokensBefore ?? detail.tokensBefore,
+        tokensAfter: marker.tokensAfter ?? detail.tokensAfter,
+      },
+    };
+  });
+}
+
+function readNonBlankString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 function hasMeaningfulToolInput(value: unknown): boolean {
@@ -1731,9 +1793,13 @@ export class ChatController {
       projectedMessages,
       sessionKey,
     );
-    const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
+    const messagesWithLocalCompactionDetails = await hydrateMissingCompactionDetailsFromLocalState(
       sessionKey,
       messagesWithCompactionDetails,
+    );
+    const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
+      sessionKey,
+      messagesWithLocalCompactionDetails,
     );
     return hydratedMessages.map(message =>
       normalizeFailedRunMessage(message, sessionKey, this.state.lastError),
@@ -1986,9 +2052,14 @@ export class ChatController {
         projectedMessages,
         sessionKey,
       );
+      const messagesWithLocalCompactionDetails =
+        await hydrateMissingCompactionDetailsFromLocalState(
+          sessionKey,
+          messagesWithCompactionDetails,
+        );
       const hydratedMessages = await hydrateMissingToolInputsFromLocalState(
         sessionKey,
-        messagesWithCompactionDetails,
+        messagesWithLocalCompactionDetails,
       );
       if (!requestStillCurrent()) {
         debugLog('[ChatCtrl] loadHistory ABORT identity changed during normalization', {
@@ -2833,9 +2904,10 @@ export class ChatController {
         __openclaw: {
           ...marker,
           checkpointId: checkpoint.checkpointId,
-          summary: checkpoint.summary,
-          tokensBefore: checkpoint.tokensBefore,
-          tokensAfter: checkpoint.tokensAfter,
+          summary:
+            readNonBlankString(checkpoint.summary) ?? readNonBlankString(marker.summary),
+          tokensBefore: checkpoint.tokensBefore ?? marker.tokensBefore,
+          tokensAfter: checkpoint.tokensAfter ?? marker.tokensAfter,
         },
       };
     });

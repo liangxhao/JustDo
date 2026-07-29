@@ -417,12 +417,12 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // Cowork 错误消息
     coworkErrorSessionStartFailed: '会话启动失败：{error}',
-    coworkCompactFailed: '上下文压缩失败：{error}',
+    coworkCompactFailed: 'Compaction failed: {error}',
     coworkCompactionInProgress: 'Compacting...',
-    coworkGoalPhaseCompacting: '正在压缩上下文',
-    coworkCompacted: '上下文已压缩',
-    coworkCompactDetails: '查看压缩摘要',
-    coworkCompactSummaryUnavailable: '暂无压缩摘要。',
+    coworkGoalPhaseCompacting: 'Compacting context',
+    coworkCompacted: 'Context compacted',
+    coworkCompactDetails: 'View compaction summary',
+    coworkCompactSummaryUnavailable: 'No compaction summary is available.',
     coworkCompactNotNeeded: 'No context compaction needed',
     coworkErrorSessionContinueFailed: '发送消息失败：{error}',
     coworkErrorEngineNotReady: 'AI 引擎正在启动中，请稍等几秒后重试。',

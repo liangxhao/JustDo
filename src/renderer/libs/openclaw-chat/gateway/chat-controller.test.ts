@@ -545,6 +545,110 @@ test('compacts the current session instead of sending /compact as chat', async (
   ]);
 });
 
+test('hydrates an automatic compaction summary when no checkpoint was persisted', async () => {
+  const getCompactionDetails = vi.fn().mockResolvedValue({
+    success: true,
+    details: {
+      'compaction-entry-1': {
+        summary: 'Recovered automatic compaction summary.',
+        tokensBefore: 25_329,
+      },
+    },
+  });
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: { getCompactionDetails },
+    },
+  });
+  const request = vi.fn((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'system',
+            timestamp: 2000,
+            __openclaw: {
+              kind: 'compaction',
+              id: 'compaction-entry-1',
+              summary: '   ',
+            },
+          },
+        ],
+      });
+    }
+    if (method === 'sessions.compaction.list') {
+      return Promise.resolve({
+        checkpoints: [
+          {
+            checkpointId: 'checkpoint-1',
+            summary: '',
+            postCompaction: { entryId: 'compaction-entry-1' },
+          },
+        ],
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+
+  expect(getCompactionDetails).toHaveBeenCalledWith({
+    sessionKey: 'agent:main:justdo:session-1',
+    entryIds: ['compaction-entry-1'],
+  });
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: {
+        kind: 'compaction',
+        id: 'compaction-entry-1',
+        checkpointId: 'checkpoint-1',
+        summary: 'Recovered automatic compaction summary.',
+        tokensBefore: 25_329,
+      },
+    }),
+  ]);
+});
+
+test('keeps base history when local compaction detail hydration rejects', async () => {
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: {
+        getCompactionDetails: vi.fn().mockRejectedValue(new Error('IPC unavailable')),
+      },
+    },
+  });
+  const request = vi.fn((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'system',
+            timestamp: 2000,
+            __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
+          },
+        ],
+      });
+    }
+    if (method === 'sessions.compaction.list') return Promise.resolve({ checkpoints: [] });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await expect(controller.loadHistory()).resolves.toBe(true);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
+    }),
+  ]);
+});
+
 test('shows compaction progress immediately and replaces it with the authoritative marker', async () => {
   let resolveCompact:
     | ((value: {
@@ -705,7 +809,7 @@ test('renders an error result and does not refresh history when session compacti
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({
       role: 'system',
-      content: '上下文压缩失败：compact unavailable',
+      content: 'Compaction failed: compact unavailable',
     }),
   ]);
 });

@@ -185,6 +185,8 @@ contextBridge.exposeInMainWorld('electron', {
     history: {
       getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
+      getCompactionDetails: (params: { sessionKey: string; entryIds: string[] }) =>
+        ipcRenderer.invoke(OpenClawHistoryIpc.GetCompactionDetails, params),
       getPagedHistory: (params: OpenClawPagedHistoryParams) =>
         ipcRenderer.invoke(OpenClawHistoryIpc.GetPagedHistory, params),
     },

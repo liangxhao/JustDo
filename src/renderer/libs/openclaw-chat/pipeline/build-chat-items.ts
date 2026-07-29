@@ -960,8 +960,7 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     if (marker && marker.kind === 'compaction-status') {
       const tokensBefore =
         typeof marker.tokensBefore === 'number' ? marker.tokensBefore : undefined;
-      const tokensAfter =
-        typeof marker.tokensAfter === 'number' ? marker.tokensAfter : undefined;
+      const tokensAfter = typeof marker.tokensAfter === 'number' ? marker.tokensAfter : undefined;
       const completed = marker.phase === 'completed';
       items.push({
         kind: 'divider',
@@ -992,20 +991,24 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     if (marker && marker.kind === 'compaction') {
       const tokensBefore =
         typeof marker.tokensBefore === 'number' ? marker.tokensBefore : undefined;
-      const tokensAfter =
-        typeof marker.tokensAfter === 'number' ? marker.tokensAfter : undefined;
+      const tokensAfter = typeof marker.tokensAfter === 'number' ? marker.tokensAfter : undefined;
       const summary = typeof marker.summary === 'string' ? marker.summary : undefined;
       const emptyConversationSummary = isEmptyCompactionSummary(summary);
-      if (tokensBefore === undefined || tokensAfter === undefined || emptyConversationSummary) {
+      const hasSummary = Boolean(summary?.trim());
+      const hasTokenCounts = tokensBefore !== undefined && tokensAfter !== undefined;
+      const checkpointId =
+        typeof marker.checkpointId === 'string' && marker.checkpointId.trim()
+          ? marker.checkpointId
+          : undefined;
+      const key =
+        typeof marker.id === 'string'
+          ? `divider:compaction:${marker.id}`
+          : `divider:compaction:${normalized.timestamp}:${i}`;
+      if (emptyConversationSummary) {
         items.push({
           kind: 'divider',
-          key:
-            typeof marker.id === 'string'
-              ? `divider:compaction:${marker.id}`
-              : `divider:compaction:${normalized.timestamp}:${i}`,
-          label: i18nService.t(
-            emptyConversationSummary ? 'coworkCompactNotNeeded' : 'coworkCompacted',
-          ),
+          key,
+          label: i18nService.t('coworkCompactNotNeeded'),
           expandable: false,
           timestamp: normalized.timestamp ?? Date.now(),
         });
@@ -1013,19 +1016,21 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
       }
       items.push({
         kind: 'divider',
-        key:
-          typeof marker.id === 'string'
-            ? `divider:compaction:${marker.id}`
-            : `divider:compaction:${normalized.timestamp}:${i}`,
-        label: `${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens`,
-        summary,
-        expandable: true,
-        description:
-          'The compacted transcript is preserved as a checkpoint. Open session checkpoints to branch or restore from that compacted view.',
-        action: {
-          kind: 'session-checkpoints',
-          label: 'Open checkpoints',
-        },
+        key,
+        label: hasTokenCounts
+          ? `${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens`
+          : i18nService.t('coworkCompacted'),
+        ...(hasSummary ? { summary, expandable: true } : { expandable: false }),
+        ...(checkpointId
+          ? {
+              description:
+                'The compacted transcript is preserved as a checkpoint. Open session checkpoints to branch or restore from that compacted view.',
+              action: {
+                kind: 'session-checkpoints' as const,
+                label: 'Open checkpoints',
+              },
+            }
+          : {}),
         timestamp: normalized.timestamp ?? Date.now(),
       });
       continue;

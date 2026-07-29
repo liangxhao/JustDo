@@ -147,6 +147,35 @@ test('builds a compaction divider with token counts and summary', () => {
   expect(divider?.summary).toBe('Earlier work was compacted.');
 });
 
+test('keeps an automatic compaction summary expandable without token or checkpoint metadata', () => {
+  const items = build({
+    messages: [
+      {
+        role: 'system',
+        timestamp: 1,
+        content: '',
+        __openclaw: {
+          kind: 'compaction',
+          id: 'automatic-compact-1',
+          summary: 'Automatic compaction preserved the active task.',
+        },
+      },
+    ],
+  });
+  const divider = items.find(
+    (item): item is Extract<ChatItem, { kind: 'divider' }> => item.kind === 'divider',
+  );
+
+  expect(divider).toEqual(
+    expect.objectContaining({
+      label: 'Context compacted',
+      summary: 'Automatic compaction preserved the active task.',
+      expandable: true,
+    }),
+  );
+  expect(divider?.action).toBeUndefined();
+});
+
 test('builds an English in-progress divider for local compaction status', () => {
   const items = build({
     messages: [

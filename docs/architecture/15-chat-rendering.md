@@ -151,6 +151,7 @@ Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产�
 - transcript 中的 compaction marker 使用 compaction entry ID；checkpoint 使用独立 UUID。Controller 保留 marker 的 `id`，并把恢复用途的 UUID 写入 `checkpointId`。
 - checkpoint 优先通过 `postCompaction.entryId` 或 `postCompaction.leafId` 与 marker 精确关联。只有缺少 transcript 位置的旧 checkpoint 才允许按时间顺序回退配对。
 - checkpoint 持久化是可失败的附加能力；没有 checkpoint 的 marker 仍应显示为普通压缩分隔线，不能借用其他压缩的摘要。
+- 压缩摘要与 token/checkpoint 元数据独立降级：只要 marker 或当前会话 transcript 中存在摘要，分隔线就可展开；缺少完整 token 数时显示英文通用标签 `Context compacted`，缺少 checkpoint 时不提供恢复/分支动作。Controller 只按 compaction entry ID 从当前 session 对应 transcript（及同源 reset/bak 归档）回填缺失摘要，不能跨会话扫描或按时间猜配；回填失败不能阻断基础历史。Main 以 transcript 的 realpath、文件身份、已提交完整行 offset 和首尾哨兵维护增量摘要索引：纯追加只扫描尾部，未完成的 JSON/UTF-8/CRLF 尾部留待下次重读，文件替换、缩小、移除、前缀改写或 session 改指新 transcript 时丢弃旧 generation。同一 session 的回填串行执行，并限制请求 ID、跟踪 ID、缓存摘要字符数和 session LRU；所有扫描在正常、提前命中或异常时主动关闭流。
 - `session.operation` 和 agent `compaction` start/end 共同维护 `compactionInFlight`。压缩期间暂停缺少 `chat.final` 时的终态计时，压缩结束后再恢复收敛。
 - 手动 `/compact` 发起或自动压缩 `start` 事件到达时，立即在当前会话追加仅用于 UI 的 `compaction-status` 分隔线，显示英文 `Compacting...`。手动 RPC 或自动压缩 `end` 完成后先原位更新状态（有 token 信息时一并显示），再由重新加载的 Gateway history 中的正式 compaction marker 替换。`session.operation` 和 Agent stream 的重复事件复用同一临时 marker；切换会话时该状态随会话缓存保留。
 - 手动压缩成功后的持久化结果仍必须以重新加载的 Gateway history 为准。刷新失败时移除临时状态、保留现有历史并显示错误，不把临时状态冒充正式 compaction marker。

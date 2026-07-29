@@ -501,6 +501,11 @@ interface IElectronAPI {
         inputs?: Record<string, { name?: string; input: unknown }>;
         error?: string;
       }>;
+      getCompactionDetails: (params: { sessionKey: string; entryIds: string[] }) => Promise<{
+        success: boolean;
+        details?: Record<string, { summary?: string; tokensBefore?: number; tokensAfter?: number }>;
+        error?: string;
+      }>;
       getPagedHistory: (params: {
         sessionKey: string;
         cursor?: string;
