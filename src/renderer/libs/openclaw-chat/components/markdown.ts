@@ -42,7 +42,8 @@ const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v6';
+const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v8';
+const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、]/;
 const INLINE_DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CONTAINER_PREFIX_RE = /^[ \t]{0,3}(?:(?:>\s?)|(?:(?:[-+*]|\d{1,9}[.)])[ \t]+))/;
@@ -314,6 +315,32 @@ export const md = new MarkdownIt({
 
 md.enable('strikethrough');
 md.linkify.set({ fuzzyLink: false });
+const trimCjkUrlTrailingText = (
+  match: NonNullable<ReturnType<typeof md.linkify.matchAtStart>>,
+): void => {
+  const punctuationIndex = match.raw.search(CJK_URL_TRAILING_PUNCTUATION_RE);
+  if (punctuationIndex === -1) return;
+
+  match.lastIndex = match.index + punctuationIndex;
+  match.raw = match.raw.slice(0, punctuationIndex);
+  match.text = match.text.slice(0, punctuationIndex);
+  match.url = match.url.slice(0, punctuationIndex);
+};
+const defaultLinkifyMatch = md.linkify.match.bind(md.linkify);
+md.linkify.match = (text) => {
+  const matches = defaultLinkifyMatch(text);
+  if (!matches) return null;
+
+  for (const match of matches) trimCjkUrlTrailingText(match);
+
+  return matches;
+};
+const defaultLinkifyMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
+md.linkify.matchAtStart = (text) => {
+  const match = defaultLinkifyMatchAtStart(text);
+  if (match) trimCjkUrlTrailingText(match);
+  return match;
+};
 md.validateLink = () => true;
 md.use(markdownItTexMath, {
   engine: katex,
@@ -341,6 +368,10 @@ md.renderer.rules.image = (tokens, idx) => {
   if (!INLINE_DATA_IMAGE_RE.test(src)) return escapeHtml(alt);
   return `<img class="markdown-inline-image" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}">`;
 };
+
+// Keep wide tables readable without expanding or compressing the message bubble.
+md.renderer.rules.table_open = () => '<div class="markdown-table-scroll"><table>\n';
+md.renderer.rules.table_close = () => '</table></div>\n';
 
 // Override fenced code blocks with copy button + JSON collapse
 md.renderer.rules.fence = (tokens, idx, _options, env) => {

@@ -2,6 +2,38 @@ import { describe, expect, test } from 'vitest';
 
 import { md } from '@/libs/openclaw-chat/components/markdown';
 
+describe('Markdown autolinks', () => {
+  test.each(['，', '。', '；', '！', '？', '、'])(
+    'ends a bare URL before the CJK punctuation %s',
+    (punctuation) => {
+      const html = md.render(`详情见 https://docs.openclaw.ai/tools/skills${punctuation}后续正文`);
+
+      expect(html).toContain(
+        '<a href="https://docs.openclaw.ai/tools/skills">https://docs.openclaw.ai/tools/skills</a>',
+      );
+      expect(html).toContain(`${punctuation}后续正文`);
+      expect(html).not.toContain(encodeURIComponent(punctuation));
+    },
+  );
+
+  test('does not rewrite an explicit Markdown link containing CJK punctuation', () => {
+    const html = md.render('[示例](https://example.com/search?q=中文，测试)');
+
+    expect(html).toContain(
+      '<a href="https://example.com/search?q=%E4%B8%AD%E6%96%87%EF%BC%8C%E6%B5%8B%E8%AF%95">示例</a>',
+    );
+  });
+});
+
+describe('Markdown tables', () => {
+  test('wraps a table in a horizontal scroll container', () => {
+    const html = md.render('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |');
+
+    expect(html).toContain('<div class="markdown-table-scroll"><table>');
+    expect(html).toContain('</table></div>');
+  });
+});
+
 describe('LaTeX Markdown formulas', () => {
   test('renders inline formulas with KaTeX', () => {
     const html = md.render('Euler: $e^{i\\pi}+1=0$');

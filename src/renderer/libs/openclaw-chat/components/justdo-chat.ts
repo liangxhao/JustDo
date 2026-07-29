@@ -198,7 +198,7 @@ export class JustDoChatElement extends LitElement {
       }
 
       .chat-container {
-        width: clamp(320px, 85%, 1280px);
+        width: clamp(320px, 92%, 1440px);
         max-width: calc(100% - 32px);
         box-sizing: border-box;
         margin: 0 auto;
@@ -706,11 +706,19 @@ export class JustDoChatElement extends LitElement {
         color: var(--justdo-chat-text-secondary, #6b7280);
       }
 
+      .markdown-content .markdown-table-scroll {
+        max-width: 100%;
+        margin: 4px 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-inline: contain;
+      }
+
       .markdown-content table {
         border-collapse: collapse;
-        margin: 4px 0;
-        max-width: 100%;
-        width: 100%;
+        width: max-content;
+        min-width: 100%;
+        max-width: none;
       }
 
       .markdown-content th,
@@ -718,6 +726,8 @@ export class JustDoChatElement extends LitElement {
         border: 1px solid var(--justdo-chat-border, #e5e7eb);
         padding: 6px 10px;
         text-align: left;
+        overflow-wrap: normal;
+        word-break: normal;
       }
 
       .markdown-content th {
