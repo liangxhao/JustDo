@@ -1,7 +1,7 @@
 import type { AssistantTurnTiming } from './chat-transcript-state';
 
 export interface ActiveTurnFooter {
-  timestamp: number;
+  completedAt: number | null;
   durationMs: number;
   running: boolean;
 }
@@ -15,12 +15,15 @@ export function projectActiveTurnFooter(
   now = Date.now(),
 ): ActiveTurnFooter | null {
   if (!turn) return null;
-  const timestamp =
-    turn.status === 'running' ? Math.max(now, turn.startedAt) : (turn.endedAt ?? turn.startedAt);
+  const running = turn.status === 'running';
+  const completedAt = running ? null : (turn.endedAt ?? turn.startedAt);
+  const durationEnd = running
+    ? Math.max(now, turn.startedAt)
+    : (completedAt ?? turn.startedAt);
   return {
-    timestamp,
-    durationMs: Math.max(0, timestamp - turn.startedAt),
-    running: turn.status === 'running',
+    completedAt,
+    durationMs: Math.max(0, durationEnd - turn.startedAt),
+    running,
   };
 }
 

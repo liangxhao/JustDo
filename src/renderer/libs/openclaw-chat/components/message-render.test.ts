@@ -147,6 +147,18 @@ describe('group footer helpers', () => {
     const date = new Date(2026, 6, 1, 9, 5);
     expect(formatGroupTimestamp(date)).toBe('2026-07-01 09:05');
   });
+
+  test('renders a derived duration for a completed assistant turn', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        ...createGroup('assistant'),
+        timestamp: 4_500,
+        durationMs: 3_500,
+      }),
+    );
+
+    expect(rendered).toContain(i18nService.t('coworkRunDuration').replace('{duration}', '00:00:03'));
+  });
 });
 
 describe('renderMessageBlock', () => {

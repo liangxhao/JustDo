@@ -54,15 +54,15 @@ describe('active turn footer', () => {
     } as TurnItem;
 
     expect(projectActiveTurnFooter(turn('running', [runningItem]), 4_000)).toEqual({
-      timestamp: 4_000,
+      completedAt: null,
       durationMs: 3_000,
       running: true,
     });
   });
 
-  test('uses the completion time after the turn finishes', () => {
+  test('keeps the completion time and final duration after the turn finishes', () => {
     expect(projectActiveTurnFooter(turn('final'), 9_000)).toEqual({
-      timestamp: 2_000,
+      completedAt: 2_000,
       durationMs: 1_000,
       running: false,
     });

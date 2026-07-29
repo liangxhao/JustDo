@@ -13,6 +13,7 @@ import {
   toSanitizedMarkdownHtml,
   toStreamingMarkdownHtml,
 } from '@/libs/openclaw-chat/components/markdown';
+import { formatActiveTurnDuration } from '@/libs/openclaw-chat/model/active-turn-footer';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
@@ -597,10 +598,23 @@ function renderGroupFooter(
   const date = new Date(ts);
   const time = formatGroupTimestamp(date);
   const roleName = getGroupFooterLabel(group, assistantName);
+  const duration =
+    group.role === 'assistant' &&
+    typeof group.durationMs === 'number' &&
+    Number.isFinite(group.durationMs) &&
+    group.durationMs >= 0
+      ? formatActiveTurnDuration(group.durationMs)
+      : null;
   return html`
     <div class="chat-group__footer">
       ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
       <time class="chat-group__timestamp" datetime=${date.toISOString()}>${time}</time>
+      ${duration
+        ? html`
+            <span>·</span>
+            <span>${i18nService.t('coworkRunDuration').replace('{duration}', duration)}</span>
+          `
+        : nothing}
     </div>
   `;
 }

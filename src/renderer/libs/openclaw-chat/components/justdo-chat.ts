@@ -2502,13 +2502,19 @@ export class JustDoChatElement extends LitElement {
     const model = footer.running
       ? this.assistantName.trim() || persistedModel
       : persistedModel || this.assistantName.trim();
-    const date = new Date(footer.timestamp);
-    const timestamp = formatActiveTurnTimestamp(date);
     const duration = formatActiveTurnDuration(footer.durationMs);
+    const completedDate = footer.completedAt === null ? null : new Date(footer.completedAt);
     return html`
-      ${model ? html`<span>${model}</span><span>·</span>` : nothing}
-      <time datetime=${date.toISOString()}>${timestamp}</time>
-      <span>·</span>
+      ${model ? html`<span>${model}</span>` : nothing}
+      ${completedDate
+        ? html`
+            ${model ? html`<span>·</span>` : nothing}
+            <time datetime=${completedDate.toISOString()}
+              >${formatActiveTurnTimestamp(completedDate)}</time
+            >
+          `
+        : nothing}
+      ${model || completedDate ? html`<span>·</span>` : nothing}
       <span>${i18nService.t('coworkRunDuration').replace('{duration}', duration)}</span>
     `;
   }
@@ -2519,14 +2525,16 @@ export class JustDoChatElement extends LitElement {
     showFooter: boolean,
   ): TemplateResult | typeof nothing {
     if (item.kind === 'history-message') {
+      const historyItems = this.buildItems([item.message], [], [], null).map(historyItem =>
+        historyItem.kind === 'group' &&
+        historyItem.role === 'assistant' &&
+        item.durationMs !== undefined
+          ? { ...historyItem, durationMs: item.durationMs }
+          : historyItem,
+      );
       return html`
         <div data-history-key=${item.key} data-minimap-anchor=${item.key}>
-          ${this.renderItems(
-            this.buildItems([item.message], [], [], null),
-            null,
-            showAvatar,
-            showFooter,
-          )}
+          ${this.renderItems(historyItems, null, showAvatar, showFooter)}
         </div>
       `;
     }

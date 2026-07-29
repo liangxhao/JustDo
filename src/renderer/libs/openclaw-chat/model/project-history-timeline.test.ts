@@ -37,6 +37,72 @@ describe('projectPersistedTimeline', () => {
     );
   });
 
+  test('derives assistant duration from persisted user and assistant timestamps', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'first prompt', timestamp: 1_000 },
+      { role: 'assistant', content: 'first answer', timestamp: 4_500 },
+      { role: 'user', content: 'second prompt', timestamp: 10_000 },
+      { role: 'assistant', content: 'second answer', timestamp: 12_000 },
+    ]);
+
+    expect(
+      result
+        .filter(item => item.kind === 'history-message')
+        .map(item => item.durationMs ?? null),
+    ).toEqual([null, 3_500, null, 2_000]);
+  });
+
+  test('supports numeric string timestamps when deriving duration', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'user',
+        content: 'prompt',
+        timestamp: '1720000000000' as unknown as number,
+      },
+      {
+        role: 'assistant',
+        content: 'answer',
+        timestamp: '1720000002500' as unknown as number,
+      },
+    ]);
+
+    expect(result[1]).toMatchObject({ kind: 'history-message', durationMs: 2_500 });
+  });
+
+  test('does not reuse an older prompt when a newer user timestamp is invalid', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'old prompt', timestamp: 1_000 },
+      { role: 'assistant', content: 'old answer', timestamp: 2_000 },
+      { role: 'user', content: 'new prompt' },
+      { role: 'assistant', content: 'new answer', timestamp: 5_000 },
+    ]);
+
+    expect(result[3]).toEqual(
+      expect.not.objectContaining({
+        durationMs: expect.any(Number),
+      }),
+    );
+  });
+
+  test('does not attach a turn duration to gateway-injected assistant messages', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'prompt', timestamp: 1_000 },
+      {
+        role: 'assistant',
+        content: 'internal status',
+        timestamp: 2_000,
+        provider: 'openclaw',
+        model: 'gateway-injected',
+      },
+    ]);
+
+    expect(result[1]).toEqual(
+      expect.not.objectContaining({
+        durationMs: expect.any(Number),
+      }),
+    );
+  });
+
   test('restores every valid update_plan call as a standalone timeline item', () => {
     const result = projectPersistedTimeline([
       {

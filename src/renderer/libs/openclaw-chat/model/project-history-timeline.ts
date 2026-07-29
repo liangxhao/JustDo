@@ -23,7 +23,7 @@ import {
 } from './tool-message-adapter';
 
 export type PersistedTimelineItem =
-  | { kind: 'history-message'; key: string; message: GatewayMessage }
+  | { kind: 'history-message'; key: string; message: GatewayMessage; durationMs?: number }
   | ProcessSummaryTimelineItem
   | PlanUpdateTimelineItem;
 
@@ -53,11 +53,42 @@ function timestampOf(outer: Record<string, unknown>, message: Record<string, unk
   for (const value of [message.timestamp, message.ts, outer.timestamp, outer.ts]) {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string') {
-      const parsed = Date.parse(value);
+      const trimmed = value.trim();
+      const numeric = Number(trimmed);
+      if (trimmed && Number.isFinite(numeric)) return numeric;
+      const parsed = Date.parse(trimmed);
       if (Number.isFinite(parsed)) return parsed;
     }
   }
   return 0;
+}
+
+function isGatewayInjectedAssistant(
+  outer: Record<string, unknown>,
+  message: Record<string, unknown>,
+): boolean {
+  const outerMetadata =
+    outer.metadata && typeof outer.metadata === 'object' && !Array.isArray(outer.metadata)
+      ? (outer.metadata as Record<string, unknown>)
+      : null;
+  const messageMetadata =
+    message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
+      ? (message.metadata as Record<string, unknown>)
+      : null;
+  return [
+    message.modelName,
+    message.model,
+    messageMetadata?.modelName,
+    messageMetadata?.model,
+    outer.modelName,
+    outer.model,
+    outerMetadata?.modelName,
+    outerMetadata?.model,
+  ].some(value => {
+    if (typeof value !== 'string') return false;
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'gateway-injected' || normalized.endsWith('/gateway-injected');
+  });
 }
 
 function runIdOf(
@@ -119,6 +150,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
   let archived: Array<ThinkingItem | ToolItem> = [];
   let segment = 0;
   const toolById = new Map<string, ToolItem>();
+  let latestUserTimestamp: number | null = null;
 
   const isPlanUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
     item.type === 'tool' &&
@@ -163,9 +195,14 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
     archived = [];
   };
 
-  const emitMessage = (message: GatewayMessage, key: string) => {
+  const emitMessage = (message: GatewayMessage, key: string, durationMs?: number) => {
     flushSummary();
-    projected.push({ kind: 'history-message', key, message });
+    projected.push({
+      kind: 'history-message',
+      key,
+      message,
+      ...(durationMs !== undefined ? { durationMs } : {}),
+    });
     segment += 1;
   };
 
@@ -294,6 +331,14 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
     const runId = runIdOf(outer, message, messageKey);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
+    if (role === 'user') latestUserTimestamp = timestamp > 0 ? timestamp : null;
+    const durationMs =
+      role === 'assistant' &&
+      !isGatewayInjectedAssistant(outer, message) &&
+      latestUserTimestamp !== null &&
+      timestamp >= latestUserTimestamp
+        ? timestamp - latestUserTimestamp
+        : undefined;
     const attachments = [
       ...attachedToolMessages(message),
       ...(message === outer ? [] : attachedToolMessages(outer)),
@@ -310,7 +355,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
         attachments.length === 0 ||
         (typeof message.content === 'string' && message.content.trim().length > 0)
       ) {
-        emitMessage(outerMessage, messageKey);
+        emitMessage(outerMessage, messageKey, durationMs);
       }
       for (const [index, attached] of attachments.entries()) {
         applyToolOnlyMessage(
@@ -330,6 +375,7 @@ export function projectPersistedTimeline(messages: GatewayMessage[]): PersistedT
       emitMessage(
         visibleMessageWithContent(outerMessage, message, visibleBlocks),
         `${messageKey}:content:${segment}`,
+        durationMs,
       );
       visibleBlocks = [];
     };

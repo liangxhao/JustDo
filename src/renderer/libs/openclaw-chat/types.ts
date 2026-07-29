@@ -37,6 +37,7 @@ export type MessageGroup = {
   modelName?: string | null;
   messages: Array<{ message: unknown; key: string; duplicateCount?: number }>;
   timestamp: number;
+  durationMs?: number;
   isStreaming: boolean;
 };
 
