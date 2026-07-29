@@ -60,6 +60,11 @@ export interface AssistantTurn {
   toolById: Map<string, ToolItem>;
 }
 
+export type AssistantTurnTiming = Pick<
+  AssistantTurn,
+  'runId' | 'status' | 'startedAt' | 'endedAt'
+>;
+
 export interface RecentRunState {
   runId: string;
   sessionId: string | null;

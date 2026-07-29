@@ -26,6 +26,12 @@ import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scro
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import {
+  type ActiveTurnFooter,
+  formatActiveTurnDuration,
+  formatActiveTurnTimestamp,
+  projectActiveTurnFooter,
+} from '@/libs/openclaw-chat/model/active-turn-footer';
+import {
   type ChatMinimapEntry,
   projectChatMinimapEntries,
 } from '@/libs/openclaw-chat/model/chat-minimap';
@@ -121,6 +127,7 @@ export class JustDoChatElement extends LitElement {
   private minimapEntriesSignature = '';
   private minimapPreviewTop = 0;
   private mermaidScrollFrame: number | null = null;
+  private activeTurnClockTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     super();
@@ -1871,10 +1878,11 @@ export class JustDoChatElement extends LitElement {
     if (ctrl) {
       const historyTimeline = getHistoryTimeline();
       const activeTimeline = this.projectActiveTimeline();
+      const activeTurnFooter = projectActiveTurnFooter(ctrl.getCurrentTurnTiming());
       const timelineView = projectIncrementalTimelineView({
         persisted: this.persistedTimelineRenderCache.get(historyTimeline),
         activeTimeline,
-        suppressTrailingAssistantFooter: activeTurn !== null || isStreaming,
+        suppressTrailingAssistantFooter: activeTurnFooter !== null || isStreaming,
       });
       this.resolveOpenProcessSummaryKey(
         [
@@ -1923,14 +1931,14 @@ export class JustDoChatElement extends LitElement {
               row => this.renderVisibleTimelineItem(row.item, row.showAvatar, row.showFooter),
             )}
             ${
-              activeTurn && activeTurn.status !== 'running'
+              activeTurnFooter
                 ? html`
                     <section
                       class="active-turn chat-group chat-group--assistant chat-group--continuation"
                     >
                       <div class="chat-group__avatar" aria-hidden="true"></div>
                       <footer class="active-turn__footer">
-                        ${this.activeTurnFooter(activeTurn, persistedMessages)}
+                        ${this.activeTurnFooter(activeTurnFooter, persistedMessages)}
                       </footer>
                     </section>
                   `
@@ -2062,6 +2070,7 @@ export class JustDoChatElement extends LitElement {
     this.removeEventListener('scroll', this.handleMinimapScroll);
     if (this.mermaidScrollFrame !== null) cancelAnimationFrame(this.mermaidScrollFrame);
     this.mermaidScrollFrame = null;
+    this.stopActiveTurnClock();
     this.unsubscribeController();
   }
 
@@ -2078,6 +2087,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
+    this.syncActiveTurnClock();
     if (this.openProcessSummaryKey !== this.renderedOpenProcessSummaryKey) {
       const nextOpenKey = this.renderedOpenProcessSummaryKey;
       const shouldRestoreFocus =
@@ -2135,6 +2145,21 @@ export class JustDoChatElement extends LitElement {
         this.streamingThinkingScrollHeights.set(content, content.scrollHeight);
       }
     }
+  }
+
+  private syncActiveTurnClock(): void {
+    const isRunning = this._controller?.getCurrentTurnTiming()?.status === 'running';
+    if (isRunning && this.activeTurnClockTimer === null) {
+      this.activeTurnClockTimer = setInterval(() => this.requestUpdate(), 1_000);
+      return;
+    }
+    if (!isRunning) this.stopActiveTurnClock();
+  }
+
+  private stopActiveTurnClock(): void {
+    if (this.activeTurnClockTimer === null) return;
+    clearInterval(this.activeTurnClockTimer);
+    this.activeTurnClockTimer = null;
   }
 
   private resolveOpenProcessSummaryKey(
@@ -2463,21 +2488,28 @@ export class JustDoChatElement extends LitElement {
   }
 
   private activeTurnFooter(
-    turn: AssistantTurn,
+    footer: ActiveTurnFooter,
     persistedMessages: GatewayMessage[],
   ): TemplateResult {
     const assistantMessage = [...persistedMessages]
       .reverse()
       .find(message => String(message.role ?? '').toLowerCase() === 'assistant') as
       Record<string, unknown> | undefined;
-    const model =
+    const persistedModel =
       (typeof assistantMessage?.modelName === 'string' && assistantMessage.modelName) ||
       (typeof assistantMessage?.model === 'string' && assistantMessage.model) ||
       '';
-    const timestamp = new Date(turn.endedAt ?? turn.startedAt).toLocaleString();
+    const model = footer.running
+      ? this.assistantName.trim() || persistedModel
+      : persistedModel || this.assistantName.trim();
+    const date = new Date(footer.timestamp);
+    const timestamp = formatActiveTurnTimestamp(date);
+    const duration = formatActiveTurnDuration(footer.durationMs);
     return html`
       ${model ? html`<span>${model}</span><span>·</span>` : nothing}
-      <time datetime=${new Date(turn.endedAt ?? turn.startedAt).toISOString()}>${timestamp}</time>
+      <time datetime=${date.toISOString()}>${timestamp}</time>
+      <span>·</span>
+      <span>${i18nService.t('coworkRunDuration').replace('{duration}', duration)}</span>
     `;
   }
 

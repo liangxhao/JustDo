@@ -227,6 +227,95 @@ test('clears active sending state when switching between existing sessions', asy
   expect(controller.state.chatLoading).toBe(true);
 });
 
+test('keeps run timing across session switches and after completion', async () => {
+  const firstSessionKey = 'agent:main:justdo:running-session';
+  const secondSessionKey = 'agent:main:justdo:other-session';
+  const controller = new ChatController();
+  controller.state.sessionKey = firstSessionKey;
+  controller.state.transcript.sessionKey = firstSessionKey;
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', startedAt: 1_000 },
+    { now: () => 1_000, createId: prefix => `${prefix}-1` },
+  );
+
+  await controller.switchSession(secondSessionKey);
+  await controller.switchSession(firstSessionKey);
+
+  expect(controller.getCurrentTurnTiming()).toEqual({
+    runId: 'run-1',
+    status: 'running',
+    startedAt: 1_000,
+  });
+
+  const resumed = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', startedAt: 5_000 },
+    { now: () => 5_000, createId: prefix => `${prefix}-2` },
+  );
+  expect(controller.getCurrentTurnTiming()?.startedAt).toBe(1_000);
+
+  resumed.status = 'final';
+  resumed.endedAt = 8_000;
+  await controller.switchSession(secondSessionKey);
+  await controller.switchSession(firstSessionKey);
+
+  expect(controller.getCurrentTurnTiming()).toEqual({
+    runId: 'run-1',
+    status: 'final',
+    startedAt: 1_000,
+    endedAt: 8_000,
+  });
+
+  controller.state.chatMessages = [{ role: 'user', content: 'new turn', timestamp: 9_000 }];
+  controller.state.loadedMessageCount = 1;
+  controller.state.historyWindowEnd = 1;
+  expect(controller.getCurrentTurnTiming()).toBeNull();
+
+  controller.state.chatMessages = [{ role: 'user', content: 'original turn', timestamp: 500 }];
+  controller.state.loadedMessageCount = 2;
+  controller.state.historyWindowEnd = 1;
+  expect(controller.getCurrentTurnTiming()).toBeNull();
+});
+
+test('stops cached background timing when an external final arrives', async () => {
+  const firstSessionKey = 'agent:main:justdo:running-session';
+  const secondSessionKey = 'agent:main:justdo:other-session';
+  const controller = new ChatController();
+  controller.state.sessionKey = firstSessionKey;
+  controller.state.transcript.sessionKey = firstSessionKey;
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', startedAt: 1_000 },
+    { now: () => 1_000, createId: prefix => `${prefix}-1` },
+  );
+  await controller.switchSession(secondSessionKey);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(6_000);
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: firstSessionKey,
+      runId: 'run-1',
+      state: 'final',
+    },
+  });
+  expect(controller.state.sessionKey).toBe(secondSessionKey);
+  await controller.switchSession(firstSessionKey);
+
+  expect(controller.getCurrentTurnTiming()).toEqual({
+    runId: 'run-1',
+    status: 'final',
+    startedAt: 1_000,
+    endedAt: 6_000,
+  });
+  now.mockRestore();
+});
+
 test('sends the backing session id returned by chat history', async () => {
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'chat.history') {
@@ -2707,6 +2796,41 @@ test('captures the gateway detail when a lifecycle run fails', () => {
   expect(controller.state.lastError).toBe(
     'LLM request failed: provider rejected the request schema or tool payload.',
   );
+});
+
+test('stores final timing when lifecycle end uses the compatibility fallback', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1', startedAt: 500 },
+    { now: () => Date.now(), createId: prefix => `${prefix}-1` },
+  );
+
+  (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent({
+    runId: 'run-1',
+    stream: 'lifecycle',
+    session: sessionKey,
+    data: { phase: 'end' },
+  });
+  await vi.advanceTimersByTimeAsync(1_600);
+
+  expect(controller.getCurrentTurnTiming()).toEqual({
+    runId: 'run-1',
+    status: 'final',
+    startedAt: 500,
+    endedAt: 2_500,
+  });
 });
 
 test('does not apply the lifecycle end fallback while compaction is in flight', async () => {

@@ -42,6 +42,7 @@ import type {
 import { reduceAgentEvent, reduceChatEvent } from '@/libs/openclaw-chat/model/agent-event-reducer';
 import {
   type AssistantTurn,
+  type AssistantTurnTiming,
   beginAssistantTurn,
   type ChatTranscriptState,
   createChatTranscriptState,
@@ -456,6 +457,7 @@ export class ChatController {
   private gatewayToken = '';
   private chatMessagesBySession = new Map<string, ChunkedMessageHistory>();
   private historySourceBySession = new Map<string, HistorySource>();
+  private turnTimingBySession = new Map<string, AssistantTurnTiming>();
   private currentMessageHistory = new ChunkedMessageHistory();
   private transcriptImageCache = new Map<string, Promise<string | null>>();
   private transcriptImageReadsActive = 0;
@@ -591,6 +593,121 @@ export class ChatController {
         this.historySourceBySession.delete(oldestKey);
       }
     }
+  }
+
+  private cacheCurrentTurnTiming(): void {
+    const turn = this.state.transcript.activeTurn;
+    const sessionKey = turn?.sessionKey || this.state.transcript.sessionKey;
+    if (!turn || !sessionKey) return;
+    const existing = this.turnTimingBySession.get(sessionKey);
+    const startedAt =
+      existing?.runId === turn.runId
+        ? Math.min(existing.startedAt, turn.startedAt)
+        : turn.startedAt;
+    this.turnTimingBySession.delete(sessionKey);
+    this.turnTimingBySession.set(sessionKey, {
+      runId: turn.runId,
+      status: turn.status,
+      startedAt,
+      ...(turn.endedAt !== undefined ? { endedAt: turn.endedAt } : {}),
+    });
+    if (this.turnTimingBySession.size > 20) {
+      const oldestSettledKey = [...this.turnTimingBySession].find(
+        ([, timing]) => timing.status !== 'running',
+      )?.[0];
+      if (oldestSettledKey) this.turnTimingBySession.delete(oldestSettledKey);
+    }
+  }
+
+  private resetTranscriptForSession(
+    sessionKey: string,
+    sessionId: string | null,
+    preserveTiming = true,
+  ): void {
+    if (preserveTiming) {
+      this.cacheCurrentTurnTiming();
+    } else {
+      this.turnTimingBySession.delete(this.state.transcript.sessionKey || sessionKey);
+      this.turnTimingBySession.delete(sessionKey);
+    }
+    resetChatTranscriptState(this.state.transcript, sessionKey, sessionId);
+  }
+
+  private finishCurrentTurnTiming(
+    status: Exclude<AssistantTurnTiming['status'], 'running'>,
+    runId?: string | null,
+  ): void {
+    const activeTurn = this.state.transcript.activeTurn;
+    if (activeTurn?.status !== 'running') this.cacheCurrentTurnTiming();
+    this.finishTurnTimingForSession(
+      this.state.sessionKey,
+      status,
+      runId,
+      activeTurn?.endedAt,
+    );
+  }
+
+  private finishTurnTimingForSession(
+    sessionKey: string,
+    status: Exclude<AssistantTurnTiming['status'], 'running'>,
+    runId?: string | null,
+    endedAt = Date.now(),
+  ): void {
+    const timingKey =
+      this.turnTimingBySession.has(sessionKey)
+        ? sessionKey
+        : [...this.turnTimingBySession.keys()].find(
+            key =>
+              normalizeTranscriptSessionKey(key) === normalizeTranscriptSessionKey(sessionKey),
+          );
+    if (!timingKey) return;
+    const cached = this.turnTimingBySession.get(timingKey);
+    if (!cached || cached.status !== 'running') return;
+    if (runId && cached.runId !== runId && !cached.runId.startsWith('justdo-')) return;
+    this.turnTimingBySession.set(timingKey, {
+      ...cached,
+      status,
+      endedAt,
+    });
+  }
+
+  getCurrentTurnTiming(): AssistantTurnTiming | null {
+    const activeTurn = this.state.transcript.activeTurn;
+    const cached = this.turnTimingBySession.get(this.state.sessionKey);
+    if (!activeTurn) {
+      if (!cached || this.state.historyWindowEnd < this.state.loadedMessageCount) return null;
+      const latestUserTimestamp = this.state.chatMessages.reduce<number | null>(
+        (latest, message) => {
+          const record = asRecord(message);
+          if (String(record?.role ?? '').toLowerCase() !== 'user') return latest;
+          const timestamp = messageTimestampMs(message);
+          return timestamp === null || (latest !== null && timestamp <= latest)
+            ? latest
+            : timestamp;
+        },
+        null,
+      );
+      if (
+        cached.status !== 'running' &&
+        cached.endedAt !== undefined &&
+        latestUserTimestamp !== null &&
+        latestUserTimestamp > cached.endedAt
+      ) {
+        return null;
+      }
+      return cached;
+    }
+
+    const canResumeCachedStart =
+      cached?.status === 'running' && cached.runId === activeTurn.runId;
+    return {
+      runId: activeTurn.runId,
+      status: activeTurn.status,
+      startedAt: canResumeCachedStart
+        ? Math.min(cached.startedAt, activeTurn.startedAt)
+        : activeTurn.startedAt,
+      ...(activeTurn.endedAt !== undefined ? { endedAt: activeTurn.endedAt } : {}),
+    };
   }
 
   private setCurrentSessionMessages(messages: unknown[]): void {
@@ -844,11 +961,7 @@ export class ChatController {
 
   private ensureTranscriptSessionIdentity(): void {
     if (this.state.transcript.sessionKey === this.state.sessionKey) return;
-    resetChatTranscriptState(
-      this.state.transcript,
-      this.state.sessionKey,
-      this.state.currentSessionId,
-    );
+    this.resetTranscriptForSession(this.state.sessionKey, this.state.currentSessionId);
     this.state.transcript.persistedMessages = this.state.chatMessages;
   }
 
@@ -938,6 +1051,7 @@ export class ChatController {
         },
         this.transcriptDependencies,
       );
+      this.finishCurrentTurnTiming('final', endingRunId);
       this.state.chatSending = false;
       this.state.chatRunId = null;
       this.terminalLifecycleSeen = false;
@@ -1137,7 +1251,7 @@ export class ChatController {
     this.state.historyLoadingOlder = false;
     this.state.historyHasMore = false;
     this.state.historyNextCursor = null;
-    resetChatTranscriptState(this.state.transcript, sessionKey, null);
+    this.resetTranscriptForSession(sessionKey, null);
     this.state.chatLoading = true;
     this.currentMessageHistory =
       this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
@@ -1201,7 +1315,7 @@ export class ChatController {
       }
       this.state.transcript.revision += 1;
     } else {
-      resetChatTranscriptState(this.state.transcript, sessionKey, null);
+      this.resetTranscriptForSession(sessionKey, null);
     }
     // Only preserve the optimistic prompt while replacing the temporary UI
     // session with the persisted JustDo session. For normal user-initiated
@@ -1377,6 +1491,17 @@ export class ChatController {
       const payload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
       if (payload) {
         this.ensureTranscriptSessionIdentity();
+        const matchesSelectedSession =
+          normalizeTranscriptSessionKey(payload.sessionKey) ===
+          normalizeTranscriptSessionKey(this.state.sessionKey);
+        if (!matchesSelectedSession && payload.state !== 'delta') {
+          this.finishTurnTimingForSession(
+            payload.sessionKey,
+            payload.state,
+            payload.runId,
+          );
+          return;
+        }
         if (
           payload.state === 'delta' &&
           this.assistantSnapshotRunId &&
@@ -1391,9 +1516,6 @@ export class ChatController {
           }
           return;
         }
-        const matchesSelectedSession =
-          normalizeTranscriptSessionKey(payload.sessionKey) ===
-          normalizeTranscriptSessionKey(this.state.sessionKey);
         if (
           matchesSelectedSession &&
           !this.state.transcript.activeTurn &&
@@ -1506,7 +1628,7 @@ export class ChatController {
       const nextSessionId = normalizeSessionId(payload?.sessionId);
       const currentSessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
       if (nextSessionId && currentSessionId && nextSessionId !== currentSessionId) {
-        resetChatTranscriptState(this.state.transcript, this.state.sessionKey, nextSessionId);
+        this.resetTranscriptForSession(this.state.sessionKey, nextSessionId, false);
         this.state.currentSessionId = nextSessionId;
         this.state.chatRunId = null;
         this.state.chatSending = false;
@@ -1991,7 +2113,7 @@ export class ChatController {
         this.state.transcript.sessionId &&
         loadedSessionId !== this.state.transcript.sessionId
       ) {
-        resetChatTranscriptState(this.state.transcript, sessionKey, loadedSessionId);
+        this.resetTranscriptForSession(sessionKey, loadedSessionId, false);
         this.currentMessageHistory.reset();
         this.state.chatMessages = [];
         this.state.loadedMessageCount = 0;
@@ -2278,6 +2400,7 @@ export class ChatController {
 
   private handleFinal(payload: NormalizedChatEvent): void {
     this.clearLifecycleEndFallback();
+    this.finishCurrentTurnTiming('final', payload.runId);
     const message = stripAssistantSilentReplySuffix(payload.message);
     const willAppend = message && !shouldHideMessage(message);
     const liveThinkingText = collectActiveThinkingText(this.state.transcript.activeTurn);
@@ -2328,6 +2451,7 @@ export class ChatController {
 
   private handleAborted(payload: NormalizedChatEvent): void {
     this.clearLifecycleEndFallback();
+    this.finishCurrentTurnTiming('aborted', payload.runId);
     const message = payload.message;
     debugLog('[ChatCtrl] ▶ chat.aborted', { hasMessage: !!message, ...this._snap() });
     if (message && !shouldHideMessage(message)) {
@@ -2348,6 +2472,7 @@ export class ChatController {
 
   private handleError(payload: NormalizedChatEvent): void {
     this.clearLifecycleEndFallback();
+    this.finishCurrentTurnTiming('error', payload.runId);
     this.state.lastError = payload.errorMessage ?? 'Unknown error';
     this.state.chatSending = false;
     this.state.compactionInFlight = false;
@@ -2511,6 +2636,7 @@ export class ChatController {
           },
           this.transcriptDependencies,
         );
+        this.finishCurrentTurnTiming('error', runId);
         this.state.chatSending = false;
         this.state.compactionInFlight = false;
         this.clearLocalCompactionStatus(this.state.sessionKey);
@@ -2651,6 +2777,7 @@ export class ChatController {
           },
           this.transcriptDependencies,
         );
+        this.finishCurrentTurnTiming('final', ack.runId ?? runId);
         this.state.chatSending = false;
         this.state.chatRunId = null;
         this.resetAssistantSnapshotSource();
@@ -2672,6 +2799,7 @@ export class ChatController {
         },
         this.transcriptDependencies,
       );
+      this.finishCurrentTurnTiming('error', runId);
       this.state.chatSending = false;
       this.state.chatRunId = null;
       this.resetAssistantSnapshotSource();
