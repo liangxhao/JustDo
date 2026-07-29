@@ -207,6 +207,42 @@ describe('normalizeMessage assistant model label', () => {
   });
 });
 
+describe('normalizeMessage gateway-injected log hint', () => {
+  test.each(['openclaw/gateway-injected', 'gateway-injected'])(
+    'removes the OpenClaw log hint from %s messages',
+    modelName => {
+      const message = normalizeMessage({
+        role: 'assistant',
+        content: 'Task failed\nLog: openclaw logs --follow',
+        modelName,
+      });
+
+      expect(message.content).toEqual([{ type: 'text', text: 'Task failed' }]);
+    },
+  );
+
+  test('removes a standalone OpenClaw log hint from gateway-injected messages', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'Log: openclaw logs --follow',
+      provider: 'openclaw',
+      model: 'gateway-injected',
+    });
+
+    expect(message.content).toEqual([]);
+  });
+
+  test('keeps the same text from regular assistant messages', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'Log: openclaw logs --follow',
+      model: 'gpt-4.1',
+    });
+
+    expect(message.content).toEqual([{ type: 'text', text: 'Log: openclaw logs --follow' }]);
+  });
+});
+
 describe('normalizeMessage goal token usage', () => {
   test('hides an unreliable zero token count from an OpenClaw goal reply', () => {
     const message = normalizeMessage({

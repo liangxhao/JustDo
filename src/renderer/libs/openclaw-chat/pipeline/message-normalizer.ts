@@ -411,6 +411,25 @@ const stripUnreliableGoalZeroUsage = (content: MessageContentItem[]): MessageCon
   });
 };
 
+const GATEWAY_INJECTED_MODEL_NAMES = new Set([
+  'openclaw/gateway-injected',
+  'gateway-injected',
+]);
+const GATEWAY_INJECTED_LOG_HINT = 'Log: openclaw logs --follow';
+
+const stripGatewayInjectedLogHint = (
+  content: MessageContentItem[],
+  modelName: string | null,
+): MessageContentItem[] => {
+  if (!modelName || !GATEWAY_INJECTED_MODEL_NAMES.has(modelName)) return content;
+
+  return content.flatMap(item => {
+    if (item.type !== 'text' || typeof item.text !== 'string') return [item];
+    const text = item.text.replaceAll(GATEWAY_INJECTED_LOG_HINT, '').trim();
+    return text ? [{ ...item, text }] : [];
+  });
+};
+
 function expandUserTextMediaContent(
   text: string,
   includeLegacyTextFields = false,
@@ -606,6 +625,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
   content = stripMessageDisplayMetadata(content);
   if (isAssistantMessage) {
     content = stripUnreliableGoalZeroUsage(content);
+    content = stripGatewayInjectedLogHint(content, modelName);
   }
 
   return {
