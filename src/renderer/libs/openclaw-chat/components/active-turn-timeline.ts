@@ -232,7 +232,9 @@ export function renderTimelineItem(
             class="process-summary"
             data-process-summary-key=${item.key}
             aria-expanded=${expanded}
-            aria-label=${`${summaryLabel(item)} · ${i18nService.t('coworkProcessOpenDetails')}`}
+            aria-label=${`${summaryLabel(item)} · ${i18nService.t(
+              expanded ? 'coworkProcessCloseDetails' : 'coworkProcessOpenDetails',
+            )}`}
           >
             <span class="process-summary__icon" aria-hidden="true">⌁</span>
             <span>${summaryLabel(item)}</span>

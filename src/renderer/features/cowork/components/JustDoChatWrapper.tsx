@@ -38,6 +38,7 @@ interface JustDoChatWrapperProps {
   searchCaseSensitive?: boolean;
   searchNavigationToken?: number;
   searchNavigationDirection?: 1 | -1;
+  processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
   onActivityChange?: (progress: GoalRunProgress | null) => void;
 }
@@ -65,6 +66,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       searchCaseSensitive,
       searchNavigationToken,
       searchNavigationDirection,
+      processSummariesExpanded,
       onSearchMatchCountChange,
       onActivityChange,
     },
@@ -288,6 +290,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         searchCaseSensitive={searchCaseSensitive}
         searchNavigationToken={searchNavigationToken}
         searchNavigationDirection={searchNavigationDirection}
+        processSummariesExpanded={processSummariesExpanded}
         onSearchMatchCountChange={onSearchMatchCountChange}
       />
     );

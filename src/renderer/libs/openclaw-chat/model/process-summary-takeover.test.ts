@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   createProcessSummarySessionIdentity,
+  ProcessSummaryTakeoverSetTracker,
   ProcessSummaryTakeoverTracker,
 } from './process-summary-takeover';
 import type { ProcessSummaryTimelineItem } from './project-turn-items';
@@ -128,5 +129,42 @@ describe('ProcessSummaryTakeoverTracker', () => {
     tracker.resolve(live.key, [live]);
 
     expect(tracker.resolve(live.key, [unrelated])).toBeNull();
+  });
+});
+
+describe('ProcessSummaryTakeoverSetTracker', () => {
+  test('maps collapsed live-summary exceptions to authoritative history keys', () => {
+    const tracker = new ProcessSummaryTakeoverSetTracker();
+    const firstLive = summary('live-1', { toolCallId: 'call-1' });
+    const secondLive = summary('live-2', { toolCallId: 'call-2' });
+    const collapsedKeys = new Set([firstLive.key, secondLive.key]);
+
+    expect(tracker.resolve(collapsedKeys, [firstLive, secondLive])).toEqual(collapsedKeys);
+
+    const firstPersisted = summary('history-1', {
+      runId: 'history-run-1',
+      toolCallId: 'call-1',
+    });
+    const secondPersisted = summary('history-2', {
+      runId: 'history-run-2',
+      toolCallId: 'call-2',
+    });
+
+    expect(tracker.resolve(collapsedKeys, [firstPersisted, secondPersisted])).toEqual(
+      new Set([firstPersisted.key, secondPersisted.key]),
+    );
+  });
+
+  test('drops collapsed exceptions that cannot be correlated', () => {
+    const tracker = new ProcessSummaryTakeoverSetTracker();
+    const live = summary('live-key', { toolCallId: 'call-live' });
+
+    tracker.resolve(new Set([live.key]), [live]);
+
+    const unrelated = summary('history-key', {
+      runId: 'history-run',
+      toolCallId: 'call-other',
+    });
+    expect(tracker.resolve(new Set([live.key]), [unrelated])).toEqual(new Set());
   });
 });

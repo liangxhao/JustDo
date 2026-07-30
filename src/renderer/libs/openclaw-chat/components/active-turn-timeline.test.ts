@@ -1,6 +1,8 @@
 import type { TemplateResult } from 'lit';
 import { describe, expect, test, vi } from 'vitest';
 
+import { i18nService } from '@/services/i18n';
+
 vi.mock('./markdown', () => ({
   toSanitizedMarkdownHtml: (text: string) => `<p>${text}</p>`,
   toStreamingMarkdownHtml: (text: string) => text,
@@ -245,6 +247,13 @@ describe('active turn timeline', () => {
     expect(expanded).toContain('<summary class="process-summary__tool-title">');
     expect(expanded).toContain('Request');
     expect(expanded).toContain('apiKey');
+  });
+
+  test('labels an expanded summary with the collapse action', () => {
+    const rendered = flatten(renderTimelineItem(summary(), 100, true));
+
+    expect(rendered).toContain(i18nService.t('coworkProcessCloseDetails'));
+    expect(rendered).not.toContain(i18nService.t('coworkProcessOpenDetails'));
   });
 
   test('shows the assistant avatar only when requested by the turn-level renderer', () => {

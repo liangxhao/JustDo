@@ -41,6 +41,7 @@ import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/op
 import { PersistedTimelineCache } from '@/libs/openclaw-chat/model/persisted-timeline-cache';
 import {
   createProcessSummarySessionIdentity,
+  ProcessSummaryTakeoverSetTracker,
   ProcessSummaryTakeoverTracker,
 } from '@/libs/openclaw-chat/model/process-summary-takeover';
 import {
@@ -98,8 +99,14 @@ export class JustDoChatElement extends LitElement {
   @property({ type: Boolean, attribute: false })
   declare searchCaseSensitive: boolean;
 
+  @property({ type: Boolean, attribute: false })
+  declare processSummariesExpanded: boolean;
+
   @state()
   declare private openProcessSummaryKey: string | null;
+
+  @state()
+  declare private collapsedProcessSummaryKeys: ReadonlySet<string>;
 
   @state()
   declare private currentMinimapKey: string | null;
@@ -116,7 +123,9 @@ export class JustDoChatElement extends LitElement {
   private readonly persistedTimelineCache = new PersistedTimelineCache();
   private readonly persistedTimelineRenderCache = new PersistedTimelineRenderCache();
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
+  private readonly collapsedProcessSummaryTakeoverTracker = new ProcessSummaryTakeoverSetTracker();
   private renderedOpenProcessSummaryKey: string | null = null;
+  private renderedCollapsedProcessSummaryKeys: ReadonlySet<string> = new Set();
   private focusedProcessSummaryKeyBeforeRender: string | null = null;
   private processSummarySessionIdentity: string | null = null;
   private lastSearchEnhancementKey = '';
@@ -139,7 +148,9 @@ export class JustDoChatElement extends LitElement {
     this.workingDirectory = '';
     this.searchQuery = '';
     this.searchCaseSensitive = false;
+    this.processSummariesExpanded = false;
     this.openProcessSummaryKey = null;
+    this.collapsedProcessSummaryKeys = new Set();
     this.currentMinimapKey = null;
     this.hoveredMinimapKey = null;
   }
@@ -1294,14 +1305,14 @@ export class JustDoChatElement extends LitElement {
 
       .chat-thinking__content {
         padding: 6px 10px;
-        background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.02));
+        background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.05));
         border-radius: 8px;
         font-size: 13px;
         line-height: 1.5;
         color: var(--justdo-chat-text-secondary, #6b7280);
         margin-top: 2px;
         border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.04));
-        max-height: 7.5em;
+        max-height: 18em;
         overflow-y: auto;
       }
 
@@ -1412,7 +1423,7 @@ export class JustDoChatElement extends LitElement {
         border-color: rgba(255, 255, 255, 0.06);
       }
       :host(.dark) .chat-thinking__content {
-        background: rgba(255, 255, 255, 0.03);
+        background: rgba(255, 255, 255, 0.06);
         border-color: rgba(255, 255, 255, 0.06);
       }
 
@@ -1536,9 +1547,12 @@ export class JustDoChatElement extends LitElement {
       }
       .process-summary__thinking {
         margin-top: 5px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: var(--justdo-chat-code-bg, rgba(15, 23, 42, 0.05));
         color: var(--justdo-chat-muted, #64748b);
         line-height: 1.5;
-        max-height: 7.5em;
+        max-height: 18em;
         overflow-y: auto;
       }
       .process-summary__thinking > :first-child {
@@ -2061,8 +2075,10 @@ export class JustDoChatElement extends LitElement {
     this.persistedTimelineCache.clear();
     this.persistedTimelineRenderCache.clear();
     this.processSummaryTakeoverTracker.clear();
+    this.collapsedProcessSummaryTakeoverTracker.clear();
     this.processSummarySessionIdentity = null;
     this.renderedOpenProcessSummaryKey = null;
+    this.renderedCollapsedProcessSummaryKeys = new Set();
     this.renderRoot?.removeEventListener('click', this.handleMarkdownClick);
     this.renderRoot?.removeEventListener('contextmenu', this.handleInlineImageContextMenu);
     this.renderRoot?.removeEventListener('keydown', this.handleTimelineKeyDown);
@@ -2088,6 +2104,20 @@ export class JustDoChatElement extends LitElement {
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
     this.syncActiveTurnClock();
+    if (changedProperties?.has('processSummariesExpanded')) {
+      this.openProcessSummaryKey = null;
+      this.renderedOpenProcessSummaryKey = null;
+      this.collapsedProcessSummaryKeys = new Set();
+      this.renderedCollapsedProcessSummaryKeys = new Set();
+      this.collapsedProcessSummaryTakeoverTracker.clear();
+    } else if (
+      this.collapsedProcessSummaryKeys.size !== this.renderedCollapsedProcessSummaryKeys.size ||
+      [...this.collapsedProcessSummaryKeys].some(
+        key => !this.renderedCollapsedProcessSummaryKeys.has(key),
+      )
+    ) {
+      this.collapsedProcessSummaryKeys = new Set(this.renderedCollapsedProcessSummaryKeys);
+    }
     if (this.openProcessSummaryKey !== this.renderedOpenProcessSummaryKey) {
       const nextOpenKey = this.renderedOpenProcessSummaryKey;
       const shouldRestoreFocus =
@@ -2168,14 +2198,19 @@ export class JustDoChatElement extends LitElement {
   ): void {
     if (this.processSummarySessionIdentity !== sessionIdentity) {
       this.processSummaryTakeoverTracker.clear();
+      this.collapsedProcessSummaryTakeoverTracker.clear();
       this.processSummarySessionIdentity = sessionIdentity;
       this.renderedOpenProcessSummaryKey = null;
+      this.renderedCollapsedProcessSummaryKeys = new Set();
       return;
     }
     this.renderedOpenProcessSummaryKey = this.processSummaryTakeoverTracker.resolve(
       this.openProcessSummaryKey,
       items,
     );
+    this.renderedCollapsedProcessSummaryKeys = this.processSummariesExpanded
+      ? this.collapsedProcessSummaryTakeoverTracker.resolve(this.collapsedProcessSummaryKeys, items)
+      : new Set();
   }
 
   private readonly handleMarkdownClick = (event: Event): void => {
@@ -2184,6 +2219,16 @@ export class JustDoChatElement extends LitElement {
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
     if (summaryButton) {
       const summaryKey = summaryButton.dataset.processSummaryKey ?? null;
+      if (this.processSummariesExpanded && summaryKey) {
+        const collapsedKeys = new Set(this.renderedCollapsedProcessSummaryKeys);
+        if (collapsedKeys.has(summaryKey)) {
+          collapsedKeys.delete(summaryKey);
+        } else {
+          collapsedKeys.add(summaryKey);
+        }
+        this.collapsedProcessSummaryKeys = collapsedKeys;
+        return;
+      }
       this.openProcessSummaryKey =
         this.renderedOpenProcessSummaryKey === summaryKey ? null : summaryKey;
       return;
@@ -2541,7 +2586,10 @@ export class JustDoChatElement extends LitElement {
     return renderTimelineItem(
       item,
       Date.now(),
-      item.kind === 'process-summary' && this.renderedOpenProcessSummaryKey === item.key,
+      item.kind === 'process-summary' &&
+        ((this.processSummariesExpanded &&
+          !this.renderedCollapsedProcessSummaryKeys.has(item.key)) ||
+          this.renderedOpenProcessSummaryKey === item.key),
       showAvatar,
     );
   }

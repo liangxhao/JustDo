@@ -21,6 +21,7 @@ interface ChatMessageDisplayProps {
   searchCaseSensitive?: boolean;
   searchNavigationToken?: number;
   searchNavigationDirection?: 1 | -1;
+  processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
 }
 
@@ -42,6 +43,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   searchCaseSensitive = false,
   searchNavigationToken = 0,
   searchNavigationDirection = 1,
+  processSummariesExpanded = false,
   onSearchMatchCountChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -99,7 +101,15 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     }
     chat.assistantName = assistantName ?? '';
     chat.workingDirectory = workingDirectory;
-  }, [assistantName, controller, displayedMessages, isStreaming, workingDirectory]);
+    chat.processSummariesExpanded = processSummariesExpanded;
+  }, [
+    assistantName,
+    controller,
+    displayedMessages,
+    isStreaming,
+    processSummariesExpanded,
+    workingDirectory,
+  ]);
 
   useEffect(() => {
     const chat = chatRef.current;

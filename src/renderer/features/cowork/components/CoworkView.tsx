@@ -47,6 +47,7 @@ import {
 import { clearActiveSkills } from '@/features/plugins/slices/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import { i18nService } from '@/services/i18n';
+import BrainIcon from '@/shared/components/icons/BrainIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
@@ -91,6 +92,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
+  const [areProcessSummariesExpanded, setAreProcessSummariesExpanded] = useState(false);
   const [isSessionExportOpen, setIsSessionExportOpen] = useState(false);
   const [sessionExportMessageCount, setSessionExportMessageCount] = useState(0);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
@@ -527,6 +529,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     setSessionSearchMatchCount(0);
     setSessionSearchActiveIndex(-1);
     setSessionSearchNavigation({ token: 0, direction: 1 });
+    setAreProcessSummariesExpanded(false);
   }, [currentSession?.id]);
 
   useEffect(() => {
@@ -778,6 +781,32 @@ const CoworkView: React.FC<CoworkViewProps> = ({
               onMouseDown={event => event.stopPropagation()}
               onClick={event => {
                 event.stopPropagation();
+                setAreProcessSummariesExpanded(expanded => !expanded);
+              }}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                areProcessSummariesExpanded
+                  ? 'bg-surface-raised text-primary'
+                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+              }`}
+              title={i18nService.t(
+                areProcessSummariesExpanded
+                  ? 'coworkCollapseAllProcessDetails'
+                  : 'coworkExpandAllProcessDetails',
+              )}
+              aria-label={i18nService.t(
+                areProcessSummariesExpanded
+                  ? 'coworkCollapseAllProcessDetails'
+                  : 'coworkExpandAllProcessDetails',
+              )}
+              aria-pressed={areProcessSummariesExpanded}
+            >
+              <BrainIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
                 setIsSessionSearchOpen(open => !open);
               }}
               className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
@@ -886,6 +915,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             searchCaseSensitive={!sessionSearchIgnoreCase}
             searchNavigationToken={sessionSearchNavigation.token}
             searchNavigationDirection={sessionSearchNavigation.direction}
+            processSummariesExpanded={areProcessSummariesExpanded}
             onSearchMatchCountChange={handleSessionSearchMatchCountChange}
             onActivityChange={setGoalRunProgress}
           />

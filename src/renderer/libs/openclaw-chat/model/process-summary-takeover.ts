@@ -1,8 +1,5 @@
 import type { PersistedTimelineItem } from './project-history-timeline';
-import type {
-  ActiveTurnTimelineItem,
-  ProcessSummaryTimelineItem,
-} from './project-turn-items';
+import type { ActiveTurnTimelineItem, ProcessSummaryTimelineItem } from './project-turn-items';
 
 type TimelineItem = PersistedTimelineItem | ActiveTurnTimelineItem;
 
@@ -113,5 +110,33 @@ export class ProcessSummaryTakeoverTracker {
 
   clear(): void {
     this.openSummary = null;
+  }
+}
+
+/**
+ * Carries multiple process-summary disclosure keys across live-to-history
+ * takeovers. Each key keeps an independent identity tracker.
+ */
+export class ProcessSummaryTakeoverSetTracker {
+  private trackers = new Map<string, ProcessSummaryTakeoverTracker>();
+
+  resolve(keys: ReadonlySet<string>, items: readonly TimelineItem[]): ReadonlySet<string> {
+    const resolvedKeys = new Set<string>();
+    const nextTrackers = new Map<string, ProcessSummaryTakeoverTracker>();
+
+    for (const key of keys) {
+      const tracker = this.trackers.get(key) ?? new ProcessSummaryTakeoverTracker();
+      const resolvedKey = tracker.resolve(key, items);
+      if (!resolvedKey || resolvedKeys.has(resolvedKey)) continue;
+      resolvedKeys.add(resolvedKey);
+      nextTrackers.set(resolvedKey, tracker);
+    }
+
+    this.trackers = nextTrackers;
+    return resolvedKeys;
+  }
+
+  clear(): void {
+    this.trackers.clear();
   }
 }
