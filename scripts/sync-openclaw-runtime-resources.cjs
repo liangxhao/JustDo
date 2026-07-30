@@ -33,6 +33,51 @@ function syncDocTemplates(repoRoot, runtimeRoot, label) {
   return { sourceDir, targetDir, copiedFiles };
 }
 
+function syncDocChannels(repoRoot, runtimeRoot, label) {
+  const sourceDir = path.join(repoRoot, 'resources', 'docs', 'channels');
+  const targetDir = path.join(runtimeRoot, 'docs', 'channels');
+
+  if (!fs.existsSync(sourceDir)) {
+    throw new Error(`Channel source not found: ${sourceDir}`);
+  }
+
+  fs.rmSync(targetDir, { recursive: true, force: true });
+  fs.mkdirSync(targetDir, { recursive: true });
+  fs.cpSync(sourceDir, targetDir, { recursive: true, force: true });
+
+  const copiedFiles = fs
+    .readdirSync(targetDir, { withFileTypes: true, recursive: true })
+    .filter((entry) => entry.isFile())
+    .length;
+
+  console.log(
+    `[${label}] Replaced OpenClaw doc channels: `
+      + `${path.relative(repoRoot, sourceDir)} -> ${path.relative(repoRoot, targetDir)} `
+      + `(${copiedFiles} files)`,
+  );
+
+  return { sourceDir, targetDir, copiedFiles };
+}
+
+function syncGatewayConfigChannels(repoRoot, runtimeRoot, label) {
+  const sourceFile = path.join(repoRoot, 'resources', 'docs', 'gateway', 'config-channels.md');
+  const targetFile = path.join(runtimeRoot, 'docs', 'gateway', 'config-channels.md');
+
+  if (!fs.existsSync(sourceFile)) {
+    throw new Error(`Gateway channel config source not found: ${sourceFile}`);
+  }
+
+  fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+  fs.copyFileSync(sourceFile, targetFile);
+
+  console.log(
+    `[${label}] Replaced OpenClaw gateway channel config: `
+      + `${path.relative(repoRoot, sourceFile)} -> ${path.relative(repoRoot, targetFile)}`,
+  );
+
+  return { sourceFile, targetFile };
+}
+
 function syncLocalExtensions(repoRoot, runtimeRoot, label) {
   const sourceDir = path.join(repoRoot, 'openclaw-extensions');
   const targetDir = path.join(runtimeRoot, 'dist', 'extensions');
@@ -75,6 +120,8 @@ function syncOpenClawRuntimeResources(runtimeRoot, options = {}) {
   }
 
   const docs = syncDocTemplates(repoRoot, resolvedRuntimeRoot, label);
+  const channels = syncDocChannels(repoRoot, resolvedRuntimeRoot, label);
+  const gatewayConfigChannels = syncGatewayConfigChannels(repoRoot, resolvedRuntimeRoot, label);
   const extensions = syncLocalExtensions(repoRoot, resolvedRuntimeRoot, label);
   const pruneStats = {
     extensionDirsRemoved: 0,
@@ -87,6 +134,7 @@ function syncOpenClawRuntimeResources(runtimeRoot, options = {}) {
 
   console.log(
     `[${label}] Runtime resources ready: ${docs.copiedFiles} doc templates, `
+      + `${channels.copiedFiles} doc channels, `
       + `${extensions.copied.length} local extensions, `
       + `${pruneStats.extensionDirsRemoved} bundled extensions removed.`,
   );
@@ -94,6 +142,8 @@ function syncOpenClawRuntimeResources(runtimeRoot, options = {}) {
   return {
     runtimeRoot: resolvedRuntimeRoot,
     docs,
+    channels,
+    gatewayConfigChannels,
     extensions,
     pruning,
   };
@@ -115,5 +165,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  syncDocChannels,
+  syncGatewayConfigChannels,
   syncOpenClawRuntimeResources,
 };
