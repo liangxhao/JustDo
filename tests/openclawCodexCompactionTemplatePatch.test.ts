@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 
 const { applyPatch, CODEX_COMPACTION_MARKER, __testing } =
-  require('../scripts/patches/v2026.6.11/013-codex-compaction-template.cjs') as {
+  require('../scripts/patches/v2026.6.11/012-codex-compaction-template.cjs') as {
     applyPatch: (runtimeDir: string) => string[];
     CODEX_COMPACTION_MARKER: string;
     __testing: Record<string, string>;

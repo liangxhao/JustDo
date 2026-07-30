@@ -1,4 +1,4 @@
-import { productName } from '../../package.json';
+import { author, productName } from '../../package.json';
 
 const ENGLISH_PRODUCT_NAME = /^[A-Za-z]{1,64}$/;
 const WINDOWS_RESERVED_FILE_NAME = /^(con|prn|aux|nul)$/i;
@@ -14,6 +14,9 @@ export const validateProductName = (value: string): string => {
 
 /** User-facing brand name. Stable internal identifiers must not derive from this value. */
 export const PRODUCT_NAME = validateProductName(productName);
+
+/** Publisher attribution from package.json; separate from the product brand. */
+export const AUTHOR_NAME = author.name;
 
 /** Visible per-user application data directory, for example `%APPDATA%/<productName>`. */
 export const USER_DATA_DIRECTORY_NAME = PRODUCT_NAME;

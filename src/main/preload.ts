@@ -15,6 +15,10 @@ import {
 import { OpenClawHistoryIpc, type OpenClawPagedHistoryParams } from '../shared/openclaw/historyIpc';
 import { HookIpc } from '../shared/openclaw/hooks';
 import { MemoryIpc } from '../shared/openclaw/memory';
+import {
+  SystemPromptReplacementIpc,
+  type SystemPromptReplacementRule,
+} from '../shared/openclaw/systemPromptReplacements';
 import { UsageStatsIpc } from '../shared/openclaw/usage';
 import {
   type MarketplaceDetailRequest,
@@ -175,6 +179,10 @@ contextBridge.exposeInMainWorld('electron', {
       getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),
       setPort: (port: number) => ipcRenderer.invoke('openclaw:engine:setPort', port),
+      getSystemPromptReplacementRules: () =>
+        ipcRenderer.invoke(SystemPromptReplacementIpc.GetRules),
+      setSystemPromptReplacementRules: (rules: SystemPromptReplacementRule[]) =>
+        ipcRenderer.invoke(SystemPromptReplacementIpc.SetRules, rules),
       openTerminal: () => ipcRenderer.invoke('openclaw:engine:openTerminal'),
       onProgress: (callback: (status: unknown) => void) => {
         const handler = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);

@@ -34,17 +34,18 @@ scripts/patches/v2026.6.11/
 | `008-dedupe-visible-subagent-announces.cjs` | Deduplicate sibling completion announces already visible in parent history |
 | `009-reply-session-init-conflict-retry.cjs` | Fresh writer snapshots, key-order-independent revisions, and bounded retry for reply initialization conflicts |
 | `010-defer-selected-tool-schemas.cjs` | Defer selected heavyweight native schemas through directory-mode Tool Search |
-| `011-trim-runtime-system-prompt.cjs` | Remove redundant runtime metadata and normalize injected context line endings |
-| `012-retain-user-messages-across-compaction.cjs` | Persist and replay original user text across repeated compactions with a rolling 20k-token budget |
-| `013-codex-compaction-template.cjs` | Replace OpenClaw's compaction prompts, replay wrapper, and forced suffixes with Codex handoff semantics |
-| `014-default-cron-delivery-none.cjs` | Normalize native-tool agent-turn cron add/update requests to in-app delivery when `delivery` is omitted or a targetless `announce` cannot resolve an external destination |
-| `015-live-context-budget-status.cjs` | Publish the authoritative pre-prompt context estimate to session state during active runs |
+| `011-retain-user-messages-across-compaction.cjs` | Persist and replay original user text across repeated compactions with a rolling 20k-token budget |
+| `012-codex-compaction-template.cjs` | Replace OpenClaw's compaction prompts, replay wrapper, and forced suffixes with Codex handoff semantics |
+| `013-default-cron-delivery-none.cjs` | Normalize native-tool agent-turn cron add/update requests to in-app delivery when `delivery` is omitted or a targetless `announce` cannot resolve an external destination |
+| `014-live-context-budget-status.cjs` | Publish the authoritative pre-prompt context estimate to session state during active runs |
+| `015-final-system-prompt-replacements.cjs` | Apply JustDo-managed ordered regex rules to the final system prompt |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
-`013` depends on the sanitization helper injected by `012`; the numeric
-filenames are the required application order. Reassess this dependency before
-removing either patch.
+`012` depends on the sanitization helper injected by `011`, and `015` places
+its helper before the live-context publisher injected by `014`; the numeric
+filenames are the required application order. Reassess these dependencies
+before removing any of those patches.
 
 ## Required Patch Header
 
@@ -148,15 +149,15 @@ Patch removal is a real change:
 | `008-dedupe-visible-subagent-announces.cjs` | Subagent completion delivery compatibility | Remove when upstream coalesces sibling announces or credits results already visible in parent history |
 | `009-reply-session-init-conflict-retry.cjs` | Runtime session concurrency guard | Remove when upstream aligns reply snapshot/commit cache consistency, uses key-order-independent revisions, and retries genuine conflicts |
 | `010-defer-selected-tool-schemas.cjs` | Tool context compaction | Remove when upstream supports a configurable per-tool Tool Search defer list |
-| `011-trim-runtime-system-prompt.cjs` | Runtime prompt compatibility | Remove when upstream supports configuring redundant runtime prompt fields |
-| `012-retain-user-messages-across-compaction.cjs` | Compaction fidelity | Remove when upstream persists and replays retained user messages across compaction entries |
-| `013-codex-compaction-template.cjs` | Compaction fidelity | Remove when upstream supports replacing the compaction template, replay wrapper, and suffix assembly |
-| `014-default-cron-delivery-none.cjs` | Scheduled-task delivery default | Remove when upstream exposes a configurable default cron delivery mode |
-| `015-live-context-budget-status.cjs` | Missing live Gateway usage state | Remove when Gateway exposes current context budget status during active runs |
+| `011-retain-user-messages-across-compaction.cjs` | Compaction fidelity | Remove when upstream persists and replays retained user messages across compaction entries |
+| `012-codex-compaction-template.cjs` | Compaction fidelity | Remove when upstream supports replacing the compaction template, replay wrapper, and suffix assembly |
+| `013-default-cron-delivery-none.cjs` | Scheduled-task delivery default | Remove when upstream exposes a configurable default cron delivery mode |
+| `014-live-context-budget-status.cjs` | Missing live Gateway usage state | Remove when Gateway exposes current context budget status during active runs |
+| `015-final-system-prompt-replacements.cjs` | Missing final prompt transform | Remove when Gateway exposes a final, system-only prompt transform hook |
 
 ### Compaction patch upgrade warning
 
-`012` and `013` match exact text emitted by the OpenClaw `v2026.6.11` bundle.
+`011` and `012` match exact text emitted by the OpenClaw `v2026.6.11` bundle.
 They intentionally fail loudly when those anchors change. On every OpenClaw
 upgrade:
 

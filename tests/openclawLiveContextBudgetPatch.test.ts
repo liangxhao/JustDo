@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { expect, test } from 'vitest';
 
 const { applyPatch, __testing } =
-  require('../scripts/patches/v2026.6.11/015-live-context-budget-status.cjs') as {
+  require('../scripts/patches/v2026.6.11/014-live-context-budget-status.cjs') as {
     applyPatch: (runtimeDir: string) => string[];
     __testing: Record<string, string>;
   };

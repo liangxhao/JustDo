@@ -8,7 +8,7 @@ accurate and dense; detailed design belongs in `docs/architecture/`.
 JustDo is a local-first Electron + React desktop assistant. Agents execute real
 tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 
-- App: `v2026.7.6`
+- App: `v2026.7.23`
 - Electron: `42.6.0`
 - OpenClaw: `v2026.6.11`
 - Node: `>=24 <25` (`.nvmrc`)
@@ -130,11 +130,11 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 `008-dedupe-visible-subagent-announces.cjs`,
 `009-reply-session-init-conflict-retry.cjs`,
 `010-defer-selected-tool-schemas.cjs`,
-`011-trim-runtime-system-prompt.cjs`,
-`012-retain-user-messages-across-compaction.cjs`,
-`013-codex-compaction-template.cjs`,
-`014-default-cron-delivery-none.cjs`,
-`015-live-context-budget-status.cjs`.
+`011-retain-user-messages-across-compaction.cjs`,
+`012-codex-compaction-template.cjs`,
+`013-default-cron-delivery-none.cjs`,
+`014-live-context-budget-status.cjs`,
+`015-final-system-prompt-replacements.cjs`.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 

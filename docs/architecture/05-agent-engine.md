@@ -116,7 +116,7 @@ handoff 思路：摘要强调用户意图、约束、已验证进度、未完成
 
 OpenClaw 的公开 compaction provider 可以替换摘要，但拿不到当前模型认证；公开
 `before_compaction` / `after_compaction` hook 又不能修改压缩结果。因此
-`012-retain-user-messages-across-compaction.cjs` 只补足原生 hook 无法表达的一层：
+`011-retain-user-messages-across-compaction.cjs` 只补足原生 hook 无法表达的一层：
 从整个压缩前有效分支提取真实 user 文本，在 compaction details 中跨轮滚动保存，并在
 后续模型上下文中重放。完整性标记让重复压缩只追加上次边界之后的新输入，并能从旧版
 不完整 metadata 补收 recent tail 中的用户原话。手动压缩的顺序是“用户原话 → 摘要”；
@@ -132,12 +132,12 @@ characters，每段摘要输入合计最多保留 24,000 characters；从最新�
 工具输出不会挤占全部摘要上下文。对升级前已经存在、尚无 retention metadata 的
 compaction entry，重放层会从 JSONL 中仍保留的旧 message entries 回填一次用户原话。
 
-`013-codex-compaction-template.cjs` 替换 SDK 内建的首次、重复和 split-turn 摘要提示词、
+`012-codex-compaction-template.cjs` 替换 SDK 内建的首次、重复和 split-turn 摘要提示词、
 摘要 system wording 与回放前缀，并旁路 safeguard 强制的 `## Goal` / `## Progress`
-等结构与诊断后缀。用户原话仍由 `012` 作为独立 user 消息重放，不重复塞入 summary
+等结构与诊断后缀。用户原话仍由 `011` 作为独立 user 消息重放，不重复塞入 summary
 正文；assistant thinking 随完整 assistant 消息参与摘要，压缩后只保留其归纳结果。
 
-`012` 和 `013` 都是仅针对 OpenClaw `v2026.6.11` 生成 bundle 的精确文本 patch，并
+`011` 和 `012` 都是仅针对 OpenClaw `v2026.6.11` 生成 bundle 的精确文本 patch，并
 故意在锚点变化时失败。升级 OpenClaw 时不得把它们原样复制到新版本目录：先检查上游
 是否已提供用户原话重放、可替换摘要模板和 replay wrapper；仍需 patch 时，必须根据
 新 bundle 重新定位并重写锚点，再分别验证手动、threshold/overflow、mid-turn、重复
@@ -318,3 +318,29 @@ Patch 失效时应表现为：
 - Gateway 启动日志可见。
 - Feature 降级路径可见。
 - 文档能指向具体 patch。
+
+## Final system prompt replacements
+
+JustDo exposes ordered, system-only regular-expression replacements through
+`window.electron.openclaw.engine.getSystemPromptReplacementRules()` and
+`setSystemPromptReplacementRules(rules)`. Rules are persisted under the
+OpenClaw state directory in `system-prompt-replacements.json`.
+
+The Gateway receives the file path through
+`JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH`. Runtime patch `015` reloads changed
+rules after OpenClaw prompt hooks have completed and before prompt-cache setup,
+overflow preflight, lifecycle observation, and model submission. It updates
+the active session system prompt, so subsequent tool-loop calls use the same
+transformed value. User, assistant, and tool-history messages are not
+transformed.
+
+Rules run sequentially and contain `id`, `pattern`, optional `flags`,
+`replacement`, and optional `enabled`. They are trusted local configuration:
+invalid rules are rejected by the JustDo API, while the Gateway skips malformed
+on-disk entries without logging prompt content.
+
+Built-in rules are registered centrally in
+`src/main/openclaw/runtime/systemPromptReplacementRegistry.ts`. They run first
+and remain authoritative by `id`; rules added through IPC are persisted after
+them. Individual rule behavior is documented by co-located tests rather than
+duplicated in this architecture document.

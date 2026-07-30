@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { SystemPromptReplacementIpc } from '../../../shared/openclaw/systemPromptReplacements';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import type {
   OpenClawEngineManager,
@@ -209,6 +210,40 @@ export const registerOpenClawEngineHandlers = ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to get OpenClaw engine status',
+      };
+    }
+  });
+
+  ipcMain.handle(SystemPromptReplacementIpc.GetRules, () => {
+    try {
+      return {
+        success: true,
+        rules: getManager().getSystemPromptReplacementRules(),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to get system prompt replacement rules',
+      };
+    }
+  });
+
+  ipcMain.handle(SystemPromptReplacementIpc.SetRules, (_event, rules: unknown) => {
+    try {
+      return {
+        success: true,
+        rules: getManager().setSystemPromptReplacementRules(rules),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to set system prompt replacement rules',
       };
     }
   });

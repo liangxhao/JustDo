@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import packageJson from '../../package.json';
 import {
+  AUTHOR_NAME,
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
   PRODUCT_NAME,
   USER_DATA_DIRECTORY_NAME,
@@ -11,6 +12,7 @@ import {
 describe('product metadata', () => {
   it('derives external names from package.json without changing internal package identity', () => {
     expect(PRODUCT_NAME).toBe(packageJson.productName);
+    expect(AUTHOR_NAME).toBe(packageJson.author.name);
     expect(USER_DATA_DIRECTORY_NAME).toBe(packageJson.productName);
     expect(DEFAULT_WORKSPACE_DIRECTORY_NAME).toBe(
       packageJson.productName.toLocaleLowerCase('en-US'),

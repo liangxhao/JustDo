@@ -11,6 +11,10 @@ import {
   GatewayPortSetErrorCode,
   validateGatewayPortNumber,
 } from '../../../shared/openclaw/gatewayPort';
+import {
+  normalizeSystemPromptReplacementRules,
+  type SystemPromptReplacementRule,
+} from '../../../shared/openclaw/systemPromptReplacements';
 import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
 import { applyPortableGitRuntimeEnv } from '../../core/portableGitRuntime';
 import { appendPythonRuntimeToEnv } from '../../core/pythonRuntime';
@@ -24,6 +28,7 @@ import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
+import { mergeRegisteredSystemPromptReplacementRules } from './systemPromptReplacementRegistry';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
 type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;
@@ -159,6 +164,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private readonly gatewayPortPath: string;
   private readonly gatewayLogPath: string;
   private readonly configPath: string;
+  private readonly systemPromptReplacementRulesPath: string;
 
   private desiredVersion: string | null;
   private status: OpenClawEngineStatus;
@@ -194,10 +200,15 @@ export class OpenClawEngineManager extends EventEmitter {
     this.gatewayPortPath = path.join(this.stateDir, 'gateway-port.json');
     this.gatewayLogPath = path.join(this.logsDir, 'gateway.log');
     this.configPath = path.join(this.stateDir, 'openclaw.json');
+    this.systemPromptReplacementRulesPath = path.join(
+      this.stateDir,
+      'system-prompt-replacements.json',
+    );
 
     ensureDir(this.baseDir);
     ensureDir(this.logsDir);
     ensureDir(this.stateDir);
+    this.synchronizeRegisteredSystemPromptReplacementRules();
 
     const runtime = this.resolveRuntimeMetadata();
     this.desiredVersion = runtime.version;
@@ -235,6 +246,71 @@ export class OpenClawEngineManager extends EventEmitter {
   /** Return the current secret env vars snapshot (for change detection). */
   getSecretEnvVars(): Record<string, string> {
     return this.secretEnvVars;
+  }
+
+  /**
+   * Return built-in registrations followed by ordered persisted replacements
+   * applied only to the final system prompt.
+   */
+  getSystemPromptReplacementRules(): SystemPromptReplacementRule[] {
+    if (!fs.existsSync(this.systemPromptReplacementRulesPath)) {
+      return mergeRegisteredSystemPromptReplacementRules([]);
+    }
+    const parsed = parseJsonFile<unknown>(this.systemPromptReplacementRulesPath);
+    if (parsed === null) {
+      throw new Error('Failed to parse system prompt replacement rules');
+    }
+    return mergeRegisteredSystemPromptReplacementRules(
+      normalizeSystemPromptReplacementRules(parsed),
+    );
+  }
+
+  /**
+   * Validate and persist final system-prompt replacements. The Gateway reloads
+   * this file at the next model turn, so a restart is not required.
+   */
+  setSystemPromptReplacementRules(rules: unknown): SystemPromptReplacementRule[] {
+    const normalized = mergeRegisteredSystemPromptReplacementRules(
+      normalizeSystemPromptReplacementRules(rules),
+    );
+    this.writeSystemPromptReplacementRules(normalized);
+    console.log(
+      `[OpenClaw] Updated final system prompt replacement rules: count=${normalized.length}`,
+    );
+    return normalized;
+  }
+
+  private writeSystemPromptReplacementRules(
+    rules: readonly SystemPromptReplacementRule[],
+  ): void {
+    fs.writeFileSync(
+      this.systemPromptReplacementRulesPath,
+      `${JSON.stringify(rules, null, 2)}\n`,
+      'utf8',
+    );
+  }
+
+  private synchronizeRegisteredSystemPromptReplacementRules(): void {
+    try {
+      const existing = fs.existsSync(this.systemPromptReplacementRulesPath)
+        ? parseJsonFile<unknown>(this.systemPromptReplacementRulesPath)
+        : [];
+      if (existing === null) {
+        console.warn(
+          '[OpenClaw] Could not synchronize registered system prompt replacement rules: persisted rules are invalid JSON',
+        );
+        return;
+      }
+      const normalized = normalizeSystemPromptReplacementRules(existing);
+      const merged = mergeRegisteredSystemPromptReplacementRules(normalized);
+      if (JSON.stringify(merged) !== JSON.stringify(normalized)) {
+        this.writeSystemPromptReplacementRules(merged);
+      }
+    } catch (error) {
+      console.warn(
+        `[OpenClaw] Could not synchronize registered system prompt replacement rules: ${String(error)}`,
+      );
+    }
   }
 
   override on<U extends keyof OpenClawEngineManagerEvents>(
@@ -425,6 +501,7 @@ export class OpenClawEngineManager extends EventEmitter {
       JUSTDO_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
       JUSTDO_OPENCLAW_ENTRY: openclawEntry.replace(/\\/g, '/'),
       ...this.secretEnvVars,
+      JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH: this.systemPromptReplacementRulesPath,
     };
 
     if (!env.TZ) {

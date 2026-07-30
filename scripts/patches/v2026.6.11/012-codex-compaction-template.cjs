@@ -9,7 +9,7 @@
 // Re-audit the SDK prompt/wrapper constants and compaction-safeguard assembly,
 // then rewrite the exact anchors and verify first, repeated, and split-turn
 // summaries against the current Codex compaction sources.
-// Depends on: 012-retain-user-messages-across-compaction.cjs, which is applied
+// Depends on: 011-retain-user-messages-across-compaction.cjs, which is applied
 // first by filename order and injects sanitizeCompactionSummaryMessages.
 // Remove when: OpenClaw supports replacing (not merely extending) its
 // compaction prompt, replay wrapper, and post-summary sections through config.

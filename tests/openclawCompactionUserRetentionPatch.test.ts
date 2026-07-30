@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 
 const { applyPatch, RETAINED_USER_HELPERS } =
-  require('../scripts/patches/v2026.6.11/012-retain-user-messages-across-compaction.cjs') as {
+  require('../scripts/patches/v2026.6.11/011-retain-user-messages-across-compaction.cjs') as {
     applyPatch: (runtimeDir: string) => string[];
     RETAINED_USER_HELPERS: string;
   };

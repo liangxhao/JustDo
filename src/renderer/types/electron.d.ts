@@ -17,6 +17,8 @@ type ExtensionUpdateConfigurationResult =
 type InstalledOpenClawExtension =
   import('../../shared/openclaw/extensions').InstalledOpenClawExtension;
 type OpenClawSkillSource = import('../../shared/plugins/skills').OpenClawSkillSource;
+type SystemPromptReplacementRule =
+  import('../../shared/openclaw/systemPromptReplacements').SystemPromptReplacementRule;
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -487,6 +489,16 @@ interface IElectronAPI {
         error?: string;
         errorCode?: GatewayPortSetErrorCode;
         requiresRestart?: boolean;
+      }>;
+      getSystemPromptReplacementRules: () => Promise<{
+        success: boolean;
+        rules?: SystemPromptReplacementRule[];
+        error?: string;
+      }>;
+      setSystemPromptReplacementRules: (rules: SystemPromptReplacementRule[]) => Promise<{
+        success: boolean;
+        rules?: SystemPromptReplacementRule[];
+        error?: string;
       }>;
       openTerminal: () => Promise<{
         success: boolean;
