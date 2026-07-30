@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { readSessionGoal } from './sessionRuntime';
+import { createSingleFlightTtlLookup, readSessionGoal, readUsage } from './sessionRuntime';
 
 describe('readSessionGoal', () => {
   it('normalizes a valid Gateway goal', () => {
@@ -61,5 +61,101 @@ describe('readSessionGoal', () => {
         tokenBudget: -10,
       }),
     ).not.toHaveProperty('tokenBudget');
+  });
+});
+
+describe('readUsage', () => {
+  it('uses the live prompt estimate while the persisted total is stale', () => {
+    expect(
+      readUsage({
+        totalTokens: 12_000,
+        totalTokensFresh: false,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          estimatedPromptTokens: 18_500,
+          contextTokenBudget: 180_000,
+        },
+      }),
+    ).toEqual({
+      totalTokens: 18_500,
+      contextTokens: 200_000,
+      totalTokensFresh: true,
+    });
+  });
+
+  it('keeps a fresh Gateway total ahead of the prompt estimate', () => {
+    expect(
+      readUsage({
+        totalTokens: 21_000,
+        totalTokensFresh: true,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          estimatedPromptTokens: 18_500,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 21_000,
+      totalTokensFresh: true,
+    });
+  });
+
+  it('uses the live estimate during a run even when transcript fallback looks fresh', () => {
+    expect(
+      readUsage({
+        totalTokens: 21_000,
+        totalTokensFresh: true,
+        hasActiveRun: true,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          estimatedPromptTokens: 32_500,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 32_500,
+      totalTokensFresh: true,
+    });
+  });
+});
+
+describe('createSingleFlightTtlLookup', () => {
+  it('coalesces concurrent calls and reuses a settled value within the TTL', async () => {
+    let currentTime = 100;
+    let resolveLoad: ((value: string) => void) | undefined;
+    const loader = vi.fn(
+      () =>
+        new Promise<string>(resolve => {
+          resolveLoad = resolve;
+        }),
+    );
+    const lookup = createSingleFlightTtlLookup(loader, 750, () => currentTime);
+
+    const first = lookup('session-1');
+    const concurrent = lookup('session-1');
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    resolveLoad?.('value-1');
+    await expect(Promise.all([first, concurrent])).resolves.toEqual(['value-1', 'value-1']);
+
+    currentTime += 500;
+    await expect(lookup('session-1')).resolves.toBe('value-1');
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes after expiry and does not cache rejected calls', async () => {
+    let currentTime = 100;
+    const loader = vi
+      .fn<(key: string) => Promise<string>>()
+      .mockRejectedValueOnce(new Error('gateway unavailable'))
+      .mockResolvedValueOnce('value-2')
+      .mockResolvedValueOnce('value-3');
+    const lookup = createSingleFlightTtlLookup(loader, 750, () => currentTime);
+
+    await expect(lookup('session-1')).rejects.toThrow('gateway unavailable');
+    await expect(lookup('session-1')).resolves.toBe('value-2');
+    expect(loader).toHaveBeenCalledTimes(2);
+
+    currentTime += 751;
+    await expect(lookup('session-1')).resolves.toBe('value-3');
+    expect(loader).toHaveBeenCalledTimes(3);
   });
 });

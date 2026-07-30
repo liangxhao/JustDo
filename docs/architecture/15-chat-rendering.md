@@ -126,7 +126,8 @@ process summary 中供排查。该展示完全属于 Lit message pipeline，与 
 
 - 覆盖 `active`、`paused`、`blocked`、`usage_limited`、`budget_limited`、`complete` 全部状态。
 - renderer 在提交创建型 `/goal` 命令时先从命令参数生成仅用于展示的 optimistic objective，因此首页首轮切换到临时 session 后也会立即出现卡片；一旦 Gateway 返回权威 `goal`，立即替换 optimistic 状态。
-- 运行期间每 1.5 秒读取一次 `sessions.list` 中的 Goal，空闲但 Goal 仍为 `active` 时降频到每 5 秒；运行状态查询不得因 session active 而被主进程拒绝。终态停止轮询，后续控制命令和新一轮运行会重新触发刷新。
+- 运行期间每 3 秒读取一次 `sessions.list` 中的 Goal，空闲但 Goal 仍为 `active` 时降频到每 5 秒；运行状态查询不得因 session active 而被主进程拒绝。终态停止轮询，后续控制命令和新一轮运行会重新触发刷新。
+- 输入区的 context usage 在运行期间保持可见，并每 3 秒查询一次 Gateway session；兼容补丁会在首次 prompt 及每次工具结果进入下一次模型调用前，把权威的 `contextBudgetStatus.estimatedPromptTokens` 异步发布到 session state，而不改写 OpenClaw 的 `totalTokensFresh`。active run 始终优先展示该估算，回合结束后立即刷新并做两次短重试以接收最终值；普通空闲加载成功后不再重试。瞬时查询失败保留最近一次有效值。Goal 与 usage 查询通过 Main 的短 TTL single-flight 缓存复用同一份 `sessions.list` 结果。
 - `ChatController.transcript.activeTurn` 被纯 selector 投影为 `starting`、`thinking`、`tool`、`responding`、`compacting` 五种瞬时执行阶段，卡片显示当前阶段、已执行工具数量和本轮耗时。Goal UI 不读取旧 Thinking/Tool/stream overlay。它们是运行活动提示，不伪装成可量化的任务完成百分比。
 - 展示 objective、最后状态备注、token 使用量及预算进度。
 - OpenClaw 在缺少 fresh token baseline 时会把首个 Goal 回合结束后的快照作为基线，此时自动回复可能产生不可靠的 `Tokens used: 0`；JustDo 会隐藏该零值及零进度，取得正数用量后再展示。

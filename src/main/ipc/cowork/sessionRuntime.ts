@@ -14,6 +14,8 @@ interface Dependencies {
   getRuntime: () => OpenClawRuntimeAdapter | null;
 }
 
+const SESSION_LOOKUP_CACHE_TTL_MS = 750;
+
 const nonNegativeNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 
@@ -60,18 +62,26 @@ export const readSessionGoal = (value: unknown): SessionGoal | undefined => {
   };
 };
 
-const readUsage = (session: Record<string, unknown>) => {
+export const readUsage = (session: Record<string, unknown>) => {
   const budget =
     session.contextBudgetStatus && typeof session.contextBudgetStatus === 'object'
       ? (session.contextBudgetStatus as Record<string, unknown>)
       : undefined;
+  const reportedTotalTokens =
+    nonNegativeNumber(session.totalTokens) ??
+    nonNegativeNumber(session.usedTokens) ??
+    nonNegativeNumber(session.contextUsedTokens) ??
+    nonNegativeNumber(session.currentTokens);
+  const estimatedPromptTokens = nonNegativeNumber(budget?.estimatedPromptTokens);
+  const reportedTotalTokensFresh =
+    typeof session.totalTokensFresh === 'boolean' ? session.totalTokensFresh : true;
+  const hasActiveRun =
+    session.hasActiveRun === true || session.status === 'running' || session.runState === 'active';
   return {
     totalTokens:
-      nonNegativeNumber(session.totalTokens) ??
-      nonNegativeNumber(session.usedTokens) ??
-      nonNegativeNumber(session.contextUsedTokens) ??
-      nonNegativeNumber(session.currentTokens) ??
-      nonNegativeNumber(budget?.estimatedPromptTokens) ??
+      (hasActiveRun || !reportedTotalTokensFresh ? estimatedPromptTokens : reportedTotalTokens) ??
+      reportedTotalTokens ??
+      estimatedPromptTokens ??
       0,
     contextTokens:
       nonNegativeNumber(session.contextTokens) ??
@@ -81,19 +91,17 @@ const readUsage = (session: Record<string, unknown>) => {
       nonNegativeNumber(session.totalContextTokens) ??
       nonNegativeNumber(budget?.contextTokenBudget) ??
       0,
-    totalTokensFresh:
-      typeof session.totalTokensFresh === 'boolean'
-        ? session.totalTokensFresh || nonNegativeNumber(budget?.estimatedPromptTokens) !== undefined
-        : true,
+    totalTokensFresh: reportedTotalTokensFresh || estimatedPromptTokens !== undefined,
   };
 };
 
 type GatewaySession = { key: string } & Record<string, unknown>;
+type GatewaySessionResult = { session?: GatewaySession; error?: string };
 
-const findGatewaySession = async (
+const queryGatewaySession = async (
   dependencies: Pick<Dependencies, 'getCoworkStore' | 'getRuntime'>,
   sessionId: string,
-): Promise<{ session?: GatewaySession; error?: string }> => {
+): Promise<GatewaySessionResult> => {
   const runtime = dependencies.getRuntime();
   if (!runtime) return { error: 'OpenClaw runtime adapter not available' };
   const client = runtime.getGatewayClient();
@@ -119,16 +127,50 @@ const findGatewaySession = async (
   return session ? { session } : { error: 'Session not found in gateway' };
 };
 
+export const createSingleFlightTtlLookup = <T>(
+  loader: (key: string) => Promise<T>,
+  ttlMs: number,
+  now: () => number = Date.now,
+): ((key: string) => Promise<T>) => {
+  const entries = new Map<string, { promise: Promise<T>; settled: boolean; expiresAt: number }>();
+
+  return (key: string) => {
+    const cached = entries.get(key);
+    if (cached && (!cached.settled || cached.expiresAt > now())) {
+      return cached.promise;
+    }
+
+    let entry: { promise: Promise<T>; settled: boolean; expiresAt: number };
+    const promise = loader(key)
+      .then(result => {
+        entry.settled = true;
+        entry.expiresAt = now() + ttlMs;
+        return result;
+      })
+      .catch(error => {
+        if (entries.get(key) === entry) entries.delete(key);
+        throw error;
+      });
+    entry = { promise, settled: false, expiresAt: 0 };
+    entries.set(key, entry);
+    return promise;
+  };
+};
+
 export const registerCoworkSessionRuntimeHandlers = ({
   getCoworkStore,
   getCoworkEngineRouter,
   getRuntime,
 }: Dependencies): void => {
   const sessionDependencies = { getCoworkStore, getRuntime };
+  const findGatewaySession = createSingleFlightTtlLookup(
+    sessionId => queryGatewaySession(sessionDependencies, sessionId),
+    SESSION_LOOKUP_CACHE_TTL_MS,
+  );
 
   ipcMain.handle('cowork:session:goal', async (_event, sessionId: string) => {
     try {
-      const result = await findGatewaySession(sessionDependencies, sessionId);
+      const result = await findGatewaySession(sessionId);
       if (!result.session) return { success: false, error: result.error };
       return { success: true, goal: readSessionGoal(result.session.goal) };
     } catch (error) {
@@ -141,7 +183,7 @@ export const registerCoworkSessionRuntimeHandlers = ({
 
   ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
     try {
-      const result = await findGatewaySession(sessionDependencies, sessionId);
+      const result = await findGatewaySession(sessionId);
       if (!result.session) return { success: false, error: result.error };
       const usage = readUsage(result.session);
       if (usage.totalTokens <= 0 || usage.contextTokens <= 0) {

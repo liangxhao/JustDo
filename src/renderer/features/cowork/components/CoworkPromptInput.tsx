@@ -14,6 +14,7 @@ import {
   resolveAutomaticAgentModelRepair,
 } from '@/features/cowork/components/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
+import { startContextUsageRefresh } from '@/features/cowork/components/contextUsageRefresh';
 import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import { getGoalRefreshDelay } from '@/features/cowork/components/goalRuntimeRefresh';
@@ -257,6 +258,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [pendingGoalObjective, setPendingGoalObjective] = useState<string | null>(
       initialGoalObjective,
     );
+    const isRunActive = isStreaming || goalRunProgress !== null;
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
@@ -268,6 +270,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const slashCommandRefreshPendingRef = useRef(false);
     const slashCommandRefreshSeqRef = useRef(0);
     const latestValueRef = useRef(value);
+    const contextUsageRunRef = useRef<{ sessionId?: string; active: boolean }>({
+      sessionId,
+      active: isRunActive,
+    });
 
     useEffect(() => {
       modelSelectionContextRef.current += 1;
@@ -941,8 +947,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       const percentage = Math.round((usedTokens / contextTokens) * 100);
       return `${formatContextLength(usedTokens)} / ${formatContextLength(contextTokens)} · ${percentage}%`;
     }, [contextUsage, effectiveSelectedModel?.contextLength]);
-    const contextUsageStatusText =
-      sessionId && !isStreaming && contextUsageText ? contextUsageText : null;
+    const contextUsageStatusText = sessionId && contextUsageText ? contextUsageText : null;
     const contextUsageBadge = contextUsageStatusText ? (
       <span
         className="inline-flex h-7 max-w-[190px] items-center rounded-md border border-border/60 bg-surface-raised/70 px-2 text-[11px] font-medium leading-none text-secondary tabular-nums select-none shadow-subtle"
@@ -1432,7 +1437,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       let cancelled = false;
       let timeoutId: number | null = null;
       let requestInFlight = false;
-      const isRunActive = isStreaming || goalRunProgress !== null;
       const schedule = (goal?: SessionGoal) => {
         if (cancelled) return;
         const delay = getGoalRefreshDelay(isRunActive, goal?.status);
@@ -1471,52 +1475,33 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         cancelled = true;
         if (timeoutId !== null) window.clearTimeout(timeoutId);
       };
-    }, [sessionId, isStreaming, goalRunProgress]);
+    }, [sessionId, isRunActive]);
 
-    // Usage is only meaningful after Gateway has completed at least one turn.
+    // During a run, Gateway can expose a live prompt estimate before the final usage lands.
+    // Keep the last valid value visible and refresh it without overlapping requests.
     useEffect(() => {
-      const isRunActive = isStreaming || goalRunProgress !== null;
-      if (!sessionId || sessionId.startsWith('temp-') || !hasAssistantMessage || isRunActive) {
+      const previousRun = contextUsageRunRef.current;
+      const justFinishedRun =
+        previousRun.sessionId === sessionId && previousRun.active && !isRunActive;
+      contextUsageRunRef.current = { sessionId, active: isRunActive };
+      if (!sessionId || sessionId.startsWith('temp-') || (!hasAssistantMessage && !isRunActive)) {
         return;
       }
-      let cancelled = false;
-      let retryTimeoutId: number | null = null;
-      let retriesRemaining = 2;
-      const scheduleRetry = () => {
-        if (cancelled || retriesRemaining <= 0) return;
-        retriesRemaining -= 1;
-        retryTimeoutId = window.setTimeout(fetchUsage, 500);
-      };
-      const fetchUsage = async () => {
-        try {
-          const result = await window.electron.cowork.getContextUsage(sessionId);
-          if (cancelled) return;
-          if (!result.success || result.totalTokens == null) {
-            scheduleRetry();
-            return;
-          }
+      return startContextUsageRefresh({
+        isRunActive,
+        retryAfterSuccess: justFinishedRun,
+        fetchUsage: () => window.electron.cowork.getContextUsage(sessionId),
+        onUsage: result => {
           setContextUsage({
             totalTokens: result.totalTokens,
             contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
             totalTokensFresh: result.totalTokensFresh ?? true,
           });
-        } catch {
-          // Runtime details are supplementary; keep the last known state on transient failures.
-          scheduleRetry();
-        }
-      };
-      void fetchUsage();
-      return () => {
-        cancelled = true;
-        if (retryTimeoutId !== null) window.clearTimeout(retryTimeoutId);
-      };
-    }, [
-      sessionId,
-      isStreaming,
-      goalRunProgress,
-      hasAssistantMessage,
-      effectiveSelectedModel?.contextLength,
-    ]);
+        },
+        schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        cancelSchedule: handle => window.clearTimeout(handle),
+      });
+    }, [sessionId, isRunActive, hasAssistantMessage, effectiveSelectedModel?.contextLength]);
 
     const handleGoalCommand = useCallback(
       (command: string) => {

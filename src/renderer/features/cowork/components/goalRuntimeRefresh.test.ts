@@ -4,7 +4,7 @@ import { getGoalRefreshDelay } from './goalRuntimeRefresh';
 
 describe('getGoalRefreshDelay', () => {
   it('refreshes quickly during a run and backs off for an idle active goal', () => {
-    expect(getGoalRefreshDelay(true, 'active')).toBe(1_500);
+    expect(getGoalRefreshDelay(true, 'active')).toBe(3_000);
     expect(getGoalRefreshDelay(false, 'active')).toBe(5_000);
   });
 
