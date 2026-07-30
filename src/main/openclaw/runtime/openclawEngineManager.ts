@@ -12,6 +12,7 @@ import {
   validateGatewayPortNumber,
 } from '../../../shared/openclaw/gatewayPort';
 import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
+import { applyPortableGitRuntimeEnv } from '../../core/portableGitRuntime';
 import { appendPythonRuntimeToEnv } from '../../core/pythonRuntime';
 import {
   applyTrustedCertificateEnv,
@@ -442,6 +443,7 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
+    applyPortableGitRuntimeEnv(env as Record<string, string | undefined>);
     applyDependencyManagerConfigEnv(env, app.getPath('userData'));
     applyTrustedCertificateEnv(
       env,
