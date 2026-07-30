@@ -95,6 +95,15 @@ export const readUsage = (session: Record<string, unknown>) => {
   };
 };
 
+export const readGatewaySessionId = (session: Record<string, unknown>): string | undefined => {
+  for (const value of [session.sessionId, session.id]) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+};
+
 type GatewaySession = { key: string } & Record<string, unknown>;
 type GatewaySessionResult = { session?: GatewaySession; error?: string };
 
@@ -167,6 +176,22 @@ export const registerCoworkSessionRuntimeHandlers = ({
     sessionId => queryGatewaySession(sessionDependencies, sessionId),
     SESSION_LOOKUP_CACHE_TTL_MS,
   );
+
+  ipcMain.handle('cowork:session:gatewaySessionId', async (_event, sessionId: string) => {
+    try {
+      const result = await findGatewaySession(sessionId);
+      if (!result.session) return { success: false, error: result.error };
+      const gatewaySessionId = readGatewaySessionId(result.session);
+      return gatewaySessionId
+        ? { success: true, sessionId: gatewaySessionId }
+        : { success: false, error: 'Gateway session has no sessionId' };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get Gateway session ID',
+      };
+    }
+  });
 
   ipcMain.handle('cowork:session:goal', async (_event, sessionId: string) => {
     try {

@@ -425,7 +425,7 @@ const stripGatewayInjectedLogHint = (
 
   return content.flatMap(item => {
     if (item.type !== 'text' || typeof item.text !== 'string') return [item];
-    const text = item.text.replaceAll(GATEWAY_INJECTED_LOG_HINT, '').trim();
+    const text = item.text.split(GATEWAY_INJECTED_LOG_HINT).join('').trim();
     return text ? [{ ...item, text }] : [];
   });
 };

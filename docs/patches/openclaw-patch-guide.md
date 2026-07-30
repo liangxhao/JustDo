@@ -39,6 +39,7 @@ scripts/patches/v2026.6.11/
 | `013-default-cron-delivery-none.cjs` | Normalize native-tool agent-turn cron add/update requests to in-app delivery when `delivery` is omitted or a targetless `announce` cannot resolve an external destination |
 | `014-live-context-budget-status.cjs` | Publish the authoritative pre-prompt context estimate to session state during active runs |
 | `015-final-system-prompt-replacements.cjs` | Apply JustDo-managed ordered regex rules to the final system prompt |
+| `016-litellm-session-id.cjs` | Forward the active OpenClaw session UUID as `metadata.session_id` on OpenAI-compatible model requests |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -154,6 +155,7 @@ Patch removal is a real change:
 | `013-default-cron-delivery-none.cjs` | Scheduled-task delivery default | Remove when upstream exposes a configurable default cron delivery mode |
 | `014-live-context-budget-status.cjs` | Missing live Gateway usage state | Remove when Gateway exposes current context budget status during active runs |
 | `015-final-system-prompt-replacements.cjs` | Missing final prompt transform | Remove when Gateway exposes a final, system-only prompt transform hook |
+| `016-litellm-session-id.cjs` | Missing provider request correlation | Remove when OpenClaw forwards its session UUID as OpenAI-compatible request metadata |
 
 ### Compaction patch upgrade warning
 

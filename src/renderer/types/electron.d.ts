@@ -606,6 +606,9 @@ interface IElectronAPI {
     getSession: (
       sessionId: string,
     ) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
+    getGatewaySessionId: (
+      sessionId: string,
+    ) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
     remoteManaged: (
       sessionId: string,
     ) => Promise<{ success: boolean; remoteManaged: boolean; error?: string }>;

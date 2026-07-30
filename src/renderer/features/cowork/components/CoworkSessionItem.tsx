@@ -1,5 +1,5 @@
 import { useDraggable } from '@dnd-kit/core';
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { DocumentDuplicateIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CoworkSessionStatus, CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
@@ -139,7 +139,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       closeMenu();
       return;
     }
-    const menuHeight = showBatchOption ? 120 : 92;
+    const menuItemCount =
+      3 + (showBatchOption ? 1 : 0) + (onMoveToGroup && groups.length > 0 ? 1 : 0);
+    const menuHeight = menuItemCount * 28 + 8;
     const position = calculateMenuPosition(e.clientX, e.clientY, menuHeight);
     if (position) {
       setMenuPosition(position);
@@ -216,6 +218,32 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     [closeMenu, onEnterBatchMode],
   );
 
+  const handleCopySessionId = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      closeMenu();
+      try {
+        const result = await window.electron.cowork.getGatewaySessionId(session.id);
+        if (!result.success || !result.sessionId) {
+          throw new Error(result.error || 'Gateway session ID is unavailable');
+        }
+        await navigator.clipboard.writeText(result.sessionId);
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('copySessionIdSuccess'),
+          }),
+        );
+      } catch {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('copySessionIdFailed'),
+          }),
+        );
+      }
+    },
+    [closeMenu, session.id],
+  );
+
   useEffect(() => {
     if (!menuPosition) return;
     const handleClickOutside = (event: MouseEvent) => {
@@ -270,6 +298,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
   const batchLabel = i18nService.t('batchOperations');
   const moveToGroupLabel = i18nService.t('moveToGroup');
+  const copySessionIdLabel = i18nService.t('copySessionId');
 
   interface MenuItem {
     key: string;
@@ -284,6 +313,12 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const menuItems = useMemo(() => {
     const items: MenuItem[] = [
       { key: 'rename', label: renameLabel, onClick: handleRenameClick, tone: 'neutral' as const },
+      {
+        key: 'copySessionId',
+        label: copySessionIdLabel,
+        onClick: handleCopySessionId,
+        tone: 'neutral' as const,
+      },
       { key: 'delete', label: deleteLabel, onClick: handleDeleteClick, tone: 'danger' as const },
     ];
     if (showBatchOption) {
@@ -308,8 +343,10 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     return items;
   }, [
     batchLabel,
+    copySessionIdLabel,
     deleteLabel,
     handleBatchClick,
+    handleCopySessionId,
     handleDeleteClick,
     handleRenameClick,
     renameLabel,
@@ -438,6 +475,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
             >
               {item.key === 'batch' && <ListChecksIcon className="h-4 w-4" />}
               {item.key === 'rename' && <PencilSquareIcon className="h-4 w-4" />}
+              {item.key === 'copySessionId' && <DocumentDuplicateIcon className="h-4 w-4" />}
               {item.key === 'delete' && <TrashIcon className="h-4 w-4" />}
               {item.key === 'moveToGroup' && (
                 <span className="h-4 w-4 flex items-center justify-center">→</span>

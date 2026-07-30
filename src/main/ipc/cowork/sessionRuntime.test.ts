@@ -1,6 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createSingleFlightTtlLookup, readSessionGoal, readUsage } from './sessionRuntime';
+import {
+  createSingleFlightTtlLookup,
+  readGatewaySessionId,
+  readSessionGoal,
+  readUsage,
+} from './sessionRuntime';
+
+describe('readGatewaySessionId', () => {
+  it('prefers the Gateway sessionId and normalizes whitespace', () => {
+    expect(readGatewaySessionId({ sessionId: ' gateway-session-1 ', id: 'fallback-id' })).toBe(
+      'gateway-session-1',
+    );
+  });
+
+  it('falls back to id and rejects missing identifiers', () => {
+    expect(readGatewaySessionId({ sessionId: ' ', id: 'gateway-session-2' })).toBe(
+      'gateway-session-2',
+    );
+    expect(readGatewaySessionId({ sessionId: '  ' })).toBeUndefined();
+  });
+});
 
 describe('readSessionGoal', () => {
   it('normalizes a valid Gateway goal', () => {

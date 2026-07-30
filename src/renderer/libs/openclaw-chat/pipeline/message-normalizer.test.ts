@@ -232,6 +232,17 @@ describe('normalizeMessage gateway-injected log hint', () => {
     expect(message.content).toEqual([]);
   });
 
+  test('removes every OpenClaw log hint from gateway-injected messages', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content:
+        'Task failed\nLog: openclaw logs --follow\nRetry failed\nLog: openclaw logs --follow',
+      modelName: 'gateway-injected',
+    });
+
+    expect(message.content).toEqual([{ type: 'text', text: 'Task failed\n\nRetry failed' }]);
+  });
+
   test('keeps the same text from regular assistant messages', () => {
     const message = normalizeMessage({
       role: 'assistant',

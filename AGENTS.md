@@ -134,7 +134,8 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 `012-codex-compaction-template.cjs`,
 `013-default-cron-delivery-none.cjs`,
 `014-live-context-budget-status.cjs`,
-`015-final-system-prompt-replacements.cjs`.
+`015-final-system-prompt-replacements.cjs`,
+`016-litellm-session-id.cjs`.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 
