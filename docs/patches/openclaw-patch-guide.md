@@ -40,6 +40,7 @@ scripts/patches/v2026.6.11/
 | `014-live-context-budget-status.cjs` | Publish the authoritative pre-prompt context estimate to session state during active runs |
 | `015-final-system-prompt-replacements.cjs` | Apply JustDo-managed ordered regex rules to the final system prompt |
 | `016-litellm-session-id.cjs` | Forward the active OpenClaw session UUID as `metadata.session_id` on chat and safeguard-compaction OpenAI-compatible model requests |
+| `017-tool-error-reasoning-recovery.cjs` | Retry reasoning-only post-tool-error turns with bounded request-only user recovery messages |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -161,6 +162,7 @@ Patch removal is a real change:
 | `014-live-context-budget-status.cjs` | Missing live Gateway usage state | Remove when Gateway exposes current context budget status during active runs |
 | `015-final-system-prompt-replacements.cjs` | Missing final prompt transform | Remove when Gateway exposes a final, system-only prompt transform hook |
 | `016-litellm-session-id.cjs` | Missing provider request correlation | Remove when OpenClaw forwards its session UUID as OpenAI-compatible request metadata |
+| `017-tool-error-reasoning-recovery.cjs` | Reasoning-only turns silently stop after tool errors | Remove when OpenClaw supports bounded request-only recovery messages without transcript persistence |
 
 ### Compaction patch upgrade warning
 
