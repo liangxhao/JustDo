@@ -1,6 +1,9 @@
 import { ipcMain, session } from 'electron';
 
-import { applyMainProcessOutboundHeaderPolicy } from '../../core/mainProcessFetch';
+import {
+  applyMainProcessOutboundHeaderPolicy,
+  MainProcessOutboundHeaderSource,
+} from '../../core/mainProcessFetch';
 
 interface ApiFetchOptions {
   url: string;
@@ -42,7 +45,11 @@ export const registerNetworkHandlers = (): void => {
     };
 
     try {
-      const headers = applyMainProcessOutboundHeaderPolicy(options.url, options.headers);
+      const headers = applyMainProcessOutboundHeaderPolicy(
+        options.url,
+        options.headers,
+        MainProcessOutboundHeaderSource.RendererFetch,
+      );
       return await doFetch(headers);
     } catch (error) {
       console.error(

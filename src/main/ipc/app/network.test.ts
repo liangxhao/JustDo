@@ -23,6 +23,10 @@ vi.mock('electron', () => ({
 
 vi.mock('../../core/mainProcessFetch', () => ({
   applyMainProcessOutboundHeaderPolicy: mocks.applyMainProcessOutboundHeaderPolicy,
+  MainProcessOutboundHeaderSource: {
+    RendererFetch: 'renderer-fetch',
+    SessionTitle: 'session-title',
+  },
 }));
 
 import { registerNetworkHandlers } from './network';
@@ -69,6 +73,7 @@ test('applies the outbound-header policy to API fetch requests', async () => {
   expect(mocks.applyMainProcessOutboundHeaderPolicy).toHaveBeenCalledWith(
     'https://api.deepseek.com/chat/completions',
     requestHeaders,
+    'renderer-fetch',
   );
   expect(mocks.fetch).toHaveBeenCalledWith(
     'https://api.deepseek.com/chat/completions',

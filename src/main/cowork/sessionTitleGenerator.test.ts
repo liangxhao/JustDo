@@ -37,7 +37,10 @@ test('generateTitle sends the Gateway session ID as LiteLLM metadata', async () 
   const [url, init] = fetchMock.mock.calls[0];
   expect(url).toBe('https://model.example/v1/chat/completions');
   expect(init?.headers).toEqual({
+    Accept: 'application/json',
     'Content-Type': 'application/json',
+    'Content-Length': String(Buffer.byteLength(String(init?.body), 'utf8')),
+    'User-Agent': 'OpenAI/JS 6.39.1',
     Authorization: 'Bearer secret-key',
   });
   const requestBody = JSON.parse(String(init?.body));

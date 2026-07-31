@@ -21,6 +21,14 @@ const resolveConfiguredProxy = async (requestUrl: string): Promise<string | null
   return resolveSystemProxyUrl(requestUrl);
 };
 
+export const MainProcessOutboundHeaderSource = {
+  RendererFetch: 'renderer-fetch',
+  SessionTitle: 'session-title',
+} as const;
+
+export type MainProcessOutboundHeaderSource =
+  (typeof MainProcessOutboundHeaderSource)[keyof typeof MainProcessOutboundHeaderSource];
+
 /** Main-process fetch transport. It deliberately has no outbound-header policy. */
 export const mainProcessFetch = async (
   requestUrl: string,
@@ -86,7 +94,8 @@ export const mainProcessFetch = async (
 
 export const applyMainProcessOutboundHeaderPolicy = (
   requestUrl: string,
-  requestHeaders?: HeadersInit,
+  requestHeaders: HeadersInit | undefined,
+  source: MainProcessOutboundHeaderSource,
 ): Record<string, string> => {
   const headers = Object.fromEntries(new Headers(requestHeaders).entries());
   const policy = resolveOutboundHeaderProxyConfig(getOutboundHeaderPolicyConfig());
@@ -95,9 +104,13 @@ export const applyMainProcessOutboundHeaderPolicy = (
   }
 
   const values = getOutboundHeaderUserInfo(undefined, policy.headerNames);
-  const injectedHeaderCount = applyOutboundHeaders(headers, values);
+  const injectedHeaderCount = applyOutboundHeaders(headers, values, headerName =>
+    console.warn(
+      `[MainProcessOutboundHeaderPolicy] source=${source} skipped unsafe outbound header value: ${headerName}`,
+    ),
+  );
   console.log(
-    `[OutboundHeaderProxy] outbound header policy matched requestId=${crypto.randomUUID()} origin=${new URL(requestUrl).origin} matched=true injectedHeaderCount=${injectedHeaderCount}`,
+    `[MainProcessOutboundHeaderPolicy] source=${source} outbound header policy matched requestId=${crypto.randomUUID()} origin=${new URL(requestUrl).origin} matched=true injectedHeaderCount=${injectedHeaderCount}`,
   );
   return headers;
 };
@@ -107,6 +120,10 @@ export const mainProcessTitleFetch = async (
   requestUrl: string,
   init?: RequestInit,
 ): Promise<Response> => {
-  const headers = applyMainProcessOutboundHeaderPolicy(requestUrl, init?.headers);
+  const headers = applyMainProcessOutboundHeaderPolicy(
+    requestUrl,
+    init?.headers,
+    MainProcessOutboundHeaderSource.SessionTitle,
+  );
   return mainProcessFetch(requestUrl, { ...init, headers });
 };

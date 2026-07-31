@@ -105,11 +105,13 @@ export const isOutboundHeaderProxyActive = (config: OutboundHeaderProxyConfig): 
 export const applyOutboundHeaders = (
   headers: Record<string, string | string[] | undefined>,
   headerValues: Readonly<Record<string, string>>,
+  warnUnsafeValue: (headerName: string) => void = headerName =>
+    console.warn(`[OutboundHeaderProxy] Skipped unsafe outbound header value: ${headerName}`),
 ): number => {
   let injectedHeaderCount = 0;
   for (const [headerName, value] of Object.entries(headerValues)) {
     if (!HTTP_HEADER_VALUE_PATTERN.test(value)) {
-      console.warn(`[OutboundHeaderProxy] Skipped unsafe outbound header value: ${headerName}`);
+      warnUnsafeValue(headerName);
       continue;
     }
     const existingKey =

@@ -8,7 +8,12 @@ import path from 'path';
 import tls from 'tls';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { mainProcessFetch, mainProcessTitleFetch } from './mainProcessFetch';
+import {
+  applyMainProcessOutboundHeaderPolicy,
+  mainProcessFetch,
+  MainProcessOutboundHeaderSource,
+  mainProcessTitleFetch,
+} from './mainProcessFetch';
 import {
   captureOutboundHeaderStartupEnabled,
   DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
@@ -133,18 +138,47 @@ test('injects configured headers only for a whitelisted Main title request', asy
     const injectionLogs = injectionLogSpy.mock.calls.filter(
       ([message]) =>
         typeof message === 'string' &&
-        message.startsWith('[OutboundHeaderProxy] outbound header policy matched '),
+        message.startsWith(
+          '[MainProcessOutboundHeaderPolicy] source=session-title outbound header policy matched ',
+        ),
     );
     expect(injectionLogs).toHaveLength(1);
     expect(injectionLogs[0]).toHaveLength(1);
     expect(String(injectionLogs[0][0])).toMatch(
-      /^\[OutboundHeaderProxy\] outbound header policy matched requestId=[0-9a-f-]+ origin=http:\/\/model\.example matched=true injectedHeaderCount=1$/,
+      /^\[MainProcessOutboundHeaderPolicy\] source=session-title outbound header policy matched requestId=[0-9a-f-]+ origin=http:\/\/model\.example matched=true injectedHeaderCount=1$/,
     );
   } finally {
     injectionLogSpy.mockRestore();
     const { setFixedProxyUrl } = await import('./systemProxy');
     setFixedProxyUrl(null);
     await new Promise<void>(resolve => proxyServer.close(() => resolve()));
+  }
+});
+
+test('identifies Main title requests when skipping unsafe outbound header values', () => {
+  const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const userInfoPath = writeUserInfo(JSON.stringify({ 'X-User-Account': '用户-123' }));
+  const configPath = writePolicyConfig({
+    overwrite: false,
+    enabled: true,
+    baseUrlWhitelist: ['http://model.example/v1/'],
+    headerNames: ['X-User-Account'],
+  });
+  updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath);
+
+  try {
+    expect(
+      applyMainProcessOutboundHeaderPolicy(
+        'http://model.example/v1/title',
+        undefined,
+        MainProcessOutboundHeaderSource.SessionTitle,
+      ),
+    ).toEqual({});
+    expect(warningSpy).toHaveBeenCalledWith(
+      '[MainProcessOutboundHeaderPolicy] source=session-title skipped unsafe outbound header value: X-User-Account',
+    );
+  } finally {
+    warningSpy.mockRestore();
   }
 });
 
@@ -552,18 +586,26 @@ test('injects an immutable header snapshot into 100 concurrent request header ob
 
 test('skips unsafe outbound header values during injection', () => {
   const headers = { untouched: 'yes' };
+  const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-  expect(
-    applyOutboundHeaders(headers, {
+  try {
+    expect(
+      applyOutboundHeaders(headers, {
+        [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
+        [HEADER_NAMES.COOKIE]: 'Cookie: a=b\r\nHost: example.com',
+      }),
+    ).toBe(1);
+
+    expect(headers).toEqual({
       [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
-      [HEADER_NAMES.COOKIE]: 'Cookie: a=b\r\nHost: example.com',
-    }),
-  ).toBe(1);
-
-  expect(headers).toEqual({
-    [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
-    untouched: 'yes',
-  });
+      untouched: 'yes',
+    });
+    expect(warningSpy).toHaveBeenCalledWith(
+      '[OutboundHeaderProxy] Skipped unsafe outbound header value: X-Cookie',
+    );
+  } finally {
+    warningSpy.mockRestore();
+  }
 });
 
 test('normalizes the static policy and ignores invalid base URLs', () => {
