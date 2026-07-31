@@ -136,6 +136,11 @@ compaction entry，重放层会从 JSONL 中仍保留的旧 message entries 回�
 摘要 system wording 与回放前缀，并旁路 safeguard 强制的 `## Goal` / `## Progress`
 等结构与诊断后缀。用户原话仍由 `011` 作为独立 user 消息重放，不重复塞入 summary
 正文；assistant thinking 随完整 assistant 消息参与摘要，压缩后只保留其归纳结果。
+`016-litellm-session-id.cjs` 同时覆盖普通 agent stream 与 safeguard 自己的分阶段摘要
+调用；后者原生通过 `generateSummary2()` 直连模型，不复用会话 stream。补丁把当前
+OpenClaw session UUID 传入每个摘要 chunk，并以 `metadata.session_id` 注入
+OpenAI-compatible 请求，因此手动、threshold、overflow 和 mid-turn 压缩都能在
+LiteLLM 中与原会话关联。
 
 `011` 和 `012` 都是仅针对 OpenClaw `v2026.6.11` 生成 bundle 的精确文本 patch，并
 故意在锚点变化时失败。升级 OpenClaw 时不得把它们原样复制到新版本目录：先检查上游
