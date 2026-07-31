@@ -882,11 +882,11 @@ class CoworkService {
     return this.openClawStatus;
   }
 
-  async generateSessionTitle(prompt: string | null): Promise<string | null> {
+  async generateSessionTitle(prompt: string | null, sessionId: string): Promise<string | null> {
     if (!window.electron?.generateSessionTitle) {
       return null;
     }
-    return window.electron.generateSessionTitle(prompt);
+    return window.electron.generateSessionTitle({ userInput: prompt, sessionId });
   }
 
   async patchSessionModel(options: {

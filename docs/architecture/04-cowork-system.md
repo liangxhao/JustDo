@@ -101,9 +101,11 @@ Gateway history 是权威。`historyReconciler` 和 `src/main/openclaw/sessions/
 - `id`：JustDo UI session id。
 - `title`：本地显示标题，可由标题生成服务更新。标题服务通过当前选中模型的
   OpenAI-compatible API 做一次无状态请求，不创建 OpenClaw/Gateway 会话；模型不可用、
-  请求失败或超时时回退为首条非空输入的截断文本。该 Main 进程请求可以遵循用户选择的
-  系统/自定义代理，但不经过本地 MITM。标题 URL 命中 Outbound Header 白名单时，该确定性
-  调用点会显式注入配置 Header；Main 的其他请求不继承这一行为。
+  请求失败或超时时回退为首条非空输入的截断文本。发送前会等待当前 Gateway 会话 ID，
+  并以 `metadata.session_id` 传给 OpenAI-compatible 服务；无法解析 ID 时不发送无法关联的
+  标题请求。该 Main 进程请求可以遵循用户选择的系统/自定义代理，但不经过本地 MITM。
+  标题 URL 命中 Outbound Header 白名单时，该确定性调用点会显式注入配置 Header；Main
+  的其他请求不继承这一行为。
 - `status`：UI 状态，例如 idle/running/error。
 - `cwd`：会话工作目录。
 - `execution_mode`：当前只保留 local/sandbox/auto 语义，旧 container 会迁移到 local。

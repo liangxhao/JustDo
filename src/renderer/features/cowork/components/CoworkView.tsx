@@ -339,7 +339,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       // Generate title in the background and update when ready
       if (startedSession) {
         coworkService
-          .generateSessionTitle(prompt)
+          .generateSessionTitle(prompt, startedSession.id)
           .then(generatedTitle => {
             const betterTitle = generatedTitle?.trim();
             if (betterTitle && betterTitle !== fallbackTitle) {

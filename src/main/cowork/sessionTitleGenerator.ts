@@ -33,6 +33,11 @@ export type SessionTitleApiConfig = {
 
 export type SessionTitleFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
+export interface SessionTitleGenerationOptions {
+  sessionId?: string;
+  timeoutMs?: number;
+}
+
 export interface SessionTitleGeneratorCallbacks {
   resolveApiConfig(): { config: SessionTitleApiConfig | null; error?: string };
   fetch?: SessionTitleFetch;
@@ -41,12 +46,17 @@ export interface SessionTitleGeneratorCallbacks {
 export class SessionTitleGenerator {
   constructor(private readonly callbacks: SessionTitleGeneratorCallbacks) {}
 
+  getFallbackTitle(userIntent: string | null): string {
+    const normalizedInput = typeof userIntent === 'string' ? userIntent.trim() : '';
+    return this.buildFallbackTitle(normalizedInput);
+  }
+
   async generateTitle(
     userIntent: string | null,
-    timeoutMs = SESSION_TITLE_TIMEOUT_MS,
+    options: SessionTitleGenerationOptions = {},
   ): Promise<string> {
     const normalizedInput = typeof userIntent === 'string' ? userIntent.trim() : '';
-    const fallbackTitle = this.buildFallbackTitle(normalizedInput);
+    const fallbackTitle = this.getFallbackTitle(userIntent);
     if (!normalizedInput) return fallbackTitle;
 
     const resolution = this.callbacks.resolveApiConfig();
@@ -58,7 +68,9 @@ export class SessionTitleGenerator {
       return fallbackTitle;
     }
 
-    const effectiveTimeout = timeoutMs > 0 ? timeoutMs : SESSION_TITLE_TIMEOUT_MS;
+    const effectiveTimeout =
+      options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : SESSION_TITLE_TIMEOUT_MS;
+    const sessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : '';
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
 
@@ -75,6 +87,7 @@ export class SessionTitleGenerator {
           body: JSON.stringify({
             model,
             max_tokens: SESSION_TITLE_MAX_TOKENS,
+            ...(sessionId ? { metadata: { session_id: sessionId } } : {}),
             messages: [
               { role: 'system', content: SESSION_TITLE_SYSTEM_PROMPT },
               {

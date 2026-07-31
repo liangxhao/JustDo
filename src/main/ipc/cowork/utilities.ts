@@ -1,11 +1,16 @@
 import { ipcMain } from 'electron';
 
+import {
+  type GenerateSessionTitleRequest,
+  SessionTitleIpc,
+} from '../../../shared/cowork/sessionTitle';
 import { saveCoworkApiConfig } from '../../cowork/coworkConfigStore';
 import { probeCoworkModelReadiness } from '../../cowork/coworkModelReadiness';
 import { getCurrentApiConfig, resolveCurrentApiConfig } from '../../cowork/providerApiConfig';
+import type { CoworkGenerateTitleOptions } from '../../engine/types';
 
 interface TitleGenerator {
-  generateTitle?: (userInput: string | null) => Promise<string>;
+  generateTitle?: (userInput: string | null, options?: CoworkGenerateTitleOptions) => Promise<string>;
 }
 
 interface CoworkUtilitiesHandlerOptions {
@@ -17,11 +22,13 @@ export const registerCoworkUtilityHandlers = ({
   getTitleGenerator,
   listRecentCwds,
 }: CoworkUtilitiesHandlerOptions): void => {
-  ipcMain.handle('generate-session-title', async (_event, userInput: string | null) => {
+  ipcMain.handle(SessionTitleIpc.Generate, async (_event, request: GenerateSessionTitleRequest) => {
+    const userInput = request?.userInput ?? null;
+    const sessionId = typeof request?.sessionId === 'string' ? request.sessionId.trim() : '';
     try {
       const router = getTitleGenerator();
       if (router.generateTitle) {
-        return await router.generateTitle(userInput);
+        return await router.generateTitle(userInput, { sessionId });
       }
       console.warn('[CoworkUtilities] title generator unavailable; using fallback title');
     } catch (error) {

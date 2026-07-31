@@ -60,6 +60,7 @@ import type {
 } from '../gateway/types';
 import type {
   CoworkContinueOptions,
+  CoworkGenerateTitleOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
@@ -93,6 +94,9 @@ const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
 const RUNTIME_SESSION_SNAPSHOT_TTL_MS = 2_000;
+const TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS = 30_000;
+const TITLE_SESSION_ID_POLL_INTERVAL_MS = 100;
+const TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS = 2_000;
 const LIFECYCLE_END_FALLBACK_MS = 1_500;
 const ERROR_TERMINAL_SESSION_STATUSES = new Set([
   'aborted',
@@ -3111,8 +3115,69 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // ─── Public API ────────────────────────────────────────────────────────
 
-  async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string> {
-    return this.titleGenerator.generateTitle(userIntent, timeoutMs);
+  async generateTitle(
+    userIntent: string | null,
+    options: CoworkGenerateTitleOptions = {},
+  ): Promise<string> {
+    const localSessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : '';
+    if (!localSessionId) {
+      return this.titleGenerator.getFallbackTitle(userIntent);
+    }
+    const gatewaySessionId = await this.resolveGatewaySessionIdForTitle(localSessionId);
+    if (!gatewaySessionId) {
+      console.warn(
+        '[OpenClawRuntime] Gateway session ID unavailable; using fallback session title',
+        { sessionId: localSessionId },
+      );
+      return this.titleGenerator.getFallbackTitle(userIntent);
+    }
+    return this.titleGenerator.generateTitle(userIntent, {
+      sessionId: gatewaySessionId,
+      timeoutMs: options.timeoutMs,
+    });
+  }
+
+  private async resolveGatewaySessionIdForTitle(
+    localSessionId: string,
+  ): Promise<string | undefined> {
+    try {
+      await this.ensureGatewayClientReady();
+    } catch {
+      return undefined;
+    }
+
+    const sessionKey = this.findSessionKeyBySessionId(localSessionId);
+    if (!sessionKey) return undefined;
+
+    const deadline = Date.now() + TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS;
+    let nextSnapshotAt = 0;
+    while (Date.now() <= deadline) {
+      const activeSessionId = this.runtimeRowString(
+        this.activeTurns.get(localSessionId)?.gatewaySessionId,
+      );
+      if (activeSessionId) return activeSessionId;
+
+      const now = Date.now();
+      if (now >= nextSnapshotAt) {
+        const snapshot = await this.getRuntimeSessionSnapshot(true);
+        const session = snapshot.sessions.find(
+          row => this.runtimeRowString(row.key) === sessionKey,
+        );
+        if (session) {
+          const snapshotSessionId =
+            this.runtimeRowString(session.sessionId) || this.runtimeRowString(session.id);
+          if (snapshotSessionId) return snapshotSessionId;
+        }
+        nextSnapshotAt = Date.now() + TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS;
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await new Promise(resolve =>
+        setTimeout(resolve, Math.min(TITLE_SESSION_ID_POLL_INTERVAL_MS, remainingMs)),
+      );
+    }
+    return undefined;
   }
 
   async patchSessionModel(

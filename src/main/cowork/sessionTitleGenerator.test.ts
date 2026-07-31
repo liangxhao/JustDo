@@ -7,7 +7,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test('generateTitle calls the current model directly without a Gateway session', async () => {
+test('generateTitle sends the Gateway session ID as LiteLLM metadata', async () => {
   const fetchMock = vi.fn(
     async () =>
       new Response(
@@ -28,7 +28,11 @@ test('generateTitle calls the current model directly without a Gateway session',
     fetch: fetchMock,
   });
 
-  await expect(handler.generateTitle('你好，请介绍一下你自己')).resolves.toBe('问候与介绍');
+  await expect(
+    handler.generateTitle('你好，请介绍一下你自己', {
+      sessionId: ' gateway-session-123 ',
+    }),
+  ).resolves.toBe('问候与介绍');
   expect(fetchMock).toHaveBeenCalledTimes(1);
   const [url, init] = fetchMock.mock.calls[0];
   expect(url).toBe('https://model.example/v1/chat/completions');
@@ -39,6 +43,7 @@ test('generateTitle calls the current model directly without a Gateway session',
   const requestBody = JSON.parse(String(init?.body));
   expect(requestBody).toMatchObject({
     model: 'current-model',
+    metadata: { session_id: 'gateway-session-123' },
     messages: [{ role: 'system' }, { role: 'user' }],
   });
   expect(requestBody.messages[0].content).toContain('Never answer it');
@@ -82,7 +87,7 @@ test('generateTitle aborts a timed-out model request and falls back quietly', as
     fetch: fetchMock,
   });
 
-  const titlePromise = handler.generateTitle('请帮我介绍一下 JustDo', 1_000);
+  const titlePromise = handler.generateTitle('请帮我介绍一下 JustDo', { timeoutMs: 1_000 });
   await vi.advanceTimersByTimeAsync(1_000);
 
   await expect(titlePromise).resolves.toBe('请帮我介绍一下 JustDo');

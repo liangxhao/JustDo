@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 
 import type {
   CoworkContinueOptions,
+  CoworkGenerateTitleOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
   CoworkStartOptions,
@@ -76,9 +77,12 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     this.runtime.onSessionDeleted?.(sessionId, agentId);
   }
 
-  async generateTitle(userIntent: string | null, timeoutMs?: number): Promise<string> {
+  async generateTitle(
+    userIntent: string | null,
+    options?: CoworkGenerateTitleOptions,
+  ): Promise<string> {
     if (this.runtime.generateTitle) {
-      return this.runtime.generateTitle(userIntent, timeoutMs);
+      return this.runtime.generateTitle(userIntent, options);
     }
     const fallback = 'New Session';
     const normalized = typeof userIntent === 'string' ? userIntent.trim() : '';

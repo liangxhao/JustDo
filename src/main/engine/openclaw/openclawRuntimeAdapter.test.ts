@@ -92,6 +92,35 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
   ...overrides,
 });
 
+test('resolves the Gateway session ID used by title generation', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({
+    sessions: [
+      {
+        key: 'agent:main:justdo:session-1',
+        sessionId: 'gateway-session-123',
+      },
+    ],
+  });
+  const internals = adapter as unknown as {
+    ensureGatewayClientReady: () => Promise<void>;
+    gatewayClient: GatewayClientLike | null;
+    resolveGatewaySessionIdForTitle: (sessionId: string) => Promise<string | undefined>;
+  };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(internals.resolveGatewaySessionIdForTitle('session-1')).resolves.toBe(
+    'gateway-session-123',
+  );
+  expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500 });
+});
+
 test('returns raw gateway history without projecting message fields', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

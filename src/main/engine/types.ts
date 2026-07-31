@@ -126,6 +126,11 @@ export type CoworkStopOptions = {
   bestEffort?: boolean;
 };
 
+export interface CoworkGenerateTitleOptions {
+  sessionId?: string;
+  timeoutMs?: number;
+}
+
 export interface CoworkRuntime {
   on<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   off<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
@@ -144,10 +149,13 @@ export interface CoworkRuntime {
    * Generate a session title using the configured model.
    * Optional: only implemented by OpenClawRuntimeAdapter which has Gateway access.
    * @param userIntent The user's initial prompt to generate title from
-   * @param timeoutMs Timeout in milliseconds (default 30000ms)
+   * @param options Local session context and timeout.
    * @returns Generated title, or fallback if generation fails
    */
-  generateTitle?(userIntent: string | null, timeoutMs?: number): Promise<string>;
+  generateTitle?(
+    userIntent: string | null,
+    options?: CoworkGenerateTitleOptions,
+  ): Promise<string>;
   /**
    * Patch the model for a session via OpenClaw gateway sessions.patch API.
    * Optional: only implemented by OpenClawRuntimeAdapter which has Gateway access.

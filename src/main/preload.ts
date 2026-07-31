@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
+import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
 import { DeveloperConfigIpc } from '../shared/developerConfig';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
 import { LogIpc } from '../shared/logIpc';
@@ -169,8 +170,8 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('check-api-config', options),
   saveApiConfig: (config: { apiKey: string; baseURL: string; model: string; apiType?: 'openai' }) =>
     ipcRenderer.invoke('save-api-config', config),
-  generateSessionTitle: (userInput: string | null) =>
-    ipcRenderer.invoke('generate-session-title', userInput),
+  generateSessionTitle: (request: GenerateSessionTitleRequest) =>
+    ipcRenderer.invoke(SessionTitleIpc.Generate, request),
   getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),
   openclaw: {
     engine: {
