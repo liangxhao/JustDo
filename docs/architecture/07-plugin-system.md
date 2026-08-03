@@ -78,6 +78,10 @@ Extension 的启用、删除和配置更新由 `OpenClawExtensionImportService` 
 
 内置 `ask-user-question` Extension 通过 Main process 的 loopback HTTP callback server 把结构化问题交给 renderer。Callback server 使用动态端口，因此必须先开始监听，再把当前 URL 和 secret placeholder 同步到 Gateway 配置。每次确保 Gateway 可用时都会先检查 callback host；如果端口变化而 Gateway 仍在运行，Gateway watcher 会热重载 Extension 配置，使它不再请求上一次进程留下的失效端口。只有 secret 环境变量或 Extension manifest 变化才需要 JustDo 硬重启 Gateway。Callback URL 只在 HTTP server 确实处于 listening 状态时对外发布。
 
+每个问题和选项都必须声明请求内唯一的稳定 `id`，格式为 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`，且不能使用 `Object.prototype` 保留属性名。问题选项可以声明 `input: { label, placeholder? }`；存在 `input` 时，renderer 仅在该选项被选中后显示必填补充字段。答案以 question id 为键，`selected` 和 `optionInputs` 保存 option id，并可带独立的 `other` 文本；整个链路不使用展示文本或分隔符关联答案。Main process 和 Extension 会在各自的运行时边界校验问题、ID 唯一性和答案完整性，非法响应按拒绝处理。
+
+Ask-user 请求没有自动选择或超时默认值。Broker 和 Extension 会等待用户明确提交或取消；调用方中止运行或 HTTP 断开时只取消对应请求，应用/Extension host 关闭时则把全部待处理请求按 `deny` 结束。Broker 按 request id 保留原始问题，Host 不信任 renderer 回传的问题定义；renderer 初始化或 reload 后通过 IPC 重放仍在等待的交互。Callback server 和 Host controller 的 start/stop 使用串行生命周期队列，避免重启期间旧 server 的关闭回调影响新实例。
+
 主要 preload API：
 
 - `extensions.list()`

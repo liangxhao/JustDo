@@ -822,6 +822,7 @@ if (!gotTheLock) {
   registerCoworkInteractionHandlers({
     getCoworkStore,
     getExtensionHostController: () => extensionHostLifecycle.currentController,
+    getPendingInteractions: () => extensionHostLifecycle.listPendingInteractions(),
     askUserSessionByRequestId,
   });
 

@@ -6,6 +6,7 @@ import { DeveloperConfigIpc } from '../shared/developerConfig';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
 import { LogIpc } from '../shared/logIpc';
 import {
+  CoworkInteractionIpc,
   type ExtensionDeleteRequest,
   type ExtensionImportProgress,
   type ExtensionImportRequest,
@@ -267,7 +268,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:message:deleteFrom', sessionId, messageId),
     // Extension interaction handling
     respondToInteraction: (options: { requestId: string; result: unknown }) =>
-      ipcRenderer.invoke('cowork:interaction:respond', options),
+      ipcRenderer.invoke(CoworkInteractionIpc.Respond, options),
+    replayPendingInteractions: () => ipcRenderer.invoke(CoworkInteractionIpc.Replay),
 
     // Configuration
     getConfig: () => ipcRenderer.invoke('cowork:config:get'),
@@ -334,14 +336,14 @@ contextBridge.exposeInMainWorld('electron', {
         _event: Electron.IpcRendererEvent,
         data: { sessionId: string; request: unknown },
       ) => callback(data);
-      ipcRenderer.on('cowork:stream:interaction', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:interaction', handler);
+      ipcRenderer.on(CoworkInteractionIpc.Stream, handler);
+      return () => ipcRenderer.removeListener(CoworkInteractionIpc.Stream, handler);
     },
     onStreamInteractionDismiss: (callback: (data: { requestId: string }) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: { requestId: string }) =>
         callback(data);
-      ipcRenderer.on('cowork:stream:interactionDismiss', handler);
-      return () => ipcRenderer.removeListener('cowork:stream:interactionDismiss', handler);
+      ipcRenderer.on(CoworkInteractionIpc.Dismiss, handler);
+      return () => ipcRenderer.removeListener(CoworkInteractionIpc.Dismiss, handler);
     },
     onStreamComplete: (callback: (data: { sessionId: string; finalStatus?: string }) => void) => {
       const handler = (

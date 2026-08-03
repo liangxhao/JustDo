@@ -1,13 +1,20 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
+import type {
+  AskUserQuestion,
+  AskUserQuestionAnswer,
+} from '../../../shared/openclaw/extensions';
+import { CoworkInteractionIpc } from '../../../shared/openclaw/extensions';
 import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawExtensionHostController } from '../../plugins/extensions';
+import type { AskUserInteractionEnvelope } from '../../plugins/extensions/openclawExtensionHostLifecycle';
 import { sanitizeCoworkMessageForIpc } from '../payloadSanitizer';
 
 interface Dependencies {
   getCoworkStore: () => CoworkStore;
   getExtensionHostController: () => OpenClawExtensionHostController | null;
+  getPendingInteractions: () => AskUserInteractionEnvelope[];
   askUserSessionByRequestId: Map<string, string>;
 }
 
@@ -24,20 +31,33 @@ type CoworkInteractionResult =
       toolUseID?: string;
     };
 
-const formatAnswer = (value: string): string =>
-  value
-    .split('|||')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .join(', ');
+const formatAnswer = (answer: AskUserQuestionAnswer, question?: AskUserQuestion): string => {
+  const optionsById = new Map(question?.options.map(option => [option.id, option]) ?? []);
+  const parts = answer.selected.map((optionId) => {
+    const label = optionsById.get(optionId)?.label ?? optionId;
+    const input = answer.optionInputs?.[optionId];
+    return input ? `${label}: ${input}` : label;
+  });
+  if (answer.other) parts.push(answer.other);
+  return parts.join(', ');
+};
 
 export const registerCoworkInteractionHandlers = ({
   getCoworkStore,
   getExtensionHostController,
+  getPendingInteractions,
   askUserSessionByRequestId,
 }: Dependencies): void => {
+  ipcMain.handle(CoworkInteractionIpc.Replay, event => {
+    const interactions = getPendingInteractions();
+    interactions.forEach(interaction => {
+      event.sender.send(CoworkInteractionIpc.Stream, interaction);
+    });
+    return { success: true, count: interactions.length };
+  });
+
   ipcMain.handle(
-    'cowork:interaction:respond',
+    CoworkInteractionIpc.Respond,
     async (_event, options: { requestId: string; result: CoworkInteractionResult }) => {
       try {
         const extensionHost = getExtensionHostController();
@@ -55,23 +75,27 @@ export const registerCoworkInteractionHandlers = ({
             updatedInput,
           });
           const sessionId = response.handled
-            ? typeof updatedInput?.sessionId === 'string'
-              ? updatedInput.sessionId.trim()
-              : (askUserSessionByRequestId.get(options.requestId) ?? '')
+            ? (askUserSessionByRequestId.get(options.requestId) ?? '')
             : '';
           if (sessionId && sessionId !== '__askuser__') {
+            const questions = response.questions ?? [];
+            const questionsById = new Map(questions.map(question => [question.id, question]));
             const content =
-              result.behavior === 'submit' &&
+              response.behavior === 'allow' &&
               response.answers &&
               Object.keys(response.answers).length > 0
                 ? Object.entries(response.answers)
                     .map(
-                      ([question, answer]) =>
-                        `${question}\n${t('askUserAnswerLabel')}：${formatAnswer(answer)}`,
+                      ([questionId, answer]) => {
+                        const question = questionsById.get(questionId);
+                        return `${question?.question ?? questionId}\n${t('askUserAnswerLabel')}：${formatAnswer(answer, question)}`;
+                      },
                     )
                     .join('\n\n')
                 : t(
-                    result.behavior === 'submit' ? 'askUserSubmittedMessage' : 'askUserCanceledMessage',
+                    response.behavior === 'allow'
+                      ? 'askUserSubmittedMessage'
+                      : 'askUserCanceledMessage',
                   );
             const message = getCoworkStore().addMessage(sessionId, {
               type: 'user',
@@ -79,6 +103,7 @@ export const registerCoworkInteractionHandlers = ({
               metadata: {
                 source: 'AskUserQuestion',
                 requestId: options.requestId,
+                behavior: response.behavior ?? null,
                 answers: response.answers ?? null,
               },
             });

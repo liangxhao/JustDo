@@ -1,6 +1,12 @@
 import crypto from 'crypto';
 
-import type { AskUserRequest, AskUserResponse } from '../../../shared/openclaw/extensions';
+import type {
+  AskUserRequest,
+  AskUserResponse,
+} from '../../../shared/openclaw/extensions';
+import {
+  parseAskUserAnswers,
+} from '../../../shared/openclaw/extensions';
 import type { AskUserExtensionConfig } from '../../openclaw/config/openclawConfigSync';
 import {
   type ExtensionInteractionResponse,
@@ -18,21 +24,27 @@ export class OpenClawExtensionHostController {
   private readonly deps: OpenClawExtensionHostControllerDeps;
   private bridgeServer: OpenClawExtensionCallbackServer | null = null;
   private secret: string | null = null;
-  private startPromise: Promise<AskUserExtensionConfig | null> | null = null;
+  private lifecycleQueue: Promise<void> = Promise.resolve();
   private readonly interactionRouter = new ExtensionInteractionRouter();
 
   constructor(deps: OpenClawExtensionHostControllerDeps) {
     this.deps = deps;
     this.interactionRouter.register((requestId, result) => {
-      const answers =
-        result.behavior === 'allow' && result.updatedInput
-          ? (result.updatedInput.answers as Record<string, string> | undefined)
-          : undefined;
+      const request = this.getPendingAskUserRequest(requestId);
+      const answers = result.behavior === 'allow' && request
+        ? parseAskUserAnswers(result.updatedInput?.answers, request.questions)
+        : null;
+      const behavior = result.behavior === 'allow' && answers ? 'allow' : 'deny';
       const handled = this.resolveAskUser(requestId, {
-        behavior: result.behavior,
-        answers,
+        behavior,
+        ...(answers ? { answers } : {}),
       });
-      return { handled, answers };
+      return {
+        handled,
+        behavior,
+        ...(answers ? { answers } : {}),
+        ...(request ? { questions: request.questions } : {}),
+      };
     });
   }
 
@@ -47,16 +59,19 @@ export class OpenClawExtensionHostController {
   }
 
   start(): Promise<AskUserExtensionConfig | null> {
-    if (this.startPromise) return this.startPromise;
-
-    this.startPromise = this.startInternal().finally(() => {
-      this.startPromise = null;
-    });
-    return this.startPromise;
+    return this.enqueueLifecycle(() => this.startInternal());
   }
 
   resolveAskUser(requestId: string, response: AskUserResponse): boolean {
     return this.bridgeServer?.resolveAskUser(requestId, response) ?? false;
+  }
+
+  getPendingAskUserRequest(requestId: string): AskUserRequest | null {
+    return this.bridgeServer?.getPendingAskUserRequest(requestId) ?? null;
+  }
+
+  listPendingAskUserRequests(): AskUserRequest[] {
+    return this.bridgeServer?.listPendingAskUserRequests() ?? [];
   }
 
   respondToInteraction(
@@ -66,11 +81,19 @@ export class OpenClawExtensionHostController {
     return this.interactionRouter.respond(requestId, result);
   }
 
-  async stop(): Promise<void> {
-    // A shutdown may race with the initial bridge startup. Wait for startup to
-    // settle first so it cannot create resources after cleanup has completed.
-    await this.startPromise;
-    await this.bridgeServer?.stop();
+  stop(): Promise<void> {
+    return this.enqueueLifecycle(async () => {
+      await this.bridgeServer?.stop();
+    });
+  }
+
+  private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.lifecycleQueue.then(operation, operation);
+    this.lifecycleQueue = result.then(
+      (): void => undefined,
+      (): void => undefined,
+    );
+    return result;
   }
 
   private async startInternal(): Promise<AskUserExtensionConfig | null> {

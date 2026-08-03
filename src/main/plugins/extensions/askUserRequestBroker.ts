@@ -6,11 +6,14 @@ import type {
   AskUserResponse,
 } from '../../../shared/openclaw/extensions';
 
-const ASK_USER_TIMEOUT_MS = 120_000;
-
 type PendingRequest = {
+  request: AskUserRequest;
   resolve: (response: AskUserResponse) => void;
-  timer: ReturnType<typeof setTimeout>;
+};
+
+export type AskUserPendingRequest = {
+  requestId: string;
+  response: Promise<AskUserResponse>;
 };
 
 export class AskUserRequestBroker {
@@ -30,32 +33,49 @@ export class AskUserRequestBroker {
     const pending = this.pendingRequests.get(requestId);
     if (!pending) return false;
 
-    clearTimeout(pending.timer);
     this.pendingRequests.delete(requestId);
     pending.resolve(response);
     return true;
   }
 
-  request(questions: AskUserQuestion[], sessionKey?: string): Promise<AskUserResponse> {
+  cancel(requestId: string): boolean {
+    const pending = this.pendingRequests.get(requestId);
+    if (!pending) return false;
+
+    this.pendingRequests.delete(requestId);
+    this.dismissCallback?.(requestId);
+    pending.resolve({ behavior: 'deny' });
+    return true;
+  }
+
+  get(requestId: string): AskUserRequest | null {
+    return this.pendingRequests.get(requestId)?.request ?? null;
+  }
+
+  list(): AskUserRequest[] {
+    return Array.from(this.pendingRequests.values(), pending => pending.request);
+  }
+
+  cancelAll(): void {
+    for (const requestId of Array.from(this.pendingRequests.keys())) this.cancel(requestId);
+  }
+
+  request(questions: AskUserQuestion[], sessionKey?: string): AskUserPendingRequest {
     const requestId = crypto.randomUUID();
+    const request = { requestId, sessionKey, questions };
 
-    return new Promise(resolve => {
-      const timer = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        this.dismissCallback?.(requestId);
-        resolve({ behavior: 'deny' });
-      }, ASK_USER_TIMEOUT_MS);
-
-      this.pendingRequests.set(requestId, { resolve, timer });
+    const response = new Promise<AskUserResponse>(resolve => {
+      this.pendingRequests.set(requestId, { request, resolve });
 
       if (this.requestCallback) {
-        this.requestCallback({ requestId, sessionKey, questions });
+        this.requestCallback(request);
         return;
       }
 
-      clearTimeout(timer);
       this.pendingRequests.delete(requestId);
       resolve({ behavior: 'deny' });
     });
+
+    return { requestId, response };
   }
 }

@@ -1,3 +1,8 @@
+import type {
+  AskUserAnswers,
+  AskUserQuestion,
+} from '../../../shared/openclaw/extensions';
+
 export type ExtensionInteractionResult = {
   behavior: 'allow' | 'deny';
   updatedInput?: Record<string, unknown>;
@@ -5,7 +10,9 @@ export type ExtensionInteractionResult = {
 
 export type ExtensionInteractionResponse = {
   handled: boolean;
-  answers?: Record<string, string>;
+  behavior?: 'allow' | 'deny';
+  answers?: AskUserAnswers;
+  questions?: AskUserQuestion[];
 };
 
 export type ExtensionInteractionHandler = (

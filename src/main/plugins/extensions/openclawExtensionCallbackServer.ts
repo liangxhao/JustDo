@@ -8,10 +8,10 @@ import http from 'http';
 import net from 'net';
 
 import type {
-  AskUserQuestion,
   AskUserRequest,
   AskUserResponse,
 } from '../../../shared/openclaw/extensions';
+import { parseAskUserQuestions } from '../../../shared/openclaw/extensions';
 import { AskUserRequestBroker } from './askUserRequestBroker';
 
 export type { AskUserRequest, AskUserResponse } from '../../../shared/openclaw/extensions';
@@ -32,6 +32,7 @@ export class OpenClawExtensionCallbackServer {
   private _port: number | null = null;
   private readonly secret: string;
   private readonly askUserBroker = new AskUserRequestBroker();
+  private lifecycleQueue: Promise<void> = Promise.resolve();
 
   constructor(secret: string) {
     this.secret = secret;
@@ -74,15 +75,36 @@ export class OpenClawExtensionCallbackServer {
     return this.askUserBroker.resolve(requestId, response);
   }
 
+  getPendingAskUserRequest(requestId: string): AskUserRequest | null {
+    return this.askUserBroker.get(requestId);
+  }
+
+  listPendingAskUserRequests(): AskUserRequest[] {
+    return this.askUserBroker.list();
+  }
+
   /**
    * Start the HTTP callback server on a free port.
    */
-  async start(): Promise<number> {
-    if (this.server?.listening && this._port) {
-      throw new Error('OpenClawExtensionCallbackServer is already running');
-    }
-    this.server = null;
-    this._port = null;
+  start(): Promise<number> {
+    return this.enqueueLifecycle(() => this.startInternal());
+  }
+
+  stop(): Promise<void> {
+    return this.enqueueLifecycle(() => this.stopInternal());
+  }
+
+  private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.lifecycleQueue.then(operation, operation);
+    this.lifecycleQueue = result.then(
+      (): void => undefined,
+      (): void => undefined,
+    );
+    return result;
+  }
+
+  private async startInternal(): Promise<number> {
+    if (this.server?.listening && this._port) return this._port;
 
     const port = await this.findFreePort();
 
@@ -115,23 +137,22 @@ export class OpenClawExtensionCallbackServer {
     });
   }
 
-  /**
-   * Stop the HTTP callback server.
-   */
-  async stop(): Promise<void> {
-    if (!this.server) return;
+  private async stopInternal(): Promise<void> {
+    this.askUserBroker.cancelAll();
+    const srv = this.server;
+    if (!srv) return;
+    this.server = null;
+    this._port = null;
 
     return new Promise(resolve => {
-      this.server!.close(() => {
+      const forceCloseTimer = setTimeout(() => {
+        srv.closeAllConnections?.();
+      }, 2000);
+      srv.close(() => {
+        clearTimeout(forceCloseTimer);
         log('INFO', 'Extension callback server stopped');
-        this.server = null;
-        this._port = null;
         resolve();
       });
-      // Force-close open connections after a short timeout
-      setTimeout(() => {
-        this.server?.closeAllConnections?.();
-      }, 2000);
     });
   }
 
@@ -168,22 +189,33 @@ export class OpenClawExtensionCallbackServer {
         `AskUser request received, questions=${Array.isArray(input.questions) ? input.questions.length : 0}`,
       );
 
-      if (!Array.isArray(input.questions) || input.questions.length === 0) {
+      const questions = parseAskUserQuestions(input.questions);
+      if (!questions) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Missing or empty "questions" field' }));
+        res.end(JSON.stringify({ error: 'Invalid "questions" field' }));
         return;
       }
 
-      const userResponse = await this.askUserBroker.request(
-        input.questions as AskUserQuestion[],
+      const pending = this.askUserBroker.request(
+        questions,
         typeof input.sessionKey === 'string' ? input.sessionKey : undefined,
       );
+      const cancelPending = () => {
+        this.askUserBroker.cancel(pending.requestId);
+      };
+      req.once('aborted', cancelPending);
+      res.once('close', cancelPending);
+      const userResponse = await pending.response;
+      req.removeListener('aborted', cancelPending);
+      res.removeListener('close', cancelPending);
+      if (res.destroyed || res.writableEnded) return;
       log('INFO', `AskUser resolved, behavior=${userResponse.behavior}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(userResponse));
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       log('ERROR', `AskUser request error: ${errMsg}`);
+      if (res.destroyed || res.writableEnded) return;
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ behavior: 'deny' }));
     }

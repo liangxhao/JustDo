@@ -1,26 +1,24 @@
 import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import { CoworkInteractionKind } from '@shared/openclaw/extensions';
-import React, { useEffect, useMemo, useState } from 'react';
+import type {
+  AskUserAnswers,
+  AskUserQuestion,
+  AskUserQuestionOption,
+} from '@shared/openclaw/extensions';
+import {
+  CoworkInteractionKind,
+  parseAskUserQuestions,
+} from '@shared/openclaw/extensions';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CoworkInteractionRequest, CoworkInteractionResult } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
+
+import { resolveWizardAutoAdvanceStep } from './askUserInteractionAnswers';
 
 interface CoworkQuestionWizardProps {
   interaction: CoworkInteractionRequest;
   onRespond: (result: CoworkInteractionResult) => void;
 }
-
-type QuestionOption = {
-  label: string;
-  description?: string;
-};
-
-type QuestionItem = {
-  question: string;
-  header?: string;
-  options: QuestionOption[];
-  multiSelect?: boolean;
-};
 
 const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   interaction,
@@ -28,212 +26,197 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
 }) => {
   const toolInput = useMemo(() => interaction.toolInput ?? {}, [interaction.toolInput]);
 
-  const questions = useMemo<QuestionItem[]>(() => {
+  const questions = useMemo<AskUserQuestion[]>(() => {
     if (interaction.interactionKind !== CoworkInteractionKind.STRUCTURED_QUESTION) return [];
     if (!toolInput || typeof toolInput !== 'object') return [];
-    const rawQuestions = (toolInput as Record<string, unknown>).questions;
-    if (!Array.isArray(rawQuestions)) return [];
-
-    return rawQuestions
-      .map((question) => {
-        if (!question || typeof question !== 'object') return null;
-        const record = question as Record<string, unknown>;
-        const options = Array.isArray(record.options)
-          ? record.options
-              .map((option) => {
-                if (!option || typeof option !== 'object') return null;
-                const optionRecord = option as Record<string, unknown>;
-                if (typeof optionRecord.label !== 'string') return null;
-                return {
-                  label: optionRecord.label,
-                  description: typeof optionRecord.description === 'string'
-                    ? optionRecord.description
-                    : undefined,
-                } as QuestionOption;
-              })
-              .filter(Boolean) as QuestionOption[]
-          : [];
-
-        if (typeof record.question !== 'string' || options.length === 0) {
-          return null;
-        }
-
-        return {
-          question: record.question,
-          header: typeof record.header === 'string' ? record.header : undefined,
-          options,
-          multiSelect: Boolean(record.multiSelect),
-        } as QuestionItem;
-      })
-      .filter(Boolean) as QuestionItem[];
+    return parseAskUserQuestions((toolInput as Record<string, unknown>).questions) ?? [];
   }, [interaction.interactionKind, toolInput]);
 
   const [currentStep, setCurrentStep] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [otherInputs, setOtherInputs] = useState<Record<number, string>>({});
-  const [otherActive, setOtherActive] = useState<Record<number, boolean>>({});
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [optionInputs, setOptionInputs] = useState<Record<string, Record<string, string>>>({});
+  const [otherInputs, setOtherInputs] = useState<Record<string, string>>({});
+  const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const rawAnswers = (toolInput as Record<string, unknown>).answers;
-    if (rawAnswers && typeof rawAnswers === 'object') {
-      const initial: Record<string, string> = {};
-      Object.entries(rawAnswers as Record<string, unknown>).forEach(([key, value]) => {
-        if (typeof value === 'string') {
-          initial[key] = value;
-        }
-      });
-      setAnswers(initial);
-    } else {
-      setAnswers({});
-    }
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = null;
+    setCurrentStep(0);
+    setAnswers({});
+    setOptionInputs({});
     setOtherInputs({});
     setOtherActive({});
+    return () => {
+      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    };
   }, [interaction.requestId, toolInput]);
 
   if (questions.length === 0) {
     return null;
   }
 
-  const currentQuestion = questions[currentStep];
   const totalSteps = questions.length;
-  const isFirstStep = currentStep === 0;
-  const isLastStep = currentStep === totalSteps - 1;
+  const activeStep = Math.min(currentStep, totalSteps - 1);
+  const currentQuestion = questions[activeStep];
+  const isFirstStep = activeStep === 0;
+  const isLastStep = activeStep === totalSteps - 1;
 
-  const getSelectedValues = (question: QuestionItem): string[] => {
-    const rawValue = answers[question.question] ?? '';
-    if (!rawValue) return [];
-    if (!question.multiSelect) return [rawValue];
-    return rawValue
-      .split('|||')
-      .map((value) => value.trim())
-      .filter(Boolean);
+  const getSelectedValues = (question: AskUserQuestion): string[] => {
+    return answers[question.id] ?? [];
   };
 
-  const handleSelectOption = (question: QuestionItem, optionLabel: string) => {
+  const clearAutoAdvance = () => {
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = null;
+  };
+
+  const handleSelectOption = (question: AskUserQuestion, optionId: string) => {
+    clearAutoAdvance();
     if (!question.multiSelect) {
       setAnswers((prev) => ({
         ...prev,
-        [question.question]: optionLabel,
+        [question.id]: [optionId],
       }));
       setOtherInputs((prev) => {
         const next = { ...prev };
-        delete next[currentStep];
+        delete next[question.id];
         return next;
       });
-      setOtherActive((prev) => ({ ...prev, [currentStep]: false }));
+      setOtherActive((prev) => ({ ...prev, [question.id]: false }));
 
-      // 单选题选择后自动跳转到下一题（延迟执行以显示选中效果）
-      setTimeout(() => {
-        // 使用函数式更新获取最新的 currentStep
-        setCurrentStep((prevStep) => {
-          const nextStep = prevStep + 1;
-          // 只有不是最后一题才跳转
-          if (nextStep < questions.length) {
-            return nextStep;
-          }
-          return prevStep;
-        });
-      }, 150);
+      setOptionInputs((prev) => ({
+        ...prev,
+        [question.id]: prev[question.id]?.[optionId]
+          ? { [optionId]: prev[question.id][optionId] }
+          : {},
+      }));
+
+      const selectedOption = question.options.find(option => option.id === optionId);
+      // Keep the question visible when the selected option requires extra input.
+      if (!selectedOption?.input) {
+        const scheduledStep = activeStep;
+        advanceTimerRef.current = setTimeout(() => {
+          advanceTimerRef.current = null;
+          setCurrentStep(prevStep =>
+            resolveWizardAutoAdvanceStep(prevStep, scheduledStep, questions.length));
+        }, 150);
+      }
     } else {
       setAnswers((prev) => {
-        const rawValue = prev[question.question] ?? '';
+        const rawValue = prev[question.id] ?? [];
 
-        if (!rawValue.trim()) {
+        if (rawValue.length === 0) {
           return {
             ...prev,
-            [question.question]: optionLabel,
+            [question.id]: [optionId],
           };
         }
 
-        const current = new Set(
-          rawValue
-            .split('|||')
-            .map((value) => value.trim())
-            .filter(Boolean)
-        );
+        const current = new Set(rawValue);
 
-        if (current.has(optionLabel)) {
-          current.delete(optionLabel);
+        if (current.has(optionId)) {
+          current.delete(optionId);
         } else {
-          current.add(optionLabel);
+          current.add(optionId);
         }
 
         if (current.size === 0) {
           const newAnswers = { ...prev };
-          delete newAnswers[question.question];
+          delete newAnswers[question.id];
           return newAnswers;
         }
 
         return {
           ...prev,
-          [question.question]: Array.from(current).join('|||'),
+          [question.id]: Array.from(current),
         };
       });
     }
   };
 
+  const handleOptionInputChange = (option: AskUserQuestionOption, value: string) => {
+    setOptionInputs((prev) => ({
+      ...prev,
+      [currentQuestion.id]: {
+        ...(prev[currentQuestion.id] ?? {}),
+        [option.id]: value,
+      },
+    }));
+  };
+
   const handleOtherInputChange = (value: string) => {
+    clearAutoAdvance();
     setOtherInputs((prev) => ({
       ...prev,
-      [currentStep]: value,
+      [currentQuestion.id]: value,
     }));
     setOtherActive((prev) => ({
       ...prev,
-      [currentStep]: true,
+      [currentQuestion.id]: true,
     }));
     if (!currentQuestion.multiSelect) {
       setAnswers((prev) => {
         const next = { ...prev };
-        delete next[currentQuestion.question];
+        delete next[currentQuestion.id];
         return next;
       });
     }
   };
 
   const handleToggleOther = () => {
+    clearAutoAdvance();
     setOtherActive((prev) => {
-      const nextActive = !prev[currentStep];
+      const nextActive = !prev[currentQuestion.id];
       return {
         ...prev,
-        [currentStep]: nextActive,
+        [currentQuestion.id]: nextActive,
       };
     });
     if (!currentQuestion.multiSelect) {
       setAnswers((prev) => {
         const next = { ...prev };
-        delete next[currentQuestion.question];
+        delete next[currentQuestion.id];
         return next;
       });
     }
   };
 
   const handlePrevious = () => {
+    clearAutoAdvance();
     if (!isFirstStep) {
       setCurrentStep((prev) => prev - 1);
     }
   };
 
   const handleNext = () => {
+    clearAutoAdvance();
     if (!isLastStep) {
       setCurrentStep((prev) => prev + 1);
     }
+  };
+
+  const handleStepSelect = (step: number) => {
+    clearAutoAdvance();
+    setCurrentStep(step);
   };
 
   const handleSkip = () => {
     // Clear the answer for the current question
     setAnswers((prev) => {
       const newAnswers = { ...prev };
-      delete newAnswers[currentQuestion.question];
+      delete newAnswers[currentQuestion.id];
       return newAnswers;
     });
     setOtherInputs((prev) => {
       const newInputs = { ...prev };
-      delete newInputs[currentStep];
+      delete newInputs[currentQuestion.id];
       return newInputs;
     });
     setOtherActive((prev) => ({
       ...prev,
-      [currentStep]: false,
+      [currentQuestion.id]: false,
     }));
 
     if (!isLastStep) {
@@ -242,18 +225,22 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   };
 
   const handleSubmit = () => {
-    // Merge "Other" inputs into answers
-    const finalAnswers = { ...answers };
-    Object.entries(otherInputs).forEach(([stepIndex, otherValue]) => {
-      const question = questions[Number(stepIndex)];
-      if (question && otherActive[Number(stepIndex)] && otherValue.trim()) {
-        if (question.multiSelect) {
-          const existingAnswers = finalAnswers[question.question]?.split('|||').map(a => a.trim()).filter(Boolean) || [];
-          finalAnswers[question.question] = [...existingAnswers, otherValue.trim()].join('|||');
-        } else {
-          finalAnswers[question.question] = otherValue.trim();
-        }
-      }
+    const finalAnswers: AskUserAnswers = {};
+    questions.forEach((question) => {
+      const selected = getSelectedValues(question);
+      const selectedOptionInputs = Object.fromEntries(
+        selected
+          .map(id => [id, optionInputs[question.id]?.[id]?.trim()] as const)
+          .filter((entry): entry is [string, string] => Boolean(entry[1])),
+      );
+      const other = otherActive[question.id] ? otherInputs[question.id]?.trim() : '';
+      finalAnswers[question.id] = {
+        selected,
+        ...(Object.keys(selectedOptionInputs).length > 0
+          ? { optionInputs: selectedOptionInputs }
+          : {}),
+        ...(other ? { other } : {}),
+      };
     });
 
     onRespond({
@@ -275,10 +262,15 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   const selectedValues = getSelectedValues(currentQuestion);
 
   // Check whether every question has at least one answer (selected option or "other" input)
-  const allAnswered = questions.every((q, idx) => {
-    const hasSelection = Boolean(answers[q.question]?.trim());
-    const hasOther = Boolean(otherActive[idx] && otherInputs[idx]?.trim());
-    return hasSelection || hasOther;
+  const allAnswered = questions.every((q) => {
+    const selected = getSelectedValues(q);
+    const hasSelection = selected.length > 0;
+    const hasOther = Boolean(otherActive[q.id] && otherInputs[q.id]?.trim());
+    const requiredInputsComplete = selected.every((id) => {
+      const option = q.options.find(candidate => candidate.id === id);
+      return !option?.input || Boolean(optionInputs[q.id]?.[id]?.trim());
+    });
+    return (hasSelection || hasOther) && requiredInputsComplete;
   });
 
   return (
@@ -304,7 +296,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         <div className="h-1 bg-surface-raised">
           <div
             className="h-full bg-primary transition-all duration-300"
-            style={{ width: `${((currentStep + 1) / totalSteps) * 100}%` }}
+            style={{ width: `${((activeStep + 1) / totalSteps) * 100}%` }}
           />
         </div>
 
@@ -341,14 +333,17 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 {/* Step dots */}
                 <div className="flex items-center gap-1.5">
                   {questions.map((question, index) => {
-                    const isActive = index === currentStep;
-                    const isAnswered = Boolean(answers[question.question]?.trim() || otherInputs[index]?.trim());
+                    const isActive = index === activeStep;
+                    const isAnswered = Boolean(
+                      answers[question.id]?.length
+                      || (otherActive[question.id] && otherInputs[question.id]?.trim()),
+                    );
 
                     return (
                       <button
                         key={index}
                         type="button"
-                        onClick={() => setCurrentStep(index)}
+                        onClick={() => handleStepSelect(index)}
                         className={`relative flex items-center justify-center w-7 h-7 rounded-full text-xs font-medium transition-all ${
                           isActive
                             ? 'bg-primary text-white shadow-md'
@@ -386,57 +381,67 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
             {/* Options */}
             <div className="space-y-2">
               {currentQuestion.options.map((option) => {
-                const isSelected = selectedValues.includes(option.label);
+                const isSelected = selectedValues.includes(option.id);
                 return (
-                  <button
-                    key={option.label}
-                    type="button"
-                    onClick={() => handleSelectOption(currentQuestion, option.label)}
-                    className={`w-full text-left rounded-lg border px-4 py-3 transition-all ${
-                      isSelected
-                        ? 'border-primary bg-primary/10 text-foreground shadow-sm'
-                        : 'border-border text-secondary hover:bg-surface-raised hover:border-primary/50'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      {currentQuestion.multiSelect ? (
-                        <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border-2 transition-colors ${
-                          isSelected
-                            ? 'bg-primary border-primary'
-                            : 'border-border'
-                        }`}>
-                          {isSelected && (
-                            <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
-                              <path d="M13 4L6 11L3 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          )}
-                        </div>
-                      ) : (
-                        <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 transition-colors ${
-                          isSelected
-                            ? 'border-primary'
-                            : 'border-border'
-                        }`}>
-                          {isSelected && (
-                            <div className="w-full h-full rounded-full bg-primary scale-50" />
-                          )}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium">{option.label}</div>
-                        {option.description && (
-                          <div className="text-xs mt-1 opacity-80">{option.description}</div>
+                  <React.Fragment key={option.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectOption(currentQuestion, option.id)}
+                      className={`w-full text-left rounded-lg border px-4 py-3 transition-all ${
+                        isSelected
+                          ? 'border-primary bg-primary/10 text-foreground shadow-sm'
+                          : 'border-border text-secondary hover:bg-surface-raised hover:border-primary/50'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        {currentQuestion.multiSelect ? (
+                          <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border-2 transition-colors ${
+                            isSelected ? 'bg-primary border-primary' : 'border-border'
+                          }`}>
+                            {isSelected && (
+                              <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
+                                <path d="M13 4L6 11L3 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </div>
+                        ) : (
+                          <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 transition-colors ${
+                            isSelected ? 'border-primary' : 'border-border'
+                          }`}>
+                            {isSelected && (
+                              <div className="w-full h-full rounded-full bg-primary scale-50" />
+                            )}
+                          </div>
                         )}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium">{option.label}</div>
+                          {option.description && (
+                            <div className="text-xs mt-1 opacity-80">{option.description}</div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
+                    {isSelected && option.input && (
+                      <label className="block pl-3 text-xs font-medium text-secondary">
+                        {option.input.label}
+                        <textarea
+                          rows={3}
+                          value={optionInputs[currentQuestion.id]?.[option.id] ?? ''}
+                          onChange={(event) => handleOptionInputChange(option, event.target.value)}
+                          placeholder={option.input.placeholder}
+                          className="mt-1 w-full min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm font-normal"
+                          autoFocus
+                        />
+                      </label>
+                    )}
+                  </React.Fragment>
                 );
               })}
               <button
                 type="button"
                 onClick={handleToggleOther}
                 className={`w-full text-left rounded-lg border px-4 py-3 transition-all ${
-                  otherActive[currentStep]
+                  otherActive[currentQuestion.id]
                     ? 'border-primary bg-primary/10 text-foreground shadow-sm'
                     : 'border-border text-secondary hover:bg-surface-raised hover:border-primary/50'
                 }`}
@@ -444,11 +449,11 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 <div className="flex items-start gap-3">
                   {currentQuestion.multiSelect ? (
                     <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border-2 transition-colors ${
-                      otherActive[currentStep]
+                      otherActive[currentQuestion.id]
                         ? 'bg-primary border-primary'
                         : 'border-border'
                     }`}>
-                      {otherActive[currentStep] && (
+                      {otherActive[currentQuestion.id] && (
                         <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
                           <path d="M13 4L6 11L3 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
@@ -456,11 +461,11 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                     </div>
                   ) : (
                     <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 transition-colors ${
-                      otherActive[currentStep]
+                      otherActive[currentQuestion.id]
                         ? 'border-primary'
                         : 'border-border'
                     }`}>
-                      {otherActive[currentStep] && (
+                      {otherActive[currentQuestion.id] && (
                         <div className="w-full h-full rounded-full bg-primary scale-50" />
                       )}
                     </div>
@@ -475,10 +480,10 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
             </div>
 
             <div className="mt-4 flex items-start gap-3">
-              {otherActive[currentStep] && (
+              {otherActive[currentQuestion.id] && (
                 <textarea
                   rows={3}
-                  value={otherInputs[currentStep] || ''}
+                  value={otherInputs[currentQuestion.id] || ''}
                   onChange={(e) => handleOtherInputChange(e.target.value)}
                   placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
                   className="flex-1 min-h-20 max-h-40 resize-y px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-secondary dark:placeholder:text-foregroundSecondary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"

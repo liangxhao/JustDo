@@ -673,6 +673,7 @@ interface IElectronAPI {
       requestId: string;
       result: CoworkInteractionResult;
     }) => Promise<{ success: boolean; error?: string }>;
+    replayPendingInteractions: () => Promise<{ success: boolean; count: number }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
     setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;
     setDefaultModel: (options: {

@@ -446,6 +446,7 @@ const App: React.FC = () => {
       if (hasMultipleQuestions) {
         return (
           <CoworkQuestionWizard
+            key={pendingInteraction.requestId}
             interaction={pendingInteraction}
             onRespond={handleInteractionResponse}
           />
@@ -455,6 +456,7 @@ const App: React.FC = () => {
 
     return (
       <CoworkInteractionModal
+        key={pendingInteraction.requestId}
         interaction={pendingInteraction}
         onRespond={handleInteractionResponse}
       />

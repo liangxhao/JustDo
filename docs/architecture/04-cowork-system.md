@@ -79,7 +79,7 @@ JustDo 必须透传该状态并自动轮询；只有 `fresh`（或旧版 Gateway
 
 ## 用户交互
 
-JustDo 不实现 OpenClaw 命令审批。Extension host 的 ask-user 请求通过 `cowork:stream:interaction` 发给 renderer；用户在交互弹窗中选择后，renderer 调用 `cowork.respondToInteraction()`，Main 把结果交回 extension host。
+JustDo 不实现 OpenClaw 命令审批。Extension host 的 ask-user 请求通过 `cowork:stream:interaction` 发给 renderer；用户在交互弹窗中选择后，renderer 调用 `cowork.respondToInteraction()`，Main 把结果交回 extension host。Renderer 注册事件监听后会调用 `cowork:interaction:replay`，由 Main 重放 Broker 中仍在等待的请求，因此窗口创建、reload 或短暂崩溃不会丢失交互。
 
 ## 历史同步
 

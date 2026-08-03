@@ -4,8 +4,19 @@ import { AskUserRequestBroker } from './askUserRequestBroker';
 
 const questions = [
   {
+    id: 'continue',
     question: 'Continue?',
-    options: [{ label: 'Yes' }, { label: 'No' }],
+    options: [
+      {
+        id: 'yes',
+        label: 'Yes',
+        input: {
+          label: 'What should happen next?',
+          placeholder: 'Describe the next step',
+        },
+      },
+      { id: 'no', label: 'No' },
+    ],
   },
 ];
 
@@ -19,36 +30,56 @@ describe('AskUserRequestBroker', () => {
       expect(request.sessionKey).toBe('justdo:session');
     });
 
-    const pendingResponse = broker.request(questions, 'justdo:session');
+    const pendingResponse = broker.request(questions, 'justdo:session').response;
     broker.resolve(requestId, {
       behavior: 'allow',
-      answers: { 'Continue?': 'Yes' },
+      answers: {
+        continue: {
+          selected: ['yes'],
+          optionInputs: { yes: 'Run the validation suite' },
+        },
+      },
     });
 
     await expect(pendingResponse).resolves.toEqual({
       behavior: 'allow',
-      answers: { 'Continue?': 'Yes' },
+      answers: {
+        continue: {
+          selected: ['yes'],
+          optionInputs: { yes: 'Run the validation suite' },
+        },
+      },
     });
   });
 
   test('denies immediately when no host request handler is registered', async () => {
     const broker = new AskUserRequestBroker();
 
-    await expect(broker.request(questions)).resolves.toEqual({ behavior: 'deny' });
+    await expect(broker.request(questions).response).resolves.toEqual({ behavior: 'deny' });
   });
 
-  test('denies and dismisses a request after timeout', async () => {
-    vi.useFakeTimers();
+  test('waits for an explicit response and denies pending requests on shutdown', async () => {
     const broker = new AskUserRequestBroker();
     const onDismiss = vi.fn();
     broker.onRequest(() => undefined);
     broker.onDismiss(onDismiss);
 
-    const pendingResponse = broker.request(questions);
-    await vi.advanceTimersByTimeAsync(120_000);
+    const pending = broker.request(questions);
+    const pendingResponse = pending.response;
+    let settled = false;
+    void pendingResponse.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(broker.get(pending.requestId)?.questions).toEqual(questions);
+    expect(broker.list()).toHaveLength(1);
+
+    expect(broker.cancel(pending.requestId)).toBe(true);
 
     await expect(pendingResponse).resolves.toEqual({ behavior: 'deny' });
     expect(onDismiss).toHaveBeenCalledOnce();
-    vi.useRealTimers();
   });
 });

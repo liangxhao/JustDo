@@ -243,6 +243,12 @@ class CoworkService {
     });
     this.streamListenerCleanups.push(interactionDismissCleanup);
 
+    // Listener registration happens before replay, so requests created during
+    // renderer startup are either received live or deduplicated by request id.
+    void cowork.replayPendingInteractions().catch(error => {
+      console.error('Failed to replay pending interactions:', error);
+    });
+
     // Complete listener
     const completeCleanup = cowork.onStreamComplete(({ sessionId, finalStatus }) => {
       // Use finalStatus from backend if provided.

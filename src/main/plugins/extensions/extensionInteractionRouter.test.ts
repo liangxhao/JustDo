@@ -7,12 +7,25 @@ describe('ExtensionInteractionRouter', () => {
     const router = new ExtensionInteractionRouter();
     const fallback = vi.fn(() => ({ handled: true }));
     router.register(() => ({ handled: false }));
-    router.register(() => ({ handled: true, answers: { Choice: 'A' } }));
+    router.register(() => ({
+      handled: true,
+      answers: {
+        choice: {
+          selected: ['a'],
+          optionInputs: { a: 'Additional context' },
+        },
+      },
+    }));
     router.register(fallback);
 
     expect(router.respond('request-1', { behavior: 'allow' })).toEqual({
       handled: true,
-      answers: { Choice: 'A' },
+      answers: {
+        choice: {
+          selected: ['a'],
+          optionInputs: { a: 'Additional context' },
+        },
+      },
     });
     expect(fallback).not.toHaveBeenCalled();
   });
