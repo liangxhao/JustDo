@@ -28,6 +28,7 @@ import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
+import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
 import { mergeRegisteredSystemPromptReplacementRules } from './systemPromptReplacementRegistry';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
@@ -1119,56 +1120,17 @@ export class OpenClawEngineManager extends EventEmitter {
    * to dist/entry.js because the bundle is guaranteed to exist.
    */
   private ensureGatewayLauncherCjsForBundle(runtimeRoot: string): string {
-    const launcherPath = path.join(runtimeRoot, 'gateway-launcher.cjs');
-    const expectedContent =
-      `// Auto-generated CJS launcher for Windows — bundle-only mode.\n` +
-      `// Loads gateway-bundle.mjs directly without dist/ fallback.\n` +
-      `const { pathToFileURL } = require('node:url');\n` +
-      `const path = require('node:path');\n` +
-      `const fs = require('node:fs');\n` +
-      `const _log = (msg) => process.stderr.write('[openclaw-launcher] ' + msg + '\\n');\n` +
-      `const _t0 = Date.now();\n` +
-      `const _elapsed = () => (Date.now() - _t0) + 'ms';\n` +
-      `// ─── Compile cache setup ───\n` +
-      `try {\n` +
-      `  const { enableCompileCache, getCompileCacheDir } = require('node:module');\n` +
-      `  const _ccDir = path.join(process.env.OPENCLAW_STATE_DIR || __dirname, '.compile-cache');\n` +
-      `  enableCompileCache(_ccDir);\n` +
-      `  _log('compile-cache dir=' + getCompileCacheDir());\n` +
-      `} catch (_) {}\n` +
-      `// ─── Load bundle ───\n` +
-      `const bundlePath = path.join(__dirname, 'gateway-bundle.mjs');\n` +
-      `const _realpath = (p) => { try { return fs.realpathSync(path.resolve(p)); } catch { return path.resolve(p); } };\n` +
-      `const _launcherInArgv = process.argv[1] &&\n` +
-      `  _realpath(process.argv[1]).toLowerCase() === _realpath(__filename).toLowerCase();\n` +
-      `if (_launcherInArgv) {\n` +
-      `  process.argv[1] = bundlePath;\n` +
-      `} else {\n` +
-      `  process.argv.splice(1, 0, bundlePath);\n` +
-      `}\n` +
-      `// Keep only the Gateway alive. One-shot CLI commands must exit normally.\n` +
-      OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE +
-      `const bundleUrl = pathToFileURL(bundlePath).href;\n` +
-      `_log('loading bundle (' + _elapsed() + ')');\n` +
-      `import(bundleUrl).then(() => {\n` +
-      `  _log('import ok (' + _elapsed() + ')');\n` +
-      `  try { require('node:module').flushCompileCache(); } catch (_) {}\n` +
-      `}).catch((err) => {\n` +
-      `  _log('import failed (' + _elapsed() + '): ' + (err.stack || err));\n` +
-      `  process.exit(1);\n` +
-      `});\n`;
-
     try {
-      const existing = fs.existsSync(launcherPath) ? fs.readFileSync(launcherPath, 'utf8') : '';
-      if (existing !== expectedContent) {
-        if (existing) {
+      const result = ensureOpenClawGatewayBundleLauncher(runtimeRoot);
+      if (result.changed) {
+        if (result.replaced) {
           console.log(
             '[OpenClaw] Overwriting existing gateway-launcher.cjs (switching to bundle-only mode)',
           );
         }
-        fs.writeFileSync(launcherPath, expectedContent, 'utf8');
         console.log('[OpenClaw] Generated gateway-launcher.cjs for bundle-only mode');
       }
+      return result.launcherPath;
     } catch (err) {
       console.error('[OpenClaw] Failed to write gateway-launcher.cjs:', err);
       // Fall back to the legacy launcher generation
@@ -1177,9 +1139,8 @@ export class OpenClawEngineManager extends EventEmitter {
         path.join(runtimeRoot, 'gateway.asar', 'openclaw.mjs'),
       ]);
       if (esmEntry) return this.ensureGatewayLauncherCjs(runtimeRoot, esmEntry);
-      return launcherPath;
+      return path.join(runtimeRoot, 'gateway-launcher.cjs');
     }
-    return launcherPath;
   }
 
   private resolveGatewayClientEntry(runtimeRoot: string): string | null {

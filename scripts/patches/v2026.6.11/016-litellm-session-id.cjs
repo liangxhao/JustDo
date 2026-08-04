@@ -270,8 +270,28 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    HELPER_SOURCE,
+    RENAMED_RESOLVER,
+    RESOLVER_WRAPPER,
+    PATCHED_SUMMARY_GENERATION,
+    PATCHED_SUMMARY_CHUNK_CALL,
+    PATCHED_SUMMARIZE_IN_STAGES_FIELDS,
+    PATCHED_COMPACTION_RUNTIME_MODEL,
+    PATCHED_ACTIVE_EXTENSION_FACTORY,
+    PATCHED_COMPACTION_EXTENSION_FACTORY,
+    ...SUMMARIZATION_SESSION_FIELDS.map(([, replacement]) => replacement),
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`LiteLLM session id patch is incomplete: ${missing.length} replacement(s) missing`);
+  return true;
+}
+
 module.exports = {
   applyPatch,
+  verifyPatch,
   __testing: {
     HELPER_SOURCE,
     COMPACTION_MARKER,

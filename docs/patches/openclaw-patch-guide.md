@@ -129,10 +129,22 @@ Examples:
 After changing patches:
 
 1. Reinstall/sync the target runtime.
-2. Confirm patch logs show applied/skipped status.
-3. Run a smoke test for the patched behavior.
-4. Run related Vitest tests if adapter behavior changed.
-5. Update this guide and any feature docs.
+2. Run `npm run openclaw:patches:verify`.
+3. Confirm patch logs show applied/skipped status.
+4. Run a smoke test for the patched behavior.
+5. Run related Vitest tests if adapter behavior changed.
+6. Update this guide and any feature docs.
+
+Every successful full patch pass writes `runtime-patch-manifest.json` into the
+runtime root, but only after every patch module's read-only `verifyPatch()` has
+asserted that all critical final replacements are present. The manifest binds
+the declared OpenClaw version and the SHA-256 of every current patch script to
+the exact `gateway-bundle.mjs` bytes produced after patching. Electron Builder
+verifies this manifest before packaging and again against the runtime copied
+into the packaged app. On Windows, the second check extracts the manifest and
+gateway bundle from the packaged `win-resources.tar`. A silent no-op,
+missing/stale patch, rebuilt bundle, or packaging omission therefore fails the
+build before an installer is emitted.
 
 ### 5. Remove
 

@@ -25,6 +25,11 @@ Every patch under `scripts/patches/<openclaw-version>/` must start with metadata
 - Electron, Windows, or packaging compatibility patches may be temporary or
   permanent, but still need a removal condition.
 - Patch hit failure must be visible through build or startup logs.
+- Every patch module must export an idempotent, read-only `verifyPatch(runtimeDir)`
+  that throws unless all of that patch's critical final replacements are present
+  in `gateway-bundle.mjs`.
+- Do not hand-edit `runtime-patch-manifest.json`. It is generated after the
+  complete patch pass and verified both before and after Electron packaging.
 
 ## Review Checklist
 

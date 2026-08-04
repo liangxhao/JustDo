@@ -183,11 +183,20 @@ Agent 模型引用由 `resolveQualifiedAgentModelRef()` 规范化，避免同名
 - `openclaw:precompile`
 - `openclaw:prune`
 
+`openclaw:bundle` 在新建 bundle 和命中缓存跳过重建两条路径中都会生成或修复
+`gateway-launcher.cjs`。构建脚本与 `OpenClawEngineManager` 共用同一个 launcher
+生成器，确保 Electron Builder 校验前以及应用运行时得到一致的 bundle-only 入口。
+缓存命中时会先验证 patch manifest；bundle 与 patch 集合均未变化时跳过完整 patch
+pass。`predist:win` 由 npm 在执行 `dist:win` 前自动调用，`dist:win` 本身不得再次调用。
+
 ## 约束
 
 - 不引入第二个 Agent engine。
 - 不让 renderer 直接管理 Gateway process。
 - Runtime patch 必须小、可审计、可删除，并遵守 `scripts/patches/README.md`。
+- 完整 patch pass 会生成绑定 patch 集合与最终 Gateway bundle 哈希的
+  `runtime-patch-manifest.json`；Electron Builder 在打包前和复制产物后各校验一次，
+  校验失败时不得生成安装包。
 - OpenClaw 行为差异优先向上游修复，JustDo patch 只作为兼容层。
 
 ## 组件分工

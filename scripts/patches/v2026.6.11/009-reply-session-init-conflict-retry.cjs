@@ -138,4 +138,12 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [PATCHED_ENTRY, PATCHED_CONFLICT_HANDLER, PATCHED_REVISION, PATCHED_COMMIT_ENTRY];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Reply session initialization retry patch is incomplete: ${missing.length} replacement(s) missing`);
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

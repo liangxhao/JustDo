@@ -105,4 +105,18 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    'const activeSubagents = listControlledSubagentRuns(opts.agentSessionKey).filter((entry) => !entry.endedAt);',
+    'status: "no_active_subagents"',
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (!/agentSessionKey: options\d*\?\.agentSessionKey,/.test(content)) {
+    missing.push('agent session key forwarding');
+  }
+  if (missing.length > 0) throw new Error(`Sessions yield active guard patch is incomplete: ${missing.join(', ')}`);
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

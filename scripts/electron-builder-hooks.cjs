@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const os = require('os');
 const { existsSync, readdirSync, statSync, mkdirSync, readFileSync, rmSync, cpSync, lstatSync } = require('fs');
 const { spawnSync } = require('child_process');
 const asar = require('@electron/asar');
@@ -8,6 +9,10 @@ const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-pyt
 const { ensurePortableGit } = require('./setup-mingit.js');
 const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resources.cjs');
 const { packMultipleSources } = require('./pack-openclaw-tar.cjs');
+const {
+  PATCH_MANIFEST_FILENAME,
+  verifyOpenClawPatchManifest,
+} = require('./verify-openclaw-runtime-patches.cjs');
 
 function isWindowsTarget(context) {
   return context?.electronPlatformName === 'win32';
@@ -300,6 +305,17 @@ function ensureBundledOpenClawRuntime(context) {
   }
   verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, buildHint);
   verifyOpenClawReasoningStreamPatches(gatewayBundlePath, buildHint);
+  try {
+    const manifest = verifyOpenClawPatchManifest(runtimeRoot);
+    console.log(
+      `[electron-builder-hooks] Verified all ${manifest.patches.length} OpenClaw runtime patches.`,
+    );
+  } catch (error) {
+    throw new Error(
+      '[electron-builder-hooks] OpenClaw runtime patches are not ready for packaging. '
+      + `${error instanceof Error ? error.message : String(error)} Run \`${buildHint}\`.`,
+    );
+  }
 
   const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
   if (existsSync(gatewayAsarPath)) {
@@ -730,6 +746,7 @@ async function beforePack(context) {
     const requiredTarEntries = [
       'cfmind/package.json',
       'cfmind/runtime-build-info.json',
+      `cfmind/${PATCH_MANIFEST_FILENAME}`,
       'cfmind/gateway-bundle.mjs',
       'cfmind/gateway-launcher.cjs',
       'cfmind/gateway.asar',
@@ -769,6 +786,8 @@ async function beforePack(context) {
 }
 
 async function afterPack(context) {
+  verifyPackagedOpenClawRuntime(context);
+
   if (isMacTarget(context)) {
     const appName = context.packager.appInfo.productFilename;
     const appPath = path.join(context.appOutDir, `${appName}.app`);
@@ -783,7 +802,52 @@ async function afterPack(context) {
   }
 }
 
+function verifyPackagedOpenClawRuntime(context) {
+  const resourcesRoot = isMacTarget(context)
+    ? path.join(
+        context.appOutDir,
+        `${context.packager.appInfo.productFilename}.app`,
+        'Contents',
+        'Resources',
+      )
+    : path.join(context.appOutDir, 'resources');
+
+  if (isWindowsTarget(context)) {
+    const tarPath = path.join(resourcesRoot, 'win-resources.tar');
+    if (!existsSync(tarPath)) {
+      throw new Error(
+        `[electron-builder-hooks] Packaged Windows runtime archive is missing: ${tarPath}`,
+      );
+    }
+
+    const temporaryRoot = require('fs').mkdtempSync(
+      path.join(os.tmpdir(), 'justdo-openclaw-patch-verification-'),
+    );
+    try {
+      const requiredEntries = new Set([
+        `cfmind/${PATCH_MANIFEST_FILENAME}`,
+        'cfmind/gateway-bundle.mjs',
+      ]);
+      const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
+      tarModule.extract({
+        cwd: temporaryRoot,
+        file: tarPath.replace(/\\/g, '/'),
+        sync: true,
+        filter: (entryPath) => requiredEntries.has(entryPath.replace(/^\.\//, '')),
+      });
+      verifyOpenClawPatchManifest(path.join(temporaryRoot, 'cfmind'));
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  } else {
+    verifyOpenClawPatchManifest(path.join(resourcesRoot, 'cfmind'));
+  }
+
+  console.log('[electron-builder-hooks] Verified patches in packaged OpenClaw runtime.');
+}
+
 module.exports = {
   beforePack,
   afterPack,
+  verifyPackagedOpenClawRuntime,
 };

@@ -289,8 +289,29 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    PATCHED_COMPACTION_SUMMARY_WRAPPER,
+    PATCHED_SUMMARIZATION_SYSTEM_PROMPT,
+    PATCHED_SUMMARIZATION_PROMPT,
+    PATCHED_UPDATE_SUMMARIZATION_PROMPT,
+    PATCHED_TURN_PREFIX_SUMMARIZATION_PROMPT,
+    PATCHED_STRUCTURED_FALLBACK,
+    PATCHED_SAFE_GUARD_SETUP,
+    PATCHED_STRUCTURED_INSTRUCTIONS,
+    PATCHED_ASSEMBLE_SUFFIX,
+    PATCHED_PROVIDER_SUFFIX,
+    PATCHED_LLM_SUFFIX,
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Codex compaction template patch is incomplete: ${missing.length} replacement(s) missing`);
+  return true;
+}
+
 module.exports = {
   applyPatch,
+  verifyPatch,
   CODEX_COMPACTION_MARKER,
   __testing: {
     ORIGINAL_COMPACTION_SUMMARY_WRAPPER,

@@ -338,4 +338,20 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    'function isAssistantReasoningContentType(type)',
+    'entry.type === "thinking" || entry.type === "reasoning" || entry.type === "redacted_thinking"',
+    'isAssistantReasoningContentType(block3.type) && typeof block3.thinking === "string"',
+    'function isZeroUsageVisibleStopAssistantTurn(message2) {\n  return false;',
+    'result.meta?.toolSummary?.tools) && result.meta.toolSummary.tools.includes("sessions_yield")',
+    'if (hasIntentionalSilentGatewayAgentPayload(response)) return void 0;',
+    'const acceptsIntentionalSilentCompletion = hasIntentionalSilentGatewayAgentPayload(directAnnounceResponse);',
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`History thinking and subagent yield patch is incomplete: ${missing.join(', ')}`);
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

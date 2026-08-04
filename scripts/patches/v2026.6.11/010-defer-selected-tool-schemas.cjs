@@ -82,4 +82,12 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch, DEFERRED_TOOL_NAMES };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  if (!content.includes(PATCHED_CATALOG_PREDICATE)) {
+    throw new Error('Selective Tool Search patch is incomplete');
+  }
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch, DEFERRED_TOOL_NAMES };

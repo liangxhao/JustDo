@@ -2,6 +2,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  listPatchFiles,
+  verifyOpenClawPatchManifest,
+  writeOpenClawPatchManifest,
+} = require('./verify-openclaw-runtime-patches.cjs');
 
 function resolveRepoRoot() {
   return path.resolve(__dirname, '..');
@@ -18,9 +23,13 @@ function readOpenClawVersion(repoRoot) {
 
 function loadPatchModule(filePath) {
   const loaded = require(filePath);
-  if (typeof loaded === 'function') return loaded;
-  if (typeof loaded.applyPatch === 'function') return loaded.applyPatch;
-  throw new Error(`Patch module must export a function or applyPatch(): ${filePath}`);
+  if (typeof loaded.applyPatch !== 'function') {
+    throw new Error(`Patch module must export applyPatch(): ${filePath}`);
+  }
+  if (typeof loaded.verifyPatch !== 'function') {
+    throw new Error(`Patch module must export verifyPatch(): ${filePath}`);
+  }
+  return loaded;
 }
 
 function patchOpenClawRuntime(runtimeDir, options = {}) {
@@ -40,22 +49,20 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
     return [];
   }
 
-  const patchFiles = fs
-    .readdirSync(patchDir, { withFileTypes: true })
-    .filter(entry => entry.isFile() && entry.name.endsWith('.cjs'))
-    .map(entry => path.join(patchDir, entry.name))
-    .sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+  const patchFiles = listPatchFiles(repoRoot, version);
 
   const results = [];
+  const loadedPatches = [];
   for (const patchFile of patchFiles) {
-    const patch = loadPatchModule(patchFile);
+    const patchModule = loadPatchModule(patchFile);
     const patchLabel = `${label}:${path.basename(patchFile, '.cjs')}`;
-    const result = patch(runtimeDir, {
+    const result = patchModule.applyPatch(runtimeDir, {
       ...options,
       label: patchLabel,
       version,
       repoRoot,
     });
+    loadedPatches.push({ patchFile, patchLabel, patchModule });
     results.push({
       file: path.relative(repoRoot, patchFile),
       result,
@@ -66,7 +73,57 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
     console.log(`[${label}] Patch directory is empty for ${version}.`);
   }
 
+  const gatewayBundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+  if (patchFiles.length > 0 && fs.existsSync(gatewayBundlePath)) {
+    for (const { patchLabel, patchModule } of loadedPatches) {
+      patchModule.verifyPatch(runtimeDir, {
+        ...options,
+        label: patchLabel,
+        version,
+        repoRoot,
+      });
+    }
+
+    if (options.writeManifest !== false) {
+      const { manifestPath } = writeOpenClawPatchManifest(runtimeDir, { repoRoot, version });
+      if (options.verbose) {
+        console.log(`[${label}] Wrote patch manifest: ${path.relative(repoRoot, manifestPath)}`);
+      }
+    }
+  }
+
   return results;
+}
+
+function ensureOpenClawRuntimePatches(runtimeDir, options = {}) {
+  const repoRoot = options.repoRoot || resolveRepoRoot();
+  const version = (options.version || readOpenClawVersion(repoRoot)).replace(/^v?/, 'v');
+  const label = options.label || 'patch-openclaw-runtime';
+
+  try {
+    const manifest = verifyOpenClawPatchManifest(runtimeDir, { repoRoot, version });
+    if (options.verbose) {
+      console.log(
+        `[${label}] Patch manifest is current; skipped ${manifest.patches.length} patch(es).`,
+      );
+    }
+    return { cached: true, manifest, results: [] };
+  } catch (error) {
+    if (options.verbose) {
+      console.log(
+        `[${label}] Patch manifest is stale or missing; running patches. ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  const results = patchOpenClawRuntime(runtimeDir, {
+    ...options,
+    repoRoot,
+    version,
+  });
+  const manifest = verifyOpenClawPatchManifest(runtimeDir, { repoRoot, version });
+  return { cached: false, manifest, results };
 }
 
 if (require.main === module) {
@@ -86,4 +143,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { patchOpenClawRuntime };
+module.exports = { ensureOpenClawRuntimePatches, patchOpenClawRuntime };

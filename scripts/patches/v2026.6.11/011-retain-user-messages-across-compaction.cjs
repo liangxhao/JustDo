@@ -596,7 +596,27 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    RETAINED_USER_HELPERS,
+    PATCHED_CONTEXT_REPLAY,
+    PATCHED_PREPARATION_STATE,
+    PATCHED_PREVIOUS_SUMMARY,
+    PATCHED_PREPARATION_RESULT,
+    PATCHED_SUMMARY_INPUT,
+    PATCHED_TURN_PREFIX_INPUT,
+    PATCHED_COMPACTION_PERSIST,
+    PATCHED_COMPACTION_RETURN,
+    PATCHED_EMBEDDED_COMPACTION_PERSIST,
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Retained user message compaction patch is incomplete: ${missing.length} replacement(s) missing`);
+  return true;
+}
+
 module.exports = {
   applyPatch,
+  verifyPatch,
   RETAINED_USER_HELPERS,
 };

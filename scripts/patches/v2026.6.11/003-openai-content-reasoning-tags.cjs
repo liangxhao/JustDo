@@ -94,4 +94,16 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    'const routedDeltas = reasoningTagTextPartitioner.push(',
+    'else appendThinkingDelta("reasoning_content", delta.text);',
+    'const appendPartitionedVisibleDelta = (delta) => {\n    appendRoutedContentDelta(delta);',
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Content reasoning tags patch is incomplete: ${missing.join(', ')}`);
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

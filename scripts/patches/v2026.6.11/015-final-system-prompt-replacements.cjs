@@ -160,4 +160,12 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [HELPER_MARKER, HELPER_SOURCE, RULE_APPLICATION, PATCHED_FINALIZATION];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Final system prompt replacements patch is incomplete: ${missing.length} replacement(s) missing`);
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

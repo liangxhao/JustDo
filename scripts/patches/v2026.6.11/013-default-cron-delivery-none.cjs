@@ -134,8 +134,22 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    PATCHED_DELIVERY_HELP,
+    PATCHED_CANONICAL_JOB,
+    PATCHED_CONTEXT_DELIVERY,
+    PATCHED_UPDATE_PATCH,
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Default cron delivery patch is incomplete: ${missing.length} replacement(s) missing`);
+  return true;
+}
+
 module.exports = {
   applyPatch,
+  verifyPatch,
   __testing: {
     ORIGINAL_DELIVERY_HELP,
     LEGACY_PATCHED_DELIVERY_HELP,

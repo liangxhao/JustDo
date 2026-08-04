@@ -15,7 +15,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
+const {
+  ensureOpenClawRuntimePatches,
+  patchOpenClawRuntime,
+} = require('./patch-openclaw-runtime.cjs');
+const {
+  ensureOpenClawGatewayBundleLauncher,
+} = require('../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
 const runtimeDir = process.argv[2]
@@ -24,6 +30,18 @@ const runtimeDir = process.argv[2]
 
 const bundleOutPath = path.join(runtimeDir, 'gateway-bundle.mjs');
 const scriptPath = __filename;
+
+function ensureGatewayLauncher() {
+  const result = ensureOpenClawGatewayBundleLauncher(runtimeDir);
+  if (result.changed) {
+    console.log(
+      `[bundle-openclaw-gateway] ${result.replaced ? 'Replaced' : 'Generated'} ` +
+        `${path.relative(runtimeDir, result.launcherPath)}.`,
+    );
+  } else {
+    console.log('[bundle-openclaw-gateway] Gateway launcher is up-to-date.');
+  }
+}
 
 // Prefer gateway-entry.js (dedicated gateway entry, skips CLI overhead).
 // Fall back to entry.js (full CLI entry) if gateway-entry.js doesn't exist.
@@ -44,7 +62,11 @@ if (fs.existsSync(bundleOutPath)) {
   const scriptStat = fs.statSync(scriptPath);
   if (bundleStat.mtimeMs > Math.max(entryStat.mtimeMs, scriptStat.mtimeMs)) {
     console.log(`[bundle-openclaw-gateway] Bundle is up-to-date, skipping.`);
-    patchOpenClawRuntime(runtimeDir, { label: 'bundle-openclaw-gateway' });
+    ensureOpenClawRuntimePatches(runtimeDir, {
+      label: 'bundle-openclaw-gateway',
+      verbose: true,
+    });
+    ensureGatewayLauncher();
     process.exit(0);
   }
 }
@@ -268,6 +290,7 @@ esbuild
   .then((result) => {
     verifyBundledRuntimeCompanions(runtimeDir, bundleOutPath);
     patchOpenClawRuntime(runtimeDir, { label: 'bundle-openclaw-gateway' });
+    ensureGatewayLauncher();
     const elapsed = Date.now() - t0;
     const sizeKB = Math.round(fs.statSync(bundleOutPath).size / 1024);
     console.log(

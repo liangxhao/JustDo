@@ -256,8 +256,24 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    'async function persistJustDoLiveContextBudgetStatus(params) {',
+    'contextBudgetStatus: params.status',
+    '[justdo-context-usage] failed to publish live context budget status',
+    PATCHED_MIDTURN_PUBLISH,
+    PATCHED_MIDTURN_OPTIONS,
+    PATCHED_INITIAL_PUBLISH,
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Live context budget status patch is incomplete: ${missing.length} replacement(s) missing`);
+  return true;
+}
+
 module.exports = {
   applyPatch,
+  verifyPatch,
   __testing: {
     ORIGINAL_ATTEMPT_START,
     LEGACY_PATCHED_ATTEMPT_START,

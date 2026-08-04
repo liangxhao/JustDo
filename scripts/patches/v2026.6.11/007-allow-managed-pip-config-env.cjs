@@ -73,4 +73,18 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  if (!content.includes(PATCH_MARKER)) {
+    throw new Error('Managed PIP_CONFIG_FILE patch marker is missing');
+  }
+  const markerIndex = content.indexOf(PATCH_MARKER);
+  const blockStart = content.lastIndexOf('[', markerIndex);
+  const blockEnd = content.indexOf(']', markerIndex);
+  if (blockStart < 0 || blockEnd < 0 || content.slice(blockStart, blockEnd).includes('"PIP_CONFIG_FILE"')) {
+    throw new Error('PIP_CONFIG_FILE remains in the patched host environment block list');
+  }
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

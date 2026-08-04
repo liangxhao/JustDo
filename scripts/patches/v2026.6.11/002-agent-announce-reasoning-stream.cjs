@@ -81,4 +81,16 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    'const resolvedReasoningLevel = sessionEntry?.reasoningLevel ??',
+    'resolvedReasoningLevel,\n',
+    'reasoningLevel: resolvedReasoningLevel,\n',
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Agent announce reasoning patch is incomplete: ${missing.join(', ')}`);
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

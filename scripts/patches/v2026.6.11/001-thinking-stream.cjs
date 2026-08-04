@@ -122,4 +122,21 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const filePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+  const content = fs.readFileSync(filePath, 'utf8');
+  const required = [
+    'streamReasoning: reasoningMode === "stream" && canShowReasoning',
+    'if (params.onReasoningStream) params.onReasoningStream({ text: trimmed });',
+    'if (stream3 === "thinking") {',
+    'if (text2?.trim()) extra.text = compactPreview(text2, 80);',
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (!/if \(![A-Za-z_$][\w$]*\.streamReasoning\) return;/.test(content)) {
+    missing.push('reasoning stream callback-independent guard');
+  }
+  if (missing.length > 0) throw new Error(`Thinking stream patch is incomplete: ${missing.join(', ')}`);
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

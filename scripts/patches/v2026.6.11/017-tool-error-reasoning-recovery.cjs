@@ -199,8 +199,25 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    PATCH_MARKER,
+    'const MAX_TOOL_ERROR_REASONING_RECOVERY_RETRIES = 2;',
+    'temporaryToolErrorRecoveryUserMessageCount: toolErrorReasoningRecoveryAttempts',
+    'pendingToolErrorRecoveryUserMessageCount',
+    'toolErrorReasoningRecoveryCandidate',
+    'request-only recovery user message(s)',
+    'const thinkingOnlyTerminal = !joinAssistantTexts(params.attempt.assistantTexts).length',
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Tool-error reasoning recovery patch is incomplete: ${missing.join(', ')}`);
+  return true;
+}
+
 module.exports = {
   applyPatch,
+  verifyPatch,
   MAX_RECOVERY_RETRIES,
   RECOVERY_USER_MESSAGE,
 };

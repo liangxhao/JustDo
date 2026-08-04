@@ -191,4 +191,22 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
-module.exports = { applyPatch };
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    'const isWindowsPackageRunner =',
+    'JUSTDO_ELECTRON_PATH:',
+    'JUSTDO_NPM_BIN_DIR:',
+    'materializeWindowsSpawnProgram(resolveWindowsSpawnProgram({',
+    'const preparedSpawn = windowsInvocation',
+    'shell: windowsInvocation?.shell ?? false',
+    'windowsHide: process',
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) {
+    throw new Error(`Windows MCP package runner patch is incomplete: ${missing.join(', ')}`);
+  }
+  return true;
+}
+
+module.exports = { applyPatch, verifyPatch };

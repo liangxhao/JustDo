@@ -121,8 +121,22 @@ function applyPatch(runtimeDir, options = {}) {
   return patched;
 }
 
+function verifyPatch(runtimeDir) {
+  const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+  const required = [
+    'const hasPriorRequesterVisibleCompletion = async (entry) =>',
+    'if (await hasPriorRequesterVisibleCompletion(entry)) return true;',
+    'return await params.runSubagentAnnounceFlow({',
+    '})().then((didAnnounce) => {\n      finalizeAnnounceCleanup(didAnnounce);',
+  ];
+  const missing = required.filter(marker => !content.includes(marker));
+  if (missing.length > 0) throw new Error(`Visible subagent announce dedupe patch is incomplete: ${missing.join(', ')}`);
+  return true;
+}
+
 module.exports = {
   applyPatch,
+  verifyPatch,
   isVisibleCompletionTextMatch,
   normalizeVisibleCompletionText,
 };
