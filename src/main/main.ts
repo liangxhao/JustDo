@@ -13,13 +13,15 @@ import {
 } from '../shared/productMetadata';
 import { ProviderName } from '../shared/providers';
 import type { ProxySettings } from '../shared/proxy';
-import { APP_NAME } from './core/appConstants';
+import { APP_NAME, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
+import { AutoUpdateService } from './core/autoUpdateService';
 import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
 import { applyDependencyManagerConfigEnv } from './core/dependencyManagerConfig';
 import { loadDeveloperConfig } from './core/developerConfigFile';
 import { setLanguage } from './core/i18n';
+import { isNsisInstalledApp } from './core/installedApp';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
 import { mainProcessTitleFetch } from './core/mainProcessFetch';
@@ -48,6 +50,7 @@ import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
 import {
   registerAppHandlers,
+  registerAutoUpdateHandlers,
   registerCalendarPermissionHandlers,
   registerDialogHandlers,
   registerLocalFileHandlers,
@@ -978,6 +981,30 @@ if (!gotTheLock) {
   };
 
   const appShutdown = registerAppShutdown({ cleanup: runAppCleanup });
+  app.on('second-instance', (_event, commandLine) => {
+    if (commandLine.includes(INSTALLER_QUIT_SWITCH)) {
+      console.log('[Main] Installer requested a graceful shutdown.');
+      app.quit();
+      return;
+    }
+    createWindow();
+  });
+  const autoUpdateService = new AutoUpdateService({
+    currentVersion: app.getVersion(),
+    enabled: isNsisInstalledApp({
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      resourcesPath: process.resourcesPath,
+    }),
+    getWindows: () => BrowserWindow.getAllWindows(),
+    installAfterCleanup: installUpdate => appShutdown.quitAndInstall(installUpdate),
+    recoverAfterInstallFailure: () => {
+      console.error('[AutoUpdate] Restarting the app after update installation failure.');
+      app.relaunch();
+      app.exit(1);
+    },
+  });
+  registerAutoUpdateHandlers(autoUpdateService);
 
   // 初始化应用
   const initApp = async () => {
@@ -1082,6 +1109,7 @@ if (!gotTheLock) {
 
     // 创建窗口
     createWindow();
+    autoUpdateService.scheduleStartupCheck();
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
     powerMonitor.on('resume', () => {

@@ -42,7 +42,7 @@ jobs:
           restore-keys: npm-${{ runner.os }}-
       
       - run: npm install
-      
+
       # 设置 OpenClaw runtime (如果需要)
       - name: Setup OpenClaw Runtime
         run: |
@@ -84,7 +84,7 @@ jobs:
           restore-keys: npm-${{ runner.os }}-
       
       - run: npm install
-      
+
       # Windows 需要 Python 运行时
       - name: Setup Python Runtime
         run: npm run setup:python-runtime
@@ -96,11 +96,18 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Verify Windows update artifacts
+        run: npm run verify:windows-update-artifacts
       
       - uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
           retention-days: 7
 
   # ========== Linux 构建 ==========
@@ -154,7 +161,7 @@ jobs:
         with:
           files: |
             artifacts/macos-build/*.dmg
-            artifacts/windows-build/*.exe
+            artifacts/windows-build/*
             artifacts/linux-build/*
           draft: true
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}

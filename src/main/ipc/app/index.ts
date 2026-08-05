@@ -1,4 +1,5 @@
 export { registerAppHandlers } from './app';
+export { registerAutoUpdateHandlers } from './autoUpdate';
 export { registerCalendarPermissionHandlers } from './calendarPermissions';
 export { registerDialogHandlers } from './dialog';
 export { registerLocalFileHandlers } from './localFiles';

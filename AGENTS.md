@@ -8,7 +8,7 @@ accurate and dense; detailed design belongs in `docs/architecture/`.
 JustDo is a local-first Electron + React desktop assistant. Agents execute real
 tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 
-- App: `v2026.7.23`
+- App: `v2026.8.5`
 - Electron: `42.6.0`
 - OpenClaw: `v2026.6.11`
 - Node: `>=24 <25` (`.nvmrc`)

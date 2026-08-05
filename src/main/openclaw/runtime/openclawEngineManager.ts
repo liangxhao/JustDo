@@ -27,8 +27,8 @@ import { ensureElectronNodeShim, getElectronNodeRuntimePath } from './electronNo
 import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
-import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
 import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
+import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
 import { mergeRegisteredSystemPromptReplacementRules } from './systemPromptReplacementRegistry';
 
 type GatewayProcess = UtilityProcess | ChildProcess;

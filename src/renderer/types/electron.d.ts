@@ -26,6 +26,8 @@ type ApprovalKind = import('../../shared/openclaw/approvals').ApprovalKind;
 type ApprovalRequest = import('../../shared/openclaw/approvals').ApprovalRequest;
 type ApprovalResolved = import('../../shared/openclaw/approvals').ApprovalResolved;
 type ApprovalDecision = import('../../shared/openclaw/approvals').ApprovalDecision;
+type AppUpdateActionResult = import('../../shared/appUpdate').AppUpdateActionResult;
+type AppUpdateState = import('../../shared/appUpdate').AppUpdateState;
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -841,6 +843,12 @@ interface IElectronAPI {
     getVersion: () => Promise<string>;
     getOpenclawVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
+  };
+  appUpdate: {
+    getState: () => Promise<AppUpdateState>;
+    check: () => Promise<AppUpdateState>;
+    quitAndInstall: () => Promise<AppUpdateActionResult>;
+    onStateChanged: (callback: (state: AppUpdateState) => void) => () => void;
   };
   builtinModels: {
     refresh: () => Promise<{ success: boolean; error?: string }>;

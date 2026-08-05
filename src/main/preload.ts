@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+import { AppUpdateIpc, type AppUpdateState } from '../shared/appUpdate';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
 import { DeveloperConfigIpc } from '../shared/developerConfig';
@@ -462,6 +463,16 @@ contextBridge.exposeInMainWorld('electron', {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getOpenclawVersion: () => ipcRenderer.invoke('app:getOpenclawVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
+  },
+  appUpdate: {
+    getState: (): Promise<AppUpdateState> => ipcRenderer.invoke(AppUpdateIpc.GetState),
+    check: (): Promise<AppUpdateState> => ipcRenderer.invoke(AppUpdateIpc.Check),
+    quitAndInstall: () => ipcRenderer.invoke(AppUpdateIpc.QuitAndInstall),
+    onStateChanged: (callback: (state: AppUpdateState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: AppUpdateState) => callback(state);
+      ipcRenderer.on(AppUpdateIpc.StateChanged, handler);
+      return () => ipcRenderer.removeListener(AppUpdateIpc.StateChanged, handler);
+    },
   },
   builtinModels: {
     refresh: () => ipcRenderer.invoke('builtinModels:refresh'),

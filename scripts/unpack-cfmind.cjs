@@ -25,6 +25,12 @@ const path = require('path');
 
 const tarPath = process.argv[2];
 const destDir = process.argv[3];
+function activity(text) {
+  // nsExec reads redirected output using the active Windows code page while
+  // Node writes UTF-8. Keep this stream ASCII-only to prevent mojibake. The
+  // surrounding NSIS milestones remain fully localized Unicode strings.
+  console.log(text);
+}
 
 if (!tarPath || !destDir) {
   console.error('[unpack-cfmind] Usage: JustDo.exe unpack-cfmind.cjs <tarPath> <destDir>');
@@ -68,11 +74,11 @@ function loadTarModule() {
 // ============================================================
 
 try {
-  console.log(`[unpack-cfmind] Extracting: ${tarPath}`);
-  console.log(`[unpack-cfmind] Destination: ${destDir}`);
+  activity('Reading resource package...');
 
   const tar = loadTarModule();
   const t0 = Date.now();
+  let extractedEntries = 0;
 
   // Ensure destination directory exists
   fs.mkdirSync(destDir, { recursive: true });
@@ -82,23 +88,29 @@ try {
     file: tarPath,
     cwd: destDir,
     sync: true,
+    onentry: () => {
+      extractedEntries += 1;
+      if (extractedEntries % 750 === 0) {
+        activity(`Prepared ${extractedEntries.toLocaleString('en-US')} resource entries`);
+      }
+    },
   });
 
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-  console.log(`[unpack-cfmind] Done in ${elapsed}s`);
+  activity(
+    `${extractedEntries.toLocaleString('en-US')} resource entries ready in ${elapsed}s`,
+  );
 
   // Verify key directories exist
   const expectedDirs = ['cfmind'];
   for (const dir of expectedDirs) {
     const dirPath = path.join(destDir, dir);
-    if (fs.existsSync(dirPath)) {
-      console.log(`[unpack-cfmind] Verified: ${dir}/`);
-    } else {
+    if (!fs.existsSync(dirPath)) {
       console.error(`[unpack-cfmind] Warning: expected directory missing: ${dir}/`);
     }
   }
 
-  console.log('[unpack-cfmind] OK');
+  activity('Core resources verified');
   process.exit(0);
 } catch (err) {
   console.error(`[unpack-cfmind] Extraction failed: ${err.message}`);

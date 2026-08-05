@@ -12,8 +12,19 @@
 const fs = require('fs');
 const path = require('path');
 
+const REMOVE_OPTIONS = {
+  recursive: true,
+  force: true,
+  maxRetries: 5,
+  retryDelay: 200,
+};
+
 function resolveRepoRoot() {
   return path.resolve(__dirname, '..');
+}
+
+function removeDirectory(dirPath) {
+  fs.rmSync(dirPath, REMOVE_OPTIONS);
 }
 
 // ─── Strategy 1: File cleanup patterns ───
@@ -113,7 +124,7 @@ function stubPackage(pkgDir, pkgName, stats) {
   } catch { /* ignore */ }
 
   // Remove all contents
-  fs.rmSync(pkgDir, { recursive: true, force: true });
+  removeDirectory(pkgDir);
   fs.mkdirSync(pkgDir, { recursive: true });
 
   // Write dual CJS + ESM stub files
@@ -154,7 +165,7 @@ function cleanDir(dirPath, stats) {
 
     if (entry.isDirectory()) {
       if (DIRS_TO_DELETE.has(entry.name.toLowerCase())) {
-        fs.rmSync(fullPath, { recursive: true, force: true });
+        removeDirectory(fullPath);
         stats.dirsRemoved++;
         continue;
       }
@@ -245,7 +256,7 @@ function pruneRuntimeExtensions(runtimeRoot, stats, options = {}) {
 
     const fullPath = path.join(extensionsDir, entry.name);
     const size = getDirectorySize(fullPath);
-    fs.rmSync(fullPath, { recursive: true, force: true });
+    removeDirectory(fullPath);
     removed.push(entry.name);
     stats.extensionDirsRemoved++;
     stats.bytesFreed += size;

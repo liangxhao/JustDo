@@ -41,6 +41,7 @@ export default defineConfig({
               external: id => {
                 const staticExternals = [
                   'electron',
+                  'electron-updater',
                   'better-sqlite3',
                   'discord.js',
                   'zlib-sync',

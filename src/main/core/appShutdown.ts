@@ -6,6 +6,7 @@ type AppShutdownOptions = {
 
 export type AppShutdownController = {
   isQuitting: () => boolean;
+  quitAndInstall: (installUpdate: () => void) => void;
 };
 
 export const registerAppShutdown = ({ cleanup }: AppShutdownOptions): AppShutdownController => {
@@ -13,7 +14,7 @@ export const registerAppShutdown = ({ cleanup }: AppShutdownOptions): AppShutdow
   let cleanupInProgress = false;
   let quitting = false;
 
-  const beginCleanup = (context: string): void => {
+  const beginCleanup = (context: string, afterCleanup?: () => void): void => {
     if (cleanupFinished || cleanupInProgress) return;
 
     cleanupInProgress = true;
@@ -27,7 +28,16 @@ export const registerAppShutdown = ({ cleanup }: AppShutdownOptions): AppShutdow
       .finally(() => {
         cleanupFinished = true;
         cleanupInProgress = false;
-        app.exit(0);
+        if (!afterCleanup) {
+          app.exit(0);
+          return;
+        }
+        try {
+          afterCleanup();
+        } catch (error) {
+          console.error('[Main] Failed to launch downloaded update:', error);
+          app.exit(1);
+        }
       });
   };
 
@@ -42,5 +52,6 @@ export const registerAppShutdown = ({ cleanup }: AppShutdownOptions): AppShutdow
 
   return {
     isQuitting: () => quitting,
+    quitAndInstall: installUpdate => beginCleanup('Installing downloaded update', installUpdate),
   };
 };

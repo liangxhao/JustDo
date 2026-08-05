@@ -42,6 +42,7 @@ import {
   getEnabledProviderModels,
 } from '@/features/models/modelConfig';
 import { setAvailableModels } from '@/features/models/modelSlice';
+import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
 import ShortcutsSettings, {
   shortcutLabelMap,
@@ -55,6 +56,8 @@ import { themeService } from '@/services/theme';
 import Modal from '@/shared/components/common/Modal';
 import ErrorMessage from '@/shared/components/ErrorMessage';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
+
+import appLogoUrl from '../../../../resources/logo.png';
 
 type TabType = 'general' | 'usage' | 'model' | 'memory' | 'im' | 'shortcuts' | 'help';
 
@@ -287,7 +290,6 @@ const Settings: React.FC<SettingsProps> = ({
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(220);
   const [appVersion, setAppVersion] = useState<string>('unknown');
-  const [openclawVersion, setOpenclawVersion] = useState<string>('unknown');
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
@@ -296,7 +298,6 @@ const Settings: React.FC<SettingsProps> = ({
   useEffect(() => {
     if (activeTab === 'help') {
       window.electron.appInfo.getVersion().then(setAppVersion);
-      window.electron.appInfo.getOpenclawVersion().then(setOpenclawVersion);
     }
   }, [activeTab]);
 
@@ -2272,26 +2273,35 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'help': {
         return (
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-lg font-semibold text-foreground mb-4">
-                {i18nService.t('about')}
-              </h3>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between py-2 border-b border-border/50">
-                  <span className="text-sm text-secondary">{i18nService.t('appName')}</span>
-                  <span className="text-sm font-medium text-foreground">{APP_NAME}</span>
-                </div>
-                <div className="flex items-center justify-between py-2 border-b border-border/50">
-                  <span className="text-sm text-secondary">{i18nService.t('appVersion')}</span>
-                  <span className="text-sm font-medium text-foreground">{appVersion}</span>
-                </div>
-                <div className="flex items-center justify-between py-2 border-b border-border/50">
-                  <span className="text-sm text-secondary">{i18nService.t('openclawVersion')}</span>
-                  <span className="text-sm font-medium text-foreground">{openclawVersion}</span>
+          <div className="space-y-8">
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-foreground">{i18nService.t('about')}</h3>
+              <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-surface-raised/50 p-5 shadow-subtle">
+                <div
+                  className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-primary/10 blur-3xl"
+                  aria-hidden="true"
+                />
+                <div className="relative flex items-center gap-4">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-border/50 bg-surface p-2.5 shadow-card">
+                    <img src={appLogoUrl} alt="" className="h-full w-full object-contain" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h4 className="text-xl font-semibold tracking-tight text-foreground">
+                        {APP_NAME}
+                      </h4>
+                      <span className="rounded-full border border-primary/20 bg-primary-muted px-2.5 py-0.5 text-xs font-medium text-primary">
+                        {appVersion}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 text-sm leading-6 text-secondary">
+                      {i18nService.t('appAboutDescription')}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            </section>
+            <AppUpdateSection />
           </div>
         );
       }

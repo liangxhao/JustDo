@@ -65,6 +65,7 @@ flowchart TB
 | `preventSleep`     | 防休眠                                                  |
 | `developerConfig`  | 读取启动时加载的开发者功能可见性配置                    |
 | `appInfo`          | 应用版本、OpenClaw 版本、系统语言                       |
+| `appUpdate`        | Windows 更新状态、手动检查、重启安装和状态事件         |
 | `builtinModels`    | 刷新内置模型 provider                                   |
 | `log`              | 日志路径、打开日志目录、导出 zip、debug 日志            |
 | `scheduledTasks`   | 定时任务 CRUD、手动运行、运行历史、状态事件             |
@@ -100,6 +101,15 @@ Streaming Cowork events use IPC event listeners such as:
 - `cowork:sessions:changed`
 
 Scheduled task events use constants from `src/shared/scheduledTask/constants.ts`.
+
+Windows 正式安装包的自动更新由 Main 中的更新服务独占。NSIS 安装完成后会在 resources
+目录写入安装标记；Main 同时检查 packaged、Windows、安装标记、构建配置标记和
+`app-update.yml`，避免 `win-unpacked`、复制版或未配置 feed 的本地验证包误启用更新。Renderer 只能读取带单调
+revision 的状态、请求检查或
+请求安装，不能指定 feed URL 和本地安装包。更新下载完成后，Main 先执行与正常退出相同的
+OpenClaw、扩展宿主、定时任务和 SQLite 清理，再启动 NSIS 安装器；开发环境和非 Windows
+平台返回 `unsupported`。如果安装器在清理完成后启动失败，Main 会重新启动当前应用，避免
+Renderer 停留在数据库和后台服务已关闭的半退出状态。
 
 ## Rules
 

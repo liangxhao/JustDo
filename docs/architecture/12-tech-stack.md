@@ -139,6 +139,16 @@ Main bundle 需要 external 部分 native/Electron/runtime 依赖，例如：
 
 打包过滤会排除 README、license、tests、map、d.ts 等开发文件。新增 runtime 必需资产时要确认不会被过滤误删。
 
+Windows NSIS 使用 `electron-updater` 从 Generic HTTPS 静态目录更新。feed 固化在
+`scripts/windows-update-config.cjs`，打包过程不访问更新服务器，也不依赖环境变量；安装包
+进入可访问该地址的内网后自动启用更新。当前内网分发未配置 Authenticode 证书，因此
+`app-update.yml` 不写 publisher，下载的更新安装包不执行发布者签名匹配。
+`afterAllArtifactBuild` 根据最终 EXE 和
+`docs/releases/<package-version>.md` 重建 `latest.yml`，写入规范化版本、实际文件名、
+SHA-512、大小、发布时间和更新说明。部署时先上传 EXE 和 blockmap，最后原子
+替换短缓存或不缓存的 `latest.yml`。CI 会复算 manifest 的文件大小与 SHA-512 并检查
+blockmap、feed 配置和构建标记后才上传产物。
+
 ## Native Modules
 
 `better-sqlite3` 是 native dependency。相关脚本：
