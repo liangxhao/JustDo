@@ -13,10 +13,10 @@ const SKILL_FILE_NAME = 'SKILL.md';
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 const FILE_SYSTEM_RETRY_COUNT = 5;
 const FILE_SYSTEM_RETRY_DELAY_MS = 200;
+const SKILL_TRASH_DIRECTORY_NAME = '.justdo-skill-trash';
 const MAX_SKILL_NAME_LENGTH = 64;
 const SKILL_NAME_PATTERN = /^(?=.*[a-z0-9])[a-z0-9_()-](?:[a-z0-9_(). -]*[a-z0-9_()-])?$/i;
-const WINDOWS_RESERVED_NAME_PATTERN =
-  /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const WINDOWS_RESERVED_NAME_PATTERN = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 export type LocalSkillFileResult = {
   success: boolean;
@@ -65,6 +65,18 @@ const resetWindowsDirectoryAcl = (directory: string): void => {
     windowsHide: true,
     stdio: 'ignore',
   });
+
+  const username = process.env.USERNAME;
+  if (!username) return;
+  const account = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${username}` : username;
+  childProcess.spawnSync(
+    executable,
+    [directory, '/grant:r', `${account}:(OI)(CI)F`, '/T', '/C', '/Q', '/L'],
+    {
+      windowsHide: true,
+      stdio: 'ignore',
+    },
+  );
 };
 
 const removeDirectory = (directory: string): void => {
@@ -135,6 +147,62 @@ const renameDirectory = (sourceDir: string, targetDir: string): void => {
       if (!canRetry) throw error;
       waitForFileSystemRetry();
     }
+  }
+};
+
+const quarantineDirectory = (directory: string): string | null => {
+  const skillsRoot = path.dirname(directory);
+  const trashRoot = path.join(path.dirname(skillsRoot), SKILL_TRASH_DIRECTORY_NAME);
+  let transactionDir = '';
+  try {
+    fs.mkdirSync(trashRoot, { recursive: true });
+    transactionDir = fs.mkdtempSync(path.join(trashRoot, 'delete-'));
+    const quarantinedDirectory = path.join(transactionDir, path.basename(directory));
+    try {
+      renameDirectory(directory, quarantinedDirectory);
+    } catch (error) {
+      const code = getFileSystemErrorCode(error);
+      if (process.platform !== 'win32' || (code !== 'EACCES' && code !== 'EPERM')) {
+        throw error;
+      }
+      resetWindowsDirectoryAcl(directory);
+      renameDirectory(directory, quarantinedDirectory);
+    }
+    return quarantinedDirectory;
+  } catch (error) {
+    if (transactionDir) {
+      try {
+        removeDirectory(transactionDir);
+      } catch {
+        // Best effort cleanup; the original error determines the fallback.
+      }
+    }
+    const code = getFileSystemErrorCode(error);
+    if (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY' || code === 'EXDEV') {
+      return null;
+    }
+    throw error;
+  }
+};
+
+const removeSkillDirectory = (directory: string): void => {
+  const quarantinedDirectory = quarantineDirectory(directory);
+  if (!quarantinedDirectory) {
+    removeDirectory(directory);
+  } else {
+    try {
+      removeDirectory(path.dirname(quarantinedDirectory));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'unknown error';
+      console.warn(
+        '[OpenClawSkillFiles] Skill was removed but its quarantined files could not be cleaned:',
+        errorMessage,
+      );
+    }
+  }
+
+  if (pathExists(directory)) {
+    throw new Error(`Skill directory still exists after deletion: ${directory}`);
   }
 };
 
@@ -349,7 +417,7 @@ export class OpenClawSkillFiles {
       throw new Error('Only user-owned skill directories can be deleted');
     }
     try {
-      removeDirectory(targetDir);
+      removeSkillDirectory(targetDir);
     } catch (error) {
       throw new Error(formatFileSystemError(error, targetDir), { cause: error });
     }

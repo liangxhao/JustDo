@@ -1,6 +1,8 @@
 import {
   ArchiveBoxIcon,
   ArrowUpTrayIcon,
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
   FolderIcon,
   SparklesIcon,
   XMarkIcon,
@@ -28,6 +30,7 @@ import Tooltip from '@/shared/components/ui/Tooltip';
 import { RootState } from '@/store';
 
 type SkillTab = 'installed' | 'marketplace';
+type ActionOutcome = { type: 'success' | 'error'; title: string; message: string };
 
 interface SkillsManagerProps {
   readOnly?: boolean;
@@ -45,9 +48,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   const [skillPendingDelete, setSkillPendingDelete] = useState<Skill | null>(null);
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<{ fileName: string; error: string }[]>([]);
-  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [actionOutcome, setActionOutcome] = useState<ActionOutcome | null>(null);
 
   // Gateway offline state
   const [gatewayOffline, setGatewayOffline] = useState(false);
@@ -112,7 +115,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       setImportPickerOpen(false);
       setImporting(true);
       setSkillActionError('');
-      setImportSuccess(null);
+      setActionOutcome(null);
       setImportErrors([]);
 
       const result =
@@ -158,12 +161,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
           .map(r => r.skillId)
           .filter(Boolean)
           .join(', ');
-        setImportSuccess(skillIds);
+        setActionOutcome({
+          type: 'success',
+          title: i18nService.t('importSkill'),
+          message: i18nService.t('skillImportSuccess').replace('{skillId}', skillIds),
+        });
         // Reload skills
         const loadedSkills = await skillService.loadSkills();
         dispatch(setSkills(loadedSkills));
-        // Clear success message after 5 seconds
-        setTimeout(() => setImportSuccess(null), 5000);
       }
 
       if (failed.length > 0) {
@@ -184,6 +189,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   };
 
   const handleCancelDeleteSkill = () => {
+    if (deleting) return;
     setSkillPendingDelete(null);
   };
 
@@ -202,29 +208,36 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   };
 
   const handleConfirmDelete = async () => {
-    if (!skillPendingDelete) return;
+    if (!skillPendingDelete || deleting) return;
 
-    const result = await skillService.deleteSkill(skillPendingDelete.id, skillPendingDelete.source);
-    if (result.success && result.skills) {
-      dispatch(setSkills(result.skills));
-      // Show success message and close detail modal
-      setDeleteSuccess(skillPendingDelete.name);
-      setSelectedSkill(null);
-      setSkillPendingDelete(null);
-      // Clear success message after 3 seconds
-      setTimeout(() => setDeleteSuccess(null), 3000);
-    } else {
-      // If delete failed (non-managed), show manual delete hint and open folder
-      if (result.error?.includes('not found')) {
-        const skillPath = skillPendingDelete.skillPath;
-        const lastSep = Math.max(skillPath.lastIndexOf('/'), skillPath.lastIndexOf('\\'));
-        const skillDir = lastSep >= 0 ? skillPath.substring(0, lastSep) : skillPath;
-        await window.electron.shell.openPath(skillDir);
-        setSkillActionError(i18nService.t('skillDeleteManualHint'));
+    const pendingSkill = skillPendingDelete;
+    setDeleting(true);
+    try {
+      const result = await skillService.deleteSkill(pendingSkill.id, pendingSkill.source);
+      if (result.success && result.skills) {
+        dispatch(setSkills(result.skills));
+        setSelectedSkill(null);
+        setActionOutcome({
+          type: 'success',
+          title: i18nService.t('deleteSkill'),
+          message: i18nService.t('skillDeleteSuccess').replace('{name}', pendingSkill.name),
+        });
       } else {
-        setSkillActionError(result.error || i18nService.t('skillDeleteFailed'));
+        setActionOutcome({
+          type: 'error',
+          title: i18nService.t('skillDeleteFailed'),
+          message: result.error || i18nService.t('skillDeleteFailed'),
+        });
       }
+    } catch (error) {
+      setActionOutcome({
+        type: 'error',
+        title: i18nService.t('skillDeleteFailed'),
+        message: error instanceof Error ? error.message : i18nService.t('skillDeleteFailed'),
+      });
+    } finally {
       setSkillPendingDelete(null);
+      setDeleting(false);
     }
   };
 
@@ -280,18 +293,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               </li>
             ))}
           </ul>
-        </div>
-      )}
-
-      {importSuccess && (
-        <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30 text-green-600 text-sm">
-          {i18nService.t('skillImportSuccess').replace('{skillId}', importSuccess)}
-        </div>
-      )}
-
-      {deleteSuccess && (
-        <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30 text-green-600 text-sm">
-          {i18nService.t('skillDeleteSuccess').replace('{name}', deleteSuccess)}
         </div>
       )}
 
@@ -564,8 +565,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
             </p>
 
             {/* Eligibility info */}
-            {selectedSkill.missing &&
-              getMissingRequirementCount(selectedSkill.missing) > 0 && (
+            {selectedSkill.missing && getMissingRequirementCount(selectedSkill.missing) > 0 && (
               <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 mb-4">
                 <p className="text-xs text-yellow-600 font-medium mb-1">
                   {i18nService.t('skillMissingRequirements')}
@@ -591,7 +591,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
                   </p>
                 )}
               </div>
-              )}
+            )}
 
             <div className="space-y-2 mb-5">
               {selectedSkill.version && (
@@ -668,6 +668,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
         createPortal(
           <Modal
             onClose={handleCancelDeleteSkill}
+            closeOnBackdrop={!deleting}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
             className="w-full max-w-sm mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-5"
           >
@@ -681,6 +682,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               <button
                 type="button"
                 onClick={handleCancelDeleteSkill}
+                disabled={deleting}
                 className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors"
               >
                 {i18nService.t('cancel')}
@@ -688,9 +690,44 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
               <button
                 type="button"
                 onClick={handleConfirmDelete}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+                disabled={deleting}
+                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {i18nService.t('delete')}
+                {i18nService.t(deleting ? 'skillDeleting' : 'delete')}
+              </button>
+            </div>
+          </Modal>,
+          document.body,
+        )}
+
+      {actionOutcome &&
+        createPortal(
+          <Modal
+            onClose={() => setActionOutcome(null)}
+            closeOnBackdrop={false}
+            overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+            className="w-full max-w-sm mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-5"
+          >
+            <div className="flex items-start gap-3">
+              {actionOutcome.type === 'success' ? (
+                <CheckCircleIcon className="h-6 w-6 flex-shrink-0 text-green-500" />
+              ) : (
+                <ExclamationTriangleIcon className="h-6 w-6 flex-shrink-0 text-red-500" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="text-lg font-semibold text-foreground">{actionOutcome.title}</div>
+                <p className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-sm text-secondary">
+                  {actionOutcome.message}
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setActionOutcome(null)}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+              >
+                {i18nService.t('confirm')}
               </button>
             </div>
           </Modal>,

@@ -516,9 +516,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // Security scan
     skillDetailVersion: '版本',
     deleteSkill: '删除技能',
-    skillDeleteConfirm: '确定删除技能”{name}”吗？',
+    skillDeleteConfirm: '确定删除技能“{name}”吗？',
+    skillDeleting: '正在删除…',
     skillDeleteFailed: '删除技能失败',
-    skillDeleteSuccess: '技能”{name}”已删除',
+    skillDeleteSuccess: '技能“{name}”已删除',
     skillDeleteManualHint: '此技能无法通过应用删除，请在打开的文件夹中手动删除。',
     skillUpdateFailed: '更新技能失败',
     clearSkill: '清除技能',
@@ -1433,6 +1434,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillDetailVersion: 'Version',
     deleteSkill: 'Delete Skill',
     skillDeleteConfirm: 'Delete skill "{name}"?',
+    skillDeleting: 'Deleting…',
     skillDeleteFailed: 'Failed to delete skill',
     skillDeleteSuccess: 'Skill "{name}" deleted',
     skillDeleteManualHint:

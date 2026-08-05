@@ -209,7 +209,7 @@ test('can delete a skill after importing it', () => {
   expect(fs.existsSync(path.join(managed, skillId))).toBe(false);
 });
 
-test('repairs inherited Windows ACLs before retrying a permission-blocked deletion', () => {
+test('repairs inherited Windows ACLs before retrying quarantined file cleanup', () => {
   const managed = makeTempDir();
   const skillDir = path.join(managed, 'permission-blocked-skill');
   fs.mkdirSync(skillDir);
@@ -237,11 +237,38 @@ test('repairs inherited Windows ACLs before retrying a permission-blocked deleti
 
   expect(childProcess.spawnSync).toHaveBeenCalledWith(
     expect.stringMatching(/[\\/]icacls\.exe$|^icacls\.exe$/),
-    [skillDir, '/reset', '/T', '/C', '/Q', '/L'],
+    [expect.stringContaining('.justdo-skill-trash'), '/reset', '/T', '/C', '/Q', '/L'],
     expect.objectContaining({ windowsHide: true, stdio: 'ignore' }),
   );
   expect(fs.rmSync).toHaveBeenCalledTimes(2);
   expect(fs.existsSync(skillDir)).toBe(false);
+});
+
+test('reports success after moving a skill out of the scan root even if cleanup remains blocked', () => {
+  const root = makeTempDir();
+  const managed = path.join(root, 'state', 'skills');
+  const skillDir = path.join(managed, 'locked-skill');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: locked-skill\n---\n');
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  vi.spyOn(fs, 'rmSync').mockImplementation(target => {
+    if (target.toString().includes('.justdo-skill-trash')) {
+      throw Object.assign(new Error('scanner still holds a quarantined file'), { code: 'EPERM' });
+    }
+  });
+  vi.spyOn(childProcess, 'spawnSync').mockReturnValue({
+    pid: 1,
+    output: [],
+    stdout: null,
+    stderr: null,
+    status: 0,
+    signal: null,
+  });
+
+  new OpenClawSkillFiles(managed).deleteDirectory(skillDir);
+
+  expect(fs.existsSync(skillDir)).toBe(false);
+  expect(fs.existsSync(path.join(managed, 'locked-skill'))).toBe(false);
 });
 
 test('does not leave a partial managed skill when copying fails', () => {
