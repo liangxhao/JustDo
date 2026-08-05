@@ -351,10 +351,14 @@ transformed.
 Rules run sequentially and contain `id`, `pattern`, optional `flags`,
 `replacement`, and optional `enabled`. They are trusted local configuration:
 invalid rules are rejected by the JustDo API, while the Gateway skips malformed
-on-disk entries without logging prompt content.
+on-disk entries without logging prompt content. The 100-rule limit applies to
+custom rules; registered built-in rules do not consume user capacity.
 
 Built-in rules are registered centrally in
 `src/main/openclaw/runtime/systemPromptReplacementRegistry.ts`. They run first
 and remain authoritative by `id`; rules added through IPC are persisted after
-them. Individual rule behavior is documented by co-located tests rather than
+them. The built-in transforms also remove per-skill `<version>` lines from the
+final `<available_skills>` catalog and the accompanying version-refresh
+guidance because those hashes do not help model-side skill selection.
+Individual rule behavior is documented by co-located tests rather than
 duplicated in this architecture document.

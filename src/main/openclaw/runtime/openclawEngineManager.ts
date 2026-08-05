@@ -11,10 +11,7 @@ import {
   GatewayPortSetErrorCode,
   validateGatewayPortNumber,
 } from '../../../shared/openclaw/gatewayPort';
-import {
-  normalizeSystemPromptReplacementRules,
-  type SystemPromptReplacementRule,
-} from '../../../shared/openclaw/systemPromptReplacements';
+import type { SystemPromptReplacementRule } from '../../../shared/openclaw/systemPromptReplacements';
 import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
 import { applyPortableGitRuntimeEnv } from '../../core/portableGitRuntime';
 import { appendPythonRuntimeToEnv } from '../../core/pythonRuntime';
@@ -29,7 +26,10 @@ import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
 import { ensureOpenClawGatewayBundleLauncher } from './openclawGatewayBundleLauncher.cjs';
 import { OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE } from './openclawLauncher';
-import { mergeRegisteredSystemPromptReplacementRules } from './systemPromptReplacementRegistry';
+import {
+  mergeRegisteredSystemPromptReplacementRules,
+  normalizePersistedSystemPromptReplacementRules,
+} from './systemPromptReplacementRegistry';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
 type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;
@@ -262,7 +262,7 @@ export class OpenClawEngineManager extends EventEmitter {
       throw new Error('Failed to parse system prompt replacement rules');
     }
     return mergeRegisteredSystemPromptReplacementRules(
-      normalizeSystemPromptReplacementRules(parsed),
+      normalizePersistedSystemPromptReplacementRules(parsed),
     );
   }
 
@@ -272,7 +272,7 @@ export class OpenClawEngineManager extends EventEmitter {
    */
   setSystemPromptReplacementRules(rules: unknown): SystemPromptReplacementRule[] {
     const normalized = mergeRegisteredSystemPromptReplacementRules(
-      normalizeSystemPromptReplacementRules(rules),
+      normalizePersistedSystemPromptReplacementRules(rules),
     );
     this.writeSystemPromptReplacementRules(normalized);
     console.log(
@@ -302,7 +302,7 @@ export class OpenClawEngineManager extends EventEmitter {
         );
         return;
       }
-      const normalized = normalizeSystemPromptReplacementRules(existing);
+      const normalized = normalizePersistedSystemPromptReplacementRules(existing);
       const merged = mergeRegisteredSystemPromptReplacementRules(normalized);
       if (JSON.stringify(merged) !== JSON.stringify(normalized)) {
         this.writeSystemPromptReplacementRules(merged);

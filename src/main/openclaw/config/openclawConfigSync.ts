@@ -373,7 +373,7 @@ export const mergeOpenClawSkillConfig = (
   managedSkills: Record<string, unknown>,
 ): Record<string, unknown> => {
   const mergedSkills = { ...existingSkills, ...managedSkills };
-  for (const key of ['load', 'entries']) {
+  for (const key of ['load', 'entries', 'limits']) {
     if (isRecord(existingSkills[key]) && isRecord(managedSkills[key])) {
       mergedSkills[key] = {
         ...existingSkills[key],
@@ -414,6 +414,8 @@ export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 // Allow substantial work while still terminating runaway subagent runs.
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
+export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
+export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 40_000;
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
   every: '30m',
@@ -1211,7 +1213,12 @@ export class OpenClawConfigSync {
       browser: connectivityConfig.browser,
       // skills.update writes user choices such as entries.<id>.enabled here.
       // Preserve those Gateway-owned settings across JustDo startup syncs.
-      skills: mergeOpenClawSkillConfig(existingSkills, {}),
+      skills: mergeOpenClawSkillConfig(existingSkills, {
+        limits: {
+          maxSkillsInPrompt: OPENCLAW_MAX_SKILLS_IN_PROMPT,
+          maxSkillsPromptChars: OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
+        },
+      }),
       cron: {
         enabled: true,
         maxConcurrentRuns: 3,

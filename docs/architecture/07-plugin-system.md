@@ -97,6 +97,8 @@ Ask-user 请求没有自动选择或超时默认值。Broker 和 Extension 会�
 
 Gateway `skills.status` 是 Skill 列表、来源、启用状态和依赖检查的权威。JustDo 本地文件服务只负责导入和删除文件，不能判断某个 Skill 是否已被 Gateway 加载。
 
+JustDo 在 OpenClaw 配置同步时将模型可见的 Skill 目录限制设为最多 200 个、40,000 字符。OpenClaw 仍会先按运行环境和启用状态过滤 Skill；超过预算时先省略 description，再按名称顺序截断。配置同步只覆盖这两个 prompt 限制，并保留用户设置的其他 `skills.limits` 字段。
+
 OpenClaw precedence 为 `openclaw-extra` < `openclaw-bundled` < `openclaw-managed` < `agents-skills-personal` < `agents-skills-project` < `openclaw-workspace`。UI 按来源分组，并把更具体、优先级更高的来源显示在前。
 
 ### 当前内置 Skills

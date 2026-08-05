@@ -21,6 +21,20 @@ export const REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES =
       replacement: '\n',
     },
     {
+      id: 'remove-skill-version-lines',
+      pattern:
+        '^[\\t ]*<version>[^\\r\\n]*<\\/version>[\\t ]*(?:\\r?\\n)?',
+      flags: 'gm',
+      replacement: '',
+    },
+    {
+      id: 'remove-skill-version-refresh-guidance',
+      pattern:
+        "^[\\t ]*If a skill's <version> differs from a previous turn, re-read (?:its SKILL\\.md|that skill) before using it\\.[\\t ]*(?:\\r?\\n)?",
+      flags: 'gm',
+      replacement: '',
+    },
+    {
       id: 'compact-runtime-section',
       pattern: [
         '^## Runtime\\r?\\n',
@@ -87,22 +101,29 @@ export const REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES =
     },
   ]);
 
+export const normalizePersistedSystemPromptReplacementRules = (
+  value: unknown,
+): SystemPromptReplacementRule[] =>
+  normalizeSystemPromptReplacementRules(
+    value,
+    SYSTEM_PROMPT_REPLACEMENT_MAX_RULES +
+      REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.length,
+  );
+
 export const mergeRegisteredSystemPromptReplacementRules = (
   persistedRules: readonly SystemPromptReplacementRule[],
 ): SystemPromptReplacementRule[] => {
   const registeredIds = new Set(
     REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.map(rule => rule.id),
   );
-  const merged = [
-    ...REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.map(rule => ({ ...rule })),
-    ...persistedRules
-      .filter(rule => !registeredIds.has(rule.id))
-      .map(rule => ({ ...rule })),
-  ];
-  if (merged.length > SYSTEM_PROMPT_REPLACEMENT_MAX_RULES) {
+  const customRules = persistedRules.filter(rule => !registeredIds.has(rule.id));
+  if (customRules.length > SYSTEM_PROMPT_REPLACEMENT_MAX_RULES) {
     throw new RangeError(
-      `System prompt replacement rules cannot exceed ${SYSTEM_PROMPT_REPLACEMENT_MAX_RULES} including registered rules`,
+      `Custom system prompt replacement rules cannot exceed ${SYSTEM_PROMPT_REPLACEMENT_MAX_RULES}`,
     );
   }
-  return merged;
+  return [
+    ...REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.map(rule => ({ ...rule })),
+    ...customRules.map(rule => ({ ...rule })),
+  ];
 };

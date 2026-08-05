@@ -22,13 +22,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export const normalizeSystemPromptReplacementRules = (
   value: unknown,
+  maxRules = SYSTEM_PROMPT_REPLACEMENT_MAX_RULES,
 ): SystemPromptReplacementRule[] => {
   if (!Array.isArray(value)) {
     throw new TypeError('System prompt replacement rules must be an array');
   }
-  if (value.length > SYSTEM_PROMPT_REPLACEMENT_MAX_RULES) {
+  if (value.length > maxRules) {
     throw new RangeError(
-      `System prompt replacement rules cannot exceed ${SYSTEM_PROMPT_REPLACEMENT_MAX_RULES}`,
+      `System prompt replacement rules cannot exceed ${maxRules}`,
     );
   }
 

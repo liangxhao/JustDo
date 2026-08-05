@@ -19,6 +19,8 @@ import {
   hasOpenClawConfigChanged,
   mergeOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
+  OPENCLAW_MAX_SKILLS_IN_PROMPT,
+  OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
   OPENCLAW_STUCK_SESSION_ABORT_MS,
   OPENCLAW_STUCK_SESSION_WARN_MS,
@@ -425,6 +427,34 @@ describe('OpenClaw skill config merging', () => {
     ).toEqual({
       load: { extraDirs: ['C:/skills'], watch: false },
       entries: { docx: { enabled: false } },
+    });
+  });
+
+  test('applies managed prompt limits while preserving other skill limits', () => {
+    expect(
+      mergeOpenClawSkillConfig(
+        {
+          limits: {
+            maxCandidatesPerRoot: 500,
+            maxSkillsLoadedPerSource: 300,
+            maxSkillsInPrompt: 150,
+            maxSkillsPromptChars: 18_000,
+          },
+        },
+        {
+          limits: {
+            maxSkillsInPrompt: OPENCLAW_MAX_SKILLS_IN_PROMPT,
+            maxSkillsPromptChars: OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
+          },
+        },
+      ),
+    ).toEqual({
+      limits: {
+        maxCandidatesPerRoot: 500,
+        maxSkillsLoadedPerSource: 300,
+        maxSkillsInPrompt: 200,
+        maxSkillsPromptChars: 40_000,
+      },
     });
   });
 });
