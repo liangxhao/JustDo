@@ -1,14 +1,25 @@
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { create as createTar } from 'tar';
+import { afterEach, describe, expect, it } from 'vitest';
 
 const nsisScript = readFileSync(path.resolve(__dirname, '../scripts/nsis-installer.nsh'), 'utf8');
-const unpackScript = readFileSync(path.resolve(__dirname, '../scripts/unpack-cfmind.cjs'), 'utf8');
+const unpackScriptPath = path.resolve(__dirname, '../scripts/unpack-cfmind.cjs');
+const unpackScript = readFileSync(unpackScriptPath, 'utf8');
 const processHelper = readFileSync(
   path.resolve(__dirname, '../scripts/nsis-process-helper.ps1'),
   'utf8',
 );
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe('Windows uninstaller process handling', () => {
   it('excludes the uninstaller process from installed-process detection', () => {
@@ -63,6 +74,89 @@ describe('Windows installer process handling', () => {
     expect(nsisScript).not.toContain('-Command "');
     expect(processHelper).toContain("[ValidateSet('Find', 'Wait', 'Stop')]");
     expect(processHelper).toContain('$attempt -lt $MaxAttempts');
+  });
+
+  it('removes the previous Git runtime before extracting MinGit during upgrades', () => {
+    const backupIndex = unpackScript.indexOf('fs.renameSync(minGitDir, minGitBackupDir)');
+    const extractionIndex = unpackScript.indexOf('tar.extract({');
+
+    expect(backupIndex).toBeGreaterThan(-1);
+    expect(extractionIndex).toBeGreaterThan(backupIndex);
+    expect(unpackScript).toContain("const minGitDir = path.join(destDir, 'mingit')");
+    expect(unpackScript).toContain(
+      "const minGitBackupDir = path.join(destDir, '.mingit-upgrade-backup')",
+    );
+    expect(unpackScript).toContain('MinGit extraction is missing a non-empty git.exe');
+  });
+
+  it('does not retain PortableGit files in an upgraded installation', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-mingit-upgrade-'));
+    tempDirs.push(root);
+    const archiveRoot = path.join(root, 'archive');
+    const installResources = path.join(root, 'installed-resources');
+    const archivePath = path.join(root, 'win-resources.tar');
+    const staleBashPath = path.join(installResources, 'mingit', 'bin', 'bash.exe');
+    const installedGitPath = path.join(installResources, 'mingit', 'cmd', 'git.exe');
+
+    mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
+    mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
+    mkdirSync(path.dirname(staleBashPath), { recursive: true });
+    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'mingit');
+    writeFileSync(staleBashPath, 'portable-git');
+    createTar({ cwd: archiveRoot, file: archivePath, sync: true }, ['cfmind', 'mingit']);
+
+    const result = spawnSync(process.execPath, [unpackScriptPath, archivePath, installResources], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(installedGitPath)).toBe(true);
+    expect(existsSync(staleBashPath)).toBe(false);
+    expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
+  });
+
+  it('restores PortableGit when the replacement archive is invalid', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-mingit-rollback-'));
+    tempDirs.push(root);
+    const installResources = path.join(root, 'installed-resources');
+    const archivePath = path.join(root, 'invalid-resources.tar');
+    const staleBashPath = path.join(installResources, 'mingit', 'bin', 'bash.exe');
+
+    mkdirSync(path.dirname(staleBashPath), { recursive: true });
+    writeFileSync(staleBashPath, 'portable-git');
+    writeFileSync(archivePath, 'not a tar archive');
+
+    const result = spawnSync(process.execPath, [unpackScriptPath, archivePath, installResources], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(staleBashPath)).toBe(true);
+    expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
+  });
+
+  it('rejects a resource archive without git.exe and restores PortableGit', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-mingit-missing-git-'));
+    tempDirs.push(root);
+    const archiveRoot = path.join(root, 'archive');
+    const installResources = path.join(root, 'installed-resources');
+    const archivePath = path.join(root, 'win-resources.tar');
+    const staleBashPath = path.join(installResources, 'mingit', 'bin', 'bash.exe');
+
+    mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
+    mkdirSync(path.dirname(staleBashPath), { recursive: true });
+    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeFileSync(staleBashPath, 'portable-git');
+    createTar({ cwd: archiveRoot, file: archivePath, sync: true }, ['cfmind']);
+
+    const result = spawnSync(process.execPath, [unpackScriptPath, archivePath, installResources], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('missing a non-empty git.exe');
+    expect(existsSync(staleBashPath)).toBe(true);
   });
 });
 

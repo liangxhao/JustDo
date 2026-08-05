@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Prepare PortableGit (with bash.exe) under resources/mingit for Windows packaging/runtime.
+ * Prepare MinGit under resources/mingit for Windows packaging/runtime.
  *
  * Features:
  * - Cross-platform execution (macOS/Linux can prepare assets for Windows packaging)
@@ -15,36 +15,22 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { createHash } = require('crypto');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
-const GIT_VERSION = '2.47.1';
-const PORTABLE_GIT_FILE = `PortableGit-${GIT_VERSION}-64-bit.7z.exe`;
-const DEFAULT_PORTABLE_GIT_URL = `https://github.com/git-for-windows/git/releases/download/v${GIT_VERSION}.windows.1/${PORTABLE_GIT_FILE}`;
+const GIT_VERSION = '2.55.0';
+const GIT_FOR_WINDOWS_PATCH = '3';
+const MINGIT_VERSION = `${GIT_VERSION}.${GIT_FOR_WINDOWS_PATCH}`;
+const MINGIT_FILE = `MinGit-${MINGIT_VERSION}-64-bit.zip`;
+const DEFAULT_MINGIT_URL = `https://github.com/git-for-windows/git/releases/download/v${GIT_VERSION}.windows.${GIT_FOR_WINDOWS_PATCH}/${MINGIT_FILE}`;
+const EXPECTED_MINGIT_SHA256 = 'f48e2d2dc74a24454adc6d8fd0ac25bf9c2386f19cfb06202b9465aaad4f9f05';
+const EXPECTED_GIT_VERSION_OUTPUT = `git version ${GIT_VERSION}.windows.${GIT_FOR_WINDOWS_PATCH}`;
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'mingit');
-const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', PORTABLE_GIT_FILE);
-const RUNTIME_DIRS = [path.join('dev', 'shm'), path.join('dev', 'mqueue')];
-
-const DIRS_TO_PRUNE = [
-  'doc',
-  'ReleaseNotes.html',
-  'README.portable',
-  path.join('mingw64', 'doc'),
-  path.join('mingw64', 'share', 'doc'),
-  path.join('mingw64', 'share', 'gtk-doc'),
-  path.join('mingw64', 'share', 'man'),
-  path.join('mingw64', 'share', 'gitweb'),
-  path.join('mingw64', 'share', 'git-gui'),
-  path.join('mingw64', 'libexec', 'git-core', 'git-gui'),
-  path.join('mingw64', 'libexec', 'git-core', 'git-gui--askpass'),
-  path.join('usr', 'share', 'doc'),
-  path.join('usr', 'share', 'man'),
-  path.join('usr', 'share', 'vim'),
-  path.join('usr', 'share', 'perl5'),
-  path.join('usr', 'lib', 'perl5'),
-];
+const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', MINGIT_FILE);
+const VERSION_MARKER_PATH = path.join(OUTPUT_DIR, '.justdo-mingit-version');
 
 function parseArgs(argv) {
   return {
@@ -98,19 +84,76 @@ function resolve7zaPath() {
   return path7za;
 }
 
-function findPortableGitBash(baseDir = OUTPUT_DIR) {
-  const candidates = [
-    path.join(baseDir, 'bin', 'bash.exe'),
-    path.join(baseDir, 'usr', 'bin', 'bash.exe'),
-  ];
+function findMinGitExecutable(baseDir = OUTPUT_DIR) {
+  const candidates = [path.join(baseDir, 'cmd', 'git.exe'), path.join(baseDir, 'bin', 'git.exe')];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
+    if (isNonEmptyFile(candidate)) {
       return candidate;
     }
   }
 
   return null;
+}
+
+function validatePreparedMinGit(baseDir = OUTPUT_DIR, options = {}) {
+  const gitPath = findMinGitExecutable(baseDir);
+  if (!gitPath) {
+    return { ok: false, gitPath: null, reason: 'git.exe is missing or empty' };
+  }
+
+  const packageVersionsPath = path.join(baseDir, 'etc', 'package-versions.txt');
+  let packageVersions;
+  try {
+    packageVersions = fs.readFileSync(packageVersionsPath, 'utf8');
+  } catch {
+    return { ok: false, gitPath, reason: `version manifest is missing: ${packageVersionsPath}` };
+  }
+  const packageVersionPattern = new RegExp(
+    `^mingw-w64-x86_64-git\\s+${MINGIT_VERSION.replace(/\./g, '\\.')}-\\d+\\s*$`,
+    'm',
+  );
+  if (!packageVersionPattern.test(packageVersions)) {
+    return {
+      ok: false,
+      gitPath,
+      reason: `version manifest does not identify MinGit ${MINGIT_VERSION}`,
+    };
+  }
+
+  if ((options.platform ?? process.platform) === 'win32') {
+    const result = spawnSync(gitPath, ['--version'], { encoding: 'utf8', windowsHide: true });
+    const actualVersion = String(result.stdout || '').trim();
+    if (result.status !== 0 || actualVersion !== EXPECTED_GIT_VERSION_OUTPUT) {
+      return {
+        ok: false,
+        gitPath,
+        reason: `git.exe reported ${actualVersion || '(no version)'} instead of ${EXPECTED_GIT_VERSION_OUTPUT}`,
+      };
+    }
+  }
+
+  return { ok: true, gitPath, reason: null };
+}
+
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+async function assertExpectedArchiveChecksum(archivePath) {
+  const actualHash = await sha256File(archivePath);
+  if (actualHash !== EXPECTED_MINGIT_SHA256) {
+    throw new Error(
+      `MinGit archive SHA-256 mismatch for ${archivePath}. ` +
+        `Expected ${EXPECTED_MINGIT_SHA256}, received ${actualHash}.`,
+    );
+  }
 }
 
 async function downloadArchive(url, destination) {
@@ -141,23 +184,6 @@ async function downloadArchive(url, destination) {
   }
 }
 
-function pruneUnneededFiles() {
-  let prunedCount = 0;
-  for (const relPath of DIRS_TO_PRUNE) {
-    const fullPath = path.join(OUTPUT_DIR, relPath);
-    if (!fs.existsSync(fullPath)) continue;
-    try {
-      fs.rmSync(fullPath, { recursive: true, force: true });
-      prunedCount++;
-    } catch (error) {
-      console.warn(
-        `[setup-mingit] Warning: Could not remove ${relPath}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  console.log(`[setup-mingit] Pruned ${prunedCount} entries.`);
-}
-
 function extractArchive(archivePath) {
   const sevenZip = resolve7zaPath();
   if (fs.existsSync(OUTPUT_DIR)) {
@@ -165,7 +191,7 @@ function extractArchive(archivePath) {
   }
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  console.log(`[setup-mingit] Extracting archive with 7zip-bin: ${archivePath}`);
+  console.log(`[setup-mingit] Extracting MinGit archive with 7zip-bin: ${archivePath}`);
   const result = spawnSync(sevenZip, ['x', archivePath, `-o${OUTPUT_DIR}`, '-y'], {
     stdio: 'inherit',
   });
@@ -178,24 +204,14 @@ function extractArchive(archivePath) {
   }
 }
 
-function ensurePortableGitRuntimeDirs(required) {
-  const ensured = [];
-  for (const relPath of RUNTIME_DIRS) {
-    const fullPath = path.join(OUTPUT_DIR, relPath);
-    try {
-      fs.mkdirSync(fullPath, { recursive: true });
-      ensured.push(relPath);
-    } catch (error) {
-      const message = `Could not create runtime directory ${relPath}: ${error instanceof Error ? error.message : String(error)}`;
-      if (required) {
-        throw new Error(message);
-      }
-      console.warn(`[setup-mingit] Warning: ${message}`);
-    }
-  }
-
-  if (ensured.length > 0) {
-    console.log(`[setup-mingit] Ensured runtime directories: ${ensured.join(', ')}`);
+function isExpectedMinGitPrepared() {
+  try {
+    return (
+      fs.readFileSync(VERSION_MARKER_PATH, 'utf8').trim() === MINGIT_VERSION &&
+      validatePreparedMinGit().ok
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -205,6 +221,7 @@ async function resolveArchive(required) {
     if (!isNonEmptyFile(envArchive)) {
       throw new Error(`JUSTDO_PORTABLE_GIT_ARCHIVE points to an invalid file: ${envArchive}`);
     }
+    await assertExpectedArchiveChecksum(envArchive);
     console.log(
       `[setup-mingit] Using local archive from JUSTDO_PORTABLE_GIT_ARCHIVE: ${envArchive}`,
     );
@@ -212,26 +229,40 @@ async function resolveArchive(required) {
   }
 
   if (isNonEmptyFile(DEFAULT_ARCHIVE_PATH)) {
-    console.log(`[setup-mingit] Using cached archive: ${DEFAULT_ARCHIVE_PATH}`);
-    return { archivePath: DEFAULT_ARCHIVE_PATH, source: 'cache' };
+    try {
+      await assertExpectedArchiveChecksum(DEFAULT_ARCHIVE_PATH);
+      console.log(`[setup-mingit] Using verified cached archive: ${DEFAULT_ARCHIVE_PATH}`);
+      return { archivePath: DEFAULT_ARCHIVE_PATH, source: 'cache' };
+    } catch (error) {
+      console.warn(
+        `[setup-mingit] Discarding invalid cached archive: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      fs.rmSync(DEFAULT_ARCHIVE_PATH, { force: true });
+    }
   }
 
   const urlFromEnv =
     typeof process.env.JUSTDO_PORTABLE_GIT_URL === 'string'
       ? process.env.JUSTDO_PORTABLE_GIT_URL.trim()
       : '';
-  const downloadUrl = urlFromEnv || DEFAULT_PORTABLE_GIT_URL;
+  const downloadUrl = urlFromEnv || DEFAULT_MINGIT_URL;
 
   try {
-    console.log(`[setup-mingit] Downloading PortableGit from: ${downloadUrl}`);
+    console.log(`[setup-mingit] Downloading MinGit from: ${downloadUrl}`);
     await downloadArchive(downloadUrl, DEFAULT_ARCHIVE_PATH);
+    try {
+      await assertExpectedArchiveChecksum(DEFAULT_ARCHIVE_PATH);
+    } catch (error) {
+      fs.rmSync(DEFAULT_ARCHIVE_PATH, { force: true });
+      throw error;
+    }
     const fileSizeMB = (fs.statSync(DEFAULT_ARCHIVE_PATH).size / 1024 / 1024).toFixed(1);
     console.log(`[setup-mingit] Downloaded archive (${fileSizeMB} MB): ${DEFAULT_ARCHIVE_PATH}`);
     return { archivePath: DEFAULT_ARCHIVE_PATH, source: 'download' };
   } catch (error) {
     if (required) {
       throw new Error(
-        'Unable to obtain PortableGit archive. ' +
+        'Unable to obtain MinGit archive. ' +
           'Set JUSTDO_PORTABLE_GIT_ARCHIVE to a local offline package or ' +
           'set JUSTDO_PORTABLE_GIT_URL to a reachable mirror. ' +
           `Original error: ${error instanceof Error ? error.message : String(error)}`,
@@ -239,7 +270,7 @@ async function resolveArchive(required) {
     }
 
     console.warn(
-      '[setup-mingit] PortableGit archive is not available; skip because --required is not set. ' +
+      '[setup-mingit] MinGit archive is not available; skip because --required is not set. ' +
         `Reason: ${error instanceof Error ? error.message : String(error)}`,
     );
     return null;
@@ -255,38 +286,35 @@ async function ensurePortableGit(options = {}) {
     console.log(
       '[setup-mingit] Skip on non-Windows host (pass --required to force cross-platform preparation).',
     );
-    return { ok: true, skipped: true, bashPath: null };
+    return { ok: true, skipped: true, gitPath: null };
   }
 
-  const existingBash = findPortableGitBash();
-  if (existingBash) {
-    ensurePortableGitRuntimeDirs(required);
-    console.log(`[setup-mingit] PortableGit already prepared: ${existingBash}`);
-    return { ok: true, skipped: false, bashPath: existingBash };
+  const existingGit = findMinGitExecutable();
+  if (isExpectedMinGitPrepared() && existingGit) {
+    console.log(`[setup-mingit] MinGit ${MINGIT_VERSION} already prepared: ${existingGit}`);
+    return { ok: true, skipped: false, gitPath: existingGit };
   }
 
   const archive = await resolveArchive(required);
   if (!archive) {
-    return { ok: true, skipped: true, bashPath: null };
+    return { ok: true, skipped: true, gitPath: null };
   }
 
   extractArchive(archive.archivePath);
-  const resolvedBash = findPortableGitBash();
-  if (!resolvedBash) {
-    throw new Error(
-      'PortableGit extraction finished but bash.exe is missing. ' +
-        `Checked: ${path.join(OUTPUT_DIR, 'bin', 'bash.exe')} and ${path.join(OUTPUT_DIR, 'usr', 'bin', 'bash.exe')}`,
-    );
+  const validation = validatePreparedMinGit();
+  if (!validation.ok || !validation.gitPath) {
+    fs.rmSync(OUTPUT_DIR, { recursive: true, force: true });
+    throw new Error(`MinGit extraction validation failed: ${validation.reason}`);
   }
+  const resolvedGit = validation.gitPath;
 
-  ensurePortableGitRuntimeDirs(required);
-  pruneUnneededFiles();
+  fs.writeFileSync(VERSION_MARKER_PATH, `${MINGIT_VERSION}\n`, 'utf8');
 
   const finalSize = getDirSize(OUTPUT_DIR);
-  console.log(`[setup-mingit] PortableGit ready: ${resolvedBash}`);
+  console.log(`[setup-mingit] MinGit ${MINGIT_VERSION} ready: ${resolvedGit}`);
   console.log(`[setup-mingit] Total size: ~${(finalSize / 1024 / 1024).toFixed(1)} MB`);
 
-  return { ok: true, skipped: false, bashPath: resolvedBash };
+  return { ok: true, skipped: false, gitPath: resolvedGit };
 }
 
 async function main() {
@@ -303,5 +331,6 @@ if (require.main === module) {
 
 module.exports = {
   ensurePortableGit,
-  findPortableGitBash,
+  findMinGitExecutable,
+  validatePreparedMinGit,
 };

@@ -412,54 +412,6 @@ function ensureBundledOpenClawRuntime(context) {
   }
 }
 
-function findPackagedBash(appOutDir) {
-  const candidates = [
-    path.join(appOutDir, 'resources', 'mingit', 'bin', 'bash.exe'),
-    path.join(appOutDir, 'resources', 'mingit', 'usr', 'bin', 'bash.exe'),
-  ];
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
-
-function verifyPackagedPortableGitRuntimeDirs(appOutDir) {
-  const requiredDirs = [
-    path.join(appOutDir, 'resources', 'mingit', 'dev', 'shm'),
-    path.join(appOutDir, 'resources', 'mingit', 'dev', 'mqueue'),
-  ];
-  const createdDirs = [];
-
-  for (const dir of requiredDirs) {
-    if (existsSync(dir)) continue;
-    mkdirSync(dir, { recursive: true });
-    createdDirs.push(dir);
-  }
-
-  const missingDirs = requiredDirs.filter(dir => !existsSync(dir));
-  if (missingDirs.length > 0) {
-    throw new Error(
-      'Windows package is missing required PortableGit runtime directories. ' +
-        `Missing: ${missingDirs.join(', ')}`,
-    );
-  }
-
-  if (createdDirs.length > 0) {
-    console.log(
-      '[electron-builder-hooks] Created missing PortableGit runtime directories: ' +
-        createdDirs.join(', '),
-    );
-  }
-
-  console.log(
-    '[electron-builder-hooks] Verified PortableGit runtime directories: ' + requiredDirs.join(', '),
-  );
-}
-
 function findPackagedPythonExecutable(appOutDir) {
   const candidates = [
     path.join(appOutDir, 'resources', 'python-win', 'python.exe'),
@@ -717,7 +669,7 @@ async function beforePack(context) {
       );
     }
 
-    console.log('[electron-builder-hooks] Ensuring PortableGit (mingit) is prepared...');
+    console.log('[electron-builder-hooks] Ensuring MinGit is prepared...');
     await ensurePortableGit({ required: true });
     const mingitRoot = path.join(__dirname, '..', 'resources', 'mingit');
 
@@ -747,7 +699,7 @@ async function beforePack(context) {
         prefix: 'python-win',
       },
       {
-        label: 'PortableGit',
+        label: 'MinGit',
         dir: mingitRoot,
         prefix: 'mingit',
       },
@@ -819,15 +771,15 @@ async function beforePack(context) {
       ...runtimeCompanionTarEntries,
     ];
     const missingTarEntries = requiredTarEntries.filter(entry => !tarEntryPaths.has(entry));
-    const hasPortableGit =
+    const hasMinGit =
       tarEntryPaths.has('mingit/bin/git.exe') || tarEntryPaths.has('mingit/cmd/git.exe');
 
-    if (missingTarEntries.length > 0 || !hasPortableGit) {
+    if (missingTarEntries.length > 0 || !hasMinGit) {
       throw new Error(
         '[electron-builder-hooks] Combined tar validation FAILED. Missing critical entries: ' +
           [
             ...missingTarEntries,
-            ...(!hasPortableGit ? ['mingit/bin/git.exe or mingit/cmd/git.exe'] : []),
+            ...(!hasMinGit ? ['mingit/bin/git.exe or mingit/cmd/git.exe'] : []),
           ].join(', '),
       );
     }

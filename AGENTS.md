@@ -59,7 +59,7 @@ npm run dist:linux
 Before non-trivial pushes, prefer `npm run lint && npm run build && npm test`.
 For docs-only changes, run `git diff --check`.
 
-Windows packaging uses bundled PortableGit/Python runtime assets via
+Windows packaging uses bundled MinGit/Python runtime assets via
 `scripts/setup-mingit.js` and `scripts/setup-python-runtime.js`.
 
 ## Architecture

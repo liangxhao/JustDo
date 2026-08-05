@@ -16,9 +16,10 @@ vendor/openclaw-plugins/
 # Tar archives generated during Windows packaging
 build-tar/
 
-# Bundled PortableGit for Windows builds (downloaded via scripts/setup-mingit.js)
+# Bundled MinGit for Windows builds (downloaded via scripts/setup-mingit.js)
 resources/mingit/
 resources/MinGit-*.zip
+# Ignore stale archives left by builds before the MinGit migration.
 resources/PortableGit-*.7z.exe
 resources/python-win/
 resources/python-*.zip

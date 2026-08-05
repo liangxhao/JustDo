@@ -468,7 +468,7 @@ FunctionEnd
   ${Else}
     FileWrite $2 "python-runtime-after-tar: missing$\r$\n"
   ${EndIf}
-  ${If} ${FileExists} "$INSTDIR\resources\mingit\bin\bash.exe"
+  ${If} ${FileExists} "$INSTDIR\resources\mingit\cmd\git.exe"
     FileWrite $2 "mingit-after-tar: exists$\r$\n"
   ${Else}
     FileWrite $2 "mingit-after-tar: missing$\r$\n"

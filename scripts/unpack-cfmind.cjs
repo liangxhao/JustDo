@@ -10,7 +10,7 @@
  *
  * 效果:
  *   输入: $INSTDIR/resources/win-resources.tar
- *   输出: $INSTDIR/resources/cfmind/, skills/, python-win/
+ *   输出: $INSTDIR/resources/cfmind/, skills/, python-win/, mingit/
  *   tar 文件由 NSIS 脚本在解压后删除
  *
  * 依赖: 从 app.asar 内加载 tar npm 包 (Electron 内置 ASAR 透明读取支持)
@@ -83,23 +83,62 @@ try {
   // Ensure destination directory exists
   fs.mkdirSync(destDir, { recursive: true });
 
-  // Extract tar using npm tar package (handles long paths, symlinks, etc.)
-  tar.extract({
-    file: tarPath,
-    cwd: destDir,
-    sync: true,
-    onentry: () => {
-      extractedEntries += 1;
-      if (extractedEntries % 750 === 0) {
-        activity(`Prepared ${extractedEntries.toLocaleString('en-US')} resource entries`);
+  // Upgrades used to bundle PortableGit in this directory. Keep a same-volume
+  // backup until the replacement has been extracted and validated so a failed
+  // installation can restore the last working Git runtime.
+  const minGitDir = path.join(destDir, 'mingit');
+  const minGitBackupDir = path.join(destDir, '.mingit-upgrade-backup');
+  if (fs.existsSync(minGitBackupDir)) {
+    activity('Recovering the previous Git runtime backup...');
+    fs.rmSync(minGitDir, { recursive: true, force: true });
+    fs.renameSync(minGitBackupDir, minGitDir);
+  }
+  if (fs.existsSync(minGitDir)) {
+    activity('Backing up the previous Git runtime...');
+    fs.renameSync(minGitDir, minGitBackupDir);
+  }
+
+  try {
+    // Extract tar using npm tar package (handles long paths, symlinks, etc.)
+    tar.extract({
+      file: tarPath,
+      cwd: destDir,
+      sync: true,
+      onentry: () => {
+        extractedEntries += 1;
+        if (extractedEntries % 750 === 0) {
+          activity(`Prepared ${extractedEntries.toLocaleString('en-US')} resource entries`);
+        }
+      },
+    });
+
+    const gitCandidates = [
+      path.join(minGitDir, 'cmd', 'git.exe'),
+      path.join(minGitDir, 'bin', 'git.exe'),
+    ];
+    const installedGit = gitCandidates.find(candidate => {
+      try {
+        return fs.statSync(candidate).isFile() && fs.statSync(candidate).size > 0;
+      } catch {
+        return false;
       }
-    },
-  });
+    });
+    if (!installedGit) {
+      throw new Error(`MinGit extraction is missing a non-empty git.exe in: ${minGitDir}`);
+    }
+
+    fs.rmSync(minGitBackupDir, { recursive: true, force: true });
+  } catch (error) {
+    fs.rmSync(minGitDir, { recursive: true, force: true });
+    if (fs.existsSync(minGitBackupDir)) {
+      fs.renameSync(minGitBackupDir, minGitDir);
+      activity('Restored the previous Git runtime after extraction failed.');
+    }
+    throw error;
+  }
 
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-  activity(
-    `${extractedEntries.toLocaleString('en-US')} resource entries ready in ${elapsed}s`,
-  );
+  activity(`${extractedEntries.toLocaleString('en-US')} resource entries ready in ${elapsed}s`);
 
   // Verify key directories exist
   const expectedDirs = ['cfmind'];
