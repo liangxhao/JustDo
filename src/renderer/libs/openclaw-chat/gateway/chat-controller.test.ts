@@ -49,6 +49,103 @@ test('renders a SQLite fallback immediately and lets Gateway history replace it'
   );
 });
 
+test('replaces truncated OpenClaw history previews with complete messages', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockImplementation((method: string, params: unknown) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'assistant',
+            content: 'preview one\n...(truncated)...',
+            __openclaw: { id: 'assistant-1', seq: 1 },
+          },
+          {
+            role: 'assistant',
+            content: [{ type: 'thinking', thinking: 'preview two\n...(truncated)...' }],
+            __openclaw: { id: 'assistant-2', seq: 2 },
+          },
+        ],
+      });
+    }
+    if (method === 'chat.message.get') {
+      const messageId = (params as { messageId: string }).messageId;
+      if (messageId === 'assistant-1') {
+        return Promise.resolve({
+          ok: true,
+          message: {
+            role: 'assistant',
+            content: 'complete first response',
+            __openclaw: { id: messageId, seq: 1 },
+          },
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'complete second response' }],
+        },
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+
+  await expect(controller.loadHistory()).resolves.toBe(true);
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ content: 'complete first response' }),
+    expect.objectContaining({
+      content: [expect.objectContaining({ thinking: 'complete second response' })],
+      __openclaw: { id: 'assistant-2', seq: 2 },
+    }),
+  ]);
+  expect(request).toHaveBeenCalledWith('chat.message.get', {
+    sessionKey,
+    messageId: 'assistant-1',
+    maxChars: 1_000_000,
+  });
+  expect(request).toHaveBeenCalledWith('chat.message.get', {
+    sessionKey,
+    messageId: 'assistant-2',
+    maxChars: 1_000_000,
+  });
+});
+
+test('keeps a truncated history preview when the complete message is unavailable', async () => {
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [
+          {
+            role: 'assistant',
+            content: 'available preview\n...(truncated)...',
+            __openclaw: { id: 'assistant-1' },
+          },
+        ],
+      });
+    }
+    if (method === 'chat.message.get') {
+      return Promise.resolve({ ok: false, unavailableReason: 'not_found' });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await expect(controller.loadHistory()).resolves.toBe(true);
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ content: 'available preview\n...(truncated)...' }),
+  ]);
+});
+
 test('keeps the SQLite fallback when Gateway history fails', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const controller = new ChatController();
@@ -1304,6 +1401,77 @@ test('loads the latest history page first and prepends older history on demand',
   expect(controller.state.chatMessages).toHaveLength(2);
   expect(controller.state.loadedMessageCount).toBe(3);
   expect(controller.state.historyHasMore).toBe(false);
+});
+
+test('hydrates a truncated message while loading an older history page', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockImplementation((method: string, params: unknown) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({ messages: [{ role: 'assistant', content: 'rpc fallback' }] });
+    }
+    if (method === 'chat.message.get') {
+      expect(params).toEqual({
+        sessionKey,
+        messageId: 'older-1',
+        maxChars: 1_000_000,
+      });
+      return Promise.resolve({
+        ok: true,
+        message: { role: 'assistant', content: 'complete older response' },
+      });
+    }
+    return Promise.resolve({});
+  });
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages: [
+            {
+              role: 'assistant',
+              content: 'recent response',
+              __openclaw: { id: 'recent-1' },
+            },
+          ],
+          hasMore: true,
+          nextCursor: 'older-page',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          messages: [
+            {
+              role: 'assistant',
+              content: 'older preview\n...(truncated)...',
+              __openclaw: { id: 'older-1', seq: 1 },
+            },
+          ],
+          hasMore: false,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+  vi.stubGlobal('fetch', fetchMock);
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  (controller as unknown as { gatewayHttpBase: string }).gatewayHttpBase = 'http://127.0.0.1:4173';
+
+  await controller.loadHistory();
+  await expect(controller.loadOlderHistory()).resolves.toBe(true);
+
+  expect(controller.getLoadedMessages()).toEqual([
+    expect.objectContaining({
+      content: 'complete older response',
+      __openclaw: { id: 'older-1', seq: 1 },
+    }),
+    expect.objectContaining({ content: 'recent response' }),
+  ]);
 });
 
 test('skips duplicate older pages until a page adds visible history', async () => {

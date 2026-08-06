@@ -66,7 +66,6 @@ import { isPendingUserMessageMatch } from '@/libs/openclaw-chat/model/optimistic
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
 import {
   hydrateGatewayHistoryForDisplay,
-  normalizeGatewayHistoryForDisplay,
   persistFailedRun,
   projectGatewayHistoryForDisplay,
   shouldHideMessage,
@@ -196,6 +195,8 @@ function getContentImageUrl(value: unknown): string | null {
 const HISTORY_LIMIT = 1000;
 const HISTORY_PAGE_LIMIT = 250;
 const MAX_EMPTY_HISTORY_PAGES_PER_BATCH = 8;
+const FULL_HISTORY_MESSAGE_MAX_CHARS = 1_000_000;
+const OPENCLAW_HISTORY_TRUNCATION_MARKER = '...(truncated)...';
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const POST_FINAL_HISTORY_RELOAD_DELAY_MS = 1500;
 const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
@@ -221,6 +222,47 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function hasOpenClawHistoryTruncationMarker(message: unknown): boolean {
+  const record = asRecord(message);
+  if (!record) return false;
+  const hasMarker = (value: unknown): boolean =>
+    typeof value === 'string' && value.trimEnd().endsWith(OPENCLAW_HISTORY_TRUNCATION_MARKER);
+  if (
+    [record.text, record.content, record.thinking, record.partialJson, record.arguments].some(
+      hasMarker,
+    )
+  ) {
+    return true;
+  }
+  if (Array.isArray(record.content)) {
+    return record.content.some(block => {
+      const item = asRecord(block);
+      return (
+        item !== null &&
+        [item.text, item.content, item.thinking, item.partialJson, item.arguments].some(hasMarker)
+      );
+    });
+  }
+  return false;
+}
+
+function readOpenClawMessageId(message: unknown): string | null {
+  const marker = asRecord(asRecord(message)?.__openclaw);
+  return typeof marker?.id === 'string' && marker.id.trim() ? marker.id.trim() : null;
+}
+
+function retainOriginalOpenClawIdentity(fullMessage: unknown, originalMessage: unknown): unknown {
+  const full = asRecord(fullMessage);
+  const original = asRecord(originalMessage);
+  if (!full || asRecord(full.__openclaw) || !asRecord(original?.__openclaw)) {
+    return fullMessage;
+  }
+  return {
+    ...full,
+    __openclaw: original?.__openclaw,
+  };
 }
 
 type HistoryPage = {
@@ -1699,12 +1741,75 @@ export class ChatController {
   }
 
   private async normalizeHistoryPage(messages: unknown[], sessionKey: string): Promise<unknown[]> {
-    return normalizeGatewayHistoryForDisplay(messages, {
+    const projected = projectGatewayHistoryForDisplay(messages);
+    const hydratedFullMessages = await this.hydrateTruncatedHistoryMessages(projected, sessionKey);
+    return hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
       sessionKey,
       lastError: this.state.lastError,
       enrichCompactionMarkers: (projectedMessages, key) =>
         this.enrichCompactionMarkers(projectedMessages, key),
     });
+  }
+
+  private async hydrateTruncatedHistoryMessages(
+    messages: unknown[],
+    sessionKey: string,
+  ): Promise<unknown[]> {
+    const client = this.state.client;
+    if (!client) return messages;
+
+    const candidatesById = new Map<string, { indices: number[] }>();
+    messages.forEach((message, index) => {
+      if (!hasOpenClawHistoryTruncationMarker(message)) return;
+      const messageId = readOpenClawMessageId(message);
+      if (!messageId) return;
+      const existing = candidatesById.get(messageId);
+      if (existing) {
+        existing.indices.push(index);
+      } else {
+        candidatesById.set(messageId, { indices: [index] });
+      }
+    });
+    const candidates = [...candidatesById.entries()].map(([messageId, value]) => ({
+      messageId,
+      indices: value.indices,
+    }));
+    if (candidates.length === 0) return messages;
+
+    const replacements = new Map<number, unknown>();
+    const batchSize = 8;
+    for (let start = 0; start < candidates.length; start += batchSize) {
+      await Promise.all(
+        candidates.slice(start, start + batchSize).map(async candidate => {
+          try {
+            const result = await client.request<{
+              ok?: boolean;
+              message?: unknown;
+            }>('chat.message.get', {
+              sessionKey,
+              messageId: candidate.messageId,
+              maxChars: FULL_HISTORY_MESSAGE_MAX_CHARS,
+            });
+            const fullMessage = asRecord(result?.message);
+            if (!result?.ok || !fullMessage) return;
+            for (const index of candidate.indices) {
+              replacements.set(
+                index,
+                retainOriginalOpenClawIdentity(result.message, messages[index]),
+              );
+            }
+          } catch (error) {
+            debugLog('[ChatCtrl] full history message unavailable', {
+              sessionKey,
+              messageId: candidate.messageId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }),
+      );
+    }
+    if (replacements.size === 0) return messages;
+    return messages.map((message, index) => replacements.get(index) ?? message);
   }
 
   async loadOlderHistory(): Promise<boolean> {
@@ -1946,7 +2051,11 @@ export class ChatController {
         hiddenCount: rawMessages.length - projectedMessages.length,
         projectedSummary: summarizeHistoryForDebug(projectedMessages),
       });
-      const hydratedMessages = await hydrateGatewayHistoryForDisplay(projectedMessages, {
+      const hydratedFullMessages = await this.hydrateTruncatedHistoryMessages(
+        projectedMessages,
+        sessionKey,
+      );
+      const hydratedMessages = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
         sessionKey,
         lastError: this.state.lastError,
         enrichCompactionMarkers: (messages, key) => this.enrichCompactionMarkers(messages, key),

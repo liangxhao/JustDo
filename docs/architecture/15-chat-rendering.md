@@ -344,6 +344,13 @@ an available older cursor is never retired because of a renderer message or
 byte threshold: a user can continue paging through a transcript containing
 100,000 or more messages.
 
+OpenClaw may project an individual long history message as an 8,000-character
+preview ending in `...(truncated)...`. When that preview has a durable
+`__openclaw.id`, `ChatController` requests a much higher-limit projection through
+`chat.message.get` before normalization and rendering. This applies to both the
+recent window and older pages; if the lookup is unavailable or the stored message
+exceeds Gateway limits, the preview remains as a non-destructive fallback.
+
 旧页经过隐藏规则和 identity 去重后可能不增加任何可见消息。Controller 会继续推进
 cursor，跳过连续空页/重复页，直到加入可见消息、cursor 耗尽，或发现 cursor 循环。
 为避免一次顶部滚动串行占用大量 Gateway 请求，每批最多处理 8 个空页；批次间通过
