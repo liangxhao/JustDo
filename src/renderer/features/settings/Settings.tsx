@@ -9,6 +9,7 @@ import {
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '@shared/openclaw/constants';
 import {
   GatewayPortSetErrorCode,
@@ -1323,13 +1324,6 @@ const Settings: React.FC<SettingsProps> = ({
       const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
       const effectiveApiKey = providerConfig.apiKey;
       const openaiUrl = `${normalizedBaseUrl}/chat/completions`;
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (effectiveApiKey) {
-        headers.Authorization = `Bearer ${effectiveApiKey}`;
-      }
-
       showTestResultModal(
         {
           success: false,
@@ -1359,18 +1353,21 @@ const Settings: React.FC<SettingsProps> = ({
         });
         await waitForNextPaint();
 
-        const requestBody: Record<string, unknown> = {
+        const requestBody = JSON.stringify({
           model: model.id,
           messages: [{ role: 'user', content: 'Hi' }],
           max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
-        };
+        });
+        const headers = buildOpenAIJsonRequestHeaders(requestBody, effectiveApiKey, {
+          includeContentLength: false,
+        });
 
         try {
           const response = await window.electron.api.fetch({
             url: openaiUrl,
             method: 'POST',
             headers,
-            body: JSON.stringify(requestBody),
+            body: requestBody,
           });
           const data = response.data || {};
           if (response.ok && isValidConnectivityResponse(data)) {
