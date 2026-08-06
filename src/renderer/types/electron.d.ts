@@ -677,6 +677,16 @@ interface IElectronAPI {
       goal?: import('@shared/sessionGoal').SessionGoal;
       error?: string;
     }>;
+    getGoalExecution: (sessionId: string) => Promise<{
+      success: boolean;
+      execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
+      error?: string;
+    }>;
+    continueGoal: (sessionId: string) => Promise<{
+      success: boolean;
+      execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
+      error?: string;
+    }>;
     getContextUsage: (sessionId: string) => Promise<{
       success: boolean;
       totalTokens?: number;
@@ -738,6 +748,10 @@ interface IElectronAPI {
     ) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onSessionsChanged: (callback: () => void) => () => void;
+    onGoalExecutionChanged: (
+      callback: (snapshot: import('@shared/sessionGoal').GoalExecutionSnapshot) => void,
+    ) => () => void;
+    onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => () => void;
     getSubTaskStatus: (sessionId?: string) => Promise<{
       success: boolean;
       subagents?: Array<{

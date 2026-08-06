@@ -253,6 +253,54 @@ Adapter 不应该变成大而全 service。新增 Gateway API 时优先：
 2. Adapter 只调用 helper。
 3. Renderer 通过已有 Cowork/OpenClaw IPC 获取结果。
 
+### Goal continuation coordinator
+
+`src/main/openclaw/goals/goalContinuationCoordinator.ts` 只负责连续派发，不复制或
+持久化 Goal。OpenClaw session 中的 `goal` 始终是生命周期状态的唯一权威来源；
+coordinator 仅在进程内维护 `waiting`、`running`、`continuing`、`stopped`、`failed`
+执行快照，并由 adapter 转发顶层 JustDo Session 的 lifecycle event、Gateway client
+和 renderer IPC。
+
+一个顶层 run 成功结束后，coordinator 用 canonical session key 调用
+`sessions.describe`。只有 Goal 此时仍为 `active` 才通过 backend `agent` RPC 派发下一轮；
+subagent、cron、channel 和非 JustDo Session 不参与。请求复用原 Session、Agent 与模型
+选择，设置 `deliver: false` 和 `suppressPromptPersistence: true`，因此自动生成的
+continuation user prompt 不进入历史，而 assistant、thinking 和工具活动仍沿正常事件链
+可见。请求不设置 `sessionEffects: internal`，也不设置 token、轮数或时间预算。
+自动轮次必须产生成功且结果有变化的非 Goal 工具活动，或通过 `update_goal` 进入终态；
+coordinator 对成功工具的名称、输入和输出生成进程内指纹，连续两轮只有 `get_goal`/文本，
+或重复完全相同的工具证据时，将 execution 标记为 `failed` 并停止
+派发，Goal 仍保持 `active`，由用户检查结果后手动重试。这是无进展安全熔断，不是 token、
+总轮数或时间预算；只要每轮持续产生可观察的工具进展，续跑轮数仍不受限制。
+为补足 OpenClaw v2026.6.11 尚未提供的 per-turn active Goal context，隐藏 user prompt
+每轮直接携带权威 `goal.objective`；目标文本不提升为 system instruction。附加 system
+prompt 要求先审计现有历史、产物和工具证据，避免重复已完成工作，并在完成时用
+`update_goal` note 留下简短验证证据。blocked 判定与上游工具契约一致：同一阻碍至少
+连续三个 Goal turn 且已无其他可推进工作。升级到原生注入 Goal context 的 OpenClaw
+版本后应重新审计并移除重复注入。
+
+Goal 变为 `complete`、`blocked`、`paused`、`usage_limited`、`budget_limited` 或被清除时
+停止派发；run error、abort、用户 Stop 或 Gateway 请求失败也停止。Stop 路径必须先让
+coordinator 禁止续跑，再 abort 当前 run，避免终态竞态；如果 Gateway 未确认 abort，
+adapter 会恢复 stop 前的 execution 快照，避免仍在运行的任务被误报为已停止。幂等键由 Goal id、进程内续跑
+序号和随机 run id 构成，terminal lifecycle 按 run id 去重，同一 Session 的派发串行化。
+自动派发会给上一轮 `chat.final`/history reconciliation 留出短暂收敛窗口，并在窗口后再次
+执行 `sessions.describe`；Goal id/status 已变化、用户已 Stop 或新手动 run 已开始时取消
+该次派发，避免旧 lifecycle 终态覆盖新意图。
+OpenClaw 的 session metadata read 在 run 收尾阶段可能短暂落后于同一 run 内刚完成的
+`update_goal` mutation。coordinator 因此还会关联 `update_goal` 的 start/result tool event；
+一旦当前顶层 run 的 `complete` 或 `blocked` 更新成功，即使紧随其后的
+`sessions.describe` 暂时仍返回 `active`，该 run 也绝不派发下一轮。失败或取消的工具调用
+不具备这一终止语义。这个 latch 只约束续跑资格，不复制或改写 OpenClaw Goal。
+
+这些状态需严格区分：Goal lifecycle 描述目标是否 active/paused/complete，Session runtime
+activity 描述 Session（含后代）是否存在工作负载，Goal execution snapshot 只描述本次
+应用进程内的持续执行。Gateway 断连、runtime 代次变化或应用退出会清空 execution
+snapshot；ready/reconnect 不扫描旧 active Goal。重启后 UI 显示等待继续，只有用户手动
+继续、恢复或发送新消息产生新的顶层 lifecycle start 后，当前进程才重新取得续跑资格。
+手动继续会依次检查 runtime 已知 key、当前 Agent key 和默认 Agent key，并使用真正持有
+active Goal 的 `sessions.describe` canonical key，避免历史或迁移 Session 查询与执行错位。
+
 ## Gateway Connection
 
 Gateway connection info 包含 port 和 token。Main 持有 token，Renderer 需要连接 chat websocket 时通过受控 IPC 获取必要信息。

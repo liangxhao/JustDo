@@ -1,6 +1,6 @@
 import type { ChatState } from '@/libs/openclaw-chat/gateway/chat-controller';
 
-export type GoalRunPhase = 'starting' | 'thinking' | 'tool' | 'responding' | 'compacting';
+export type GoalRunPhase = 'running' | 'thinking' | 'tool' | 'responding' | 'compacting';
 
 export interface GoalRunProgress {
   phase: GoalRunPhase;
@@ -24,20 +24,23 @@ export const buildGoalRunProgress = (state: GoalActivityState): GoalRunProgress 
   if (state.compactionInFlight) {
     return { ...base, phase: 'compacting' };
   }
-  if (items.some(item => item.type === 'content' && item.text.length > 0)) {
+  const runningTool = [...tools].reverse().find(item => item.status === 'running');
+  if (runningTool) {
+    return { ...base, phase: 'tool', toolName: runningTool.name };
+  }
+  const activeContent = [...items]
+    .reverse()
+    .find(item => item.type === 'content' && item.status === 'streaming' && item.text.length > 0);
+  if (activeContent) {
     return { ...base, phase: 'responding' };
   }
-  if (toolCount > 0) {
-    return {
-      ...base,
-      phase: 'tool',
-      toolName: tools[toolCount - 1]?.name,
-    };
-  }
-  if (items.some(item => item.type === 'thinking' && item.text.length > 0)) {
+  const activeThinking = [...items]
+    .reverse()
+    .find(item => item.type === 'thinking' && item.status === 'running' && item.text.length > 0);
+  if (activeThinking) {
     return { ...base, phase: 'thinking' };
   }
-  return { ...base, phase: 'starting' };
+  return { ...base, phase: 'running' };
 };
 
 export const goalRunProgressKey = (progress: GoalRunProgress | null): string =>

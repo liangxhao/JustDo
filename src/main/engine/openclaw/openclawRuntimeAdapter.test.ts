@@ -131,6 +131,51 @@ test('resolves the Gateway session ID used by title generation', async () => {
   expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500 });
 });
 
+test('continues a goal with the canonical key that actually owns it', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const canonicalKey = 'agent:legacy:justdo:session-1';
+  const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+    expect(method).toBe('sessions.describe');
+    if (params.key !== canonicalKey) return { session: null };
+    return {
+      session: {
+        key: canonicalKey,
+        goal: {
+          schemaVersion: 1,
+          id: 'goal-1',
+          objective: 'Ship the release',
+          status: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+          tokenStart: 0,
+          tokensUsed: 0,
+          continuationTurns: 0,
+        },
+      },
+    };
+  });
+  const continueGoal = vi.fn().mockResolvedValue({
+    sessionId: 'session-1',
+    goalId: 'goal-1',
+    phase: 'running',
+    continuationCount: 1,
+    updatedAt: 1,
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    sessionIdBySessionKey: Map<string, string>;
+    goalContinuationCoordinator: { continue: typeof continueGoal };
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.sessionIdBySessionKey.set(canonicalKey, 'session-1');
+  internals.goalContinuationCoordinator.continue = continueGoal;
+
+  await adapter.continueGoal('session-1');
+
+  expect(continueGoal).toHaveBeenCalledWith('session-1', canonicalKey);
+});
+
 test('returns raw gateway history without projecting message fields', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
@@ -282,6 +327,7 @@ test('falls back to raw persisted messages when display history is empty', async
 type StopTestAdapter = {
   activeTurns: Map<string, SessionTurn>;
   gatewayClient: GatewayClientLike | null;
+  goalContinuationCoordinator: { rollbackStop: (sessionId: string) => void };
   ensureGatewayClientReady: () => Promise<void>;
   reconcilePendingApprovals: () => Promise<void>;
   approvalReconciliation: { events: unknown[] } | null;
@@ -729,12 +775,14 @@ test('preserves local running state when Gateway does not confirm the stop', asy
     }),
   };
   const stopped = vi.fn();
+  const rollbackStop = vi.spyOn(internals.goalContinuationCoordinator, 'rollbackStop');
   adapter.on('sessionStopped', stopped);
 
   await expect(adapter.stopSession(turn.sessionId)).rejects.toThrow('abort unavailable');
 
   expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
   expect(turn.stopRequested).toBe(false);
+  expect(rollbackStop).toHaveBeenCalledWith(turn.sessionId);
   expect(stopped).not.toHaveBeenCalled();
 });
 

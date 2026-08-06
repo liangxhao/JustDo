@@ -1,6 +1,10 @@
 import { ipcMain } from 'electron';
 
-import { isSessionGoalStatus, type SessionGoal } from '../../../shared/sessionGoal';
+import {
+  GoalExecutionIpc,
+  isSessionGoalStatus,
+  type SessionGoal,
+} from '../../../shared/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
 import {
@@ -107,7 +111,7 @@ export const readGatewaySessionId = (session: Record<string, unknown>): string |
 type GatewaySession = { key: string } & Record<string, unknown>;
 type GatewaySessionResult = { session?: GatewaySession; error?: string };
 
-const queryGatewaySession = async (
+export const queryGatewaySession = async (
   dependencies: Pick<Dependencies, 'getCoworkStore' | 'getRuntime'>,
   sessionId: string,
 ): Promise<GatewaySessionResult> => {
@@ -117,23 +121,18 @@ const queryGatewaySession = async (
   if (!client) return { error: 'Gateway client not connected' };
   const agentId =
     dependencies.getCoworkStore().getSession(sessionId)?.agentId || DEFAULT_MANAGED_AGENT_ID;
-  const keys = new Set([
-    ...runtime.getSessionKeysForSession(sessionId),
+  const keys = [
     buildManagedSessionKey(sessionId, agentId),
+    ...runtime.getSessionKeysForSession(sessionId),
     buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
-  ]);
-  const result = await client.request<{ sessions?: GatewaySession[] }>('sessions.list', {
-    agentId,
-    limit: 100,
-  });
-  let session = result.sessions?.find(item => keys.has(item.key));
-  if (!session && agentId !== DEFAULT_MANAGED_AGENT_ID) {
-    const fallback = await client.request<{ sessions?: GatewaySession[] }>('sessions.list', {
-      limit: 100,
+  ];
+  for (const key of new Set(keys)) {
+    const result = await client.request<{ session?: GatewaySession | null }>('sessions.describe', {
+      key,
     });
-    session = fallback.sessions?.find(item => keys.has(item.key));
+    if (result.session) return { session: result.session };
   }
-  return session ? { session } : { error: 'Session not found in gateway' };
+  return { error: 'Session not found in gateway' };
 };
 
 export const createSingleFlightTtlLookup = <T>(
@@ -195,13 +194,35 @@ export const registerCoworkSessionRuntimeHandlers = ({
 
   ipcMain.handle('cowork:session:goal', async (_event, sessionId: string) => {
     try {
-      const result = await findGatewaySession(sessionId);
+      // Goal transitions are event-driven and must not be hidden by the usage lookup TTL.
+      const result = await queryGatewaySession(sessionDependencies, sessionId);
       if (!result.session) return { success: false, error: result.error };
       return { success: true, goal: readSessionGoal(result.session.goal) };
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to get session goal',
+      };
+    }
+  });
+
+  ipcMain.handle(GoalExecutionIpc.Get, (_event, sessionId: string) => {
+    const runtime = getRuntime();
+    return runtime
+      ? { success: true, execution: runtime.getGoalExecution(sessionId) ?? undefined }
+      : { success: false, error: 'OpenClaw runtime adapter not available' };
+  });
+
+  ipcMain.handle(GoalExecutionIpc.Continue, async (_event, sessionId: string) => {
+    try {
+      const runtime = getRuntime();
+      if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
+      const execution = await runtime.continueGoal(sessionId);
+      return { success: true, execution };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to continue session goal',
       };
     }
   });

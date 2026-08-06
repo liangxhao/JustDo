@@ -26,6 +26,12 @@ import {
 } from '../../../shared/openclaw/messageDomain';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
+  GoalExecutionIpc,
+  type GoalExecutionSnapshot,
+  SessionGoalIpc,
+  SessionGoalStatus,
+} from '../../../shared/sessionGoal';
+import {
   hasSlashCommandBeforeSendHook,
   SlashCommandBeforeSendHook,
 } from '../../../shared/slashCommands';
@@ -43,6 +49,7 @@ import type {
   CoworkStore,
 } from '../../data/coworkStore';
 import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
+import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import {
   buildSessionExecApprovalFingerprint,
   SessionExecApprovalGrants,
@@ -53,6 +60,7 @@ import {
 } from '../../openclaw/runtime/openclawEngineManager';
 import {
   buildManagedSessionKey,
+  DEFAULT_MANAGED_AGENT_ID,
   type OpenClawChannelSessionSync,
 } from '../../openclaw/sessions/openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../../openclaw/sessions/openclawHistory';
@@ -290,6 +298,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private historyReconciler!: HistoryReconciler;
   private sessionRpc!: SessionRpc;
   private titleGenerator!: SessionTitleGenerator;
+  private readonly goalContinuationCoordinator: GoalContinuationCoordinator;
 
   agentTimeoutSeconds = OPENCLAW_AGENT_TIMEOUT_SECONDS;
 
@@ -301,6 +310,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     super();
     this.store = store;
     this.engineManager = engineManager;
+    this.goalContinuationCoordinator = new GoalContinuationCoordinator({
+      getClient: () => this.gatewayClient,
+      resolveSessionId: sessionKey => this.resolveSessionIdBySessionKey(sessionKey),
+      resolveAgentId: sessionId => this.store.getSession(sessionId)?.agentId || 'main',
+      onRunAccepted: (sessionId, sessionKey, runId) => {
+        if (this.terminalLifecycleSessionIds.has(sessionId)) {
+          this.cleanupSessionTurn(sessionId);
+        }
+        this.ensureActiveTurn(sessionId, sessionKey, runId);
+      },
+      onRunFailed: sessionId => this.cleanupSessionTurn(sessionId),
+      onSnapshot: snapshot => this.broadcastGoalExecution(snapshot),
+      waitBeforeAutomaticContinuation: () =>
+        new Promise(resolve => setTimeout(resolve, 1_600)),
+    });
 
     this.historyReconciler = new HistoryReconciler({
       getSession: (id: string) => this.store.getSession(id),
@@ -392,6 +416,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async stopSession(sessionId: string, options: CoworkStopOptions = {}): Promise<void> {
+    this.goalContinuationCoordinator.stop(sessionId);
     const turn = this.activeTurns.get(sessionId);
     if (turn) {
       turn.stopRequested = true;
@@ -405,12 +430,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         turn.stopRequested = false;
       }
       this.manuallyStoppedSessions.delete(sessionId);
-      if (!options.bestEffort) throw error;
+      if (!options.bestEffort) {
+        this.goalContinuationCoordinator.rollbackStop(sessionId);
+        throw error;
+      }
       coworkLog('WARN', 'OpenClawRuntime', 'Failed to confirm session stop', {
         error: String(error),
         sessionId,
       });
     }
+
+    this.goalContinuationCoordinator.confirmStop(sessionId);
 
     this.stoppedSessions.set(sessionId, Date.now());
     this.terminalLifecycleSessionIds.delete(sessionId);
@@ -418,6 +448,35 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.store.updateSession(sessionId, { status: 'idle' });
     this.emit('sessionStopped', sessionId);
     this.resolveTurn(sessionId);
+  }
+
+  getGoalExecution(sessionId: string): GoalExecutionSnapshot | null {
+    return this.goalContinuationCoordinator.getSnapshot(sessionId);
+  }
+
+  async continueGoal(sessionId: string): Promise<GoalExecutionSnapshot> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error('Session not found');
+    const client = this.requireGatewayClient();
+    const candidateKeys = [
+      ...this.getSessionKeysForSession(sessionId),
+      buildManagedSessionKey(sessionId, session.agentId || DEFAULT_MANAGED_AGENT_ID),
+      buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
+    ];
+    let sessionKey = '';
+    for (const candidateKey of new Set(candidateKeys)) {
+      const result = await client.request<{
+        session?: { key?: string; goal?: unknown } | null;
+      }>('sessions.describe', { key: candidateKey });
+      const described = result.session;
+      if (!described || !isRecord(described.goal)) continue;
+      if (described.goal.status !== SessionGoalStatus.Active) continue;
+      sessionKey = described.key?.trim() || candidateKey;
+      this.rememberSessionKey(sessionId, sessionKey);
+      break;
+    }
+    if (!sessionKey) throw new Error('The session does not have an active goal');
+    return this.goalContinuationCoordinator.continue(sessionId, sessionKey);
   }
 
   async stopAllSessions(): Promise<void> {
@@ -1075,6 +1134,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const runId = p.runId;
     const sessionKey = p.sessionKey ?? '';
     const stream = p.stream;
+    if (stream === 'tool' && sessionKey) {
+      const tool = normalizeToolEvent(p.data);
+      this.goalContinuationCoordinator.handleToolEvent({
+        runId,
+        sessionKey,
+        spawnedBy: p.spawnedBy,
+        name: tool.name,
+        toolCallId: tool.toolCallId,
+        ...(tool.input === undefined ? {} : { input: tool.input }),
+        ...(tool.output === null ? {} : { output: tool.output }),
+        status: tool.status,
+        failed: tool.failed,
+      });
+    }
+    if (stream === 'lifecycle' && sessionKey) {
+      const phase = typeof p.data.phase === 'string' ? p.data.phase : '';
+      if (phase === 'start' || phase === 'end' || phase === 'error') {
+        void this.goalContinuationCoordinator.handleLifecycle({
+          runId,
+          sessionKey,
+          spawnedBy: p.spawnedBy,
+          phase,
+          ...(typeof p.data.aborted === 'boolean' ? { aborted: p.data.aborted } : {}),
+          ...(typeof p.data.error === 'string' ? { error: p.data.error } : {}),
+        });
+      }
+    }
 
     // Resolve sessionId
     let sessionId = runId ? (this.sessionIdByRunId.get(runId) ?? null) : null;
@@ -1301,6 +1387,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!sessionKey) return;
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
     if (!sessionId) return;
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(SessionGoalIpc.Changed, { sessionId });
+      }
+    }
 
     const turn = this.activeTurns.get(sessionId);
     if (turn) {
@@ -1326,6 +1417,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private sendApprovalPayload(channel: string, payload: unknown): void {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(channel, payload);
+    }
+  }
+
+  private broadcastGoalExecution(snapshot: GoalExecutionSnapshot): void {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(GoalExecutionIpc.Changed, snapshot);
+      }
     }
   }
 
@@ -1520,6 +1619,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
     if (!sessionId) return;
+
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(SessionGoalIpc.Changed, { sessionId });
+      }
+    }
 
     const turn = this.activeTurns.get(sessionId);
     const hasActiveRun = source.hasActiveRun === true;
@@ -2729,6 +2834,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private stopGatewayClient(): void {
+    this.goalContinuationCoordinator.clear();
     this.gatewayClientGeneration++;
     this.gatewayStoppingIntentionally = true;
     this.cancelGatewayReconnect();
@@ -2778,6 +2884,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    *  on a closed connection would reject all pending requests with
    *  "gateway client stopped" noise. */
   private cleanupGatewayClientState(): void {
+    this.goalContinuationCoordinator.clear();
     this.cancelGatewayReconnect();
     this.stopTickWatchdog();
     this.gatewayClient = null;

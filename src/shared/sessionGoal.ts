@@ -33,3 +33,42 @@ export interface SessionGoal {
   usageLimitedAt?: number;
   budgetLimitedAt?: number;
 }
+
+export const GoalExecutionPhase = {
+  Waiting: 'waiting',
+  Running: 'running',
+  Continuing: 'continuing',
+  Stopped: 'stopped',
+  Failed: 'failed',
+} as const;
+
+export type GoalExecutionPhase =
+  (typeof GoalExecutionPhase)[keyof typeof GoalExecutionPhase];
+
+export const GoalExecutionFailureReason = {
+  StalledNoProgress: 'stalled_no_progress',
+} as const;
+
+export type GoalExecutionFailureReason =
+  (typeof GoalExecutionFailureReason)[keyof typeof GoalExecutionFailureReason];
+
+export interface GoalExecutionSnapshot {
+  sessionId: string;
+  goalId?: string;
+  phase: GoalExecutionPhase;
+  runId?: string;
+  continuationCount: number;
+  updatedAt: number;
+  error?: string;
+  failureReason?: GoalExecutionFailureReason;
+}
+
+export const GoalExecutionIpc = {
+  Get: 'cowork:goal:execution:get',
+  Continue: 'cowork:goal:execution:continue',
+  Changed: 'cowork:goal:execution:changed',
+} as const;
+
+export const SessionGoalIpc = {
+  Changed: 'cowork:session:goalChanged',
+} as const;

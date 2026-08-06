@@ -1,6 +1,6 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
-import type { SessionGoal } from '@shared/sessionGoal';
+import type { GoalExecutionSnapshot, SessionGoal } from '@shared/sessionGoal';
 import {
   parseGoalStartObjective,
   shouldClearSlashCommandComposerBeforeExecution,
@@ -17,7 +17,6 @@ import AttachmentCard from '@/features/cowork/components/AttachmentCard';
 import { startContextUsageRefresh } from '@/features/cowork/components/contextUsageRefresh';
 import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
-import { getGoalRefreshDelay } from '@/features/cowork/components/goalRuntimeRefresh';
 import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
 import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerialTaskQueue';
 import PermissionModeSelector from '@/features/cowork/components/PermissionModeSelector';
@@ -139,7 +138,7 @@ interface CoworkPromptInputProps {
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
   ) => boolean | void | Promise<boolean | void>;
-  onStop?: () => void;
+  onStop?: () => boolean | void | Promise<boolean | void>;
   isStreaming?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -228,6 +227,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const agentSelectedModelRef = useRef<Model | null>(agentSelectedModel);
     agentSelectedModelRef.current = agentSelectedModel;
     const [optimisticSessionModel, setOptimisticSessionModel] = useState<Model | null>(null);
+    const [goalActionPending, setGoalActionPending] = useState(false);
+    const goalActionPendingRef = useRef(false);
     const optimisticSessionModelRef = useRef<Model | null>(null);
     const confirmedSessionModelRef = useRef<Model | null>(agentSelectedModel);
     const modelSelectionContextRef = useRef(0);
@@ -255,6 +256,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       totalTokensFresh: boolean;
     } | null>(null);
     const [sessionGoal, setSessionGoal] = useState<SessionGoal | null>(null);
+    const [goalExecution, setGoalExecution] = useState<GoalExecutionSnapshot | null>(null);
     const sessionGoalRef = useRef<SessionGoal | null>(null);
     const [pendingGoalObjective, setPendingGoalObjective] = useState<string | null>(
       initialGoalObjective,
@@ -286,6 +288,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setContextUsage(null);
       setSessionGoal(null);
       sessionGoalRef.current = null;
+      setGoalExecution(null);
       setPendingGoalObjective(null);
     }, [sessionId, effectiveAgentId]);
 
@@ -867,7 +870,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleStopClick = () => {
       if (onStop) {
-        onStop();
+        void onStop();
       }
     };
 
@@ -1431,32 +1434,25 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => window.removeEventListener('config-updated', syncFromConfig);
     }, []);
 
-    // Goal state is useful while the run is active, so query it independently from context usage.
-    // The optimistic objective covers the short window before sessions.create persists the goal.
+    // OpenClaw owns Goal lifecycle state. Refresh from exact session events instead of polling
+    // an idle active Goal, which cannot change without a Gateway event or a new run.
     useEffect(() => {
       if (!sessionId || sessionId.startsWith('temp-')) return;
       let cancelled = false;
-      let timeoutId: number | null = null;
+      let retryId: number | null = null;
       let requestInFlight = false;
-      const schedule = (goal?: SessionGoal) => {
-        if (cancelled) return;
-        const delay = getGoalRefreshDelay(isRunActive, goal?.status);
-        if (delay !== null) {
-          timeoutId = window.setTimeout(fetchUsage, delay);
-        }
-      };
-      const fetchUsage = async () => {
+      const fetchGoal = async (allowRetry = true) => {
         if (cancelled || requestInFlight) return;
         requestInFlight = true;
-        let refreshedGoal = sessionGoalRef.current ?? undefined;
         try {
           const result = await window.electron.cowork.getSessionGoal(sessionId);
           if (cancelled) return;
           if (!result.success) {
-            schedule();
+            if (allowRetry) {
+              retryId = window.setTimeout(() => void fetchGoal(false), 1_500);
+            }
             return;
           }
-          refreshedGoal = result.goal;
           sessionGoalRef.current = result.goal ?? null;
           setSessionGoal(result.goal ?? null);
           if (result.goal) {
@@ -1465,16 +1461,30 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             setPendingGoalObjective(null);
           }
         } catch {
-          // Runtime details are supplementary; keep the last known state on transient failures.
+          if (allowRetry) {
+            retryId = window.setTimeout(() => void fetchGoal(false), 1_500);
+          }
         } finally {
           requestInFlight = false;
         }
-        schedule(refreshedGoal);
       };
-      void fetchUsage();
+      void fetchGoal();
+      void window.electron.cowork.getGoalExecution(sessionId).then(result => {
+        if (!cancelled && result.success) setGoalExecution(result.execution ?? null);
+      });
+      const removeGoalListener = window.electron.cowork.onSessionGoalChanged(data => {
+        if (data.sessionId === sessionId) void fetchGoal();
+      });
+      const removeExecutionListener = window.electron.cowork.onGoalExecutionChanged(snapshot => {
+        if (snapshot.sessionId !== sessionId) return;
+        setGoalExecution(snapshot);
+        void fetchGoal();
+      });
       return () => {
         cancelled = true;
-        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        removeGoalListener();
+        removeExecutionListener();
+        if (retryId !== null) window.clearTimeout(retryId);
       };
     }, [sessionId, isRunActive]);
 
@@ -1512,6 +1522,47 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       [disabled, isStreaming, onSubmit],
     );
 
+    const handleGoalContinue = useCallback(async () => {
+      if (!sessionId || disabled || goalActionPendingRef.current) return;
+      goalActionPendingRef.current = true;
+      setGoalActionPending(true);
+      try {
+        const result = await window.electron.cowork.continueGoal(sessionId);
+        if (result.success && result.execution) {
+          setGoalExecution(result.execution);
+        }
+      } finally {
+        goalActionPendingRef.current = false;
+        setGoalActionPending(false);
+      }
+    }, [disabled, sessionId]);
+
+    const handleGoalPause = useCallback(async () => {
+      if (disabled || goalActionPendingRef.current || !onStop) return;
+      goalActionPendingRef.current = true;
+      setGoalActionPending(true);
+      try {
+        const stopped = await onStop();
+        if (stopped === false) return;
+        await onSubmit('/goal pause');
+      } finally {
+        goalActionPendingRef.current = false;
+        setGoalActionPending(false);
+      }
+    }, [disabled, onStop, onSubmit]);
+
+    const handleGoalComplete = useCallback(async () => {
+      if (disabled || goalActionPendingRef.current) return;
+      goalActionPendingRef.current = true;
+      setGoalActionPending(true);
+      try {
+        await onSubmit('/goal complete');
+      } finally {
+        goalActionPendingRef.current = false;
+        setGoalActionPending(false);
+      }
+    }, [disabled, onSubmit]);
+
     const slashMenuVisible =
       slashMenuOpen &&
       (slashMenuMode === 'args'
@@ -1538,10 +1589,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           <GoalStatusCard
             goal={sessionGoal}
             pendingObjective={pendingGoalObjective}
-            progress={goalRunProgress}
+            execution={goalExecution}
             isRunning={isStreaming || goalRunProgress !== null}
-            disabled={disabled || isStreaming || goalRunProgress !== null}
+            disabled={disabled || goalActionPending}
             onCommand={handleGoalCommand}
+            onContinue={handleGoalContinue}
+            onPause={handleGoalPause}
+            onComplete={handleGoalComplete}
           />
         )}
         {attachments.length > 0 && (

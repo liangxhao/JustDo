@@ -47,6 +47,11 @@ import type {
   ScheduledTaskStatusEvent,
   ScheduledTaskUnreadCountEvent,
 } from '../shared/scheduledTask/types';
+import {
+  GoalExecutionIpc,
+  type GoalExecutionSnapshot,
+  SessionGoalIpc,
+} from '../shared/sessionGoal';
 import { SlashCommandIpc } from '../shared/slashCommands';
 
 // 暴露安全的 API 到渲染进程
@@ -291,6 +296,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:patchModel', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
     getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),
+    getGoalExecution: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Get, sessionId),
+    continueGoal: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Continue, sessionId),
     getContextUsage: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
     deleteMessage: (sessionId: string, messageId: string) =>
@@ -396,6 +403,18 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = () => callback();
       ipcRenderer.on('cowork:sessions:changed', handler);
       return () => ipcRenderer.removeListener('cowork:sessions:changed', handler);
+    },
+    onGoalExecutionChanged: (callback: (snapshot: GoalExecutionSnapshot) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: GoalExecutionSnapshot) =>
+        callback(snapshot);
+      ipcRenderer.on(GoalExecutionIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(GoalExecutionIpc.Changed, handler);
+    },
+    onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string }) =>
+        callback(data);
+      ipcRenderer.on(SessionGoalIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(SessionGoalIpc.Changed, handler);
     },
     getSubTaskStatus: (sessionId?: string) =>
       ipcRenderer.invoke('cowork:subTask:status', sessionId),

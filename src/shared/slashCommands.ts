@@ -102,7 +102,6 @@ const GOAL_CONTROL_ACTIONS = new Set([
   'status',
 ]);
 const GOAL_CREATE_ACTIONS = new Set(['create', 'set', 'start']);
-const GOAL_TOKEN_BUDGET_PATTERN = /^--tokens(?:=|\s+)\S+\s*/i;
 
 export const isGoalSlashCommand = (value: string): boolean =>
   parseSlashCommand(value)?.name === 'goal';
@@ -119,7 +118,7 @@ export const parseGoalStartObjective = (value: string): string | null => {
   const action = first.toLowerCase();
   if (GOAL_CONTROL_ACTIONS.has(action)) return null;
   const objectiveText = GOAL_CREATE_ACTIONS.has(action) ? rest.join(' ') : argumentsText;
-  const objective = objectiveText.replace(GOAL_TOKEN_BUDGET_PATTERN, '').trim();
+  const objective = objectiveText.trim();
   return objective || null;
 };
 

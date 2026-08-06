@@ -53,7 +53,7 @@ describe('parseGoalStartObjective', () => {
       'ship the desktop app',
     );
     expect(parseGoalStartObjective('/goal --tokens 50K improve startup time')).toBe(
-      'improve startup time',
+      '--tokens 50K improve startup time',
     );
   });
 

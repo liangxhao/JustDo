@@ -367,12 +367,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   };
 
   const handleStopSession = async () => {
-    if (!currentSession) return;
+    if (!currentSession) return false;
     if (currentSession.id.startsWith('temp-') && pendingStartRef.current) {
       pendingStartRef.current.cancelled = true;
       pendingStartRef.current.cancellationAction = 'stop';
     }
-    await coworkService.stopSession(currentSession.id);
+    const stopped = await coworkService.stopSession(currentSession.id);
+    if (stopped) chatWrapperRef.current?.clearSending();
+    return stopped;
   };
 
   const handleSubagentsChange = useCallback((subagents: Subagent[]) => {

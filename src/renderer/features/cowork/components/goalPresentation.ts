@@ -60,20 +60,3 @@ export const getGoalPresentation = (status: SessionGoal['status']): GoalPresenta
       };
   }
 };
-
-export const formatGoalTokenCount = (value: number): string => {
-  if (!Number.isFinite(value) || value <= 0) return '0';
-  if (value < 1_000) return String(Math.round(value));
-  if (value < 1_000_000) {
-    const rounded = value >= 10_000 ? Math.round(value / 1_000) : Math.round(value / 100) / 10;
-    return rounded >= 1_000 ? '1m' : `${rounded}k`;
-  }
-  const rounded =
-    value >= 10_000_000 ? Math.round(value / 1_000_000) : Math.round(value / 100_000) / 10;
-  return `${rounded}m`;
-};
-
-export const getGoalBudgetPercentage = (goal: SessionGoal): number | null => {
-  if (goal.tokensUsed <= 0 || goal.tokenBudget === undefined || goal.tokenBudget <= 0) return null;
-  return Math.min(100, Math.max(0, (goal.tokensUsed / goal.tokenBudget) * 100));
-};

@@ -2,10 +2,37 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createSingleFlightTtlLookup,
+  queryGatewaySession,
   readGatewaySessionId,
   readSessionGoal,
   readUsage,
 } from './sessionRuntime';
+
+describe('queryGatewaySession', () => {
+  it('uses sessions.describe for exact managed keys instead of a bounded session list', async () => {
+    const request = vi.fn(async (method: string, params: { key?: string }) => {
+      expect(method).toBe('sessions.describe');
+      return params.key === 'agent:main:justdo:session-1'
+        ? { session: { key: params.key, sessionId: 'gateway-1' } }
+        : { session: null };
+    });
+    const result = await queryGatewaySession(
+      {
+        getCoworkStore: () =>
+          ({ getSession: () => ({ agentId: 'main' }) }) as never,
+        getRuntime: () =>
+          ({
+            getGatewayClient: () => ({ request }),
+            getSessionKeysForSession: () => [],
+          }) as never,
+      },
+      'session-1',
+    );
+
+    expect(result.session?.sessionId).toBe('gateway-1');
+    expect(request).not.toHaveBeenCalledWith('sessions.list', expect.anything());
+  });
+});
 
 describe('readGatewaySessionId', () => {
   it('prefers the Gateway sessionId and normalizes whitespace', () => {
