@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 
-import { md } from '@/libs/openclaw-chat/components/markdown';
+import {
+  findStableStreamingMarkdownBoundary,
+  md,
+} from '@/libs/openclaw-chat/components/markdown';
 
 describe('Markdown autolinks', () => {
   test.each(['，', '。', '；', '！', '？', '、'])(
@@ -31,6 +34,73 @@ describe('Markdown tables', () => {
 
     expect(html).toContain('<div class="markdown-table-scroll"><table>');
     expect(html).toContain('</table></div>');
+  });
+});
+
+describe('Box-drawing diagrams', () => {
+  test('renders unfenced multiline diagrams in a literal text container', () => {
+    const source = [
+      '┌────┐',
+      '│ AB │',
+      '└────┘',
+    ].join('\n');
+
+    const html = md.render(source);
+
+    expect(html).toContain('class="markdown-box-drawing-diagram"');
+    expect(html).toContain(source);
+    expect(html).not.toContain('<br>');
+  });
+
+  test('escapes HTML while preserving diagram text', () => {
+    const source = '┌────┐\n│ <img src=x onerror=alert(1)> │\n└────┘';
+
+    const html = md.render(source);
+
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).not.toContain('<img');
+  });
+
+  test('keeps ordinary prose containing a box-drawing character unchanged', () => {
+    const html = md.render('用 │ 表示垂直连线。');
+
+    expect(html).not.toContain('markdown-box-drawing-diagram');
+  });
+
+  test('preserves Markdown around an independent diagram block', () => {
+    const html = md.render(
+      '# 标题\n正文 [链接](https://example.com)\n┌────┐\n│ AB │\n└────┘\n- 列表项',
+    );
+
+    expect(html).toContain('<h1>标题</h1>');
+    expect(html).toContain('<a href="https://example.com">链接</a>');
+    expect(html).toContain('class="markdown-box-drawing-diagram"');
+    expect(html).toContain('<li>列表项</li>');
+  });
+
+  test('does not reinterpret a fenced code block containing box-drawing characters', () => {
+    const html = md.render('```text\n┌────┐\n│ AB │\n└────┘\n```');
+
+    expect(html).toContain('class="code-block-wrapper"');
+    expect(html).not.toContain('markdown-box-drawing-diagram');
+  });
+
+  test('does not reinterpret incomplete box-drawing prose', () => {
+    const html = md.render('符号示例：\n┌ ─ ┐\n这不是完整框图。');
+
+    expect(html).not.toContain('markdown-box-drawing-diagram');
+  });
+
+  test('uses the diagram block after a complete frame finishes streaming', () => {
+    const source = '┌────┐\n│ AB │\n└────┘';
+
+    const boundary = findStableStreamingMarkdownBoundary(source);
+    const html = md.render(source.slice(0, boundary));
+
+    expect(boundary).toBe(source.length);
+    expect(html).toContain('class="markdown-box-drawing-diagram"');
+    expect(html).toContain(source);
+    expect(html).not.toContain('markdown-plain-text-fallback');
   });
 });
 

@@ -774,6 +774,21 @@ export class JustDoChatElement extends LitElement {
         font: inherit;
       }
 
+      .markdown-content .markdown-box-drawing-diagram {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: pre;
+        overflow-wrap: normal;
+        word-break: normal;
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, 'Segoe UI', Roboto,
+          sans-serif;
+        font-size: 15px;
+        line-height: 24px;
+      }
+
       /* ── Code Blocks ────────────────────────────────────────────────── */
 
       .markdown-content pre {

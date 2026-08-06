@@ -42,8 +42,10 @@ const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v8';
+const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v10';
 const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、]/;
+const BOX_DRAWING_TOP_RE = /^[ \t]*[┌╔].*[┐╗][ \t]*$/u;
+const BOX_DRAWING_BOTTOM_RE = /^[ \t]*[└╚].*[┘╝][ \t]*$/u;
 const INLINE_DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CONTAINER_PREFIX_RE = /^[ \t]{0,3}(?:(?:>\s?)|(?:(?:[-+*]|\d{1,9}[.)])[ \t]+))/;
@@ -255,10 +257,11 @@ function isFenceClose(line: string, fence: { marker: '`' | '~'; length: number }
   return trimmed.slice(match[0].length).trim() === '';
 }
 
-function findStableStreamingMarkdownBoundary(markdownText: string): number {
+export function findStableStreamingMarkdownBoundary(markdownText: string): number {
   let boundary = 0;
   let index = 0;
   let openFence: { marker: '`' | '~'; length: number } | null = null;
+  let openBoxDrawingFrame = false;
 
   while (index < markdownText.length) {
     const nextLineBreak = markdownText.indexOf('\n', index);
@@ -274,9 +277,24 @@ function findStableStreamingMarkdownBoundary(markdownText: string): number {
       continue;
     }
 
+    if (openBoxDrawingFrame) {
+      if (BOX_DRAWING_BOTTOM_RE.test(line)) {
+        openBoxDrawingFrame = false;
+        boundary = lineEnd;
+      }
+      index = lineEnd;
+      continue;
+    }
+
     const openingFence = getFenceMarker(line);
     if (openingFence) {
       openFence = openingFence;
+      index = lineEnd;
+      continue;
+    }
+
+    if (BOX_DRAWING_TOP_RE.test(line)) {
+      openBoxDrawingFrame = true;
       index = lineEnd;
       continue;
     }
@@ -351,6 +369,46 @@ md.use(markdownItTexMath, {
     strict: false,
   },
 });
+
+// Treat complete, unfenced box-drawing frames as literal blocks. This runs as a
+// paragraph terminator, so prose and other Markdown around a diagram keep their
+// normal rendering, while the diagram itself retains every space and newline.
+md.block.ruler.before(
+  'paragraph',
+  'box_drawing_diagram',
+  (state, startLine, endLine, silent) => {
+    const firstLine = state.src.slice(
+      state.bMarks[startLine] + state.tShift[startLine],
+      state.eMarks[startLine],
+    );
+    if (!BOX_DRAWING_TOP_RE.test(firstLine)) return false;
+
+    let closingLine = startLine + 1;
+    while (closingLine < endLine) {
+      const line = state.src.slice(
+        state.bMarks[closingLine] + state.tShift[closingLine],
+        state.eMarks[closingLine],
+      );
+      if (BOX_DRAWING_BOTTOM_RE.test(line)) break;
+      closingLine += 1;
+    }
+    if (closingLine >= endLine || closingLine <= startLine + 1) return false;
+    if (silent) return true;
+
+    const token = state.push('box_drawing_diagram', 'div', 0);
+    token.block = true;
+    token.map = [startLine, closingLine + 1];
+    token.content = state
+      .getLines(startLine, closingLine + 1, state.blkIndent, false)
+      .replace(/\n$/u, '');
+    state.line = closingLine + 1;
+    return true;
+  },
+  { alt: ['paragraph'] },
+);
+
+md.renderer.rules.box_drawing_diagram = (tokens, idx) =>
+  `<div class="markdown-box-drawing-diagram">${escapeHtml(tokens[idx].content)}</div>\n`;
 
 // Override html_block/html_inline to escape raw HTML
 md.renderer.rules.html_block = (tokens, idx) => escapeHtml(tokens[idx].content) + '\n';
