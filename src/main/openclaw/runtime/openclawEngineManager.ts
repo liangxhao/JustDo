@@ -20,7 +20,11 @@ import {
   buildTrustedCaBundle,
 } from '../../core/trustedCertificates';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
-import { ensureElectronNodeShim, getElectronNodeRuntimePath } from './electronNodeRuntime';
+import {
+  ensureElectronNodeShim,
+  getElectronNodeRuntimePath,
+  resolvePackagedNpmBinDir,
+} from './electronNodeRuntime';
 import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { GatewayStdoutLogFilter } from './gatewayLogFilter';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
@@ -529,7 +533,7 @@ export class OpenClawEngineManager extends EventEmitter {
     );
 
     const npmBinDir = app.isPackaged
-      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
+      ? resolvePackagedNpmBinDir(process.resourcesPath)
       : (() => {
           const npmExecPath = process.env.npm_execpath?.trim();
           if (npmExecPath) {

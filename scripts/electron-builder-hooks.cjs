@@ -799,6 +799,7 @@ async function beforePack(context) {
 }
 
 async function afterPack(context) {
+  verifyPackagedNodeRuntime(context);
   verifyPackagedOpenClawRuntime(context);
 
   if (isWindowsTarget(context)) {
@@ -828,6 +829,46 @@ async function afterPack(context) {
     } else {
       console.warn(`[electron-builder-hooks] App not found at ${appPath}, skipping icon fix`);
     }
+  }
+}
+
+function verifyPackagedNodeRuntime(context) {
+  const resourcesRoot = isMacTarget(context)
+    ? path.join(
+        context.appOutDir,
+        `${context.packager.appInfo.productFilename}.app`,
+        'Contents',
+        'Resources',
+      )
+    : path.join(context.appOutDir, 'resources');
+  const appAsarPath = path.join(resourcesRoot, 'app.asar');
+  const electronExecutable = require('electron');
+  const commands = [
+    { name: 'node', args: ['--version'] },
+    {
+      name: 'npm',
+      args: [path.join(appAsarPath, 'node_modules', 'npm', 'bin', 'npm-cli.js'), '--version'],
+    },
+    {
+      name: 'npx',
+      args: [path.join(appAsarPath, 'node_modules', 'npm', 'bin', 'npx-cli.js'), '--version'],
+    },
+  ];
+
+  for (const command of commands) {
+    const result = spawnSync(electronExecutable, command.args, {
+      encoding: 'utf8',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+    const output = String(result.stdout || '').trim();
+    if (result.status !== 0 || !/^v?\d+\.\d+\.\d+$/.test(output)) {
+      const detail = String(result.stderr || result.stdout || result.error || '').trim();
+      throw new Error(
+        `[electron-builder-hooks] Packaged ${command.name} runtime verification failed` +
+          (detail ? `: ${detail}` : '.'),
+      );
+    }
+    console.log(`[electron-builder-hooks] Verified packaged ${command.name} ${output}.`);
   }
 }
 
@@ -1023,6 +1064,7 @@ module.exports = {
   buildWindowsUpdateManifest,
   normalizeUpdateVersion,
   readReleaseNotes,
+  verifyPackagedNodeRuntime,
   verifyPackagedWindowsNativeModules,
   verifyPackagedOpenClawRuntime,
 };

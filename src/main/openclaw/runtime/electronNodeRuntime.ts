@@ -50,6 +50,12 @@ export function getElectronNodeRuntimePath(): string {
   return cachedElectronNodeRuntimePath;
 }
 
+export function resolvePackagedNpmBinDir(resourcesPath: string): string {
+  // Keep the logical app.asar path so npm can resolve its hoisted dependencies
+  // from app.asar. Electron transparently redirects npm's unpacked files.
+  return join(resourcesPath, 'app.asar', 'node_modules', 'npm', 'bin');
+}
+
 export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string): string | null {
   try {
     const shimDir = join(app.getPath('userData'), 'cowork', 'bin');
