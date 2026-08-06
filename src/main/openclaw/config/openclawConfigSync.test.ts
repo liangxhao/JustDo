@@ -247,6 +247,7 @@ describe('OpenClaw managed compaction config', () => {
       },
     });
     expect(compaction.reserveTokens).toBe(24_000);
+    expect(compaction.reserveTokensFloor).toBe(50_000);
     expect(compaction).not.toHaveProperty('keepRecentTokens');
     expect(compaction.customInstructions).toContain(
       'You are performing a CONTEXT CHECKPOINT COMPACTION.',
@@ -259,7 +260,7 @@ describe('OpenClaw managed compaction config', () => {
 describe('OpenClaw managed heartbeat config', () => {
   test('enables heartbeat wake-ups without injecting heartbeat instructions', () => {
     expect(buildManagedOpenClawHeartbeatConfig()).toEqual({
-      every: '30m',
+      every: '2h',
       includeSystemPromptSection: false,
     });
   });
@@ -269,7 +270,7 @@ describe('OpenClaw managed heartbeat config', () => {
       id: 'main',
       default: true,
       heartbeat: {
-        every: '30m',
+        every: '2h',
         includeSystemPromptSection: false,
       },
     });
@@ -453,7 +454,7 @@ describe('OpenClaw skill config merging', () => {
         maxCandidatesPerRoot: 500,
         maxSkillsLoadedPerSource: 300,
         maxSkillsInPrompt: 200,
-        maxSkillsPromptChars: 40_000,
+        maxSkillsPromptChars: 50_000,
       },
     });
   });

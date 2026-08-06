@@ -415,10 +415,10 @@ export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
-export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 40_000;
+export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 50_000;
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
-  every: '30m',
+  every: '2h',
   includeSystemPromptSection: false,
 });
 
@@ -450,7 +450,7 @@ export const applyManagedOpenClawHeartbeatConfig = (
 export const buildManagedOpenClawCompactionConfig = () => ({
   mode: 'safeguard',
   reserveTokens: 24_000,
-  reserveTokensFloor: 24_000,
+  reserveTokensFloor: 50_000,
   maxHistoryShare: 0.65,
   recentTurnsPreserve: 0,
   // The Codex prompt asks for critical references itself. Avoid injecting
