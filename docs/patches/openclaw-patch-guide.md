@@ -22,26 +22,26 @@ scripts/patches/v2026.6.11/
 
 ## Current Patch Set
 
-| Patch | Purpose |
-| --- | --- |
-| `001-thinking-stream.cjs` | Thinking stream compatibility and bounded diagnostic previews |
-| `002-agent-announce-reasoning-stream.cjs` | Agent reasoning announcement stream |
-| `003-openai-content-reasoning-tags.cjs` | OpenAI content reasoning tag handling |
-| `004-windows-mcp-package-runner.cjs` | Windows MCP stdio/package runner compatibility |
-| `005-history-thinking-and-subagent-yield.cjs` | History thinking content and subagent yield compatibility |
-| `006-sessions-yield-active-guard.cjs` | Session yield active guard |
-| `007-allow-managed-pip-config-env.cjs` | JustDo-managed pip config env passthrough |
-| `008-dedupe-visible-subagent-announces.cjs` | Deduplicate sibling completion announces already visible in parent history |
-| `009-reply-session-init-conflict-retry.cjs` | Fresh writer snapshots, key-order-independent revisions, and bounded retry for reply initialization conflicts |
-| `010-defer-selected-tool-schemas.cjs` | Defer selected heavyweight native schemas through directory-mode Tool Search |
-| `011-retain-user-messages-across-compaction.cjs` | Persist and replay original user text across repeated compactions with a rolling 20k-token budget |
-| `012-codex-compaction-template.cjs` | Replace OpenClaw's compaction prompts, replay wrapper, and forced suffixes with Codex handoff semantics |
-| `013-default-cron-delivery-none.cjs` | Normalize native-tool agent-turn cron add/update requests to in-app delivery when `delivery` is omitted or a targetless `announce` cannot resolve an external destination |
-| `014-live-context-budget-status.cjs` | Publish the authoritative pre-prompt context estimate to session state during active runs |
-| `015-final-system-prompt-replacements.cjs` | Apply JustDo-managed ordered regex rules to the final system prompt |
-| `016-litellm-session-id.cjs` | Forward the active OpenClaw session UUID as `metadata.session_id` on chat and safeguard-compaction OpenAI-compatible model requests |
-| `017-tool-error-reasoning-recovery.cjs` | Retry reasoning-only post-tool-error turns with bounded request-only user recovery messages |
-| `018-persistent-interactive-approvals.cjs` | Keep interactive approvals pending until a decision, preserve timeout-free Gateway waits, suppress the suspended turn's duplicate reply, and resume webchat exec work with a hidden internal prompt only after a real decision |
+| Patch                                            | Purpose                                                                                                                                                                                                                        |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `001-thinking-stream.cjs`                        | Thinking stream compatibility and bounded diagnostic previews                                                                                                                                                                  |
+| `002-agent-announce-reasoning-stream.cjs`        | Agent reasoning announcement stream                                                                                                                                                                                            |
+| `003-openai-content-reasoning-tags.cjs`          | OpenAI content reasoning tag handling                                                                                                                                                                                          |
+| `004-windows-mcp-package-runner.cjs`             | Windows MCP stdio/package runner compatibility                                                                                                                                                                                 |
+| `005-history-thinking-and-subagent-yield.cjs`    | History thinking content and subagent yield compatibility                                                                                                                                                                      |
+| `006-sessions-yield-active-guard.cjs`            | Session yield active guard                                                                                                                                                                                                     |
+| `007-allow-managed-pip-config-env.cjs`           | JustDo-managed pip config env passthrough                                                                                                                                                                                      |
+| `008-dedupe-visible-subagent-announces.cjs`      | Deduplicate sibling completion announces already visible in parent history                                                                                                                                                     |
+| `009-reply-session-init-conflict-retry.cjs`      | Fresh writer snapshots, key-order-independent revisions, and bounded retry for reply initialization conflicts                                                                                                                  |
+| `010-defer-selected-tool-schemas.cjs`            | Defer selected heavyweight native schemas through directory-mode Tool Search                                                                                                                                                   |
+| `011-retain-user-messages-across-compaction.cjs` | Persist and replay original user text across repeated compactions with a rolling 20k-token budget                                                                                                                              |
+| `012-codex-compaction-template.cjs`              | Replace OpenClaw's compaction prompts, replay wrapper, and forced suffixes with Codex handoff semantics                                                                                                                        |
+| `013-default-cron-delivery-none.cjs`             | Normalize native-tool agent-turn cron add/update requests to in-app delivery when `delivery` is omitted or a targetless `announce` cannot resolve an external destination                                                      |
+| `014-live-context-budget-status.cjs`             | Publish the authoritative pre-prompt context estimate to session state during active runs                                                                                                                                      |
+| `015-final-system-prompt-replacements.cjs`       | Apply JustDo-managed ordered regex rules to the final system prompt                                                                                                                                                            |
+| `016-litellm-session-id.cjs`                     | Forward `metadata.session_id` and `metadata.request_purpose` on agent, safeguard-compaction, and exec-review OpenAI-compatible model requests                                                                                  |
+| `017-tool-error-reasoning-recovery.cjs`          | Retry reasoning-only post-tool-error turns with bounded request-only user recovery messages                                                                                                                                    |
+| `018-persistent-interactive-approvals.cjs`       | Keep interactive approvals pending until a decision, preserve timeout-free Gateway waits, suppress the suspended turn's duplicate reply, and resume webchat exec work with a hidden internal prompt only after a real decision |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -157,26 +157,26 @@ Patch removal is a real change:
 
 ## Current Patch Rationale
 
-| Patch | Category | Removal direction |
-| --- | --- | --- |
-| `001-thinking-stream.cjs` | Reasoning stream compatibility | Remove when Gateway emits stable thinking stream/history and bounded thinking diagnostics |
-| `002-agent-announce-reasoning-stream.cjs` | Reasoning event compatibility | Remove when upstream agent announcements include reasoning stream |
-| `003-openai-content-reasoning-tags.cjs` | Provider content parsing | Remove when upstream provider parser preserves reasoning tags |
-| `004-windows-mcp-package-runner.cjs` | Windows process compatibility | Remove when upstream MCP package runner handles Windows stdio launch reliably |
-| `005-history-thinking-and-subagent-yield.cjs` | History/subagent compatibility | Remove when upstream history includes thinking and subagent yield data |
-| `006-sessions-yield-active-guard.cjs` | Runtime race guard | Remove when upstream session yield state is guarded |
-| `007-allow-managed-pip-config-env.cjs` | Managed dependency config passthrough | Remove when upstream supports scoped dependency manager env passthrough |
-| `008-dedupe-visible-subagent-announces.cjs` | Subagent completion delivery compatibility | Remove when upstream coalesces sibling announces or credits results already visible in parent history |
-| `009-reply-session-init-conflict-retry.cjs` | Runtime session concurrency guard | Remove when upstream aligns reply snapshot/commit cache consistency, uses key-order-independent revisions, and retries genuine conflicts |
-| `010-defer-selected-tool-schemas.cjs` | Tool context compaction | Remove when upstream supports a configurable per-tool Tool Search defer list |
-| `011-retain-user-messages-across-compaction.cjs` | Compaction fidelity | Remove when upstream persists and replays retained user messages across compaction entries |
-| `012-codex-compaction-template.cjs` | Compaction fidelity | Remove when upstream supports replacing the compaction template, replay wrapper, and suffix assembly |
-| `013-default-cron-delivery-none.cjs` | Scheduled-task delivery default | Remove when upstream exposes a configurable default cron delivery mode |
-| `014-live-context-budget-status.cjs` | Missing live Gateway usage state | Remove when Gateway exposes current context budget status during active runs |
-| `015-final-system-prompt-replacements.cjs` | Missing final prompt transform | Remove when Gateway exposes a final, system-only prompt transform hook |
-| `016-litellm-session-id.cjs` | Missing provider request correlation | Remove when OpenClaw forwards its session UUID as OpenAI-compatible request metadata |
-| `017-tool-error-reasoning-recovery.cjs` | Reasoning-only turns silently stop after tool errors | Remove when OpenClaw supports bounded request-only recovery messages without transcript persistence |
-| `018-persistent-interactive-approvals.cjs` | Interactive approval lifetime and run suspension | Remove when OpenClaw preserves timeout-free approval waits and resumes approved webchat exec work outside the originating run lifetime only after a real decision |
+| Patch                                            | Category                                                  | Removal direction                                                                                                                                                 |
+| ------------------------------------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `001-thinking-stream.cjs`                        | Reasoning stream compatibility                            | Remove when Gateway emits stable thinking stream/history and bounded thinking diagnostics                                                                         |
+| `002-agent-announce-reasoning-stream.cjs`        | Reasoning event compatibility                             | Remove when upstream agent announcements include reasoning stream                                                                                                 |
+| `003-openai-content-reasoning-tags.cjs`          | Provider content parsing                                  | Remove when upstream provider parser preserves reasoning tags                                                                                                     |
+| `004-windows-mcp-package-runner.cjs`             | Windows process compatibility                             | Remove when upstream MCP package runner handles Windows stdio launch reliably                                                                                     |
+| `005-history-thinking-and-subagent-yield.cjs`    | History/subagent compatibility                            | Remove when upstream history includes thinking and subagent yield data                                                                                            |
+| `006-sessions-yield-active-guard.cjs`            | Runtime race guard                                        | Remove when upstream session yield state is guarded                                                                                                               |
+| `007-allow-managed-pip-config-env.cjs`           | Managed dependency config passthrough                     | Remove when upstream supports scoped dependency manager env passthrough                                                                                           |
+| `008-dedupe-visible-subagent-announces.cjs`      | Subagent completion delivery compatibility                | Remove when upstream coalesces sibling announces or credits results already visible in parent history                                                             |
+| `009-reply-session-init-conflict-retry.cjs`      | Runtime session concurrency guard                         | Remove when upstream aligns reply snapshot/commit cache consistency, uses key-order-independent revisions, and retries genuine conflicts                          |
+| `010-defer-selected-tool-schemas.cjs`            | Tool context compaction                                   | Remove when upstream supports a configurable per-tool Tool Search defer list                                                                                      |
+| `011-retain-user-messages-across-compaction.cjs` | Compaction fidelity                                       | Remove when upstream persists and replays retained user messages across compaction entries                                                                        |
+| `012-codex-compaction-template.cjs`              | Compaction fidelity                                       | Remove when upstream supports replacing the compaction template, replay wrapper, and suffix assembly                                                              |
+| `013-default-cron-delivery-none.cjs`             | Scheduled-task delivery default                           | Remove when upstream exposes a configurable default cron delivery mode                                                                                            |
+| `014-live-context-budget-status.cjs`             | Missing live Gateway usage state                          | Remove when Gateway exposes current context budget status during active runs                                                                                      |
+| `015-final-system-prompt-replacements.cjs`       | Missing final prompt transform                            | Remove when Gateway exposes a final, system-only prompt transform hook                                                                                            |
+| `016-litellm-session-id.cjs`                     | Missing provider request correlation and purpose metadata | Remove when OpenClaw forwards its session UUID and request purpose for agent, compaction, and exec-review requests                                                |
+| `017-tool-error-reasoning-recovery.cjs`          | Reasoning-only turns silently stop after tool errors      | Remove when OpenClaw supports bounded request-only recovery messages without transcript persistence                                                               |
+| `018-persistent-interactive-approvals.cjs`       | Interactive approval lifetime and run suspension          | Remove when OpenClaw preserves timeout-free approval waits and resumes approved webchat exec work outside the originating run lifetime only after a real decision |
 
 ### Compaction patch upgrade warning
 

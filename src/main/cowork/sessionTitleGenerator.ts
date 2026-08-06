@@ -80,7 +80,14 @@ export class SessionTitleGenerator {
       const body = JSON.stringify({
         model,
         max_tokens: SESSION_TITLE_MAX_TOKENS,
-        ...(sessionId ? { metadata: { session_id: sessionId } } : {}),
+        ...(sessionId
+          ? {
+              metadata: {
+                session_id: sessionId,
+                request_purpose: 'title_generation',
+              },
+            }
+          : {}),
         messages: [
           { role: 'system', content: SESSION_TITLE_SYSTEM_PROMPT },
           {

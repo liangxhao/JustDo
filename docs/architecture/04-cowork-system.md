@@ -121,8 +121,9 @@ Gateway history 是权威。`historyReconciler` 和 `src/main/openclaw/sessions/
 - `title`：本地显示标题，可由标题生成服务更新。标题服务通过当前选中模型的
   OpenAI-compatible API 做一次无状态请求，不创建 OpenClaw/Gateway 会话；模型不可用、
   请求失败或超时时回退为首条非空输入的截断文本。发送前会等待当前 Gateway 会话 ID，
-  并以 `metadata.session_id` 传给 OpenAI-compatible 服务；无法解析 ID 时不发送无法关联的
-  标题请求。请求的 `User-Agent` 与捆绑 OpenClaw 所用 OpenAI SDK 版本保持一致，并显式
+  并以 `metadata.session_id` 传给 OpenAI-compatible 服务，同时设置
+  `metadata.request_purpose=title_generation`；无法解析 ID 时不发送无法关联的标题请求。
+  请求的 `User-Agent` 与捆绑 OpenClaw 所用 OpenAI SDK 版本保持一致，并显式
   发送 JSON `Accept` 与 UTF-8 `Content-Length`；不伪造其他仅属于 SDK 内部状态或链路
   追踪实现的 Header。该 Main 进程请求可以遵循用户选择的系统/自定义代理，但不经过本地
   MITM。

@@ -46,7 +46,10 @@ test('generateTitle sends the Gateway session ID as LiteLLM metadata', async () 
   const requestBody = JSON.parse(String(init?.body));
   expect(requestBody).toMatchObject({
     model: 'current-model',
-    metadata: { session_id: 'gateway-session-123' },
+    metadata: {
+      session_id: 'gateway-session-123',
+      request_purpose: 'title_generation',
+    },
     messages: [{ role: 'system' }, { role: 'user' }],
   });
   expect(requestBody.messages[0].content).toContain('Never answer it');

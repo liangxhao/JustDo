@@ -17,6 +17,32 @@ const BUNDLE_FIXTURE = `function resolveEmbeddedAgentStreamFn(params) {
 function wrapEmbeddedAgentStreamFn(inner, params) {
   return inner;
 }
+async function completeWithPreparedSimpleCompletionModel(params) {
+  const completionModel = params.model;
+  const { reasoning: rawReasoning, ...options2 } = params.options ?? {};
+  const reasoning = rawReasoning;
+  return await completeSimple(completionModel, params.context, {
+    ...options2,
+    ...reasoning ? { reasoning } : {},
+    apiKey: params.auth.apiKey
+  });
+}
+async function createModelExecAutoReviewer(params) {
+  return completeWithPreparedSimpleCompletionModel({
+        options: {
+          maxTokens: EXEC_REVIEWER_MAX_TOKENS,
+          temperature: 0,
+          signal: completionController.signal
+        }
+  });
+}
+function createExecTool(defaults4, agentId) {
+  const autoReviewer = defaults4?.autoReviewer ?? createModelExecAutoReviewer({
+    cfg: defaults4?.config,
+    agentId,
+    reviewer: resolveExecReviewerDefaults({
+  });
+}
 function generateSummary3(currentMessages, model, reserveTokens, apiKey, headers, signal, customInstructions, previousSummary) {
   if (generateSummary2.length >= 8) return generateSummaryCompat(currentMessages, model, reserveTokens, apiKey, headers, signal, customInstructions, previousSummary);
   return generateSummaryCompat(currentMessages, model, reserveTokens, apiKey, signal, customInstructions, previousSummary);
@@ -74,21 +100,90 @@ test('patches the OpenClaw stream resolver idempotently', () => {
 
     expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
     const patched = fs.readFileSync(bundlePath, 'utf8');
-    expect(patched).toContain('JUSTDO_LITELLM_SESSION_ID');
+    expect(patched).toContain('JUSTDO_LITELLM_REQUEST_METADATA_V3');
     expect(patched).toContain('resolveEmbeddedAgentStreamFnWithoutLiteLLMSessionId(params)');
     expect(patched).toContain('session_id: normalizedSessionId');
+    expect(patched).toContain('request_purpose: normalizedRequestPurpose');
     expect(patched).toContain('JUSTDO_LITELLM_COMPACTION_SESSION_ID');
     expect(patched).toContain('sessionId: runtime3?.sessionId');
     expect(patched).toContain(
-      'createLiteLLMSessionSummaryStreamFn(sessionId, model.api)',
+      'createLiteLLMRequestMetadataStreamFn(sessionId, "context_compaction", model.api)',
     );
+    expect(patched).toContain('JUSTDO_LITELLM_EXEC_REVIEW_REQUEST_METADATA');
+    expect(patched).toContain('JUSTDO_LITELLM_EXEC_REVIEW_SESSION_ID');
+    expect(patched).toContain('sessionId: defaults4?.sessionId');
     expect(applyPatch(runtimeDir)).toEqual([]);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
 });
 
-test('injects session_id while preserving existing OpenAI-compatible metadata', async () => {
+test('threads the authoritative Gateway UUID through the standard exec reviewer factory', async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-litellm-review-factory-'));
+  try {
+    const harnessPath = path.join(runtimeDir, 'review-factory.mjs');
+    fs.writeFileSync(
+      harnessPath,
+      `let capturedParams;
+function createModelExecAutoReviewer(params) {
+  capturedParams = params;
+  return () => ({ decision: "ask" });
+}
+function resolveExecReviewerDefaults({ defaults }) {
+  return defaults.reviewer;
+}
+function createExecTool(defaults4, agentId) {
+${__testing.PATCHED_EXEC_REVIEWER_FACTORY}
+      defaults: defaults4,
+      agentId
+    })
+  });
+  return { autoReviewer, capturedParams };
+}
+export { createExecTool };
+`,
+      'utf8',
+    );
+    const harness = (await import(`${pathToFileURL(harnessPath).href}?test=${Date.now()}`)) as {
+      createExecTool: (
+        defaults: Record<string, unknown>,
+        agentId: string,
+      ) => { capturedParams: Record<string, unknown> };
+    };
+    const reviewer = { model: 'review-provider/review-model' };
+
+    const result = harness.createExecTool(
+      {
+        config: { tools: { exec: { reviewer } } },
+        reviewer,
+        sessionId: 'gateway-session-789',
+        sessionKey: 'agent:main:local-key-must-not-be-used',
+      },
+      'main',
+    );
+
+    expect(result.capturedParams).toMatchObject({
+      agentId: 'main',
+      sessionId: 'gateway-session-789',
+      reviewer,
+    });
+    expect(result.capturedParams.sessionId).not.toBe('agent:main:local-key-must-not-be-used');
+
+    const missingUuidResult = harness.createExecTool(
+      {
+        config: { tools: { exec: { reviewer } } },
+        reviewer,
+        sessionKey: 'agent:main:must-not-be-used-as-a-fallback',
+      },
+      'main',
+    );
+    expect(missingUuidResult.capturedParams.sessionId).toBeUndefined();
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('injects authoritative agent request metadata while preserving existing metadata', async () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-litellm-session-helper-'));
   try {
     const harnessPath = path.join(runtimeDir, 'helper.mjs');
@@ -104,44 +199,148 @@ test('injects session_id while preserving existing OpenAI-compatible metadata', 
   });
 }
 ${__testing.HELPER_SOURCE}
-export { wrapStreamFnWithLiteLLMSessionId };
+export { wrapStreamFnWithLiteLLMRequestMetadata };
 `,
       'utf8',
     );
     const harness = (await import(`${pathToFileURL(harnessPath).href}?test=${Date.now()}`)) as {
-      wrapStreamFnWithLiteLLMSessionId: (
+      wrapStreamFnWithLiteLLMRequestMetadata: (
         streamFn: (...args: unknown[]) => unknown,
         sessionId: string,
+        requestPurpose: string,
         modelApi: string,
       ) => (...args: unknown[]) => unknown;
     };
     let payload: Record<string, unknown> = {
       model: 'deepseek-v4-flash',
-      metadata: { tenant: 'team-a', session_id: 'stale-session' },
+      metadata: {
+        tenant: 'team-a',
+        session_id: 'stale-session',
+        request_purpose: 'stale-purpose',
+      },
     };
     const streamFn = (_model: unknown, _context: unknown, options: Record<string, unknown>) => {
       const onPayload = options.onPayload as ((value: Record<string, unknown>) => void) | undefined;
       onPayload?.(payload);
     };
 
-    harness.wrapStreamFnWithLiteLLMSessionId(
+    harness.wrapStreamFnWithLiteLLMRequestMetadata(
       streamFn,
       ' openclaw-session-123 ',
+      ' agent ',
       'openai-completions',
     )({}, {}, {});
 
     expect(payload.metadata).toEqual({
       tenant: 'team-a',
       session_id: 'openclaw-session-123',
+      request_purpose: 'agent',
     });
 
     payload = { model: 'claude' };
-    harness.wrapStreamFnWithLiteLLMSessionId(
+    harness.wrapStreamFnWithLiteLLMRequestMetadata(
       streamFn,
       'openclaw-session-123',
+      'agent',
       'anthropic-messages',
     )({}, {}, {});
     expect(payload).not.toHaveProperty('metadata');
+
+    payload = { model: 'deepseek-v4-flash' };
+    harness.wrapStreamFnWithLiteLLMRequestMetadata(
+      streamFn,
+      '   ',
+      'exec_review',
+      'openai-completions',
+    )({}, {}, {});
+    expect(payload).not.toHaveProperty('metadata');
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('injects exec_review metadata through the simple-completion transport only', async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-litellm-review-helper-'));
+  try {
+    const harnessPath = path.join(runtimeDir, 'review-helper.mjs');
+    fs.writeFileSync(
+      harnessPath,
+      `function streamWithPayloadPatch(underlying, model, context, options, patchPayload) {
+  return underlying(model, context, {
+    ...options,
+    onPayload(payload) {
+      patchPayload(payload);
+      return options?.onPayload?.(payload, model);
+    }
+  });
+}
+const streamSimple = (model, context, options) => ({
+  async result() {
+    const payload = { model: model.id, metadata: { tenant: "team-a" } };
+    options?.onPayload?.(payload);
+    return { payload, context };
+  }
+});
+const completeSimple = (model, context, options) => ({
+  transport: "completeSimple",
+  model,
+  context,
+  options
+});
+const prepareModelForSimpleCompletion = ({ model }) => model;
+const normalizeSimpleCompletionReasoning = value => value;
+${__testing.HELPER_SOURCE}
+async function completeWithPreparedSimpleCompletionModel(params) {
+  const completionModel = prepareModelForSimpleCompletion({ model: params.model, cfg: params.cfg });
+  const { reasoning: rawReasoning, ...options2 } = params.options ?? {};
+  const reasoning = normalizeSimpleCompletionReasoning(rawReasoning);
+${__testing.PATCHED_SIMPLE_COMPLETION}
+}
+export { completeWithPreparedSimpleCompletionModel };
+`,
+      'utf8',
+    );
+    const harness = (await import(`${pathToFileURL(harnessPath).href}?test=${Date.now()}`)) as {
+      completeWithPreparedSimpleCompletionModel: (params: Record<string, unknown>) => Promise<{
+        payload: Record<string, unknown>;
+        context: Record<string, unknown>;
+      }>;
+    };
+    const context = {
+      systemPrompt: 'Review exactly one pending shell command.',
+      messages: [{ role: 'user', content: 'Review command data.' }],
+    };
+
+    const result = await harness.completeWithPreparedSimpleCompletionModel({
+      model: { id: 'review-model', api: 'openai-completions' },
+      auth: { apiKey: 'test-key' },
+      context,
+      requestMetadata: {
+        sessionId: ' gateway-session-456 ',
+        requestPurpose: 'exec_review',
+      },
+    });
+
+    expect(result.payload.metadata).toEqual({
+      tenant: 'team-a',
+      session_id: 'gateway-session-456',
+      request_purpose: 'exec_review',
+    });
+    expect(result.context).toEqual(context);
+    expect(JSON.stringify(result.context)).not.toContain('gateway-session-456');
+
+    const unsupportedResult = await harness.completeWithPreparedSimpleCompletionModel({
+      model: { id: 'review-model', api: 'anthropic-messages' },
+      auth: { apiKey: 'test-key' },
+      context,
+      requestMetadata: {
+        sessionId: 'gateway-session-456',
+        requestPurpose: 'exec_review',
+      },
+    });
+    expect(unsupportedResult).toMatchObject({ transport: 'completeSimple', context });
+    expect(JSON.stringify(unsupportedResult)).not.toContain('session_id');
+    expect(JSON.stringify(unsupportedResult)).not.toContain('request_purpose');
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
@@ -207,6 +406,7 @@ export { generateSummary3 };
     expect(payload.metadata).toEqual({
       tenant: 'team-a',
       session_id: 'gateway-session-123',
+      request_purpose: 'context_compaction',
     });
     expect(
       harness.generateSummary3(
@@ -231,26 +431,44 @@ test('rejects an earlier chat-only patch revision and requires a pristine bundle
   try {
     const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
     const legacyHelperSource = __testing.HELPER_SOURCE.replace(
-      /\nfunction createLiteLLMSessionSummaryStreamFn[\s\S]*\n}\n$/,
-      '\n',
+      'JUSTDO_LITELLM_REQUEST_METADATA_V3',
+      'JUSTDO_LITELLM_REQUEST_METADATA_V2',
     );
-    const chatOnlyBundle = BUNDLE_FIXTURE
-      .replace(
-        'function resolveEmbeddedAgentStreamFn(params) {',
-        `${legacyHelperSource}
+    const chatOnlyBundle = BUNDLE_FIXTURE.replace(
+      'function resolveEmbeddedAgentStreamFn(params) {',
+      `${legacyHelperSource}
 function resolveEmbeddedAgentStreamFnWithoutLiteLLMSessionId(params) {`,
-      )
-      .replace(
-        'function wrapEmbeddedAgentStreamFn(inner, params) {',
-        `${__testing.RESOLVER_WRAPPER}
+    ).replace(
+      'function wrapEmbeddedAgentStreamFn(inner, params) {',
+      `${__testing.RESOLVER_WRAPPER}
 function wrapEmbeddedAgentStreamFn(inner, params) {`,
-      );
+    );
     fs.writeFileSync(bundlePath, chatOnlyBundle, 'utf8');
 
     expect(() => applyPatch(runtimeDir)).toThrow(
       /incomplete or earlier patch revision.*regenerate the pristine runtime/i,
     );
     expect(fs.readFileSync(bundlePath, 'utf8')).toBe(chatOnlyBundle);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('rejects a partially applied current revision instead of treating it as idempotent', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-litellm-session-partial-'));
+  try {
+    const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+    fs.writeFileSync(bundlePath, BUNDLE_FIXTURE, 'utf8');
+    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    const partiallyPatched = fs
+      .readFileSync(bundlePath, 'utf8')
+      .replace('JUSTDO_LITELLM_SIMPLE_COMPLETION_REQUEST_METADATA', 'REMOVED_SIMPLE_MARKER');
+    fs.writeFileSync(bundlePath, partiallyPatched, 'utf8');
+
+    expect(() => applyPatch(runtimeDir)).toThrow(
+      /incomplete or earlier patch revision.*regenerate the pristine runtime/i,
+    );
+    expect(fs.readFileSync(bundlePath, 'utf8')).toBe(partiallyPatched);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
