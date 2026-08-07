@@ -1,6 +1,6 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import React, { useEffect,useRef, useState } from 'react';
+import { ExclamationTriangleIcon, FolderIcon } from '@heroicons/react/24/outline';
+import React, { useEffect, useRef, useState } from 'react';
 
 import type { SessionGroup } from '@/features/cowork/coworkTypes';
 import { GROUP_COLORS } from '@/features/cowork/coworkTypes';
@@ -168,7 +168,13 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
         onContextMenu={openMenu}
         style={{ cursor: 'grab' }}
       >
-        <div className="group-indicator" style={{ backgroundColor: group.color }} />
+        <span
+          className="group-indicator"
+          style={{ '--group-color': group.color } as React.CSSProperties}
+          aria-hidden="true"
+        >
+          <FolderIcon />
+        </span>
         {isRenaming ? (
           <input
             ref={renameInputRef}
@@ -183,7 +189,7 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
         ) : (
           <span className="group-name">{group.name}</span>
         )}
-        <span className="group-count">({sessionCount})</span>
+        <span className="group-count">{sessionCount}</span>
         <ChevronIcon
           direction={isExpanded ? 'up' : 'down'}
           className="chevron-icon"

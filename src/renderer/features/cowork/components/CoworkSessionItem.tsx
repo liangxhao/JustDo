@@ -420,13 +420,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
             : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'
         }`}
       >
-        {isActive && (
-          <span
-            aria-hidden="true"
-            className="absolute inset-y-2 left-1.5 w-1 rounded-full bg-primary shadow-[0_0_6px_var(--justdo-primary-muted)]"
-          />
-        )}
-
         {/* Content area */}
         <div className="flex items-center">
           {isBatchMode && (

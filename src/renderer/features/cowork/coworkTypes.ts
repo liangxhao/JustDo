@@ -26,34 +26,29 @@ export interface UpdateGroupInput {
   sortOrder?: number;
 }
 
-// Group color presets — bright modern palette with emoji icons
+// Group color presets — balanced accents that remain distinct in light and dark themes
 export const GROUP_COLORS = [
-  '#f87171', // coral red
-  '#fb923c', // tangerine
-  '#fbbf24', // sunflower
-  '#a3e635', // lime
-  '#34d399', // emerald
-  '#22d3ee', // sky cyan
-  '#60a5fa', // cerulean
-  '#818cf8', // periwinkle
-  '#c084fc', // lavender
-  '#e879f9', // orchid
-  '#f472b6', // rose
-  '#a78bfa', // amethyst
-  '#4ade80', // spring green
-  '#94a3b8', // steel
-  '#78716c', // warm gray
-  '#d4d4d8', // light gray
+  '#ef6a6a', // coral
+  '#e9894a', // amber
+  '#d6a51d', // ochre
+  '#84b83f', // leaf
+  '#3daf7d', // emerald
+  '#359daf', // cyan
+  '#4f8edc', // blue
+  '#6f7ed8', // indigo
+  '#956fd1', // violet
+  '#bf68bd', // orchid
+  '#d96893', // rose
+  '#8b72ca', // amethyst
+  '#52a96a', // green
+  '#74839a', // slate
+  '#81766f', // stone
+  '#9297a3', // gray
 ];
 
 // Cowork message types
 export type CoworkMessageType =
-  | 'user'
-  | 'assistant'
-  | 'tool_use'
-  | 'tool_result'
-  | 'system'
-  | 'subagent_completion';
+  'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'subagent_completion';
 
 // Cowork execution mode
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
@@ -128,11 +123,7 @@ export interface CoworkApiConfig {
   apiType?: 'openai';
 }
 
-export type OpenClawEnginePhase =
-  | 'ready'
-  | 'starting'
-  | 'running'
-  | 'error';
+export type OpenClawEnginePhase = 'ready' | 'starting' | 'running' | 'error';
 
 export interface OpenClawEngineStatus {
   phase: OpenClawEnginePhase;
@@ -222,12 +213,7 @@ export interface CoworkConfigResult {
 
 // Stream event types for IPC communication
 export type CoworkStreamEventType =
-  | 'message'
-  | 'tool_use'
-  | 'tool_result'
-  | 'interaction_request'
-  | 'complete'
-  | 'error';
+  'message' | 'tool_use' | 'tool_result' | 'interaction_request' | 'complete' | 'error';
 
 export interface CoworkStreamEvent {
   type: CoworkStreamEventType;
