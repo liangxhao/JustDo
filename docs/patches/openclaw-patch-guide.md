@@ -42,6 +42,7 @@ scripts/patches/v2026.6.11/
 | `016-litellm-session-id.cjs`                     | Forward `metadata.session_id` and `metadata.request_purpose` on agent, safeguard-compaction, and exec-review OpenAI-compatible model requests                                                                                  |
 | `017-tool-error-reasoning-recovery.cjs`          | Retry reasoning-only post-tool-error turns with bounded request-only user recovery messages                                                                                                                                    |
 | `018-persistent-interactive-approvals.cjs`       | Keep interactive approvals pending until a decision, preserve timeout-free Gateway waits, suppress the suspended turn's duplicate reply, and resume webchat exec work with a hidden internal prompt only after a real decision |
+| `019-compaction-emergency-fallback.cjs`          | Commit a bounded local handoff when model-backed summarization cannot run, then use bounded retries and an aggressive recent-tail pass before reporting irreducible context                                                    |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -177,14 +178,15 @@ Patch removal is a real change:
 | `016-litellm-session-id.cjs`                     | Missing provider request correlation and purpose metadata | Remove when OpenClaw forwards its session UUID and request purpose for agent, compaction, and exec-review requests                                                |
 | `017-tool-error-reasoning-recovery.cjs`          | Reasoning-only turns silently stop after tool errors      | Remove when OpenClaw supports bounded request-only recovery messages without transcript persistence                                                               |
 | `018-persistent-interactive-approvals.cjs`       | Interactive approval lifetime and run suspension          | Remove when OpenClaw preserves timeout-free approval waits and resumes approved webchat exec work outside the originating run lifetime only after a real decision |
+| `019-compaction-emergency-fallback.cjs`          | Compaction liveness                                       | Remove when OpenClaw commits a deterministic bounded fallback instead of cancelling compaction after summarizer, model, or credential failures                    |
 
 ### Compaction patch upgrade warning
 
-`011` and `012` match exact text emitted by the OpenClaw `v2026.6.11` bundle.
-They intentionally fail loudly when those anchors change. On every OpenClaw
+`011`, `012`, and `019` match exact text emitted by the OpenClaw `v2026.6.11`
+bundle. They intentionally fail loudly when those anchors change. On every OpenClaw
 upgrade:
 
-1. Do not copy either patch unchanged into the new version directory.
+1. Do not copy these patches unchanged into the new version directory.
 2. Check whether upstream now persists/replays user originals and exposes full
    replacement hooks for the compaction prompt, replay wrapper, and suffixes.
 3. If patches remain necessary, inspect the new generated bundle and rewrite
@@ -194,7 +196,8 @@ upgrade:
 5. Exercise manual `/compact`, threshold and overflow auto-compaction,
    mid-turn/split-turn recovery, and at least two consecutive compactions.
    Confirm user-message deduplication, latest-assistant inclusion, bounded tool
-   results, and patch idempotence.
+   results, emergency fallback after model/auth/summary failures, and patch
+   idempotence.
 
 ## Version Upgrade Process
 

@@ -132,6 +132,18 @@ characters，每段摘要输入合计最多保留 24,000 characters；从最新�
 工具输出不会挤占全部摘要上下文。对升级前已经存在、尚无 retention metadata 的
 compaction entry，重放层会从 JSONL 中仍保留的旧 message entries 回填一次用户原话。
 
+模型摘要并不是压缩可用性的单点依赖。`019-compaction-emergency-fallback.cjs` 在
+safeguard 无法解析摘要模型或认证，以及摘要请求超时、溢出或被 provider 拒绝时，不再
+取消 compaction；它会提交一个最多 16,000 characters 的本地应急交接摘要，其中包含
+最多 4,000 characters 的旧交接、最多 8,000 characters 的最近 user/assistant 对话，
+以及有界的工具失败与文件操作信息。最近对话优先于旧交接，避免总预算截断最新用户请求。
+正常的 compaction entry、`011` 的用户原话滚动保留和 native recent tail 仍然生效，
+因此外层会把这次压缩视为成功并自动重试当前轮。只有明确的用户取消仍保持 cancel
+语义。overflow 最多执行三次有界 compact-and-retry；第二次起使用 `keepRecentTokens: 0`
+压缩剩余 recent tail，用户原话仍由 `011` 保留。如果系统提示和工具 schema 本身已经
+超过模型容量，最终会显示准确的不可降载提示，而不再建议反复调大
+`reserveTokensFloor`。该配置只决定提前量，不再承担摘要服务失败后的恢复职责。
+
 `012-codex-compaction-template.cjs` 替换 SDK 内建的首次、重复和 split-turn 摘要提示词、
 摘要 system wording 与回放前缀，并旁路 safeguard 强制的 `## Goal` / `## Progress`
 等结构与诊断后缀。用户原话仍由 `011` 作为独立 user 消息重放，不重复塞入 summary
@@ -147,7 +159,7 @@ session UUID 传入每个摘要 chunk。Exec reviewer 同样走独立 simple-com
 因此手动、threshold、overflow、mid-turn 压缩以及模型安全审查都能在 LiteLLM 中与
 原会话关联并按用途统计。
 
-`011` 和 `012` 都是仅针对 OpenClaw `v2026.6.11` 生成 bundle 的精确文本 patch，并
+`011`、`012` 和 `019` 都是仅针对 OpenClaw `v2026.6.11` 生成 bundle 的精确文本 patch，并
 故意在锚点变化时失败。升级 OpenClaw 时不得把它们原样复制到新版本目录：先检查上游
 是否已提供用户原话重放、可替换摘要模板和 replay wrapper；仍需 patch 时，必须根据
 新 bundle 重新定位并重写锚点，再分别验证手动、threshold/overflow、mid-turn、重复
