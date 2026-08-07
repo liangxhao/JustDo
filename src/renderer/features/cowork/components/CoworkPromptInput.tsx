@@ -16,6 +16,7 @@ import {
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
 import { startContextUsageRefresh } from '@/features/cowork/components/contextUsageRefresh';
 import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
+import { runGoalActionSingleFlight } from '@/features/cowork/components/goalActionSingleFlight';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
 import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerialTaskQueue';
@@ -46,6 +47,7 @@ import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import { ActiveSkillBadge } from '@/features/plugins/components/skills';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
+import Modal from '@/shared/components/common/Modal';
 import PaperClipIcon from '@/shared/components/icons/PaperClipIcon';
 import XMarkIcon from '@/shared/components/icons/XMarkIcon';
 import { RootState } from '@/store';
@@ -229,6 +231,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [optimisticSessionModel, setOptimisticSessionModel] = useState<Model | null>(null);
     const [goalActionPending, setGoalActionPending] = useState(false);
     const goalActionPendingRef = useRef(false);
+    const [endingGoalId, setEndingGoalId] = useState<string | null>(null);
+    const goalEndCancelButtonRef = useRef<HTMLButtonElement>(null);
+    const goalEndConfirmButtonRef = useRef<HTMLButtonElement>(null);
     const optimisticSessionModelRef = useRef<Model | null>(null);
     const confirmedSessionModelRef = useRef<Model | null>(agentSelectedModel);
     const modelSelectionContextRef = useRef(0);
@@ -289,8 +294,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setSessionGoal(null);
       sessionGoalRef.current = null;
       setGoalExecution(null);
+      setEndingGoalId(null);
       setPendingGoalObjective(null);
     }, [sessionId, effectiveAgentId]);
+
+    useEffect(() => {
+      if (endingGoalId) goalEndCancelButtonRef.current?.focus();
+    }, [endingGoalId]);
 
     useEffect(() => {
       if (!agentModelIsInvalid || remoteManaged) return;
@@ -1514,54 +1524,82 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       });
     }, [sessionId, isRunActive, hasAssistantMessage, effectiveSelectedModel?.contextLength]);
 
+    const runGoalAction = useCallback(
+      (action: () => void | Promise<void>) =>
+        runGoalActionSingleFlight(goalActionPendingRef, setGoalActionPending, action),
+      [],
+    );
+
     const handleGoalCommand = useCallback(
       (command: string) => {
         if (disabled || isStreaming) return;
-        void onSubmit(command);
+        void runGoalAction(async () => {
+          await onSubmit(command);
+        });
       },
-      [disabled, isStreaming, onSubmit],
+      [disabled, isStreaming, onSubmit, runGoalAction],
     );
 
     const handleGoalContinue = useCallback(async () => {
-      if (!sessionId || disabled || goalActionPendingRef.current) return;
-      goalActionPendingRef.current = true;
-      setGoalActionPending(true);
-      try {
+      if (!sessionId || disabled) return;
+      await runGoalAction(async () => {
         const result = await window.electron.cowork.continueGoal(sessionId);
-        if (result.success && result.execution) {
-          setGoalExecution(result.execution);
-        }
-      } finally {
-        goalActionPendingRef.current = false;
-        setGoalActionPending(false);
-      }
-    }, [disabled, sessionId]);
+        if (result.success && result.execution) setGoalExecution(result.execution);
+      });
+    }, [disabled, runGoalAction, sessionId]);
 
     const handleGoalPause = useCallback(async () => {
-      if (disabled || goalActionPendingRef.current || !onStop) return;
-      goalActionPendingRef.current = true;
-      setGoalActionPending(true);
-      try {
+      if (disabled || !onStop) return;
+      await runGoalAction(async () => {
         const stopped = await onStop();
         if (stopped === false) return;
         await onSubmit('/goal pause');
-      } finally {
-        goalActionPendingRef.current = false;
-        setGoalActionPending(false);
-      }
-    }, [disabled, onStop, onSubmit]);
+      });
+    }, [disabled, onStop, onSubmit, runGoalAction]);
 
     const handleGoalComplete = useCallback(async () => {
-      if (disabled || goalActionPendingRef.current) return;
-      goalActionPendingRef.current = true;
-      setGoalActionPending(true);
-      try {
+      if (disabled) return;
+      await runGoalAction(async () => {
         await onSubmit('/goal complete');
-      } finally {
-        goalActionPendingRef.current = false;
-        setGoalActionPending(false);
-      }
-    }, [disabled, onSubmit]);
+      });
+    }, [disabled, onSubmit, runGoalAction]);
+
+    const handleGoalEndRequest = useCallback(() => {
+      const goal = sessionGoalRef.current;
+      if (!goal || disabled || goalActionPendingRef.current) return;
+      setEndingGoalId(goal.id);
+    }, [disabled]);
+
+    const handleGoalEndConfirm = useCallback(async () => {
+      const goalId = endingGoalId;
+      setEndingGoalId(null);
+      if (!goalId || disabled || sessionGoalRef.current?.id !== goalId) return;
+      await runGoalAction(async () => {
+        await onSubmit('/goal clear');
+      });
+    }, [disabled, endingGoalId, onSubmit, runGoalAction]);
+
+    const handleGoalEndDialogKeyDown = useCallback(
+      (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === 'Escape' && !goalActionPending) {
+          event.preventDefault();
+          setEndingGoalId(null);
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        const firstButton = goalEndCancelButtonRef.current;
+        const lastButton = goalEndConfirmButtonRef.current;
+        if (!firstButton || !lastButton) return;
+        if (event.shiftKey && document.activeElement === firstButton) {
+          event.preventDefault();
+          lastButton.focus();
+        } else if (!event.shiftKey && document.activeElement === lastButton) {
+          event.preventDefault();
+          firstButton.focus();
+        }
+      },
+      [goalActionPending],
+    );
 
     const slashMenuVisible =
       slashMenuOpen &&
@@ -1596,7 +1634,58 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             onContinue={handleGoalContinue}
             onPause={handleGoalPause}
             onComplete={handleGoalComplete}
+            onEnd={handleGoalEndRequest}
           />
+        )}
+        {endingGoalId && (
+          <Modal
+            onClose={() => setEndingGoalId(null)}
+            className="mx-4 w-full max-w-sm overflow-hidden rounded-2xl bg-surface shadow-xl"
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cowork-goal-end-confirm-title"
+              aria-describedby="cowork-goal-end-confirm-message"
+              onKeyDown={handleGoalEndDialogKeyDown}
+            >
+              <div className="flex items-center gap-3 px-5 py-4">
+                <div className="rounded-full bg-red-100 p-2 dark:bg-red-900/30">
+                  <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-500" />
+                </div>
+                <h2
+                  id="cowork-goal-end-confirm-title"
+                  className="text-base font-semibold text-foreground"
+                >
+                  {i18nService.t('coworkGoalEndConfirmTitle')}
+                </h2>
+              </div>
+              <div className="px-5 pb-4">
+                <p id="cowork-goal-end-confirm-message" className="text-sm text-secondary">
+                  {i18nService.t('coworkGoalEndConfirmMessage')}
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-4">
+                <button
+                  ref={goalEndCancelButtonRef}
+                  type="button"
+                  onClick={() => setEndingGoalId(null)}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                <button
+                  ref={goalEndConfirmButtonRef}
+                  type="button"
+                  disabled={goalActionPending}
+                  onClick={() => void handleGoalEndConfirm()}
+                  className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {i18nService.t('coworkGoalEnd')}
+                </button>
+              </div>
+            </div>
+          </Modal>
         )}
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">

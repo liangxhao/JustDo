@@ -27,6 +27,7 @@ interface GoalStatusCardProps {
   onContinue?: () => void;
   onPause?: () => void;
   onComplete?: () => void;
+  onEnd?: () => void;
 }
 
 const TONE_CLASSES: Record<GoalTone, { card: string; badge: string; label: string; bar: string }> =
@@ -90,6 +91,31 @@ const getPrimaryAction = (status: SessionGoal['status']) => {
   }
 };
 
+const GoalActionButton = ({
+  disabled,
+  label,
+  onClick,
+  primary = false,
+}: {
+  disabled: boolean;
+  label: string;
+  onClick: () => void;
+  primary?: boolean;
+}) => (
+  <button
+    type="button"
+    disabled={disabled}
+    onClick={onClick}
+    className={
+      primary
+        ? 'flex-shrink-0 rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50'
+        : 'flex-shrink-0 rounded-md border border-border/70 bg-surface/70 px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50'
+    }
+  >
+    {label}
+  </button>
+);
+
 const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
   goal,
   pendingObjective,
@@ -100,6 +126,7 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
   onContinue,
   onPause,
   onComplete,
+  onEnd,
 }) => {
   const status = goal?.status ?? SessionGoalStatus.Active;
   const objective = goal?.objective ?? pendingObjective ?? '';
@@ -119,44 +146,47 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
           : matchedExecution.error || i18nService.t('coworkGoalFailedHint')
         : goal?.lastStatusNote || i18nService.t(presentation.hintKey);
   const goalActions = !goal ? null : live ? (
-    <button
-      type="button"
+    <GoalActionButton
       disabled={disabled || !onPause}
-      onClick={onPause}
-      className="flex-shrink-0 rounded-md border border-border/70 bg-surface/70 px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {i18nService.t('coworkGoalPause')}
-    </button>
+      label={i18nService.t('coworkGoalPause')}
+      onClick={() => onPause?.()}
+    />
   ) : goal.status === SessionGoalStatus.Active ? (
     <>
-      <button
-        type="button"
+      <GoalActionButton
         disabled={disabled || !onContinue}
-        onClick={onContinue}
-        className="flex-shrink-0 rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {matchedExecution?.phase === GoalExecutionPhase.Failed
+        label={matchedExecution?.phase === GoalExecutionPhase.Failed
           ? i18nService.t('coworkGoalRetry')
           : i18nService.t('coworkGoalContinue')}
-      </button>
-      <button
-        type="button"
+        onClick={() => onContinue?.()}
+        primary
+      />
+      <GoalActionButton
         disabled={disabled || !onComplete}
-        onClick={onComplete}
-        className="flex-shrink-0 rounded-md border border-border/70 bg-surface/70 px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {i18nService.t('coworkGoalMarkComplete')}
-      </button>
+        label={i18nService.t('coworkGoalMarkComplete')}
+        onClick={() => onComplete?.()}
+      />
+    </>
+  ) : goal.status !== SessionGoalStatus.Complete ? (
+    <>
+      <GoalActionButton
+        disabled={disabled}
+        label={getPrimaryAction(goal.status).label}
+        onClick={() => onCommand(getPrimaryAction(goal.status).command)}
+        primary
+      />
+      <GoalActionButton
+        disabled={disabled || !onEnd}
+        label={i18nService.t('coworkGoalEnd')}
+        onClick={() => onEnd?.()}
+      />
     </>
   ) : (
-    <button
-      type="button"
+    <GoalActionButton
       disabled={disabled}
+      label={getPrimaryAction(goal.status).label}
       onClick={() => onCommand(getPrimaryAction(goal.status).command)}
-      className="flex-shrink-0 rounded-md border border-border/70 bg-surface/70 px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {getPrimaryAction(goal.status).label}
-    </button>
+    />
   );
 
   return (

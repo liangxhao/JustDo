@@ -20,6 +20,29 @@ const activeGoal = {
   continuationTurns: 0,
 };
 
+const findButtonByLabel = (
+  node: React.ReactNode,
+  label: string,
+): React.ReactElement<{ children?: React.ReactNode; onClick?: () => void }> | null => {
+  if (!React.isValidElement(node)) return null;
+  const element = node as React.ReactElement<{
+    children?: React.ReactNode;
+    label?: string;
+    onClick?: () => void;
+  }>;
+  if (
+    (element.type === 'button' && element.props.children === label) ||
+    element.props.label === label
+  ) {
+    return element;
+  }
+  let match: ReturnType<typeof findButtonByLabel> = null;
+  React.Children.forEach(element.props.children, child => {
+    if (!match) match = findButtonByLabel(child, label);
+  });
+  return match;
+};
+
 describe('GoalStatusCard', () => {
   it('renders an optimistic goal with live execution activity', () => {
     const rendered = renderToStaticMarkup(
@@ -132,8 +155,7 @@ describe('GoalStatusCard', () => {
     [SessionGoalStatus.Blocked, 'coworkGoalBlocked'],
     [SessionGoalStatus.UsageLimited, 'coworkGoalUsageLimited'],
     [SessionGoalStatus.BudgetLimited, 'coworkGoalBudgetLimited'],
-    [SessionGoalStatus.Complete, 'coworkGoalComplete'],
-  ] as const)('keeps OpenClaw %s lifecycle state authoritative', (status, labelKey) => {
+  ] as const)('renders resume and end actions for OpenClaw %s lifecycle state', (status, labelKey) => {
     const rendered = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {
         goal: { ...activeGoal, status },
@@ -148,6 +170,38 @@ describe('GoalStatusCard', () => {
     );
 
     expect(rendered).toContain(i18nService.t(labelKey));
+    expect(rendered).toContain(i18nService.t('coworkGoalResume'));
+    expect(rendered).toContain(i18nService.t('coworkGoalEnd'));
     expect(rendered).not.toContain(`>${i18nService.t('coworkGoalContinue')}<`);
+  });
+
+  it('renders only clear for a completed goal', () => {
+    const rendered = renderToStaticMarkup(
+      React.createElement(GoalStatusCard, {
+        goal: { ...activeGoal, status: SessionGoalStatus.Complete },
+        onCommand: vi.fn(),
+      }),
+    );
+
+    expect(rendered).toContain(i18nService.t('coworkGoalComplete'));
+    expect(rendered).toContain(i18nService.t('coworkGoalClear'));
+    expect(rendered).not.toContain(i18nService.t('coworkGoalEnd'));
+    expect(rendered).not.toContain(i18nService.t('coworkGoalResume'));
+  });
+
+  it('delegates the end action instead of clearing the goal directly', () => {
+    const onCommand = vi.fn();
+    const onEnd = vi.fn();
+    const tree = GoalStatusCard({
+      goal: { ...activeGoal, status: SessionGoalStatus.Paused },
+      onCommand,
+      onEnd,
+    });
+    const endButton = findButtonByLabel(tree, i18nService.t('coworkGoalEnd'));
+
+    expect(endButton).not.toBeNull();
+    endButton?.props.onClick?.();
+    expect(onEnd).toHaveBeenCalledOnce();
+    expect(onCommand).not.toHaveBeenCalled();
   });
 });
