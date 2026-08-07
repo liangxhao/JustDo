@@ -82,7 +82,23 @@ describe('Box-drawing diagrams', () => {
     const html = md.render('```text\n┌────┐\n│ AB │\n└────┘\n```');
 
     expect(html).toContain('class="code-block-wrapper"');
+    expect(html).toContain('class="markdown-box-drawing-code"');
     expect(html).not.toContain('markdown-box-drawing-diagram');
+  });
+
+  test('marks indented code blocks containing a complete diagram', () => {
+    const source = '    ┌────┐\n    │ AB │\n    └────┘';
+    const boundary = findStableStreamingMarkdownBoundary(source);
+    const html = md.render(source.slice(0, boundary));
+
+    expect(boundary).toBe(source.length);
+    expect(html).toContain('class="markdown-box-drawing-code"');
+  });
+
+  test('keeps ordinary fenced code on the regular code font path', () => {
+    const html = md.render('```typescript\nconst answer = 42;\n```');
+
+    expect(html).not.toContain('markdown-box-drawing-code');
   });
 
   test('does not reinterpret incomplete box-drawing prose', () => {

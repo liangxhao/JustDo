@@ -42,7 +42,7 @@ const MARKDOWN_CHAR_LIMIT = 140_000;
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v10';
+const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v11';
 const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、]/;
 const BOX_DRAWING_TOP_RE = /^[ \t]*[┌╔].*[┐╗][ \t]*$/u;
 const BOX_DRAWING_BOTTOM_RE = /^[ \t]*[└╚].*[┘╝][ \t]*$/u;
@@ -196,6 +196,18 @@ function normalizeMarkdownFenceContent(text: string, lang: string): string {
     const fenceLength = escapedFence.match(/`/g)?.length ?? 0;
     return `${indent}${'`'.repeat(fenceLength)}${suffix}`;
   });
+}
+
+function hasCompleteBoxDrawingFrame(text: string): boolean {
+  let hasTopBorder = false;
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (!hasTopBorder) {
+      hasTopBorder = BOX_DRAWING_TOP_RE.test(line);
+      continue;
+    }
+    if (BOX_DRAWING_BOTTOM_RE.test(line)) return true;
+  }
+  return false;
 }
 
 // ── DOMPurify hooks ─────────────────────────────────────────────────────────
@@ -439,7 +451,8 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
   const text = normalizeMarkdownFenceContent(token.content, lang);
   const highlighted = highlightCode(text, lang);
   const classAttr = codeClassAttribute(lang, highlighted);
-  const codeBlock = `<pre><code${classAttr}>${highlighted}</code></pre>`;
+  const preClass = hasCompleteBoxDrawingFrame(text) ? ' class="markdown-box-drawing-code"' : '';
+  const codeBlock = `<pre${preClass}><code${classAttr}>${highlighted}</code></pre>`;
 
   const envChrome = (env as { codeBlockChrome?: string })?.codeBlockChrome;
   if (envChrome === 'none') return codeBlock;
@@ -481,7 +494,8 @@ md.renderer.rules.code_block = (tokens, idx, _options, env) => {
   const text = token.content;
   const highlighted = highlightCode(text, '');
   const classAttr = codeClassAttribute('', highlighted);
-  const codeBlock = `<pre><code${classAttr}>${highlighted}</code></pre>`;
+  const preClass = hasCompleteBoxDrawingFrame(text) ? ' class="markdown-box-drawing-code"' : '';
+  const codeBlock = `<pre${preClass}><code${classAttr}>${highlighted}</code></pre>`;
 
   const envChrome = (env as { codeBlockChrome?: string })?.codeBlockChrome;
   if (envChrome === 'none') return codeBlock;
