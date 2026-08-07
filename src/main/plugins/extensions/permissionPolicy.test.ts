@@ -58,15 +58,14 @@ describe('file permission policy extension', () => {
   });
 
   it.each(['ask', 'auto', 'full'] as const)(
-    'blocks native cron mutations in %s mode',
+    'does not block native cron mutations in %s mode',
     async mode => {
       const beforeToolCall = registerPolicy(mode);
 
       for (const action of ['add', 'update', 'remove', 'run']) {
-        await expect(beforeToolCall({ toolName: 'cron', params: { action } })).resolves.toEqual({
-          allow: false,
-          reason: 'The native cron tool is disabled; use the scheduled-task interface.',
-        });
+        await expect(
+          beforeToolCall({ toolName: 'cron', params: { action } }),
+        ).resolves.toBeUndefined();
       }
     },
   );

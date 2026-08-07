@@ -176,9 +176,10 @@ JustDo 不再根据 `agent:<agentId>:cron:<jobId>:run:<runId>` session key 和 j
 session key 可由 Gateway 客户端构造，而 OpenClaw v2026.6.11 的公开 API 没有提供可与 approval 绑定的
 可信 active-run attestation；在该证明缺失时自动 `allow-once` 会形成权限提升边界。
 
-Agent 在所有模式下都不能通过原生 cron 工具调用 add/update/remove/run；用户操作通过 JustDo
-scheduled-task IPC 直接调用 Gateway。Gateway operator、CLI、状态目录以及 Full 模式下的 host exec
-仍属于受信任边界，完整隔离需要 OpenClaw 提供独立凭据和不可写的 scheduler state。
+Agent 可以在对话中通过原生 cron 工具调用 add/update/remove/run；JustDo UI 则通过
+scheduled-task IPC 直接调用 Gateway。两条入口最终使用同一个 Gateway cron runtime，任务执行不会
+继承交互会话 grant，也不会获得额外权限。Gateway operator、CLI、状态目录以及 Full 模式下的 host
+exec 仍属于受信任边界，完整隔离需要 OpenClaw 提供独立凭据和不可写的 scheduler state。
 
 ```mermaid
 flowchart TB

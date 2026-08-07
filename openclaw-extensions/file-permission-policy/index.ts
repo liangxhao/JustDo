@@ -9,7 +9,6 @@ type PluginConfig = {
 // These are the exact core tool ids audited in npm OpenClaw v2026.6.11.
 // This compatibility adapter must be re-audited instead of guessing aliases.
 const FILE_MUTATION_TOOLS = new Set(['apply_patch', 'edit', 'write']);
-const CRON_MUTATION_ACTIONS = new Set(['add', 'update', 'remove', 'run']);
 
 const parsePluginConfig = (value: unknown): PluginConfig => {
   let mode: PermissionMode = 'ask';
@@ -51,21 +50,8 @@ const plugin = {
     const effectiveMode: 'ask' | 'full' = config.mode === 'full' ? 'full' : 'ask';
     api.registerTrustedToolPolicy({
       id: 'core-file-mutation-v2026-6-11',
-      description:
-        'Version-locked policy for OpenClaw v2026.6.11 file mutations and native cron tool blocking.',
+      description: 'Version-locked policy for OpenClaw v2026.6.11 file mutations.',
       evaluate: async event => {
-        if (event.toolName === 'cron') {
-          const action =
-            event.params && typeof event.params === 'object' && !Array.isArray(event.params)
-              ? (event.params as Record<string, unknown>).action
-              : undefined;
-          if (typeof action === 'string' && CRON_MUTATION_ACTIONS.has(action)) {
-            return {
-              allow: false as const,
-              reason: 'The native cron tool is disabled; use the scheduled-task interface.',
-            };
-          }
-        }
         if (effectiveMode === 'full' || !FILE_MUTATION_TOOLS.has(event.toolName)) {
           return;
         }

@@ -1,7 +1,7 @@
 {
   "id": "file-permission-policy",
   "name": "File Permission Policy",
-  "description": "Policy for file-changing tools and native cron tool blocking.",
+  "description": "Policy for file-changing tools.",
   "contracts": {
     "trustedToolPolicies": ["core-file-mutation-v2026-6-11"]
   },

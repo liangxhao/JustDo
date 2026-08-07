@@ -33,7 +33,8 @@ OpenClaw 是 npm 安装的第三方 runtime。不得修改 `../openclaw` 源码�
 | `full` | 无需批准                                           | 无需批准                          | 二次确认；应用重启后恢复 `ask` |
 
 Browser、消息、MCP、marketplace、第三方插件和其他 Gateway operator 客户端不自动受三档
-权限完整覆盖。Agent 的原生 cron mutation 被受管策略统一禁止，定时任务只能从 JustDo UI 管理。
+权限完整覆盖。Agent 可以通过原生 cron 工具创建和管理定时任务；任务执行不继承交互会话 grant，
+仍按届时生效的权限模式处理。
 
 用户界面只展示三档产品行为和可执行错误，不展示“desired/effective policy”“运行时快照”
 或“正在提交并核对运行时配置”等内部实现状态。
@@ -96,9 +97,9 @@ Full 下任务可完整无人值守；Ask/Smart 下的审批保持交互式并�
 
 ### R0-3：Agent 通过原生 cron 提升为无人值守权限
 
-状态：**已关闭（JustDo 管理边界）**。受管 trusted tool policy 在 Ask/Auto/Full 全部模式下阻断
-原生 cron add/update/remove/run；JustDo scheduled-task IPC 直接调用 Gateway RPC，不经过 Agent
-tool policy。其他持有 Gateway operator 凭据的客户端仍属于外部信任边界。
+状态：**按权限继承规则关闭**。Agent 可以调用原生 cron add/update/remove/run，但任务执行不继承
+创建任务时的交互会话 grant，也不会自动获得 Full。Ask/Auto 下的审批继续保持交互式并默认拒绝
+超时；Full 仍在应用重启前降级为 Ask。其他持有 Gateway operator 凭据的客户端仍属于外部信任边界。
 
 ### R0-4：adapter info 被错误用作 active readiness
 
@@ -158,8 +159,8 @@ smoke 必须使用临时 state/workspace，不连接用户真实 Gateway，不�
 
 以下项目不阻塞当前对话功能，但在宣称“全局、可证明、不可绕过的权限边界”前必须完成：
 
-- [x] `FUTURE-1`：通过公开 trusted tool policy 禁止 Agent 的原生 cron mutation；其他
-      Gateway operator 客户端明确保留为外部信任边界。
+- [x] `FUTURE-1`：允许 Agent 使用原生 cron mutation，同时确保任务不继承创建会话的临时授权；
+      其他 Gateway operator 客户端明确保留为外部信任边界。
 - [ ] `FUTURE-2`：决定是否需要“`full` 仅允许前台命令”。如果恢复该产品约束，使用公开
       tool policy 禁用 `process`/后台交接能力，并验证 `background`、`yieldMs` 和 shell detach；
       在此之前 UI 不声称“仅前台”。
@@ -243,7 +244,7 @@ Browser、消息、MCP、marketplace 和第三方插件不自动受这三档覆�
 - [x] UI 不展示运行时快照或配置同步进度；
 - [x] `full` 二次确认并在应用重启前降级为 `ask`；
 - [x] cron-shaped approval 不根据 session key 与 job existence 自动放行；
-- [x] Agent 原生 cron mutation 在三档权限中全部被阻断。
+- [x] Agent 原生 cron mutation 不被文件权限策略阻断。
 
 ### 当前对话功能待验收
 
@@ -258,7 +259,7 @@ Browser、消息、MCP、marketplace 和第三方插件不自动受这三档覆�
 ### 未来安全边界
 
 - [ ] OpenClaw 提供并由 JustDo 使用权威 active/effective policy 快照；
-- [x] JustDo Agent 无法通过原生 cron 工具绕过任务管理入口；
+- [x] JustDo Agent 可以通过原生 cron 工具创建和管理任务，任务不继承会话 grant；
 - [ ] 如果产品要求仅前台，后台执行和 shell detach 均被覆盖；
 - [ ] workspace 逃逸、Windows 盘符、路径大小写、junction/symlink 均通过真实测试；
 - [ ] auth logout reload 失败与其他配置失败使用一致的 fail-closed 语义。

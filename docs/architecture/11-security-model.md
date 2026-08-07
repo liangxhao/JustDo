@@ -175,9 +175,10 @@ host approvals。权限配置写入、reload、回读或回滚无法确认时，
 Ask/Smart 下产生的命令、文件或第三方插件审批保持交互式，超时默认拒绝。Main 不把 cron-shaped
 session key 当作可信运行证明：OpenClaw v2026.6.11 的公开 API 只能证明 job 存在，不能证明 approval
 来自该 job 的真实 active run，自动放行会允许伪造 session 获得 run-scoped Full。
-受管插件在所有权限模式下阻断 Agent 使用原生 cron 工具的 add/update/remove/run，JustDo UI 通过
-Main RPC 管理任务。Gateway operator、CLI 和 scheduler state 仍是外部信任边界；完整隔离依赖未来的
-独立执行凭据与状态目录保护。`full` 仍是非持久化运行期状态，应用启动前降级为 `ask`。
+Agent 可以通过原生 cron 工具创建和管理任务，JustDo UI 通过 Main RPC 管理任务。任务执行仍按届时
+生效的权限模式处理，不继承创建任务时的交互会话 grant，也不会因为由 Agent 创建而自动放行审批。
+Gateway operator、CLI 和 scheduler state 仍是外部信任边界；完整隔离依赖未来的独立执行凭据与
+状态目录保护。`full` 仍是非持久化运行期状态，应用启动前降级为 `ask`。
 
 权限选择器只展示三档产品行为和可执行错误，不展示或推导 workspace、sandbox、
 effective policy、运行时快照或配置同步进度。
