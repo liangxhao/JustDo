@@ -328,6 +328,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
       <div className="flex-1 overflow-y-auto px-2.5 pb-4">
         <CoworkSessionList
+          groupRecentSessionsByDate
           sessions={sessions}
           isLoading={false}
           currentSessionId={currentSessionId}

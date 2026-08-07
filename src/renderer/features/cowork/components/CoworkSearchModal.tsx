@@ -101,6 +101,7 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
           ) : (
             <CoworkSessionList
               sessions={filteredSessions}
+              groupRecentSessionsByDate={false}
               currentSessionId={currentSessionId}
               isBatchMode={false}
               selectedIds={emptySet}

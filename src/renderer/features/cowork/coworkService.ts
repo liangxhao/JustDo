@@ -765,6 +765,21 @@ class CoworkService {
     return false;
   }
 
+  async getSessionDetails(
+    sessionId: string,
+  ): Promise<{ session: CoworkSession | null; error?: string }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.getSession) {
+      return { session: null, error: 'Cowork API not available' };
+    }
+
+    const result = await cowork.getSession(sessionId);
+    if (result.success && result.session) {
+      return { session: result.session };
+    }
+    return { session: null, error: result.error };
+  }
+
   async loadSession(sessionId: string): Promise<CoworkSession | null> {
     const cowork = window.electron?.cowork;
     if (!cowork) return null;

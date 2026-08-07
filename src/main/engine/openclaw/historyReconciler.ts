@@ -19,10 +19,14 @@ import {
   isRecord,
 } from '../gateway/helpers';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
+import {
+  matchAssistantUsageByOccurrence,
+  type MatchedTokenUsage,
+} from './historyUsageMatcher';
 
 // Callback interface
 
-type TokenUsage = { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+type TokenUsage = MatchedTokenUsage;
 
 const readUsageNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -441,11 +445,10 @@ export class HistoryReconciler {
    * Patch usage data into local assistant messages from gateway chat.history.
    * For managed sessions, full message reconciliation is skipped, but usage
    * data (token counts) only exists in chat.history — this method extracts
-   * and patches it by matching assistant messages on content text.
+   * and patches it by matching repeated assistant text one-to-one in occurrence order.
    */
   patchUsageFromHistory(sessionId: string, historyMessages: unknown[]): void {
-    // Build a map of assistant text -> usage from gateway history
-    const usageByText = new Map<string, TokenUsage>();
+    const historyUsage: Array<{ text: string; usage?: TokenUsage }> = [];
     for (const raw of historyMessages) {
       if (!isRecord(raw)) continue;
       const role = typeof raw.role === 'string' ? raw.role.trim().toLowerCase() : '';
@@ -453,40 +456,40 @@ export class HistoryReconciler {
       const text = extractMessageText(raw).trim();
       if (!text) continue;
       const usage = extractTokenUsage(raw.usage);
-      if (usage) {
-        usageByText.set(text, usage);
-      }
+      historyUsage.push({ text, usage });
     }
 
-    if (usageByText.size === 0) return;
+    if (!historyUsage.some(entry => entry.usage)) return;
 
     // Patch local assistant messages missing usage
     const session = this.callbacks.getSession(sessionId);
     if (!session) return;
 
-    let patchedAny = false;
-    for (const msg of session.messages) {
-      if (msg.type !== 'assistant') continue;
-      if (msg.usage) continue; // already has usage
-      const trimmedContent = msg.content.trim();
-      if (!trimmedContent) continue;
-      const usage = usageByText.get(trimmedContent);
-      if (!usage) continue;
+    const matches = matchAssistantUsageByOccurrence(
+      historyUsage,
+      session.messages
+        .filter(message => message.type === 'assistant')
+        .map(message => ({
+          id: message.id,
+          text: message.content,
+          hasUsage: Boolean(message.usage),
+        })),
+    );
 
-      this.callbacks.updateMessage(sessionId, msg.id, { usage });
+    for (const match of matches) {
+      this.callbacks.updateMessage(sessionId, match.id, { usage: match.usage });
       // Emit via messageMetadataUpdate so renderer gets real-time notification
       // (extends the metadata event to also carry usage data)
       this.callbacks.emit(
         'messageMetadataUpdate',
         sessionId,
-        msg.id,
+        match.id,
         { isStreaming: false, isFinal: true },
-        { usage },
+        { usage: match.usage },
       );
-      patchedAny = true;
     }
 
-    if (patchedAny) {
+    if (matches.length > 0) {
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) {
           win.webContents.send('cowork:sessions:changed');

@@ -1,7 +1,7 @@
 import React from 'react';
 
 import CoworkSessionItem from '@/features/cowork/components/CoworkSessionItem';
-import type { CoworkSessionSummary,SessionGroup } from '@/features/cowork/coworkTypes';
+import type { CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
 
 interface SessionGroupPanelProps {
   group: SessionGroup;
@@ -16,6 +16,7 @@ interface SessionGroupPanelProps {
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRename: (sessionId: string, title: string) => void;
+  onTogglePinned: (sessionId: string, pinned: boolean) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
@@ -34,6 +35,7 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   onSelectSession,
   onDeleteSession,
   onRename,
+  onTogglePinned,
   onToggleSelection,
   onEnterBatchMode,
   onMoveToGroup,
@@ -43,22 +45,23 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   return (
     <div className="session-group-panel">
       {sessions.map(session => (
-          <CoworkSessionItem
-            key={session.id}
-            session={session}
-            hasUnread={unreadSessionIds.includes(session.id)}
-            isRuntimeRunning={runtimeRunningSessionIds.has(session.id)}
-            isActive={currentSessionId === session.id}
-            isBatchMode={isBatchMode}
-            isSelected={selectedIds.has(session.id)}
-            groups={groups}
-            onSelect={() => onSelectSession(session.id)}
-            onDelete={() => onDeleteSession(session.id)}
-            onRename={title => onRename(session.id, title)}
-            onToggleSelection={() => onToggleSelection(session.id)}
-            onEnterBatchMode={() => onEnterBatchMode(session.id)}
-            onMoveToGroup={groupId => onMoveToGroup(session.id, groupId)}
-          />
+        <CoworkSessionItem
+          key={session.id}
+          session={session}
+          hasUnread={unreadSessionIds.includes(session.id)}
+          isRuntimeRunning={runtimeRunningSessionIds.has(session.id)}
+          isActive={currentSessionId === session.id}
+          isBatchMode={isBatchMode}
+          isSelected={selectedIds.has(session.id)}
+          groups={groups}
+          onSelect={() => onSelectSession(session.id)}
+          onDelete={() => onDeleteSession(session.id)}
+          onRename={title => onRename(session.id, title)}
+          onTogglePinned={() => onTogglePinned(session.id, !session.pinned)}
+          onToggleSelection={() => onToggleSelection(session.id)}
+          onEnterBatchMode={() => onEnterBatchMode(session.id)}
+          onMoveToGroup={groupId => onMoveToGroup(session.id, groupId)}
+        />
       ))}
     </div>
   );
