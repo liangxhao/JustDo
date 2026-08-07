@@ -14,6 +14,13 @@ import type {
   OpenClawExtensionConfigurationField,
 } from '../../../shared/openclaw/extensions';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+import { t } from '../../core/i18n';
+import {
+  managedDirectoryFailure,
+  managedDirectoryFailureFromMessage,
+  ManagedDirectoryOperationCoordinator,
+  managedDirectorySuccess,
+} from '../../core/managedDirectoryOperations';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 
 const OPENCLAW_PLUGIN_MANIFEST = 'openclaw.plugin.json';
@@ -25,6 +32,14 @@ const OPENCLAW_TOGGLE_SUCCESS_PATTERN =
   /(?:^|\r?\n)(?:Enabled|Disabled) plugin\s+['"][^'"\r\n]+['"]/i;
 const isProtectedExtension = (extensionId: string): boolean =>
   extensionId === OpenClawExtensionId.PERMISSION_POLICY;
+
+const isPathWithinDirectory = (rootDirectory: string, candidatePath: string): boolean => {
+  const relativePath = path.relative(path.resolve(rootDirectory), path.resolve(candidatePath));
+  return (
+    relativePath === '' ||
+    (!relativePath.startsWith(`..${path.sep}`) && relativePath !== '..' && !path.isAbsolute(relativePath))
+  );
+};
 
 const createInstallSuccessPattern = (extensionId: string | undefined): RegExp | undefined =>
   extensionId
@@ -54,6 +69,7 @@ type CommandOptions = {
 
 type OpenClawExtensionImportServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
+  directoryOperations?: ManagedDirectoryOperationCoordinator;
   runCommand?: (
     executable: string,
     args: string[],
@@ -149,6 +165,22 @@ const readJsonRecord = (filePath: string): Record<string, unknown> => {
   } catch {
     return {};
   }
+};
+
+const findInstalledExtensionPath = (
+  extensionsRoot: string,
+  extensionId: string,
+): string | undefined => {
+  if (!fs.existsSync(extensionsRoot)) return undefined;
+  for (const entry of fs.readdirSync(extensionsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const installPath = path.join(extensionsRoot, entry.name);
+    const manifest = readJsonRecord(path.join(installPath, OPENCLAW_PLUGIN_MANIFEST));
+    if (manifest.id === extensionId && isPathWithinDirectory(extensionsRoot, installPath)) {
+      return installPath;
+    }
+  }
+  return undefined;
 };
 
 const getNestedValue = (value: unknown, dottedPath: string): unknown =>
@@ -455,9 +487,59 @@ const inferInstallerFailureStage = (
 
 export class OpenClawExtensionImportService {
   private readonly runCommand: NonNullable<OpenClawExtensionImportServiceDeps['runCommand']>;
+  private readonly directoryOperations: ManagedDirectoryOperationCoordinator;
 
   constructor(private readonly deps: OpenClawExtensionImportServiceDeps) {
     this.runCommand = deps.runCommand ?? runCommand;
+    this.directoryOperations =
+      deps.directoryOperations ??
+      new ManagedDirectoryOperationCoordinator({
+        runtime: {
+          isRunning: () => {
+            const phase = deps.getOpenClawEngineManager().getStatus().phase;
+            return phase === 'running' || phase === 'starting';
+          },
+          ownsProcess: pid => deps.getOpenClawEngineManager().getGatewayProcessId?.() === pid,
+          stop: () => deps.getOpenClawEngineManager().stopGateway(),
+          start: async () => {
+            const status = await deps.getOpenClawEngineManager().startGateway();
+            return { running: status.phase === 'running', message: status.message };
+          },
+        },
+      });
+  }
+
+  private async runDirectoryCommand(
+    targetPath: string,
+    command: () => Promise<CommandResult>,
+  ): Promise<{ result: CommandResult; runtimeRestarted: boolean; error?: string }> {
+    let lastResult: CommandResult | null = null;
+    const operation = await this.directoryOperations.execute({
+      resourceName: t('extensionDirectoryResource'),
+      targetPath,
+      manageRuntimeOnLock: true,
+      // OpenClaw's CLI owns the internal directory mutation. Detect external
+      // owners before invoking it so a failed recursive uninstall/update cannot
+      // leave the live extension directory only partially modified.
+      preflightLockCheck: true,
+      operation: async () => {
+        lastResult = await command();
+        if (lastResult.exitCode === 0) return managedDirectorySuccess(lastResult);
+        return managedDirectoryFailure(
+          managedDirectoryFailureFromMessage(formatCommandError(lastResult), targetPath),
+        );
+      },
+    });
+    if (!('failure' in operation)) {
+      return { result: operation.value, runtimeRestarted: operation.runtimeRestarted };
+    }
+    return {
+      result:
+        lastResult ??
+        ({ exitCode: 1, stdout: '', stderr: operation.failure.message } satisfies CommandResult),
+      runtimeRestarted: operation.runtimeRestarted,
+      error: operation.failure.message,
+    };
   }
 
   listInstalled(): InstalledOpenClawExtension[] {
@@ -533,7 +615,8 @@ export class OpenClawExtensionImportService {
     const manager = this.deps.getOpenClawEngineManager();
     const configPath = manager.getConfigPath();
     const temporaryPath = `${configPath}.tmp-extension-${Date.now()}`;
-    const wasRunning = manager.getStatus().phase === 'running';
+    const initialPhase = manager.getStatus().phase;
+    const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
     try {
       let config: Record<string, unknown> = {};
       if (fs.existsSync(configPath)) {
@@ -555,7 +638,7 @@ export class OpenClawExtensionImportService {
       fs.writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
       fs.renameSync(temporaryPath, configPath);
 
-      if (wasRunning) {
+      if (wasRuntimeActive) {
         const status = await manager.restartGateway();
         if (status.phase !== 'running') {
           return {
@@ -589,24 +672,28 @@ export class OpenClawExtensionImportService {
     if (!installed) return { success: false, error: 'Extension is not installed.' };
 
     const manager = this.deps.getOpenClawEngineManager();
-    const wasRunning = manager.getStatus().phase === 'running';
+    const initialPhase = manager.getStatus().phase;
+    const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
     try {
       const cli = await manager.buildCliEnvironment();
-      const result = await this.runCommand(
-        process.execPath,
-        [cli.openclawEntry, 'plugins', 'uninstall', extensionId, '--force'],
-        {
-          cwd: cli.runtimeRoot,
-          env: {
-            ...cli.env,
-            OPENCLAW_HOME: manager.getBaseDir(),
-            ELECTRON_RUN_AS_NODE: '1',
+      const command = await this.runDirectoryCommand(installed.installPath, () =>
+        this.runCommand(
+          process.execPath,
+          [cli.openclawEntry, 'plugins', 'uninstall', extensionId, '--force'],
+          {
+            cwd: cli.runtimeRoot,
+            env: {
+              ...cli.env,
+              OPENCLAW_HOME: manager.getBaseDir(),
+              ELECTRON_RUN_AS_NODE: '1',
+            },
+            successPattern: OPENCLAW_UNINSTALL_SUCCESS_PATTERN,
           },
-          successPattern: OPENCLAW_UNINSTALL_SUCCESS_PATTERN,
-        },
+        ),
       );
+      const result = command.result;
       if (result.exitCode !== 0) {
-        const error = formatCommandError(result);
+        const error = command.error ?? formatCommandError(result);
         console.error('[OpenClawExtensionImportService] OpenClaw uninstaller failed:', error);
         return { success: false, error };
       }
@@ -618,7 +705,7 @@ export class OpenClawExtensionImportService {
         };
       }
 
-      if (wasRunning) {
+      if (wasRuntimeActive && !command.runtimeRestarted) {
         const status = await manager.restartGateway();
         if (status.phase !== 'running') {
           return {
@@ -649,7 +736,8 @@ export class OpenClawExtensionImportService {
     if (installed.enabled === enabled) return { success: true };
 
     const manager = this.deps.getOpenClawEngineManager();
-    const wasRunning = manager.getStatus().phase === 'running';
+    const initialPhase = manager.getStatus().phase;
+    const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
     try {
       const cli = await manager.buildCliEnvironment();
       const result = await this.runCommand(
@@ -679,7 +767,7 @@ export class OpenClawExtensionImportService {
         };
       }
 
-      if (wasRunning) {
+      if (wasRuntimeActive) {
         const status = await manager.restartGateway();
         if (status.phase !== 'running') {
           return {
@@ -749,7 +837,8 @@ export class OpenClawExtensionImportService {
 
       reportProgress('preparing_runtime', 35);
       const manager = this.deps.getOpenClawEngineManager();
-      const wasRunning = manager.getStatus().phase === 'running';
+      const initialPhase = manager.getStatus().phase;
+      const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
       const cli = await manager.buildCliEnvironment();
       const installArgs = [
         cli.openclawEntry,
@@ -773,35 +862,55 @@ export class OpenClawExtensionImportService {
       if (hasRuntimeDependencies(pluginDirectory)) {
         reportProgress('installing_dependencies', 55);
       }
-      const result = await this.runCommand(process.execPath, installArgs, {
-        cwd: cli.runtimeRoot,
-        env: installEnv,
-        successPattern: createInstallSuccessPattern(extensionId),
-        onOutput: output => {
-          if (
-            currentStage === 'installing' &&
-            /installing plugin dependencies|npm (?:install|exec)|omit=dev|node_modules/i.test(
-              output,
-            )
-          ) {
-            reportProgress('installing_dependencies', 65);
-          }
-        },
-      });
+      const stateDir =
+        typeof cli.env.OPENCLAW_STATE_DIR === 'string' && cli.env.OPENCLAW_STATE_DIR
+          ? cli.env.OPENCLAW_STATE_DIR
+          : typeof manager.getStateDir === 'function'
+            ? manager.getStateDir()
+            : manager.getBaseDir();
+      const extensionsRoot = path.join(stateDir, 'extensions');
+      const installedPath = extensionId
+        ? findInstalledExtensionPath(extensionsRoot, extensionId)
+        : undefined;
+      const defaultTargetPath = extensionId ? path.join(extensionsRoot, extensionId) : extensionsRoot;
+      const targetPath =
+        installedPath && isPathWithinDirectory(extensionsRoot, installedPath)
+          ? installedPath
+          : isPathWithinDirectory(extensionsRoot, defaultTargetPath)
+            ? defaultTargetPath
+            : extensionsRoot;
+      const command = await this.runDirectoryCommand(targetPath, () =>
+        this.runCommand(process.execPath, installArgs, {
+          cwd: cli.runtimeRoot,
+          env: installEnv,
+          successPattern: createInstallSuccessPattern(extensionId),
+          onOutput: output => {
+            if (
+              currentStage === 'installing' &&
+              /installing plugin dependencies|npm (?:install|exec)|omit=dev|node_modules/i.test(
+                output,
+              )
+            ) {
+              reportProgress('installing_dependencies', 65);
+            }
+          },
+        }),
+      );
+      const result = command.result;
       if (result.exitCode !== 0) {
         const failedStage = inferInstallerFailureStage(result, currentStage);
         console.error(
           '[OpenClawExtensionImportService] OpenClaw installer failed:',
-          formatCommandError(result),
+          command.error ?? formatCommandError(result),
         );
         return {
           success: false,
-          error: formatCommandError(result),
+          error: command.error ?? formatCommandError(result),
           failedStage,
         };
       }
 
-      if (wasRunning) {
+      if (wasRuntimeActive && !command.runtimeRestarted) {
         reportProgress('restarting_gateway', 90);
         const status = await manager.restartGateway();
         if (status.phase !== 'running') {

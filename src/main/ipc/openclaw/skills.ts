@@ -5,11 +5,16 @@ import { isUserOwnedSkillSource } from '../../../shared/plugins/skills';
 import type { GatewaySkillEntry } from '../../engine/types';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
-import type { OpenClawSkillFiles, OpenClawSkillService } from '../../plugins/skills';
+import type { LocalSkillFileResult, OpenClawSkillService } from '../../plugins/skills';
+
+type SkillFileOperations = {
+  importPath(sourcePath: string): Promise<LocalSkillFileResult>;
+  deleteDirectory(skillDirectory: string): void | Promise<void>;
+};
 
 interface SkillHandlerDependencies {
   skillService: OpenClawSkillService;
-  getSkillFiles: () => OpenClawSkillFiles;
+  getSkillFiles: () => SkillFileOperations;
   installationService: PluginInstallationService;
 }
 
@@ -119,7 +124,7 @@ export const registerSkillHandlers = ({
         return { success: false, error: 'Only user-owned skills can be deleted' };
       }
 
-      getSkillFiles().deleteDirectory(skill.baseDir);
+      await getSkillFiles().deleteDirectory(skill.baseDir);
       const updatedStatus = await skillService.getStatus();
       return { success: true, skills: updatedStatus.skills.map(mapGatewaySkill) };
     } catch (error) {

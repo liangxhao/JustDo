@@ -1,8 +1,6 @@
 import {
   ArchiveBoxIcon,
   ArrowUpTrayIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
   FolderIcon,
   SparklesIcon,
   XMarkIcon,
@@ -23,15 +21,15 @@ import { setSkills } from '@/features/plugins/slices/skillSlice';
 import { Skill } from '@/features/plugins/types/skill';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
-import ErrorMessage from '@/shared/components/ErrorMessage';
+import OperationResultModal, {
+  type OperationResult,
+} from '@/shared/components/common/OperationResultModal';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Tooltip from '@/shared/components/ui/Tooltip';
 import { RootState } from '@/store';
 
 type SkillTab = 'installed' | 'marketplace';
-type ActionOutcome = { type: 'success' | 'error'; title: string; message: string };
-
 interface SkillsManagerProps {
   readOnly?: boolean;
   onCreateByChat?: () => void;
@@ -42,15 +40,13 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
   const skills = useSelector((state: RootState) => state.skill.skills);
 
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
-  const [skillActionError, setSkillActionError] = useState('');
   const [activeTab, setActiveTab] = useState<SkillTab>('installed');
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [skillPendingDelete, setSkillPendingDelete] = useState<Skill | null>(null);
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importErrors, setImportErrors] = useState<{ fileName: string; error: string }[]>([]);
   const [deleting, setDeleting] = useState(false);
-  const [actionOutcome, setActionOutcome] = useState<ActionOutcome | null>(null);
+  const [actionOutcome, setActionOutcome] = useState<OperationResult | null>(null);
 
   // Gateway offline state
   const [gatewayOffline, setGatewayOffline] = useState(false);
@@ -92,7 +88,11 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
 
   const handleToggleSkill = async (skillId: string) => {
     if (gatewayOffline) {
-      setSkillActionError(i18nService.t('gatewayOffline'));
+      setActionOutcome({
+        type: 'error',
+        title: i18nService.t('skillUpdateFailed'),
+        message: i18nService.t('gatewayOffline'),
+      });
       return;
     }
     const targetSkill = skills.find(skill => skill.id === skillId);
@@ -100,11 +100,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     try {
       const updatedSkills = await skillService.setSkillEnabled(skillId, !targetSkill.enabled);
       dispatch(setSkills(updatedSkills));
-      setSkillActionError('');
     } catch (error) {
-      setSkillActionError(
-        error instanceof Error ? error.message : i18nService.t('skillUpdateFailed'),
-      );
+      setActionOutcome({
+        type: 'error',
+        title: i18nService.t('skillUpdateFailed'),
+        message: error instanceof Error ? error.message : i18nService.t('skillUpdateFailed'),
+      });
     }
   };
 
@@ -114,9 +115,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
     try {
       setImportPickerOpen(false);
       setImporting(true);
-      setSkillActionError('');
       setActionOutcome(null);
-      setImportErrors([]);
 
       const result =
         sourceType === 'folders'
@@ -134,7 +133,11 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
             });
 
       if (!result.success) {
-        setSkillActionError(result.error || i18nService.t('skillImportFailed'));
+        setActionOutcome({
+          type: 'error',
+          title: i18nService.t('skillImportFailed'),
+          message: result.error || i18nService.t('skillImportFailed'),
+        });
         return;
       }
       if (!result.paths || result.paths.length === 0) {
@@ -156,7 +159,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       const succeeded = results.filter(r => r.success);
       const failed = results.filter(r => !r.success);
 
-      if (succeeded.length > 0) {
+      if (succeeded.length > 0 && failed.length === 0) {
         const skillIds = succeeded
           .map(r => r.skillId)
           .filter(Boolean)
@@ -172,17 +175,38 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       }
 
       if (failed.length > 0) {
-        setImportErrors(
-          failed.map(r => ({
-            fileName: r.path.split(/[/\\]/).pop() || r.path,
-            error: r.error || i18nService.t('skillImportFailed'),
-          })),
-        );
+        const partial = succeeded.length > 0;
+        setActionOutcome({
+          type: 'error',
+          title: i18nService.t(partial ? 'pluginImportPartialTitle' : 'skillImportFailed'),
+          ...(partial
+            ? {
+                message: i18nService
+                  .t('pluginImportPartialSummary')
+                  .replace('{successCount}', String(succeeded.length))
+                  .replace('{failureCount}', String(failed.length)),
+              }
+            : {}),
+          items: [
+            ...succeeded.map(r => ({
+              label: r.skillId || r.path.split(/[/\\]/).pop() || r.path,
+              message: i18nService.t('pluginImportItemSuccess'),
+              type: 'success' as const,
+            })),
+            ...failed.map(r => ({
+              label: r.path.split(/[/\\]/).pop() || r.path,
+              message: r.error || i18nService.t('skillImportFailed'),
+              type: 'error' as const,
+            })),
+          ],
+        });
       }
     } catch (error) {
-      setSkillActionError(
-        error instanceof Error ? error.message : i18nService.t('skillImportFailed'),
-      );
+      setActionOutcome({
+        type: 'error',
+        title: i18nService.t('skillImportFailed'),
+        message: error instanceof Error ? error.message : i18nService.t('skillImportFailed'),
+      });
     } finally {
       setImporting(false);
     }
@@ -267,32 +291,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
       {gatewayOffline && (
         <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-sm">
           {i18nService.t('gatewayOfflineSkillsUnavailable')}
-        </div>
-      )}
-
-      {skillActionError && (
-        <ErrorMessage message={skillActionError} onClose={() => setSkillActionError('')} />
-      )}
-
-      {importErrors.length > 0 && (
-        <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-sm space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-medium">{i18nService.t('skillImportFailed')}</span>
-            <button
-              type="button"
-              onClick={() => setImportErrors([])}
-              className="p-1 rounded hover:bg-red-500/20 transition-colors"
-            >
-              <XMarkIcon className="h-4 w-4" />
-            </button>
-          </div>
-          <ul className="list-disc list-inside space-y-1 text-xs">
-            {importErrors.map((err, idx) => (
-              <li key={idx}>
-                <span className="font-medium">{err.fileName}:</span> {err.error}
-              </li>
-            ))}
-          </ul>
         </div>
       )}
 
@@ -700,39 +698,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly }) => {
           document.body,
         )}
 
-      {actionOutcome &&
-        createPortal(
-          <Modal
-            onClose={() => setActionOutcome(null)}
-            closeOnBackdrop={false}
-            overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-            className="w-full max-w-sm mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-5"
-          >
-            <div className="flex items-start gap-3">
-              {actionOutcome.type === 'success' ? (
-                <CheckCircleIcon className="h-6 w-6 flex-shrink-0 text-green-500" />
-              ) : (
-                <ExclamationTriangleIcon className="h-6 w-6 flex-shrink-0 text-red-500" />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="text-lg font-semibold text-foreground">{actionOutcome.title}</div>
-                <p className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-sm text-secondary">
-                  {actionOutcome.message}
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setActionOutcome(null)}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-              >
-                {i18nService.t('confirm')}
-              </button>
-            </div>
-          </Modal>,
-          document.body,
-        )}
+      <OperationResultModal result={actionOutcome} onClose={() => setActionOutcome(null)} />
     </div>
   );
 };

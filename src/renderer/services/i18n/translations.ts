@@ -544,6 +544,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillArchiveFiles: '技能压缩文件',
     skillImportSuccess: '技能 {skillId} 导入成功',
     skillImportFailed: '技能导入失败',
+    pluginImportPartialTitle: '部分导入完成',
+    pluginImportPartialSummary: '成功 {successCount} 项，失败 {failureCount} 项。',
+    pluginImportItemSuccess: '导入成功',
     // Gateway offline
     gatewayOffline: 'Gateway 离线',
     gatewayOfflineSkillsUnavailable: 'Gateway 离线，技能功能暂时不可用',
@@ -1330,8 +1333,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkGoalResume: 'Resume',
     coworkGoalEnd: 'End goal',
     coworkGoalEndConfirmTitle: 'End the current goal?',
-    coworkGoalEndConfirmMessage:
-      'Ending this goal clears its record and cannot be undone.',
+    coworkGoalEndConfirmMessage: 'Ending this goal clears its record and cannot be undone.',
     coworkGoalClear: 'Clear',
     coworkGoalContinue: 'Continue',
     coworkGoalRetry: 'Retry',
@@ -1505,6 +1507,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     skillArchiveFiles: 'Skill archives',
     skillImportSuccess: 'Skill {skillId} imported successfully',
     skillImportFailed: 'Skill import failed',
+    pluginImportPartialTitle: 'Import partially completed',
+    pluginImportPartialSummary: '{successCount} succeeded and {failureCount} failed.',
+    pluginImportItemSuccess: 'Imported successfully',
     // Gateway offline
     gatewayOffline: 'Gateway Offline',
     gatewayOfflineSkillsUnavailable: 'Gateway is offline. Skills are temporarily unavailable',

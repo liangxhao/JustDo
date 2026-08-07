@@ -1,4 +1,3 @@
-import childProcess from 'child_process';
 import extractZip from 'extract-zip';
 import fs from 'fs';
 import yaml from 'js-yaml';
@@ -6,13 +5,17 @@ import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
 
-import { cpRecursiveSync } from '../../core/fsCompat';
 import { t } from '../../core/i18n';
+import {
+  findFileSystemErrorDetails,
+  managedDirectoryFailureFromError,
+  removeDirectoryTransactional,
+  removeDirectoryWithRetry,
+  replaceDirectoryTransactional,
+} from '../../core/managedDirectoryOperations';
 
 const SKILL_FILE_NAME = 'SKILL.md';
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
-const FILE_SYSTEM_RETRY_COUNT = 5;
-const FILE_SYSTEM_RETRY_DELAY_MS = 200;
 const SKILL_TRASH_DIRECTORY_NAME = '.justdo-skill-trash';
 const MAX_SKILL_NAME_LENGTH = 64;
 const SKILL_NAME_PATTERN = /^(?=.*[a-z0-9])[a-z0-9_()-](?:[a-z0-9_(). -]*[a-z0-9_()-])?$/i;
@@ -22,6 +25,9 @@ export type LocalSkillFileResult = {
   success: boolean;
   skillId?: string;
   error?: string;
+  errorCode?: string;
+  errorPath?: string;
+  errorSyscall?: string;
 };
 
 type SkillIdResult = { skillId: string; error?: never } | { skillId?: never; error: string };
@@ -55,217 +61,15 @@ const readSkillId = (skillDir: string): SkillIdResult => {
   }
 };
 
-const getFileSystemErrorCode = (error: unknown): string =>
-  error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : '';
-
-const resetWindowsDirectoryAcl = (directory: string): void => {
-  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
-  const executable = systemRoot ? path.join(systemRoot, 'System32', 'icacls.exe') : 'icacls.exe';
-  childProcess.spawnSync(executable, [directory, '/reset', '/T', '/C', '/Q', '/L'], {
-    windowsHide: true,
-    stdio: 'ignore',
-  });
-
-  const username = process.env.USERNAME;
-  if (!username) return;
-  const account = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${username}` : username;
-  childProcess.spawnSync(
-    executable,
-    [directory, '/grant:r', `${account}:(OI)(CI)F`, '/T', '/C', '/Q', '/L'],
-    {
-      windowsHide: true,
-      stdio: 'ignore',
-    },
-  );
-};
-
-const removeDirectory = (directory: string): void => {
-  const options: fs.RmOptions = {
-    recursive: true,
-    force: true,
-    maxRetries: process.platform === 'win32' ? FILE_SYSTEM_RETRY_COUNT : 0,
-    retryDelay: process.platform === 'win32' ? FILE_SYSTEM_RETRY_DELAY_MS : 0,
+const toFailureResult = (error: unknown, fallback: string): LocalSkillFileResult => {
+  const fileSystemError = findFileSystemErrorDetails(error);
+  return {
+    success: false,
+    error: error instanceof Error ? error.message : fallback,
+    ...(fileSystemError?.code ? { errorCode: fileSystemError.code } : {}),
+    ...(fileSystemError?.sourcePath ? { errorPath: fileSystemError.sourcePath } : {}),
+    ...(fileSystemError?.syscall ? { errorSyscall: fileSystemError.syscall } : {}),
   };
-  try {
-    fs.rmSync(directory, options);
-  } catch (error) {
-    const code = getFileSystemErrorCode(error);
-    if (process.platform !== 'win32' || (code !== 'EACCES' && code !== 'EPERM')) {
-      throw error;
-    }
-
-    // Imported directories can contain child ACLs that no longer grant the
-    // current Windows user traversal rights. rmSync retries cannot repair that
-    // state, so restore inherited ACLs and make one final removal attempt.
-    resetWindowsDirectoryAcl(directory);
-    fs.rmSync(directory, options);
-  }
-};
-
-const formatFileSystemError = (error: unknown, targetDir: string): string => {
-  if (!(error instanceof Error)) return 'Failed to update skill files';
-  const code = getFileSystemErrorCode(error);
-  if (code !== 'EACCES' && code !== 'EPERM' && code !== 'EEXIST') return error.message;
-  return `Cannot access the skill directory "${targetDir}". Check its Windows owner and permissions, close processes using it, and try again. (${error.message})`;
-};
-
-const pathExists = (targetPath: string): boolean => {
-  try {
-    fs.lstatSync(targetPath);
-    return true;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-    ) {
-      return false;
-    }
-    throw error;
-  }
-};
-
-const waitForFileSystemRetry = (): void => {
-  Atomics.wait(
-    new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
-    0,
-    0,
-    FILE_SYSTEM_RETRY_DELAY_MS,
-  );
-};
-
-const renameDirectory = (sourceDir: string, targetDir: string): void => {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      fs.renameSync(sourceDir, targetDir);
-      return;
-    } catch (error) {
-      const code = getFileSystemErrorCode(error);
-      const canRetry =
-        attempt < FILE_SYSTEM_RETRY_COUNT &&
-        (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY');
-      if (!canRetry) throw error;
-      waitForFileSystemRetry();
-    }
-  }
-};
-
-const quarantineDirectory = (directory: string): string | null => {
-  const skillsRoot = path.dirname(directory);
-  const trashRoot = path.join(path.dirname(skillsRoot), SKILL_TRASH_DIRECTORY_NAME);
-  let transactionDir = '';
-  try {
-    fs.mkdirSync(trashRoot, { recursive: true });
-    transactionDir = fs.mkdtempSync(path.join(trashRoot, 'delete-'));
-    const quarantinedDirectory = path.join(transactionDir, path.basename(directory));
-    try {
-      renameDirectory(directory, quarantinedDirectory);
-    } catch (error) {
-      const code = getFileSystemErrorCode(error);
-      if (process.platform !== 'win32' || (code !== 'EACCES' && code !== 'EPERM')) {
-        throw error;
-      }
-      resetWindowsDirectoryAcl(directory);
-      renameDirectory(directory, quarantinedDirectory);
-    }
-    return quarantinedDirectory;
-  } catch (error) {
-    if (transactionDir) {
-      try {
-        removeDirectory(transactionDir);
-      } catch {
-        // Best effort cleanup; the original error determines the fallback.
-      }
-    }
-    const code = getFileSystemErrorCode(error);
-    if (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY' || code === 'EXDEV') {
-      return null;
-    }
-    throw error;
-  }
-};
-
-const removeSkillDirectory = (directory: string): void => {
-  const quarantinedDirectory = quarantineDirectory(directory);
-  if (!quarantinedDirectory) {
-    removeDirectory(directory);
-  } else {
-    try {
-      removeDirectory(path.dirname(quarantinedDirectory));
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'unknown error';
-      console.warn(
-        '[OpenClawSkillFiles] Skill was removed but its quarantined files could not be cleaned:',
-        errorMessage,
-      );
-    }
-  }
-
-  if (pathExists(directory)) {
-    throw new Error(`Skill directory still exists after deletion: ${directory}`);
-  }
-};
-
-const replaceDirectory = (sourceDir: string, targetDir: string): void => {
-  // On Windows, stage under the current user's temp directory so the completed
-  // directory has a user-owned ACL before it is moved into the managed root.
-  // On POSIX, keep staging beside the target to guarantee a same-device rename.
-  const stagingParent = process.platform === 'win32' ? os.tmpdir() : path.dirname(targetDir);
-  const transactionDir = fs.mkdtempSync(path.join(stagingParent, '.justdo-skill-stage-'));
-  const stagedDir = path.join(transactionDir, 'skill');
-  const backupDir = path.join(transactionDir, 'backup');
-  let targetBackedUp = false;
-
-  try {
-    cpRecursiveSync(sourceDir, stagedDir, { force: true });
-    fs.accessSync(stagedDir, fs.constants.R_OK | fs.constants.W_OK);
-    fs.accessSync(path.join(stagedDir, SKILL_FILE_NAME), fs.constants.R_OK);
-
-    if (pathExists(targetDir)) {
-      renameDirectory(targetDir, backupDir);
-      targetBackedUp = true;
-    }
-
-    try {
-      renameDirectory(stagedDir, targetDir);
-    } catch (error) {
-      if (targetBackedUp) {
-        try {
-          renameDirectory(backupDir, targetDir);
-          targetBackedUp = false;
-        } catch (restoreError) {
-          const restoreMessage =
-            restoreError instanceof Error ? restoreError.message : 'unknown restore error';
-          throw new Error(
-            `Failed to install the skill and restore the previous version. The backup was preserved at "${backupDir}". (${restoreMessage})`,
-            { cause: error },
-          );
-        }
-      }
-      throw error;
-    }
-
-    if (targetBackedUp) {
-      targetBackedUp = false;
-      try {
-        removeDirectory(backupDir);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'unknown error';
-        console.warn('[OpenClawSkillFiles] Failed to clean replaced skill backup:', errorMessage);
-      }
-    }
-  } catch (error) {
-    throw new Error(formatFileSystemError(error, targetDir), { cause: error });
-  } finally {
-    if (!targetBackedUp) {
-      try {
-        removeDirectory(transactionDir);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'unknown error';
-        console.warn('[OpenClawSkillFiles] Failed to clean skill staging directory:', errorMessage);
-      }
-    }
-  }
 };
 
 const isSupportedArchive = (filePath: string): boolean => {
@@ -316,14 +120,12 @@ export class OpenClawSkillFiles {
       }
       return await this.importArchive(sourcePath);
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to import skill',
-      };
+      return toFailureResult(error, 'Failed to import skill');
     }
   }
 
   importDirectory(folderPath: string): LocalSkillFileResult {
+    let targetDir = '';
     try {
       if (!fs.statSync(folderPath).isDirectory()) {
         return { success: false, error: 'Selected path is not a folder' };
@@ -345,13 +147,27 @@ export class OpenClawSkillFiles {
       const { skillId } = skillIdResult;
 
       fs.mkdirSync(this.managedSkillsDir, { recursive: true });
-      replaceDirectory(folderPath, path.join(this.managedSkillsDir, skillId));
+      targetDir = path.join(this.managedSkillsDir, skillId);
+      replaceDirectoryTransactional({
+        sourceDir: folderPath,
+        targetDir,
+        transactionPrefix: '.justdo-skill-stage-',
+        stagingParent: path.dirname(this.managedSkillsDir),
+        validateStaged: stagedDir => {
+          fs.accessSync(stagedDir, fs.constants.R_OK | fs.constants.W_OK);
+          fs.accessSync(path.join(stagedDir, SKILL_FILE_NAME), fs.constants.R_OK);
+        },
+        onCleanupError: message => {
+          console.warn('[OpenClawSkillFiles] Failed to clean skill transaction files:', message);
+        },
+      });
       return { success: true, skillId };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to import skill folder',
-      };
+      const failure = toFailureResult(error, 'Failed to import skill folder');
+      // A Windows rename error can name either the staged source or the
+      // destination. Diagnose the managed skill directory users can act on.
+      if (targetDir && failure.errorSyscall === 'rename') failure.errorPath = targetDir;
+      return failure;
     }
   }
 
@@ -373,7 +189,7 @@ export class OpenClawSkillFiles {
       return this.importDirectory(resolveExtractedSkillDirectory(extractDir));
     } finally {
       try {
-        removeDirectory(extractDir);
+        removeDirectoryWithRetry(extractDir);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'unknown error';
         console.warn(
@@ -417,9 +233,19 @@ export class OpenClawSkillFiles {
       throw new Error('Only user-owned skill directories can be deleted');
     }
     try {
-      removeSkillDirectory(targetDir);
+      removeDirectoryTransactional({
+        targetDir,
+        trashRoot: path.join(path.dirname(path.dirname(targetDir)), SKILL_TRASH_DIRECTORY_NAME),
+        onCleanupError: message => {
+          console.warn(
+            '[OpenClawSkillFiles] Skill was removed but its quarantined files could not be cleaned:',
+            message,
+          );
+        },
+      });
     } catch (error) {
-      throw new Error(formatFileSystemError(error, targetDir), { cause: error });
+      const failure = managedDirectoryFailureFromError(error, targetDir);
+      throw new Error(failure.message, { cause: error });
     }
   }
 }

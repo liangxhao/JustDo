@@ -348,6 +348,12 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.gatewayProcessGeneration;
   }
 
+  getGatewayProcessId(): number | null {
+    return this.gatewayProcess && 'pid' in this.gatewayProcess
+      ? (this.gatewayProcess.pid ?? null)
+      : null;
+  }
+
   setExternalError(message: string): OpenClawEngineStatus {
     const runtime = this.resolveRuntimeMetadata();
     this.setStatus({

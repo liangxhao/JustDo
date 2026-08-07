@@ -4,6 +4,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+import { ManagedDirectoryOperationCoordinator } from '../../core/managedDirectoryOperations';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   __openClawExtensionImportTestUtils,
@@ -109,6 +110,202 @@ describe('OpenClawExtensionImportService', () => {
     expect(result.exitCode).toBe(0);
     expect(result.timedOut).not.toBe(true);
     expect(result.stdout).toContain('Installed plugin: sample-extension');
+  });
+
+  it('releases a Gateway-owned extension lock before starting the CLI transaction', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const sourceDir = path.join(fixtureRoot, 'locked-extension');
+    const stateDir = path.join(fixtureRoot, 'state');
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(
+      path.join(sourceDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'locked-extension' }),
+    );
+    let phase = 'running';
+    const stopGateway = vi.fn(async () => {
+      phase = 'ready';
+    });
+    const startGateway = vi.fn(async () => {
+      phase = 'running';
+      return { phase: 'running' };
+    });
+    const restartGateway = vi.fn();
+    const manager = {
+      getStatus: vi.fn(() => ({ phase })),
+      getStateDir: vi.fn(() => stateDir),
+      getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
+      buildCliEnvironment: vi.fn().mockResolvedValue({
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        runtimeRoot: path.join(fixtureRoot, 'runtime'),
+        openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
+      }),
+      stopGateway,
+      startGateway,
+      restartGateway,
+    } as unknown as OpenClawEngineManager;
+    const runCommand = vi.fn(async () => {
+      expect(phase).toBe('ready');
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      runCommand,
+      directoryOperations: new ManagedDirectoryOperationCoordinator({
+        runtime: {
+          isRunning: () => phase === 'running' || phase === 'starting',
+          ownsProcess: pid => pid === 4242,
+          stop: stopGateway,
+          start: async () => {
+            const status = await startGateway();
+            return { running: status.phase === 'running' };
+          },
+        },
+        findLockingProcesses: vi.fn(async () => ({
+          available: true,
+          processes: [{ name: 'OpenClaw Gateway', pid: 4242 }],
+        })),
+      }),
+    });
+
+    await expect(service.importPath(sourceDir)).resolves.toEqual({
+      success: true,
+      extensionId: 'locked-extension',
+    });
+    expect(runCommand).toHaveBeenCalledOnce();
+    expect(stopGateway).toHaveBeenCalledOnce();
+    expect(startGateway).toHaveBeenCalledOnce();
+    expect(restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('reports an external owner before deleting any extension files', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'locked-extension');
+    const manifestPath = path.join(installedDir, 'openclaw.plugin.json');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({ id: 'locked-extension', name: 'Locked Extension' }),
+    );
+    const manager = {
+      getStateDir: vi.fn(() => stateDir),
+      getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
+      getConfigPath: vi.fn(() => path.join(stateDir, 'openclaw.json')),
+      getStatus: vi.fn(() => ({ phase: 'running' })),
+      getGatewayProcessId: vi.fn(() => 4242),
+      buildCliEnvironment: vi.fn(),
+      stopGateway: vi.fn(),
+      startGateway: vi.fn(),
+      restartGateway: vi.fn(),
+    } as unknown as OpenClawEngineManager;
+    const runCommand = vi.fn();
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      runCommand,
+      directoryOperations: new ManagedDirectoryOperationCoordinator({
+        findLockingProcesses: vi.fn(async () => ({
+          available: true,
+          processes: [{ name: 'Typora', pid: 38412 }],
+        })),
+      }),
+    });
+
+    const result = await service.delete('locked-extension');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Typora (PID 38412)');
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(fs.readFileSync(manifestPath, 'utf8')).toContain('locked-extension');
+    expect(fs.readdirSync(installedDir)).toEqual(['openclaw.plugin.json']);
+  });
+
+  it('diagnoses a CLI permission error without an error code as a directory lock', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const sourceDir = path.join(fixtureRoot, 'locked-extension');
+    const stateDir = path.join(fixtureRoot, 'state');
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(
+      path.join(sourceDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'locked-extension' }),
+    );
+    const manager = {
+      getStatus: vi.fn(() => ({ phase: 'ready' })),
+      getStateDir: vi.fn(() => stateDir),
+      getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
+      buildCliEnvironment: vi.fn().mockResolvedValue({
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        runtimeRoot: path.join(fixtureRoot, 'runtime'),
+        openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
+      }),
+    } as unknown as OpenClawEngineManager;
+    const findLockingProcesses = vi
+      .fn()
+      .mockResolvedValueOnce({ available: true, processes: [] })
+      .mockResolvedValueOnce({
+        available: true,
+        processes: [{ name: 'explorer', pid: 10856 }],
+      });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      runCommand: vi.fn().mockResolvedValue({
+        exitCode: 1,
+        stdout: '',
+        stderr: `Permission denied: '${path.join(stateDir, 'extensions', 'locked-extension')}'`,
+      }),
+      directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
+    });
+
+    const result = await service.importPath(sourceDir);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('explorer (PID 10856)');
+    expect(findLockingProcesses).toHaveBeenCalledTimes(2);
+  });
+
+  it('preflights the real install directory when its name differs from the extension id', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const sourceDir = path.join(fixtureRoot, 'update-source');
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'directory-alias');
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'canonical-extension' }),
+    );
+    fs.writeFileSync(
+      path.join(installedDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'canonical-extension', name: 'Canonical Extension' }),
+    );
+    const manager = {
+      getStatus: vi.fn(() => ({ phase: 'ready' })),
+      getStateDir: vi.fn(() => stateDir),
+      getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
+      getConfigPath: vi.fn(() => path.join(stateDir, 'openclaw.json')),
+      buildCliEnvironment: vi.fn().mockResolvedValue({
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        runtimeRoot: path.join(fixtureRoot, 'runtime'),
+        openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
+      }),
+    } as unknown as OpenClawEngineManager;
+    const findLockingProcesses = vi.fn(async (targetPath: string) => ({
+      available: true,
+      processes:
+        targetPath === installedDir ? [{ name: 'Typora', pid: 38412 }] : [],
+    }));
+    const runCommand = vi.fn();
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      runCommand,
+      directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
+    });
+
+    const result = await service.importPath(sourceDir);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Typora (PID 38412)');
+    expect(findLockingProcesses).toHaveBeenCalledWith(installedDir);
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it('rejects a Claude bundle before invoking the OpenClaw installer', async () => {
@@ -316,7 +513,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(restartGateway).toHaveBeenCalledOnce();
   });
 
-  it('uninstalls an installed extension through OpenClaw and restarts Gateway', async () => {
+  it('uninstalls an extension and restarts a Gateway that was still starting', async () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const installedDir = path.join(stateDir, 'extensions', 'sample-extension');
     fs.mkdirSync(installedDir, { recursive: true });
@@ -329,7 +526,7 @@ describe('OpenClawExtensionImportService', () => {
       getStateDir: vi.fn().mockReturnValue(stateDir),
       getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
       getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
-      getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
+      getStatus: vi.fn().mockReturnValue({ phase: 'starting' }),
       buildCliEnvironment: vi.fn().mockResolvedValue({
         env: { OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
@@ -364,7 +561,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(restartGateway).toHaveBeenCalledOnce();
   });
 
-  it('disables an installed extension without uninstalling it', async () => {
+  it('disables an installed extension and restarts a Gateway that was still starting', async () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const installedDir = path.join(stateDir, 'extensions', 'sample-extension');
     fs.mkdirSync(installedDir, { recursive: true });
@@ -377,7 +574,7 @@ describe('OpenClawExtensionImportService', () => {
       getStateDir: vi.fn().mockReturnValue(stateDir),
       getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
       getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
-      getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
+      getStatus: vi.fn().mockReturnValue({ phase: 'starting' }),
       buildCliEnvironment: vi.fn().mockResolvedValue({
         env: { OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),

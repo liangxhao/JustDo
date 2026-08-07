@@ -18,7 +18,9 @@ import { createPortal } from 'react-dom';
 import MarketplaceView from '@/features/plugins/components/marketplace/MarketplaceView';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
-import ErrorMessage from '@/shared/components/ErrorMessage';
+import OperationResultModal, {
+  type OperationResult,
+} from '@/shared/components/common/OperationResultModal';
 import PuzzleIcon from '@/shared/components/icons/PuzzleIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
@@ -52,16 +54,13 @@ const ExtensionsManager: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importSuccess, setImportSuccess] = useState<string | null>(null);
-  const [importError, setImportError] = useState('');
-  const [importErrors, setImportErrors] = useState<{ fileName: string; error: string }[]>([]);
+  const [actionOutcome, setActionOutcome] = useState<OperationResult | null>(null);
   const [extensions, setExtensions] = useState<InstalledOpenClawExtension[]>([]);
   const [loadingExtensions, setLoadingExtensions] = useState(true);
   const [importProgress, setImportProgress] = useState<ExtensionImportProgress | null>(null);
   const [importElapsedSeconds, setImportElapsedSeconds] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<InstalledOpenClawExtension | null>(null);
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
-  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
   const [togglingExtensionId, setTogglingExtensionId] = useState<string | null>(null);
   const [selectedExtension, setSelectedExtension] = useState<InstalledOpenClawExtension | null>(
     null,
@@ -82,7 +81,11 @@ const ExtensionsManager: React.FC = () => {
       setExtensions(result.extensions);
       return result.extensions;
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : i18nService.t('extensionListFailed'));
+      setActionOutcome({
+        type: 'error',
+        title: i18nService.t('extensionListFailed'),
+        message: error instanceof Error ? error.message : i18nService.t('extensionListFailed'),
+      });
       return null;
     } finally {
       setLoadingExtensions(false);
@@ -125,9 +128,7 @@ const ExtensionsManager: React.FC = () => {
     try {
       setImportPickerOpen(false);
       setImporting(true);
-      setImportSuccess(null);
-      setImportError('');
-      setImportErrors([]);
+      setActionOutcome(null);
       setImportProgress(null);
       setImportElapsedSeconds(0);
 
@@ -160,31 +161,55 @@ const ExtensionsManager: React.FC = () => {
       // Reconcile with disk even when a later installer step reports failure. OpenClaw
       // may have already published the extension before its CLI or Gateway restart fails.
       await loadExtensions();
-      if (succeeded.length > 0) {
+      if (succeeded.length > 0 && failed.length === 0) {
         const labels = succeeded
           .map(item => item.extensionId || item.sourcePath.split(/[/\\]/).pop())
           .filter(Boolean)
           .join(', ');
-        setImportSuccess(labels);
-        setTimeout(() => setImportSuccess(null), 5000);
+        setActionOutcome({
+          type: 'success',
+          title: i18nService.t('importExtension'),
+          message: i18nService.t('extensionImportSuccess').replace('{extensionId}', labels),
+        });
       }
       if (failed.length > 0) {
-        setImportErrors(
-          failed.map(item => ({
-            fileName: item.sourcePath.split(/[/\\]/).pop() || item.sourcePath,
-            error: item.failedStage
-              ? i18nService
-                  .t('extensionImportFailedAtStage')
-                  .replace('{stage}', getImportStageLabel(item.failedStage))
-                  .replace('{error}', item.error || i18nService.t('extensionImportFailed'))
-              : item.error || i18nService.t('extensionImportFailed'),
-          })),
-        );
+        const partial = succeeded.length > 0;
+        setActionOutcome({
+          type: 'error',
+          title: i18nService.t(partial ? 'pluginImportPartialTitle' : 'extensionImportFailed'),
+          ...(partial
+            ? {
+                message: i18nService
+                  .t('pluginImportPartialSummary')
+                  .replace('{successCount}', String(succeeded.length))
+                  .replace('{failureCount}', String(failed.length)),
+              }
+            : {}),
+          items: [
+            ...succeeded.map(item => ({
+              label: item.extensionId || item.sourcePath.split(/[/\\]/).pop() || item.sourcePath,
+              message: i18nService.t('pluginImportItemSuccess'),
+              type: 'success' as const,
+            })),
+            ...failed.map(item => {
+              const fileName = item.sourcePath.split(/[/\\]/).pop() || item.sourcePath;
+              const error = item.failedStage
+                ? i18nService
+                    .t('extensionImportFailedAtStage')
+                    .replace('{stage}', getImportStageLabel(item.failedStage))
+                    .replace('{error}', item.error || i18nService.t('extensionImportFailed'))
+                : item.error || i18nService.t('extensionImportFailed');
+              return { label: fileName, message: error, type: 'error' as const };
+            }),
+          ],
+        });
       }
     } catch (error) {
-      setImportError(
-        error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
-      );
+      setActionOutcome({
+        type: 'error',
+        title: i18nService.t('extensionImportFailed'),
+        message: error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
+      });
     } finally {
       setImporting(false);
       setImportProgress(null);
@@ -196,20 +221,23 @@ const ExtensionsManager: React.FC = () => {
     const extension = pendingDelete;
     try {
       setDeletingExtensionId(extension.id);
-      setImportError('');
+      setActionOutcome(null);
       const result = await window.electron.extensions.delete({ extensionId: extension.id });
       if (!result.success) {
         throw new Error(result.error || i18nService.t('extensionDeleteFailed'));
       }
       setPendingDelete(null);
-      setDeleteSuccess(extension.name);
-      window.setTimeout(() => setDeleteSuccess(null), 3000);
+      setActionOutcome({
+        type: 'success',
+        title: i18nService.t('extensionDelete'),
+        message: i18nService.t('extensionDeleteSuccess').replace('{name}', extension.name),
+      });
     } catch (error) {
-      setImportError(
-        `${i18nService.t('extensionDeleteFailed')}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      setActionOutcome({
+        type: 'error',
+        title: i18nService.t('extensionDeleteFailed'),
+        message: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       const latestExtensions = await loadExtensions();
       if (latestExtensions && !latestExtensions.some(item => item.id === extension.id)) {
@@ -223,7 +251,7 @@ const ExtensionsManager: React.FC = () => {
     if (extensionActionBusy) return;
     try {
       setTogglingExtensionId(extension.id);
-      setImportError('');
+      setActionOutcome(null);
       const result = await window.electron.extensions.setEnabled({
         extensionId: extension.id,
         enabled: !extension.enabled,
@@ -232,11 +260,11 @@ const ExtensionsManager: React.FC = () => {
         throw new Error(result.error || i18nService.t('extensionStatusUpdateFailed'));
       }
     } catch (error) {
-      setImportError(
-        `${i18nService.t('extensionStatusUpdateFailed')}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      setActionOutcome({
+        type: 'error',
+        title: i18nService.t('extensionStatusUpdateFailed'),
+        message: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       await loadExtensions();
       setTogglingExtensionId(null);
@@ -302,42 +330,6 @@ const ExtensionsManager: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      {importError && <ErrorMessage message={importError} onClose={() => setImportError('')} />}
-
-      {importErrors.length > 0 && (
-        <div className="space-y-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500">
-          <div className="flex items-center justify-between">
-            <span className="font-medium">{i18nService.t('extensionImportFailed')}</span>
-            <button
-              type="button"
-              onClick={() => setImportErrors([])}
-              className="rounded p-1 transition-colors hover:bg-red-500/20"
-            >
-              <XMarkIcon className="h-4 w-4" />
-            </button>
-          </div>
-          <ul className="list-inside list-disc space-y-1 text-xs">
-            {importErrors.map(item => (
-              <li key={`${item.fileName}:${item.error}`}>
-                <span className="font-medium">{item.fileName}:</span> {item.error}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {importSuccess && (
-        <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-600">
-          {i18nService.t('extensionImportSuccess').replace('{extensionId}', importSuccess)}
-        </div>
-      )}
-
-      {deleteSuccess && (
-        <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-600">
-          {i18nService.t('extensionDeleteSuccess').replace('{name}', deleteSuccess)}
-        </div>
-      )}
-
       {importing && importProgress && (
         <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
           <div className="flex items-center justify-between gap-3 text-sm">
@@ -785,6 +777,8 @@ const ExtensionsManager: React.FC = () => {
           </Modal>,
           document.body,
         )}
+
+      <OperationResultModal result={actionOutcome} onClose={() => setActionOutcome(null)} />
     </div>
   );
 };

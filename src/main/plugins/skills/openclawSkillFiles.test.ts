@@ -94,6 +94,28 @@ test('imports a skill directory into the OpenClaw managed directory', () => {
   expect(fs.existsSync(path.join(managed, 'linked-skill', 'SKILL.md'))).toBe(true);
 });
 
+test('stages skill replacements outside the Gateway-watched skills directory', () => {
+  const source = makeTempDir();
+  const stateDir = makeTempDir();
+  const managed = path.join(stateDir, 'skills');
+  fs.writeFileSync(
+    path.join(source, 'SKILL.md'),
+    '---\nname: staged-skill\ndescription: demo\n---\n',
+  );
+  const mkdtempSync = fs.mkdtempSync.bind(fs);
+  const stagingPrefixes: string[] = [];
+  vi.spyOn(fs, 'mkdtempSync').mockImplementation(prefix => {
+    stagingPrefixes.push(prefix.toString());
+    return mkdtempSync(prefix);
+  });
+
+  const result = new OpenClawSkillFiles(managed).importDirectory(source);
+
+  expect(result).toEqual({ success: true, skillId: 'staged-skill' });
+  expect(stagingPrefixes).toContain(path.join(stateDir, '.justdo-skill-stage-'));
+  expect(stagingPrefixes.some(prefix => path.dirname(prefix) === managed)).toBe(false);
+});
+
 test('rejects an invalid skill name before creating its managed directory', () => {
   const source = makeTempDir();
   const managed = makeTempDir();
@@ -286,7 +308,8 @@ test('does not leave a partial managed skill when copying fails', () => {
   const result = new OpenClawSkillFiles(managed).importDirectory(source);
 
   expect(result.success).toBe(false);
-  expect(result.error).toContain('Cannot access the skill directory');
+  expect(result.error).toContain('copy blocked');
+  expect(result.errorCode).toBe('EPERM');
   expect(fs.existsSync(path.join(managed, 'interrupted-skill'))).toBe(false);
 });
 
@@ -305,7 +328,7 @@ test('restores the previous skill when installing its replacement fails', () => 
   );
   const renameSync = fs.renameSync.bind(fs);
   vi.spyOn(fs, 'renameSync').mockImplementation((oldPath, newPath) => {
-    if (path.basename(oldPath.toString()) === 'skill' && newPath.toString() === target) {
+    if (path.basename(oldPath.toString()) === 'next' && newPath.toString() === target) {
       throw Object.assign(new Error('rename blocked'), { code: 'EPERM' });
     }
     renameSync(oldPath, newPath);
@@ -314,7 +337,7 @@ test('restores the previous skill when installing its replacement fails', () => 
   const result = new OpenClawSkillFiles(managed).importDirectory(source);
 
   expect(result.success).toBe(false);
-  expect(result.error).toContain('Cannot access the skill directory');
+  expect(result.error).toContain('rename blocked');
   expect(fs.readFileSync(path.join(target, 'SKILL.md'), 'utf8')).toContain('description: old');
 });
 

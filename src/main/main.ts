@@ -26,6 +26,7 @@ import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
 import { mainProcessTitleFetch } from './core/mainProcessFetch';
 import { createMainWindow } from './core/mainWindowFactory';
+import { ManagedDirectoryOperationCoordinator } from './core/managedDirectoryOperations';
 import { OutboundHeaderProxy } from './core/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './core/pythonRuntime';
 import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/systemProxy';
@@ -336,6 +337,7 @@ let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
+let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = null;
 let openClawStatusForwarderBound = false;
 let openClawGatewayPortProxyBypassBound = false;
 let preventSleepBlockerId: number | null = null;
@@ -365,6 +367,27 @@ const getOpenClawEngineManager = (): OpenClawEngineManager => {
     });
   }
   return openClawEngineManager;
+};
+
+const getOpenClawDirectoryOperations = (): ManagedDirectoryOperationCoordinator => {
+  if (!openClawDirectoryOperations) {
+    openClawDirectoryOperations = new ManagedDirectoryOperationCoordinator({
+      ownsAppProcess: pid => app.getAppMetrics().some(metric => metric.pid === pid),
+      runtime: {
+        isRunning: () => {
+          const phase = getOpenClawEngineManager().getStatus().phase;
+          return phase === 'running' || phase === 'starting';
+        },
+        ownsProcess: pid => getOpenClawEngineManager().getGatewayProcessId() === pid,
+        stop: () => getOpenClawEngineManager().stopGateway(),
+        start: async () => {
+          const status = await getOpenClawEngineManager().startGateway();
+          return { running: status.phase === 'running', message: status.message };
+        },
+      },
+    });
+  }
+  return openClawDirectoryOperations;
 };
 
 const forwardOpenClawStatus = (status: OpenClawEngineStatus): void => {
@@ -554,9 +577,10 @@ const getOpenClawSkillFiles = () => {
   if (!openClawSkillFileService) {
     openClawSkillFileService = new OpenClawSkillFileService({
       getOpenClawEngineManager,
+      directoryOperations: getOpenClawDirectoryOperations(),
     });
   }
-  return openClawSkillFileService.getSkillFiles();
+  return openClawSkillFileService;
 };
 
 const getMcpServices = (): McpServices => {
@@ -798,6 +822,7 @@ if (!gotTheLock) {
   registerExtensionHandlers({
     extensionImportService: new OpenClawExtensionImportService({
       getOpenClawEngineManager,
+      directoryOperations: getOpenClawDirectoryOperations(),
     }),
     installationService: pluginInstallationService,
   });

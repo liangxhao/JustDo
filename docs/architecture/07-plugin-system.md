@@ -68,13 +68,19 @@ Renderer 只通过 preload bridge 发起操作，不读取插件文件、不访�
 
 删除操作由 Main process 根据当前权威状态重新匹配目标。Renderer 不传递可直接删除的任意文件路径。
 
+## 托管目录事务
+
+`src/main/core/managedDirectoryOperations.ts` 是 Main process 中安装、更新和删除托管目录的公共模块。它提供：stage-copy、旧目录 backup、原子 publish、失败回滚、隔离删除、Windows ACL 修复、文件系统重试，以及结构化的 `locked` / `permission` / `filesystem` 失败原因。调用方只负责来源校验、能力清单校验和业务结果映射，不得各自再实现一套 rename/copy/rollback。
+
+`ManagedDirectoryOperationCoordinator` 在 Skill 和 Extension 服务之间共享同一串行队列，并由每次调用明确决定是否管理 Gateway 生命周期。Skill 支持热加载，导入、覆盖和删除绝不停止或重启 Gateway；锁冲突会直接通过 Restart Manager 和系统句柄表返回占用程序名与 PID。面向用户的占用列表会过滤 Electron 主进程、renderer/utility 子进程和受管 Gateway，只保留用户能够关闭的外部程序；若诊断结果只有本软件进程，则显示内部占用与重启应用的建议，不暴露无意义的自身 PID。Extension 包变更需要重启 Gateway，因此其锁恢复可先停止 Gateway、重试目录事务，再恢复 Gateway。ACL、磁盘、路径、包格式等非锁错误保留原始分类。Extension 的实际 package stage/publish 仍由 OpenClaw CLI 执行；coordinator 会在调用 CLI 前预检目标目录占用：外部进程占用时不允许 CLI 开始修改并返回程序名和 PID，只有 Gateway 占用时才先停止 Gateway、执行操作并恢复运行。CLI 返回的无错误码 `Permission denied` / `Access denied` 也会进入同一锁诊断流程。
+
 ## Extensions
 
 Extension 是原生 OpenClaw 扩展包，manifest 为 `openclaw.plugin.json`。本地导入支持目录、ZIP、TAR、TAR.GZ 和 TGZ；导入服务负责解压、校验 manifest、准备 runtime、安装缺失依赖、写入配置并按需重启 Gateway。
 
 Extension 可以声明配置字段和敏感字段。Renderer 只提交字符串值；Main process 限制字段数量、路径长度和值长度，并由 Extension service 写入配置。敏感值不得进入日志或 UI 明文回显。
 
-Extension 的启用、删除和配置更新由 `OpenClawExtensionImportService` 统一处理。由 Extension 提供的 Skill、MCP 或 Hook 不应在子能力页面直接删除，否则可能破坏 Extension 包完整性。
+Extension 的导入、更新、删除、启用和配置更新由 `OpenClawExtensionImportService` 统一处理。导入、更新和删除的 CLI 目录事务接入公共 `ManagedDirectoryOperationCoordinator`，与 Skill 文件变更互斥，并复用 Gateway 句柄释放和外部锁诊断。由 Extension 提供的 Skill、MCP 或 Hook 不应在子能力页面直接删除，否则可能破坏 Extension 包完整性。
 
 内置 `ask-user-question` Extension 通过 Main process 的 loopback HTTP callback server 把结构化问题交给 renderer。Callback server 使用动态端口，因此必须先开始监听，再把当前 URL 和 secret placeholder 同步到 Gateway 配置。每次确保 Gateway 可用时都会先检查 callback host；如果端口变化而 Gateway 仍在运行，Gateway watcher 会热重载 Extension 配置，使它不再请求上一次进程留下的失效端口。只有 secret 环境变量或 Extension manifest 变化才需要 JustDo 硬重启 Gateway。Callback URL 只在 HTTP server 确实处于 listening 状态时对外发布。
 
@@ -113,6 +119,8 @@ OpenClaw precedence 为 `openclaw-extra` < `openclaw-bundled` < `openclaw-manage
 
 用户可从目录或 ZIP、TAR、TAR.GZ、TGZ 导入 Skill。压缩包先解压到临时目录，校验 `SKILL.md`、拒绝符号链接，再复制到 Gateway state 的 managed Skill 目录。用户数据不应在应用升级时被覆盖。
 
+Skill 导入、覆盖和删除通过公共托管目录事务模块执行。`OpenClawSkillFiles` 负责 Skill 校验和调用事务性 replace/remove；`OpenClawSkillFileService` 把结构化失败映射为 Skill IPC 结果。它与 Extension 共享 coordinator 以避免 UI、Marketplace 和不同插件类型的请求并发改写目录，但 Skill 操作不启用 coordinator 的 Gateway 生命周期管理。
+
 Skill 卡片仅对 `openclaw-workspace`、`agents-skills-project`、`agents-skills-personal` 和 `openclaw-managed` 来源提供删除。删除请求携带 `id + source`，Main process 从最新 `skills.status` 精确匹配条目，并校验目标为包含 `SKILL.md` 的 `skills/<skill-id>/` 目录。`openclaw-bundled`、`openclaw-extra` 和 `unknown` 来源不可删除。
 
 主要 preload API：
@@ -131,13 +139,17 @@ sequenceDiagram
   actor User
   participant UI as SkillsManager
   participant IPC as Skills IPC
-  participant Files as OpenClawSkillFiles
+  participant Files as OpenClawSkillFileService
   participant Service as OpenClawSkillService
   participant Gateway
 
   User->>UI: Import Skill
   UI->>IPC: skills.importPath(sourcePath)
-  IPC->>Files: extract / validate / copy
+  IPC->>Files: serialized extract / validate / copy
+  opt Windows directory lock
+    Files->>Files: identify locking process
+    Files-->>UI: process name / PID and retry guidance
+  end
   Files-->>UI: import result
   UI->>IPC: skills.list()
   IPC->>Service: getStatus()
