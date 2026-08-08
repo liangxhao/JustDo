@@ -190,8 +190,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
                       }`}
                     />
                     <span className="text-xs font-semibold text-foreground/80">{label}</span>
-                    <span className="h-px flex-1 bg-border" />
-                    <span className="min-w-5 rounded-full bg-surface-raised px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums text-secondary">
+                    <span className="ml-auto min-w-5 rounded-full bg-surface-raised px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums text-secondary">
                       {group.sessions.length}
                     </span>
                   </button>
@@ -214,6 +213,7 @@ interface UngroupedSessionListProps {
   isBatchMode: boolean;
   selectedIds: Set<string>;
   showBatchOption?: boolean;
+  showCreateGroupButton?: boolean;
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, title: string) => void;
@@ -229,6 +229,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   isBatchMode,
   selectedIds,
   showBatchOption = true,
+  showCreateGroupButton = true,
   onSelectSession,
   onDeleteSession,
   onRenameSession,
@@ -427,27 +428,29 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="space-y-px">
-        {/* 对话分组 section - always show header with create button */}
+        {/* 对话分组 section */}
         <div className="flex items-center justify-between px-2.5 pt-2 pb-1">
           <span className="text-xs font-medium text-secondary">
             {i18nService.t('groupedSessions')}
           </span>
-          <button
-            type="button"
-            onClick={() => setIsCreateGroupOpen(true)}
-            className="h-5 w-5 inline-flex items-center justify-center rounded text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
-            aria-label="Create new group"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              className="h-3.5 w-3.5"
+          {showCreateGroupButton && (
+            <button
+              type="button"
+              onClick={() => setIsCreateGroupOpen(true)}
+              className="h-5 w-5 inline-flex items-center justify-center rounded text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+              aria-label="Create new group"
             >
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                className="h-3.5 w-3.5"
+              >
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+          )}
         </div>
         {groups.length > 0 && (
           <>
@@ -539,12 +542,14 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         )}
       </DragOverlay>
 
-      <CreateGroupModal
-        isOpen={isCreateGroupOpen}
-        onClose={() => setIsCreateGroupOpen(false)}
-        onCreate={handleCreateGroup}
-        existingColors={groups.map(g => g.color)}
-      />
+      {showCreateGroupButton && (
+        <CreateGroupModal
+          isOpen={isCreateGroupOpen}
+          onClose={() => setIsCreateGroupOpen(false)}
+          onCreate={handleCreateGroup}
+          existingColors={groups.map(g => g.color)}
+        />
+      )}
     </DndContext>
   );
 };

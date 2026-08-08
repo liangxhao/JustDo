@@ -106,6 +106,7 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
               isBatchMode={false}
               selectedIds={emptySet}
               showBatchOption={false}
+              showCreateGroupButton={false}
               onSelectSession={handleSelectSession}
               onDeleteSession={onDeleteSession}
               onRenameSession={onRenameSession}
