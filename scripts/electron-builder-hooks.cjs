@@ -21,6 +21,7 @@ const yaml = require('js-yaml');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
 const { ensurePortableGit } = require('./setup-mingit.js');
 const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resources.cjs');
+const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
 const { packMultipleSources } = require('./pack-openclaw-tar.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 const {
@@ -310,6 +311,7 @@ function ensureBundledOpenClawRuntime(context) {
   const buildHint = getOpenClawRuntimeBuildHint(targetId);
 
   syncOpenClawRuntimeResources(runtimeRoot, { label: 'electron-builder-hooks' });
+  syncBundledSkills(path.join(__dirname, '..'), runtimeRoot, 'electron-builder-hooks');
   verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint);
   verifyBundledSkillResources(buildHint);
 
@@ -647,9 +649,11 @@ function installSkillDependencies() {
 
 async function beforePack(context) {
   rebuildElectronNativeModules(context);
-  ensureBundledOpenClawRuntime(context);
   // Install skill dependencies first (for all platforms)
   installSkillDependencies();
+  // Copy the fully prepared custom skills after dependencies are installed so
+  // every packaging entry point receives the exact enabled skill set.
+  ensureBundledOpenClawRuntime(context);
 
   if (isWindowsTarget(context)) {
     // ── Prepare runtime resources BEFORE tar packing ──
@@ -687,11 +691,9 @@ async function beforePack(context) {
         label: 'OpenClaw runtime',
         dir: path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current'),
         prefix: 'cfmind',
-      },
-      {
-        label: 'Skills',
-        dir: path.join(__dirname, '..', 'resources', 'skills'),
-        prefix: 'skills',
+        // gateway-bundle.mjs is the Windows gateway entry and the bare dist/
+        // tree serves CLI/client fallbacks. gateway.asar duplicates that tree.
+        exclude: ['gateway.asar'],
       },
       {
         label: 'Python runtime',
@@ -727,7 +729,7 @@ async function beforePack(context) {
     // ── Validate the combined tar ──
     // Verify that each expected prefix actually has content in the archive.
     // This catches build misconfigurations early instead of at install time.
-    const requiredPrefixes = ['cfmind/', 'skills/', 'python-win/', 'mingit/'];
+    const requiredPrefixes = ['cfmind/', 'python-win/', 'mingit/'];
     const optionalPrefixes = ['dependency-config/'];
     const tarEntries = [];
     const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
@@ -756,17 +758,18 @@ async function beforePack(context) {
     const runtimeCompanionTarEntries = getRuntimeCompanionPathsReferencedByBundle(
       path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current', 'gateway-bundle.mjs'),
     ).map(entry => `cfmind/${entry}`);
+    const { enabledSkillIds } = readBundledSkillConfig(path.join(__dirname, '..'));
     const requiredTarEntries = [
       'cfmind/package.json',
       'cfmind/runtime-build-info.json',
       `cfmind/${PATCH_MANIFEST_FILENAME}`,
       'cfmind/gateway-bundle.mjs',
       'cfmind/gateway-launcher.cjs',
-      'cfmind/gateway.asar',
       'cfmind/openclaw.mjs',
       'cfmind/docs/channels/index.md',
       'cfmind/docs/gateway/config-channels.md',
       'cfmind/docs/reference/templates/AGENTS.md',
+      ...enabledSkillIds.map(skillId => `cfmind/skills/${skillId}/SKILL.md`),
       'python-win/python.exe',
       ...runtimeCompanionTarEntries,
     ];

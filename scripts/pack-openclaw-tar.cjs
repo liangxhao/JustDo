@@ -9,7 +9,7 @@
  *
  * Used by electron-builder-hooks beforePack to pack:
  *   - OpenClaw runtime (vendor/openclaw-runtime/current -> cfmind/)
- *   - Skills directory (resources/skills -> skills/)
+ *   - Custom skills already synchronized into the OpenClaw runtime
  *   - Python runtime (resources/python-win -> python-win/)
  *
  * Usage:
@@ -62,7 +62,7 @@ const EXCLUDED_DIRS = new Set([
   'examples',
   'coverage',
   '.venv',
-  '.bin',  // node_modules/.bin contains symlinks that break tar on cross-platform builds
+  '.bin', // node_modules/.bin contains symlinks that break tar on cross-platform builds
 ]);
 
 const EXCLUDED_ENVFILE = /^\.env(\..+)?$/i;
@@ -78,9 +78,17 @@ function shouldExclude(entryPath) {
 
   // Check file exclusion
   if (EXCLUDED_ENVFILE.test(basename)) return true;
-  if (EXCLUDED_FILE_PATTERNS.some((p) => p.test(basename))) return true;
+  if (EXCLUDED_FILE_PATTERNS.some(p => p.test(basename))) return true;
 
   return false;
+}
+
+function shouldExcludeFromSource(entryPath, excludedPaths = []) {
+  const normalized = entryPath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+  return excludedPaths.some(excludedPath => {
+    const excluded = excludedPath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+    return normalized === excluded || normalized.startsWith(`${excluded}/`);
+  });
 }
 
 // ── Pack functions ───────────────────────────────────────────────────────────
@@ -130,13 +138,13 @@ function packSingleSource(sourceDir, outputTar, prefix) {
       sync: true,
       // Follow symlinks instead of storing them (avoids Windows issues)
       follow: true,
-      filter: (filePath) => !shouldExclude(filePath),
+      filter: filePath => !shouldExclude(filePath),
     },
     // Pack all top-level entries (tar will recurse)
-    fs.readdirSync(sourceDir).filter((name) => {
+    fs.readdirSync(sourceDir).filter(name => {
       if (EXCLUDED_DIRS.has(name.toLowerCase())) return false;
       return true;
-    })
+    }),
   );
 
   return { totalFiles: entries.length, skipped };
@@ -152,7 +160,7 @@ function packMultipleSources(sources, outputTar) {
 
   // Pack first source (creates the tar)
   let first = true;
-  for (const { dir, prefix } of sources) {
+  for (const { dir, prefix, exclude = [] } of sources) {
     if (!fs.existsSync(dir)) {
       console.log(`[pack-openclaw-tar]   Skipping ${prefix}: ${dir} not found`);
       continue;
@@ -161,12 +169,17 @@ function packMultipleSources(sources, outputTar) {
     console.log(`[pack-openclaw-tar]   Adding ${prefix} ← ${dir}`);
 
     const entries = [];
-    function countFiles(d) {
+    function countFiles(d, relativeDir = '') {
       for (const item of fs.readdirSync(d, { withFileTypes: true })) {
         if (item.isSymbolicLink()) continue;
         const fullPath = path.join(d, item.name);
+        const relativePath = relativeDir ? `${relativeDir}/${item.name}` : item.name;
+        if (shouldExcludeFromSource(relativePath, exclude)) {
+          totalSkipped++;
+          continue;
+        }
         if (item.isDirectory()) {
-          if (!EXCLUDED_DIRS.has(item.name.toLowerCase())) countFiles(fullPath);
+          if (!EXCLUDED_DIRS.has(item.name.toLowerCase())) countFiles(fullPath, relativePath);
         } else if (item.isFile()) {
           if (!shouldExclude(item.name)) entries.push(item.name);
           else totalSkipped++;
@@ -182,14 +195,16 @@ function packMultipleSources(sources, outputTar) {
       prefix,
       sync: true,
       follow: true,
-      filter: (filePath) => !shouldExclude(filePath),
+      filter: filePath => !shouldExclude(filePath) && !shouldExcludeFromSource(filePath, exclude),
     };
 
     if (first) {
       // Create new tar
       tar.create(
         opts,
-        fs.readdirSync(dir).filter((n) => !EXCLUDED_DIRS.has(n.toLowerCase()))
+        fs
+          .readdirSync(dir)
+          .filter(n => !EXCLUDED_DIRS.has(n.toLowerCase()) && !shouldExcludeFromSource(n, exclude)),
       );
       first = false;
     } else {
@@ -197,7 +212,9 @@ function packMultipleSources(sources, outputTar) {
       // npm tar doesn't support append directly, so we use replace with gzip:false
       tar.replace(
         opts,
-        fs.readdirSync(dir).filter((n) => !EXCLUDED_DIRS.has(n.toLowerCase()))
+        fs
+          .readdirSync(dir)
+          .filter(n => !EXCLUDED_DIRS.has(n.toLowerCase()) && !shouldExcludeFromSource(n, exclude)),
       );
     }
   }
@@ -219,8 +236,11 @@ function main() {
     if (fs.existsSync(outputTar)) fs.unlinkSync(outputTar);
 
     const sources = [
-      { dir: path.join(projectRoot, 'vendor', 'openclaw-runtime', 'current'), prefix: 'cfmind' },
-      { dir: path.join(projectRoot, 'resources', 'skills'), prefix: 'skills' },
+      {
+        dir: path.join(projectRoot, 'vendor', 'openclaw-runtime', 'current'),
+        prefix: 'cfmind',
+        exclude: ['gateway.asar'],
+      },
       { dir: path.join(projectRoot, 'resources', 'python-win'), prefix: 'python-win' },
     ];
 
@@ -230,16 +250,16 @@ function main() {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     const sizeMB = (fs.statSync(outputTar).size / (1024 * 1024)).toFixed(1);
     console.log(
-      `[pack-openclaw-tar] Done in ${elapsed}s: ${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`
+      `[pack-openclaw-tar] Done in ${elapsed}s: ${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`,
     );
     return;
   }
 
   // Single directory mode
-  const sourceDir = process.argv[2]
-    || path.join(projectRoot, 'vendor', 'openclaw-runtime', 'current');
-  const outputTar = process.argv[3]
-    || path.join(projectRoot, 'vendor', 'openclaw-runtime', 'cfmind.tar');
+  const sourceDir =
+    process.argv[2] || path.join(projectRoot, 'vendor', 'openclaw-runtime', 'current');
+  const outputTar =
+    process.argv[3] || path.join(projectRoot, 'vendor', 'openclaw-runtime', 'cfmind.tar');
 
   if (!fs.existsSync(sourceDir)) {
     console.error(`[pack-openclaw-tar] Source directory not found: ${sourceDir}`);
@@ -258,7 +278,7 @@ function main() {
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   const sizeMB = (fs.statSync(outputTar).size / (1024 * 1024)).toFixed(1);
   console.log(
-    `[pack-openclaw-tar] Done in ${elapsed}s: ${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`
+    `[pack-openclaw-tar] Done in ${elapsed}s: ${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`,
   );
 }
 

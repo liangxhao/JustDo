@@ -133,11 +133,18 @@ Main bundle 需要 external 部分 native/Electron/runtime 依赖，例如：
 
 | 平台 | 输出 | 资源策略 |
 | --- | --- | --- |
-| macOS | DMG | `resources/skills` 和 `vendor/openclaw-runtime/current` 作为 extraResources |
-| Windows | NSIS | 使用 `build-tar/win-resources.tar` 和 unpack script |
-| Linux | AppImage/deb | skills 和 runtime 作为 extraResources |
+| macOS | DMG | `vendor/openclaw-runtime/current` 作为 extraResources，内置 skills 随 runtime 提供 |
+| Windows | NSIS | 使用 `build-tar/win-resources.tar` 和 unpack script，内置 skills 仅保留 runtime 内的一份 |
+| Linux | AppImage/deb | runtime 作为 extraResources，内置 skills 随 runtime 提供 |
 
-打包过滤会排除 README、license、tests、map、d.ts 等开发文件。新增 runtime 必需资产时要确认不会被过滤误删。
+生产构建关闭 source map 并启用压缩。打包过滤会排除 README、license、tests、map、d.ts
+以及 `compile:electron` 产生但运行时不使用的 `dist-electron/src`。新增 runtime 必需资产时要确认
+不会被过滤误删。Renderer 和已打入 main bundle 的依赖属于构建依赖，不应再次进入生产
+`node_modules`；生产依赖只保留 Electron 外置模块和离线运行时工具。
+OpenClaw 的构建目录仍保留 `gateway.asar` 供准备和校验阶段使用，但分发包不再携带它：
+Gateway 使用 `gateway-bundle.mjs`，CLI/client 回退使用已展开的 `openclaw.mjs` 和 `dist/`。
+每次 `beforePack` 都会按照 `resources/builtin-skills.json` 将 `resources/skills` 全量同步到
+runtime；Windows 升级安装会整目录替换 `cfmind`，避免旧版默认 skills 或已删除文件残留。
 
 Windows NSIS 使用 `electron-updater` 从 Generic HTTPS 静态目录更新。feed 固化在
 `scripts/windows-update-config.cjs`，打包过程不访问更新服务器，也不依赖环境变量；安装包

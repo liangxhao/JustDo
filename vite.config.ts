@@ -10,6 +10,7 @@ import packageJson from './package.json';
 
 // https://vitejs.dev/config/
 const devPort = packageJson.devServer.port;
+const isProductionBuild = process.env.NODE_ENV !== 'development';
 const escapedProductName = packageJson.productName.replace(
   /[&<>"']/g,
   character =>
@@ -34,9 +35,9 @@ export default defineConfig({
         entry: 'src/main/main.ts',
         vite: {
           build: {
-            sourcemap: true,
+            sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
-            minify: false,
+            minify: isProductionBuild ? 'esbuild' : false,
             rollupOptions: {
               external: id => {
                 const staticExternals = [
@@ -79,9 +80,9 @@ export default defineConfig({
         entry: 'src/main/preload.ts',
         vite: {
           build: {
-            sourcemap: true,
+            sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
-            minify: false,
+            minify: isProductionBuild ? 'esbuild' : false,
             rollupOptions: {
               checks: {
                 pluginTimings: false,
@@ -106,8 +107,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
-    minify: false,
+    sourcemap: !isProductionBuild,
+    minify: isProductionBuild ? 'esbuild' : false,
+    cssMinify: isProductionBuild ? 'esbuild' : false,
     rollupOptions: {
       checks: {
         pluginTimings: false,

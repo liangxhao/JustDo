@@ -10,12 +10,12 @@
     {
       "from": "dist",
       "to": "dist",
-      "filter": ["**/*"]
+      "filter": ["**/*", "!**/*.map"]
     },
     {
       "from": "dist-electron",
       "to": "dist-electron",
-      "filter": ["**/*"]
+      "filter": ["**/*", "!**/*.map", "!src/**"]
     },
     "!**/*.map",
     "!**/*.d.ts",
@@ -38,7 +38,12 @@
     "!**/*.spec.*",
     "!**/tests/**",
     "!**/test/**",
-    "!**/__tests__/**"
+    "!**/__tests__/**",
+    "!node_modules/better-sqlite3/deps/**",
+    "!node_modules/better-sqlite3/src/**",
+    "!node_modules/better-sqlite3/binding.gyp",
+    "!node_modules/npm/docs/**",
+    "!node_modules/npm/man/**"
   ],
   "extraResources": [
     {
@@ -65,43 +70,11 @@
     },
     "extraResources": [
       {
-        "from": "resources/skills",
-        "to": "skills",
-        "filter": [
-          "**/*",
-          "!**/.env",
-          "!**/.env.*",
-          "!**/.venv",
-          "!**/.venv/**",
-          "!**/*.map",
-          "!**/*.d.ts",
-          "!**/*.d.cts",
-          "!**/*.d.mts",
-          "!**/README.md",
-          "!**/README",
-          "!**/readme.md",
-          "!**/CHANGELOG.md",
-          "!**/CHANGELOG",
-          "!**/HISTORY.md",
-          "!**/LICENSE",
-          "!**/LICENSE.md",
-          "!**/LICENSE.txt",
-          "!**/.eslintrc*",
-          "!**/.prettierrc*",
-          "!**/tsconfig.json",
-          "!**/tsconfig.*.json",
-          "!**/*.test.*",
-          "!**/*.spec.*",
-          "!**/tests/**",
-          "!**/test/**",
-          "!**/__tests__/**"
-        ]
-      },
-      {
         "from": "vendor/openclaw-runtime/current",
         "to": "cfmind",
         "filter": [
           "**/*",
+          "!gateway.asar",
           "!**/*.map",
           "!**/*.d.ts",
           "!**/*.d.cts",
@@ -153,43 +126,11 @@
     "category": "Utility",
     "extraResources": [
       {
-        "from": "resources/skills",
-        "to": "skills",
-        "filter": [
-          "**/*",
-          "!**/.env",
-          "!**/.env.*",
-          "!**/.venv",
-          "!**/.venv/**",
-          "!**/*.map",
-          "!**/*.d.ts",
-          "!**/*.d.cts",
-          "!**/*.d.mts",
-          "!**/README.md",
-          "!**/README",
-          "!**/readme.md",
-          "!**/CHANGELOG.md",
-          "!**/CHANGELOG",
-          "!**/HISTORY.md",
-          "!**/LICENSE",
-          "!**/LICENSE.md",
-          "!**/LICENSE.txt",
-          "!**/.eslintrc*",
-          "!**/.prettierrc*",
-          "!**/tsconfig.json",
-          "!**/tsconfig.*.json",
-          "!**/*.test.*",
-          "!**/*.spec.*",
-          "!**/tests/**",
-          "!**/test/**",
-          "!**/__tests__/**"
-        ]
-      },
-      {
         "from": "vendor/openclaw-runtime/current",
         "to": "cfmind",
         "filter": [
           "**/*",
+          "!gateway.asar",
           "!**/*.map",
           "!**/*.d.ts",
           "!**/*.d.cts",
@@ -229,9 +170,6 @@
     "deleteAppDataOnUninstall": true,
     "include": "scripts/nsis-installer.nsh"
   },
-  "asarUnpack": [
-    "node_modules/better-sqlite3/**",
-    "node_modules/npm/**"
-  ],
+  "asarUnpack": ["node_modules/better-sqlite3/build/Release/*.node"],
   "asar": true
 }

@@ -10,7 +10,7 @@
  *
  * 效果:
  *   输入: $INSTDIR/resources/win-resources.tar
- *   输出: $INSTDIR/resources/cfmind/, skills/, python-win/, mingit/
+ *   输出: $INSTDIR/resources/cfmind/, python-win/, mingit/
  *   tar 文件由 NSIS 脚本在解压后删除
  *
  * 依赖: 从 app.asar 内加载 tar npm 包 (Electron 内置 ASAR 透明读取支持)
@@ -85,13 +85,26 @@ try {
 
   // Upgrades used to bundle PortableGit in this directory. Keep a same-volume
   // backup until the replacement has been extracted and validated so a failed
-  // installation can restore the last working Git runtime.
+  // installation can restore the last working Git runtime. Replace cfmind the
+  // same way so removed OpenClaw files and default skills cannot survive an
+  // upgrade that is meant to provide a fully replaced runtime.
+  const cfmindDir = path.join(destDir, 'cfmind');
+  const cfmindBackupDir = path.join(destDir, '.cfmind-upgrade-backup');
   const minGitDir = path.join(destDir, 'mingit');
   const minGitBackupDir = path.join(destDir, '.mingit-upgrade-backup');
+  if (fs.existsSync(cfmindBackupDir)) {
+    activity('Recovering the previous OpenClaw runtime backup...');
+    fs.rmSync(cfmindDir, { recursive: true, force: true });
+    fs.renameSync(cfmindBackupDir, cfmindDir);
+  }
   if (fs.existsSync(minGitBackupDir)) {
     activity('Recovering the previous Git runtime backup...');
     fs.rmSync(minGitDir, { recursive: true, force: true });
     fs.renameSync(minGitBackupDir, minGitDir);
+  }
+  if (fs.existsSync(cfmindDir)) {
+    activity('Backing up the previous OpenClaw runtime...');
+    fs.renameSync(cfmindDir, cfmindBackupDir);
   }
   if (fs.existsSync(minGitDir)) {
     activity('Backing up the previous Git runtime...');
@@ -127,9 +140,22 @@ try {
       throw new Error(`MinGit extraction is missing a non-empty git.exe in: ${minGitDir}`);
     }
 
+    const runtimePackagePath = path.join(cfmindDir, 'package.json');
+    if (!fs.existsSync(runtimePackagePath) || fs.statSync(runtimePackagePath).size === 0) {
+      throw new Error(
+        `OpenClaw extraction is missing a non-empty package.json: ${runtimePackagePath}`,
+      );
+    }
+
+    fs.rmSync(cfmindBackupDir, { recursive: true, force: true });
     fs.rmSync(minGitBackupDir, { recursive: true, force: true });
   } catch (error) {
+    fs.rmSync(cfmindDir, { recursive: true, force: true });
     fs.rmSync(minGitDir, { recursive: true, force: true });
+    if (fs.existsSync(cfmindBackupDir)) {
+      fs.renameSync(cfmindBackupDir, cfmindDir);
+      activity('Restored the previous OpenClaw runtime after extraction failed.');
+    }
     if (fs.existsSync(minGitBackupDir)) {
       fs.renameSync(minGitBackupDir, minGitDir);
       activity('Restored the previous Git runtime after extraction failed.');

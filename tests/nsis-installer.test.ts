@@ -87,23 +87,44 @@ describe('Windows installer process handling', () => {
       "const minGitBackupDir = path.join(destDir, '.mingit-upgrade-backup')",
     );
     expect(unpackScript).toContain('MinGit extraction is missing a non-empty git.exe');
+    expect(unpackScript).toContain("const cfmindDir = path.join(destDir, 'cfmind')");
+    expect(unpackScript).toContain(
+      "const cfmindBackupDir = path.join(destDir, '.cfmind-upgrade-backup')",
+    );
   });
 
-  it('does not retain PortableGit files in an upgraded installation', () => {
+  it('does not retain old Git files or OpenClaw skills in an upgraded installation', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-mingit-upgrade-'));
     tempDirs.push(root);
     const archiveRoot = path.join(root, 'archive');
     const installResources = path.join(root, 'installed-resources');
     const archivePath = path.join(root, 'win-resources.tar');
     const staleBashPath = path.join(installResources, 'mingit', 'bin', 'bash.exe');
+    const staleSkillPath = path.join(
+      installResources,
+      'cfmind',
+      'skills',
+      'openclaw-default',
+      'SKILL.md',
+    );
+    const customSkillPath = path.join(
+      installResources,
+      'cfmind',
+      'skills',
+      'custom-skill',
+      'SKILL.md',
+    );
     const installedGitPath = path.join(installResources, 'mingit', 'cmd', 'git.exe');
 
-    mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
+    mkdirSync(path.join(archiveRoot, 'cfmind', 'skills', 'custom-skill'), { recursive: true });
     mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
     mkdirSync(path.dirname(staleBashPath), { recursive: true });
+    mkdirSync(path.dirname(staleSkillPath), { recursive: true });
     writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeFileSync(path.join(archiveRoot, 'cfmind', 'skills', 'custom-skill', 'SKILL.md'), 'custom');
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'mingit');
     writeFileSync(staleBashPath, 'portable-git');
+    writeFileSync(staleSkillPath, 'default');
     createTar({ cwd: archiveRoot, file: archivePath, sync: true }, ['cfmind', 'mingit']);
 
     const result = spawnSync(process.execPath, [unpackScriptPath, archivePath, installResources], {
@@ -113,6 +134,9 @@ describe('Windows installer process handling', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(installedGitPath)).toBe(true);
     expect(existsSync(staleBashPath)).toBe(false);
+    expect(existsSync(staleSkillPath)).toBe(false);
+    expect(existsSync(customSkillPath)).toBe(true);
+    expect(existsSync(path.join(installResources, '.cfmind-upgrade-backup'))).toBe(false);
     expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
   });
 
