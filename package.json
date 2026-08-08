@@ -161,7 +161,7 @@
     "vite-plugin-electron-renderer": "^1.0.0",
     "vite-plugin-monaco-editor": "^1.1.0",
     "vitest": "^4.1.0",
-    "wait-on": "^7.2.0",
+    "wait-on": "^9.1.0",
     "yazl": "^3.3.1"
   }
 }
