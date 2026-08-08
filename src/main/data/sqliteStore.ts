@@ -130,6 +130,7 @@ export class SqliteStore {
         pinned INTEGER NOT NULL DEFAULT 0,
         cwd TEXT NOT NULL,
         execution_mode TEXT,
+        permission_mode TEXT,
         active_skill_ids TEXT,
         agent_id TEXT NOT NULL DEFAULT 'main',
         group_id TEXT REFERENCES session_groups(id),
@@ -137,6 +138,7 @@ export class SqliteStore {
         updated_at INTEGER NOT NULL
       );
     `);
+    this.ensureColumn('cowork_sessions', 'permission_mode', 'TEXT');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_messages (

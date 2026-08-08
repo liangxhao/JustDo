@@ -61,6 +61,22 @@ describe('cowork config IPC', () => {
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
+  it('hot-updates a global permission change without a workload restriction', async () => {
+    const result = await handlers.get('cowork:config:set')?.({}, { permissionMode: 'ask' });
+
+    expect(result).toEqual({ success: true });
+    expect(setConfig).toHaveBeenCalledWith({
+      workingDirectory: undefined,
+      executionMode: undefined,
+      agentEngine: undefined,
+      permissionMode: 'ask',
+    });
+    expect(syncOpenClawConfig).toHaveBeenCalledWith({
+      reason: 'cowork-config-change',
+      restartGatewayIfRunning: false,
+    });
+  });
+
   it('rolls back persisted and generated policy when config sync fails', async () => {
     syncOpenClawConfig
       .mockResolvedValueOnce({ success: false, changed: true, error: 'disk full' })

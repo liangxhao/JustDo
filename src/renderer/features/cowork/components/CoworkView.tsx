@@ -30,7 +30,6 @@ import {
 import { coworkService } from '@/features/cowork/coworkService';
 import {
   addMessage,
-  clearCurrentSession,
   setCurrentSession,
   setStreaming,
   updateSessionStatus,
@@ -267,6 +266,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         updatedAt: now,
         cwd: config.workingDirectory || '',
         executionMode: config.executionMode || 'local',
+        permissionMode: config.permissionMode,
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
         messages: [
@@ -386,7 +386,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   useEffect(() => {
     const handleNewSession = () => {
-      dispatch(clearCurrentSession());
+      coworkService.clearSession();
       window.dispatchEvent(
         new CustomEvent('cowork:focus-input', {
           detail: { clear: true },

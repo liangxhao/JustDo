@@ -1,6 +1,29 @@
 import { describe, expect, test } from 'vitest';
 
-import coworkReducer, { addDraftAttachment, hydrateDraftImageAttachment } from './coworkSlice';
+import coworkReducer, {
+  addDraftAttachment,
+  clearCurrentSession,
+  hydrateDraftImageAttachment,
+  setConfig,
+} from './coworkSlice';
+
+describe('cowork session permissions', () => {
+  test('uses full access for a new session draft', () => {
+    const restricted = coworkReducer(
+      undefined,
+      setConfig({
+        workingDirectory: 'C:\\workspace',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'ask',
+      }),
+    );
+
+    const newSession = coworkReducer(restricted, clearCurrentSession());
+
+    expect(newSession.config.permissionMode).toBe('full');
+  });
+});
 
 describe('cowork draft attachments', () => {
   test('hydrates an existing path attachment for vision after a model switch', () => {

@@ -1,4 +1,5 @@
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/openclaw/approvals';
 import { flushSync } from 'react-dom';
 
 import {
@@ -23,6 +24,8 @@ import {
   setSessionRuntimeActivity,
   setSessions,
   setStreaming,
+  updateConfig,
+  updateCurrentSessionPermissionMode,
   updateGroup,
   updateMessageContent,
   updateMessageMetadata,
@@ -534,7 +537,14 @@ class CoworkService {
   async loadConfig(): Promise<void> {
     const result = await window.electron?.cowork?.getConfig();
     if (result?.success && result.config) {
-      store.dispatch(setConfig(result.config));
+      if (!store.getState().cowork.currentSession) {
+        store.dispatch(setConfig({ ...result.config, permissionMode: DEFAULT_PERMISSION_MODE }));
+        if (result.config.permissionMode !== DEFAULT_PERMISSION_MODE) {
+          await this.updateConfigResult({ permissionMode: DEFAULT_PERMISSION_MODE });
+        }
+      } else {
+        store.dispatch(setConfig(result.config));
+      }
     }
   }
 
@@ -561,9 +571,13 @@ class CoworkService {
       return { session: null, error: 'Cowork API not available' };
     }
 
+    const activeSession = store.getState().cowork.currentSession;
+    const permissionMode =
+      activeSession?.permissionMode ?? store.getState().cowork.config.permissionMode;
+
     store.dispatch(setStreaming(true));
 
-    const result = await cowork.startSession(options);
+    const result = await cowork.startSession({ ...options, permissionMode });
     if (result.success && result.session) {
       const runningSession: CoworkSession = { ...result.session, status: 'running' };
       store.dispatch(addSession(runningSession));
@@ -833,6 +847,38 @@ class CoworkService {
     return (await this.updateConfigResult(config)).success;
   }
 
+  async updatePermissionMode(
+    permissionMode: PermissionMode,
+  ): Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }> {
+    const session = store.getState().cowork.currentSession;
+    if (!session || session.id.startsWith('temp-')) {
+      const result = await this.updateConfigResult({ permissionMode });
+      if (!result.success) return result;
+      if (!session) return result;
+      store.dispatch(
+        updateCurrentSessionPermissionMode({ sessionId: session.id, permissionMode }),
+      );
+      return result;
+    }
+
+    const persisted = await window.electron.cowork.setSessionPermissionMode({
+      sessionId: session.id,
+      permissionMode,
+    });
+    if (!persisted.success) return persisted;
+
+    const authoritative = await window.electron.cowork.getConfig();
+    if (authoritative.success && authoritative.config) {
+      store.dispatch(setConfig(authoritative.config));
+    } else {
+      store.dispatch(updateConfig({ permissionMode }));
+    }
+    store.dispatch(
+      updateCurrentSessionPermissionMode({ sessionId: session.id, permissionMode }),
+    );
+    return { success: true };
+  }
+
   async updateConfigResult(
     config: CoworkConfigUpdate,
   ): Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }> {
@@ -953,7 +999,9 @@ class CoworkService {
   }
 
   clearSession(): void {
+    this.latestLoadSessionRequestId += 1;
     store.dispatch(clearCurrentSession());
+    void this.updateConfigResult({ permissionMode: DEFAULT_PERMISSION_MODE });
   }
 
   // Session Group methods

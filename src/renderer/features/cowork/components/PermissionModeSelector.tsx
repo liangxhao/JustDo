@@ -26,7 +26,10 @@ const MODE_ICONS: Record<
 };
 
 const PermissionModeSelector: React.FC = () => {
-  const permissionMode = useSelector((state: RootState) => state.cowork.config.permissionMode);
+  const permissionMode = useSelector(
+    (state: RootState) =>
+      state.cowork.currentSession?.permissionMode ?? state.cowork.config.permissionMode,
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false);
@@ -73,7 +76,7 @@ const PermissionModeSelector: React.FC = () => {
     setIsSaving(true);
     setError(null);
     try {
-      const result = await coworkService.updateConfigResult({ permissionMode: nextMode });
+      const result = await coworkService.updatePermissionMode(nextMode);
       if (!result.success) {
         setError(result.error || i18nService.t('permissionModeSaveFailed'));
         return;

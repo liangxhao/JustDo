@@ -26,15 +26,17 @@ OpenClaw 是 npm 安装的第三方 runtime。不得修改 `../openclaw` 源码�
 
 本轮只要求用户在桌面对话中正常使用三档权限：
 
-| 模式   | 主机命令                                           | 核心文件工具                      | 生命周期                       |
-| ------ | -------------------------------------------------- | --------------------------------- | ------------------------------ |
-| `ask`  | allowlist 命中时执行；未命中时请求批准             | `write/edit/apply_patch` 请求批准 | 持久化为默认模式               |
-| `auto` | OpenClaw reviewer 自动审核；不确定或失败时请求批准 | 当前降级为人工请求批准            | 持久化为默认模式               |
-| `full` | 无需批准                                           | 无需批准                          | 二次确认；应用重启后恢复 `ask` |
+| 模式   | 主机命令                                           | 核心文件工具                      | 生命周期                        |
+| ------ | -------------------------------------------------- | --------------------------------- | ------------------------------- |
+| `ask`  | allowlist 命中时执行；未命中时请求批准             | `write/edit/apply_patch` 请求批准 | 按会话持久化                    |
+| `auto` | OpenClaw reviewer 自动审核；不确定或失败时请求批准 | 当前降级为人工请求批准            | 按会话持久化                    |
+| `full` | 无需批准                                           | 无需批准                          | 新会话/缺失值默认；按会话持久化 |
 
 Browser、消息、MCP、marketplace、第三方插件和其他 Gateway operator 客户端不自动受三档
 权限完整覆盖。Agent 可以通过原生 cron 工具创建和管理定时任务；任务执行不继承交互会话 grant，
 仍按届时生效的权限模式处理。
+会话权限按会话持久化，但 Gateway runtime 仍使用全局权限快照：打开会话不切换 runtime，
+只在发起 turn 前激活该会话权限。权限修改始终原生热更新，并行会话共同使用最新的 runtime 权限快照。
 
 用户界面只展示三档产品行为和可执行错误，不展示“desired/effective policy”“运行时快照”
 或“正在提交并核对运行时配置”等内部实现状态。
@@ -99,7 +101,8 @@ Full 下任务可完整无人值守；Ask/Smart 下的审批保持交互式并�
 
 状态：**按权限继承规则关闭**。Agent 可以调用原生 cron add/update/remove/run，但任务执行不继承
 创建任务时的交互会话 grant，也不会自动获得 Full。Ask/Auto 下的审批继续保持交互式并默认拒绝
-超时；Full 仍在应用重启前降级为 Ask。其他持有 Gateway operator 凭据的客户端仍属于外部信任边界。
+超时；会话权限从 SQLite 恢复，新会话、缺失值或非法值默认使用 Full。其他持有 Gateway operator
+凭据的客户端仍属于外部信任边界。
 
 ### R0-4：adapter info 被错误用作 active readiness
 
@@ -146,8 +149,8 @@ RPC 存活不能证明 trusted policy 已进入 active registry。
 - [ ] `CURRENT-3`：在临时 workspace 中分别执行真实 `write`、`edit`、`apply_patch`。
       `ask/auto` 必须在副作用前请求批准；deny、timeout、no route 后文件不变；allow-once
       只消费一次。
-- [ ] `CURRENT-4`：验证 `full` 下真实命令和上述文件工具无需批准，并验证应用重启前已将
-      `full` 降级为 `ask`。
+- [ ] `CURRENT-4`：验证 `full` 下真实命令和上述文件工具无需批准；验证应用重启后旧会话恢复
+      已保存权限，新会话、缺失值或非法值默认使用 `full`。
 - [ ] `CURRENT-5`：验证三档切换失败时只显示可执行错误，不恢复运行时快照、配置同步进度等
       技术提示。
 - [ ] `CURRENT-6`：确认并安全退出占用 `better-sqlite3` 的本仓库开发 Electron 进程后，
@@ -222,11 +225,11 @@ JustDo 固定 exec host 为 Gateway，不提供 node 工具或 node approvals。
 
 ### 三档产品语义
 
-| JustDo 预设 | exec 配置 | 文件修改                 | 当前对话功能约束                 |
-| ----------- | --------- | ------------------------ | -------------------------------- |
-| 请求批准    | `ask`     | 版本锁定适配器执行 `ask` | workspaceOnly；无 route 时拒绝   |
-| 智能审批    | `auto`    | 当前退化为人工 `ask`     | 命令不确定或审核失败时转人工     |
-| 完全权限    | `full`    | 无需批准                 | 二次确认；应用重启后恢复为 `ask` |
+| JustDo 预设 | exec 配置 | 文件修改                 | 当前对话功能约束               |
+| ----------- | --------- | ------------------------ | ------------------------------ |
+| 请求批准    | `ask`     | 版本锁定适配器执行 `ask` | workspaceOnly；无 route 时拒绝 |
+| 智能审批    | `auto`    | 当前退化为人工 `ask`     | 命令不确定或审核失败时转人工   |
+| 完全权限    | `full`    | 无需批准                 | 新会话默认；选择时二次确认     |
 
 Browser、消息、MCP、marketplace 和第三方插件不自动受这三档覆盖。UI 只陈述上表中的当前
 产品行为，不把产品配置展示成全工具 effective permission。
@@ -242,7 +245,7 @@ Browser、消息、MCP、marketplace 和第三方插件不自动受这三档覆�
 - [x] adapter info 不参与 active readiness；
 - [x] 权限应用或回滚无法确认时 Gateway 停止；
 - [x] UI 不展示运行时快照或配置同步进度；
-- [x] `full` 二次确认并在应用重启前降级为 `ask`；
+- [x] 新会话和无已存权限的会话默认为 `full`，旧会话恢复自身已存权限；
 - [x] cron-shaped approval 不根据 session key 与 job existence 自动放行；
 - [x] Agent 原生 cron mutation 不被文件权限策略阻断。
 
@@ -253,7 +256,7 @@ Browser、消息、MCP、marketplace 和第三方插件不自动受这三档覆�
 - [ ] allow-once 只消费一次；
 - [ ] `auto` 在 reviewer 缺失时不静默放行；
 - [ ] `full` 下命令和核心文件工具无需批准；
-- [ ] 应用重启后 `full` 在 Gateway 启动前恢复为 `ask`；
+- [ ] 新会话显示并使用 `full`；旧会话从 `cowork_sessions.permission_mode` 恢复，缺失或非法值回退到 `full`；
 - [ ] 合并前完整测试和工程检查通过。
 
 ### 未来安全边界

@@ -1,15 +1,20 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
+import { resolvePermissionMode } from '../../../shared/openclaw/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/taskWorkspace';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
+import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
 
 interface SessionExecutionHandlerDependencies {
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
+  acquirePermissionModeForTurn: (
+    permissionMode: ReturnType<typeof resolvePermissionMode>,
+  ) => Promise<PermissionModeOperationResult>;
   getEngineNotReadyResponse: (status: OpenClawEngineStatus) => {
     success: boolean;
     code: string;
@@ -25,6 +30,7 @@ interface StartSessionOptions {
   activeSkillIds?: string[];
   attachments?: CoworkAttachmentPayload[];
   agentId?: string;
+  permissionMode?: unknown;
 }
 
 interface ContinueSessionOptions {
@@ -46,10 +52,22 @@ export const registerCoworkSessionExecutionHandlers = ({
   ensureEngineRunning,
   getCoworkStore,
   getCoworkEngineRouter,
+  acquirePermissionModeForTurn,
   getEngineNotReadyResponse,
 }: SessionExecutionHandlerDependencies): void => {
   ipcMain.handle('cowork:session:start', async (_event, options: StartSessionOptions) => {
     try {
+      const permissionMode = resolvePermissionMode(options.permissionMode);
+      const permissionResult = await acquirePermissionModeForTurn(permissionMode);
+      if ('error' in permissionResult) {
+        return {
+          success: false,
+          error: permissionResult.error,
+          ...(permissionResult.status
+            ? { code: 'ENGINE_NOT_READY', engineStatus: permissionResult.status }
+            : {}),
+        };
+      }
       const engineStatus = await ensureEngineRunning();
       if (engineStatus.phase !== 'running') {
         return getEngineNotReadyResponse(engineStatus);
@@ -69,6 +87,7 @@ export const registerCoworkSessionExecutionHandlers = ({
         config.executionMode || 'local',
         options.activeSkillIds || [],
         options.agentId || 'main',
+        permissionMode,
       );
       store.updateSession(session.id, { status: 'running' });
 
@@ -83,7 +102,7 @@ export const registerCoworkSessionExecutionHandlers = ({
         metadata: Object.keys(messageMetadata).length > 0 ? messageMetadata : undefined,
       });
 
-      getCoworkEngineRouter()
+      const run = getCoworkEngineRouter()
         .startSession(session.id, options.prompt, {
           skipInitialUserMessage: true,
           skillIds: options.activeSkillIds,
@@ -102,6 +121,7 @@ export const registerCoworkSessionExecutionHandlers = ({
             console.error('[Cowork] failed to send error notification to renderer:', handlerError);
           }
         });
+      void run;
 
       return {
         success: true,
@@ -117,12 +137,24 @@ export const registerCoworkSessionExecutionHandlers = ({
 
   ipcMain.handle('cowork:session:continue', async (_event, options: ContinueSessionOptions) => {
     try {
+      const session = getCoworkStore().getSession(options.sessionId);
+      if (!session) return { success: false, error: 'Session not found.' };
+      const permissionResult = await acquirePermissionModeForTurn(session.permissionMode);
+      if ('error' in permissionResult) {
+        return {
+          success: false,
+          error: permissionResult.error,
+          ...(permissionResult.status
+            ? { code: 'ENGINE_NOT_READY', engineStatus: permissionResult.status }
+            : {}),
+        };
+      }
       const engineStatus = await ensureEngineRunning();
       if (engineStatus.phase !== 'running') {
         return getEngineNotReadyResponse(engineStatus);
       }
 
-      getCoworkEngineRouter()
+      const run = getCoworkEngineRouter()
         .continueSession(options.sessionId, options.prompt, {
           skillIds: options.activeSkillIds,
           attachments: options.attachments,
@@ -137,6 +169,7 @@ export const registerCoworkSessionExecutionHandlers = ({
             console.error('[Cowork] failed to send error notification to renderer:', handlerError);
           }
         });
+      void run;
 
       return { success: true, session: getCoworkStore().getSession(options.sessionId) };
     } catch (error) {

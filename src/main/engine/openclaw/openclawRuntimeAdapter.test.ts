@@ -241,6 +241,7 @@ test('resolves a persisted session by gateway session ID when its run key has no
   expect(session?.messages).toEqual([
     expect.objectContaining({ type: 'assistant', content: 'completed result' }),
   ]);
+  expect(session?.permissionMode).toBe('full');
 });
 
 test('falls back to raw persisted messages when display history is empty', async () => {

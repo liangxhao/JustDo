@@ -7,6 +7,7 @@ import {
   DEFAULT_PERMISSION_MODE,
   isPermissionMode,
   type PermissionMode,
+  resolvePermissionMode,
 } from '../../shared/openclaw/approvals';
 import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
 
@@ -142,6 +143,7 @@ export interface CoworkSession {
   pinned: boolean;
   cwd: string;
   executionMode: CoworkExecutionMode;
+  permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
   messages: CoworkMessage[];
@@ -213,6 +215,7 @@ export class CoworkStore {
     executionMode: CoworkExecutionMode = 'local',
     activeSkillIds: string[] = [],
     agentId: string = 'main',
+    permissionMode: PermissionMode = DEFAULT_PERMISSION_MODE,
   ): CoworkSession {
     const id = uuidv4();
     const now = Date.now();
@@ -220,11 +223,21 @@ export class CoworkStore {
     this.db
       .prepare(
         `
-      INSERT INTO cowork_sessions (id, title, status, cwd, execution_mode, active_skill_ids, agent_id, pinned, created_at, updated_at)
-      VALUES (?, ?, 'idle', ?, ?, ?, ?, 0, ?, ?)
+      INSERT INTO cowork_sessions (id, title, status, cwd, execution_mode, permission_mode, active_skill_ids, agent_id, pinned, created_at, updated_at)
+      VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, 0, ?, ?)
     `,
       )
-      .run(id, title, cwd, executionMode, JSON.stringify(activeSkillIds), agentId, now, now);
+      .run(
+        id,
+        title,
+        cwd,
+        executionMode,
+        permissionMode,
+        JSON.stringify(activeSkillIds),
+        agentId,
+        now,
+        now,
+      );
 
     return {
       id,
@@ -233,6 +246,7 @@ export class CoworkStore {
       pinned: false,
       cwd,
       executionMode,
+      permissionMode,
       activeSkillIds,
       agentId,
       messages: [],
@@ -249,6 +263,7 @@ export class CoworkStore {
       pinned?: number | null;
       cwd: string;
       execution_mode?: string | null;
+      permission_mode?: string | null;
       active_skill_ids?: string | null;
       agent_id?: string | null;
       created_at: number;
@@ -257,7 +272,7 @@ export class CoworkStore {
 
     const row = this.getOne<SessionRow>(
       `
-      SELECT id, title, status, pinned, cwd, execution_mode, active_skill_ids, agent_id, created_at, updated_at
+      SELECT id, title, status, pinned, cwd, execution_mode, permission_mode, active_skill_ids, agent_id, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `,
@@ -285,6 +300,7 @@ export class CoworkStore {
       pinned: Boolean(row.pinned),
       cwd: row.cwd,
       executionMode: (row.execution_mode as CoworkExecutionMode) || 'local',
+      permissionMode: resolvePermissionMode(row.permission_mode),
       activeSkillIds,
       agentId: row.agent_id || 'main',
       messages,
@@ -296,7 +312,7 @@ export class CoworkStore {
   updateSession(
     id: string,
     updates: Partial<
-      Pick<CoworkSession, 'title' | 'status' | 'cwd' | 'executionMode'>
+      Pick<CoworkSession, 'title' | 'status' | 'cwd' | 'executionMode' | 'permissionMode'>
     >,
   ): void {
     const now = Date.now();
@@ -318,6 +334,13 @@ export class CoworkStore {
     if (updates.executionMode !== undefined) {
       setClauses.push('execution_mode = ?');
       values.push(updates.executionMode);
+    }
+    if (updates.permissionMode !== undefined) {
+      if (!isPermissionMode(updates.permissionMode)) {
+        throw new Error(`Invalid permission mode: ${String(updates.permissionMode)}`);
+      }
+      setClauses.push('permission_mode = ?');
+      values.push(updates.permissionMode);
     }
 
     values.push(id);
@@ -811,9 +834,7 @@ export class CoworkStore {
       workingDirectory: cfg.get('workingDirectory') || getDefaultWorkingDirectory(),
       executionMode: 'local' as CoworkExecutionMode,
       agentEngine: normalizeCoworkAgentEngineValue(cfg.get('agentEngine')),
-      permissionMode: isPermissionMode(cfg.get('permissionMode'))
-        ? (cfg.get('permissionMode') as PermissionMode)
-        : DEFAULT_PERMISSION_MODE,
+      permissionMode: resolvePermissionMode(cfg.get('permissionMode')),
     };
   }
 

@@ -46,6 +46,7 @@ interface CoworkSession {
   pinned: boolean;
   cwd: string;
   executionMode: 'auto' | 'local' | 'sandbox';
+  permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
   messages: CoworkMessage[];
@@ -598,6 +599,7 @@ interface IElectronAPI {
       activeSkillIds?: string[];
       agentId?: string;
       attachments?: CoworkAttachmentPayload[];
+      permissionMode?: PermissionMode;
     }) => Promise<{
       success: boolean;
       session?: CoworkSession;
@@ -628,6 +630,14 @@ interface IElectronAPI {
       sessionId: string;
       title: string;
     }) => Promise<{ success: boolean; error?: string }>;
+    setSessionPermissionMode: (options: {
+      sessionId: string;
+      permissionMode: PermissionMode;
+    }) => Promise<{
+      success: boolean;
+      error?: string;
+      engineStatus?: OpenClawEngineStatus;
+    }>;
     getSession: (
       sessionId: string,
     ) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;

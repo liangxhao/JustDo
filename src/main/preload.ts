@@ -263,6 +263,7 @@ contextBridge.exposeInMainWorld('electron', {
       activeSkillIds?: string[];
       agentId?: string;
       attachments?: CoworkAttachmentPayload[];
+      permissionMode?: 'ask' | 'auto' | 'full';
     }) => ipcRenderer.invoke('cowork:session:start', options),
     continueSession: (options: {
       sessionId: string;
@@ -279,6 +280,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:pin', options),
     renameSession: (options: { sessionId: string; title: string }) =>
       ipcRenderer.invoke('cowork:session:rename', options),
+    setSessionPermissionMode: (options: {
+      sessionId: string;
+      permissionMode: 'ask' | 'auto' | 'full';
+    }) => ipcRenderer.invoke('cowork:session:setPermissionMode', options),
     getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
     getGatewaySessionId: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:gatewaySessionId', sessionId),

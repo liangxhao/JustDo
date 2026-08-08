@@ -14,6 +14,7 @@ const session: CoworkSession = {
   pinned: false,
   cwd: 'C:\\workspace',
   executionMode: 'auto',
+  permissionMode: 'full',
   activeSkillIds: [],
   agentId: 'main',
   messages: [],

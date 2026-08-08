@@ -6,7 +6,7 @@ export const PermissionMode = {
 
 export type PermissionMode = (typeof PermissionMode)[keyof typeof PermissionMode];
 
-export const DEFAULT_PERMISSION_MODE: PermissionMode = PermissionMode.Ask;
+export const DEFAULT_PERMISSION_MODE: PermissionMode = PermissionMode.Full;
 
 export const ExecApprovalDecision = {
   AllowOnce: 'allow-once',
@@ -122,6 +122,9 @@ export const OpenClawApprovalIpc = {
 
 export const isPermissionMode = (value: unknown): value is PermissionMode =>
   value === PermissionMode.Ask || value === PermissionMode.Auto || value === PermissionMode.Full;
+
+export const resolvePermissionMode = (value: unknown): PermissionMode =>
+  isPermissionMode(value) ? value : DEFAULT_PERMISSION_MODE;
 
 export const isExecApprovalDecision = (value: unknown): value is ExecApprovalDecision =>
   value === ExecApprovalDecision.AllowOnce ||

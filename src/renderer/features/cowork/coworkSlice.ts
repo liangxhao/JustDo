@@ -1,4 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/openclaw/approvals';
 
 import {
   removeSessionFromState,
@@ -63,7 +64,7 @@ const initialState: CoworkState = {
     workingDirectory: '',
     executionMode: 'local',
     agentEngine: 'openclaw',
-    permissionMode: 'ask',
+    permissionMode: DEFAULT_PERMISSION_MODE,
   },
   thinkingExpanded: false, // Default to collapsed (浅蓝色)
   toolExpanded: true, // Default to expanded (浅蓝色)
@@ -446,11 +447,21 @@ const coworkSlice = createSlice({
       state.config = { ...state.config, ...action.payload };
     },
 
+    updateCurrentSessionPermissionMode(
+      state,
+      action: PayloadAction<{ sessionId: string; permissionMode: PermissionMode }>,
+    ) {
+      if (state.currentSession?.id === action.payload.sessionId) {
+        state.currentSession.permissionMode = action.payload.permissionMode;
+      }
+    },
+
     clearCurrentSession(state) {
       state.currentSessionId = null;
       state.currentSession = null;
       state.isStreaming = false;
       state.remoteManaged = false;
+      state.config.permissionMode = DEFAULT_PERMISSION_MODE;
     },
 
     setDraftAttachments(
@@ -583,6 +594,7 @@ export const {
   setRemoteManaged,
   updateSessionPinned,
   updateSessionTitle,
+  updateCurrentSessionPermissionMode,
   enqueuePendingInteraction,
   dequeuePendingInteraction,
   clearPendingInteractions,

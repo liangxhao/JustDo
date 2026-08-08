@@ -61,6 +61,7 @@ import {
   registerWindowHandlers,
 } from './ipc/app';
 import {
+  enqueueCoworkConfigUpdate,
   registerAgentHandlers,
   registerCoworkConfigHandlers,
   registerCoworkInteractionHandlers,
@@ -96,7 +97,7 @@ import type { AskUserExtensionConfig } from './openclaw/config/openclawConfigSyn
 import { buildProviderSelection } from './openclaw/config/openclawConfigSync';
 import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
 import { resolveQualifiedAgentModelRef } from './openclaw/models/openclawAgentModels';
-import { downgradePersistedFullPermissionMode } from './openclaw/permissions/permissionStartupPolicy';
+import { SessionPermissionModeCoordinator } from './openclaw/permissions/sessionPermissionModeCoordinator';
 import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
@@ -819,16 +820,27 @@ if (!gotTheLock) {
     listExtensionServers: () => discoverExtensionMcpServers(getOpenClawEngineManager()),
     installationService: pluginInstallationService,
   });
+
+  const sessionPermissionModeCoordinator = new SessionPermissionModeCoordinator({
+    getCoworkStore,
+    syncOpenClawConfig,
+    enqueue: enqueueCoworkConfigUpdate,
+  });
+
   registerCoworkSessionExecutionHandlers({
     ensureEngineRunning: ensureOpenClawRunningForCowork,
     getCoworkStore,
     getCoworkEngineRouter,
+    acquirePermissionModeForTurn: permissionMode =>
+      sessionPermissionModeCoordinator.acquireForTurn(permissionMode),
     getEngineNotReadyResponse,
   });
 
   registerCoworkSessionHandlers({
     getCoworkStore,
     getCoworkEngineRouter,
+    setSessionPermissionMode: (sessionId, permissionMode) =>
+      sessionPermissionModeCoordinator.setSessionMode(sessionId, permissionMode),
   });
 
   registerCoworkSessionRuntimeHandlers({
@@ -1026,12 +1038,6 @@ if (!gotTheLock) {
     registerLocalFileProtocol();
 
     store = await initStore();
-    if (downgradePersistedFullPermissionMode(getCoworkStore())) {
-      console.warn(
-        '[OpenClaw] Persisted full access was downgraded to ask before Gateway startup.',
-      );
-    }
-
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them on startup.
     const resetCount = getCoworkStore().resetRunningSessions();

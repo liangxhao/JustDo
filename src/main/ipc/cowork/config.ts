@@ -29,7 +29,7 @@ interface Dependencies {
 
 let configUpdateQueue: Promise<void> = Promise.resolve();
 
-const enqueueConfigUpdate = <T>(task: () => Promise<T>): Promise<T> => {
+export const enqueueCoworkConfigUpdate = <T>(task: () => Promise<T>): Promise<T> => {
   const result = configUpdateQueue.then(task, task);
   configUpdateQueue = result.then(
     (): void => undefined,
@@ -68,7 +68,7 @@ export const registerCoworkConfigHandlers = ({
         permissionMode?: PermissionMode;
       },
     ) =>
-      enqueueConfigUpdate(async () => {
+      enqueueCoworkConfigUpdate(async () => {
         try {
           if (!config || typeof config !== 'object' || Array.isArray(config)) {
             return { success: false, error: 'Invalid cowork configuration.' };

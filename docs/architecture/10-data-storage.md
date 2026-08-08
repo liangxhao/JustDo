@@ -6,11 +6,17 @@ JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据�
 
 开发者功能的可见性是一个独立的启动期文件配置，不存入 SQLite。Main process 每次启动读取 `<userData>/developer/config.json`（Windows 默认为 `%APPDATA%/<package.json.productName>/developer/config.json`）；文件不存在时自动创建 `{ "showDeveloperMode": false }`。只有 `showDeveloperMode` 为 JSON 布尔值 `true` 时，Renderer 才展示“开发者模式”选项及其已启用的开发入口。文件缺失、解析失败或任何其他值都按隐藏处理，运行期间修改需重启应用生效。
 
-权限模式的产品默认值保存在 SQLite `cowork_config.permissionMode`。Main 通过 OpenClaw
+会话权限模式保存在 SQLite `cowork_sessions.permission_mode`；新会话、缺失值或非法值均回退为 `full`。
+`cowork_config.permissionMode` 仅保存当前激活的 runtime 权限快照。Main 通过 OpenClaw
 公开的 `tools.exec.mode`、`tools.fs.workspaceOnly` 与 Gateway
 `exec.approvals.get/set` 配置 npm runtime；写入 host exec policy 时使用 `baseHash` 并发保护。
 JustDo 不创建 `permission-policy.json`，也不直接读写 `exec-approvals.json`。文件修改审批由
 JustDo 自有、版本锁定的 bundled extension 通过 OpenClaw 公开 trusted tool policy 接口完成。
+打开旧会话只恢复其已存展示值；发起新 turn 前才将该会话权限激活到 runtime。
+OpenClaw 权限配置是 Gateway 全局快照。权限修改始终通过原生热更新立即生效，
+不会因为一个或多个会话正在运行而禁用或拒绝；并行任务共同使用最新的 runtime 权限快照。
+`SessionPermissionModeCoordinator` 与 cowork config IPC 共用串行队列，在 Main 中原子协调
+权限同步、会话持久化和失败回滚。
 
 `productName` 必须是长度 1–64 的单个英文单词，只允许 ASCII 字母 `A-Z` / `a-z`。构建配置和运行时都会校验该约束。更换它会直接使用新的 `userData` 和默认工程目录，不提供旧品牌目录的兼容或迁移。
 
@@ -47,18 +53,18 @@ flowchart TB
 
 ## 当前核心表
 
-| 表                | 用途                                                      |
-| ----------------- | --------------------------------------------------------- |
-| `kv`              | 通用 key/value 配置                                       |
-| `cowork_sessions` | Cowork 会话 UI 元数据和 Gateway session id 映射           |
-| `cowork_messages` | Cowork 消息 UI cache                                      |
-| `cowork_config`   | Cowork 配置，包括工作目录、engine 和默认 `permissionMode` |
-| `agents`          | Agent 定义、模型、技能绑定                                |
-| `mcp_servers`     | MCP server 配置                                           |
-| `openclaw_hooks`  | OpenClaw hook 配置                                        |
-| `session_groups`  | 会话分组                                                  |
-| `scheduled_task_run_receipts` | 定时任务结果快照与持久已读回执                   |
-| `scheduled_task_result_cleanup` | 跨 OpenClaw 删除失败时的 transcript 清理续传状态 |
+| 表                              | 用途                                                      |
+| ------------------------------- | --------------------------------------------------------- |
+| `kv`                            | 通用 key/value 配置                                       |
+| `cowork_sessions`               | Cowork 会话 UI 元数据和 Gateway session id 映射           |
+| `cowork_messages`               | Cowork 消息 UI cache                                      |
+| `cowork_config`                 | Cowork 配置，包括工作目录、engine 和当前 runtime 权限快照 |
+| `agents`                        | Agent 定义、模型、技能绑定                                |
+| `mcp_servers`                   | MCP server 配置                                           |
+| `openclaw_hooks`                | OpenClaw hook 配置                                        |
+| `session_groups`                | 会话分组                                                  |
+| `scheduled_task_run_receipts`   | 定时任务结果快照与持久已读回执                            |
+| `scheduled_task_result_cleanup` | 跨 OpenClaw 删除失败时的 transcript 清理续传状态          |
 
 ```mermaid
 erDiagram
@@ -73,6 +79,7 @@ erDiagram
     integer pinned
     text cwd
     text execution_mode
+    text permission_mode
     text active_skill_ids
     text agent_id
     text group_id
@@ -120,6 +127,7 @@ erDiagram
 - `pinned`
 - `cwd`
 - `execution_mode`
+- `permission_mode`
 - `active_skill_ids`
 - `agent_id`
 - `group_id`

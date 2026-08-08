@@ -24,6 +24,7 @@ const registerHandlers = (stopSession: ReturnType<typeof vi.fn>): IpcHandler => 
   registerCoworkSessionHandlers({
     getCoworkStore: () => ({}) as CoworkStore,
     getCoworkEngineRouter: () => router,
+    setSessionPermissionMode: vi.fn(),
   });
   const registration = mocks.handle.mock.calls.find(
     ([channel]) => channel === 'cowork:session:stop',
@@ -64,4 +65,41 @@ test('reports failure when the runtime cannot confirm a session stop', async () 
     success: false,
     error: 'abort unavailable',
   });
+});
+
+test('persists a valid permission mode for an existing session', async () => {
+  const setSessionPermissionMode = vi.fn().mockResolvedValue({ success: true });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({}) as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode,
+  });
+  const registration = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:setPermissionMode',
+  );
+  const handler = registration?.[1] as IpcHandler;
+
+  await expect(handler({}, { sessionId: 'session-1', permissionMode: 'ask' })).resolves.toEqual({
+    success: true,
+  });
+  expect(setSessionPermissionMode).toHaveBeenCalledWith('session-1', 'ask');
+});
+
+test('rejects an invalid session permission mode', async () => {
+  const setSessionPermissionMode = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({}) as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode,
+  });
+  const registration = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:setPermissionMode',
+  );
+  const handler = registration?.[1] as IpcHandler;
+
+  await expect(handler({}, { sessionId: 'session-1', permissionMode: 'unsafe' })).resolves.toEqual({
+    success: false,
+    error: 'Invalid session permission mode.',
+  });
+  expect(setSessionPermissionMode).not.toHaveBeenCalled();
 });

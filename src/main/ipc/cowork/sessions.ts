@@ -1,16 +1,23 @@
 import { ipcMain } from 'electron';
 
+import { isPermissionMode, type PermissionMode } from '../../../shared/openclaw/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
+import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
 
 interface SessionHandlerDependencies {
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
+  setSessionPermissionMode: (
+    sessionId: string,
+    permissionMode: PermissionMode,
+  ) => Promise<PermissionModeOperationResult>;
 }
 
 export const registerCoworkSessionHandlers = ({
   getCoworkStore,
   getCoworkEngineRouter,
+  setSessionPermissionMode,
 }: SessionHandlerDependencies): void => {
   ipcMain.handle('cowork:session:stop', async (_event, sessionId: string) => {
     try {
@@ -123,6 +130,31 @@ export const registerCoworkSessionHandlers = ({
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to rename session',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'cowork:session:setPermissionMode',
+    async (_event, options: { sessionId: string; permissionMode: unknown }) => {
+      try {
+        if (!options?.sessionId || !isPermissionMode(options.permissionMode)) {
+          return { success: false, error: 'Invalid session permission mode.' };
+        }
+        const result = await setSessionPermissionMode(options.sessionId, options.permissionMode);
+        if ('error' in result) {
+          return {
+            success: false,
+            error: result.error,
+            ...(result.status ? { engineStatus: result.status } : {}),
+          };
+        }
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to update session permission.',
         };
       }
     },

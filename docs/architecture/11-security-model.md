@@ -164,8 +164,8 @@ env key 而没有值时不允许建立会话 grant。命中后仍仅向 Gateway 
 node approvals RPC；远程 node 不是 JustDo 的产品能力。
 
 默认策略为 `security=allowlist`、`ask=on-miss`、`askFallback=deny`。用户从消息输入区附件按钮
-右侧的权限选择器切换 `ask`、`auto` 或 `full`。切换会持久化应用级产品偏好，热更新 OpenClaw
-config，再通过 Gateway CAS 更新 host policy并回读 defaults 和所有受管 agent entry。已有待审批
+右侧的权限选择器切换 `ask`、`auto` 或 `full`。切换会持久化当前会话权限，热更新 OpenClaw
+共享 runtime 快照，再通过 Gateway CAS 更新 host policy 并回读 defaults 和所有受管 agent entry。已有待审批
 请求不自动放行。所有配置同步在 Main 内串行；成功前会回读 tools exec/fs、文件权限插件和
 host approvals。权限配置写入、reload、回读或回滚无法确认时，Main 立即断开并
 停止 Gateway，将 engine 标记为权限同步错误。
@@ -178,7 +178,8 @@ session key 当作可信运行证明：OpenClaw v2026.6.11 的公开 API 只能�
 Agent 可以通过原生 cron 工具创建和管理任务，JustDo UI 通过 Main RPC 管理任务。任务执行仍按届时
 生效的权限模式处理，不继承创建任务时的交互会话 grant，也不会因为由 Agent 创建而自动放行审批。
 Gateway operator、CLI 和 scheduler state 仍是外部信任边界；完整隔离依赖未来的独立执行凭据与
-状态目录保护。`full` 仍是非持久化运行期状态，应用启动前降级为 `ask`。
+状态目录保护。旧会话从 SQLite 恢复其权限；新会话、缺失值或非法值默认使用 `full`。
+并行任务共同使用最近一次热更新的 runtime 权限快照。
 
 权限选择器只展示三档产品行为和可执行错误，不展示或推导 workspace、sandbox、
 effective policy、运行时快照或配置同步进度。

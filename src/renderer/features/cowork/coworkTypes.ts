@@ -97,6 +97,7 @@ export interface CoworkSession {
   pinned: boolean;
   cwd: string;
   executionMode: CoworkExecutionMode;
+  permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
   messages: CoworkMessage[];
@@ -182,6 +183,7 @@ export interface CoworkStartOptions {
   activeSkillIds?: string[];
   agentId?: string;
   attachments?: CoworkAttachmentPayload[];
+  permissionMode?: PermissionMode;
 }
 
 // Continue session options

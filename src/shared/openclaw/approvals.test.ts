@@ -4,14 +4,27 @@ import {
   ApprovalDecision,
   ApprovalKind,
   canGrantExecApprovalForSession,
+  DEFAULT_PERMISSION_MODE,
   ExecApprovalDecision,
   isApprovalDecision,
   isExecApprovalDecision,
   isPermissionMode,
   PermissionMode,
+  resolvePermissionMode,
 } from './approvals';
 
 describe('OpenClaw approval contracts', () => {
+  test('defaults execution permissions to full access', () => {
+    expect(DEFAULT_PERMISSION_MODE).toBe(PermissionMode.Full);
+    expect(resolvePermissionMode(undefined)).toBe(PermissionMode.Full);
+    expect(resolvePermissionMode(null)).toBe(PermissionMode.Full);
+    expect(resolvePermissionMode('invalid')).toBe(PermissionMode.Full);
+  });
+
+  test.each(Object.values(PermissionMode))('preserves stored permission mode %s', mode => {
+    expect(resolvePermissionMode(mode)).toBe(mode);
+  });
+
   test.each(Object.values(PermissionMode))('accepts permission mode %s', mode => {
     expect(isPermissionMode(mode)).toBe(true);
   });

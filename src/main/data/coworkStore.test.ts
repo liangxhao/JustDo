@@ -42,6 +42,7 @@ function setupDb(): void {
       cwd TEXT NOT NULL,
       system_prompt TEXT NOT NULL DEFAULT '',
       execution_mode TEXT NOT NULL DEFAULT 'local',
+      permission_mode TEXT,
       active_skill_ids TEXT,
       agent_id TEXT NOT NULL DEFAULT 'main',
       created_at INTEGER NOT NULL,
