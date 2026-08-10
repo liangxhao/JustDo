@@ -3,11 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 
-const { applyPatch, __testing } =
+const { applyPatch, verifyPatch, __testing } =
   require('../scripts/patches/v2026.6.11/016-litellm-session-id.cjs') as {
     applyPatch: (runtimeDir: string) => string[];
+    verifyPatch: (runtimeDir: string) => boolean;
     __testing: Record<string, string>;
   };
 
@@ -16,6 +17,41 @@ const BUNDLE_FIXTURE = `function resolveEmbeddedAgentStreamFn(params) {
 }
 function wrapEmbeddedAgentStreamFn(inner, params) {
   return inner;
+}
+function configureAttemptStream(params) {
+  return resolveEmbeddedAgentStreamFn({
+        sessionId: params.sessionId,
+        promptCacheKey: params.promptCacheKey,
+  });
+}
+function configureCompactionStream(params) {
+  return resolveEmbeddedAgentStreamFn({
+    providerStreamFn: params.providerStreamFn,
+    sessionId: params.sessionId,
+    signal: params.signal,
+  });
+}
+function configureBtwStream(params, sessionId, runtimeModel) {
+  return resolveEmbeddedAgentStreamFn({
+    sessionId,
+    signal: params.opts?.abortSignal,
+    model: runtimeModel,
+  });
+}
+function buildDirectChildSessionPatch(patch) {
+  const entry = {};
+  if (typeof patch.spawnedBy === "string" && patch.spawnedBy.trim()) entry.spawnedBy = patch.spawnedBy.trim();
+  return entry;
+}
+async function spawnSubagentFixture(requesterInternalKey) {
+  const spawnedByKey = requesterInternalKey;
+  const childCapabilities = resolveSubagentCapabilities({
+    depth: 1
+  });
+  const spawnLineagePatchError = await patchChildSession({
+    spawnedBy: spawnedByKey,
+  });
+  return { childCapabilities, spawnLineagePatchError };
 }
 async function completeWithPreparedSimpleCompletionModel(params) {
   const completionModel = params.model;
@@ -100,18 +136,23 @@ test('patches the OpenClaw stream resolver idempotently', () => {
 
     expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
     const patched = fs.readFileSync(bundlePath, 'utf8');
-    expect(patched).toContain('JUSTDO_LITELLM_REQUEST_METADATA_V3');
+    expect(patched).toContain('JUSTDO_LITELLM_REQUEST_METADATA_V4');
+    expect(patched).toContain('JUSTDO_LITELLM_PARENT_SESSION_ID');
     expect(patched).toContain('resolveEmbeddedAgentStreamFnWithoutLiteLLMSessionId(params)');
     expect(patched).toContain('session_id: normalizedSessionId');
+    expect(patched).toContain('payload.metadata.parent_session_id = normalizedParentSessionId');
     expect(patched).toContain('request_purpose: normalizedRequestPurpose');
     expect(patched).toContain('JUSTDO_LITELLM_COMPACTION_SESSION_ID');
     expect(patched).toContain('sessionId: runtime3?.sessionId');
     expect(patched).toContain(
-      'createLiteLLMRequestMetadataStreamFn(sessionId, "context_compaction", model.api)',
+      'createLiteLLMRequestMetadataStreamFn(sessionId, "context_compaction", model.api, parentSessionId)',
     );
     expect(patched).toContain('JUSTDO_LITELLM_EXEC_REVIEW_REQUEST_METADATA');
     expect(patched).toContain('JUSTDO_LITELLM_EXEC_REVIEW_SESSION_ID');
     expect(patched).toContain('sessionId: defaults4?.sessionId');
+    expect(patched).toContain('parentSessionId: resolveLiteLLMParentSessionId({');
+    expect(patched).toContain('entry.parentSessionId = patch.parentSessionId.trim()');
+    expect(verifyPatch(runtimeDir)).toBe(true);
     expect(applyPatch(runtimeDir)).toEqual([]);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
@@ -131,6 +172,9 @@ function createModelExecAutoReviewer(params) {
 }
 function resolveExecReviewerDefaults({ defaults }) {
   return defaults.reviewer;
+}
+function resolveLiteLLMParentSessionId(params) {
+  return params.sessionKey === "agent:main:subagent:child" ? "gateway-parent-123" : undefined;
 }
 function createExecTool(defaults4, agentId) {
 ${__testing.PATCHED_EXEC_REVIEWER_FACTORY}
@@ -157,7 +201,7 @@ export { createExecTool };
         config: { tools: { exec: { reviewer } } },
         reviewer,
         sessionId: 'gateway-session-789',
-        sessionKey: 'agent:main:local-key-must-not-be-used',
+        sessionKey: 'agent:main:subagent:child',
       },
       'main',
     );
@@ -165,6 +209,7 @@ export { createExecTool };
     expect(result.capturedParams).toMatchObject({
       agentId: 'main',
       sessionId: 'gateway-session-789',
+      parentSessionId: 'gateway-parent-123',
       reviewer,
     });
     expect(result.capturedParams.sessionId).not.toBe('agent:main:local-key-must-not-be-used');
@@ -178,6 +223,7 @@ export { createExecTool };
       'main',
     );
     expect(missingUuidResult.capturedParams.sessionId).toBeUndefined();
+    expect(missingUuidResult.capturedParams.parentSessionId).toBeUndefined();
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
@@ -209,6 +255,7 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
         sessionId: string,
         requestPurpose: string,
         modelApi: string,
+        parentSessionId?: string,
       ) => (...args: unknown[]) => unknown;
     };
     let payload: Record<string, unknown> = {
@@ -217,6 +264,7 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
         tenant: 'team-a',
         session_id: 'stale-session',
         request_purpose: 'stale-purpose',
+        parent_session_id: 'stale-parent',
       },
     };
     const streamFn = (_model: unknown, _context: unknown, options: Record<string, unknown>) => {
@@ -229,12 +277,14 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
       ' openclaw-session-123 ',
       ' agent ',
       'openai-completions',
+      ' gateway-parent-123 ',
     )({}, {}, {});
 
     expect(payload.metadata).toEqual({
       tenant: 'team-a',
       session_id: 'openclaw-session-123',
       request_purpose: 'agent',
+      parent_session_id: 'gateway-parent-123',
     });
 
     payload = { model: 'claude' };
@@ -246,6 +296,22 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
     )({}, {}, {});
     expect(payload).not.toHaveProperty('metadata');
 
+    payload = {
+      model: 'deepseek-v4-flash',
+      metadata: { parent_session_id: 'stale-parent' },
+    };
+    harness.wrapStreamFnWithLiteLLMRequestMetadata(
+      streamFn,
+      'openclaw-session-123',
+      'agent',
+      'openai-completions',
+      'openclaw-session-123',
+    )({}, {}, {});
+    expect(payload.metadata).toEqual({
+      session_id: 'openclaw-session-123',
+      request_purpose: 'agent',
+    });
+
     payload = { model: 'deepseek-v4-flash' };
     harness.wrapStreamFnWithLiteLLMRequestMetadata(
       streamFn,
@@ -254,6 +320,184 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
       'openai-completions',
     )({}, {}, {});
     expect(payload).not.toHaveProperty('metadata');
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('resolves and backfills stable direct-parent UUIDs for legacy nested subagents', async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-litellm-lineage-helper-'));
+  try {
+    const harnessPath = path.join(runtimeDir, 'lineage-helper.mjs');
+    fs.writeFileSync(
+      harnessPath,
+      `const store = {
+  "agent:main:root": { sessionId: "stale-root-session", updatedAt: 1 },
+  "legacy:root": { sessionId: "root-session", updatedAt: 2 },
+  "agent:main:subagent:child": {
+    sessionId: "child-session",
+    spawnedBy: "agent:main:root",
+    updatedAt: 3
+  },
+  "agent:main:subagent:grandchild": {
+    sessionId: "grandchild-session",
+    spawnedBy: "agent:main:subagent:child",
+    updatedAt: 4
+  },
+  "agent:main:subagent:failed": {
+    sessionId: "failed-child-session",
+    spawnedBy: "agent:main:root",
+    updatedAt: 5
+  },
+  "agent:main:subagent:self-parent": {
+    sessionId: "self-child-session",
+    parentSessionId: "self-child-session",
+    spawnedBy: "agent:main:root",
+    updatedAt: 6
+  }
+};
+function resolveGatewaySessionStoreTargetWithStore({ key }) {
+  return {
+    storePath: "sessions.json",
+    canonicalKey: key,
+    storeKeys: key === "agent:main:root" ? [key, "legacy:root"] : [key],
+    store
+  };
+}
+function findFreshestStoreMatch(targetStore, ...keys) {
+  let freshest;
+  for (const key of keys) {
+    const entry = targetStore[key];
+    if (entry && (!freshest || (entry.updatedAt ?? 0) > (freshest.entry.updatedAt ?? 0))) {
+      freshest = { key, entry };
+    }
+  }
+  return freshest;
+}
+const pendingUpdates = [];
+function updateSubagentSessionStore(_storePath, mutator) {
+  return new Promise((resolve, reject) => pendingUpdates.push({ mutator, resolve, reject }));
+}
+function flushNextUpdate() {
+  const pending = pendingUpdates.shift();
+  pending?.mutator(store);
+  pending?.resolve();
+}
+function rejectNextUpdate() {
+  pendingUpdates.shift()?.reject(new Error("write failed"));
+}
+function mergeSessionEntry(existing, patch) {
+  return { ...existing, ...patch };
+}
+function streamWithPayloadPatch() {}
+${__testing.HELPER_SOURCE}
+function getParentSessionCacheSize() {
+  return JUSTDO_LITELLM_PARENT_SESSION_CACHE.size;
+}
+export {
+  flushNextUpdate,
+  getParentSessionCacheSize,
+  rejectNextUpdate,
+  resolveLiteLLMParentSessionId,
+  resolveLiteLLMSessionIdForKey,
+  store
+};
+`,
+      'utf8',
+    );
+    const harness = (await import(`${pathToFileURL(harnessPath).href}?test=${Date.now()}`)) as {
+      store: Record<string, Record<string, unknown>>;
+      flushNextUpdate: () => void;
+      getParentSessionCacheSize: () => number;
+      rejectNextUpdate: () => void;
+      resolveLiteLLMParentSessionId: (params: Record<string, unknown>) => string | undefined;
+      resolveLiteLLMSessionIdForKey: (config: unknown, sessionKey: string) => string | undefined;
+    };
+    const config = {};
+
+    expect(
+      harness.resolveLiteLLMParentSessionId({
+        config,
+        sessionKey: 'agent:main:root',
+        sessionId: 'root-session',
+      }),
+    ).toBeUndefined();
+    expect(harness.resolveLiteLLMSessionIdForKey(config, 'agent:main:root')).toBe('root-session');
+    expect(
+      harness.resolveLiteLLMParentSessionId({
+        config,
+        sessionKey: 'agent:main:subagent:child',
+        sessionId: 'child-session',
+      }),
+    ).toBe('root-session');
+    expect(harness.getParentSessionCacheSize()).toBe(1);
+    harness.store['legacy:root']!.sessionId = 'rotated-root-session';
+    expect(
+      harness.resolveLiteLLMParentSessionId({
+        config,
+        sessionKey: 'agent:main:subagent:child',
+        sessionId: 'child-session',
+      }),
+    ).toBe('root-session');
+    harness.flushNextUpdate();
+    await Promise.resolve();
+    expect(harness.getParentSessionCacheSize()).toBe(0);
+    expect(harness.store['agent:main:subagent:child']?.parentSessionId).toBe('root-session');
+
+    expect(
+      harness.resolveLiteLLMParentSessionId({
+        config,
+        sessionKey: 'agent:main:subagent:child',
+        sessionId: 'child-session',
+      }),
+    ).toBe('root-session');
+    expect(
+      harness.resolveLiteLLMParentSessionId({
+        config,
+        sessionKey: 'agent:main:subagent:grandchild',
+        sessionId: 'grandchild-session',
+      }),
+    ).toBe('child-session');
+    harness.flushNextUpdate();
+    await Promise.resolve();
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(
+      harness.resolveLiteLLMParentSessionId({
+        config,
+        sessionKey: 'agent:main:subagent:failed',
+        sessionId: 'failed-child-session',
+      }),
+    ).toBe('rotated-root-session');
+    harness.rejectNextUpdate();
+    await Promise.resolve();
+    expect(harness.getParentSessionCacheSize()).toBe(1);
+    expect(warn).toHaveBeenCalledWith(
+      '[JustDoLiteLLMMetadata] Failed to persist parent_session_id for a legacy child session.',
+    );
+    warn.mockRestore();
+
+    expect(
+      harness.resolveLiteLLMParentSessionId({
+        config,
+        sessionKey: 'agent:main:subagent:self-parent',
+        sessionId: 'self-child-session',
+      }),
+    ).toBe('rotated-root-session');
+    harness.flushNextUpdate();
+    await Promise.resolve();
+    expect(harness.getParentSessionCacheSize()).toBe(1);
+    expect(harness.store['agent:main:subagent:self-parent']?.parentSessionId).toBe(
+      'rotated-root-session',
+    );
+    harness.store['legacy:root']!.sessionId = 'second-rotated-root-session';
+    expect(
+      harness.resolveLiteLLMParentSessionId({
+        config,
+        sessionKey: 'agent:main:subagent:self-parent',
+        sessionId: 'self-child-session',
+      }),
+    ).toBe('rotated-root-session');
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
@@ -318,6 +562,7 @@ export { completeWithPreparedSimpleCompletionModel };
       requestMetadata: {
         sessionId: ' gateway-session-456 ',
         requestPurpose: 'exec_review',
+        parentSessionId: ' gateway-parent-123 ',
       },
     });
 
@@ -325,6 +570,7 @@ export { completeWithPreparedSimpleCompletionModel };
       tenant: 'team-a',
       session_id: 'gateway-session-456',
       request_purpose: 'exec_review',
+      parent_session_id: 'gateway-parent-123',
     });
     expect(result.context).toEqual(context);
     expect(JSON.stringify(result.context)).not.toContain('gateway-session-456');
@@ -401,12 +647,14 @@ export { generateSummary3 };
       undefined,
       undefined,
       'gateway-session-123',
+      'gateway-parent-123',
     );
 
     expect(payload.metadata).toEqual({
       tenant: 'team-a',
       session_id: 'gateway-session-123',
       request_purpose: 'context_compaction',
+      parent_session_id: 'gateway-parent-123',
     });
     expect(
       harness.generateSummary3(
@@ -431,8 +679,8 @@ test('rejects an earlier chat-only patch revision and requires a pristine bundle
   try {
     const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
     const legacyHelperSource = __testing.HELPER_SOURCE.replace(
+      'JUSTDO_LITELLM_REQUEST_METADATA_V4',
       'JUSTDO_LITELLM_REQUEST_METADATA_V3',
-      'JUSTDO_LITELLM_REQUEST_METADATA_V2',
     );
     const chatOnlyBundle = BUNDLE_FIXTURE.replace(
       'function resolveEmbeddedAgentStreamFn(params) {',
