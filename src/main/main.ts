@@ -18,6 +18,7 @@ import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
 import { AutoUpdateService } from './core/autoUpdateService';
 import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
+import { CustomerRegistrationService } from './core/customerRegistrationService';
 import { applyDependencyManagerConfigEnv } from './core/dependencyManagerConfig';
 import { loadDeveloperConfig } from './core/developerConfigFile';
 import { setLanguage } from './core/i18n';
@@ -27,6 +28,7 @@ import { initLogger } from './core/logger';
 import { mainProcessTitleFetch } from './core/mainProcessFetch';
 import { createMainWindow } from './core/mainWindowFactory';
 import { ManagedDirectoryOperationCoordinator } from './core/managedDirectoryOperations';
+import { resolveOutboundHeaderUserInfoPath } from './core/outboundHeaderPolicyConfig';
 import { OutboundHeaderProxy } from './core/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './core/pythonRuntime';
 import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/systemProxy';
@@ -335,6 +337,7 @@ let mcpServices: McpServices | null = null;
 let openClawHookServices: OpenClawHookServices | null = null;
 let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
+let customerRegistrationService: CustomerRegistrationService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = null;
@@ -982,6 +985,7 @@ if (!gotTheLock) {
 
   const runAppCleanup = async (): Promise<void> => {
     console.log('[Main] App is quitting, starting cleanup...');
+    customerRegistrationService?.stop();
     destroyTray();
     // Prevent scheduled work from starting while dependent runtimes are draining.
     try {
@@ -1048,6 +1052,17 @@ if (!gotTheLock) {
     await app.whenReady();
 
     await outboundHeaderProxy.start();
+
+    if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
+      customerRegistrationService = new CustomerRegistrationService({
+        apiKey: BUILTIN_MODEL_PROVIDER_CONFIG.apiKey.trim(),
+        baseUrl: BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl,
+        productName: packageJson.productName,
+        version: packageJson.version,
+        userInfoPath: resolveOutboundHeaderUserInfoPath(),
+      });
+      customerRegistrationService.start();
+    }
 
     // Note: Calendar permission is checked on-demand when calendar operations are requested
     // We don't trigger permission dialogs at startup to avoid annoying users

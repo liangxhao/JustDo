@@ -24,6 +24,7 @@ flowchart TB
     Runtime["OpenClaw Engine Manager"]
     Plugins["Plugin Services\nSkills/MCP/Hooks/Extensions/Marketplace"]
     Scheduler["CronJobService"]
+    CustomerSync["Customer Registration\nstartup + daily sync"]
   end
 
   subgraph G["OpenClaw Gateway"]
@@ -44,6 +45,7 @@ flowchart TB
   IPC --> Runtime
   IPC --> Plugins
   IPC --> Scheduler
+  CustomerSync --> LiteLLM["LiteLLM Customer API"]
   Engine --> Runtime
   Runtime --> G
   Chat -. "WebSocket" .-> G
@@ -258,7 +260,7 @@ flowchart LR
 1. `main.ts` 根据 `package.json.productName` 设置专用 `userData` 目录。
 2. 初始化日志、Electron command line、异常处理。
 3. 注册 IPC handlers。
-4. `app.whenReady()` 后启动 outbound proxy、注册本地协议。
+4. `app.whenReady()` 后启动 outbound proxy，并异步向内置模型 URL 对应的 LiteLLM Customer API 上报一次用户与产品信息；`alias` 持久化 `${productName} ${version}`，同时保留完整 `metadata` 供服务端后续支持。此后每 24 小时更新一次，上报失败不阻塞应用启动。
 5. 初始化 SQLite，执行 schema 兼容和旧数据迁移。
 6. 初始化 Cowork store、provider config getter、内置模型 provider。
 7. 绑定 Cowork runtime event forwarder 和 Gateway 状态 forwarder。
