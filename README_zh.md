@@ -49,7 +49,7 @@ npm run electron:dev
 Vite 开发服务器端口来自 `package.json`：
 
 ```text
-http://localhost:4175
+http://localhost:43127
 ```
 
 需要准备并使用 OpenClaw host runtime 时：
@@ -148,7 +148,7 @@ OpenClaw 集成在 `package.json` 中声明：
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {
-    "port": 4175
+    "port": 43127
   }
 }
 ```

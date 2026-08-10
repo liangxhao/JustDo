@@ -22,7 +22,7 @@ JustDo 是 OpenClaw Gateway 的桌面前端和本地控制面：
 | SQLite | `justdo.sqlite` 位于 Electron `userData/<package.json.productName>` |
 | Skills | 15 个内置 skill 声明，14 个默认启用 |
 | Runtime patches | 当前 OpenClaw 版本保留 6 个 patch |
-| Dev server | `http://localhost:4175` |
+| Dev server | `http://localhost:43127` |
 
 ## 产品名与内部标识
 

@@ -15,7 +15,7 @@
     "plugins": []
   },
   "devServer": {
-    "port": 4175
+    "port": 43127
   },
   "main": "dist-electron/main.js",
   "engines": {

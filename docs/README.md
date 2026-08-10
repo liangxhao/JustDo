@@ -10,7 +10,7 @@
 | OpenClaw Gateway | `v2026.6.11` |
 | Electron | `42.6.0` |
 | Node.js | `>=24 <25` |
-| 开发端口 | `4175` |
+| 开发端口 | `43127` |
 | Redux slices | 7 |
 | 内置 Skills | 15 个声明，14 个默认启用 |
 | 当前 Runtime patches | 13 个，位于 `scripts/patches/v2026.6.11/` |

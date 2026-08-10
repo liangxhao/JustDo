@@ -10,7 +10,7 @@
 | Electron | `^42.6.0` |
 | OpenClaw Gateway | `v2026.6.11` |
 | Package manager | npm |
-| Dev server port | `4175` |
+| Dev server port | `43127` |
 
 ## Frontend
 

@@ -13,7 +13,7 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 - OpenClaw: `v2026.6.11`
 - Node: `>=24 <25` (`.nvmrc`)
 - Package manager: npm
-- Dev server port: `4175`
+- Dev server port: `43127`
 - License: MIT
 
 ## Branding

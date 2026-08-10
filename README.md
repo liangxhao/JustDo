@@ -52,7 +52,7 @@ npm run electron:dev
 The Vite dev server uses the port from `package.json`:
 
 ```text
-http://localhost:4175
+http://localhost:43127
 ```
 
 To prepare and run with the OpenClaw host runtime:
@@ -157,7 +157,7 @@ OpenClaw integration is declared in `package.json`:
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {
-    "port": 4175
+    "port": 43127
   }
 }
 ```
