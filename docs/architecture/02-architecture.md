@@ -115,7 +115,7 @@ src/main/
 
 - `src/main/main.ts` 初始化应用、store、Gateway、IPC、窗口和托盘。
 - `src/main/openclaw/runtime/openclawEngineManager.ts` 管理 Gateway 下载、安装、启动、停止和状态。
-- `src/main/engine/coworkEngineService.ts` 和 `coworkEngineRouter.ts` 负责 Cowork 调度外观。
+- `src/main/engine/cowork/coworkEngineService.ts` 和 `coworkEngineRouter.ts` 负责 Cowork 调度外观。
 - `src/main/plugins/index.ts` 汇总 skills、MCP、hooks、extensions 和 marketplace 服务。
 - `src/main/ipc/**` 注册 renderer 可调用的主进程 API。
 

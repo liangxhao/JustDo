@@ -9,7 +9,7 @@ JustDo 当前只有一个 AI 执行引擎：OpenClaw Gateway `v2026.6.11`。Main
 | `src/main/openclaw/runtime/openclawEngineManager.ts`    | Gateway runtime 生命周期              |
 | `src/main/openclaw/config/openclawConfigSyncService.ts` | 配置同步服务                          |
 | `src/main/openclaw/config/openclawConfigSync.ts`        | provider/MCP/hooks/extension 配置生成 |
-| `src/main/engine/openclawRuntimeAdapter.ts`             | Cowork 到 Gateway 的 adapter          |
+| `src/main/engine/openclaw/openclawRuntimeAdapter.ts`    | Cowork 到 Gateway 的 adapter          |
 | `src/main/engine/gateway/sessionRpc.ts`                 | Gateway session RPC helper            |
 | `src/main/cowork/providerApiConfig.ts`                  | provider 配置解析                     |
 | `src/main/cowork/builtinModelProvider.ts`               | 内置模型 provider 同步                |

@@ -65,7 +65,7 @@ flowchart LR
 ## 当前实现要点
 
 - `<justdo-chat>` 通过 Gateway WebSocket 渲染聊天内容。
-- `openclawRuntimeAdapter.ts` 是 Cowork facade 到 Gateway 的 adapter。
+- `src/main/engine/openclaw/openclawRuntimeAdapter.ts` 是 Cowork facade 到 Gateway 的 adapter。
 - `OpenClawConfigSyncService` 把 JustDo 本地配置同步给 Gateway。
 - `CronJobService` 轮询/调用 Gateway cron runtime。
 - `OpenClawSkillService` 通过 Gateway skill RPC 管理 skills。

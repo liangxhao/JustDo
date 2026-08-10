@@ -109,7 +109,7 @@ OpenClaw precedence 为 `openclaw-extra` < `openclaw-bundled` < `openclaw-manage
 
 ### 当前内置 Skills
 
-`resources/builtin-skills.json` 当前声明 15 个 Skill，其中 `agent-browser` 默认禁用，其余 14 个默认启用。`disableOpenClawDefaults` 为 `true`，表示 runtime 以 JustDo 声明的内置 Skill 清单为准。
+`resources/builtin-skills.json` 当前声明 7 个 Skill，全部默认启用。`disableOpenClawDefaults` 为 `true`，表示 runtime 以 JustDo 声明的内置 Skill 清单为准。
 
 内置 Skill 位于 `resources/skills/<id>/`。新增、删除或重命名内置 Skill 时必须同步 `resources/builtin-skills.json`、README、打包规则和相关测试。
 

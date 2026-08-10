@@ -1,19 +1,19 @@
 # JustDo 文档索引
 
-本文档目录描述 JustDo 当前实现。历史迁移计划已经收敛为“当前边界/当前状态”说明，避免读者把已完成的改造当成待办事项。
+本文档目录以当前实现为主，同时保留必要的设计、审查和验收记录。功能文档会明确标注其定位，避免读者把已完成的改造或仍有前置条件的设计误读为当前能力。
 
 ## 当前版本事实
 
 | 项 | 当前值 |
 | --- | --- |
-| JustDo | `v2026.7.6` |
+| JustDo | `v2026.8.10` |
 | OpenClaw Gateway | `v2026.6.11` |
 | Electron | `42.6.0` |
 | Node.js | `>=24 <25` |
 | 开发端口 | `43127` |
-| Redux slices | 7 |
-| 内置 Skills | 15 个声明，14 个默认启用 |
-| 当前 Runtime patches | 13 个，位于 `scripts/patches/v2026.6.11/` |
+| Redux slices | 6 |
+| 内置 Skills | 7 个声明，7 个默认启用 |
+| 当前 Runtime patches | 19 个，位于 `scripts/patches/v2026.6.11/` |
 
 ## 架构文档
 
@@ -39,8 +39,24 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [current-state-v2026.8.10.md](features/current-state-v2026.8.10.md) | v2026.8.10 已落地能力、未完成边界和代码入口 |
 | [openclaw-thin-frontend-refactor-plan.md](features/openclaw-thin-frontend-refactor-plan.md) | Thin frontend 当前完成状态 |
 | [thinking-stream-implementation.md](features/thinking-stream-implementation.md) | Thinking stream 当前实现 |
+
+### 功能设计与验收记录
+
+以下文档不是统一的待办列表。带有 `plan` 的文件中，部分已标记 `Status: implemented`，其余仍保留设计、审查或前置条件；阅读时应以文件开头的状态和当前状态总览为准。
+
+| 文档 | 当前定位 |
+| --- | --- |
+| [scheduled-task-in-app-results-implementation-plan.md](features/scheduled-task-in-app-results-implementation-plan.md) | 已实现的结果收件箱设计记录 |
+| [openclaw-execution-plan-ui-implementation-plan.md](features/openclaw-execution-plan-ui-implementation-plan.md) | Goal UI 实现记录 |
+| [openclaw-permission-management-remediation-plan.md](features/openclaw-permission-management-remediation-plan.md) | 已交付主链路 + 未完成安全验收项 |
+| [browser-settings-design.md](features/browser-settings-design.md) | 当前 runtime 不支持 extension 的设计与前置条件 |
+| [authentication-builtin-model-lifecycle.md](features/authentication-builtin-model-lifecycle.md) | 待认证 handler 接入的集成契约 |
+| [chat-message-flow-review-2026-07-26.md](features/chat-message-flow-review-2026-07-26.md) | 聊天链路审查记录 |
+| [chat-message-timeline-refactor-plan.md](features/chat-message-timeline-refactor-plan.md) | 聊天时间线重构设计记录 |
+| [outbound-header-proxy-analysis-and-redesign.md](features/outbound-header-proxy-analysis-and-redesign.md) | 代理链路分析与测试计划 |
 
 ## Patch 文档
 
@@ -55,3 +71,4 @@
 - 修改 SQLite schema 时，同步更新 `10-data-storage.md`。
 - 修改 Plugin 能力边界、skill manifest 或安装逻辑时，同步更新 `07-plugin-system.md`。
 - 修改 runtime patch 时，同步更新 `patches/openclaw-patch-guide.md`。
+- 完成功能实现后，更新当前状态文档或下一版本的当前状态文档，并在功能文档开头明确标记“已实现/设计记录/待接入”。

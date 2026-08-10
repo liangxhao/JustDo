@@ -18,7 +18,7 @@ JustDo has completed the thin-frontend refactor. This document records the curre
 
 ## Files To Watch
 
-- `src/main/engine/openclawRuntimeAdapter.ts`
+- `src/main/engine/openclaw/openclawRuntimeAdapter.ts`
 - `src/main/openclaw/runtime/openclawEngineManager.ts`
 - `src/main/openclaw/config/openclawConfigSyncService.ts`
 - `src/renderer/libs/openclaw-chat/`

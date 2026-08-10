@@ -193,7 +193,7 @@ IPC 状态。
 
 ## 版本
 
-- JustDo: `v2026.7.6`
+- JustDo: `v2026.8.10`
 - OpenClaw Gateway: `v2026.6.11`
 
 ## 组件职责

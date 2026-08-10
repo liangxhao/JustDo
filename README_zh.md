@@ -2,7 +2,7 @@
 
 JustDo 是一个基于 Electron、React、SQLite 和 OpenClaw Gateway 的桌面 AI 助理。它不是只给建议的聊天框，而是面向真实任务执行：对话、附件、技能、MCP、定时任务、桌面后台运行和本地配置管理都在同一个应用里完成。
 
-![Version](https://img.shields.io/badge/Version-v2026.7.6-green.svg?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-v2026.8.10-green.svg?style=for-the-badge)
 ![Electron](https://img.shields.io/badge/Electron-42-47848F?style=for-the-badge&logo=electron&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-24.x-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)
@@ -14,7 +14,7 @@ JustDo 是一个基于 Electron、React、SQLite 和 OpenClaw Gateway 的桌面 
 | AI 工作会话 | OpenClaw Gateway 是执行引擎。JustDo 负责桌面壳、UI 状态、权限和本地缓存。 |
 | 聊天 UI | React 负责应用外壳；`<justdo-chat>` 是 Lit 自定义元素，直连本地 OpenClaw Gateway WebSocket。 |
 | 本地存储 | `better-sqlite3` 保存 UI 缓存、应用设置、Agent、MCP、hooks、会话分组和 cowork 元数据。 |
-| Skills | `resources/builtin-skills.json` 声明 15 个内置技能；默认启用 14 个，`agent-browser` 默认关闭。 |
+| Skills | `resources/builtin-skills.json` 声明 7 个内置技能，全部默认启用。 |
 | MCP 与 hooks | 在 Plugins 页面管理，本地持久化后同步到 OpenClaw 配置。 |
 | 定时任务 | JustDo 负责 UI CRUD 和轮询；任务执行交给 OpenClaw cron runtime。 |
 | 桌面集成 | 托盘、开机启动、防休眠、本地文件预览、日志、代理处理和平台打包资源。 |
@@ -142,7 +142,7 @@ OpenClaw 集成在 `package.json` 中声明：
 
 ```json
 {
-  "version": "v2026.7.6",
+  "version": "v2026.8.10",
   "openclaw": {
     "version": "v2026.6.11",
     "repo": "https://github.com/openclaw/openclaw.git"

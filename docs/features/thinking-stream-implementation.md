@@ -17,8 +17,8 @@ Thinking/reasoning stream display is currently implemented through OpenClaw Gate
 - `scripts/patches/v2026.6.11/002-agent-announce-reasoning-stream.cjs`
 - `scripts/patches/v2026.6.11/003-openai-content-reasoning-tags.cjs`
 - `scripts/patches/v2026.6.11/005-history-thinking-and-subagent-yield.cjs`
-- `src/main/engine/coworkRuntimeForwarder.ts`
-- `src/main/engine/openclawRuntimeAdapter.ts`
+- `src/main/engine/cowork/coworkRuntimeForwarder.ts`
+- `src/main/engine/openclaw/openclawRuntimeAdapter.ts`
 - `src/renderer/libs/openclaw-chat/pipeline/stream-text.ts`
 
 ## Maintenance Rule

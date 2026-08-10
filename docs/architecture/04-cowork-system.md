@@ -8,10 +8,10 @@ Cowork 是 JustDo 的 AI 工作会话系统。用户在 renderer 中创建或继
 | --------------------------------------------- | ---------------------------------------- |
 | `src/renderer/features/cowork/`               | Cowork UI、Redux slice、service、组件    |
 | `src/main/ipc/cowork/`                        | Cowork IPC handlers                      |
-| `src/main/engine/coworkEngineService.ts`      | Cowork engine service                    |
-| `src/main/engine/coworkEngineRouter.ts`       | session routing facade                   |
-| `src/main/engine/openclawRuntimeAdapter.ts`   | Gateway adapter                          |
-| `src/main/engine/coworkRuntimeForwarder.ts`   | runtime events -> IPC events             |
+| `src/main/engine/cowork/coworkEngineService.ts` | Cowork engine service                  |
+| `src/main/engine/cowork/coworkEngineRouter.ts`  | session routing facade                 |
+| `src/main/engine/openclaw/openclawRuntimeAdapter.ts` | Gateway adapter                   |
+| `src/main/engine/cowork/coworkRuntimeForwarder.ts` | runtime events -> IPC events       |
 | `src/main/data/coworkStore.ts`                | local session/message/agent persistence  |
 | `src/main/openclaw/sessions/`                 | Gateway session key/history/text helpers |
 | `src/main/engine/openclaw/subagentGateway.ts` | subagent status/history bridge           |
@@ -112,6 +112,19 @@ Gateway history 是权威。`historyReconciler` 和 `src/main/openclaw/sessions/
 - 用户可见错误必须 i18n。
 
 ## 详细状态模型
+
+### Subagent identity
+
+Subagent 的展示和历史入口使用 Gateway 提供的稳定身份，而不是从标签或工具输出猜测：
+
+- `sessionKey` 用于 Gateway RPC、历史加载和运行状态查询；
+- `sessionId` 用于展示、复制和服务端请求关联；
+- `spawnedBy` / `parentSessionKey` 用于恢复父子关系，兼容旧 Gateway 字段；
+- 子会话抽屉复用 `ChatController` 和 `<justdo-chat>` 的历史渲染管线，但不把子会话写入普通
+  Cowork Redux/SQLite 执行状态。
+
+父级 session rotation 不会改变已经创建的子会话归属。无法取得稳定 child session identity 时，
+UI 只能保留降级状态，不应使用 label、tool-call id 或 transcript 文本作为替代主键。
 
 ### Session Metadata
 

@@ -5,7 +5,7 @@ OpenClaw Gateway. It is designed for real task execution: chat with an agent,
 attach files, manage skills and MCP servers, run scheduled tasks, and keep the
 desktop app available in the background.
 
-![Version](https://img.shields.io/badge/Version-v2026.7.6-green.svg?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-v2026.8.10-green.svg?style=for-the-badge)
 ![Electron](https://img.shields.io/badge/Electron-42-47848F?style=for-the-badge&logo=electron&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-24.x-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)
@@ -17,7 +17,7 @@ desktop app available in the background.
 | AI work sessions | OpenClaw Gateway is the execution engine. JustDo manages the desktop shell, UI state, permissions, and local cache. |
 | Chat UI | React owns the application shell; `<justdo-chat>` is a Lit custom element backed by the local OpenClaw Gateway WebSocket. |
 | Local storage | `better-sqlite3` stores UI cache, app settings, agents, MCP servers, hooks, session groups, and cowork metadata. |
-| Skills | 15 bundled skills are listed in `resources/builtin-skills.json`; 14 are enabled by default and `agent-browser` is disabled. |
+| Skills | 7 bundled skills are listed in `resources/builtin-skills.json`; all 7 are enabled by default. |
 | MCP and hooks | Managed from the Plugins screen, persisted locally, then synced into OpenClaw configuration. |
 | Scheduled tasks | UI CRUD and polling are handled by JustDo; execution is delegated to the OpenClaw cron runtime. |
 | Desktop integration | Tray, auto launch, prevent sleep, local file preview, logs, proxy handling, and packaged platform resources. |
@@ -151,7 +151,7 @@ OpenClaw integration is declared in `package.json`:
 
 ```json
 {
-  "version": "v2026.7.6",
+  "version": "v2026.8.10",
   "openclaw": {
     "version": "v2026.6.11",
     "repo": "https://github.com/openclaw/openclaw.git"

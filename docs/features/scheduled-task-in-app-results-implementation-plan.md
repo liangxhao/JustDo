@@ -4,7 +4,7 @@ Status: implemented
 
 Baseline:
 
-- JustDo: `v2026.7.6`
+- JustDo: `v2026.8.10`
 - OpenClaw Gateway: `v2026.6.11`
 - Planning date: 2026-07-28
 
