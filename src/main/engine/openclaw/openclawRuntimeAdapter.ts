@@ -759,6 +759,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         ...(commandSessionId ? { sessionId: commandSessionId } : {}),
         message: prompt.trim(),
         deliver: false,
+        justdoUserInitiated: true,
         timeoutMs: this.agentTimeoutSeconds * 1000,
         idempotencyKey: runId,
         ...(attachments ? { attachments } : {}),

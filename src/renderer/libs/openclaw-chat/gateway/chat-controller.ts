@@ -2626,6 +2626,7 @@ export class ChatController {
         ...(this.state.currentSessionId ? { sessionId: this.state.currentSessionId } : {}),
         message,
         deliver: false,
+        justdoUserInitiated: true,
         idempotencyKey: runId,
         ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
       });

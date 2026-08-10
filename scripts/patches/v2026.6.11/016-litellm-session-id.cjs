@@ -1,13 +1,14 @@
 'use strict';
 
-// Purpose: Attach the active OpenClaw session id, direct parent session id, and request purpose as
-// LiteLLM-compatible metadata on OpenAI-compatible requests associated with a
-// session.
+// Purpose: Attach the active OpenClaw session id, direct parent session id, request purpose, and
+// explicit human-user initiation signal as LiteLLM-compatible metadata on
+// OpenAI-compatible requests associated with a session.
 //
 // This patch covers three independent OpenClaw request paths:
 // 1. Rename and wrap resolveEmbeddedAgentStreamFn() so normal agent/model
 //    requests add metadata.session_id, optional metadata.parent_session_id,
-//    and metadata.request_purpose=agent.
+//    metadata.request_purpose=agent, and metadata.user_initiated=true only on
+//    the first provider request belonging to a direct user chat.send run.
 // 2. Thread the session UUID through compaction-safeguard's staged summary
 //    pipeline and provide generateSummary2() with a payload-patching stream.
 //    The safeguard calls generateSummary2() directly instead of reusing the
@@ -18,10 +19,11 @@
 // 3. Extend the simple-completion path used by tools.exec.reviewer so its model
 //    request carries the current session UUID and request_purpose=exec_review.
 //
-// Existing request metadata is preserved; session_id, parent_session_id, and
-// request_purpose are replaced with authoritative values from the active
-// OpenClaw request path. Subagents snapshot their direct parent's Gateway UUID
-// at spawn time; legacy child sessions resolve and backfill it from spawnedBy.
+// Existing request metadata is preserved; session_id, parent_session_id,
+// request_purpose, and user_initiated are replaced with authoritative values
+// from the active OpenClaw request path. Subagents snapshot their direct
+// parent's Gateway UUID at spawn time; legacy child sessions resolve and
+// backfill it from spawnedBy.
 //
 // Application model: apply all changes atomically to a pristine generated
 // bundle. A bundle containing only an earlier revision of this patch is
@@ -39,7 +41,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const HELPER_MARKER = 'JUSTDO_LITELLM_REQUEST_METADATA_V4';
+const HELPER_MARKER = 'JUSTDO_LITELLM_REQUEST_METADATA_V8';
+const USER_INITIATED_SCHEMA_MARKER = 'JUSTDO_LITELLM_USER_INITIATED_SCHEMA_V1';
+const USER_INITIATED_REGISTER_MARKER = 'JUSTDO_LITELLM_USER_INITIATED_REGISTER_V1';
 const PARENT_SESSION_MARKER = 'JUSTDO_LITELLM_PARENT_SESSION_ID';
 const COMPACTION_MARKER = 'JUSTDO_LITELLM_COMPACTION_SESSION_ID';
 const SIMPLE_COMPLETION_MARKER = 'JUSTDO_LITELLM_SIMPLE_COMPLETION_REQUEST_METADATA';
@@ -48,6 +52,18 @@ const EXEC_REVIEWER_FACTORY_MARKER = 'JUSTDO_LITELLM_EXEC_REVIEW_SESSION_ID';
 const ORIGINAL_RESOLVER = 'function resolveEmbeddedAgentStreamFn(params) {';
 const RENAMED_RESOLVER = 'function resolveEmbeddedAgentStreamFnWithoutLiteLLMSessionId(params) {';
 const WRAPPER_ANCHOR = 'function wrapEmbeddedAgentStreamFn(inner, params) {';
+const ORIGINAL_CHAT_SEND_SCHEMA = `      systemInputProvenance: typebox_exports.Optional(InputProvenanceSchema),
+      systemProvenanceReceipt: typebox_exports.Optional(typebox_exports.String()),`;
+const PATCHED_CHAT_SEND_SCHEMA = `      systemInputProvenance: typebox_exports.Optional(InputProvenanceSchema),
+      // ${USER_INITIATED_SCHEMA_MARKER}
+      justdoUserInitiated: typebox_exports.Optional(typebox_exports.Boolean()),
+      systemProvenanceReceipt: typebox_exports.Optional(typebox_exports.String()),`;
+const ORIGINAL_CHAT_RUN_REGISTRATION = `          context.addChatRun(clientRunId, {
+            sessionKey,`;
+const PATCHED_CHAT_RUN_REGISTRATION = `          // ${USER_INITIATED_REGISTER_MARKER}
+          registerLiteLLMUserChatRunFromChatSend(p4, clientRunId);
+          context.addChatRun(clientRunId, {
+            sessionKey,`;
 const ORIGINAL_DIRECT_CHILD_SPAWNED_BY =
   '  if (typeof patch.spawnedBy === "string" && patch.spawnedBy.trim()) entry.spawnedBy = patch.spawnedBy.trim();';
 const PATCHED_DIRECT_CHILD_SPAWNED_BY = `${ORIGINAL_DIRECT_CHILD_SPAWNED_BY}
@@ -71,6 +87,7 @@ const STREAM_RESOLUTION_FIELDS = [
         config: params.config,
         sessionKey: params.sessionKey,
         spawnedBy: params.spawnedBy,
+        runId: params.runId,
         promptCacheKey: params.promptCacheKey,`,
   ],
   [
@@ -247,6 +264,26 @@ const JUSTDO_LITELLM_SESSION_APIS = new Set([
   "azure-openai-responses"
 ]);
 const JUSTDO_LITELLM_PARENT_SESSION_CACHE = new Map();
+const JUSTDO_LITELLM_USER_CHAT_RUNS = new Set();
+const JUSTDO_LITELLM_USER_CHAT_RUN_LIMIT = 4096;
+function registerLiteLLMUserChatRun(runId) {
+  const normalizedRunId = typeof runId === "string" ? runId.trim() : "";
+  if (!normalizedRunId) return;
+  JUSTDO_LITELLM_USER_CHAT_RUNS.add(normalizedRunId);
+  if (JUSTDO_LITELLM_USER_CHAT_RUNS.size > JUSTDO_LITELLM_USER_CHAT_RUN_LIMIT) {
+    JUSTDO_LITELLM_USER_CHAT_RUNS.delete(JUSTDO_LITELLM_USER_CHAT_RUNS.values().next().value);
+  }
+}
+function registerLiteLLMUserChatRunFromChatSend(params, runId) {
+  if (params?.justdoUserInitiated !== true) return false;
+  registerLiteLLMUserChatRun(runId);
+  return true;
+}
+function consumeLiteLLMUserChatRun(runId) {
+  if (!runId || !JUSTDO_LITELLM_USER_CHAT_RUNS.has(runId)) return false;
+  JUSTDO_LITELLM_USER_CHAT_RUNS.delete(runId);
+  return true;
+}
 function readLiteLLMSessionEntry(config, sessionKey) {
   const normalizedSessionKey = typeof sessionKey === "string" ? sessionKey.trim() : "";
   if (!config || !normalizedSessionKey) return void 0;
@@ -308,17 +345,17 @@ function resolveLiteLLMParentSessionId(params) {
   backfillLiteLLMParentSessionId(current, parentSessionId, normalizedSessionId);
   return parentSessionId;
 }
-function wrapStreamFnWithLiteLLMRequestMetadata(streamFn, sessionId, requestPurpose, modelApi, parentSessionId) {
+function wrapStreamFnWithLiteLLMRequestMetadata(streamFn, sessionId, requestPurpose, modelApi, parentSessionId, runId) {
   const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
   const normalizedRequestPurpose = typeof requestPurpose === "string" ? requestPurpose.trim() : "";
   const normalizedParentSessionId = typeof parentSessionId === "string" ? parentSessionId.trim() : "";
+  const normalizedRunId = typeof runId === "string" ? runId.trim() : "";
   if (!normalizedSessionId || !normalizedRequestPurpose || !JUSTDO_LITELLM_SESSION_APIS.has(modelApi)) return streamFn;
-  return (model, context, options) => streamWithPayloadPatch(
-    streamFn,
-    model,
-    context,
-    options,
-    (payload) => {
+  let userInitiationPending = Boolean(normalizedRunId);
+  return (model, context, options) => {
+    return streamWithPayloadPatch(streamFn, model, context, options, (payload) => {
+      const markUserInitiated = userInitiationPending && consumeLiteLLMUserChatRun(normalizedRunId);
+      userInitiationPending = false;
       const metadata = payload.metadata;
       payload.metadata = {
         ...metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {},
@@ -330,8 +367,13 @@ function wrapStreamFnWithLiteLLMRequestMetadata(streamFn, sessionId, requestPurp
       } else {
         delete payload.metadata.parent_session_id;
       }
-    }
-  );
+      if (markUserInitiated) {
+        payload.metadata.user_initiated = true;
+      } else {
+        delete payload.metadata.user_initiated;
+      }
+    });
+  };
 }
 function createLiteLLMRequestMetadataStreamFn(sessionId, requestPurpose, modelApi, parentSessionId) {
   const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -352,7 +394,8 @@ const RESOLVER_WRAPPER = `function resolveEmbeddedAgentStreamFn(params) {
       sessionKey: params.sessionKey,
       sessionId: params.sessionId,
       spawnedBy: params.spawnedBy
-    })
+    }),
+    params.runId
   );
 }
 `;
@@ -372,6 +415,8 @@ function patchFile(filePath) {
   let content = fs.readFileSync(filePath, 'utf8');
   const patchMarkers = [
     HELPER_MARKER,
+    USER_INITIATED_SCHEMA_MARKER,
+    USER_INITIATED_REGISTER_MARKER,
     PARENT_SESSION_MARKER,
     RENAMED_RESOLVER,
     RESOLVER_WRAPPER,
@@ -412,6 +457,20 @@ function patchFile(filePath) {
       filePath,
     );
   }
+  content = replaceExactlyOnce(
+    content,
+    ORIGINAL_CHAT_SEND_SCHEMA,
+    PATCHED_CHAT_SEND_SCHEMA,
+    'LiteLLM direct user chat schema',
+    filePath,
+  );
+  content = replaceExactlyOnce(
+    content,
+    ORIGINAL_CHAT_RUN_REGISTRATION,
+    PATCHED_CHAT_RUN_REGISTRATION,
+    'LiteLLM direct user chat run registration',
+    filePath,
+  );
 
   // Snapshot the direct parent UUID when a child session is created. Existing
   // children are resolved and backfilled lazily by HELPER_SOURCE.
@@ -540,6 +599,8 @@ function verifyPatch(runtimeDir) {
   const content = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
   const required = [
     HELPER_SOURCE,
+    PATCHED_CHAT_SEND_SCHEMA,
+    PATCHED_CHAT_RUN_REGISTRATION,
     PATCHED_DIRECT_CHILD_SPAWNED_BY,
     PATCHED_SPAWN_PARENT_CAPTURE,
     PATCHED_SPAWN_LINEAGE_PATCH,

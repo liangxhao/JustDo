@@ -152,7 +152,10 @@ safeguard 无法解析摘要模型或认证，以及摘要请求超时、溢出�
 以及 `tools.exec.reviewer` 使用的 simple-completion 调用。补丁为关联到会话的
 OpenAI-compatible 请求注入权威的 `metadata.session_id`，subagent 请求还会注入直接父级
 Gateway UUID `metadata.parent_session_id`，并用
-`metadata.request_purpose` 区分 `agent`、`context_compaction` 和 `exec_review`；标题生成
+`metadata.request_purpose` 区分 `agent`、`context_compaction` 和 `exec_review`；真实用户
+直接发起的顶层 agent turn 只有第一次 provider 请求会带上
+`metadata.user_initiated=true`，系统 provenance 输入、自动续跑、同一 turn 的后续请求与
+子代理请求不会携带该标记；标题生成
 的直连请求由 JustDo 标记为 `title_generation`。safeguard 原生通过
 `generateSummary2()` 直连模型，不复用会话 stream，因此补丁会把当前 OpenClaw
 session UUID 和可选的直接父级 UUID 传入每个摘要 chunk。Exec reviewer 同样走独立

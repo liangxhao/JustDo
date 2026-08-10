@@ -439,6 +439,7 @@ test('sends the backing session id returned by chat history', async () => {
       sessionKey: 'agent:main:justdo:session-1',
       sessionId: 'backing-session-1',
       message: 'continue with stable session identity',
+      justdoUserInitiated: true,
     }),
   );
 });
@@ -474,6 +475,7 @@ test('creates a backing session before the first goal command', async () => {
       sessionKey: 'agent:main:justdo:new-session',
       sessionId: 'new-backing-session',
       message: '/goal build a release dashboard',
+      justdoUserInitiated: true,
     }),
   );
 });
@@ -928,6 +930,7 @@ test('sends and optimistically renders image attachments in an existing session'
     sessionKey: 'agent:main:justdo:session-1',
     message: 'second image',
     deliver: false,
+    justdoUserInitiated: true,
     idempotencyKey: expect.stringMatching(/^justdo-/),
     attachments: [
       {

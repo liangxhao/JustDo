@@ -18,6 +18,15 @@ const BUNDLE_FIXTURE = `function resolveEmbeddedAgentStreamFn(params) {
 function wrapEmbeddedAgentStreamFn(inner, params) {
   return inner;
 }
+const ChatSendParamsSchema = typebox_exports.Object({
+      systemInputProvenance: typebox_exports.Optional(InputProvenanceSchema),
+      systemProvenanceReceipt: typebox_exports.Optional(typebox_exports.String()),
+});
+function handleChatSend(p4, clientRunId, sessionKey) {
+          context.addChatRun(clientRunId, {
+            sessionKey,
+  return p4;
+}
 function configureAttemptStream(params) {
   return resolveEmbeddedAgentStreamFn({
         sessionId: params.sessionId,
@@ -136,12 +145,21 @@ test('patches the OpenClaw stream resolver idempotently', () => {
 
     expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
     const patched = fs.readFileSync(bundlePath, 'utf8');
-    expect(patched).toContain('JUSTDO_LITELLM_REQUEST_METADATA_V4');
+    expect(patched).toContain('JUSTDO_LITELLM_REQUEST_METADATA_V8');
+    expect(patched).toContain('JUSTDO_LITELLM_USER_INITIATED_SCHEMA_V1');
+    expect(patched).toContain('JUSTDO_LITELLM_USER_INITIATED_REGISTER_V1');
+    expect(patched).toContain(
+      'justdoUserInitiated: typebox_exports.Optional(typebox_exports.Boolean())',
+    );
+    expect(patched).toContain('registerLiteLLMUserChatRunFromChatSend(p4, clientRunId)');
     expect(patched).toContain('JUSTDO_LITELLM_PARENT_SESSION_ID');
     expect(patched).toContain('resolveEmbeddedAgentStreamFnWithoutLiteLLMSessionId(params)');
     expect(patched).toContain('session_id: normalizedSessionId');
     expect(patched).toContain('payload.metadata.parent_session_id = normalizedParentSessionId');
     expect(patched).toContain('request_purpose: normalizedRequestPurpose');
+    expect(patched).toContain('runId: params.runId');
+    expect(patched).toContain('payload.metadata.user_initiated = true');
+    expect(patched).toContain('let userInitiationPending = Boolean(normalizedRunId)');
     expect(patched).toContain('JUSTDO_LITELLM_COMPACTION_SESSION_ID');
     expect(patched).toContain('sessionId: runtime3?.sessionId');
     expect(patched).toContain(
@@ -245,7 +263,7 @@ test('injects authoritative agent request metadata while preserving existing met
   });
 }
 ${__testing.HELPER_SOURCE}
-export { wrapStreamFnWithLiteLLMRequestMetadata };
+export { registerLiteLLMUserChatRun, registerLiteLLMUserChatRunFromChatSend, wrapStreamFnWithLiteLLMRequestMetadata };
 `,
       'utf8',
     );
@@ -256,7 +274,13 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
         requestPurpose: string,
         modelApi: string,
         parentSessionId?: string,
+        runId?: string,
       ) => (...args: unknown[]) => unknown;
+      registerLiteLLMUserChatRun: (runId: string) => void;
+      registerLiteLLMUserChatRunFromChatSend: (
+        params: Record<string, unknown>,
+        runId: string,
+      ) => boolean;
     };
     let payload: Record<string, unknown> = {
       model: 'deepseek-v4-flash',
@@ -265,12 +289,28 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
         session_id: 'stale-session',
         request_purpose: 'stale-purpose',
         parent_session_id: 'stale-parent',
+        user_initiated: false,
       },
     };
+    let shouldEmitPayload = true;
     const streamFn = (_model: unknown, _context: unknown, options: Record<string, unknown>) => {
       const onPayload = options.onPayload as ((value: Record<string, unknown>) => void) | undefined;
-      onPayload?.(payload);
+      if (shouldEmitPayload) onPayload?.(payload);
     };
+
+    expect(
+      harness.registerLiteLLMUserChatRunFromChatSend(
+        { systemProvenanceReceipt: '[system receipt]' },
+        'skill-workshop-run',
+      ),
+    ).toBe(false);
+    expect(harness.registerLiteLLMUserChatRunFromChatSend({}, 'talk-consult-run')).toBe(false);
+    expect(
+      harness.registerLiteLLMUserChatRunFromChatSend(
+        { justdoUserInitiated: true },
+        'explicit-user-run',
+      ),
+    ).toBe(true);
 
     harness.wrapStreamFnWithLiteLLMRequestMetadata(
       streamFn,
@@ -278,6 +318,7 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
       ' agent ',
       'openai-completions',
       ' gateway-parent-123 ',
+      'explicit-user-run',
     )({}, {}, {});
 
     expect(payload.metadata).toEqual({
@@ -285,6 +326,70 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
       session_id: 'openclaw-session-123',
       request_purpose: 'agent',
       parent_session_id: 'gateway-parent-123',
+      user_initiated: true,
+    });
+
+    payload = {
+      model: 'deepseek-v4-flash',
+      metadata: { user_initiated: true },
+    };
+    harness.registerLiteLLMUserChatRun('run-user-456');
+    const userInitiatedStream = harness.wrapStreamFnWithLiteLLMRequestMetadata(
+      streamFn,
+      'openclaw-session-456',
+      'agent',
+      'openai-completions',
+      undefined,
+      'run-user-456',
+    );
+    userInitiatedStream({}, {}, {});
+    expect(payload.metadata).toEqual({
+      session_id: 'openclaw-session-456',
+      request_purpose: 'agent',
+      user_initiated: true,
+    });
+    payload = {
+      model: 'deepseek-v4-flash',
+      metadata: { user_initiated: true },
+    };
+    userInitiatedStream({}, {}, {});
+    expect(payload.metadata).toEqual({
+      session_id: 'openclaw-session-456',
+      request_purpose: 'agent',
+    });
+
+    harness.registerLiteLLMUserChatRun('run-user-retry');
+    const retryingUserStream = harness.wrapStreamFnWithLiteLLMRequestMetadata(
+      streamFn,
+      'openclaw-session-retry',
+      'agent',
+      'openai-completions',
+      undefined,
+      'run-user-retry',
+    );
+    shouldEmitPayload = false;
+    retryingUserStream({}, {}, {});
+    shouldEmitPayload = true;
+    payload = { model: 'deepseek-v4-flash' };
+    retryingUserStream({}, {}, {});
+    expect(payload.metadata).toEqual({
+      session_id: 'openclaw-session-retry',
+      request_purpose: 'agent',
+      user_initiated: true,
+    });
+
+    payload = { model: 'deepseek-v4-flash' };
+    harness.wrapStreamFnWithLiteLLMRequestMetadata(
+      streamFn,
+      'openclaw-session-456',
+      'agent',
+      'openai-completions',
+      undefined,
+      'run-user-456',
+    )({}, {}, {});
+    expect(payload.metadata).toEqual({
+      session_id: 'openclaw-session-456',
+      request_purpose: 'agent',
     });
 
     payload = { model: 'claude' };
@@ -298,7 +403,7 @@ export { wrapStreamFnWithLiteLLMRequestMetadata };
 
     payload = {
       model: 'deepseek-v4-flash',
-      metadata: { parent_session_id: 'stale-parent' },
+      metadata: { parent_session_id: 'stale-parent', user_initiated: true },
     };
     harness.wrapStreamFnWithLiteLLMRequestMetadata(
       streamFn,
@@ -679,8 +784,8 @@ test('rejects an earlier chat-only patch revision and requires a pristine bundle
   try {
     const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
     const legacyHelperSource = __testing.HELPER_SOURCE.replace(
-      'JUSTDO_LITELLM_REQUEST_METADATA_V4',
-      'JUSTDO_LITELLM_REQUEST_METADATA_V3',
+      'JUSTDO_LITELLM_REQUEST_METADATA_V8',
+      'JUSTDO_LITELLM_REQUEST_METADATA_V7',
     );
     const chatOnlyBundle = BUNDLE_FIXTURE.replace(
       'function resolveEmbeddedAgentStreamFn(params) {',
