@@ -32,11 +32,13 @@ test('lists subagents from the registry-backed sessions projection', async () =>
           sessions: [
             {
               key: 'agent:main:subagent:running',
+              sessionId: 'running-session-id',
               derivedTitle: 'Changing title',
               status: 'done',
             },
             {
               key: 'agent:main:subagent:timeout',
+              sessionId: 'timeout-session-id',
               displayName: 'Slow worker',
               status: 'timeout',
               subagentRunState: 'historical',
@@ -77,6 +79,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
     {
       id: 'agent:main:subagent:running',
       sessionKey: 'agent:main:subagent:running',
+      sessionId: 'running-session-id',
       label: 'research-task',
       status: 'running',
       task: 'Research the topic',
@@ -88,6 +91,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
     {
       id: 'agent:main:subagent:timeout',
       sessionKey: 'agent:main:subagent:timeout',
+      sessionId: 'timeout-session-id',
       label: 'Slow worker',
       status: 'timeout',
       model: 'openai/gpt-5',
@@ -141,6 +145,7 @@ test('replaces internal fallback labels with the persisted session title', async
   ).resolves.toMatchObject([
     {
       sessionKey: 'agent:main:subagent:child-20',
+      sessionId: '93624b49-cad5-41de-944f-8cbae6a70108',
       label: 'blessing_20',
       task: '请写一句中文祝福语，主题是"万事如意"。',
       status: 'done',
@@ -224,6 +229,7 @@ test('keeps persisted subagents after OpenClaw child links age out', async () =>
         sessions: [
           {
             key: 'agent:main:subagent:old-worker',
+            sessionId: 'old-worker-session-id',
             spawnedBy: 'agent:main:cowork:parent',
             task: 'Old retained task',
             status: 'done',
@@ -245,6 +251,7 @@ test('keeps persisted subagents after OpenClaw child links age out', async () =>
   ).resolves.toMatchObject([
     {
       sessionKey: 'agent:main:subagent:old-worker',
+      sessionId: 'old-worker-session-id',
       task: 'Old retained task',
       status: 'done',
       endedAt: 100,

@@ -1018,6 +1018,7 @@ class CoworkService {
     subagents?: Array<{
       id: string;
       sessionKey: string;
+      sessionId?: string;
       label: string;
       status: 'running' | 'done' | 'failed' | 'killed' | 'timeout';
       task?: string;

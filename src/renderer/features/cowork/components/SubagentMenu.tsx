@@ -1,4 +1,4 @@
-import { InformationCircleIcon } from '@heroicons/react/24/outline';
+import { DocumentDuplicateIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -19,6 +19,7 @@ export type SubagentStatus = (typeof SUBAGENT_STATUSES)[keyof typeof SUBAGENT_ST
 export type Subagent = {
   id: string;
   sessionKey: string;
+  sessionId?: string;
   label: string;
   status: SubagentStatus;
   task?: string;
@@ -135,7 +136,24 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
       .join(' ');
   };
 
-  const detailRows = detailSubagent
+  const copySessionId = async (value: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(value);
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: i18nService.t('copySessionIdSuccess'),
+        }),
+      );
+    } catch {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: i18nService.t('copySessionIdFailed'),
+        }),
+      );
+    }
+  };
+
+  const detailRows: Array<[string, string | undefined, boolean?]> = detailSubagent
     ? [
         [i18nService.t('subagentInfoStatus'), detailSubagent.status],
         [i18nService.t('subagentInfoTask'), detailSubagent.task],
@@ -145,6 +163,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
         [i18nService.t('subagentInfoEnded'), formatDateTime(detailSubagent.endedAt)],
         [i18nService.t('subagentInfoTokens'), detailSubagent.totalTokens?.toLocaleString()],
         [i18nService.t('subagentInfoSession'), detailSubagent.sessionKey],
+        [i18nService.t('subagentInfoSessionId'), detailSubagent.sessionId, true],
       ]
     : [];
 
@@ -251,14 +270,27 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
               </button>
             </div>
             <dl className="max-h-[calc(80vh-4rem)] overflow-y-auto px-5 py-3">
-              {detailRows.map(([label, value]) => (
+              {detailRows.map(([label, value, copyable]) => (
                 <div
                   key={label}
                   className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 border-b border-border/60 py-2.5 last:border-0"
                 >
                   <dt className="text-sm text-secondary">{label}</dt>
-                  <dd className="break-words whitespace-pre-wrap text-sm text-foreground">
-                    {value || i18nService.t('subagentInfoUnavailable')}
+                  <dd className="min-w-0 break-words whitespace-pre-wrap text-sm text-foreground">
+                    {copyable && typeof value === 'string' ? (
+                      <button
+                        type="button"
+                        className="inline-flex max-w-full items-start gap-1.5 text-left hover:text-primary"
+                        onClick={() => void copySessionId(value)}
+                        aria-label={i18nService.t('copySessionId')}
+                        title={i18nService.t('copySessionId')}
+                      >
+                        <span className="min-w-0 break-all">{value}</span>
+                        <DocumentDuplicateIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                      </button>
+                    ) : (
+                      value || i18nService.t('subagentInfoUnavailable')
+                    )}
                   </dd>
                 </div>
               ))}

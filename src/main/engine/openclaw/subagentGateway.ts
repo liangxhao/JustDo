@@ -16,6 +16,7 @@ export type SubagentStatus =
 export type GatewaySubagent = {
   id: string;
   sessionKey: string;
+  sessionId?: string;
   label: string;
   status: SubagentStatus;
   task?: string;
@@ -105,6 +106,7 @@ const mergeSessionProjection = (
     existing.label = title;
   }
   existing.model ??= optionalString(row.model);
+  existing.sessionId ??= optionalString(row.sessionId);
   existing.startedAt ??= optionalNumber(row.startedAt);
   existing.endedAt ??= optionalNumber(row.endedAt);
   existing.runtimeMs ??= optionalNumber(row.runtimeMs);
@@ -153,6 +155,7 @@ const addToolSubagents = (
     target.set(sessionKey, {
       id: sessionKey,
       sessionKey,
+      sessionId: optionalString(value.sessionId),
       label:
         optionalString(value.taskName) ||
         optionalString(value.label) ||
@@ -245,6 +248,7 @@ export const listGatewaySubagents = async (options: {
       bySessionKey.set(sessionKey, {
         id: sessionKey,
         sessionKey,
+        sessionId: optionalString(row.sessionId),
         label: resolveLabel(row, sessionKey),
         status: resolveStatus(row),
         model: optionalString(row.model),
@@ -271,6 +275,7 @@ export const listGatewaySubagents = async (options: {
         bySessionKey.set(sessionKey, {
           id: sessionKey,
           sessionKey,
+          sessionId: optionalString(row.sessionId),
           label: resolveLabel(row, sessionKey),
           status: resolveStatus(row),
           task: optionalString(row.task),

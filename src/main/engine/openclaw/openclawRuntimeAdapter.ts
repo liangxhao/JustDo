@@ -3197,6 +3197,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     subagents: Array<{
       id: string;
       sessionKey: string;
+      sessionId?: string;
       label: string;
       status: SubagentStatus;
       task?: string;
