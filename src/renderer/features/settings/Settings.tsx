@@ -50,6 +50,7 @@ import ShortcutsSettings, {
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
+import { buildModelConnectionTestRequestBody } from '@/features/settings/modelConnectionTest';
 import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
@@ -1353,11 +1354,10 @@ const Settings: React.FC<SettingsProps> = ({
         });
         await waitForNextPaint();
 
-        const requestBody = JSON.stringify({
-          model: model.id,
-          messages: [{ role: 'user', content: 'Hi' }],
-          max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
-        });
+        const requestBody = buildModelConnectionTestRequestBody(
+          model.id,
+          CONNECTIVITY_TEST_TOKEN_BUDGET,
+        );
         const headers = buildOpenAIJsonRequestHeaders(requestBody, effectiveApiKey, {
           includeContentLength: false,
         });
