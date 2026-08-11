@@ -76,7 +76,7 @@ const AppUpdateSection: React.FC = () => {
       if (active) setState(current => selectNewerAppUpdateState(current, nextState));
     });
     void window.electron.appUpdate
-      .getState()
+      .check()
       .then(nextState => {
         if (active) setState(current => selectNewerAppUpdateState(current, nextState));
       })

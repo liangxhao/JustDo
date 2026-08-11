@@ -40,6 +40,11 @@ import { setAvailableModels, setSelectedModel } from '@/features/models/modelSli
 import PluginsView from '@/features/plugins/components/PluginsView';
 import { CronView } from '@/features/scheduled-tasks/components';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
+import {
+  type AppUpdateToastState,
+  selectAppUpdateToastState,
+} from '@/features/settings/appUpdateToastState';
+import AppUpdateToast from '@/features/settings/components/AppUpdateToast';
 import Settings, { type SettingsOpenOptions } from '@/features/settings/Settings';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -54,11 +59,13 @@ const App: React.FC = () => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [updateToast, setUpdateToast] = useState<AppUpdateToastState>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [developerModeAvailable, setDeveloperModeAvailable] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const resolvedApprovalIdsRef = useRef(new Map<string, number>());
+  const dismissedUpdateRevisionRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const hasInitialized = useRef(false);
   const dispatch = useDispatch();
@@ -316,6 +323,25 @@ const App: React.FC = () => {
     return unsubscribe;
   }, [dispatch]);
 
+  useEffect(() => {
+    let active = true;
+    const applyUpdateState = (state: Parameters<typeof selectAppUpdateToastState>[1]) => {
+      if (!active) return;
+      setUpdateToast(current =>
+        selectAppUpdateToastState(current, state, dismissedUpdateRevisionRef.current),
+      );
+    };
+    const unsubscribe = window.electron.appUpdate.onStateChanged(applyUpdateState);
+    void window.electron.appUpdate
+      .getState()
+      .then(applyUpdateState)
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
   // Network status monitoring
   useEffect(() => {
     const handleOnline = () => {
@@ -401,6 +427,31 @@ const App: React.FC = () => {
       setToastMessage(null);
       toastTimerRef.current = null;
     }, 2200);
+  }, []);
+
+  const handleInstallAppUpdate = useCallback(async () => {
+    setUpdateToast(current =>
+      current ? { ...current, installing: true, installError: false } : current,
+    );
+    try {
+      const result = await window.electron.appUpdate.quitAndInstall();
+      if (!result.success) {
+        setUpdateToast(current =>
+          current ? { ...current, installing: false, installError: true } : current,
+        );
+      }
+    } catch {
+      setUpdateToast(current =>
+        current ? { ...current, installing: false, installError: true } : current,
+      );
+    }
+  }, []);
+
+  const handleDismissAppUpdate = useCallback(() => {
+    setUpdateToast(current => {
+      dismissedUpdateRevisionRef.current = current?.state.revision ?? null;
+      return null;
+    });
   }, []);
 
   const handleInteractionResponse = useCallback(
@@ -637,6 +688,15 @@ const App: React.FC = () => {
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
       {toastMessage && <Toast message={toastMessage} onClose={() => setToastMessage(null)} />}
+      {updateToast && (
+        <AppUpdateToast
+          availableVersion={updateToast.state.availableVersion}
+          installing={updateToast.installing}
+          installError={updateToast.installError}
+          onInstall={() => void handleInstallAppUpdate()}
+          onDismiss={handleDismissAppUpdate}
+        />
+      )}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar
           onShowSettings={handleShowSettings}

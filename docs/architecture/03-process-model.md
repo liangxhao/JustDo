@@ -65,7 +65,7 @@ flowchart TB
 | `preventSleep`     | 防休眠                                                  |
 | `developerConfig`  | 读取启动时加载的开发者功能可见性配置                    |
 | `appInfo`          | 应用版本、OpenClaw 版本、系统语言                       |
-| `appUpdate`        | Windows 更新状态、手动检查、重启安装和状态事件         |
+| `appUpdate`        | Windows 更新状态、手动检查、重启安装和状态事件          |
 | `builtinModels`    | 刷新内置模型 provider                                   |
 | `log`              | 日志路径、打开日志目录、导出 zip、debug 日志            |
 | `scheduledTasks`   | 定时任务 CRUD、手动运行、运行历史、状态事件             |
@@ -109,7 +109,10 @@ revision 的状态、请求检查或
 请求安装，不能指定 feed URL 和本地安装包。更新下载完成后，Main 先执行与正常退出相同的
 OpenClaw、扩展宿主、定时任务和 SQLite 清理，再启动 NSIS 安装器；开发环境和非 Windows
 平台返回 `unsupported`。如果安装器在清理完成后启动失败，Main 会重新启动当前应用，避免
-Renderer 停留在数据库和后台服务已关闭的半退出状态。
+Renderer 停留在数据库和后台服务已关闭的半退出状态。应用启动并创建窗口后延迟 10 秒检查一次，
+但不进行后台周期检查；用户每次进入设置的“帮助”页时，Renderer 也请求 Main 检查一次，
+同时保留手动重试入口。如果多个触发同时到达，Main 复用同一个进行中的检查。更新下载完成后，Renderer 在
+主界面右下角显示不带遮罩、不抢占焦点的小型提示，用户可选择重启安装或关闭提示；应用不会自动重启。
 
 ## Rules
 
