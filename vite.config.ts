@@ -9,12 +9,13 @@ import monacoEditorPlugin from 'vite-plugin-monaco-editor';
 import packageJson from './package.json';
 
 // https://vitejs.dev/config/
-const devPort = packageJson.devServer.port;
+const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
 const isProductionBuild = process.env.NODE_ENV !== 'development';
 const escapedProductName = packageJson.productName.replace(
   /[&<>"']/g,
   character =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character,
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ??
+    character,
 );
 
 export default defineConfig({

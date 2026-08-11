@@ -5,16 +5,14 @@ import { isUserOwnedSkillSource } from '../../../shared/plugins/skills';
 import type { GatewaySkillEntry } from '../../engine/types';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
-import type { LocalSkillFileResult, OpenClawSkillService } from '../../plugins/skills';
-
-type SkillFileOperations = {
-  importPath(sourcePath: string): Promise<LocalSkillFileResult>;
-  deleteDirectory(skillDirectory: string): void | Promise<void>;
-};
+import type {
+  OpenClawSkillFileService,
+  OpenClawSkillService,
+} from '../../plugins/skills';
 
 interface SkillHandlerDependencies {
   skillService: OpenClawSkillService;
-  getSkillFiles: () => SkillFileOperations;
+  skillFileService: Pick<OpenClawSkillFileService, 'importPath' | 'deleteDirectory'>;
   installationService: PluginInstallationService;
 }
 
@@ -39,7 +37,7 @@ const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
 
 export const registerSkillHandlers = ({
   skillService,
-  getSkillFiles,
+  skillFileService,
   installationService,
 }: SkillHandlerDependencies): void => {
   installationService.registerInstaller({
@@ -48,7 +46,7 @@ export const registerSkillHandlers = ({
       if (request.payload.kind !== PluginKind.SKILL) {
         return { success: false, error: 'Invalid skill installation payload' };
       }
-      const result = await getSkillFiles().importPath(request.payload.sourcePath);
+      const result = await skillFileService.importPath(request.payload.sourcePath);
       return { success: result.success, pluginId: result.skillId, error: result.error };
     },
   });
@@ -124,7 +122,7 @@ export const registerSkillHandlers = ({
         return { success: false, error: 'Only user-owned skills can be deleted' };
       }
 
-      await getSkillFiles().deleteDirectory(skill.baseDir);
+      await skillFileService.deleteDirectory(skill.baseDir);
       const updatedStatus = await skillService.getStatus();
       return { success: true, skills: updatedStatus.skills.map(mapGatewaySkill) };
     } catch (error) {

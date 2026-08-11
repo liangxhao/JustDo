@@ -47,6 +47,7 @@ export class OpenClawSkillFileService {
     const operation = await this.directoryOperations.execute({
       resourceName: t('skillDirectoryResource'),
       targetPath: () => targetPath,
+      manageRuntimeOnLock: true,
       operation: async () => {
         const result = await this.getSkillFiles().importPath(sourcePath);
         if (result.success) return managedDirectorySuccess(result);
@@ -77,6 +78,7 @@ export class OpenClawSkillFileService {
     const operation = await this.directoryOperations.execute({
       resourceName: t('skillDirectoryResource'),
       targetPath: skillDirectory,
+      manageRuntimeOnLock: true,
       operation: async () => {
         try {
           this.getSkillFiles().deleteDirectory(skillDirectory);

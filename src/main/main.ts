@@ -237,7 +237,8 @@ const isLinux = process.platform === 'linux';
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
 const DEV_SERVER_URL =
-  process.env.ELECTRON_START_URL || `http://localhost:${packageJson.devServer.port}`;
+  process.env.ELECTRON_START_URL ||
+  `http://localhost:${process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port}`;
 const enableVerboseLogging =
   process.env.ELECTRON_ENABLE_LOGGING === '1' || process.env.ELECTRON_ENABLE_LOGGING === 'true';
 const disableGpu =
@@ -818,7 +819,7 @@ if (!gotTheLock) {
   });
   registerSkillHandlers({
     skillService: openClawSkillService,
-    getSkillFiles: getOpenClawSkillFiles,
+    skillFileService: getOpenClawSkillFiles(),
     installationService: pluginInstallationService,
   });
   registerMarketplaceHandlers(pluginManager);
@@ -1150,7 +1151,7 @@ if (!gotTheLock) {
     // 设置安全策略
     registerContentSecurityPolicy({
       isDev,
-      devServerPort: packageJson.devServer.port,
+      devServerPort: Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port),
     });
 
     // 创建窗口

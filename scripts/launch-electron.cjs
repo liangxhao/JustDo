@@ -11,6 +11,7 @@ const path = require('path');
 const {
   devServer: { port: devServerPort },
 } = require('../package.json');
+const resolvedDevServerPort = process.env.JUSTDO_DEV_SERVER_PORT || devServerPort;
 
 // Get electron executable path
 const electronPath = require('electron');
@@ -23,7 +24,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 // Set development environment
 env.NODE_ENV = process.env.NODE_ENV || 'development';
 env.ELECTRON_START_URL =
-  process.env.ELECTRON_START_URL || `http://localhost:${devServerPort}`;
+  process.env.ELECTRON_START_URL || `http://localhost:${resolvedDevServerPort}`;
 
 console.log('[Electron Launcher] Starting Electron...');
 console.log('[Electron Launcher] Electron path:', electronPath);
@@ -40,7 +41,7 @@ const child = spawn(electronPath, args, {
   cwd: process.cwd(),
   stdio: 'inherit',
   env: env,
-  windowsHide: false
+  windowsHide: false,
 });
 
 child.on('close', (code, signal) => {

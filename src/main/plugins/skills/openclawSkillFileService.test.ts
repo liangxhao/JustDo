@@ -155,6 +155,45 @@ test('does not manage the Gateway when using the shared runtime-aware coordinato
   expect(manager.startGateway).not.toHaveBeenCalled();
 });
 
+test('restarts the Gateway when it owns a locked skill directory', async () => {
+  const manager = createManager();
+  const findLockingProcesses = vi
+    .fn()
+    .mockResolvedValue({
+      available: true,
+      processes: [{ name: 'JustDo Gateway', pid: 4242 }],
+    });
+  const directoryOperations = new ManagedDirectoryOperationCoordinator({
+    runtime: {
+      isRunning: () => manager.manager.getStatus().phase === 'running',
+      ownsProcess: pid => pid === 4242,
+      stop: manager.stopGateway,
+      start: async () => {
+        const status = await manager.startGateway();
+        return { running: status.phase === 'running', message: status.message };
+      },
+    },
+    findLockingProcesses,
+  });
+  const importPath = vi
+    .fn<() => Promise<LocalSkillFileResult>>()
+    .mockResolvedValueOnce(lockedResult())
+    .mockResolvedValueOnce({ success: true, skillId: 'demo' });
+  const service = new OpenClawSkillFileService({
+    getOpenClawEngineManager: () => manager.manager,
+    directoryOperations,
+    createSkillFiles: () => ({ importPath }) as unknown as OpenClawSkillFiles,
+  });
+
+  await expect(service.importPath('C:\\source')).resolves.toEqual({
+    success: true,
+    skillId: 'demo',
+  });
+  expect(manager.stopGateway).toHaveBeenCalledOnce();
+  expect(manager.startGateway).toHaveBeenCalledOnce();
+  expect(importPath).toHaveBeenCalledTimes(2);
+});
+
 test('serializes concurrent skill mutations', async () => {
   const manager = createManager('ready');
   let active = 0;

@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from 'vitest';
 
 import type { GatewaySkillEntry, GatewaySkillStatus } from '../../engine/types';
 import { PluginInstallationService } from '../../plugins/installation';
-import type { OpenClawSkillFiles, OpenClawSkillService } from '../../plugins/skills';
+import type { OpenClawSkillService } from '../../plugins/skills';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -63,7 +63,7 @@ test.each([
 
   registerSkillHandlers({
     skillService: { getStatus } as unknown as OpenClawSkillService,
-    getSkillFiles: () => ({ deleteDirectory }) as unknown as OpenClawSkillFiles,
+    skillFileService: { deleteDirectory },
     installationService: new PluginInstallationService(),
   });
 
@@ -81,7 +81,7 @@ test('rejects noncanonical source names', async () => {
 
   registerSkillHandlers({
     skillService: { getStatus } as unknown as OpenClawSkillService,
-    getSkillFiles: () => ({ deleteDirectory: vi.fn() }) as unknown as OpenClawSkillFiles,
+    skillFileService: { deleteDirectory: vi.fn() },
     installationService: new PluginInstallationService(),
   });
 
@@ -100,7 +100,7 @@ test('returns the skill import validation error to the renderer', async () => {
 
   registerSkillHandlers({
     skillService: {} as OpenClawSkillService,
-    getSkillFiles: () => ({ importPath }) as unknown as OpenClawSkillFiles,
+    skillFileService: { importPath },
     installationService: new PluginInstallationService(),
   });
 
@@ -123,7 +123,7 @@ test('does not delete a same-key skill from a different source', async () => {
     skillService: {
       getStatus: vi.fn(async () => createStatus(skill)),
     } as unknown as OpenClawSkillService,
-    getSkillFiles: () => ({ deleteDirectory }) as unknown as OpenClawSkillFiles,
+    skillFileService: { deleteDirectory },
     installationService: new PluginInstallationService(),
   });
 
@@ -144,7 +144,7 @@ test('does not delete bundled skills even when their source looks user-owned', a
     skillService: {
       getStatus: vi.fn(async () => createStatus(skill)),
     } as unknown as OpenClawSkillService,
-    getSkillFiles: () => ({ deleteDirectory }) as unknown as OpenClawSkillFiles,
+    skillFileService: { deleteDirectory },
     installationService: new PluginInstallationService(),
   });
 
