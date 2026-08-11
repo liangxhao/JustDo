@@ -12,7 +12,7 @@ import {
   type BrowserMode as BrowserModeValue,
   normalizeBrowserMode,
 } from '@shared/browser';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -54,8 +54,11 @@ const BrowserSettingsTab: React.FC = () => {
   const [setupUrlCopied, setSetupUrlCopied] = useState(false);
   const [connectionVerified, setConnectionVerified] = useState(false);
   const [savingMode, setSavingMode] = useState(false);
+  const refreshRequestIdRef = useRef(0);
+  const statusRef = useRef<BrowserConnectionStatus | null>(null);
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -63,13 +66,29 @@ const BrowserSettingsTab: React.FC = () => {
       if (!result.success || !result.status) {
         throw new Error(i18nService.t('browserStatusFailed'));
       }
+      if (requestId !== refreshRequestIdRef.current) return;
+      const previousStatus = statusRef.current;
+      statusRef.current = result.status;
       setStatus(result.status);
+      if (
+        !result.status.endpointReachable ||
+        (typeof previousStatus?.activePort === 'number' &&
+          previousStatus.activePort !== result.status.activePort)
+      ) {
+        setConnectionVerified(false);
+      }
     } catch (refreshError) {
+      if (requestId !== refreshRequestIdRef.current) return;
+      statusRef.current = null;
+      setStatus(null);
+      setConnectionVerified(false);
       setError(
         refreshError instanceof Error ? refreshError.message : i18nService.t('browserStatusFailed'),
       );
     } finally {
-      setLoading(false);
+      if (requestId === refreshRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -77,10 +96,15 @@ const BrowserSettingsTab: React.FC = () => {
     if (browserMode === BrowserMode.User) {
       void refresh();
     } else {
+      refreshRequestIdRef.current += 1;
+      statusRef.current = null;
       setLoading(false);
       setStatus(null);
       setConnectionVerified(false);
     }
+    return () => {
+      refreshRequestIdRef.current += 1;
+    };
   }, [browserMode, refresh]);
 
   const selectBrowserMode = async (mode: BrowserModeValue) => {
@@ -109,7 +133,6 @@ const BrowserSettingsTab: React.FC = () => {
       const result = await window.electron.browser.openRemoteDebugging();
       if (!result.success) throw new Error(i18nService.t('browserOpenSetupFailed'));
       setSetupUrlCopied(true);
-      window.setTimeout(() => void refresh(), 1200);
     } catch {
       setError(i18nService.t('browserOpenSetupFailed'));
     } finally {
@@ -234,27 +257,18 @@ const BrowserSettingsTab: React.FC = () => {
         </div>
       ) : (
         <>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="text-base font-semibold text-foreground">
-                {i18nService.t('browserUserChromeTitle')}
-              </h3>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-secondary">
-                {i18nService.t('browserUserChromeDescription')}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => void refresh()}
-              disabled={loading}
-              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-surface-raised disabled:opacity-50"
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              {i18nService.t('refresh')}
-            </button>
+          <div>
+            <h3 className="text-base font-semibold text-foreground">
+              {i18nService.t('browserUserChromeTitle')}
+            </h3>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-secondary">
+              {i18nService.t('browserUserChromeDescription')}
+            </p>
           </div>
 
           <div
+            role="status"
+            aria-live="polite"
             className={`flex items-center gap-3 rounded-xl border p-4 ${
               status?.endpointReachable
                 ? 'border-primary/30 bg-primary/5'
@@ -314,6 +328,17 @@ const BrowserSettingsTab: React.FC = () => {
                   ? i18nService.t('browserStepRestartChromeStaleDescription')
                   : i18nService.t('browserStepRestartChromeDescription')
               }
+              action={
+                <button
+                  type="button"
+                  onClick={() => void refresh()}
+                  disabled={loading || busyAction !== null}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-50"
+                >
+                  <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                  {i18nService.t('browserRefreshStatus')}
+                </button>
+              }
             />
             <SetupStep
               complete={connectionVerified}
@@ -324,7 +349,7 @@ const BrowserSettingsTab: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void restartGateway()}
-                    disabled={busyAction !== null || status?.endpointReachable !== true}
+                    disabled={loading || busyAction !== null || status?.endpointReachable !== true}
                     className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-50"
                   >
                     <ArrowPathIcon
@@ -335,7 +360,7 @@ const BrowserSettingsTab: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void testConnection()}
-                    disabled={busyAction !== null || status?.endpointReachable !== true}
+                    disabled={loading || busyAction !== null || status?.endpointReachable !== true}
                     className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
                   >
                     <ArrowPathIcon

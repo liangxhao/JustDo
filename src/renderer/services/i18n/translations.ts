@@ -121,9 +121,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserDebuggingAddressCopied: '地址已复制。请粘贴到 Chrome 地址栏，然后按回车：',
     browserStepRestartChromeTitle: '3. 确认调试服务正在运行',
     browserStepRestartChromeDescription:
-      '开启后保持 Chrome 运行；此页面会自动检测 Chrome 创建的本地随机端口。',
+      '开启后保持 Chrome 运行，然后点击刷新状态，检测 Chrome 创建的本地随机端口。',
     browserStepRestartChromeStaleDescription:
       '当前端口文件已经失效。请完全退出所有 Chrome 进程，再从普通快捷方式重新启动 Chrome，然后刷新状态。',
+    browserRefreshStatus: '刷新状态',
     browserStepAuthorizeTitle: '4. 连接并批准授权',
     browserStepAuthorizeDescription:
       '重启 Gateway 后发起一次浏览器操作，在 Chrome 的 “Allow remote debugging?” 窗口中点击允许。',
@@ -1116,9 +1117,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'Address copied. Paste it into the Chrome address bar, then press Enter:',
     browserStepRestartChromeTitle: '3. Confirm the debugging service is running',
     browserStepRestartChromeDescription:
-      'Keep Chrome running after enabling it. This page detects the random local port created by Chrome.',
+      'Keep Chrome running after enabling it, then refresh the status to detect the random local port created by Chrome.',
     browserStepRestartChromeStaleDescription:
       'The current port file is stale. Fully quit every Chrome process, start Chrome again from its normal shortcut, then refresh this status.',
+    browserRefreshStatus: 'Refresh status',
     browserStepAuthorizeTitle: '4. Connect and approve access',
     browserStepAuthorizeDescription:
       'Restart Gateway, request a browser action, then click Allow in Chrome’s “Allow remote debugging?” dialog.',
