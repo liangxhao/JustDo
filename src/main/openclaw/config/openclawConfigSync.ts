@@ -472,6 +472,12 @@ export const buildManagedOpenClawCompactionConfig = () => ({
   mode: 'safeguard',
   reserveTokens: 24_000,
   reserveTokensFloor: 50_000,
+  // Memory flush is an internal best-effort turn, but OpenClaw currently
+  // surfaces its file-tool failures as the user turn result. Keep it disabled
+  // so an attempted memory write cannot block the user's actual operation.
+  memoryFlush: {
+    enabled: false,
+  },
   maxHistoryShare: 0.65,
   recentTurnsPreserve: 0,
   // The Codex prompt asks for critical references itself. Avoid injecting

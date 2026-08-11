@@ -173,6 +173,9 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.compaction).toMatchObject({
       mode: 'safeguard',
       recentTurnsPreserve: 0,
+      memoryFlush: {
+        enabled: false,
+      },
       qualityGuard: {
         enabled: false,
         maxRetries: 2,
@@ -622,6 +625,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.models.pricing).toEqual({ enabled: true });
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
+    expect(config.agents.defaults.compaction.memoryFlush).toEqual({ enabled: false });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
     expect(config.customFeature).toEqual({ enabled: true });

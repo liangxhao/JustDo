@@ -242,6 +242,9 @@ describe('OpenClaw managed compaction config', () => {
       mode: 'safeguard',
       recentTurnsPreserve: 0,
       identifierPolicy: 'off',
+      memoryFlush: {
+        enabled: false,
+      },
       qualityGuard: {
         enabled: false,
         maxRetries: 2,
