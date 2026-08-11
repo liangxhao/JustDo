@@ -231,6 +231,8 @@ const buildAuthScopedOpenClawConfig = (
 
   const existingAgents = isRecord(existingConfig.agents) ? existingConfig.agents : {};
   const managedAgents = isRecord(managedConfig.agents) ? managedConfig.agents : {};
+  const existingSession = isRecord(existingConfig.session) ? existingConfig.session : {};
+  const managedSession = isRecord(managedConfig.session) ? managedConfig.session : {};
   const existingDefaults = isRecord(existingAgents.defaults)
     ? existingAgents.defaults
     : {};
@@ -331,6 +333,10 @@ const buildAuthScopedOpenClawConfig = (
       defaults,
       ...(agentList === undefined ? {} : { list: agentList }),
     },
+    session: {
+      ...existingSession,
+      ...managedSession,
+    },
   };
 };
 
@@ -417,6 +423,20 @@ export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
 export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 50_000;
+export const OPENCLAW_SESSION_PRUNE_AFTER = '365d';
+export const OPENCLAW_SESSION_MAX_ENTRIES = 500;
+
+export const buildManagedOpenClawSessionConfig = () => ({
+  dmScope: 'per-account-channel-peer',
+  reset: {
+    mode: 'idle',
+  },
+  maintenance: {
+    mode: 'enforce',
+    pruneAfter: OPENCLAW_SESSION_PRUNE_AFTER,
+    maxEntries: OPENCLAW_SESSION_MAX_ENTRIES,
+  },
+});
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
   every: '2h',
@@ -1182,12 +1202,7 @@ export class OpenClawConfigSync {
         },
         ...this.buildAgentsList(primaryModel, availableModelRefs),
       },
-      session: {
-        dmScope: 'per-account-channel-peer',
-        reset: {
-          mode: 'idle',
-        },
-      },
+      session: buildManagedOpenClawSessionConfig(),
       commands: {
         // Internal `chat.send` turns identify the sender as bare `gateway-client`.
         // Prefixing with `webchat:` does not round-trip through owner resolution,
@@ -1718,6 +1733,7 @@ export class OpenClawConfigSync {
           compaction: buildManagedOpenClawCompactionConfig(),
         },
       },
+      session: buildManagedOpenClawSessionConfig(),
       ...connectivityConfig,
       ...hookConfig,
       tools: {
@@ -1818,6 +1834,7 @@ export class OpenClawConfigSync {
                   compaction: buildManagedOpenClawCompactionConfig(),
                 },
               },
+              session: buildManagedOpenClawSessionConfig(),
               update: connectivityConfig.update,
               browser: connectivityConfig.browser,
               ...hookConfig,

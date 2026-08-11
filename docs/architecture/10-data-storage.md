@@ -213,6 +213,11 @@ Cowork 会话列表和 UI 元数据表。OpenClaw session key 由运行时根据
 不在该表重复持久化。旧版本数据库中可能仍存在未使用的 `claude_session_id` 列；为避免重建用户
 数据库，该冗余列会被忽略，新数据库不再创建。
 
+JustDo 在完整、最小和认证生命周期配置同步中都显式启用 session maintenance：普通 OpenClaw
+session 的年龄保留阈值为 `365d`，每个 session store 的 `maxEntries` 配置为 500。OpenClaw
+maintenance 触发后会清理超龄条目，并将普通条目压回数量阈值；受保护会话不受普通条目上限约束。
+JustDo SQLite 中的会话列表和消息缓存独立于该运行时保留策略。
+
 关键索引：
 
 - `idx_cowork_sessions_agent_order`

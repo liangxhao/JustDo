@@ -197,6 +197,15 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.fs.mode).toBeUndefined();
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.tools.exec.mode).toBe('ask');
+    expect(config.session).toEqual({
+      dmScope: 'per-account-channel-peer',
+      reset: { mode: 'idle' },
+      maintenance: {
+        mode: 'enforce',
+        pruneAfter: '365d',
+        maxEntries: 500,
+      },
+    });
   });
 
   test('a second no-model sync force-merges the latest managed permission preset', () => {
@@ -282,6 +291,11 @@ describe('OpenClaw auth logout config sync', () => {
       config: { mode: 'keep-me' },
     });
     expect(config.skills.entries.docx).toEqual({ enabled: false });
+    expect(config.session.maintenance).toEqual({
+      mode: 'enforce',
+      pruneAfter: '365d',
+      maxEntries: 500,
+    });
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
   });
 

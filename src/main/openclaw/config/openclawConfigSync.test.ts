@@ -15,6 +15,7 @@ import {
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawHeartbeatConfig,
+  buildManagedOpenClawSessionConfig,
   buildOpenClawConfigMeta,
   buildProviderSelection,
   hasOpenClawConfigChanged,
@@ -23,6 +24,8 @@ import {
   OPENCLAW_MAX_SKILLS_IN_PROMPT,
   OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
+  OPENCLAW_SESSION_MAX_ENTRIES,
+  OPENCLAW_SESSION_PRUNE_AFTER,
   OPENCLAW_STUCK_SESSION_ABORT_MS,
   OPENCLAW_STUCK_SESSION_WARN_MS,
   resolveFileToolsWorkspaceOnly,
@@ -370,6 +373,24 @@ describe('OpenClaw managed connectivity config', () => {
         dangerouslyAllowPrivateNetwork: true,
       },
     });
+  });
+});
+
+describe('OpenClaw managed session retention', () => {
+  test('retains sessions for at most one year and caps the store at 500 entries', () => {
+    expect(buildManagedOpenClawSessionConfig()).toEqual({
+      dmScope: 'per-account-channel-peer',
+      reset: {
+        mode: 'idle',
+      },
+      maintenance: {
+        mode: 'enforce',
+        pruneAfter: OPENCLAW_SESSION_PRUNE_AFTER,
+        maxEntries: OPENCLAW_SESSION_MAX_ENTRIES,
+      },
+    });
+    expect(OPENCLAW_SESSION_PRUNE_AFTER).toBe('365d');
+    expect(OPENCLAW_SESSION_MAX_ENTRIES).toBe(500);
   });
 });
 
