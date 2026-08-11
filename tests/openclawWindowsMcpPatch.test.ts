@@ -43,6 +43,23 @@ class StdioTransport {
     return child;
   }
 }
+async function createRealSession(options) {
+  const transport = new StdioClientTransport({
+		command: options.command,
+		args: buildChromeMcpArgsFromOptions(options),
+		stderr: "pipe"
+	});
+  const client = new Client();
+  let getStderr = () => "";
+	const ready = (async () => {
+    await client.connect(transport);
+				getStderr = drainStderr(transport);
+  })();
+  return { transport, client, ready, getStderr };
+}
+async function listChromeMcpPages(profileName, profileOptions, options = {}) {
+	return extractStructuredPages(await callTool(profileName, profileOptions, "list_pages", {}, options));
+}
 `;
 
 const runtimeFixtureWithWindowsHide = runtimeFixture.replace(
@@ -97,6 +114,45 @@ describe('Windows MCP runtime patch', () => {
     expect(patched).toContain(
       'prepareOomScoreAdjustedSpawn(windowsInvocation.command, windowsInvocation.argv, { env: packageRunnerEnv })',
     );
+  });
+
+  it('launches Chrome MCP npx through the managed Electron Node runtime', () => {
+    const runtimeDir = createRuntime(runtimeFixture);
+
+    applyPatch(runtimeDir);
+
+    const patched = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+    expect(patched).toContain('/* JUSTDO_WINDOWS_CHROME_MCP_SPAWN */');
+    expect(patched).toContain('path.join(process.env.JUSTDO_NPM_BIN_DIR, "npx-cli.js")');
+    expect(patched).toContain('command: chromeMcpElectron || options.command');
+    expect(patched).toContain(
+      'args: chromeMcpElectron ? [chromeMcpNpxCli, ...chromeMcpArgs] : chromeMcpArgs',
+    );
+  });
+
+  it('captures Chrome MCP stderr before the handshake can fail', () => {
+    const runtimeDir = createRuntime(runtimeFixture);
+
+    applyPatch(runtimeDir);
+
+    const patched = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+    const stderrCapture = patched.indexOf('/* JUSTDO_CHROME_MCP_EARLY_STDERR */');
+    const connect = patched.indexOf('await client.connect(transport)');
+    expect(stderrCapture).toBeGreaterThan(0);
+    expect(stderrCapture).toBeLessThan(connect);
+    expect(patched.match(/getStderr = drainStderr\(transport\)/g)).toHaveLength(1);
+  });
+
+  it('creates a selectable page when Chrome auto-connect exposes no initial page', () => {
+    const runtimeDir = createRuntime(runtimeFixture);
+
+    applyPatch(runtimeDir);
+
+    const patched = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
+    expect(patched).toContain('/* JUSTDO_CHROME_MCP_EMPTY_PAGE_RECOVERY */');
+    expect(patched).toContain('err.message !== "No page selected"');
+    expect(patched).toContain('callTool(profileName, profileOptions, "new_page"');
+    expect(patched).toContain('url: "about:blank"');
   });
 
   it('keeps OpenClaw native windowsHide without adding a duplicate key', () => {

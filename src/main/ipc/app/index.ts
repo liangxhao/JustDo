@@ -1,5 +1,6 @@
 export { registerAppHandlers } from './app';
 export { registerAutoUpdateHandlers } from './autoUpdate';
+export { applyBrowserModeChange, registerBrowserHandlers } from './browser';
 export { registerCalendarPermissionHandlers } from './calendarPermissions';
 export { registerDialogHandlers } from './dialog';
 export { registerLocalFileHandlers } from './localFiles';

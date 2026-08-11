@@ -2,6 +2,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import { PermissionMode, type PermissionMode as PermissionModeValue } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
@@ -469,7 +470,9 @@ export const buildManagedOpenClawCompactionConfig = () => ({
     'You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\n\nInclude:\n- Current progress and key decisions made\n- Important context, constraints, or user preferences\n- What remains to be done (clear next steps)\n- Any critical data, examples, or references needed to continue\n\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.',
 });
 
-export const buildManagedOpenClawConnectivityConfig = () => ({
+export const buildManagedOpenClawConnectivityConfig = (
+  browserMode: BrowserModeValue = BrowserMode.Isolated,
+) => ({
   update: {
     checkOnStart: false,
     auto: {
@@ -522,6 +525,18 @@ export const buildManagedOpenClawConnectivityConfig = () => ({
   },
   browser: {
     enabled: true,
+    defaultProfile: browserMode === BrowserMode.User ? 'user' : 'openclaw',
+    ...(browserMode === BrowserMode.User
+      ? {
+          profiles: {
+            user: {
+              driver: 'existing-session',
+              attachOnly: true,
+              color: '#00AA00',
+            },
+          },
+        }
+      : {}),
     // Local execution can already reach the user's network through command
     // tools. Keep browser behavior consistent and allow proxy Fake-IP ranges
     // plus user-authorized LAN destinations without requiring hidden setup.
@@ -938,6 +953,7 @@ type OpenClawConfigSyncDeps = {
   getMcpServers?: () => McpServerRecord[];
   getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
+  getBrowserMode?: () => BrowserModeValue;
 };
 
 export class OpenClawConfigSync {
@@ -947,6 +963,7 @@ export class OpenClawConfigSync {
   private readonly getMcpServers?: () => McpServerRecord[];
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
+  private readonly getBrowserMode?: () => BrowserModeValue;
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
@@ -955,6 +972,7 @@ export class OpenClawConfigSync {
     this.getMcpServers = deps.getMcpServers;
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
+    this.getBrowserMode = deps.getBrowserMode;
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
@@ -1101,7 +1119,7 @@ export class OpenClawConfigSync {
     );
     const mcpServers = buildOpenClawMcpServers(this.getMcpServers?.() ?? []);
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
-    const connectivityConfig = buildManagedOpenClawConnectivityConfig();
+    const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
 
     const managedModels: Record<string, unknown> = {
@@ -1667,7 +1685,7 @@ export class OpenClawConfigSync {
   private writeMinimalConfig(configPath: string, reason: string): OpenClawConfigSyncResult {
     const coworkConfig = this.getCoworkConfig();
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
-    const connectivityConfig = buildManagedOpenClawConnectivityConfig();
+    const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
     const bundledExtensionEntries = buildBundledExtensionEntries(
       {
@@ -1801,6 +1819,7 @@ export class OpenClawConfigSync {
                 },
               },
               update: connectivityConfig.update,
+              browser: connectivityConfig.browser,
               ...hookConfig,
               tools: {
                 ...existingTools,

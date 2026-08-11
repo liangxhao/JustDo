@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import { AppUpdateIpc, type AppUpdateState } from '../shared/appUpdate';
+import {
+  type BrowserActionResult,
+  type BrowserConnectionTestResult,
+  BrowserIpc,
+  type BrowserMode,
+  type BrowserModeUpdateResult,
+  type BrowserStatusResult,
+} from '../shared/browser';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
 import { DeveloperConfigIpc } from '../shared/developerConfig';
@@ -137,6 +145,15 @@ contextBridge.exposeInMainWorld('electron', {
   permissions: {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
     requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),
+  },
+  browser: {
+    getStatus: (): Promise<BrowserStatusResult> => ipcRenderer.invoke(BrowserIpc.GetStatus),
+    setMode: (mode: BrowserMode): Promise<BrowserModeUpdateResult> =>
+      ipcRenderer.invoke(BrowserIpc.SetMode, mode),
+    openRemoteDebugging: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.OpenRemoteDebugging),
+    testConnection: (): Promise<BrowserConnectionTestResult> =>
+      ipcRenderer.invoke(BrowserIpc.TestConnection),
   },
   api: {
     // 普通 API 请求（非流式）

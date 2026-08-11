@@ -28,6 +28,11 @@ type ApprovalResolved = import('../../shared/openclaw/approvals').ApprovalResolv
 type ApprovalDecision = import('../../shared/openclaw/approvals').ApprovalDecision;
 type AppUpdateActionResult = import('../../shared/appUpdate').AppUpdateActionResult;
 type AppUpdateState = import('../../shared/appUpdate').AppUpdateState;
+type BrowserActionResult = import('../../shared/browser').BrowserActionResult;
+type BrowserConnectionTestResult = import('../../shared/browser').BrowserConnectionTestResult;
+type BrowserMode = import('../../shared/browser').BrowserMode;
+type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
+type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -330,6 +335,12 @@ import type { Agent } from '@/features/agents/agentTypes';
 import type { McpServerFormData } from '@/features/plugins/types/mcp';
 
 interface IElectronAPI {
+  browser: {
+    getStatus: () => Promise<BrowserStatusResult>;
+    setMode: (mode: BrowserMode) => Promise<BrowserModeUpdateResult>;
+    openRemoteDebugging: () => Promise<BrowserActionResult>;
+    testConnection: () => Promise<BrowserConnectionTestResult>;
+  };
   platform: string;
   arch: string;
   store: {

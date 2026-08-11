@@ -1,3 +1,4 @@
+import { BrowserMode } from '@shared/browser';
 import { expect, test } from 'vitest';
 
 import {
@@ -10,6 +11,10 @@ import {
 
 test('defaultConfig: uses light theme for first launch', () => {
   expect(defaultConfig.theme).toBe('light');
+});
+
+test('defaultConfig: uses the isolated browser for first launch', () => {
+  expect(defaultConfig.browserMode).toBe(BrowserMode.Isolated);
 });
 
 test('isCustomProvider: custom_0 is custom', () => {

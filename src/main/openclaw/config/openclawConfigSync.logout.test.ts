@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import { setStoreGetter } from '../../cowork/providerApiConfig';
 import {
@@ -137,6 +138,7 @@ const writeMinimalConfig = (
   configPath: string,
   reason: string,
   permissionMode: 'ask' | 'auto' | 'full' = 'ask',
+  browserMode: BrowserModeValue = BrowserMode.Isolated,
 ): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
     engineManager: {
@@ -149,6 +151,7 @@ const writeMinimalConfig = (
       agentEngine: 'openclaw',
       permissionMode,
     }),
+    getBrowserMode: () => browserMode,
   } as never);
   return (
     sync as unknown as {
@@ -220,6 +223,35 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.entries['file-permission-policy']).toEqual({
       enabled: true,
       config: { mode: 'full' },
+    });
+  });
+
+  test('a second no-model sync replaces the managed browser profile', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-browser-switch-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+
+    expect(writeMinimalConfig(configPath, 'startup')).toMatchObject({ ok: true });
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).browser).toMatchObject({
+      defaultProfile: 'openclaw',
+    });
+
+    const result = writeMinimalConfig(
+      configPath,
+      'browser-mode-change',
+      'ask',
+      BrowserMode.User,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).browser).toMatchObject({
+      defaultProfile: 'user',
+      profiles: {
+        user: {
+          driver: 'existing-session',
+          attachOnly: true,
+        },
+      },
     });
   });
 

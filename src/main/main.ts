@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
+import { normalizeBrowserMode } from '../shared/browser';
 import { BuiltinModelIpc } from '../shared/builtinModels';
 import type { DeveloperConfig } from '../shared/developerConfig';
 import {
@@ -52,8 +53,10 @@ import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
 import {
+  applyBrowserModeChange,
   registerAppHandlers,
   registerAutoUpdateHandlers,
+  registerBrowserHandlers,
   registerCalendarPermissionHandlers,
   registerDialogHandlers,
   registerLocalFileHandlers,
@@ -517,6 +520,8 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       connectGatewayClient: () => getCoworkEngineService().connectGatewayClient(),
       requestGateway: <T>(method: string, params?: unknown) =>
         getCoworkEngineService().requestGateway<T>(method, params),
+      getBrowserMode: () =>
+        normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
     });
   }
   return openClawConfigSyncService;
@@ -784,6 +789,18 @@ if (!gotTheLock) {
 
   registerNetworkHandlers();
   registerLogHandlers();
+  registerBrowserHandlers({
+    getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
+    setBrowserMode: mode => {
+      const store = getStore();
+      return applyBrowserModeChange(mode, {
+        readAppConfig: () => store.get<Record<string, unknown>>('app_config') ?? {},
+        writeAppConfig: config => store.set('app_config', config),
+        syncConfig: reason => syncOpenClawConfig({ reason }),
+        logError: (message, error) => console.error(`[BrowserSettings] ${message}`, error ?? ''),
+      });
+    },
+  });
 
   registerAppHandlers({
     getStore,

@@ -1,3 +1,4 @@
+import type { BrowserMode } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import type { PermissionMode } from '../../../shared/openclaw/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -23,6 +24,7 @@ type OpenClawConfigSyncServiceDeps = {
   disconnectGatewayClient: () => void;
   connectGatewayClient: () => Promise<void>;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
+  getBrowserMode?: () => BrowserMode;
 };
 
 type SyncOpenClawConfigOptions = {
@@ -562,6 +564,7 @@ export class OpenClawConfigSyncService {
         getMcpServers: () => this.deps.getMcpStore().listServers(),
         getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),
+        getBrowserMode: this.deps.getBrowserMode,
       });
     }
     return this.configSync;

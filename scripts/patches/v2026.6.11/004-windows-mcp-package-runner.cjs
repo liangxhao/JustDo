@@ -3,6 +3,8 @@
 // Purpose: Allow OpenClaw's native MCP stdio transport to launch commands on
 // Windows without opening console windows. npm/npx are invoked through their
 // JavaScript entry points because Node 24 cannot spawn .cmd shims directly.
+// Chrome MCP imports the upstream stdio transport directly, so patch its npx
+// invocation separately and capture stderr before its handshake begins.
 // Affected OpenClaw version: v2026.6.11.
 // Risk: Diverges from upstream MCP process spawning on Windows and may mask
 // spawn behavior changes if the upstream transport is refactored.
@@ -16,8 +18,19 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const PATCH_MARKER = 'JUSTDO_WINDOWS_MCP_SPAWN';
+const CHROME_MCP_PATCH_MARKER = 'JUSTDO_WINDOWS_CHROME_MCP_SPAWN';
+const CHROME_MCP_STDERR_MARKER = 'JUSTDO_CHROME_MCP_EARLY_STDERR';
+const CHROME_MCP_EMPTY_PAGE_MARKER = 'JUSTDO_CHROME_MCP_EMPTY_PAGE_RECOVERY';
 const ORIGINAL_PREPARE_SPAWN =
   'const preparedSpawn = prepareOomScoreAdjustedSpawn(this.serverParams.command, this.serverParams.args ?? [], { env: baseEnv });';
+const ORIGINAL_CHROME_MCP_TRANSPORT = `const transport = new StdioClientTransport({
+		command: options.command,
+		args: buildChromeMcpArgsFromOptions(options),
+		stderr: "pipe"
+	});`;
+const ORIGINAL_CHROME_MCP_LIST_PAGES = `async function listChromeMcpPages(profileName, profileOptions, options = {}) {
+	return extractStructuredPages(await callTool(profileName, profileOptions, "list_pages", {}, options));
+}`;
 
 function walkJsFiles(dir, out = []) {
   if (!fs.existsSync(dir)) return out;
@@ -167,6 +180,85 @@ function patchFile(filePath) {
   return true;
 }
 
+function patchChromeMcpFile(filePath) {
+  let content = fs.readFileSync(filePath, 'utf8');
+  const original = content;
+
+  if (!content.includes(CHROME_MCP_PATCH_MARKER)) {
+    if (!content.includes(ORIGINAL_CHROME_MCP_TRANSPORT)) return false;
+    const replacement = `/* ${CHROME_MCP_PATCH_MARKER} */
+	const chromeMcpArgs = buildChromeMcpArgsFromOptions(options);
+	const isWindowsNpx = process.platform === "win32" && /^npx(?:\\.cmd)?$/i.test(options.command);
+	const chromeMcpNpxCli = isWindowsNpx && process.env.JUSTDO_NPM_BIN_DIR
+		? path.join(process.env.JUSTDO_NPM_BIN_DIR, "npx-cli.js")
+		: void 0;
+	const chromeMcpElectron = chromeMcpNpxCli && process.env.JUSTDO_ELECTRON_PATH;
+	const chromeMcpEnv = chromeMcpElectron
+		? {
+			...Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === "string")),
+			ELECTRON_RUN_AS_NODE: "1",
+			NODE_OPTIONS: [process.env.NODE_OPTIONS, process.env.JUSTDO_WINDOWS_HIDE_PRELOAD
+				? \`--require="\${process.env.JUSTDO_WINDOWS_HIDE_PRELOAD}"\`
+				: ""].filter(Boolean).join(" ")
+		}
+		: void 0;
+	const transport = new StdioClientTransport({
+		command: chromeMcpElectron || options.command,
+		args: chromeMcpElectron ? [chromeMcpNpxCli, ...chromeMcpArgs] : chromeMcpArgs,
+		env: chromeMcpEnv,
+		stderr: "pipe"
+	});`;
+    content = content.replace(ORIGINAL_CHROME_MCP_TRANSPORT, replacement);
+  }
+
+  if (!content.includes(CHROME_MCP_STDERR_MARKER)) {
+    const originalStderr = `let getStderr = () => "";
+	const ready = (async () => {`;
+    const replacementStderr = `let getStderr = () => "";
+	/* ${CHROME_MCP_STDERR_MARKER} */
+	getStderr = drainStderr(transport);
+	const ready = (async () => {`;
+    if (!content.includes(originalStderr)) {
+      throw new Error(`Chrome MCP stderr initialization was not found in ${filePath}`);
+    }
+    content = content.replace(originalStderr, replacementStderr);
+    content = content.replace('\n\t\t\t\tgetStderr = drainStderr(transport);', '');
+  }
+
+  if (!content.includes(CHROME_MCP_EMPTY_PAGE_MARKER)) {
+    if (!content.includes(ORIGINAL_CHROME_MCP_LIST_PAGES)) {
+      throw new Error(`Chrome MCP page listing implementation was not found in ${filePath}`);
+    }
+    const replacementListPages = `async function listChromeMcpPages(profileName, profileOptions, options = {}) {
+	try {
+		return extractStructuredPages(await callTool(profileName, profileOptions, "list_pages", {}, options));
+	} catch (err) {
+		/* ${CHROME_MCP_EMPTY_PAGE_MARKER} */
+		if (!(err instanceof Error) || err.message !== "No page selected") throw err;
+		return extractStructuredPages(await callTool(profileName, profileOptions, "new_page", {
+			url: "about:blank",
+			timeout: CHROME_MCP_NEW_PAGE_TIMEOUT_MS
+		}, options));
+	}
+}`;
+    content = content.replace(ORIGINAL_CHROME_MCP_LIST_PAGES, replacementListPages);
+  }
+
+  if (content === original) return false;
+  fs.writeFileSync(filePath, content, 'utf8');
+  const syntaxCheck = spawnSync(process.execPath, ['--check', filePath], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (syntaxCheck.status !== 0) {
+    fs.writeFileSync(filePath, original, 'utf8');
+    throw new Error(
+      `Patched Chrome MCP runtime is invalid (${filePath}): ${syntaxCheck.stderr.trim()}`,
+    );
+  }
+  return true;
+}
+
 function applyPatch(runtimeDir, options = {}) {
   const candidates = [
     path.join(runtimeDir, 'gateway-bundle.mjs'),
@@ -181,7 +273,23 @@ function applyPatch(runtimeDir, options = {}) {
     throw new Error('OpenClaw MCP stdio spawn implementation was not found');
   }
 
-  const patched = targetFiles.filter(patchFile).map(filePath => path.relative(runtimeDir, filePath));
+  const chromeMcpFiles = candidates.filter(filePath => {
+    const content = fs.readFileSync(filePath, 'utf8');
+    return (
+      content.includes(ORIGINAL_CHROME_MCP_TRANSPORT) ||
+      content.includes(CHROME_MCP_PATCH_MARKER)
+    );
+  });
+  if (chromeMcpFiles.length === 0) {
+    throw new Error('OpenClaw Chrome MCP transport implementation was not found');
+  }
+
+  const patched = Array.from(
+    new Set([
+      ...targetFiles.filter(patchFile),
+      ...chromeMcpFiles.filter(patchChromeMcpFile),
+    ]),
+  ).map(filePath => path.relative(runtimeDir, filePath));
   const label = options.label || 'patch-openclaw-windows-mcp-package-runner';
   if (patched.length > 0) {
     console.log(`[${label}] Patched Windows MCP spawning: ${patched.join(', ')}`);
@@ -205,6 +313,23 @@ function verifyPatch(runtimeDir) {
   const missing = required.filter(marker => !content.includes(marker));
   if (missing.length > 0) {
     throw new Error(`Windows MCP package runner patch is incomplete: ${missing.join(', ')}`);
+  }
+  const chromeMcpFiles = walkJsFiles(path.join(runtimeDir, 'dist')).filter(filePath => {
+    if (!path.basename(filePath).startsWith('chrome-mcp-')) return false;
+    return fs.readFileSync(filePath, 'utf8').includes('async function listChromeMcpPages');
+  });
+  if (
+    chromeMcpFiles.length === 0 ||
+    !chromeMcpFiles.every(filePath => {
+      const chromeMcpContent = fs.readFileSync(filePath, 'utf8');
+      return (
+        chromeMcpContent.includes(CHROME_MCP_PATCH_MARKER) &&
+        chromeMcpContent.includes(CHROME_MCP_STDERR_MARKER) &&
+        chromeMcpContent.includes(CHROME_MCP_EMPTY_PAGE_MARKER)
+      );
+    })
+  ) {
+    throw new Error('Windows Chrome MCP package runner patch is incomplete');
   }
   return true;
 }

@@ -5,6 +5,7 @@ import {
   CheckCircleIcon,
   Cog6ToothIcon,
   CubeIcon,
+  GlobeAltIcon,
   PencilSquareIcon,
   XCircleIcon,
   XMarkIcon,
@@ -44,6 +45,7 @@ import {
 } from '@/features/models/modelConfig';
 import { setAvailableModels } from '@/features/models/modelSlice';
 import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
+import BrowserSettingsTab from '@/features/settings/components/BrowserSettingsTab';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
 import ShortcutsSettings, {
   shortcutLabelMap,
@@ -61,7 +63,15 @@ import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import appLogoUrl from '../../../../resources/logo.png';
 
-type TabType = 'general' | 'usage' | 'model' | 'memory' | 'im' | 'shortcuts' | 'help';
+type TabType =
+  | 'general'
+  | 'usage'
+  | 'model'
+  | 'browser'
+  | 'memory'
+  | 'im'
+  | 'shortcuts'
+  | 'help';
 
 const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
@@ -1501,6 +1511,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CubeIcon className="h-5 w-5" />,
     },
     {
+      key: 'browser',
+      label: i18nService.t('browserSettings'),
+      icon: <GlobeAltIcon className="h-5 w-5" />,
+    },
+    {
       key: 'memory',
       label: i18nService.t('memoryTitle'),
       icon: <BookOpenIcon className="h-5 w-5" />,
@@ -2236,6 +2251,9 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'usage':
         return <UsageStatsTab />;
+
+      case 'browser':
+        return <BrowserSettingsTab />;
 
       case 'shortcuts':
         return <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />;

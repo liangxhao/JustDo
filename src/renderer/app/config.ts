@@ -1,3 +1,4 @@
+import { BrowserMode, type BrowserMode as BrowserModeValue } from '@shared/browser';
 import { ProviderRegistry } from '@shared/providers';
 import { defaultProxySettings, type ProxySettings } from '@shared/proxy';
 
@@ -5,6 +6,7 @@ const BUILTIN_MODELS_PROVIDER_KEY = 'builtin_models';
 
 // 配置类型定义
 export interface AppConfig {
+  browserMode: BrowserModeValue;
   // API 配置
   api: {
     key: string;
@@ -106,6 +108,7 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
 
 // 默认配置
 export const defaultConfig: AppConfig = {
+  browserMode: BrowserMode.Isolated,
   api: {
     key: '',
     baseUrl: '',

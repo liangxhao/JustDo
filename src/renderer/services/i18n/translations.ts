@@ -89,6 +89,51 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     usageStatsCalculating: '正在更新统计，剩余 {count} 个会话文件',
     usageStatsStillRefreshing: '统计仍在后台更新，可稍后刷新重试',
     model: '模型',
+    browserSettings: '浏览器',
+    browserModeTitle: '选择浏览器使用方式',
+    browserModeDescription:
+      '此设置决定会话中的浏览器操作使用哪个浏览器环境。切换后会自动应用到 Gateway。',
+    browserModeIsolatedTitle: '使用隔离浏览器',
+    browserModeIsolatedDescription:
+      '使用独立的浏览器资料，不读取日常 Chrome 的账号、Cookie 或标签页。',
+    browserModeIsolatedActive:
+      '当前使用隔离浏览器。它与日常 Chrome 完全分开，也是默认和更安全的选择。',
+    browserModeUserTitle: '允许连接你的浏览器',
+    browserModeUserDescription:
+      '连接日常 Chrome，复用其中的登录状态、Cookie 和标签页，需要你主动授权。',
+    browserModeChangeFailed: '浏览器模式切换失败',
+    browserUserChromeTitle: '连接你的 Chrome',
+    browserUserChromeDescription:
+      '复用日常 Chrome 的登录状态、Cookie 和标签页。Chrome 会在首次连接时要求你明确授权。',
+    browserStatusReady: 'Chrome 已准备好，可以请求授权',
+    browserStatusRestartRequired: '检测到失效的调试端口，需要完全重启 Chrome',
+    browserStatusNotReady: 'Chrome 尚未准备好',
+    browserDetectedPort: '检测到的本地端口',
+    browserStatusFailed: '无法检测 Chrome 状态',
+    browserOpenSetupFailed: '无法打开 Chrome 远程调试设置页',
+    browserGatewayRestartFailed: 'Gateway 重启失败',
+    browserStepChromeTitle: '1. 安装并正常启动 Google Chrome',
+    browserStepChromeDescription: '请使用日常 Chrome 快捷方式启动，不要添加任何调试端口参数。',
+    browserStepDebuggingTitle: '2. 开启 Chrome Remote Debugging',
+    browserStepDebuggingDescription:
+      '在 Chrome 专用设置页开启 Remote Debugging。这个开关由 Chrome 管理，应用不能代替你开启。',
+    browserCopyDebuggingAddress: '复制地址并打开 Chrome',
+    browserDebuggingAddressCopied: '地址已复制。请粘贴到 Chrome 地址栏，然后按回车：',
+    browserStepRestartChromeTitle: '3. 确认调试服务正在运行',
+    browserStepRestartChromeDescription:
+      '开启后保持 Chrome 运行；此页面会自动检测 Chrome 创建的本地随机端口。',
+    browserStepRestartChromeStaleDescription:
+      '当前端口文件已经失效。请完全退出所有 Chrome 进程，再从普通快捷方式重新启动 Chrome，然后刷新状态。',
+    browserStepAuthorizeTitle: '4. 连接并批准授权',
+    browserStepAuthorizeDescription:
+      '重启 Gateway 后发起一次浏览器操作，在 Chrome 的 “Allow remote debugging?” 窗口中点击允许。',
+    browserRestartGateway: '重启 Gateway 并准备授权',
+    browserTestConnection: '测试连接并触发授权',
+    browserConnectionVerified: '已连接到 Chrome',
+    browserPermissionTimeout:
+      'Chrome 授权握手超时。请关闭 Remote Debugging 后重新开启，确认没有其他 MCP 正在连接，然后立即重试。Chrome 150/151 存在相关已知问题。',
+    browserGatewayUnavailable: 'Gateway 尚未连接，请先重启 Gateway。',
+    browserConnectionFailed: 'Chrome 连接测试失败',
     shortcuts: '快捷键',
     help: '帮助',
     about: '关于',
@@ -671,8 +716,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     permissionModeFullActive: '完全权限已启用',
     permissionModeFullDescription: '命令和文件修改均无需批准',
     permissionModeFullConfirmTitle: '确认启用完全权限？',
-    permissionModeFullConfirmDescription:
-      'Agent 和定时任务将无需批准执行主机命令和修改文件。',
+    permissionModeFullConfirmDescription: 'Agent 和定时任务将无需批准执行主机命令和修改文件。',
     permissionModeFullConfirmAction: '启用完全权限',
     permissionModeSaveFailed: '无法保存执行权限设置',
     execApprovalTitle: '需要批准主机命令',
@@ -1038,6 +1082,53 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     usageStatsCalculating: 'Updating usage from {count} remaining session files',
     usageStatsStillRefreshing: 'Usage is still updating; refresh again shortly',
     model: 'Model',
+    browserSettings: 'Browser',
+    browserUserChromeTitle: 'Connect your Chrome',
+    browserModeTitle: 'Choose how the browser is used',
+    browserModeDescription:
+      'This setting determines which browser environment conversations use. Changes are applied to Gateway automatically.',
+    browserModeIsolatedTitle: 'Use isolated browser',
+    browserModeIsolatedDescription:
+      'Uses a separate browser profile without access to your everyday Chrome accounts, cookies, or tabs.',
+    browserModeIsolatedActive:
+      'The isolated browser is active. It stays separate from everyday Chrome and is the default, safer choice.',
+    browserModeUserTitle: 'Allow access to your browser',
+    browserModeUserDescription:
+      'Connects to everyday Chrome and reuses its sign-in state, cookies, and tabs after you explicitly authorize it.',
+    browserModeChangeFailed: 'Failed to change browser mode',
+    browserUserChromeDescription:
+      'Reuse the sign-in state, cookies, and tabs from your everyday Chrome profile. Chrome requires explicit approval on the first connection.',
+    browserStatusReady: 'Chrome is ready for an authorization request',
+    browserStatusRestartRequired: 'A stale debugging port was found; fully restart Chrome',
+    browserStatusNotReady: 'Chrome is not ready yet',
+    browserDetectedPort: 'Detected local port',
+    browserStatusFailed: 'Unable to detect Chrome status',
+    browserOpenSetupFailed: 'Unable to open Chrome remote debugging settings',
+    browserGatewayRestartFailed: 'Failed to restart Gateway',
+    browserStepChromeTitle: '1. Install and start Google Chrome normally',
+    browserStepChromeDescription:
+      'Start your everyday Chrome shortcut without adding any remote debugging port arguments.',
+    browserStepDebuggingTitle: '2. Enable Chrome Remote Debugging',
+    browserStepDebuggingDescription:
+      'Enable Remote Debugging on Chrome’s dedicated settings page. Chrome owns this switch, so the app cannot enable it for you.',
+    browserCopyDebuggingAddress: 'Copy address and open Chrome',
+    browserDebuggingAddressCopied:
+      'Address copied. Paste it into the Chrome address bar, then press Enter:',
+    browserStepRestartChromeTitle: '3. Confirm the debugging service is running',
+    browserStepRestartChromeDescription:
+      'Keep Chrome running after enabling it. This page detects the random local port created by Chrome.',
+    browserStepRestartChromeStaleDescription:
+      'The current port file is stale. Fully quit every Chrome process, start Chrome again from its normal shortcut, then refresh this status.',
+    browserStepAuthorizeTitle: '4. Connect and approve access',
+    browserStepAuthorizeDescription:
+      'Restart Gateway, request a browser action, then click Allow in Chrome’s “Allow remote debugging?” dialog.',
+    browserRestartGateway: 'Restart Gateway and prepare authorization',
+    browserTestConnection: 'Test connection and request authorization',
+    browserConnectionVerified: 'Connected to Chrome',
+    browserPermissionTimeout:
+      'Chrome authorization timed out. Turn Remote Debugging off and on again, make sure no other MCP client is connecting, then retry immediately. Chrome 150/151 has a related known issue.',
+    browserGatewayUnavailable: 'Gateway is not connected. Restart Gateway first.',
+    browserConnectionFailed: 'Chrome connection test failed',
     shortcuts: 'Shortcuts',
     help: 'Help',
     about: 'About',

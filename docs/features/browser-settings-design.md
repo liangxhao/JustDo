@@ -41,8 +41,12 @@
 | 产品模式               | OpenClaw Profile | Driver             | 登录态                    | 是否需要人在场        |
 | ---------------------- | ---------------- | ------------------ | ------------------------- | --------------------- |
 | 内置浏览器             | `openclaw`       | `openclaw`         | OpenClaw 独立 Profile     | 否                    |
-| 用户浏览器（有人值守） | `user`           | `existing-session` | 整个当前 Chrome Profile   | 连接时需要确认        |
+| 用户浏览器（有人值守） | `user`           | `existing-session` | 整个当前 Chrome Profile   | 首次连接时确认        |
 | 用户浏览器（无人值守） | `chrome`         | `extension`        | 用户 Chrome，仅共享标签组 | 首次安装/配对后不需要 |
+
+设置页当前提供前两种模式供用户选择：默认使用 `openclaw` 隔离浏览器；只有用户主动选择
+“允许连接你的浏览器”后，才将默认 Profile 切换为 `user` 并显示 Chrome 授权引导。模式保存到
+`app_config.browserMode`，切换后通过配置同步服务安全应用，使后续会话使用新的默认 Profile。
 
 ### 2.1 内置浏览器
 
@@ -51,12 +55,28 @@ OpenClaw 启动隔离 Chromium Profile。隔离性好，但不会复用日常浏
 
 ### 2.2 用户浏览器（有人值守）
 
-通过 Chrome DevTools MCP `--autoConnect` 连接 Chrome 144+：
+通过 Chrome DevTools MCP 自动连接日常 Chrome 会话：
 
 - 复用整个当前 Profile 的标签页、Cookie、代理、VPN、企业证书和扩展。
-- Chrome 会显示 “Allow remote debugging?”，用户需要点击允许。
-- 适合用户正在电脑前协作的任务。
-- 不适合定时任务或用户离开电脑后的执行。
+- 需要 Chrome 144 或更高版本。在 `chrome://inspect/#remote-debugging` 开启
+  Remote Debugging，并在首次连接时批准 Chrome 的 Allow 对话框。
+- 不使用 `--remote-debugging-port`。Chrome 136 起会忽略针对默认用户数据目录的
+  调试端口参数；显式 CDP 只能配合独立的 `--user-data-dir`，不能复用日常 Profile。
+- OpenClaw 启动 Chrome MCP `existing-session` 子进程并传入 `--autoConnect`。
+
+设置页提供“浏览器”选项卡，并通过主进程只读检测 Chrome 的准备状态：
+
+- 检查 Chrome 是否安装以及 `Local State` 中的 Remote Debugging 用户开关。
+- 读取默认用户目录的 `DevToolsActivePort`，并验证对应 loopback 端口是否监听。
+- 文件存在但端口未监听时显示“需要完全重启 Chrome”，不把残留文件误判为可连接。
+- 可复制 `chrome://inspect/#remote-debugging` 并聚焦 Chrome；由于 Chrome 可能丢弃外部
+  进程传入的 `chrome://` URL，用户需要在地址栏粘贴后回车。端口就绪后可重启 Gateway
+  并通过“测试连接”直接请求 `browser.request /tabs` 触发授权。
+- Windows 下 Chrome MCP 直接使用上游 stdio transport；运行时补丁会将其 `npx` 调用
+  映射到 JustDo 管理的 Electron Node 与 `npx-cli.js`，并从握手开始捕获 stderr。
+- Chrome 自动连接成功但尚未建立初始页面上下文时，上游 `list_pages` 会返回
+  `No page selected`；运行时会创建一个同 Profile 的空白页建立上下文，再返回标签页列表。
+- 设置页不会写 Chrome 配置、删除端口文件或使用 `--remote-debugging-port=9222` 启动 Chrome。
 
 ### 2.3 用户浏览器（无人值守）
 

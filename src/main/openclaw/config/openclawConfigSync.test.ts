@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
+import { BrowserMode } from '../../../shared/browser';
 import { PermissionMode } from '../../../shared/openclaw/approvals';
 import {
   OpenClawApi,
@@ -346,9 +347,27 @@ describe('OpenClaw managed connectivity config', () => {
       },
       browser: {
         enabled: true,
+        defaultProfile: 'openclaw',
         ssrfPolicy: {
           dangerouslyAllowPrivateNetwork: true,
         },
+      },
+    });
+  });
+
+  test('uses the existing user session only after the user opts in', () => {
+    expect(buildManagedOpenClawConnectivityConfig(BrowserMode.User).browser).toEqual({
+      enabled: true,
+      defaultProfile: 'user',
+      profiles: {
+        user: {
+          driver: 'existing-session',
+          attachOnly: true,
+          color: '#00AA00',
+        },
+      },
+      ssrfPolicy: {
+        dangerouslyAllowPrivateNetwork: true,
       },
     });
   });
