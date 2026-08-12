@@ -48,6 +48,7 @@ describe('cowork session execution permissions', () => {
       updateSession: vi.fn(),
       addMessage: vi.fn(),
       getSession: vi.fn().mockReturnValue(session('ask')),
+      getAgent: vi.fn().mockReturnValue({ model: 'openai/gpt-5' }),
     } as unknown as CoworkStore;
     const startSession = vi.fn().mockResolvedValue(undefined);
     registerCoworkSessionExecutionHandlers({
@@ -65,6 +66,7 @@ describe('cowork session execution permissions', () => {
     expect(result).toMatchObject({ success: true });
     expect(acquirePermissionModeForTurn).toHaveBeenCalledWith('ask');
     expect(createSession.mock.calls[0]?.[5]).toBe('ask');
+    expect(createSession.mock.calls[0]?.[6]).toBe('openai/gpt-5');
     expect(startSession).toHaveBeenCalledOnce();
   });
 

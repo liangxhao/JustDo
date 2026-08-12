@@ -6,6 +6,7 @@
  * 1. Directly via properties (messages, stream, etc.)
  * 2. Via a ChatController reference (controller property)
  */
+import { readModelRef } from '@shared/openclaw/modelRef';
 import katexStyles from 'katex/dist/katex.min.css?inline';
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -2564,13 +2565,7 @@ export class JustDoChatElement extends LitElement {
       .reverse()
       .find(message => String(message.role ?? '').toLowerCase() === 'assistant') as
       Record<string, unknown> | undefined;
-    const persistedModel =
-      (typeof assistantMessage?.modelName === 'string' && assistantMessage.modelName) ||
-      (typeof assistantMessage?.model === 'string' && assistantMessage.model) ||
-      '';
-    const model = footer.running
-      ? this.assistantName.trim() || persistedModel
-      : persistedModel || this.assistantName.trim();
+    const model = readModelRef(assistantMessage) ?? '';
     const duration = formatActiveTurnDuration(footer.durationMs);
     const completedDate = footer.completedAt === null ? null : new Date(footer.completedAt);
     return html`

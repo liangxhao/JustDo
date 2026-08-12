@@ -25,6 +25,7 @@ import {
   normalizeMessageSessionKey,
   normalizeToolEvent,
 } from '../../../shared/openclaw/messageDomain';
+import { readModelRef } from '../../../shared/openclaw/modelRef';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
   GoalExecutionIpc,
@@ -203,11 +204,6 @@ type VisibleRunStreamState = {
   modelName: string;
 };
 
-type PendingSessionModelPatch = {
-  model: string;
-  agentId?: string;
-};
-
 type SessionRuntimeStatus = {
   known: boolean;
   mainRunning: boolean;
@@ -235,7 +231,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly confirmationModeBySession = new Map<string, 'modal' | 'text'>();
   private readonly stoppedSessions = new Map<string, number>();
   private readonly manuallyStoppedSessions = new Set<string>();
-  private readonly pendingSessionModelPatches = new Map<string, PendingSessionModelPatch>();
   private readonly visibleRunStreams = new Map<string, VisibleRunStreamState>();
   private readonly terminalLifecycleSessionIds = new Set<string>();
   private readonly recentTerminalRunIds = new Map<string, number>();
@@ -662,6 +657,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw new Error('Prompt is required.');
     }
 
+    await this.sessionRpc.waitForModelUpdate(sessionId);
+
     this.stoppedSessions.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
     // Resolve stale activeTurns
@@ -693,15 +690,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const agentId = options.agentId || session.agentId || 'main';
-    const agent = this.store.getAgent(agentId);
-    const rawModel = agent?.model || '';
-    let modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
-    if (!modelName) {
-      const apiResolution = resolveRawApiConfig();
-      const configModel = apiResolution.config?.model;
-      const providerMetadata = apiResolution.providerMetadata;
-      if (configModel) modelName = providerMetadata?.modelName || configModel;
-    }
+    const modelName = '';
 
     const sessionKey = this.toSessionKey(sessionId, agentId);
     this.rememberSessionKey(sessionId, sessionKey);
@@ -897,12 +886,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (state === 'final' && (!runId || !this.isRecentTerminalRun(runId))) {
         this.appendExternalFinalAssistantMessage(
           sessionId,
-          this.resolveSessionModelName(sessionId),
+          '',
           p.message,
         );
       }
       return;
     }
+
+    const chatModelRef = readModelRef(p.message);
 
     const admission = classifyChatEvent({
       selected: { sessionKey: turn.sessionKey, sessionId: turn.gatewaySessionId },
@@ -923,7 +914,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               sessionId,
               sessionKey,
               runId,
-              turn.modelName,
+              chatModelRef ?? stream.modelName,
               text,
               true,
             );
@@ -940,6 +931,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       return;
     }
+
+    if (chatModelRef) turn.modelName = chatModelRef;
 
     if (turn.runId && !runId) {
       if (state === 'final') {
@@ -1184,22 +1177,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (runId && turn.runId !== runId && this.isAnnounceRunId(runId)) {
       const data = p.data;
+      const announceModelName = readModelRef(data) ?? '';
       if (stream === 'thinking') {
-        this.handleVisibleRunThinkingSnapshot(sessionId, sessionKey, runId, turn.modelName, data);
+        this.handleVisibleRunThinkingSnapshot(
+          sessionId,
+          sessionKey,
+          runId,
+          announceModelName,
+          data,
+        );
       } else if (stream === 'assistant') {
         const text = typeof data.text === 'string' ? data.text : '';
         this.handleVisibleRunAssistantSnapshot(
           sessionId,
           sessionKey,
           runId,
-          turn.modelName,
+          announceModelName,
           text,
           false,
         );
       } else if (stream === 'tool') {
-        this.handleVisibleRunToolEvent(sessionId, sessionKey, runId, turn.modelName, data);
+        this.handleVisibleRunToolEvent(sessionId, sessionKey, runId, announceModelName, data);
       } else if (stream === 'item' || stream === 'command_output') {
-        this.handleVisibleRunToolItemEvent(sessionId, sessionKey, runId, turn.modelName, data);
+        this.handleVisibleRunToolItemEvent(sessionId, sessionKey, runId, announceModelName, data);
       } else if (stream === 'lifecycle') {
         const phase = typeof data.phase === 'string' ? data.phase : '';
         if (phase === 'end' || phase === 'error') {
@@ -1232,6 +1232,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.sessionIdByRunId.set(runId, sessionId);
 
     const data = p.data;
+    const agentModelRef = readModelRef(data);
+    if (agentModelRef) turn.modelName = agentModelRef;
 
     // Thinking stream — OpenClaw's `text` is the reliable accumulated snapshot.
     // Its `delta` can be provider-shaped, so compute our own UI delta from the snapshot.
@@ -1348,7 +1350,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     data: unknown,
   ): void {
     const eventData = isRecord(data) ? data : {};
-    const modelName = this.resolveSessionModelName(sessionId);
+    const modelName = readModelRef(eventData) ?? '';
 
     if (stream === 'thinking' || stream === 'assistant') {
       if (stream === 'thinking') {
@@ -1809,6 +1811,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     message: unknown,
     sessionKey?: string,
   ): void {
+    modelName = readModelRef(message) ?? modelName;
     const content = extractAssistantText(message).trim();
     if (!content || isNoReply(content)) {
       if (sessionKey) {
@@ -1849,21 +1852,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.emit('message', sessionId, msg);
   }
 
-  private resolveSessionModelName(sessionId: string): string {
-    const session = this.store.getSession(sessionId);
-    const agentId = session?.agentId || 'main';
-    const agent = this.store.getAgent(agentId);
-    const rawModel = agent?.model || '';
-    let modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
-    if (!modelName) {
-      const apiResolution = resolveRawApiConfig();
-      const configModel = apiResolution.config?.model;
-      const providerMetadata = apiResolution.providerMetadata;
-      if (configModel) modelName = providerMetadata?.modelName || configModel;
-    }
-    return modelName;
-  }
-
   private isAnnounceRunId(runId: string): boolean {
     return runId.startsWith('announce:v1:');
   }
@@ -1875,7 +1863,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     modelName: string,
   ): VisibleRunStreamState {
     const existing = this.visibleRunStreams.get(runId);
-    if (existing) return existing;
+    if (existing) {
+      if (modelName) existing.modelName = modelName;
+      return existing;
+    }
     const stream: VisibleRunStreamState = {
       sessionId,
       sessionKey,
@@ -2453,7 +2444,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.activeTurns.delete(sessionId);
     this.clearCompactionInFlight(sessionId);
     this.reCreatedChannelSessionIds.delete(sessionId);
-    this.flushPendingSessionModelPatch(sessionId);
   }
 
   private scheduleLifecycleEndFallback(sessionId: string, turn: SessionTurn): void {
@@ -2472,22 +2462,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.lifecycleEndFallbackTimers.set(sessionId, timer);
   }
 
-  private flushPendingSessionModelPatch(sessionId: string): void {
-    const pendingPatch = this.pendingSessionModelPatches.get(sessionId);
-    if (!pendingPatch) return;
-    this.pendingSessionModelPatches.delete(sessionId);
-    if (!this.store.getSession(sessionId)) return;
-
-    void this.sessionRpc
-      .patchModel(sessionId, pendingPatch.model, pendingPatch.agentId)
-      .catch(error =>
-        coworkLog('WARN', 'OpenClawRuntime', 'Deferred patchSessionModel failed', {
-          error: String(error),
-          sessionId,
-        }),
-      );
-  }
-
   private ensureActiveTurn(sessionId: string, sessionKey: string, runId: string): void {
     if (this.activeTurns.has(sessionId)) return;
     if (this.isSessionInStopCooldown(sessionId)) return;
@@ -2499,17 +2473,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const turnRunId = runId || randomUUID();
     const turnToken = this.nextTurnToken(sessionId);
-    const session = this.store.getSession(sessionId);
-    const agentId = session?.agentId || 'main';
-    const agent = this.store.getAgent(agentId);
-    const rawModel = agent?.model || '';
-    let modelName = rawModel.includes('/') ? rawModel.slice(rawModel.indexOf('/') + 1) : rawModel;
-    if (!modelName) {
-      const apiResolution = resolveRawApiConfig();
-      const configModel = apiResolution.config?.model;
-      const providerMetadata = apiResolution.providerMetadata;
-      if (configModel) modelName = providerMetadata?.modelName || configModel;
-    }
+    const modelName = '';
 
     this.activeTurns.set(sessionId, {
       sessionId,
@@ -3148,7 +3112,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.gatewayHistoryCountBySession.delete(sessionId);
     this.latestTurnTokenBySession.delete(sessionId);
     this.stoppedSessions.delete(sessionId);
-    this.pendingSessionModelPatches.delete(sessionId);
     this.cleanupSessionTurn(sessionId);
     this.confirmationModeBySession.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
@@ -3600,16 +3563,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     sessionId: string,
     model: string,
     agentId?: string,
-  ): Promise<{ ok: boolean; error?: string }> {
-    if (this.isSessionActive(sessionId)) {
-      this.pendingSessionModelPatches.set(sessionId, { model, agentId });
-      coworkLog('INFO', 'OpenClawRuntime', 'patchSessionModel: deferred active session', {
-        sessionId,
-        model,
-      });
-      return { ok: true };
-    }
-    return this.sessionRpc.patchModel(sessionId, model, agentId);
+  ) {
+    return this.sessionRpc.patchModel(
+      sessionId,
+      model,
+      agentId,
+      this.isSessionActive(sessionId) ? 'subsequent-calls' : 'next-turn',
+    );
+  }
+
+  async getSessionModel(sessionId: string, agentId?: string) {
+    return this.sessionRpc.getModel(sessionId, agentId);
   }
 
   async requestGateway<T>(method: string, params?: unknown): Promise<T> {

@@ -2267,7 +2267,7 @@ test.each(['failed', 'timeout', 'timed_out', 'killed', 'aborted', 'cancelled'])(
   },
 );
 
-test('patchSessionModel defers gateway patch while session is active', async () => {
+test('patchSessionModel applies immediately to subsequent calls while session is active', async () => {
   const session = {
     id: 'session-1',
     title: 'Session',
@@ -2295,7 +2295,12 @@ test('patchSessionModel defers gateway patch while session is active', async () 
     replaceConversationMessages: () => {},
   };
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  const patchSessionModel = vi.fn().mockResolvedValue({ ok: true });
+  const patchSessionModel = vi.fn().mockResolvedValue({
+    ok: true,
+    modelRef: 'bailian/qwen3.6-plus',
+    appliesTo: 'subsequent-calls',
+    source: 'gateway',
+  });
   (
     adapter as unknown as {
       sessionRpc: { patchModel: typeof patchSessionModel };
@@ -2306,18 +2311,16 @@ test('patchSessionModel defers gateway patch while session is active', async () 
   adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'main-run');
   const result = await adapter.patchSessionModel('session-1', 'bailian/qwen3.6-plus');
 
-  expect(result).toEqual({ ok: true });
-  expect(patchSessionModel).not.toHaveBeenCalled();
-
-  adapter.handleGatewayEvent({
-    event: 'sessions.changed',
-    payload: {
-      sessionKey: 'agent:main:justdo:session-1',
-      key: 'agent:main:justdo:session-1',
-      status: 'idle',
-      hasActiveRun: false,
-    },
+  expect(result).toEqual({
+    ok: true,
+    modelRef: 'bailian/qwen3.6-plus',
+    appliesTo: 'subsequent-calls',
+    source: 'gateway',
   });
-
-  expect(patchSessionModel).toHaveBeenCalledWith('session-1', 'bailian/qwen3.6-plus', undefined);
+  expect(patchSessionModel).toHaveBeenCalledWith(
+    'session-1',
+    'bailian/qwen3.6-plus',
+    undefined,
+    'subsequent-calls',
+  );
 });

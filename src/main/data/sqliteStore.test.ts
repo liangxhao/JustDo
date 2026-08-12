@@ -77,7 +77,7 @@ test('deletes legacy schema database and creates a fresh database', () => {
     .get();
 
   expect(columns.map(column => column.name)).toEqual(
-    expect.arrayContaining(['agent_id', 'group_id', 'pinned', 'active_skill_ids']),
+    expect.arrayContaining(['agent_id', 'group_id', 'pinned', 'active_skill_ids', 'model_ref']),
   );
   expect(columns.map(column => column.name)).not.toContain('claude_session_id');
   expect(indexes.map(index => index.name)).toContain('idx_cowork_sessions_agent_order');
@@ -85,5 +85,57 @@ test('deletes legacy schema database and creates a fresh database', () => {
   expect(resultTable).toEqual({ name: 'scheduled_task_run_receipts' });
   expect(cleanupTable).toEqual({ name: 'scheduled_task_result_cleanup' });
 
+  store.close();
+});
+
+test('adds model_ref to a current database without deleting sessions', () => {
+  const dir = createTempDir();
+  const dbPath = path.join(dir, DB_FILENAME);
+  const db = new BetterSqlite3(dbPath);
+  const now = Date.now();
+
+  db.exec(`
+    CREATE TABLE cowork_sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      cwd TEXT NOT NULL,
+      execution_mode TEXT,
+      active_skill_ids TEXT,
+      agent_id TEXT NOT NULL,
+      group_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE cowork_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      metadata TEXT,
+      created_at INTEGER NOT NULL,
+      sequence INTEGER,
+      thinking_content TEXT,
+      model_name TEXT,
+      usage TEXT
+    );
+  `);
+  db.prepare(
+    `INSERT INTO cowork_sessions
+      (id, title, status, cwd, agent_id, created_at, updated_at)
+     VALUES ('kept-session', 'kept', 'idle', '/tmp', 'main', ?, ?)`,
+  ).run(now, now);
+  db.close();
+
+  const store = SqliteStore.create(dir);
+  const migratedDb = store.getDatabase();
+  const columns = migratedDb.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
+  const keptRow = migratedDb
+    .prepare("SELECT id FROM cowork_sessions WHERE id = 'kept-session'")
+    .get();
+
+  expect(columns.map(column => column.name)).toContain('model_ref');
+  expect(keptRow).toEqual({ id: 'kept-session' });
   store.close();
 });

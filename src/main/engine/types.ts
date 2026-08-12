@@ -167,7 +167,37 @@ export interface CoworkRuntime {
     sessionId: string,
     model: string,
     agentId?: string,
-  ): Promise<{ ok: boolean; error?: string }>;
+  ): Promise<
+    | {
+        ok: true;
+        modelRef: string;
+        appliesTo: 'next-turn' | 'subsequent-calls';
+        source: 'gateway' | 'local-cache' | 'agent-default';
+      }
+    | {
+        ok: false;
+        error: string;
+        modelRef?: string;
+        source?: 'gateway' | 'local-cache' | 'agent-default';
+      }
+  >;
+  getSessionModel?(
+    sessionId: string,
+    agentId?: string,
+  ): Promise<
+    | {
+        ok: true;
+        modelRef: string;
+        appliesTo: 'next-turn' | 'subsequent-calls';
+        source: 'gateway' | 'local-cache' | 'agent-default';
+      }
+    | {
+        ok: false;
+        error: string;
+        modelRef?: string;
+        source?: 'gateway' | 'local-cache' | 'agent-default';
+      }
+  >;
   getSessionRuntimeStatus?(
     sessionId: string,
     options?: { includeSubagents?: boolean; forceRefresh?: boolean },

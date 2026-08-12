@@ -118,6 +118,11 @@ process summary 中供排查。该展示完全属于 Lit message pipeline，与 
 布局能力。它不得渲染 Thinking 或 Tool，也不得包含这两类过程项的
 `details`/`summary` disclosure；过程项的唯一展开状态由 `process-summary` 持有。
 
+assistant footer 的模型字段表示生成该条消息的实际模型，而不是 Agent 默认模型或当前
+选择器状态。Live final 与 Gateway history 中的 `modelProvider/model` 会规范化为
+`provider/model`；流式阶段尚无权威字段时不猜测模型，history 对账会回填 SQLite UI cache。
+后续会话模型切换不得改写已经完成消息的模型归属。
+
 相关文档：`docs/features/thinking-stream-implementation.md`。
 
 ## Goal 状态展示

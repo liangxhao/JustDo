@@ -146,6 +146,7 @@ export interface CoworkSession {
   permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
+  modelRef?: string;
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
@@ -216,6 +217,7 @@ export class CoworkStore {
     activeSkillIds: string[] = [],
     agentId: string = 'main',
     permissionMode: PermissionMode = DEFAULT_PERMISSION_MODE,
+    modelRef?: string,
   ): CoworkSession {
     const id = uuidv4();
     const now = Date.now();
@@ -223,8 +225,8 @@ export class CoworkStore {
     this.db
       .prepare(
         `
-      INSERT INTO cowork_sessions (id, title, status, cwd, execution_mode, permission_mode, active_skill_ids, agent_id, pinned, created_at, updated_at)
-      VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, 0, ?, ?)
+      INSERT INTO cowork_sessions (id, title, status, cwd, execution_mode, permission_mode, active_skill_ids, agent_id, model_ref, pinned, created_at, updated_at)
+      VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, 0, ?, ?)
     `,
       )
       .run(
@@ -235,6 +237,7 @@ export class CoworkStore {
         permissionMode,
         JSON.stringify(activeSkillIds),
         agentId,
+        modelRef?.trim() || null,
         now,
         now,
       );
@@ -249,6 +252,7 @@ export class CoworkStore {
       permissionMode,
       activeSkillIds,
       agentId,
+      ...(modelRef?.trim() ? { modelRef: modelRef.trim() } : {}),
       messages: [],
       createdAt: now,
       updatedAt: now,
@@ -266,13 +270,14 @@ export class CoworkStore {
       permission_mode?: string | null;
       active_skill_ids?: string | null;
       agent_id?: string | null;
+      model_ref?: string | null;
       created_at: number;
       updated_at: number;
     }
 
     const row = this.getOne<SessionRow>(
       `
-      SELECT id, title, status, pinned, cwd, execution_mode, permission_mode, active_skill_ids, agent_id, created_at, updated_at
+      SELECT id, title, status, pinned, cwd, execution_mode, permission_mode, active_skill_ids, agent_id, model_ref, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `,
@@ -303,6 +308,7 @@ export class CoworkStore {
       permissionMode: resolvePermissionMode(row.permission_mode),
       activeSkillIds,
       agentId: row.agent_id || 'main',
+      ...(row.model_ref?.trim() ? { modelRef: row.model_ref.trim() } : {}),
       messages,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -312,7 +318,10 @@ export class CoworkStore {
   updateSession(
     id: string,
     updates: Partial<
-      Pick<CoworkSession, 'title' | 'status' | 'cwd' | 'executionMode' | 'permissionMode'>
+      Pick<
+        CoworkSession,
+        'title' | 'status' | 'cwd' | 'executionMode' | 'permissionMode' | 'modelRef'
+      >
     >,
   ): void {
     const now = Date.now();
@@ -341,6 +350,10 @@ export class CoworkStore {
       }
       setClauses.push('permission_mode = ?');
       values.push(updates.permissionMode);
+    }
+    if (updates.modelRef !== undefined) {
+      setClauses.push('model_ref = ?');
+      values.push(updates.modelRef.trim() || null);
     }
 
     values.push(id);
@@ -778,6 +791,7 @@ export class CoworkStore {
       content?: string;
       metadata?: CoworkMessageMetadata;
       thinkingContent?: string;
+      modelName?: string;
       usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
     },
   ): void {
@@ -791,10 +805,20 @@ export class CoworkStore {
     if (updates.metadata !== undefined) {
       setClauses.push('metadata = ?');
       values.push(updates.metadata ? JSON.stringify(updates.metadata) : null);
+      const metadataModelName =
+        typeof updates.metadata?.modelName === 'string' ? updates.metadata.modelName.trim() : '';
+      if (updates.modelName === undefined && metadataModelName) {
+        setClauses.push('model_name = ?');
+        values.push(metadataModelName);
+      }
     }
     if (updates.thinkingContent !== undefined) {
       setClauses.push('thinking_content = ?');
       values.push(updates.thinkingContent || null);
+    }
+    if (updates.modelName !== undefined) {
+      setClauses.push('model_name = ?');
+      values.push(updates.modelName.trim() || null);
     }
     if (updates.usage !== undefined) {
       setClauses.push('usage = ?');

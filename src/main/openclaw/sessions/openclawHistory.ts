@@ -1,4 +1,5 @@
 import { isGatewayToolFailureNotice } from '../../../shared/cowork/toolFailureNotice';
+import { normalizeModelRef } from '../../../shared/openclaw/modelRef';
 import {
   parseScheduledReminderPrompt,
   parseSimpleScheduledReminderText,
@@ -77,14 +78,24 @@ const resolveAssistantModelName = (
   message: Record<string, unknown>,
   metadata?: Record<string, unknown>,
 ): string | undefined => {
-  return pickTrimmedString(
+  const provider = pickTrimmedString(
+    message.modelProvider,
+    message.provider,
+    metadata?.modelProvider,
+    metadata?.provider,
+  );
+  const explicit = pickTrimmedString(
     message.modelName,
     metadata?.modelName,
+  );
+  if (explicit) return normalizeModelRef(explicit, provider) ?? undefined;
+  const model = pickTrimmedString(
     message.model,
     message.modelId,
     metadata?.model,
     metadata?.modelId,
   );
+  return normalizeModelRef(model, provider) ?? undefined;
 };
 
 const extractEmbeddedToolUseEntries = (message: unknown): GatewayHistoryEntry[] => {

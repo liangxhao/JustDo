@@ -689,7 +689,19 @@ interface IElectronAPI {
       sessionId: string;
       model: string;
       agentId?: string;
-    }) => Promise<{ success: boolean; error?: string }>;
+    }) => Promise<{
+      success: boolean;
+      modelRef?: string;
+      appliesTo?: 'next-turn' | 'subsequent-calls';
+      source?: 'gateway' | 'local-cache' | 'agent-default';
+      error?: string;
+    }>;
+    getSessionModel: (options: { sessionId: string; agentId?: string }) => Promise<{
+      success: boolean;
+      modelRef?: string;
+      source?: 'gateway' | 'local-cache' | 'agent-default';
+      error?: string;
+    }>;
     listSessions: (
       agentId?: string,
     ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;

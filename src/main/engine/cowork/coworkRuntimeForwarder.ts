@@ -31,23 +31,7 @@ export const bindCoworkRuntimeForwarder = (
       typeof message === 'object' && message && 'type' in message
         ? (message as { type?: unknown }).type
         : undefined;
-    const isRecord = (value: unknown): value is Record<string, unknown> =>
-      value !== null && typeof value === 'object' && !Array.isArray(value);
-    const enrichedMessage =
-      messageType === 'assistant' && isRecord(message)
-        ? (() => {
-            const session = getCoworkStore().getSession(sessionId);
-            const agent = getCoworkStore().getAgent(session?.agentId || 'main');
-            const rawModel = agent?.model || '';
-            const modelName = rawModel.includes('/')
-              ? rawModel.slice(rawModel.indexOf('/') + 1)
-              : rawModel;
-            return {
-              ...message,
-              ...(modelName ? { modelName } : {}),
-            } as CoworkMessage;
-          })()
-        : (message as CoworkMessage);
+    const forwardedMessage = message as CoworkMessage;
 
     if (
       messageType === 'subagent_completion' ||
@@ -56,7 +40,7 @@ export const bindCoworkRuntimeForwarder = (
       messageType === 'user'
     ) {
       try {
-        getCoworkStore().insertMessageWithId(sessionId, enrichedMessage);
+        getCoworkStore().insertMessageWithId(sessionId, forwardedMessage);
       } catch (error) {
         console.error('[CoworkForwarder] Failed to persist message:', error);
       }
@@ -66,7 +50,7 @@ export const bindCoworkRuntimeForwarder = (
       sessionId,
       message: {
         ...(safeMessage as Record<string, unknown>),
-        ...(enrichedMessage.modelName ? { modelName: enrichedMessage.modelName } : {}),
+        ...(forwardedMessage.modelName ? { modelName: forwardedMessage.modelName } : {}),
       },
     });
   });

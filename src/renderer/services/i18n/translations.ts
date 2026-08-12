@@ -456,6 +456,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // Agent model state
     noModelAvailableHint: '无模型可用',
+    coworkModelApplying: '正在应用模型…',
+    coworkModelApplyFailed: '模型切换失败：{error}',
 
     coworkNewSession: '新会话',
     coworkContinuePlaceholder: '继续对话...',
@@ -1481,6 +1483,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // Agent model state
     noModelAvailableHint: 'No models available',
+    coworkModelApplying: 'Applying model…',
+    coworkModelApplyFailed: 'Failed to switch model: {error}',
 
     coworkNewSession: 'New Session',
     coworkContinuePlaceholder: 'Continue the conversation...',

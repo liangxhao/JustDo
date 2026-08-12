@@ -226,6 +226,7 @@ export class HistoryReconciler {
       // only exists in chat.history — so we must patch it here.
       if (isManaged) {
         this.patchUsageFromHistory(sessionId, history.messages);
+        this.patchAssistantModelsFromHistory(sessionId, history.messages);
         return;
       }
 
@@ -241,9 +242,42 @@ export class HistoryReconciler {
       });
 
       this.patchUsageFromHistory(sessionId, history.messages);
+      this.patchAssistantModelsFromHistory(sessionId, history.messages);
       this.callbacks.setChannelSyncCursor(sessionId, history.messages.length);
     } catch (error) {
       console.warn('[Reconcile] failed — sessionId:', sessionId, 'error:', error);
+    }
+  }
+
+  private patchAssistantModelsFromHistory(sessionId: string, historyMessages: unknown[]): void {
+    const entries = extractGatewayHistoryEntries(historyMessages).filter(
+      entry => entry.role === 'assistant' && entry.modelName,
+    );
+    if (entries.length === 0) return;
+
+    const session = this.callbacks.getSession(sessionId);
+    if (!session) return;
+    const localAssistants = session.messages.filter(
+      message => message.type === 'assistant' && message.metadata?.isThinking !== true,
+    );
+    const usedIds = new Set<string>();
+
+    for (const entry of [...entries].reverse()) {
+      const normalizedText = entry.text.replace(/\s+/g, ' ').trim();
+      const match = localAssistants.findLast(message => {
+        if (usedIds.has(message.id)) return false;
+        return message.content.replace(/\s+/g, ' ').trim() === normalizedText;
+      });
+      if (!match || !entry.modelName) continue;
+      usedIds.add(match.id);
+      if (match.modelName === entry.modelName) continue;
+
+      const metadata = { ...match.metadata, modelName: entry.modelName };
+      this.callbacks.updateMessage(sessionId, match.id, {
+        metadata,
+        modelName: entry.modelName,
+      });
+      this.callbacks.emit('messageMetadataUpdate', sessionId, match.id, metadata);
     }
   }
 

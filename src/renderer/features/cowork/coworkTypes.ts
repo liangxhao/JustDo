@@ -100,6 +100,7 @@ export interface CoworkSession {
   permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
+  modelRef?: string;
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;

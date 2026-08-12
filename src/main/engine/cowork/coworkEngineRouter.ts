@@ -99,11 +99,19 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     sessionId: string,
     model: string,
     agentId?: string,
-  ): Promise<{ ok: boolean; error?: string }> {
+  ): ReturnType<NonNullable<CoworkRuntime['patchSessionModel']>> {
     if (this.runtime.patchSessionModel) {
       return this.runtime.patchSessionModel(sessionId, model, agentId);
     }
     return { ok: false, error: 'patchSessionModel not supported by current runtime' };
+  }
+
+  async getSessionModel(
+    sessionId: string,
+    agentId?: string,
+  ): ReturnType<NonNullable<CoworkRuntime['getSessionModel']>> {
+    if (this.runtime.getSessionModel) return this.runtime.getSessionModel(sessionId, agentId);
+    return Promise.resolve({ ok: false, error: 'getSessionModel not supported by current runtime' });
   }
 
   async getSessionRuntimeStatus(

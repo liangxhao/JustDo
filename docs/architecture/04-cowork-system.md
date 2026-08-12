@@ -148,6 +148,7 @@ UI 只能保留降级状态，不应使用 label、tool-call id 或 transcript �
 - `execution_mode`：当前只保留 local/sandbox/auto 语义，旧 container 会迁移到 local。
 - `active_skill_ids`：本次会话 UI 选择的 skill。
 - `agent_id`：绑定 Agent。
+- `model_ref`：Gateway 最近确认的 `provider/model` 会话模型，仅作为 UI 恢复缓存。
 - `group_id`：会话分组。
 - `pinned`、`created_at`、`updated_at`：列表展示和排序。
 
@@ -197,6 +198,11 @@ flowchart LR
 ### Continue Session
 
 继续会话会复用本地 session id 和 Gateway session key。若 Gateway session key 缺失，应通过历史同步/repair 逻辑尽量恢复；恢复失败时要给用户明确错误，而不是静默创建无关联新会话。
+
+Agent 模型只决定新会话默认值。已有会话以 Gateway `sessions.describe` 的
+`modelProvider/model` 为权威，模型切换按 session 串行执行 `sessions.patch` 后再次
+describe 确认，并把确认值缓存到 `cowork_sessions.model_ref`。发送新 turn 必须等待该
+队列清空。运行中切换不会改变已经在途的推理，只影响当前任务后续尚未开始的主会话模型调用。
 
 ### Stop Session
 

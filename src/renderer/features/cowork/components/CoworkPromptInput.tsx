@@ -43,11 +43,12 @@ import {
   hydrateDraftImageAttachment,
   setDraftAttachments,
   setDraftPrompt,
+  updateCurrentSessionModelRef,
 } from '@/features/cowork/coworkSlice';
 import { CoworkAttachmentPayload } from '@/features/cowork/coworkTypes';
 import ModelSelector from '@/features/models/ModelSelector';
 import { type Model, setSelectedModel } from '@/features/models/modelSlice';
-import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
+import { resolveOpenClawModelRef, toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import { ActiveSkillBadge } from '@/features/plugins/components/skills';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -156,6 +157,8 @@ interface CoworkPromptInputProps {
   sessionId?: string;
   /** Agent that owns the session. Defaults to the agent selected on the home screen. */
   modelAgentId?: string;
+  /** Last Gateway-confirmed model for this session. */
+  sessionModelRef?: string;
   /** Whether the session has completed at least one Gateway-backed turn. */
   hasAssistantMessage?: boolean;
   /** Objective inferred from the optimistic first message while the real session is being created. */
@@ -205,6 +208,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       showModelSelector = false,
       sessionId,
       modelAgentId,
+      sessionModelRef,
       hasAssistantMessage = false,
       initialGoalObjective = null,
       goalRunProgress = null,
@@ -230,20 +234,26 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         availableModels,
         fallbackModel: globalSelectedModel,
       });
-    const agentSelectedModelRef = useRef<Model | null>(agentSelectedModel);
-    agentSelectedModelRef.current = agentSelectedModel;
+    const confirmedPropModel = sessionModelRef
+      ? resolveOpenClawModelRef(sessionModelRef, availableModels)
+      : null;
+    const baseSelectedModel = confirmedPropModel ?? agentSelectedModel;
+    const agentSelectedModelRef = useRef<Model | null>(baseSelectedModel);
+    agentSelectedModelRef.current = baseSelectedModel;
     const [optimisticSessionModel, setOptimisticSessionModel] = useState<Model | null>(null);
+    const [modelUpdatePending, setModelUpdatePending] = useState(false);
+    const [modelUpdateError, setModelUpdateError] = useState<string | null>(null);
     const [goalActionPending, setGoalActionPending] = useState(false);
     const goalActionPendingRef = useRef(false);
     const [endingGoalId, setEndingGoalId] = useState<string | null>(null);
     const goalEndCancelButtonRef = useRef<HTMLButtonElement>(null);
     const goalEndConfirmButtonRef = useRef<HTMLButtonElement>(null);
     const optimisticSessionModelRef = useRef<Model | null>(null);
-    const confirmedSessionModelRef = useRef<Model | null>(agentSelectedModel);
+    const confirmedSessionModelRef = useRef<Model | null>(baseSelectedModel);
     const modelSelectionContextRef = useRef(0);
     const modelSelectionQueueRef = useRef(new LatestSerialTaskQueue());
     const automaticModelRepairKeyRef = useRef('');
-    const effectiveSelectedModel = optimisticSessionModel ?? agentSelectedModel;
+    const effectiveSelectedModel = optimisticSessionModel ?? baseSelectedModel;
     const hasNoAvailableModels = !remoteManaged && availableModels.length === 0;
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const [value, setValue] = useState(draftPrompt);
@@ -296,6 +306,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       optimisticSessionModelRef.current = null;
       confirmedSessionModelRef.current = agentSelectedModelRef.current;
       setOptimisticSessionModel(null);
+      setModelUpdatePending(false);
+      setModelUpdateError(null);
       setContextUsage(null);
       setSessionGoal(null);
       sessionGoalRef.current = null;
@@ -303,6 +315,35 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setEndingGoalId(null);
       setPendingGoalObjective(null);
     }, [sessionId, effectiveAgentId]);
+
+    useEffect(() => {
+      if (!sessionId || remoteManaged) return;
+      const selectionContext = modelSelectionContextRef.current;
+      let cancelled = false;
+      void coworkService
+        .getSessionModel({ sessionId, agentId: effectiveAgentId })
+        .then(result => {
+          if (cancelled || selectionContext !== modelSelectionContextRef.current) return;
+          if (!result.success || !result.modelRef) return;
+          const confirmedModel = resolveOpenClawModelRef(result.modelRef, availableModels);
+          if (!confirmedModel) return;
+          confirmedSessionModelRef.current = confirmedModel;
+          optimisticSessionModelRef.current = confirmedModel;
+          setOptimisticSessionModel(confirmedModel);
+          dispatch(updateCurrentSessionModelRef({ sessionId, modelRef: result.modelRef }));
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }, [availableModels, dispatch, effectiveAgentId, remoteManaged, sessionId]);
+
+    useEffect(() => {
+      if (!confirmedPropModel || modelUpdatePending) return;
+      confirmedSessionModelRef.current = confirmedPropModel;
+      optimisticSessionModelRef.current = confirmedPropModel;
+      setOptimisticSessionModel(confirmedPropModel);
+    }, [confirmedPropModel, modelUpdatePending]);
 
     useEffect(() => {
       if (endingGoalId) goalEndCancelButtonRef.current?.focus();
@@ -576,7 +617,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const promptValue = promptOverride ?? value;
         const trimmedValue = promptValue.trim();
         // Require user text even when attachments exist; empty prompts produce poor session titles.
-        if (!trimmedValue || isRunActive || disabled) return;
+        if (!trimmedValue || isRunActive || disabled || modelUpdatePending) return;
         setShowFolderRequiredWarning(false);
 
         const attachmentPayloads: CoworkAttachmentPayload[] = [];
@@ -696,6 +737,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         dispatch,
         draftKey,
         modelSupportsImage,
+        modelUpdatePending,
       ],
     );
 
@@ -1430,7 +1472,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ];
     }, [disabled, isRunActive, value, contextMenuPos]);
 
-    const canSubmit = !disabled && !hasNoAvailableModels && !!value.trim();
+    const canSubmit =
+      !disabled && !modelUpdatePending && !hasNoAvailableModels && !!value.trim();
     const enhancedContainerClass = isDraggingFiles
       ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
       : containerClass;
@@ -1862,12 +1905,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <ModelSelector
                         dropdownDirection="up"
                         value={effectiveSelectedModel}
+                        loading={modelUpdatePending}
                         onChange={async nextModel => {
                           if (!nextModel) return;
                           confirmedSessionModelRef.current ??= agentSelectedModelRef.current;
                           const selectionContext = modelSelectionContextRef.current;
                           optimisticSessionModelRef.current = nextModel;
                           setOptimisticSessionModel(nextModel);
+                          setModelUpdatePending(true);
+                          setModelUpdateError(null);
                           const { taskId, completion } = modelSelectionQueueRef.current.enqueue(
                             async () => {
                               if (!sessionId) {
@@ -1888,7 +1934,49 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                     agentId: effectiveAgentId,
                                   });
                                   if (!result.success) {
+                                    if (
+                                      result.modelRef &&
+                                      selectionContext === modelSelectionContextRef.current &&
+                                      modelSelectionQueueRef.current.isLatest(taskId)
+                                    ) {
+                                      const authoritative = resolveOpenClawModelRef(
+                                        result.modelRef,
+                                        availableModels,
+                                      );
+                                      if (authoritative) {
+                                        confirmedSessionModelRef.current = authoritative;
+                                      }
+                                      dispatch(
+                                        updateCurrentSessionModelRef({
+                                          sessionId,
+                                          modelRef: result.modelRef,
+                                        }),
+                                      );
+                                    }
                                     throw new Error(result.error || 'patchSessionModel failed');
+                                  }
+                                  if (result.modelRef) {
+                                    if (
+                                      selectionContext !== modelSelectionContextRef.current ||
+                                      !modelSelectionQueueRef.current.isLatest(taskId)
+                                    ) {
+                                      return;
+                                    }
+                                    const confirmed = resolveOpenClawModelRef(
+                                      result.modelRef,
+                                      availableModels,
+                                    );
+                                    if (confirmed) {
+                                      confirmedSessionModelRef.current = confirmed;
+                                      optimisticSessionModelRef.current = confirmed;
+                                      setOptimisticSessionModel(confirmed);
+                                    }
+                                    dispatch(
+                                      updateCurrentSessionModelRef({
+                                        sessionId,
+                                        modelRef: result.modelRef,
+                                      }),
+                                    );
                                   }
                                 }
                               }
@@ -1912,11 +2000,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                               dispatch(setSelectedModel(nextModel));
                             }
                             if (!modelSelectionQueueRef.current.isLatest(taskId)) return;
+                            setModelUpdatePending(false);
                           } catch (error) {
                             if (!modelSelectionQueueRef.current.isLatest(taskId)) return;
                             const confirmedModel = confirmedSessionModelRef.current;
                             optimisticSessionModelRef.current = confirmedModel;
                             setOptimisticSessionModel(confirmedModel);
+                            setModelUpdatePending(false);
+                            setModelUpdateError(
+                              error instanceof Error ? error.message : String(error),
+                            );
                             console.warn('[CoworkPromptInput] Failed to update session model', {
                               sessionId,
                               error,
@@ -1924,6 +2017,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                           }
                         }}
                       />
+                      {modelUpdatePending && (
+                        <span className="max-w-60 text-[11px] leading-4 text-secondary" role="status">
+                          {i18nService.t('coworkModelApplying')}
+                        </span>
+                      )}
+                      {modelUpdateError && (
+                        <span className="max-w-60 text-[11px] leading-4 text-red-500" role="alert">
+                          {i18nService
+                            .t('coworkModelApplyFailed')
+                            .replace('{error}', modelUpdateError)}
+                        </span>
+                      )}
                       {hasNoAvailableModels && (
                         <span className="max-w-60 text-[11px] leading-4 text-red-500">
                           {i18nService.t('noModelAvailableHint')}

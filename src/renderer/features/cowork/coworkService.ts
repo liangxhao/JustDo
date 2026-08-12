@@ -25,6 +25,7 @@ import {
   setSessions,
   setStreaming,
   updateConfig,
+  updateCurrentSessionModelRef,
   updateCurrentSessionPermissionMode,
   updateGroup,
   updateMessageContent,
@@ -270,6 +271,14 @@ class CoworkService {
         this.confirmTerminalSessionIdle(sessionId);
       }
       store.dispatch(updateSessionStatus({ sessionId, status }));
+      void cowork
+        .getSessionModel({ sessionId })
+        .then(result => {
+          if (result.success && result.modelRef) {
+            store.dispatch(updateCurrentSessionModelRef({ sessionId, modelRef: result.modelRef }));
+          }
+        })
+        .catch(() => {});
     });
     this.streamListenerCleanups.push(completeCleanup);
 
@@ -973,11 +982,29 @@ class CoworkService {
     sessionId: string;
     model: string;
     agentId?: string;
-  }): Promise<{ success: boolean; error?: string }> {
+  }): Promise<{
+    success: boolean;
+    modelRef?: string;
+    appliesTo?: 'next-turn' | 'subsequent-calls';
+    source?: 'gateway' | 'local-cache' | 'agent-default';
+    error?: string;
+  }> {
     if (!window.electron?.cowork?.patchSessionModel) {
       return { success: false, error: 'patchSessionModel API not available' };
     }
     return window.electron.cowork.patchSessionModel(options);
+  }
+
+  async getSessionModel(options: { sessionId: string; agentId?: string }): Promise<{
+    success: boolean;
+    modelRef?: string;
+    source?: 'gateway' | 'local-cache' | 'agent-default';
+    error?: string;
+  }> {
+    if (!window.electron?.cowork?.getSessionModel) {
+      return { success: false, error: 'getSessionModel API not available' };
+    }
+    return window.electron.cowork.getSessionModel(options);
   }
 
   async setDefaultModel(options: {

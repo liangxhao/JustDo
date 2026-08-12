@@ -82,6 +82,7 @@ erDiagram
     text permission_mode
     text active_skill_ids
     text agent_id
+    text model_ref
     text group_id
     integer created_at
     integer updated_at
@@ -130,6 +131,7 @@ erDiagram
 - `permission_mode`
 - `active_skill_ids`
 - `agent_id`
+- `model_ref`
 - `group_id`
 - `created_at`
 - `updated_at`
@@ -217,6 +219,11 @@ JustDo 在完整、最小和认证生命周期配置同步中都显式启用 ses
 session 的年龄保留阈值为 `365d`，每个 session store 的 `maxEntries` 配置为 500。OpenClaw
 maintenance 触发后会清理超龄条目，并将普通条目压回数量阈值；受保护会话不受普通条目上限约束。
 JustDo SQLite 中的会话列表和消息缓存独立于该运行时保留策略。
+
+`model_ref` 保存最近一次由 Gateway `sessions.describe` 确认的会话模型，格式为
+`provider/model`。它用于恢复会话模型选择器和建立发送屏障；Agent 的 `model` 只作为新会话
+默认值。每条 assistant 消息的实际模型仍由 Gateway history 决定，并独立保存在
+`cowork_messages.model_name`，后续切换会话模型不会改写历史消息。
 
 关键索引：
 

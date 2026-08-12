@@ -81,13 +81,16 @@ export const registerCoworkSessionExecutionHandlers = ({
       }
 
       const fallbackTitle = options.prompt.split('\n')[0].slice(0, 50) || 'New Session';
+      const agentId = options.agentId || 'main';
+      const initialModelRef = store.getAgent(agentId)?.model.trim() || undefined;
       const session = store.createSession(
         options.title?.trim() || fallbackTitle,
         resolveTaskWorkingDirectory(selectedWorkspaceRoot),
         config.executionMode || 'local',
         options.activeSkillIds || [],
-        options.agentId || 'main',
+        agentId,
         permissionMode,
+        initialModelRef,
       );
       store.updateSession(session.id, { status: 'running' });
 

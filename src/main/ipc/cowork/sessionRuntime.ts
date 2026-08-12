@@ -256,11 +256,43 @@ export const registerCoworkSessionRuntimeHandlers = ({
           options.model,
           options.agentId,
         );
-        return { success: result.ok, error: result.error };
+        if ('error' in result) {
+          return {
+            success: false,
+            error: result.error,
+            modelRef: result.modelRef,
+            source: result.source,
+          };
+        }
+        return {
+          success: true,
+          modelRef: result.modelRef,
+          appliesTo: result.appliesTo,
+          source: result.source,
+        };
       } catch (error) {
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to patch session model',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'cowork:session:model',
+    async (_event, options: { sessionId: string; agentId?: string }) => {
+      try {
+        const result = await getCoworkEngineRouter().getSessionModel(
+          options.sessionId,
+          options.agentId,
+        );
+        if ('error' in result) return { success: false, error: result.error };
+        return { success: true, modelRef: result.modelRef, source: result.source };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get session model',
         };
       }
     },

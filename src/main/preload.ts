@@ -316,6 +316,8 @@ contextBridge.exposeInMainWorld('electron', {
     ) => ipcRenderer.invoke('cowork:sessions:runtimeStatus', sessionIds, options),
     patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:session:patchModel', options),
+    getSessionModel: (options: { sessionId: string; agentId?: string }) =>
+      ipcRenderer.invoke('cowork:session:model', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
     getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),
     getGoalExecution: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Get, sessionId),

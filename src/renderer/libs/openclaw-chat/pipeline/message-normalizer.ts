@@ -2,6 +2,8 @@
  * Message normalization utilities for chat rendering.
  */
 
+import { normalizeModelRef } from '@shared/openclaw/modelRef';
+
 import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
 import { extractCanvasShortcodes } from '@/libs/openclaw-chat/shims/backend-helpers';
 import {
@@ -38,15 +40,23 @@ function resolveMessageModelName(message: Record<string, unknown>): string | nul
   const nestedMessage = asRecord(message.message);
   const nestedMetadata = nestedMessage ? asRecord(nestedMessage.metadata) : null;
 
+  const provider = pickTrimmedString(
+    message.modelProvider,
+    message.provider,
+    metadata?.modelProvider,
+    metadata?.provider,
+    nestedMessage?.modelProvider,
+    nestedMessage?.provider,
+    nestedMetadata?.modelProvider,
+    nestedMetadata?.provider,
+  );
   const explicitModelName = pickTrimmedString(
     message.modelName,
     metadata?.modelName,
     nestedMessage?.modelName,
     nestedMetadata?.modelName,
   );
-  if (explicitModelName) return explicitModelName;
-
-  const provider = pickTrimmedString(message.provider, metadata?.provider, nestedMessage?.provider);
+  if (explicitModelName) return normalizeModelRef(explicitModelName, provider);
   const model = pickTrimmedString(
     message.model,
     message.modelId,
@@ -56,8 +66,7 @@ function resolveMessageModelName(message: Record<string, unknown>): string | nul
     nestedMessage?.modelId,
   );
 
-  if (provider && model) return `${provider}/${model}`;
-  return model;
+  return normalizeModelRef(model, provider);
 }
 
 function coerceCanvasPreview(

@@ -456,6 +456,15 @@ const coworkSlice = createSlice({
       }
     },
 
+    updateCurrentSessionModelRef(
+      state,
+      action: PayloadAction<{ sessionId: string; modelRef: string }>,
+    ) {
+      if (state.currentSession?.id === action.payload.sessionId) {
+        state.currentSession.modelRef = action.payload.modelRef;
+      }
+    },
+
     clearCurrentSession(state) {
       state.currentSessionId = null;
       state.currentSession = null;
@@ -595,6 +604,7 @@ export const {
   updateSessionPinned,
   updateSessionTitle,
   updateCurrentSessionPermissionMode,
+  updateCurrentSessionModelRef,
   enqueuePendingInteraction,
   dequeuePendingInteraction,
   clearPendingInteractions,

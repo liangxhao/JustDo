@@ -155,7 +155,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     ? (agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null)
     : null;
   const { selectedModel: sessionSelectedModel } = resolveAgentModelSelection({
-    agentModel: currentSessionAgent?.model ?? '',
+    agentModel: currentSession?.modelRef || currentSessionAgent?.model || '',
     availableModels,
     fallbackModel: globalSelectedModel,
   });
@@ -938,6 +938,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                   showModelSelector={true}
                   sessionId={currentSession.id}
                   modelAgentId={currentSession.agentId}
+                  sessionModelRef={currentSession.modelRef}
                   hasAssistantMessage={currentSession.messages.some(
                     message => message.type === 'assistant',
                   )}

@@ -621,13 +621,14 @@ function renderGroupFooter(
 
 export function getGroupFooterLabel(group: MessageGroup, assistantName?: string): string {
   if (group.role === 'assistant') {
+    void assistantName;
     const modelName = group.modelName?.trim() ?? '';
     const senderLabel = group.senderLabel?.trim() ?? '';
     if (modelName === 'openclaw/gateway-injected' || modelName === 'gateway-injected') {
       return i18nService.t('coworkSystemMessageLabel');
     }
     return (
-      modelName || assistantName?.trim() || senderLabel || i18nService.t('coworkAssistantLabel')
+      modelName || senderLabel || i18nService.t('coworkAssistantLabel')
     );
   }
   if (group.role === 'user') {

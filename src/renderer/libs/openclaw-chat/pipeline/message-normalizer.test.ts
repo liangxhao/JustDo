@@ -194,7 +194,7 @@ describe('normalizeMessage assistant model label', () => {
     expect(message.modelName).toBe('deepseek/deepseek-v4-flash');
   });
 
-  test('prefers explicit modelName over provider and model fields', () => {
+  test('qualifies a bare explicit modelName with the provider', () => {
     const message = normalizeMessage({
       role: 'assistant',
       content: 'hello',
@@ -203,7 +203,7 @@ describe('normalizeMessage assistant model label', () => {
       model: 'deepseek-v4-flash',
     });
 
-    expect(message.modelName).toBe('gpt-4.1');
+    expect(message.modelName).toBe('deepseek/gpt-4.1');
   });
 });
 

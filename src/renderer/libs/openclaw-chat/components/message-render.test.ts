@@ -139,8 +139,10 @@ describe('group footer helpers', () => {
     ).toBe(i18nService.t('coworkAssistantLabel'));
   });
 
-  test('uses the configured assistant name when model metadata is unavailable', () => {
-    expect(getGroupFooterLabel(createGroup('assistant'), 'Research Agent')).toBe('Research Agent');
+  test('does not present the configured assistant name as actual model metadata', () => {
+    expect(getGroupFooterLabel(createGroup('assistant'), 'Research Agent')).toBe(
+      i18nService.t('coworkAssistantLabel'),
+    );
   });
 
   test('formats timestamps as yyyy-mm-dd hh:mm', () => {
