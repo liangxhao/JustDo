@@ -4,6 +4,7 @@ import {
   CONTEXT_USAGE_IDLE_RETRY_MS,
   CONTEXT_USAGE_RUNNING_REFRESH_MS,
   getContextUsageRefreshDelay,
+  mergeContextUsageSnapshot,
   startContextUsageRefresh,
 } from './contextUsageRefresh';
 
@@ -20,6 +21,49 @@ describe('getContextUsageRefreshDelay', () => {
     expect(getContextUsageRefreshDelay(false, true, 2)).toBe(CONTEXT_USAGE_IDLE_RETRY_MS);
     expect(getContextUsageRefreshDelay(false, false, 2)).toBeNull();
     expect(getContextUsageRefreshDelay(false, true, 0)).toBeNull();
+  });
+});
+
+describe('mergeContextUsageSnapshot', () => {
+  const snapshot = (totalTokens: number, compactionCount: number) => ({
+    totalTokens,
+    contextTokens: 200_000,
+    totalTokensFresh: true,
+    compactionCount,
+    generationKey: 'gateway-session-1:openai/gpt-5',
+  });
+
+  it('does not let estimates or finalized usage move backwards in one generation', () => {
+    expect(mergeContextUsageSnapshot(snapshot(15_000, 2), snapshot(10_000, 2))).toEqual(
+      snapshot(15_000, 2),
+    );
+  });
+
+  it('accepts a lower value after context compaction', () => {
+    expect(mergeContextUsageSnapshot(snapshot(15_000, 2), snapshot(10_000, 3))).toEqual(
+      snapshot(10_000, 3),
+    );
+  });
+
+  it('ignores a stale snapshot from an older compaction generation', () => {
+    expect(mergeContextUsageSnapshot(snapshot(10_000, 3), snapshot(16_000, 2))).toEqual(
+      snapshot(10_000, 3),
+    );
+  });
+
+  it('accepts a lower value after the Gateway session or model changes', () => {
+    const previous = snapshot(15_000, 3);
+    const resetSession = {
+      ...snapshot(8_000, 0),
+      generationKey: 'gateway-session-2:openai/gpt-5',
+    };
+    const switchedModel = {
+      ...snapshot(7_000, 0),
+      generationKey: 'gateway-session-2:anthropic/claude-sonnet-4',
+    };
+
+    expect(mergeContextUsageSnapshot(previous, resetSession)).toEqual(resetSession);
+    expect(mergeContextUsageSnapshot(resetSession, switchedModel)).toEqual(switchedModel);
   });
 });
 

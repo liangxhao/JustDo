@@ -34,6 +34,8 @@ test('publishes initial and mid-turn context estimates to session state', () => 
       'void params.midTurnPrecheck.onContextBudgetStatus?.(precheck, contextMessages.length);',
     );
     expect(patched).toContain('contextBudgetStatus: params.status');
+    expect(patched).toContain('currentUpdatedAt > nextUpdatedAt');
+    expect(patched).toContain('currentEstimatedTokens >= nextEstimatedTokens');
     expect(patched).not.toContain('totalTokensFresh: false');
     expect(applyPatch(runtimeDir)).toEqual([]);
   } finally {
@@ -61,6 +63,31 @@ test('upgrades the earlier freshness-mutating patch revision', () => {
     expect(patched).not.toContain('totalTokensFresh: false');
     expect(patched).toContain('if (params.sessionId && entry.sessionId !== params.sessionId)');
     expect(patched).toContain('void persistJustDoLiveContextBudgetStatus({');
+    expect(applyPatch(runtimeDir)).toEqual([]);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('upgrades the earlier unordered publisher without duplicating it', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-live-context-order-upgrade-'));
+  try {
+    const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+    fs.writeFileSync(
+      bundlePath,
+      [
+        __testing.UNORDERED_PATCHED_ATTEMPT_START,
+        __testing.PATCHED_MIDTURN_PUBLISH,
+        __testing.PATCHED_MIDTURN_OPTIONS,
+        __testing.PATCHED_INITIAL_PUBLISH,
+      ].join('\n'),
+      'utf8',
+    );
+
+    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    const upgraded = fs.readFileSync(bundlePath, 'utf8');
+    expect(upgraded.match(/async function persistJustDoLiveContextBudgetStatus/g)).toHaveLength(1);
+    expect(upgraded).toContain('currentUpdatedAt > nextUpdatedAt');
     expect(applyPatch(runtimeDir)).toEqual([]);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
@@ -157,6 +184,36 @@ export function setCurrentEntry(entry) {
       sessionKey: 'agent:main:test',
       sessionId: 'session-new',
       status: { estimatedPromptTokens: 25_000 },
+    });
+    expect(harness.readAppliedPatch()).toEqual({
+      contextBudgetStatus: { estimatedPromptTokens: 25_000 },
+    });
+
+    harness.setCurrentEntry({
+      sessionId: 'session-new',
+      contextBudgetStatus: { estimatedPromptTokens: 30_000, updatedAt: 300 },
+    });
+    await harness.persistJustDoLiveContextBudgetStatus({
+      config: {},
+      agentId: 'main',
+      sessionKey: 'agent:main:test',
+      sessionId: 'session-new',
+      status: { estimatedPromptTokens: 20_000, updatedAt: 300 },
+    });
+    expect(harness.readAppliedPatch()).toEqual({
+      contextBudgetStatus: { estimatedPromptTokens: 25_000 },
+    });
+
+    harness.setCurrentEntry({
+      sessionId: 'session-new',
+      contextBudgetStatus: { estimatedPromptTokens: 30_000, updatedAt: 200 },
+    });
+    await harness.persistJustDoLiveContextBudgetStatus({
+      config: {},
+      agentId: 'main',
+      sessionKey: 'agent:main:test',
+      sessionId: 'session-new',
+      status: { estimatedPromptTokens: 15_000, updatedAt: 100 },
     });
     expect(harness.readAppliedPatch()).toEqual({
       contextBudgetStatus: { estimatedPromptTokens: 25_000 },

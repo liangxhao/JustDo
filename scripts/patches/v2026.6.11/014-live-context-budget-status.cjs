@@ -40,7 +40,7 @@ const LEGACY_PATCHED_ATTEMPT_START = `async function persistJustDoLiveContextBud
   }
 }
 async function runEmbeddedAttempt(params) {`;
-const PATCHED_ATTEMPT_START = `async function persistJustDoLiveContextBudgetStatus(params) {
+const UNORDERED_PATCHED_ATTEMPT_START = `async function persistJustDoLiveContextBudgetStatus(params) {
   const sessionKey = params.sessionKey?.trim();
   if (!sessionKey || !params.status) return;
   const storePath = resolveStorePath2(params.config?.session?.store, {
@@ -63,7 +63,41 @@ const PATCHED_ATTEMPT_START = `async function persistJustDoLiveContextBudgetStat
   }
 }
 async function runEmbeddedAttempt(params) {`;
+const PATCHED_ATTEMPT_START = `async function persistJustDoLiveContextBudgetStatus(params) {
+  const sessionKey = params.sessionKey?.trim();
+  if (!sessionKey || !params.status) return;
+  const storePath = resolveStorePath2(params.config?.session?.store, {
+    agentId: params.agentId
+  });
+  if (!storePath) return;
+  try {
+    await patchSessionEntry2({
+      storePath,
+      sessionKey
+    }, (entry, context) => {
+      if (!context.existingEntry) return null;
+      if (params.sessionId && entry.sessionId !== params.sessionId) return null;
+      const currentStatus = entry.contextBudgetStatus;
+      const currentUpdatedAt = Number(currentStatus?.updatedAt);
+      const nextUpdatedAt = Number(params.status.updatedAt);
+      if (Number.isFinite(currentUpdatedAt) && Number.isFinite(nextUpdatedAt) && currentUpdatedAt > nextUpdatedAt) return null;
+      const currentEstimatedTokens = Number(currentStatus?.estimatedPromptTokens);
+      const nextEstimatedTokens = Number(params.status.estimatedPromptTokens);
+      if (currentUpdatedAt === nextUpdatedAt && Number.isFinite(currentEstimatedTokens) && Number.isFinite(nextEstimatedTokens) && currentEstimatedTokens >= nextEstimatedTokens) return null;
+      return {
+        contextBudgetStatus: params.status
+      };
+    });
+  } catch (error51) {
+    log41.debug(\`[justdo-context-usage] failed to publish live context budget status: \${String(error51)}\`);
+  }
+}
+async function runEmbeddedAttempt(params) {`;
 const LEGACY_PUBLISHER_SOURCE = LEGACY_PATCHED_ATTEMPT_START.slice(
+  0,
+  -ORIGINAL_ATTEMPT_START.length,
+);
+const UNORDERED_PUBLISHER_SOURCE = UNORDERED_PATCHED_ATTEMPT_START.slice(
   0,
   -ORIGINAL_ATTEMPT_START.length,
 );
@@ -173,9 +207,11 @@ function normalizePublisher(content, filePath) {
   let normalized = content;
   let changed = false;
 
-  if (normalized.includes(LEGACY_PUBLISHER_SOURCE)) {
-    normalized = normalized.split(LEGACY_PUBLISHER_SOURCE).join(PUBLISHER_SOURCE);
-    changed = true;
+  for (const previousPublisher of [LEGACY_PUBLISHER_SOURCE, UNORDERED_PUBLISHER_SOURCE]) {
+    if (normalized.includes(previousPublisher)) {
+      normalized = normalized.split(previousPublisher).join(PUBLISHER_SOURCE);
+      changed = true;
+    }
   }
 
   const publisherCount = countOccurrences(normalized, PUBLISHER_SOURCE);
@@ -261,6 +297,8 @@ function verifyPatch(runtimeDir) {
   const required = [
     'async function persistJustDoLiveContextBudgetStatus(params) {',
     'contextBudgetStatus: params.status',
+    'currentUpdatedAt > nextUpdatedAt',
+    'currentEstimatedTokens >= nextEstimatedTokens',
     '[justdo-context-usage] failed to publish live context budget status',
     PATCHED_MIDTURN_PUBLISH,
     PATCHED_MIDTURN_OPTIONS,
@@ -277,6 +315,7 @@ module.exports = {
   __testing: {
     ORIGINAL_ATTEMPT_START,
     LEGACY_PATCHED_ATTEMPT_START,
+    UNORDERED_PATCHED_ATTEMPT_START,
     PATCHED_ATTEMPT_START,
     ORIGINAL_MIDTURN_PUBLISH,
     LEGACY_PATCHED_MIDTURN_PUBLISH,

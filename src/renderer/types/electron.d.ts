@@ -725,6 +725,9 @@ interface IElectronAPI {
       totalTokens?: number;
       contextTokens?: number;
       totalTokensFresh?: boolean;
+      compactionCount?: number;
+      gatewaySessionId?: string;
+      modelRef?: string;
       error?: string;
     }>;
     deleteMessage: (

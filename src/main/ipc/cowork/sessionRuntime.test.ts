@@ -127,6 +127,7 @@ describe('readUsage', () => {
       totalTokens: 18_500,
       contextTokens: 200_000,
       totalTokensFresh: true,
+      compactionCount: 0,
     });
   });
 
@@ -160,6 +161,24 @@ describe('readUsage', () => {
     ).toMatchObject({
       totalTokens: 32_500,
       totalTokensFresh: true,
+    });
+  });
+
+  it('exposes the compaction generation used to validate decreases', () => {
+    expect(
+      readUsage({
+        sessionId: 'gateway-session-1',
+        totalTokens: 9_000,
+        contextWindow: 200_000,
+        compactionCount: 3,
+        modelProvider: 'openai',
+        model: 'gpt-5',
+      }),
+    ).toMatchObject({
+      totalTokens: 9_000,
+      compactionCount: 3,
+      gatewaySessionId: 'gateway-session-1',
+      modelRef: 'openai/gpt-5',
     });
   });
 });

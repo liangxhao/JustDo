@@ -23,6 +23,9 @@ const SESSION_LOOKUP_CACHE_TTL_MS = 750;
 const nonNegativeNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 
+const nonEmptyString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
 export const readSessionGoal = (value: unknown): SessionGoal | undefined => {
   if (!value || typeof value !== 'object') return undefined;
   const source = value as Record<string, unknown>;
@@ -81,6 +84,11 @@ export const readUsage = (session: Record<string, unknown>) => {
     typeof session.totalTokensFresh === 'boolean' ? session.totalTokensFresh : true;
   const hasActiveRun =
     session.hasActiveRun === true || session.status === 'running' || session.runState === 'active';
+  const provider = nonEmptyString(budget?.provider) ?? nonEmptyString(session.modelProvider);
+  const model = nonEmptyString(budget?.model) ?? nonEmptyString(session.model);
+  const gatewaySessionId = [session.sessionId, session.id]
+    .map(nonEmptyString)
+    .find((value): value is string => value !== undefined);
   return {
     totalTokens:
       (hasActiveRun || !reportedTotalTokensFresh ? estimatedPromptTokens : reportedTotalTokens) ??
@@ -96,6 +104,9 @@ export const readUsage = (session: Record<string, unknown>) => {
       nonNegativeNumber(budget?.contextTokenBudget) ??
       0,
     totalTokensFresh: reportedTotalTokensFresh || estimatedPromptTokens !== undefined,
+    compactionCount: nonNegativeNumber(session.compactionCount) ?? 0,
+    ...(gatewaySessionId ? { gatewaySessionId } : {}),
+    ...(model ? { modelRef: provider ? `${provider}/${model}` : model } : {}),
   };
 };
 

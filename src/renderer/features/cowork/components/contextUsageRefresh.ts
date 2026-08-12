@@ -7,7 +7,33 @@ export interface ContextUsageRefreshResult {
   totalTokens?: number;
   contextTokens?: number;
   totalTokensFresh?: boolean;
+  compactionCount?: number;
+  gatewaySessionId?: string;
+  modelRef?: string;
 }
+
+export interface ContextUsageSnapshot {
+  totalTokens: number;
+  contextTokens: number;
+  totalTokensFresh: boolean;
+  compactionCount: number;
+  generationKey: string;
+}
+
+export const mergeContextUsageSnapshot = (
+  previous: ContextUsageSnapshot | null,
+  next: ContextUsageSnapshot,
+): ContextUsageSnapshot => {
+  if (!previous || next.generationKey !== previous.generationKey) return next;
+  if (next.compactionCount > previous.compactionCount) return next;
+  if (next.compactionCount < previous.compactionCount) return previous;
+  if (next.totalTokens >= previous.totalTokens) return next;
+  return {
+    ...next,
+    totalTokens: previous.totalTokens,
+    totalTokensFresh: previous.totalTokensFresh,
+  };
+};
 
 export const getContextUsageRefreshDelay = (
   isRunActive: boolean,

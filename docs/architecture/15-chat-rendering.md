@@ -159,6 +159,8 @@ Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产�
 
 ## 上下文压缩展示
 
+输入区的上下文用量在运行期间轮询 Gateway 的 pre-prompt estimate，运行结束后切换到持久化 usage。同一 Gateway session、模型和 `compactionCount` 内 UI 对读数做单调合并，避免异步 estimate 或 estimate/final usage 口径差异造成显示回退；Gateway session、模型变化或 `compactionCount` 递增时才接受较低读数。live estimate 写回 session state 时按 `updatedAt` 拒绝乱序的旧状态，相同毫秒内保留较大估算。
+
 - transcript 中的 compaction marker 使用 compaction entry ID；checkpoint 使用独立 UUID。Controller 保留 marker 的 `id`，并把恢复用途的 UUID 写入 `checkpointId`。
 - checkpoint 优先通过 `postCompaction.entryId` 或 `postCompaction.leafId` 与 marker 精确关联。只有缺少 transcript 位置的旧 checkpoint 才允许按时间顺序回退配对。
 - checkpoint 持久化是可失败的附加能力；没有 checkpoint 的 marker 仍应显示为普通压缩分隔线，不能借用其他压缩的摘要。

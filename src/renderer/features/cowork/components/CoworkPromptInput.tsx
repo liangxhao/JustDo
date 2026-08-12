@@ -14,7 +14,11 @@ import {
   resolveAutomaticAgentModelRepair,
 } from '@/features/cowork/components/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
-import { startContextUsageRefresh } from '@/features/cowork/components/contextUsageRefresh';
+import {
+  type ContextUsageSnapshot,
+  mergeContextUsageSnapshot,
+  startContextUsageRefresh,
+} from '@/features/cowork/components/contextUsageRefresh';
 import {
   canStopCoworkRun,
   isCoworkRunActive,
@@ -269,11 +273,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [slashMenuCommand, setSlashMenuCommand] = useState<SlashCommandDef | null>(null);
     const [slashMenuArgItems, setSlashMenuArgItems] = useState<string[]>([]);
     const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
-    const [contextUsage, setContextUsage] = useState<{
-      totalTokens: number;
-      contextTokens: number;
-      totalTokensFresh: boolean;
-    } | null>(null);
+    const [contextUsage, setContextUsage] = useState<ContextUsageSnapshot | null>(null);
     const [sessionGoal, setSessionGoal] = useState<SessionGoal | null>(null);
     const [goalExecution, setGoalExecution] = useState<GoalExecutionSnapshot | null>(null);
     const sessionGoalRef = useRef<SessionGoal | null>(null);
@@ -1562,16 +1562,29 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         retryAfterSuccess: justFinishedRun,
         fetchUsage: () => window.electron.cowork.getContextUsage(sessionId),
         onUsage: result => {
-          setContextUsage({
-            totalTokens: result.totalTokens,
-            contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
-            totalTokensFresh: result.totalTokensFresh ?? true,
-          });
+          setContextUsage(previous =>
+            mergeContextUsageSnapshot(previous, {
+              totalTokens: result.totalTokens,
+              contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
+              totalTokensFresh: result.totalTokensFresh ?? true,
+              compactionCount: result.compactionCount ?? previous?.compactionCount ?? 0,
+              generationKey: [
+                result.gatewaySessionId ?? sessionId,
+                result.modelRef ?? effectiveSelectedModel?.id ?? '',
+              ].join(':'),
+            }),
+          );
         },
         schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
         cancelSchedule: handle => window.clearTimeout(handle),
       });
-    }, [sessionId, isRunActive, hasAssistantMessage, effectiveSelectedModel?.contextLength]);
+    }, [
+      sessionId,
+      isRunActive,
+      hasAssistantMessage,
+      effectiveSelectedModel?.contextLength,
+      effectiveSelectedModel?.id,
+    ]);
 
     const runGoalAction = useCallback(
       (action: () => void | Promise<void>) =>
