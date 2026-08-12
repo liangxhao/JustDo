@@ -15,6 +15,10 @@ import {
 } from '@/features/cowork/components/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
 import { startContextUsageRefresh } from '@/features/cowork/components/contextUsageRefresh';
+import {
+  canStopCoworkRun,
+  isCoworkRunActive,
+} from '@/features/cowork/components/coworkRunActivity';
 import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
 import { runGoalActionSingleFlight } from '@/features/cowork/components/goalActionSingleFlight';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
@@ -266,7 +270,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [pendingGoalObjective, setPendingGoalObjective] = useState<string | null>(
       initialGoalObjective,
     );
-    const isRunActive = isStreaming || goalRunProgress !== null;
+    const isRunActive = isCoworkRunActive(isStreaming, goalRunProgress);
+    const canStopRun = canStopCoworkRun(isStreaming, goalRunProgress);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
@@ -570,7 +575,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const promptValue = promptOverride ?? value;
         const trimmedValue = promptValue.trim();
         // Require user text even when attachments exist; empty prompts produce poor session titles.
-        if (!trimmedValue || isStreaming || disabled) return;
+        if (!trimmedValue || isRunActive || disabled) return;
         setShowFolderRequiredWarning(false);
 
         const attachmentPayloads: CoworkAttachmentPayload[] = [];
@@ -681,7 +686,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       },
       [
         value,
-        isStreaming,
+        isRunActive,
         disabled,
         onSubmit,
         attachments,
@@ -865,7 +870,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           break;
       }
 
-      if (isSendCombo && !isStreaming && !disabled) {
+      if (isSendCombo && !isRunActive && !disabled) {
         event.preventDefault();
         handleSubmit();
       } else {
@@ -1076,7 +1081,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleIncomingFiles = useCallback(
       async (fileList: FileList | File[]) => {
-        if (disabled || isStreaming) return;
+        if (disabled || isRunActive) return;
         const files = Array.from(fileList ?? []);
         if (files.length === 0) return;
 
@@ -1165,14 +1170,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         disabled,
         fileToDataUrl,
         getNativeFilePath,
-        isStreaming,
+        isRunActive,
         modelSupportsImage,
         saveInlineFile,
       ],
     );
 
     const handleAddFile = useCallback(async () => {
-      if (isAddingFile || disabled || isStreaming) return;
+      if (isAddingFile || disabled || isRunActive) return;
       setIsAddingFile(true);
       try {
         const result = await window.electron.dialog.selectFiles({
@@ -1206,7 +1211,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       } finally {
         setIsAddingFile(false);
       }
-    }, [addAttachment, isAddingFile, disabled, isStreaming, modelSupportsImage]);
+    }, [addAttachment, isAddingFile, disabled, isRunActive, modelSupportsImage]);
 
     const handleRemoveAttachment = useCallback(
       (path: string) => {
@@ -1231,7 +1236,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       event.preventDefault();
       event.stopPropagation();
       dragDepthRef.current += 1;
-      if (!disabled && !isStreaming) {
+      if (!disabled && !isRunActive) {
         setIsDraggingFiles(true);
       }
     };
@@ -1240,7 +1245,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       if (!hasFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
-      event.dataTransfer.dropEffect = disabled || isStreaming ? 'none' : 'copy';
+      event.dataTransfer.dropEffect = disabled || isRunActive ? 'none' : 'copy';
     };
 
     const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
@@ -1259,19 +1264,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       event.stopPropagation();
       dragDepthRef.current = 0;
       setIsDraggingFiles(false);
-      if (disabled || isStreaming) return;
+      if (disabled || isRunActive) return;
       void handleIncomingFiles(event.dataTransfer.files);
     };
 
     const handlePaste = useCallback(
       (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-        if (disabled || isStreaming) return;
+        if (disabled || isRunActive) return;
         const files = Array.from(event.clipboardData?.files ?? []);
         if (files.length === 0) return;
         event.preventDefault();
         void handleIncomingFiles(files);
       },
-      [disabled, handleIncomingFiles, isStreaming],
+      [disabled, handleIncomingFiles, isRunActive],
     );
 
     // Context menu handling for textarea
@@ -1414,7 +1419,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         {
           action: 'paste' as const,
           label: i18nService.t('contextMenuPaste'),
-          disabled: disabled || isStreaming,
+          disabled: disabled || isRunActive,
         },
         {
           action: 'selectAll' as const,
@@ -1422,7 +1427,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           disabled: value.length === 0,
         },
       ];
-    }, [disabled, isStreaming, value, contextMenuPos]);
+    }, [disabled, isRunActive, value, contextMenuPos]);
 
     const canSubmit = !disabled && !hasNoAvailableModels && !!value.trim();
     const enhancedContainerClass = isDraggingFiles
@@ -1532,12 +1537,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleGoalCommand = useCallback(
       (command: string) => {
-        if (disabled || isStreaming) return;
+        if (disabled || isRunActive) return;
         void runGoalAction(async () => {
           await onSubmit(command);
         });
       },
-      [disabled, isStreaming, onSubmit, runGoalAction],
+      [disabled, isRunActive, onSubmit, runGoalAction],
     );
 
     const handleGoalContinue = useCallback(async () => {
@@ -1628,7 +1633,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             goal={sessionGoal}
             pendingObjective={pendingGoalObjective}
             execution={goalExecution}
-            isRunning={isStreaming || goalRunProgress !== null}
+            isRunning={isRunActive}
             disabled={disabled || goalActionPending}
             onCommand={handleGoalCommand}
             onContinue={handleGoalContinue}
@@ -1922,7 +1927,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
                         title={i18nService.t('slashCommandButton')}
                         aria-label={i18nService.t('slashCommandButton')}
-                        disabled={disabled || isStreaming}
+                        disabled={disabled || isRunActive}
                       >
                         /
                       </button>
@@ -1932,7 +1937,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
                         title={i18nService.t('coworkAddFile')}
                         aria-label={i18nService.t('coworkAddFile')}
-                        disabled={disabled || isStreaming || isAddingFile}
+                        disabled={disabled || isRunActive || isAddingFile}
                       >
                         <PaperClipIcon className="h-4 w-4" />
                       </button>
@@ -1988,8 +1993,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   {!remoteManaged && <ActiveSkillBadge />}
                 </div>
                 <div className="flex items-center gap-2">
-                  {isStreaming && <InProgressBadge />}
-                  {isStreaming ? (
+                  {isRunActive && <InProgressBadge />}
+                  {canStopRun ? (
                     <button
                       type="button"
                       onClick={handleStopClick}
@@ -1998,7 +2003,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     >
                       <StopIcon className="h-5 w-5" />
                     </button>
-                  ) : (
+                  ) : !isRunActive ? (
                     <button
                       type="button"
                       onClick={() => void handleSubmit()}
@@ -2009,7 +2014,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     >
                       <PaperAirplaneIcon className="h-5 w-5" />
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </>
@@ -2036,7 +2041,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
                     title={i18nService.t('slashCommandButton')}
                     aria-label={i18nService.t('slashCommandButton')}
-                    disabled={disabled || isStreaming}
+                    disabled={disabled || isRunActive}
                   >
                     /
                   </button>
@@ -2046,7 +2051,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
                     title={i18nService.t('coworkAddFile')}
                     aria-label={i18nService.t('coworkAddFile')}
-                    disabled={disabled || isStreaming || isAddingFile}
+                    disabled={disabled || isRunActive || isAddingFile}
                   >
                     <PaperClipIcon className="h-4 w-4" />
                   </button>
@@ -2055,8 +2060,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 </div>
               )}
 
-              {isStreaming && <InProgressBadge />}
-              {isStreaming ? (
+              {isRunActive && <InProgressBadge />}
+              {canStopRun ? (
                 <button
                   type="button"
                   onClick={handleStopClick}
@@ -2065,7 +2070,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 >
                   <StopIcon className="h-4 w-4" />
                 </button>
-              ) : (
+              ) : !isRunActive ? (
                 <button
                   type="button"
                   onClick={() => void handleSubmit()}
@@ -2076,7 +2081,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 >
                   <PaperAirplaneIcon className="h-4 w-4" />
                 </button>
-              )}
+              ) : null}
             </>
           )}
         </div>

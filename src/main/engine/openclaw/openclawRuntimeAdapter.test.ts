@@ -1116,6 +1116,128 @@ test('getSessionRuntimeStatus treats a visible announce stream as locally runnin
   });
 });
 
+test('getSessionRuntimeStatus treats manual context compaction as locally running', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({
+    sessions: [
+      {
+        key: sessionKey,
+        hasActiveRun: false,
+        status: 'completed',
+        runState: 'idle',
+      },
+    ],
+  });
+  adapter.rememberSessionKey('session-1', sessionKey);
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  adapter.handleGatewayEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'start', sessionKey },
+  });
+
+  await expect(adapter.getSessionRuntimeStatus('session-1')).resolves.toEqual({
+    known: true,
+    mainRunning: true,
+    subagentRunning: false,
+    running: true,
+  });
+  expect(request).not.toHaveBeenCalled();
+
+  adapter.handleGatewayEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'end', sessionKey },
+  });
+
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
+  ).resolves.toEqual({
+    known: true,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  expect(request).toHaveBeenCalledOnce();
+});
+
+test.each(['error', 'failed'])('clears manual context compaction on %s', async phase => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({ sessions: [] });
+  adapter.rememberSessionKey('session-1', sessionKey);
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  adapter.handleGatewayEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'start', sessionKey },
+  });
+  adapter.handleGatewayEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase, sessionKey },
+  });
+
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
+  ).resolves.toMatchObject({ mainRunning: false, running: false });
+});
+
+test('expires manual context compaction when its terminal event is lost', async () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const sessionKey = 'agent:main:justdo:session-1';
+    const request = vi.fn().mockResolvedValue({ sessions: [] });
+    adapter.rememberSessionKey('session-1', sessionKey);
+    (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+      request,
+    } as unknown as GatewayClientLike;
+
+    adapter.handleGatewayEvent({
+      event: 'session.operation',
+      payload: { operation: 'compact', phase: 'start', sessionKey },
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+
+    await expect(
+      adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
+    ).resolves.toMatchObject({ mainRunning: false, running: false });
+    expect(request).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('clears manual context compaction when Gateway state is cleaned up', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({ sessions: [] });
+  adapter.rememberSessionKey('session-1', sessionKey);
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  adapter.handleGatewayEvent({
+    event: 'session.operation',
+    payload: { operation: 'compact', phase: 'start', sessionKey },
+  });
+  (
+    adapter as unknown as { cleanupGatewayClientState: () => void }
+  ).cleanupGatewayClientState();
+
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
+  ).resolves.toMatchObject({ mainRunning: false, running: false });
+});
+
 test('announce run events follow webchat chat-final and tool-stream split', () => {
   const session = {
     id: 'session-1',
@@ -2007,6 +2129,48 @@ test('compaction pauses and then resumes the lifecycle end fallback', () => {
         data: { phase: 'end', completed: true },
       },
     });
+    vi.advanceTimersByTime(1500);
+    expect(adapter.isSessionActive('session-1')).toBe(false);
+    expect(session.status).toBe('idle');
+  } finally {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('compaction timeout resumes the lifecycle end fallback when its end event is lost', () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createEmptyStore();
+    session.status = 'running';
+    store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+      Object.assign(session, updates);
+    };
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+    adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'run-1');
+
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'lifecycle',
+        data: { phase: 'end' },
+      },
+    });
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'compaction',
+        data: { phase: 'start' },
+      },
+    });
+
+    vi.advanceTimersByTime(10 * 60 * 1_000);
+    expect(adapter.isSessionActive('session-1')).toBe(true);
     vi.advanceTimersByTime(1500);
     expect(adapter.isSessionActive('session-1')).toBe(false);
     expect(session.status).toBe('idle');

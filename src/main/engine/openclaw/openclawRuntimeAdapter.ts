@@ -122,6 +122,7 @@ const TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS = 30_000;
 const TITLE_SESSION_ID_POLL_INTERVAL_MS = 100;
 const TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS = 2_000;
 const LIFECYCLE_END_FALLBACK_MS = 1_500;
+const COMPACTION_IN_FLIGHT_TIMEOUT_MS = 10 * 60 * 1_000;
 const ERROR_TERMINAL_SESSION_STATUSES = new Set([
   'aborted',
   'cancelled',
@@ -239,6 +240,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly terminalLifecycleSessionIds = new Set<string>();
   private readonly recentTerminalRunIds = new Map<string, number>();
   private readonly compactionInFlightSessionIds = new Set<string>();
+  private readonly compactionInFlightTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lifecycleEndFallbackTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
@@ -1591,7 +1593,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     turn: SessionTurn | undefined,
   ): void {
     if (phase === 'start') {
+      this.clearCompactionInFlight(sessionId);
       this.compactionInFlightSessionIds.add(sessionId);
+      const compactionTimer = setTimeout(() => {
+        if (this.compactionInFlightTimers.get(sessionId) !== compactionTimer) return;
+        this.compactionInFlightTimers.delete(sessionId);
+        this.compactionInFlightSessionIds.delete(sessionId);
+        const activeTurn = this.activeTurns.get(sessionId);
+        if (activeTurn && this.terminalLifecycleSessionIds.has(sessionId)) {
+          this.scheduleLifecycleEndFallback(sessionId, activeTurn);
+        }
+      }, COMPACTION_IN_FLIGHT_TIMEOUT_MS);
+      compactionTimer.unref?.();
+      this.compactionInFlightTimers.set(sessionId, compactionTimer);
       const timer = this.lifecycleEndFallbackTimers.get(sessionId);
       if (timer) {
         clearTimeout(timer);
@@ -1599,11 +1613,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       return;
     }
-    if (phase !== 'end') return;
-    this.compactionInFlightSessionIds.delete(sessionId);
-    if (turn && this.terminalLifecycleSessionIds.has(sessionId)) {
+    if (phase !== 'end' && phase !== 'error' && phase !== 'failed') return;
+    this.clearCompactionInFlight(sessionId);
+    if (phase === 'end' && turn && this.terminalLifecycleSessionIds.has(sessionId)) {
       this.scheduleLifecycleEndFallback(sessionId, turn);
     }
+  }
+
+  private clearCompactionInFlight(sessionId: string): void {
+    const timer = this.compactionInFlightTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.compactionInFlightTimers.delete(sessionId);
+    this.compactionInFlightSessionIds.delete(sessionId);
+  }
+
+  private clearAllCompactionInFlight(): void {
+    for (const timer of this.compactionInFlightTimers.values()) clearTimeout(timer);
+    this.compactionInFlightTimers.clear();
+    this.compactionInFlightSessionIds.clear();
   }
 
   private handleSessionsChangedEvent(payload: unknown): void {
@@ -2424,7 +2451,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.finalizeVisibleRun(runId);
     }
     this.activeTurns.delete(sessionId);
-    this.compactionInFlightSessionIds.delete(sessionId);
+    this.clearCompactionInFlight(sessionId);
     this.reCreatedChannelSessionIds.delete(sessionId);
     this.flushPendingSessionModelPatch(sessionId);
   }
@@ -2468,7 +2495,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.manuallyStoppedSessions.delete(sessionId);
     }
     this.terminalLifecycleSessionIds.delete(sessionId);
-    this.compactionInFlightSessionIds.delete(sessionId);
+    this.clearCompactionInFlight(sessionId);
 
     const turnRunId = runId || randomUUID();
     const turnToken = this.nextTurnToken(sessionId);
@@ -2861,6 +2888,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.knownChannelSessionIds.clear();
     this.heartbeatSessionKeys.clear();
     this.stoppedSessions.clear();
+    this.clearAllCompactionInFlight();
     this.lastTickTimestamp = 0;
     this.lastAgentActivityTimestamp = 0;
     for (const timer of this.pendingMessageUpdateTimer.values()) clearTimeout(timer);
@@ -2898,6 +2926,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.knownChannelSessionIds.clear();
     this.heartbeatSessionKeys.clear();
     this.stoppedSessions.clear();
+    this.clearAllCompactionInFlight();
     this.lastTickTimestamp = 0;
     this.lastAgentActivityTimestamp = 0;
     for (const timer of this.pendingMessageUpdateTimer.values()) clearTimeout(timer);
@@ -3258,7 +3287,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const localMainRunning = new Map(
       uniqueSessionIds.map(sessionId => [
         sessionId,
-        this.isSessionActive(sessionId) || this.hasVisibleRunForSession(sessionId),
+        this.isSessionActive(sessionId) ||
+          this.hasVisibleRunForSession(sessionId) ||
+          this.compactionInFlightSessionIds.has(sessionId),
       ]),
     );
     const statuses: Record<string, SessionRuntimeStatus> = {};
