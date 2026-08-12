@@ -300,7 +300,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         <div className="px-6 py-6 min-h-[300px] flex flex-col">
           <div className="flex-1">
             {/* Question header and navigation */}
-            <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="flex flex-col items-start gap-4 mb-4 sm:flex-row sm:justify-between">
               <div className="flex-1">
                 {currentQuestion.header && (
                   <span className="inline-block text-[11px] uppercase tracking-wide px-2 py-1 rounded-full bg-surface-raised text-secondary mb-3">
@@ -319,7 +319,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
               </div>
 
               {/* Step indicators and navigation */}
-              <div className="flex items-center gap-2">
+              <div className="flex w-full items-center justify-center gap-2 sm:w-auto">
                 {/* Previous button */}
                 {!isFirstStep && (
                   <button
@@ -332,7 +332,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
                 )}
 
                 {/* Step dots */}
-                <div className="flex items-center gap-1.5">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-1.5 sm:flex-none sm:flex-nowrap">
                   {questions.map((question, index) => {
                     const isActive = index === activeStep;
                     const isAnswered = isQuestionComplete(question);

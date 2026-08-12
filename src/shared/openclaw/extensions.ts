@@ -62,6 +62,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
+export const MAX_ASK_USER_QUESTIONS = 8;
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
 
 const isSafeAskUserId = (value: string): boolean =>
@@ -74,7 +75,9 @@ const readRequiredString = (value: unknown): string | null => {
 };
 
 export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null => {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 4) return null;
+  if (!Array.isArray(value)
+    || value.length < 1
+    || value.length > MAX_ASK_USER_QUESTIONS) return null;
 
   const questionIds = new Set<string>();
   const questions: AskUserQuestion[] = [];

@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
-import { parseAskUserAnswers, parseAskUserQuestions } from './extensions';
+import {
+  MAX_ASK_USER_QUESTIONS,
+  parseAskUserAnswers,
+  parseAskUserQuestions,
+} from './extensions';
 
 const rawQuestions = [
   {
@@ -44,6 +48,20 @@ describe('ask-user-question runtime validation', () => {
       ...rawQuestions[0],
       options: [rawQuestions[0].options[0], rawQuestions[0].options[0]],
     }])).toBeNull();
+  });
+
+  test('accepts up to eight questions and rejects more', () => {
+    expect(MAX_ASK_USER_QUESTIONS).toBe(8);
+    const questions = Array.from({ length: MAX_ASK_USER_QUESTIONS }, (_, index) => ({
+      ...rawQuestions[0],
+      id: `question_${index + 1}`,
+    }));
+
+    expect(parseAskUserQuestions(questions)).toHaveLength(MAX_ASK_USER_QUESTIONS);
+    expect(parseAskUserQuestions([
+      ...questions,
+      { ...rawQuestions[0], id: 'question_9' },
+    ])).toBeNull();
   });
 
   test('rejects ids that can address object prototype properties', () => {

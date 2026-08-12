@@ -55,6 +55,7 @@ type AskUserResponse = {
 
 const LOOPBACK_CALLBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
+export const MAX_ASK_USER_QUESTIONS = 8;
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
 
 type HttpCallbackResult = {
@@ -167,8 +168,10 @@ const readRequiredString = (value: unknown): string | null => {
 const isSafeAskUserId = (value: string): boolean =>
   askUserIdRegex.test(value) && !(value in Object.prototype);
 
-const parseQuestions = (value: unknown): Question[] | null => {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 4) return null;
+export const parseQuestions = (value: unknown): Question[] | null => {
+  if (!Array.isArray(value)
+    || value.length < 1
+    || value.length > MAX_ASK_USER_QUESTIONS) return null;
   const questionIds = new Set<string>();
   const questions: Question[] = [];
   for (const rawQuestion of value) {
@@ -305,11 +308,11 @@ const QuestionSchema = Type.Object({
   multiSelect: Type.Optional(Type.Boolean({ description: 'Allow multiple selections.' })),
 });
 
-const AskUserQuestionSchema = Type.Object({
+export const AskUserQuestionSchema = Type.Object({
   questions: Type.Array(QuestionSchema, {
     minItems: 1,
-    maxItems: 4,
-    description: 'Questions to show (1-4).',
+    maxItems: MAX_ASK_USER_QUESTIONS,
+    description: `Questions to show (1-${MAX_ASK_USER_QUESTIONS}).`,
   }),
 });
 
