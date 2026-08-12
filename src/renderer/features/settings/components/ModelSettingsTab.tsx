@@ -1,4 +1,10 @@
-import { ArrowPathIcon, SignalIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowPathIcon,
+  ExclamationTriangleIcon,
+  MagnifyingGlassIcon,
+  SignalIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import React, { useRef, useState } from 'react';
 
 import {
@@ -12,6 +18,8 @@ import {
   validateDisplayName,
 } from '@/app/config';
 import { APP_NAME, EXPORT_PASSWORD } from '@/app/constants/app';
+import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
+import { getModelActionAvailability } from '@/features/settings/modelSettingsAvailability';
 import {
   createProvidersExportPayload,
   mergeImportedProviders,
@@ -46,17 +54,21 @@ interface Props {
   toggleProviderEnabled: (provider: ProviderType) => void;
   handleAddCustomProvider: () => void;
   handleAddModel: () => void;
+  handleDetectModels: () => void;
   handleEditModel: (
     modelId: string,
     modelName: string,
     supportsImage?: boolean,
     contextLength?: number,
     maxTokens?: number,
+    capabilitiesConfirmed?: boolean,
   ) => void;
   handleDeleteModel: (modelId: string) => void;
   handleTestConnection: () => void;
   handleRefreshBuiltinModels: () => void;
   isRefreshingBuiltinModels: boolean;
+  isDetectingModels: boolean;
+  modelDiscoveryMessage: string | null;
   setDisplayNameError: (value: string | null) => void;
   setProviders: React.Dispatch<React.SetStateAction<ProvidersConfig>>;
   setError: (value: string | null) => void;
@@ -75,11 +87,14 @@ const ModelSettingsTab: React.FC<Props> = ({
   toggleProviderEnabled,
   handleAddCustomProvider,
   handleAddModel,
+  handleDetectModels,
   handleEditModel,
   handleDeleteModel,
   handleTestConnection,
   handleRefreshBuiltinModels,
   isRefreshingBuiltinModels,
+  isDetectingModels,
+  modelDiscoveryMessage,
   displayNameError,
   setDisplayNameError,
   setProviders,
@@ -99,6 +114,18 @@ const ModelSettingsTab: React.FC<Props> = ({
     };
   const isReadOnly = isProviderReadOnly(activeProvider, activeConfig);
   const isBaseUrlLocked = false;
+  const hasModels = (activeConfig.models?.length ?? 0) > 0;
+  const isModelActionBusy = isTesting || isDetectingModels || isRefreshingBuiltinModels;
+  const actionAvailability = getModelActionAvailability({
+    requiresCredentials: providerRequiresApiKey(activeProvider),
+    baseUrl: activeConfig.baseUrl,
+    apiKey: activeConfig.apiKey,
+    modelCount: activeConfig.models?.length ?? 0,
+    busy: isModelActionBusy,
+  });
+  const modelActionDisabledReason = !actionAvailability.credentialsReady
+    ? i18nService.t('modelActionsRequireCredentials')
+    : undefined;
   const sortedProviders = Object.entries(providers).sort(([leftKey], [rightKey]) => {
     if (leftKey === 'builtin_models') return -1;
     if (rightKey === 'builtin_models') return 1;
@@ -164,45 +191,44 @@ const ModelSettingsTab: React.FC<Props> = ({
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex min-h-full">
       <div className="shrink-0 pr-3 space-y-1.5 overflow-y-auto" style={{ width: 260 }}>
-          {/* Heading with import/export */}
-          <div className="flex items-center justify-between mb-2 px-1">
-            <h3 className="text-sm font-medium text-foreground">{i18nService.t('modelProviders')}</h3>
-            <div className="flex items-center space-x-1">
-              <input
-                ref={importInputRef}
-                type="file"
-                accept="application/json"
-                className="hidden"
-                onChange={handleImport}
-              />
-              <button
-                type="button"
-                onClick={() => importInputRef.current?.click()}
-                disabled={isImporting || isExporting}
-                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
-              >
-                {i18nService.t('import')}
-              </button>
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isImporting || isExporting}
-                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
-              >
-                {i18nService.t('export')}
-              </button>
-            </div>
+        {/* Heading with import/export */}
+        <div className="flex items-center justify-between mb-2 px-1">
+          <h3 className="text-sm font-medium text-foreground">{i18nService.t('modelProviders')}</h3>
+          <div className="flex items-center space-x-1">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={handleImport}
+            />
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              disabled={isImporting || isExporting || isModelActionBusy}
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+            >
+              {i18nService.t('import')}
+            </button>
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={isImporting || isExporting || isModelActionBusy}
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+            >
+              {i18nService.t('export')}
+            </button>
           </div>
+        </div>
 
         {sortedProviders.map(([provider, config]) => {
           const providerKey = provider as ProviderType;
           const isCustom = isCustomProvider(provider);
-          const providerInfo =
-            isCustom
-              ? { label: getCustomProviderDefaultName(provider), icon: <CustomProviderIcon /> }
-              : undefined;
+          const providerInfo = isCustom
+            ? { label: getCustomProviderDefaultName(provider), icon: <CustomProviderIcon /> }
+            : undefined;
           const readOnlyProviderRow = isProviderReadOnly(providerKey, config);
           const displayLabel =
             providerKey === 'builtin_models'
@@ -221,7 +247,9 @@ const ModelSettingsTab: React.FC<Props> = ({
             >
               <div className="flex flex-1 items-center min-w-0">
                 <div className="mr-2 flex h-7 w-7 items-center justify-center shrink-0">
-                  <span className="text-foreground">{isCustom ? <CustomProviderIcon /> : providerInfo?.icon}</span>
+                  <span className="text-foreground">
+                    {isCustom ? <CustomProviderIcon /> : providerInfo?.icon}
+                  </span>
                 </div>
                 <div className="flex flex-col min-w-0">
                   <span
@@ -231,7 +259,11 @@ const ModelSettingsTab: React.FC<Props> = ({
                   >
                     {displayLabel}
                   </span>
-                  {isCustom && <span className="text-[9px] leading-tight mt-0.5 text-primary">{i18nService.t('customBadge')}</span>}
+                  {isCustom && (
+                    <span className="text-[9px] leading-tight mt-0.5 text-primary">
+                      {i18nService.t('customBadge')}
+                    </span>
+                  )}
                   {readOnlyProviderRow && (
                     <span className="text-[9px] leading-tight mt-0.5 text-primary">
                       {i18nService.t('builtinModelsProvider')}
@@ -281,17 +313,21 @@ const ModelSettingsTab: React.FC<Props> = ({
         <button
           type="button"
           onClick={handleAddCustomProvider}
-          className="w-full mt-2 px-3 py-2 text-xs font-medium rounded-xl border border-dashed border-border text-secondary hover:text-foreground hover:border-primary hover:bg-primary/5 transition-colors"
+          disabled={isModelActionBusy}
+          className="w-full mt-2 px-3 py-2 text-xs font-medium rounded-xl border border-dashed border-border text-secondary hover:text-foreground hover:border-primary hover:bg-primary/5 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
         >
           {i18nService.t('addCustomProvider')}
         </button>
       </div>
 
-      <div className="flex flex-1 min-w-0 min-h-0 flex-col pl-3 border-l border-border">
-        <div className="flex flex-1 min-h-0 flex-col space-y-4">
+      <div className="flex flex-1 min-w-0 flex-col pl-3 border-l border-border">
+        <div className="flex flex-col gap-3">
           {!isBuiltinModelsProvider(activeProvider) && (
             <div>
-              <label htmlFor={`${activeProvider}-displayName`} className="block text-xs font-medium text-foreground mb-1">
+              <label
+                htmlFor={`${activeProvider}-displayName`}
+                className="block text-xs font-medium text-foreground mb-1"
+              >
                 {i18nService.t('customDisplayName')}
               </label>
               <input
@@ -321,7 +357,7 @@ const ModelSettingsTab: React.FC<Props> = ({
                     handleProviderConfigChange(activeProvider, 'displayName', value);
                   }
                 }}
-                className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
+                className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-1.5 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
                 placeholder={getCustomProviderDefaultName(activeProvider)}
               />
               {displayNameError && <p className="mt-1 text-xs text-red-500">{displayNameError}</p>}
@@ -329,118 +365,241 @@ const ModelSettingsTab: React.FC<Props> = ({
           )}
 
           {!isReadOnly && (
-            <div className="space-y-4">
-              <div>
-                <label htmlFor={`${activeProvider}-baseUrl`} className="block text-xs font-medium text-foreground mb-1">
-                  {i18nService.t('baseUrl')}{isCustomProvider(activeProvider) && <span className="text-red-500"> *</span>}
-                </label>
-                <input
-                  type="text"
-                  id={`${activeProvider}-baseUrl`}
-                  value={activeConfig.baseUrl}
-                  onChange={e => handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)}
-                  disabled={isBaseUrlLocked}
-                  className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 pr-8 text-xs ${isBaseUrlLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  placeholder={getProviderDefaultBaseUrl(activeProvider) || defaultConfig.providers?.[activeProvider]?.baseUrl || i18nService.t('baseUrlPlaceholder')}
-                  required={isCustomProvider(activeProvider)}
-                />
+            <div className="rounded-2xl border border-border bg-surface p-2.5">
+              <div className="mb-2 flex items-center gap-2">
+                <h3 className="shrink-0 text-xs font-semibold text-foreground">
+                  {i18nService.t('providerCredentials')}
+                </h3>
+                <span className="truncate text-[10px] text-muted">
+                  {i18nService.t('providerCredentialsHint')}
+                </span>
               </div>
-
-              {!isBuiltinModelsProvider(activeProvider) && (
+              <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label htmlFor={`${activeProvider}-apiKey`} className="block text-xs font-medium text-foreground mb-1">
-                    {i18nService.t('apiKey')}{isCustomProvider(activeProvider) && <span className="text-red-500"> *</span>}
+                  <label
+                    htmlFor={`${activeProvider}-baseUrl`}
+                    className="block text-xs font-medium text-foreground mb-1"
+                  >
+                    {i18nService.t('baseUrl')}
+                    {isCustomProvider(activeProvider) && <span className="text-red-500"> *</span>}
                   </label>
                   <input
-                    type="password"
-                    id={`${activeProvider}-apiKey`}
-                    value={activeConfig.apiKey}
-                    onChange={e => handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)}
-                    className="block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
-                    placeholder={i18nService.t('apiKeyPlaceholder')}
+                    type="text"
+                    id={`${activeProvider}-baseUrl`}
+                    value={activeConfig.baseUrl}
+                    onChange={e =>
+                      handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)
+                    }
+                    disabled={isBaseUrlLocked || isModelActionBusy}
+                    className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-1.5 pr-8 text-xs ${isBaseUrlLocked || isModelActionBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    placeholder={
+                      getProviderDefaultBaseUrl(activeProvider) ||
+                      defaultConfig.providers?.[activeProvider]?.baseUrl ||
+                      i18nService.t('baseUrlPlaceholder')
+                    }
                     required={isCustomProvider(activeProvider)}
                   />
                 </div>
-              )}
+
+                {!isBuiltinModelsProvider(activeProvider) && (
+                  <div>
+                    <label
+                      htmlFor={`${activeProvider}-apiKey`}
+                      className="block text-xs font-medium text-foreground mb-1"
+                    >
+                      {i18nService.t('apiKey')}
+                      {isCustomProvider(activeProvider) && <span className="text-red-500"> *</span>}
+                    </label>
+                    <input
+                      type="password"
+                      id={`${activeProvider}-apiKey`}
+                      value={activeConfig.apiKey}
+                      onChange={e =>
+                        handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)
+                      }
+                      disabled={isModelActionBusy}
+                      className="block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                      placeholder={i18nService.t('apiKeyPlaceholder')}
+                      required={isCustomProvider(activeProvider)}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
-          {(isBuiltinModelsProvider(activeProvider) || !isReadOnly) && (
-            <div className="flex w-full items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={isTesting || (providerRequiresApiKey(activeProvider) && !activeConfig.apiKey)}
-                className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
-              >
-                <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
-                {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}
-              </button>
-              {activeProvider === 'builtin_models' && (
-                <button
-                  type="button"
-                  onClick={handleRefreshBuiltinModels}
-                  disabled={isRefreshingBuiltinModels}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ArrowPathIcon
-                    className={`h-3.5 w-3.5 mr-1.5 ${isRefreshingBuiltinModels ? 'animate-spin' : ''}`}
-                  />
-                  {i18nService.t('refresh')}
-                </button>
+          <div className="flex min-h-[240px] flex-col rounded-2xl border border-border bg-surface p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h3 className="shrink-0 text-xs font-semibold text-foreground">
+                {i18nService.t('availableModels')}
+              </h3>
+              {(isBuiltinModelsProvider(activeProvider) || !isReadOnly) && (
+                <div className="flex shrink-0 items-center justify-end gap-2">
+                  {!isReadOnly && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleDetectModels}
+                        disabled={!actionAvailability.canManageModels}
+                        title={modelActionDisabledReason}
+                        className="inline-flex items-center rounded-xl bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isDetectingModels ? (
+                          <ArrowPathIcon className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        ) : (
+                          <MagnifyingGlassIcon className="h-3.5 w-3.5 mr-1.5" />
+                        )}
+                        {isDetectingModels
+                          ? i18nService.t('detectingModels')
+                          : i18nService.t('detectModels')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAddModel}
+                        disabled={!actionAvailability.canManageModels}
+                        title={modelActionDisabledReason}
+                        className="inline-flex items-center rounded-xl border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
+                        {i18nService.t('manualAddModel')}
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={!actionAvailability.canTestConnection}
+                    title={
+                      !hasModels
+                        ? i18nService.t('connectionTestRequiresModels')
+                        : modelActionDisabledReason
+                    }
+                    className="inline-flex shrink-0 items-center rounded-xl border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
+                    {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}
+                  </button>
+                  {activeProvider === 'builtin_models' && (
+                    <button
+                      type="button"
+                      onClick={handleRefreshBuiltinModels}
+                      disabled={isModelActionBusy}
+                      className="inline-flex items-center rounded-xl border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ArrowPathIcon
+                        className={`h-3.5 w-3.5 mr-1.5 ${isRefreshingBuiltinModels ? 'animate-spin' : ''}`}
+                      />
+                      {i18nService.t('refresh')}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
-          )}
 
-          <div className="flex flex-1 min-h-0 flex-col">
-            <div className="flex items-center justify-between mb-1.5">
-              <h3 className="text-xs font-medium text-foreground">{i18nService.t('availableModels')}</h3>
-              {!isReadOnly && (
-                <button type="button" onClick={handleAddModel} className="inline-flex items-center text-xs text-primary hover:text-primary-hover">
-                  <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
-                  {i18nService.t('addModel')}
-                </button>
-              )}
-            </div>
+            {modelDiscoveryMessage && !isReadOnly && (
+              <div className="mb-2 rounded-xl bg-primary-muted px-3 py-2 text-[11px] text-primary">
+                {modelDiscoveryMessage}
+              </div>
+            )}
 
-            <div className="space-y-1.5 flex-1 min-h-0 overflow-y-auto">
-              {(activeConfig.models ?? []).map(model => (
-                <div key={model.id} className="bg-surface p-2 rounded-xl border-border border transition-colors hover:border-primary group">
-                  <div className="flex items-center justify-between gap-2 min-w-0">
-                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                      <div className="w-1.5 h-1.5 shrink-0 rounded-full bg-green-400" />
-                      <div className="min-w-0">
-                        <div className="text-foreground font-medium text-[11px] truncate">{model.name}</div>
-                        <div className="text-[10px] text-secondary truncate">{model.id}</div>
+            <div className="min-h-[120px] flex-1 space-y-1.5 overflow-y-auto">
+              {(activeConfig.models ?? []).map(model => {
+                const capabilitiesConfirmed =
+                  isReadOnly || hasConfirmedModelCapabilities(model);
+                return (
+                  <div
+                    key={model.id}
+                    className="bg-surface p-2 rounded-xl border-border border transition-colors hover:border-primary group"
+                  >
+                    <div className="flex items-center justify-between gap-2 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <div className="w-1.5 h-1.5 shrink-0 rounded-full bg-green-400" />
+                        <div className="min-w-0">
+                          <div className="text-foreground font-medium text-[11px] truncate">
+                            {model.name}
+                          </div>
+                          <div className="text-[10px] text-secondary truncate">{model.id}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center shrink-0 space-x-1">
+                        {!isReadOnly && !capabilitiesConfirmed && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleEditModel(
+                                model.id,
+                                model.name,
+                                model.supportsImage,
+                                model.contextLength,
+                                model.maxTokens,
+                                model.capabilitiesConfirmed,
+                              )
+                            }
+                            className="rounded-md p-0.5 text-red-500 transition-colors hover:bg-red-500/10 hover:text-red-600"
+                            title={i18nService.t('modelCapabilitiesNeedConfirmation')}
+                            aria-label={i18nService.t('modelCapabilitiesNeedConfirmation')}
+                          >
+                            <ExclamationTriangleIcon className="h-4 w-4" />
+                          </button>
+                        )}
+                        {capabilitiesConfirmed && model.supportsImage && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-primary-muted text-primary">
+                            {i18nService.t('imageInput')}
+                          </span>
+                        )}
+                        {capabilitiesConfirmed && model.contextLength && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-raised text-secondary">
+                            {i18nService.t('contextShort')}{' '}
+                            {formatContextLength(model.contextLength)}
+                          </span>
+                        )}
+                        {capabilitiesConfirmed && model.maxTokens && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-raised text-secondary">
+                            {i18nService.t('outputShort')} {formatContextLength(model.maxTokens)}
+                          </span>
+                        )}
+                        {!isReadOnly && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleEditModel(
+                                  model.id,
+                                  model.name,
+                                  model.supportsImage,
+                                  model.contextLength,
+                                  model.maxTokens,
+                                  model.capabilitiesConfirmed,
+                                )
+                              }
+                              className="p-0.5 text-secondary hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <PencilIcon className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteModel(model.id)}
+                              className="p-0.5 text-secondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <TrashIcon className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
-                    <div className="flex items-center shrink-0 space-x-1">
-                      {model.supportsImage && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-primary-muted text-primary">{i18nService.t('imageInput')}</span>}
-                      {model.contextLength && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-raised text-secondary">{formatContextLength(model.contextLength)}</span>}
-                      {model.maxTokens && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-raised text-secondary">{formatContextLength(model.maxTokens)}</span>}
-                      {!isReadOnly && (
-                        <>
-                          <button type="button" onClick={() => handleEditModel(model.id, model.name, model.supportsImage, model.contextLength, model.maxTokens)} className="p-0.5 text-secondary hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                            <PencilIcon className="h-3.5 w-3.5" />
-                          </button>
-                          <button type="button" onClick={() => handleDeleteModel(model.id)} className="p-0.5 text-secondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <TrashIcon className="h-3.5 w-3.5" />
-                          </button>
-                        </>
-                      )}
-                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {(!activeConfig.models || activeConfig.models.length === 0) && (
                 <div className="bg-surface p-2.5 rounded-xl border border-border-subtle text-center">
                   <p className="text-[11px] text-secondary">{i18nService.t('noModelsAvailable')}</p>
                   {!isReadOnly && (
-                    <button type="button" onClick={handleAddModel} className="mt-1.5 inline-flex items-center text-[11px] font-medium text-primary hover:text-primary-hover">
-                      <PlusCircleIcon className="h-3 w-3 mr-1" />
-                      {i18nService.t('addFirstModel')}
-                    </button>
+                    <p className="mt-1 text-[10px] text-muted">
+                      {actionAvailability.credentialsReady
+                        ? i18nService.t('emptyModelListHint')
+                        : i18nService.t('modelActionsRequireCredentials')}
+                    </p>
                   )}
                 </div>
               )}

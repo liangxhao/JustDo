@@ -5,6 +5,7 @@ import {
   CheckCircleIcon,
   Cog6ToothIcon,
   CubeIcon,
+  ExclamationTriangleIcon,
   GlobeAltIcon,
   PencilSquareIcon,
   XCircleIcon,
@@ -17,6 +18,13 @@ import {
   GatewayPortValidationCode,
   parseGatewayPortInput,
 } from '@shared/openclaw/gatewayPort';
+import {
+  buildProviderModelsUrl,
+  DEFAULT_MODEL_CONTEXT_LENGTH,
+  DEFAULT_MODEL_MAX_TOKENS,
+  mergeDiscoveredProviderModels,
+  parseProviderModelsResponse,
+} from '@shared/providers/modelDiscovery';
 import {
   type CustomProxyConfig,
   defaultCustomProxyConfig,
@@ -52,7 +60,9 @@ import ShortcutsSettings, {
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
+import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
 import { buildModelConnectionTestRequestBody } from '@/features/settings/modelConnectionTest';
+import { validateModelForm } from '@/features/settings/modelFormValidation';
 import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
@@ -63,15 +73,7 @@ import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import appLogoUrl from '../../../../resources/logo.png';
 
-type TabType =
-  | 'general'
-  | 'usage'
-  | 'model'
-  | 'browser'
-  | 'memory'
-  | 'im'
-  | 'shortcuts'
-  | 'help';
+type TabType = 'general' | 'usage' | 'model' | 'browser' | 'memory' | 'im' | 'shortcuts' | 'help';
 
 const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
@@ -124,6 +126,24 @@ const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
   return getProviderDefaultBaseUrl(provider) || '';
 };
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
+const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const buildModelDiscoveryHeaders = (apiKey: string): Record<string, string> =>
+  apiKey.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {};
+
+const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      value => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      error => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 
 const waitForNextPaint = () =>
   new Promise<void>(resolve => {
@@ -318,6 +338,9 @@ const Settings: React.FC<SettingsProps> = ({
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
   const [isRefreshingBuiltinModels, setIsRefreshingBuiltinModels] = useState(false);
+  const [isDetectingModels, setIsDetectingModels] = useState(false);
+  const [modelDiscoveryMessage, setModelDiscoveryMessage] = useState<string | null>(null);
+  const modelDiscoveryGenerationRef = useRef(0);
 
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
@@ -367,6 +390,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [newModelSupportsImage, setNewModelSupportsImage] = useState(false);
   const [newModelContextLength, setNewModelContextLength] = useState<number | undefined>(undefined);
   const [newModelMaxTokens, setNewModelMaxTokens] = useState<number | undefined>(undefined);
+  const [modelCapabilitiesInitiallyConfirmed, setModelCapabilitiesInitiallyConfirmed] =
+    useState(false);
+  const [modelCapabilitiesDirty, setModelCapabilitiesDirty] = useState(false);
   const [modelFormError, setModelFormError] = useState<string | null>(null);
 
   // State for displayName validation
@@ -765,6 +791,9 @@ const Settings: React.FC<SettingsProps> = ({
 
   // Handle adding a new custom provider
   const handleAddCustomProvider = () => {
+    modelDiscoveryGenerationRef.current += 1;
+    setIsDetectingModels(false);
+    setModelDiscoveryMessage(null);
     const newKey = getNextCustomProviderKey(providers);
     setProviders(prev => ({
       ...prev,
@@ -784,7 +813,90 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelName('');
     setNewModelId('');
     setNewModelSupportsImage(false);
+    setNewModelContextLength(undefined);
+    setNewModelMaxTokens(undefined);
+    setModelCapabilitiesInitiallyConfirmed(false);
+    setModelCapabilitiesDirty(false);
     setModelFormError(null);
+    setModelDiscoveryMessage(null);
+  };
+
+  const handleDetectModels = async () => {
+    const provider = activeProvider;
+    const providerConfig = providers[provider];
+    const baseUrl = providerConfig?.baseUrl.trim() ?? '';
+    const apiKey = providerConfig?.apiKey.trim() ?? '';
+    if (!baseUrl || !apiKey || isProviderReadOnly(provider, providerConfig)) {
+      return;
+    }
+
+    const discoveryGeneration = ++modelDiscoveryGenerationRef.current;
+    setError(null);
+    setModelDiscoveryMessage(null);
+    setIsDetectingModels(true);
+    try {
+      const headers = buildModelDiscoveryHeaders(apiKey);
+      const modelsResponse = await withTimeout(
+        window.electron.api.fetch({
+          url: buildProviderModelsUrl(baseUrl),
+          method: 'GET',
+          headers,
+        }),
+        MODEL_DISCOVERY_TIMEOUT_MS,
+        i18nService.t('modelDetectionTimeout'),
+      );
+      if (discoveryGeneration !== modelDiscoveryGenerationRef.current) {
+        return;
+      }
+      if (!modelsResponse.ok) {
+        const detail =
+          getConnectivityErrorMessage(modelsResponse.data) ||
+          `${modelsResponse.status} ${modelsResponse.statusText}`.trim();
+        throw new Error(detail);
+      }
+      if (!Array.isArray(toConnectivityRecord(modelsResponse.data)?.data)) {
+        throw new Error(i18nService.t('connectionInvalidResponse'));
+      }
+
+      const discoveredModels = parseProviderModelsResponse(modelsResponse.data).map(model => ({
+        id: model.id,
+        name: model.name,
+      }));
+      setProviders(current => ({
+        ...current,
+        ...(current[provider]?.baseUrl.trim() === baseUrl &&
+        current[provider]?.apiKey.trim() === apiKey
+          ? {
+              [provider]: {
+                ...current[provider],
+                models: mergeDiscoveredProviderModels(
+                  current[provider]?.models ?? [],
+                  discoveredModels,
+                ),
+              },
+            }
+          : {}),
+      }));
+
+      const messageKey =
+        discoveredModels.length === 0 ? 'noModelsDetected' : 'modelDetectionSummary';
+      setModelDiscoveryMessage(
+        i18nService.t(messageKey).replace('{count}', String(discoveredModels.length)),
+      );
+    } catch (discoveryError) {
+      if (discoveryGeneration !== modelDiscoveryGenerationRef.current) {
+        return;
+      }
+      const detail =
+        discoveryError instanceof Error
+          ? discoveryError.message
+          : i18nService.t('modelDetectionFailed');
+      setError(`${i18nService.t('modelDetectionFailed')}: ${detail}`);
+    } finally {
+      if (discoveryGeneration === modelDiscoveryGenerationRef.current) {
+        setIsDetectingModels(false);
+      }
+    }
   };
 
   const handleRefreshBuiltinModels = async () => {
@@ -820,6 +932,8 @@ const Settings: React.FC<SettingsProps> = ({
   const confirmDeleteCustomProvider = () => {
     const key = pendingDeleteProvider;
     if (!key) return;
+    modelDiscoveryGenerationRef.current += 1;
+    setIsDetectingModels(false);
     setPendingDeleteProvider(null);
     setProviders(prev => {
       const next = { ...prev };
@@ -841,13 +955,20 @@ const Settings: React.FC<SettingsProps> = ({
 
   // Handle provider change
   const handleProviderChange = (provider: ProviderType) => {
+    modelDiscoveryGenerationRef.current += 1;
+    setIsDetectingModels(false);
     setIsAddingModel(false);
     setIsEditingModel(false);
     setEditingModelId(null);
     setNewModelName('');
     setNewModelId('');
     setNewModelSupportsImage(false);
+    setNewModelContextLength(undefined);
+    setNewModelMaxTokens(undefined);
+    setModelCapabilitiesInitiallyConfirmed(false);
+    setModelCapabilitiesDirty(false);
     setModelFormError(null);
+    setModelDiscoveryMessage(null);
     setActiveProvider(provider);
     // 切换 provider 时清除测试结果
     setIsTestResultModalOpen(false);
@@ -858,6 +979,12 @@ const Settings: React.FC<SettingsProps> = ({
   const handleProviderConfigChange = (provider: ProviderType, field: string, value: string) => {
     if (isProviderReadOnly(provider, providers[provider])) {
       return;
+    }
+
+    if (field === 'apiKey' || field === 'baseUrl') {
+      modelDiscoveryGenerationRef.current += 1;
+      setIsDetectingModels(false);
+      setModelDiscoveryMessage(null);
     }
 
     setProviders(prev => {
@@ -942,10 +1069,13 @@ const Settings: React.FC<SettingsProps> = ({
 
     const customProviderNames = Object.entries(providers)
       .filter(([providerKey]) => isCustomProvider(providerKey))
-      .map(([providerKey, providerConfig]) => [
-        providerKey,
-        providerConfig.displayName?.trim() || getCustomProviderDefaultName(providerKey),
-      ] as const);
+      .map(
+        ([providerKey, providerConfig]) =>
+          [
+            providerKey,
+            providerConfig.displayName?.trim() || getCustomProviderDefaultName(providerKey),
+          ] as const,
+      );
     const reservedNameProvider = customProviderNames.find(([, name]) =>
       isBuiltinProviderDisplayName(name),
     );
@@ -956,8 +1086,8 @@ const Settings: React.FC<SettingsProps> = ({
       return;
     }
 
-    const invalidNameProvider = customProviderNames.find(([, name]) =>
-      !validateDisplayName(name).valid,
+    const invalidNameProvider = customProviderNames.find(
+      ([, name]) => !validateDisplayName(name).valid,
     );
     if (invalidNameProvider) {
       setActiveTab('model');
@@ -1048,6 +1178,7 @@ const Settings: React.FC<SettingsProps> = ({
         providerKey?: string;
         supportsImage?: boolean;
         contextLength?: number;
+        maxTokens?: number;
       }[] = [];
       Object.entries(normalizedProviders).forEach(([providerName, config]) => {
         if (config.enabled && config.models) {
@@ -1059,6 +1190,7 @@ const Settings: React.FC<SettingsProps> = ({
               providerKey: providerName,
               supportsImage: model.supportsImage ?? false,
               contextLength: model.contextLength,
+              maxTokens: model.maxTokens,
             });
           });
         }
@@ -1084,6 +1216,9 @@ const Settings: React.FC<SettingsProps> = ({
       setNewModelId('');
       setNewModelSupportsImage(false);
       setNewModelContextLength(undefined);
+      setNewModelMaxTokens(undefined);
+      setModelCapabilitiesInitiallyConfirmed(false);
+      setModelCapabilitiesDirty(false);
       setModelFormError(null);
     }
     setActiveTab(tab);
@@ -1129,6 +1264,8 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelSupportsImage(false);
     setNewModelContextLength(undefined);
     setNewModelMaxTokens(undefined);
+    setModelCapabilitiesInitiallyConfirmed(false);
+    setModelCapabilitiesDirty(false);
     setModelFormError(null);
   };
 
@@ -1138,6 +1275,7 @@ const Settings: React.FC<SettingsProps> = ({
     supportsImage?: boolean,
     contextLength?: number,
     maxTokens?: number,
+    capabilitiesConfirmed?: boolean,
   ) => {
     if (isProviderReadOnly(activeProvider, providers[activeProvider])) {
       return;
@@ -1148,9 +1286,17 @@ const Settings: React.FC<SettingsProps> = ({
     setEditingModelId(modelId);
     setNewModelName(modelName);
     setNewModelId(modelId);
-    setNewModelSupportsImage(!!supportsImage);
-    setNewModelContextLength(contextLength);
-    setNewModelMaxTokens(maxTokens);
+    const hasConfirmedCapabilities = hasConfirmedModelCapabilities({
+      capabilitiesConfirmed,
+      supportsImage,
+      contextLength,
+      maxTokens,
+    });
+    setNewModelSupportsImage(hasConfirmedCapabilities ? !!supportsImage : false);
+    setNewModelContextLength(hasConfirmedCapabilities ? contextLength : undefined);
+    setNewModelMaxTokens(hasConfirmedCapabilities ? maxTokens : undefined);
+    setModelCapabilitiesInitiallyConfirmed(hasConfirmedCapabilities);
+    setModelCapabilitiesDirty(false);
     setModelFormError(null);
   };
 
@@ -1174,36 +1320,34 @@ const Settings: React.FC<SettingsProps> = ({
   const handleSaveNewModel = () => {
     const modelId = newModelId.trim();
     const modelName = newModelName.trim();
-    if (!modelName || !modelId) {
-      setModelFormError(i18nService.t('modelNameAndIdRequired'));
-      return;
-    }
-
     const currentModels = providers[activeProvider].models ?? [];
-    const duplicateModel = currentModels.find(
-      model => model.id === modelId && (!isEditingModel || model.id !== editingModelId),
-    );
-    if (duplicateModel) {
-      setModelFormError(i18nService.t('modelIdExists'));
+    const effectiveContextLength = newModelContextLength ?? DEFAULT_MODEL_CONTEXT_LENGTH;
+    const effectiveMaxTokens = newModelMaxTokens ?? DEFAULT_MODEL_MAX_TOKENS;
+    const validationError = validateModelForm({
+      modelId,
+      modelName,
+      contextLength: effectiveContextLength,
+      maxTokens: effectiveMaxTokens,
+      existingModelIds: currentModels.map(model => model.id),
+      editingModelId: isEditingModel ? editingModelId : null,
+    });
+    if (validationError) {
+      setModelFormError(i18nService.t(validationError));
       return;
     }
 
-    // Validate contextLength > maxTokens
-    if (
-      newModelContextLength !== undefined &&
-      newModelMaxTokens !== undefined &&
-      newModelContextLength <= newModelMaxTokens
-    ) {
-      setModelFormError('Context length must be greater than max tokens');
-      return;
-    }
-
+    const capabilitiesConfirmed = modelCapabilitiesInitiallyConfirmed || modelCapabilitiesDirty;
     const nextModel = {
       id: modelId,
       name: modelName,
-      supportsImage: newModelSupportsImage,
-      ...(newModelContextLength !== undefined ? { contextLength: newModelContextLength } : {}),
-      ...(newModelMaxTokens !== undefined ? { maxTokens: newModelMaxTokens } : {}),
+      capabilitiesConfirmed,
+      ...(capabilitiesConfirmed
+        ? {
+            supportsImage: newModelSupportsImage,
+            contextLength: effectiveContextLength,
+            maxTokens: effectiveMaxTokens,
+          }
+        : {}),
     };
     const updatedModels =
       isEditingModel && editingModelId
@@ -1226,6 +1370,8 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelSupportsImage(false);
     setNewModelContextLength(undefined);
     setNewModelMaxTokens(undefined);
+    setModelCapabilitiesInitiallyConfirmed(false);
+    setModelCapabilitiesDirty(false);
     setModelFormError(null);
   };
 
@@ -1238,6 +1384,8 @@ const Settings: React.FC<SettingsProps> = ({
     setNewModelSupportsImage(false);
     setNewModelContextLength(undefined);
     setNewModelMaxTokens(undefined);
+    setModelCapabilitiesInitiallyConfirmed(false);
+    setModelCapabilitiesDirty(false);
     setModelFormError(null);
   };
 
@@ -1247,7 +1395,7 @@ const Settings: React.FC<SettingsProps> = ({
       handleCancelModelEdit();
       return;
     }
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'BUTTON') {
       e.preventDefault();
       handleSaveNewModel();
     }
@@ -1313,7 +1461,11 @@ const Settings: React.FC<SettingsProps> = ({
     setTestResult(null);
 
     // Check if provider has valid authentication
-    if (providerRequiresApiKey(testingProvider) && !providerConfig.apiKey) {
+    if (
+      (providerRequiresApiKey(testingProvider) &&
+        (!providerConfig.apiKey.trim() || !providerConfig.baseUrl.trim())) ||
+      isDetectingModels
+    ) {
       setIsTesting(false);
       return;
     }
@@ -2237,11 +2389,14 @@ const Settings: React.FC<SettingsProps> = ({
             toggleProviderEnabled={toggleProviderEnabled}
             handleAddCustomProvider={handleAddCustomProvider}
             handleAddModel={handleAddModel}
+            handleDetectModels={handleDetectModels}
             handleEditModel={handleEditModel}
             handleDeleteModel={handleDeleteModel}
             handleTestConnection={handleTestConnection}
             handleRefreshBuiltinModels={handleRefreshBuiltinModels}
             isRefreshingBuiltinModels={isRefreshingBuiltinModels}
+            isDetectingModels={isDetectingModels}
+            modelDiscoveryMessage={modelDiscoveryMessage}
             setDisplayNameError={setDisplayNameError}
             setProviders={setProviders}
             setError={setError}
@@ -2737,55 +2892,85 @@ const Settings: React.FC<SettingsProps> = ({
                     />
                   </div>
                 </>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">
-                    {i18nService.t('contextLength')}
-                  </label>
-                  <input
-                    type="number"
-                    value={newModelContextLength ?? ''}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setNewModelContextLength(val === '' ? undefined : parseInt(val, 10));
-                    }}
-                    className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
-                    placeholder="200000"
-                    min={0}
-                  />
-                  <p className="mt-1 text-[11px] text-muted">
-                    {i18nService.t('contextLengthHint')}
+                <div className="rounded-xl border border-border bg-surface p-3">
+                  <div className="mb-2">
+                    <div>
+                      <h5 className="text-xs font-semibold text-foreground">
+                        {i18nService.t('modelCapabilities')}
+                      </h5>
+                      <p className="mt-0.5 text-[10px] text-muted">
+                        {i18nService.t('modelCapabilitiesHint')}
+                      </p>
+                    </div>
+                  </div>
+                  {!modelCapabilitiesInitiallyConfirmed && (
+                    <div className="mb-3 flex gap-2 rounded-lg border border-red-500/30 bg-red-500/5 px-2.5 py-2 text-red-600 dark:text-red-400">
+                      <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p className="text-[10px] leading-4">
+                        {i18nService.t('modelCapabilitiesConfirmationWarning')}
+                      </p>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-secondary mb-1">
+                        {i18nService.t('contextLength')}
+                      </label>
+                      <input
+                        type="number"
+                        value={newModelContextLength ?? ''}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setNewModelContextLength(val === '' ? undefined : Number(val));
+                          setModelCapabilitiesDirty(true);
+                        }}
+                        className="block w-full rounded-xl bg-surface-inset border-border border px-3 py-2 text-xs text-foreground placeholder:text-muted focus:border-primary focus:ring-1 focus:ring-primary/30"
+                        placeholder={i18nService.t('defaultContextLengthPlaceholder')}
+                        min={1}
+                        step={1}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-secondary mb-1">
+                        {i18nService.t('maxTokens')}
+                      </label>
+                      <input
+                        type="number"
+                        value={newModelMaxTokens ?? ''}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setNewModelMaxTokens(val === '' ? undefined : Number(val));
+                          setModelCapabilitiesDirty(true);
+                        }}
+                        className="block w-full rounded-xl bg-surface-inset border-border border px-3 py-2 text-xs text-foreground placeholder:text-muted focus:border-primary focus:ring-1 focus:ring-primary/30"
+                        placeholder={i18nService.t('defaultMaxTokensPlaceholder')}
+                        min={1}
+                        step={1}
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[10px] text-muted">
+                    {i18nService.t('modelTokenDefaultsHint')}
                   </p>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">
-                    {i18nService.t('maxTokens')}
-                  </label>
-                  <input
-                    type="number"
-                    value={newModelMaxTokens ?? ''}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setNewModelMaxTokens(val === '' ? undefined : parseInt(val, 10));
-                    }}
-                    className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-xs"
-                    placeholder="32000"
-                    min={0}
-                  />
-                  <p className="mt-1 text-[11px] text-muted">{i18nService.t('maxTokensHint')}</p>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    id={`${activeProvider}-supportsImage`}
-                    type="checkbox"
-                    checked={newModelSupportsImage}
-                    onChange={e => setNewModelSupportsImage(e.target.checked)}
-                    className="h-3.5 w-3.5 text-primary focus:ring-primary bg-surface border-border rounded"
-                  />
-                  <label
-                    htmlFor={`${activeProvider}-supportsImage`}
-                    className="text-xs text-secondary"
-                  >
-                    {i18nService.t('supportsImageInput')}
+                  <label className="mt-3 flex cursor-pointer items-center justify-between rounded-lg bg-surface-inset px-3 py-2">
+                    <span className="flex items-baseline gap-1.5 text-xs text-secondary">
+                      {i18nService.t('supportsImageInput')}
+                      {!modelCapabilitiesInitiallyConfirmed && !modelCapabilitiesDirty && (
+                        <span className="text-[10px] text-muted">
+                          {i18nService.t('defaultImageInputOff')}
+                        </span>
+                      )}
+                    </span>
+                    <input
+                      id={`${activeProvider}-supportsImage`}
+                      type="checkbox"
+                      checked={newModelSupportsImage}
+                      onChange={e => {
+                        setNewModelSupportsImage(e.target.checked);
+                        setModelCapabilitiesDirty(true);
+                      }}
+                      className="h-3.5 w-3.5 text-primary focus:ring-primary bg-surface border-border rounded"
+                    />
                   </label>
                 </div>
               </div>

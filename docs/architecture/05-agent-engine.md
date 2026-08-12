@@ -366,6 +366,15 @@ JustDo 生成的所有 `openai-completions` 模型条目都显式设置
 `agents.defaults.memorySearch`，复用同一个内置 provider 的 base URL 和 API key。若没有
 embedding 模型，则显式设置 `memorySearch.enabled: false`，避免 OpenClaw 回退到 OpenAI。
 
+自定义 provider 在设置页填写 Base URL 和 API Key 后，仅通过 OpenAI 兼容的 `/models`
+发现模型 ID 和名称，不自动探测或推测上下文窗口、最大输出、视觉输入及模型分类。发现结果
+按模型 ID 与当前草稿智能合并，保留未返回的手动模型、用户名称及已有能力配置。新模型的
+能力参数保持“未确认”状态：运行时回退到 200k 上下文、32k 最大输出和关闭视觉输入，设置
+列表不展示这些回退值，而是提示用户进入模型配置核对。默认数值只作为输入占位提示；用户
+修改能力字段并保存后，才持久化 `capabilitiesConfirmed` 及完整能力值。旧配置没有该标记时，
+明显偏离默认值的能力配置按已确认兼容处理。内置模型同步仍可使用受控服务提供的
+`/model/info` 区分聊天与 embedding 模型并读取能力元数据。
+
 登录/退出与内置模型、`openclaw.json`、Gateway 环境之间的接入契约独立记录在
 [`docs/features/authentication-builtin-model-lifecycle.md`](../features/authentication-builtin-model-lifecycle.md)，
 认证模块应只依赖其中定义的 Main 进程生命周期入口。

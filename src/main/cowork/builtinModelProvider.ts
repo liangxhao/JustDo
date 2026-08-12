@@ -1,4 +1,12 @@
 import { ProviderName } from '../../shared/providers';
+import {
+  buildProviderModelInfoUrl,
+  buildProviderModelsUrl,
+  combineProviderModelDiscovery,
+  normalizeModelProviderBaseUrl,
+  parseProviderModelInfoResponse,
+  parseProviderModelsResponse,
+} from '../../shared/providers/modelDiscovery';
 import type { SqliteStore } from '../data/sqliteStore';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from './builtinModelProviderConfig';
 
@@ -73,79 +81,13 @@ const beginBuiltinModelSync = (store: SqliteStore, shouldFetch: boolean): Builti
 const isCurrentBuiltinModelSync = (store: SqliteStore, state: BuiltinModelSyncState): boolean =>
   syncStateByStore.get(store)?.generation === state.generation;
 
-const toRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-
-const normalizeBaseUrl = (baseUrl: string): string => baseUrl.trim().replace(/\/+$/, '');
-
 export function readBuiltinModelProviderFile(): BuiltinProviderFile | null {
   return {
     enabled: BUILTIN_MODEL_PROVIDER_CONFIG.enabled,
     apiKey: BUILTIN_MODEL_PROVIDER_CONFIG.apiKey.trim(),
-    baseUrl: normalizeBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl),
+    baseUrl: normalizeModelProviderBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl),
   };
 }
-
-const buildModelsUrl = (baseUrl: string): string => `${normalizeBaseUrl(baseUrl)}/models`;
-
-const buildModelInfoUrl = (baseUrl: string): string => `${normalizeBaseUrl(baseUrl)}/model/info`;
-
-const getNumber = (record: Record<string, unknown>, key: string): number | undefined => {
-  const value = record[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-};
-
-const parseModelsResponse = (payload: unknown): string[] => {
-  const record = toRecord(payload);
-  const data = Array.isArray(record?.data) ? record.data : [];
-  return data
-    .map(item => {
-      const model = toRecord(item);
-      return typeof model?.id === 'string' ? model.id.trim() : '';
-    })
-    .filter(Boolean);
-};
-
-type ProviderModelInfo = {
-  model: ProviderModel;
-  mode?: string;
-};
-
-const parseModelInfoResponse = (payload: unknown): Map<string, ProviderModelInfo> => {
-  const record = toRecord(payload);
-  const data = Array.isArray(record?.data) ? record.data : [];
-  const result = new Map<string, ProviderModelInfo>();
-
-  for (const item of data) {
-    const entry = toRecord(item);
-    const modelName = typeof entry?.model_name === 'string' ? entry.model_name.trim() : '';
-    const modelInfo = toRecord(entry?.model_info);
-    const modelId =
-      modelName ||
-      (typeof modelInfo?.key === 'string' ? modelInfo.key.trim() : '') ||
-      (typeof modelInfo?.id === 'string' ? modelInfo.id.trim() : '');
-
-    if (!modelId) {
-      continue;
-    }
-
-    const rawMode = modelInfo?.mode ?? entry?.mode;
-    result.set(modelId, {
-      model: {
-        id: modelId,
-        name: modelName || modelId,
-        supportsImage: modelInfo?.supports_vision === true,
-        contextLength: modelInfo ? getNumber(modelInfo, 'max_input_tokens') : undefined,
-        maxTokens: modelInfo ? getNumber(modelInfo, 'max_output_tokens') : undefined,
-      },
-      mode: typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : undefined,
-    });
-  }
-
-  return result;
-};
 
 type BuiltinModels = {
   chatModels: ProviderModel[];
@@ -161,34 +103,26 @@ async function fetchBuiltinModels(
   signal: AbortSignal,
 ): Promise<BuiltinModels> {
   const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined;
-  const modelsResponse = await fetch(buildModelsUrl(baseUrl), { headers, signal });
+  const modelsResponse = await fetch(buildProviderModelsUrl(baseUrl), { headers, signal });
   if (!modelsResponse.ok) {
     throw new Error(`GET /models failed with ${modelsResponse.status}`);
   }
-  const modelIds = parseModelsResponse(await modelsResponse.json());
+  const listedModels = parseProviderModelsResponse(await modelsResponse.json());
 
-  const infoResponse = await fetch(buildModelInfoUrl(baseUrl), { headers, signal });
+  const infoResponse = await fetch(buildProviderModelInfoUrl(baseUrl), { headers, signal });
   const infoById = infoResponse.ok
-    ? parseModelInfoResponse(await infoResponse.json())
-    : new Map<string, ProviderModelInfo>();
-
-  const chatModels: ProviderModel[] = [];
-  const embeddingModels: ProviderModel[] = [];
-  for (const modelId of modelIds) {
-    const modelInfo = infoById.get(modelId);
-    const model = {
-      id: modelId,
-      name: modelInfo?.model.name || modelId,
-      supportsImage: modelInfo?.model.supportsImage ?? false,
-      ...(modelInfo?.model.contextLength ? { contextLength: modelInfo.model.contextLength } : {}),
-      ...(modelInfo?.model.maxTokens ? { maxTokens: modelInfo.model.maxTokens } : {}),
-    };
-    if (modelInfo?.mode === 'embedding') {
-      embeddingModels.push(model);
-    } else {
-      chatModels.push(model);
-    }
-  }
+    ? parseProviderModelInfoResponse(await infoResponse.json())
+    : new Map();
+  const discovery = combineProviderModelDiscovery(listedModels, infoById);
+  const toProviderModel = (model: (typeof discovery.chatModels)[number]): ProviderModel => ({
+    id: model.id,
+    name: model.name,
+    supportsImage: model.supportsImage ?? false,
+    ...(model.contextLength ? { contextLength: model.contextLength } : {}),
+    ...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
+  });
+  const chatModels = discovery.chatModels.map(toProviderModel);
+  const embeddingModels = discovery.embeddingModels.map(toProviderModel);
 
   return {
     chatModels,
