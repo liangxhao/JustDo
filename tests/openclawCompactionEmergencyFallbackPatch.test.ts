@@ -357,6 +357,27 @@ test('is idempotent after the complete fallback patch is present', () => {
   expect(verifyPatch(runtimeDir)).toBe(true);
 });
 
+test('preserves the request metadata stream when patch 016 has already run', () => {
+  const { bundlePath, runtimeDir } = createFixture();
+  const content = fs.readFileSync(bundlePath, 'utf8').replace(
+    '        compactionResult ??= unwrapCoreResult(await compact(preparation, this.model, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, this.agent.streamFn));',
+    `          // JUSTDO_LITELLM_NATIVE_COMPACTION_REQUEST_METADATA
+        const compactionStreamFn = createLiteLLMContextCompactionStreamFn(
+          this.agent.streamFn,
+          this.model.api
+        );
+        compactionResult ??= unwrapCoreResult(await compact(preparation, this.model, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, compactionStreamFn));`,
+  );
+  fs.writeFileSync(bundlePath, content, 'utf8');
+
+  expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+  const patched = fs.readFileSync(bundlePath, 'utf8');
+  expect(patched).toContain('JUSTDO_LITELLM_NATIVE_COMPACTION_REQUEST_METADATA');
+  expect(patched).toContain('compactionModel.api');
+  expect(patched).toContain('this.thinkingLevel, compactionStreamFn));');
+  expect(verifyPatch(runtimeDir)).toBe(true);
+});
+
 test('migrates an already-patched legacy helper instead of only updating its marker', () => {
   const { bundlePath, runtimeDir } = createFixture();
   applyPatch(runtimeDir);

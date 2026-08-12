@@ -148,8 +148,8 @@ safeguard 无法解析摘要模型或认证，以及摘要请求超时、溢出�
 摘要 system wording 与回放前缀，并旁路 safeguard 强制的 `## Goal` / `## Progress`
 等结构与诊断后缀。用户原话仍由 `011` 作为独立 user 消息重放，不重复塞入 summary
 正文；assistant thinking 随完整 assistant 消息参与摘要，压缩后只保留其归纳结果。
-`016-litellm-session-id.cjs` 覆盖普通 agent stream、safeguard 自己的分阶段摘要调用，
-以及 `tools.exec.reviewer` 使用的 simple-completion 调用。补丁为关联到会话的
+`016-litellm-session-id.cjs` 覆盖普通 agent stream、safeguard 自己的分阶段摘要调用、
+OpenClaw 原生 `compact()` 回退，以及 `tools.exec.reviewer` 使用的 simple-completion 调用。补丁为关联到会话的
 OpenAI-compatible 请求注入权威的 `metadata.session_id`，subagent 请求还会注入直接父级
 Gateway UUID `metadata.parent_session_id`，并用
 `metadata.request_purpose` 区分 `agent`、`context_compaction` 和 `exec_review`；真实用户
@@ -161,7 +161,9 @@ Gateway UUID `metadata.parent_session_id`，并用
 `generateSummary2()` 直连模型，不复用会话 stream，因此补丁会把当前 OpenClaw
 session UUID 和可选的直接父级 UUID 传入每个摘要 chunk。Exec reviewer 同样走独立
 simple-completion 链路，会从当前执行上下文取得相同的会话关联信息，但不会把 UUID 写入
-reviewer prompt。subagent 创建时会固化父级当时的 Gateway UUID，旧子会话则通过
+reviewer prompt。原生 `compact()` 会复用普通 agent stream；补丁会保留该 stream 的会话
+关联信息，并在进入压缩时再次包装，使最终 payload 权威覆盖为
+`request_purpose=context_compaction` 且移除 `user_initiated`。subagent 创建时会固化父级当时的 Gateway UUID，旧子会话则通过
 `spawnedBy` 解析并回填，因此父会话后续 rotation 不会改变已有子会话的归属。
 因此手动、threshold、overflow、mid-turn 压缩以及模型安全审查都能在 LiteLLM 中与
 原会话关联并按用途统计。

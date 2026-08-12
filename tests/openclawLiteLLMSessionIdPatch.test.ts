@@ -92,6 +92,9 @@ function generateSummary3(currentMessages, model, reserveTokens, apiKey, headers
   if (generateSummary2.length >= 8) return generateSummaryCompat(currentMessages, model, reserveTokens, apiKey, headers, signal, customInstructions, previousSummary);
   return generateSummaryCompat(currentMessages, model, reserveTokens, apiKey, signal, customInstructions, previousSummary);
 }
+async function runCompactionWork(preparation, compactionModel, auth2, options2) {
+        compactionResult ??= unwrapCoreResult(await compact(preparation, this.model, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, this.agent.streamFn));
+}
 generateSummary3(chunk, params.model, params.reserveTokens, params.apiKey, params.headers, params.signal, effectiveInstructions, summary);
 compactionSafeguardDeps.summarizeInStages({
     summarizationInstructions: params.summarizationInstructions,
@@ -145,7 +148,7 @@ test('patches the OpenClaw stream resolver idempotently', () => {
 
     expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
     const patched = fs.readFileSync(bundlePath, 'utf8');
-    expect(patched).toContain('JUSTDO_LITELLM_REQUEST_METADATA_V8');
+    expect(patched).toContain('JUSTDO_LITELLM_REQUEST_METADATA_V9');
     expect(patched).toContain('JUSTDO_LITELLM_USER_INITIATED_SCHEMA_V1');
     expect(patched).toContain('JUSTDO_LITELLM_USER_INITIATED_REGISTER_V1');
     expect(patched).toContain(
@@ -161,6 +164,7 @@ test('patches the OpenClaw stream resolver idempotently', () => {
     expect(patched).toContain('payload.metadata.user_initiated = true');
     expect(patched).toContain('let userInitiationPending = Boolean(normalizedRunId)');
     expect(patched).toContain('JUSTDO_LITELLM_COMPACTION_SESSION_ID');
+    expect(patched).toContain('JUSTDO_LITELLM_NATIVE_COMPACTION_REQUEST_METADATA');
     expect(patched).toContain('sessionId: runtime3?.sessionId');
     expect(patched).toContain(
       'createLiteLLMRequestMetadataStreamFn(sessionId, "context_compaction", model.api, parentSessionId)',
@@ -172,6 +176,27 @@ test('patches the OpenClaw stream resolver idempotently', () => {
     expect(patched).toContain('entry.parentSessionId = patch.parentSessionId.trim()');
     expect(verifyPatch(runtimeDir)).toBe(true);
     expect(applyPatch(runtimeDir)).toEqual([]);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('patches native compaction after the emergency fallback patch has run', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-litellm-post-019-'));
+  try {
+    const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+    const postEmergencyFallbackBundle = BUNDLE_FIXTURE.replace(
+      '        compactionResult ??= unwrapCoreResult(await compact(preparation, this.model, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, this.agent.streamFn));',
+      '          compactionResult = unwrapCoreResult(await compact(preparation, compactionModel, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, this.agent.streamFn));',
+    );
+    fs.writeFileSync(bundlePath, postEmergencyFallbackBundle, 'utf8');
+
+    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    const patched = fs.readFileSync(bundlePath, 'utf8');
+    expect(patched).toContain('JUSTDO_LITELLM_NATIVE_COMPACTION_REQUEST_METADATA');
+    expect(patched).toContain('compactionModel.api');
+    expect(patched).toContain('this.thinkingLevel, compactionStreamFn));');
+    expect(verifyPatch(runtimeDir)).toBe(true);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
@@ -263,7 +288,12 @@ test('injects authoritative agent request metadata while preserving existing met
   });
 }
 ${__testing.HELPER_SOURCE}
-export { registerLiteLLMUserChatRun, registerLiteLLMUserChatRunFromChatSend, wrapStreamFnWithLiteLLMRequestMetadata };
+export {
+  createLiteLLMContextCompactionStreamFn,
+  registerLiteLLMUserChatRun,
+  registerLiteLLMUserChatRunFromChatSend,
+  wrapStreamFnWithLiteLLMRequestMetadata
+};
 `,
       'utf8',
     );
@@ -281,6 +311,10 @@ export { registerLiteLLMUserChatRun, registerLiteLLMUserChatRunFromChatSend, wra
         params: Record<string, unknown>,
         runId: string,
       ) => boolean;
+      createLiteLLMContextCompactionStreamFn: (
+        streamFn: (...args: unknown[]) => unknown,
+        modelApi: string,
+      ) => (...args: unknown[]) => unknown;
     };
     let payload: Record<string, unknown> = {
       model: 'deepseek-v4-flash',
@@ -416,6 +450,46 @@ export { registerLiteLLMUserChatRun, registerLiteLLMUserChatRunFromChatSend, wra
       session_id: 'openclaw-session-123',
       request_purpose: 'agent',
     });
+
+    harness.registerLiteLLMUserChatRun('run-before-auto-compaction');
+    const agentStream = harness.wrapStreamFnWithLiteLLMRequestMetadata(
+      streamFn,
+      'openclaw-compaction-session',
+      'agent',
+      'openai-completions',
+      'openclaw-parent-session',
+      'run-before-auto-compaction',
+    );
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      payload = {
+        model: 'deepseek-v4-flash',
+        metadata: { tenant: 'team-a', user_initiated: true },
+      };
+      harness.createLiteLLMContextCompactionStreamFn(agentStream, 'openai-completions')({}, {}, {});
+      expect(payload.metadata).toEqual({
+        tenant: 'team-a',
+        session_id: 'openclaw-compaction-session',
+        request_purpose: 'context_compaction',
+        parent_session_id: 'openclaw-parent-session',
+      });
+    }
+
+    payload = { model: 'claude' };
+    harness.createLiteLLMContextCompactionStreamFn(agentStream, 'anthropic-messages')({}, {}, {});
+    expect(payload).toEqual({ model: 'claude' });
+
+    payload = { model: 'deepseek-v4-flash' };
+    agentStream({}, {}, {});
+    expect(payload.metadata).toEqual({
+      session_id: 'openclaw-compaction-session',
+      request_purpose: 'agent',
+      parent_session_id: 'openclaw-parent-session',
+      user_initiated: true,
+    });
+
+    expect(harness.createLiteLLMContextCompactionStreamFn(streamFn, 'openai-completions')).toBe(
+      streamFn,
+    );
 
     payload = { model: 'deepseek-v4-flash' };
     harness.wrapStreamFnWithLiteLLMRequestMetadata(
@@ -784,8 +858,8 @@ test('rejects an earlier chat-only patch revision and requires a pristine bundle
   try {
     const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
     const legacyHelperSource = __testing.HELPER_SOURCE.replace(
+      'JUSTDO_LITELLM_REQUEST_METADATA_V9',
       'JUSTDO_LITELLM_REQUEST_METADATA_V8',
-      'JUSTDO_LITELLM_REQUEST_METADATA_V7',
     );
     const chatOnlyBundle = BUNDLE_FIXTURE.replace(
       'function resolveEmbeddedAgentStreamFn(params) {',

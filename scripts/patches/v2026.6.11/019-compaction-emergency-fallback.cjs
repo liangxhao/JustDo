@@ -217,6 +217,13 @@ const PATCHED_COMPACTION_PREFLIGHT = `        const isManual = options2.mode ===
 
 const ORIGINAL_NATIVE_COMPACTION = `        compactionResult ??= unwrapCoreResult(await compact(preparation, this.model, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, this.agent.streamFn));`;
 
+const ORIGINAL_LITELLM_NATIVE_COMPACTION = `          // JUSTDO_LITELLM_NATIVE_COMPACTION_REQUEST_METADATA
+        const compactionStreamFn = createLiteLLMContextCompactionStreamFn(
+          this.agent.streamFn,
+          this.model.api
+        );
+        compactionResult ??= unwrapCoreResult(await compact(preparation, this.model, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, compactionStreamFn));`;
+
 const PATCHED_NATIVE_COMPACTION = `        if (!compactionResult) {
           if (!compactionModel) {
             if (isManual) throw new Error(formatNoModelSelectedMessage());
@@ -225,6 +232,45 @@ const PATCHED_NATIVE_COMPACTION = `        if (!compactionResult) {
           if (!auth2) return { status: "skipped" };
           compactionResult = unwrapCoreResult(await compact(preparation, compactionModel, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, this.agent.streamFn));
         }`;
+
+const PATCHED_LITELLM_NATIVE_COMPACTION = `        if (!compactionResult) {
+          if (!compactionModel) {
+            if (isManual) throw new Error(formatNoModelSelectedMessage());
+            return { status: "skipped" };
+          }
+          if (!auth2) return { status: "skipped" };
+          // JUSTDO_LITELLM_NATIVE_COMPACTION_REQUEST_METADATA
+          const compactionStreamFn = createLiteLLMContextCompactionStreamFn(
+            this.agent.streamFn,
+            compactionModel.api
+          );
+          compactionResult = unwrapCoreResult(await compact(preparation, compactionModel, auth2.apiKey, auth2.headers, options2.customInstructions, options2.signal, this.thinkingLevel, compactionStreamFn));
+        }`;
+
+function replaceNativeCompaction(content, filePath, replace) {
+  if (
+    content.includes(PATCHED_NATIVE_COMPACTION) ||
+    content.includes(PATCHED_LITELLM_NATIVE_COMPACTION)
+  ) {
+    return content;
+  }
+  if (content.includes(ORIGINAL_LITELLM_NATIVE_COMPACTION)) {
+    return replace(
+      content,
+      ORIGINAL_LITELLM_NATIVE_COMPACTION,
+      PATCHED_LITELLM_NATIVE_COMPACTION,
+      'native compaction fallback with request metadata',
+      filePath,
+    );
+  }
+  return replace(
+    content,
+    ORIGINAL_NATIVE_COMPACTION,
+    PATCHED_NATIVE_COMPACTION,
+    'native compaction fallback',
+    filePath,
+  );
+}
 
 const ORIGINAL_OVERFLOW_GUARD = `          if (this.overflowRecoveryAttempted) {
             this.emit({
@@ -338,13 +384,7 @@ function patchFile(filePath) {
         'compaction preflight',
         filePath,
       );
-      content = replaceForMigration(
-        content,
-        ORIGINAL_NATIVE_COMPACTION,
-        PATCHED_NATIVE_COMPACTION,
-        'native compaction fallback',
-        filePath,
-      );
+      content = replaceNativeCompaction(content, filePath, replaceForMigration);
       content = replaceForMigration(
         content,
         ORIGINAL_PROVIDER_FAILURE,
@@ -436,13 +476,7 @@ function patchFile(filePath) {
     'compaction preflight',
     filePath,
   );
-  content = replaceRequired(
-    content,
-    ORIGINAL_NATIVE_COMPACTION,
-    PATCHED_NATIVE_COMPACTION,
-    'native compaction fallback',
-    filePath,
-  );
+  content = replaceNativeCompaction(content, filePath, replaceRequired);
   content = replaceRequired(
     content,
     ORIGINAL_NO_MODEL,
