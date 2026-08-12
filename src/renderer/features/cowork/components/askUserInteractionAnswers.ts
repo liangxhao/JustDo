@@ -1,4 +1,4 @@
-import type { AskUserAnswers } from '@shared/openclaw/extensions';
+import type { AskUserAnswers, AskUserQuestion } from '@shared/openclaw/extensions';
 
 export const buildSingleOptionAnswers = (
   questionId: string,
@@ -10,6 +10,23 @@ export const buildSingleOptionAnswers = (
 export const buildOtherAnswers = (questionId: string, other: string): AskUserAnswers => ({
   [questionId]: { selected: [], other },
 });
+
+export const isQuestionAnswerComplete = (
+  question: AskUserQuestion,
+  selected: string[],
+  optionInputs: Record<string, string> | undefined,
+  otherActive: boolean,
+  otherInput: string | undefined,
+): boolean => {
+  if (otherActive && !otherInput?.trim()) return false;
+  const hasOther = Boolean(otherActive && otherInput?.trim());
+  if (selected.length === 0 && !hasOther) return false;
+
+  return selected.every((id) => {
+    const option = question.options.find(candidate => candidate.id === id);
+    return !option?.input || Boolean(optionInputs?.[id]?.trim());
+  });
+};
 
 export const resolveWizardAutoAdvanceStep = (
   currentStep: number,

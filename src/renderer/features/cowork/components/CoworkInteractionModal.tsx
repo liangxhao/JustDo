@@ -8,12 +8,17 @@ import {
   CoworkInteractionKind,
   parseAskUserQuestions,
 } from '@shared/openclaw/extensions';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CoworkInteractionRequest, CoworkInteractionResult } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 
-import { buildOtherAnswers, buildSingleOptionAnswers } from './askUserInteractionAnswers';
+import {
+  buildOtherAnswers,
+  buildSingleOptionAnswers,
+  isQuestionAnswerComplete,
+} from './askUserInteractionAnswers';
+import { useDialogFocusTrap } from './useDialogFocusTrap';
 
 interface CoworkInteractionModalProps {
   interaction: CoworkInteractionRequest;
@@ -58,6 +63,10 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   const [optionInputs, setOptionInputs] = useState<Record<string, Record<string, string>>>({});
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({});
   const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useDialogFocusTrap(dialogRef, closeButtonRef, interaction.requestId);
 
   useEffect(() => {
     setAnswers({});
@@ -208,16 +217,13 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   };
 
   const isQuestionComplete = (question: AskUserQuestion): boolean => {
-    const selected = getSelectedValues(question);
-    const hasOther = Boolean(
-      otherActive[question.id] && otherInputs[question.id]?.trim(),
+    return isQuestionAnswerComplete(
+      question,
+      getSelectedValues(question),
+      optionInputs[question.id],
+      Boolean(otherActive[question.id]),
+      otherInputs[question.id],
     );
-    if (selected.length === 0 && !hasOther) return false;
-    return selected.every((id) => {
-      const option = question.options.find(candidate => candidate.id === id);
-      if (!option?.input) return true;
-      return Boolean(optionInputs[question.id]?.[id]?.trim());
-    });
   };
 
   const isComplete = isQuestionTool && !isBinaryQuestion
@@ -276,17 +282,28 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
 
   const isBinaryOtherActive = isBinaryQuestion && Boolean(otherActive[questions[0].id]);
   const canSubmit = !isBinaryOtherActive || Boolean(otherInputs[questions[0].id]?.trim());
+  const canRespond = isComplete && canSubmit;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop">
-      <div className="modal-content w-full max-w-lg mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden">
+      <div
+        ref={dialogRef}
+        className="modal-content w-full max-w-lg mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cowork-interaction-modal-title"
+        tabIndex={-1}
+      >
         {/* Header */}
         <div className="flex items-center gap-3 px-6 py-4 border-b border-border">
           <div className="p-2 rounded-full bg-blue-100 dark:bg-blue-900/30">
             <QuestionMarkCircleIcon className="h-6 w-6 text-blue-600 dark:text-blue-500" />
           </div>
           <div className="flex-1">
-            <h2 className="text-lg font-semibold text-foreground">
+            <h2
+              id="cowork-interaction-modal-title"
+              className="text-lg font-semibold text-foreground"
+            >
               {isQuestionTool && !isBinaryQuestion
                 ? i18nService.t('coworkSelectionRequired')
                 : i18nService.t('coworkInteractionRequired')}
@@ -298,9 +315,10 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
             </p>
           </div>
           <button
+            ref={closeButtonRef}
             onClick={handleCancel}
             className="p-2 rounded-lg hover:bg-surface-raised text-secondary transition-colors"
-            aria-label="Close"
+            aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-5 w-5" />
           </button>
@@ -312,6 +330,9 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
             <div className="px-3 py-2 rounded-lg bg-background">
               <p className="text-sm text-foreground whitespace-pre-wrap">
                 {questions[0].question}
+                <span className="ml-1.5 text-xs font-normal text-secondary">
+                  {i18nService.t('coworkQuestionSingleSelect')}
+                </span>
               </p>
               {requestedCommand && (
                 <div className="mt-3">
@@ -329,6 +350,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleToggleOther(questions[0])}
+                  aria-pressed={Boolean(otherActive[questions[0].id])}
                   className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
                     otherActive[questions[0].id]
                       ? 'border-primary bg-primary/10 text-foreground'
@@ -368,6 +390,11 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                         </span>
                       )}
                       {question.question}
+                      <span className="ml-1.5 text-xs font-normal text-secondary">
+                        {i18nService.t(question.multiSelect
+                          ? 'coworkQuestionMultiSelect'
+                          : 'coworkQuestionSingleSelect')}
+                      </span>
                     </div>
                     {/* 命令详情 */}
                     {requestedCommand && (
@@ -391,6 +418,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                             <button
                               type="button"
                               onClick={() => handleSelectOption(question, option.id)}
+                              aria-pressed={isSelected}
                               className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
                                 isSelected
                                   ? 'border-primary bg-primary/10 text-foreground'
@@ -421,6 +449,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleToggleOther(question)}
+                        aria-pressed={Boolean(otherActive[question.id])}
                         className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
                           otherActive[question.id]
                             ? 'border-primary bg-primary/10 text-foreground'
@@ -485,8 +514,12 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!isComplete || !canSubmit}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!canRespond}
+            className={`px-4 py-2 text-sm font-medium rounded-lg border shadow-sm transition-colors ${
+              canRespond
+                ? 'border-primary bg-primary text-white hover:bg-primary-hover'
+                : 'border-border bg-surface text-secondary cursor-not-allowed'
+            }`}
           >
             {isBinaryOtherActive
               ? i18nService.t('coworkSubmitSelection')
