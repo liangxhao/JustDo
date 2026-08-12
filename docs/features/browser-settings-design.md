@@ -69,6 +69,8 @@ OpenClaw 启动隔离 Chromium Profile。隔离性好，但不会复用日常浏
 - 检查 Chrome 是否安装以及 `Local State` 中的 Remote Debugging 用户开关。
 - 读取默认用户目录的 `DevToolsActivePort`，并验证对应 loopback 端口是否监听。
 - 文件存在但端口未监听时显示“需要完全重启 Chrome”，不把残留文件误判为可连接。
+- 端口存在时解析监听进程；无人监听时明确说明它只是 Chrome 遗留记录，其他进程占用时
+  显示进程名和 PID，并且不把该端口误判为可用的 Chrome 调试端点。
 - 可复制 `chrome://inspect/#remote-debugging` 并聚焦 Chrome；由于 Chrome 可能丢弃外部
   进程传入的 `chrome://` URL，用户需要在地址栏粘贴后回车。端口就绪后可重启 Gateway
   并通过“测试连接”直接请求 `browser.request /tabs` 触发授权。

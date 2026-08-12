@@ -53,6 +53,7 @@ const BrowserSettingsTab: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [setupUrlCopied, setSetupUrlCopied] = useState(false);
   const [connectionVerified, setConnectionVerified] = useState(false);
+  const [connectionTestError, setConnectionTestError] = useState<string | null>(null);
   const [savingMode, setSavingMode] = useState(false);
   const refreshRequestIdRef = useRef(0);
   const statusRef = useRef<BrowserConnectionStatus | null>(null);
@@ -61,6 +62,7 @@ const BrowserSettingsTab: React.FC = () => {
     const requestId = ++refreshRequestIdRef.current;
     setLoading(true);
     setError(null);
+    setConnectionTestError(null);
     try {
       const result = await window.electron.browser.getStatus();
       if (!result.success || !result.status) {
@@ -82,6 +84,7 @@ const BrowserSettingsTab: React.FC = () => {
       statusRef.current = null;
       setStatus(null);
       setConnectionVerified(false);
+      setConnectionTestError(null);
       setError(
         refreshError instanceof Error ? refreshError.message : i18nService.t('browserStatusFailed'),
       );
@@ -129,6 +132,7 @@ const BrowserSettingsTab: React.FC = () => {
   const openRemoteDebugging = async () => {
     setBusyAction('open');
     setError(null);
+    setConnectionTestError(null);
     try {
       const result = await window.electron.browser.openRemoteDebugging();
       if (!result.success) throw new Error(i18nService.t('browserOpenSetupFailed'));
@@ -143,6 +147,7 @@ const BrowserSettingsTab: React.FC = () => {
   const restartGateway = async () => {
     setBusyAction('restart');
     setError(null);
+    setConnectionTestError(null);
     try {
       const result = await window.electron.openclaw.engine.restartGateway();
       if (!result.success) throw new Error(i18nService.t('browserGatewayRestartFailed'));
@@ -157,20 +162,21 @@ const BrowserSettingsTab: React.FC = () => {
   const testConnection = async () => {
     setBusyAction('test');
     setError(null);
+    setConnectionTestError(null);
     setConnectionVerified(false);
     try {
       const result = await window.electron.browser.testConnection();
       if (result.success) {
         setConnectionVerified(true);
       } else if (result.errorCode === 'permission-timeout') {
-        setError(i18nService.t('browserPermissionTimeout'));
+        setConnectionTestError(i18nService.t('browserPermissionTimeout'));
       } else if (result.errorCode === 'gateway-unavailable') {
-        setError(i18nService.t('browserGatewayUnavailable'));
+        setConnectionTestError(i18nService.t('browserGatewayUnavailable'));
       } else {
-        setError(i18nService.t('browserConnectionFailed'));
+        setConnectionTestError(i18nService.t('browserConnectionFailed'));
       }
     } catch {
-      setError(i18nService.t('browserConnectionFailed'));
+      setConnectionTestError(i18nService.t('browserConnectionFailed'));
     } finally {
       setBusyAction(null);
     }
@@ -178,9 +184,25 @@ const BrowserSettingsTab: React.FC = () => {
 
   const statusLabel = status?.endpointReachable
     ? i18nService.t('browserStatusReady')
-    : status?.issue === 'chrome-restart-required'
-      ? i18nService.t('browserStatusRestartRequired')
-      : i18nService.t('browserStatusNotReady');
+    : status?.issue === 'port-occupied-by-other-process'
+      ? i18nService.t('browserStatusPortOccupied')
+      : status?.issue === 'chrome-restart-required'
+        ? i18nService.t('browserStatusRestartRequired')
+        : i18nService.t('browserStatusNotReady');
+
+  const portOwnerLabel = status?.activePort
+    ? status.activePortOwner
+      ? i18nService
+          .t('browserPortOwner')
+          .replace(
+            '{process}',
+            status.activePortOwner.processName || i18nService.t('browserUnknownProcess'),
+          )
+          .replace('{pid}', String(status.activePortOwner.pid))
+      : status.activePortOwnerResolved
+        ? i18nService.t('browserPortUnoccupied')
+        : i18nService.t('browserPortOwnerUnknown')
+    : null;
 
   return (
     <div className="space-y-6">
@@ -283,8 +305,11 @@ const BrowserSettingsTab: React.FC = () => {
             <div>
               <div className="text-sm font-medium text-foreground">{statusLabel}</div>
               {status?.activePort ? (
-                <div className="mt-0.5 text-xs text-secondary">
-                  {i18nService.t('browserDetectedPort')}: {status.activePort}
+                <div className="mt-0.5 space-y-0.5 text-xs text-secondary">
+                  <div>
+                    {i18nService.t('browserDetectedPort')}: {status.activePort}
+                  </div>
+                  {portOwnerLabel ? <div>{portOwnerLabel}</div> : null}
                 </div>
               ) : null}
             </div>
@@ -324,9 +349,11 @@ const BrowserSettingsTab: React.FC = () => {
               complete={status?.endpointReachable === true}
               title={i18nService.t('browserStepRestartChromeTitle')}
               description={
-                status?.issue === 'chrome-restart-required'
-                  ? i18nService.t('browserStepRestartChromeStaleDescription')
-                  : i18nService.t('browserStepRestartChromeDescription')
+                status?.issue === 'port-occupied-by-other-process'
+                  ? i18nService.t('browserStepRestartChromeOccupiedDescription')
+                  : status?.issue === 'chrome-restart-required'
+                    ? i18nService.t('browserStepRestartChromeStaleDescription')
+                    : i18nService.t('browserStepRestartChromeDescription')
               }
               action={
                 <button
@@ -350,7 +377,7 @@ const BrowserSettingsTab: React.FC = () => {
                     type="button"
                     onClick={() => void restartGateway()}
                     disabled={loading || busyAction !== null || status?.endpointReachable !== true}
-                    className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-surface-raised disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-lg border border-primary/25 bg-primary-muted px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <ArrowPathIcon
                       className={`h-4 w-4 ${busyAction === 'restart' ? 'animate-spin' : ''}`}
@@ -373,6 +400,19 @@ const BrowserSettingsTab: React.FC = () => {
                       <CheckCircleIcon className="h-4 w-4" />
                       {i18nService.t('browserConnectionVerified')}
                     </span>
+                  ) : null}
+                  {busyAction === 'test' ? (
+                    <p className="basis-full text-sm leading-6 text-foreground" role="status">
+                      {i18nService.t('browserAuthorizationWaiting')}
+                    </p>
+                  ) : null}
+                  {connectionTestError ? (
+                    <p
+                      className="basis-full rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm leading-6 text-danger"
+                      role="alert"
+                    >
+                      {connectionTestError}
+                    </p>
                   ) : null}
                 </div>
               }

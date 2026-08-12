@@ -19,8 +19,15 @@ export type BrowserConnectionIssue =
   | 'unsupported-platform'
   | 'chrome-not-found'
   | 'remote-debugging-disabled'
+  | 'port-occupied-by-other-process'
   | 'chrome-restart-required'
   | 'not-running';
+
+export type BrowserPortOwner = {
+  pid: number;
+  processName: string | null;
+  isChrome: boolean;
+};
 
 export type BrowserConnectionStatus = {
   supported: boolean;
@@ -28,6 +35,8 @@ export type BrowserConnectionStatus = {
   remoteDebuggingEnabled: boolean;
   activePort: number | null;
   activePortFileExists: boolean;
+  activePortOwnerResolved: boolean;
+  activePortOwner: BrowserPortOwner | null;
   endpointReachable: boolean;
   issue: BrowserConnectionIssue | null;
 };

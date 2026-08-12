@@ -106,9 +106,14 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserUserChromeDescription:
       '复用日常 Chrome 的登录状态、Cookie 和标签页。Chrome 会在首次连接时要求你明确授权。',
     browserStatusReady: 'Chrome 已准备好，可以请求授权',
-    browserStatusRestartRequired: '检测到失效的调试端口，需要完全重启 Chrome',
+    browserStatusPortOccupied: 'Chrome 调试端口被其他进程占用',
+    browserStatusRestartRequired: '未检测到 Chrome 调试服务，请启动或重新打开 Chrome',
     browserStatusNotReady: 'Chrome 尚未准备好',
-    browserDetectedPort: '检测到的本地端口',
+    browserDetectedPort: 'Chrome 记录的本地端口',
+    browserPortOwner: '监听进程：{process}（PID {pid}）',
+    browserPortUnoccupied: '当前没有进程监听该端口；这是 Chrome 遗留的端口记录，不表示 Chrome 仍在运行。',
+    browserPortOwnerUnknown: '无法确定该端口的监听进程。',
+    browserUnknownProcess: '未知进程',
     browserStatusFailed: '无法检测 Chrome 状态',
     browserOpenSetupFailed: '无法打开 Chrome 远程调试设置页',
     browserGatewayRestartFailed: 'Gateway 重启失败',
@@ -123,13 +128,17 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserStepRestartChromeDescription:
       '开启后保持 Chrome 运行，然后点击刷新状态，检测 Chrome 创建的本地随机端口。',
     browserStepRestartChromeStaleDescription:
-      '当前端口文件已经失效。请完全退出所有 Chrome 进程，再从普通快捷方式重新启动 Chrome，然后刷新状态。',
+      'Chrome 当前可能已经关闭。如果已经关闭，请从普通快捷方式重新打开 Chrome；如果仍在运行，请完全退出后再打开，然后刷新状态。',
+    browserStepRestartChromeOccupiedDescription:
+      'Chrome 记录的调试端口正被其他进程监听。请先关闭上方显示的进程，再完全重启 Chrome 并刷新状态。',
     browserRefreshStatus: '刷新状态',
     browserStepAuthorizeTitle: '4. 连接并批准授权',
     browserStepAuthorizeDescription:
       '重启 Gateway 后发起一次浏览器操作，在 Chrome 的 “Allow remote debugging?” 窗口中点击允许。',
     browserRestartGateway: '重启 Gateway 并准备授权',
     browserTestConnection: '测试连接并触发授权',
+    browserAuthorizationWaiting:
+      '连接请求已发送。请查看 Chrome，并在窗口顶部中央的授权框中点击“允许”。',
     browserConnectionVerified: '已连接到 Chrome',
     browserPermissionTimeout:
       'Chrome 授权握手超时。请关闭 Remote Debugging 后重新开启，确认没有其他 MCP 正在连接，然后立即重试。Chrome 150/151 存在相关已知问题。',
@@ -1103,9 +1112,15 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserUserChromeDescription:
       'Reuse the sign-in state, cookies, and tabs from your everyday Chrome profile. Chrome requires explicit approval on the first connection.',
     browserStatusReady: 'Chrome is ready for an authorization request',
-    browserStatusRestartRequired: 'A stale debugging port was found; fully restart Chrome',
+    browserStatusPortOccupied: 'Another process is using the Chrome debugging port',
+    browserStatusRestartRequired: 'Chrome debugging is not running; start or reopen Chrome',
     browserStatusNotReady: 'Chrome is not ready yet',
-    browserDetectedPort: 'Detected local port',
+    browserDetectedPort: 'Local port recorded by Chrome',
+    browserPortOwner: 'Listening process: {process} (PID {pid})',
+    browserPortUnoccupied:
+      'No process is listening on this port. This is a stale Chrome record and does not mean Chrome is still running.',
+    browserPortOwnerUnknown: 'Unable to identify the process listening on this port.',
+    browserUnknownProcess: 'Unknown process',
     browserStatusFailed: 'Unable to detect Chrome status',
     browserOpenSetupFailed: 'Unable to open Chrome remote debugging settings',
     browserGatewayRestartFailed: 'Failed to restart Gateway',
@@ -1122,13 +1137,17 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserStepRestartChromeDescription:
       'Keep Chrome running after enabling it, then refresh the status to detect the random local port created by Chrome.',
     browserStepRestartChromeStaleDescription:
-      'The current port file is stale. Fully quit every Chrome process, start Chrome again from its normal shortcut, then refresh this status.',
+      'Chrome may already be closed. If so, reopen it normally. If it is still running, quit it completely before reopening, then refresh the status.',
+    browserStepRestartChromeOccupiedDescription:
+      'Another process is listening on Chrome’s recorded debugging port. Close the process shown above, fully restart Chrome, then refresh the status.',
     browserRefreshStatus: 'Refresh status',
     browserStepAuthorizeTitle: '4. Connect and approve access',
     browserStepAuthorizeDescription:
       'Restart Gateway, request a browser action, then click Allow in Chrome’s “Allow remote debugging?” dialog.',
     browserRestartGateway: 'Restart Gateway and prepare authorization',
     browserTestConnection: 'Test connection and request authorization',
+    browserAuthorizationWaiting:
+      'Connection request sent. Check Chrome and click Allow in the authorization dialog at the top center of the window.',
     browserConnectionVerified: 'Connected to Chrome',
     browserPermissionTimeout:
       'Chrome authorization timed out. Turn Remote Debugging off and on again, make sure no other MCP client is connecting, then retry immediately. Chrome 150/151 has a related known issue.',
