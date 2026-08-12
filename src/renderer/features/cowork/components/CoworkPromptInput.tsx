@@ -274,6 +274,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const canStopRun = canStopCoworkRun(isStreaming, goalRunProgress);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const slashMenuRef = useRef<HTMLDivElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
     const dragDepthRef = useRef(0);
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1611,6 +1612,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       (slashMenuMode === 'args'
         ? !!slashMenuCommand && slashMenuArgItems.length > 0
         : slashMenuItems.length > 0);
+
+    useEffect(() => {
+      if (!slashMenuVisible) return;
+
+      const selectedOption = slashMenuRef.current?.querySelector<HTMLElement>(
+        '[role="option"][aria-selected="true"]',
+      );
+      selectedOption?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }, [slashMenuArgItems, slashMenuIndex, slashMenuItems, slashMenuMode, slashMenuVisible]);
+
     const groupedSlashItems = useMemo(() => {
       const grouped = new Map<
         SlashCommandCategory,
@@ -1718,6 +1729,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         )}
         {slashMenuVisible && (
           <div
+            ref={slashMenuRef}
             className="absolute bottom-full left-0 right-0 z-40 mb-2 max-h-80 overflow-y-auto rounded-lg border border-border bg-surface p-1.5 shadow-elevated"
             role="listbox"
             aria-label="Slash commands"
@@ -1734,7 +1746,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     onClick={() => handleSlashArgSelect(arg, false)}
                     onMouseEnter={() => setSlashMenuIndex(index)}
                     className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                      index === slashMenuIndex ? 'bg-primary/10' : 'hover:bg-surface-raised'
+                      index === slashMenuIndex ? 'bg-primary-muted' : 'hover:bg-surface-raised'
                     }`}
                     role="option"
                     aria-selected={index === slashMenuIndex}
@@ -1766,7 +1778,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         onClick={() => handleSlashCommandSelect(command, true)}
                         onMouseEnter={() => setSlashMenuIndex(index)}
                         className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                          index === slashMenuIndex ? 'bg-primary/10' : 'hover:bg-surface-raised'
+                          index === slashMenuIndex ? 'bg-primary-muted' : 'hover:bg-surface-raised'
                         }`}
                         role="option"
                         aria-selected={index === slashMenuIndex}
