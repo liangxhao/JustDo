@@ -2,10 +2,326 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+test('shows a stalled-run status at 15 seconds and clears it on model activity', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_000_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.send') return Promise.resolve({ runId: 'run-1' });
+    if (method === 'sessions.describe') {
+      return Promise.resolve({ session: { hasActiveRun: true } });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.transportStatus = 'connected';
+  controller.state.sessionKey = sessionKey;
+
+  await controller.sendMessage('slow request');
+  await vi.advanceTimersByTimeAsync(14_999);
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toBeNull();
+
+  await vi.advanceTimersByTimeAsync(1);
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toMatchObject({ kind: 'preparing' });
+  expect(request).toHaveBeenCalledWith('sessions.describe', { key: sessionKey });
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'assistant',
+      data: { text: 'response resumed' },
+    },
+  });
+
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toBeNull();
+});
+
+test('clears the notice when a delayed model event is received', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_250_000);
+  const controller = new ChatController();
+  controller.state.connected = true;
+  controller.state.transportStatus = 'connected';
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.setPendingUserMessage('wait for delayed delivery');
+  await vi.advanceTimersByTimeAsync(15_000);
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: controller.state.sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      ts: 1,
+      stream: 'thinking',
+      data: { text: 'newly received activity' },
+    },
+  });
+
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toBeNull();
+});
+
+test('covers request preparation before the Gateway assigns a run id', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_500_000);
+  const controller = new ChatController();
+  controller.state.transportStatus = 'connected';
+
+  controller.setPendingUserMessage('prepare an externally started run');
+  await vi.advanceTimersByTimeAsync(15_000);
+
+  expect(controller.state.runActivity).toMatchObject({
+    runId: expect.stringMatching(/^justdo-pending-/),
+    stage: 'starting',
+  });
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toMatchObject({ kind: 'preparing' });
+});
+
+test('preserves preparation timing when the initial Gateway connection starts', async () => {
+  class FakeWebSocket {
+    static readonly OPEN = 1;
+    readyState = 0;
+    addEventListener = vi.fn();
+    close = vi.fn();
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+  const controller = new ChatController();
+  controller.setPendingUserMessage('first-session preparation');
+
+  await controller.connect(
+    'ws://gateway.test',
+    'token',
+    'agent:main:justdo:temp-session-1',
+  );
+
+  expect(controller.state.runActivity).toMatchObject({
+    runId: expect.stringMatching(/^justdo-pending-/),
+    stage: 'starting',
+  });
+  controller.disconnect();
+});
+
+test('reports reconnecting when transport drops during pre-run preparation', () => {
+  const controller = new ChatController();
+  controller.state.client = {} as never;
+  controller.state.connected = true;
+  controller.state.transportStatus = 'connected';
+  controller.setPendingUserMessage('prepare an externally started run');
+
+  (
+    controller as unknown as {
+      handleClose(): void;
+    }
+  ).handleClose();
+
+  expect(controller.state.transportStatus).toBe('reconnecting');
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toMatchObject({ kind: 'reconnecting', tone: 'warning' });
+});
+
+test('only claims the run is active after a fresh sessions.describe confirmation', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(2_000_000);
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.send') return Promise.resolve({ runId: 'run-1' });
+    if (method === 'sessions.describe') {
+      return Promise.resolve({ session: { hasActiveRun: true } });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.transportStatus = 'connected';
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('very slow request');
+  await vi.advanceTimersByTimeAsync(60_000);
+
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toMatchObject({ kind: 'slow-active' });
+
+  if (controller.state.runActivity) {
+    controller.state.runActivity.activeRunConfirmedAt = null;
+    controller.state.runActivity.probeState = 'idle';
+  }
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toMatchObject({ kind: 'preparing' });
+});
+
+test('does not treat a persisted running status as active-run confirmation', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(3_000_000);
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.send') return Promise.resolve({ runId: 'run-1' });
+    if (method === 'sessions.describe') {
+      return Promise.resolve({ session: { status: 'running' } });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.transportStatus = 'connected';
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.sendMessage('stale persisted state');
+  await vi.advanceTimersByTimeAsync(60_000);
+
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toMatchObject({ kind: 'preparing' });
+});
+
+test('does not let an old probe release the current run probe lock', async () => {
+  let resolveFirst: ((value: unknown) => void) | undefined;
+  let resolveSecond: ((value: unknown) => void) | undefined;
+  const request = vi
+    .fn()
+    .mockImplementationOnce(
+      () => new Promise(resolve => {
+        resolveFirst = resolve;
+      }),
+    )
+    .mockImplementationOnce(
+      () => new Promise(resolve => {
+        resolveSecond = resolve;
+      }),
+    );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.setPendingUserMessage('first run');
+  const probe = (
+    controller as unknown as {
+      probeActiveRun(): Promise<void>;
+    }
+  ).probeActiveRun.bind(controller);
+
+  const firstProbe = probe();
+  controller.clearSending();
+  controller.setPendingUserMessage('second run');
+  const secondProbe = probe();
+  resolveFirst?.({ session: { hasActiveRun: true } });
+  await firstProbe;
+
+  await probe();
+  expect(request).toHaveBeenCalledTimes(2);
+
+  resolveSecond?.({ session: { hasActiveRun: true } });
+  await secondProbe;
+});
+
+test('discards a delayed probe result after model activity and keeps the exact next threshold', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(4_000_000);
+  let resolveDescribe: ((value: unknown) => void) | undefined;
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.send') return Promise.resolve({ runId: 'run-1' });
+    if (method === 'sessions.describe') {
+      return new Promise(resolve => {
+        resolveDescribe = resolve;
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.transportStatus = 'connected';
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  await controller.sendMessage('slow describe');
+
+  await vi.advanceTimersByTimeAsync(15_000);
+  await vi.advanceTimersByTimeAsync(5_000);
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: controller.state.sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'thinking',
+      data: { text: 'activity while describe is pending' },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(10_000);
+  resolveDescribe?.({ session: { hasActiveRun: true } });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(controller.state.runActivity).toMatchObject({
+    probeState: 'idle',
+    activeRunConfirmedAt: null,
+  });
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(2);
 });
 
 test('renders a SQLite fallback immediately and lets Gateway history replace it', async () => {

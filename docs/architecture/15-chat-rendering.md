@@ -123,6 +123,29 @@ assistant footer 的模型字段表示生成该条消息的实际模型，而不
 `provider/model`；流式阶段尚无权威字段时不猜测模型，history 对账会回填 SQLite UI cache。
 后续会话模型切换不得改写已经完成消息的模型归属。
 
+### 长时间无输出提示
+
+当前主会话的 active run 在 renderer 内维护独立的瞬时 `RunActivity`，记录 run、阶段、
+最近 Agent 事件、最近模型活动和最近一次 active-run 确认。它不进入 Redux、SQLite 或
+持久化 history，也不会创建消息气泡。Thinking、Assistant 文本和 Tool 事件会重置无输出
+计时；Gateway tick 只证明 transport 有活动，不能证明模型正在思考。
+
+- 连续 15 秒无模型活动后，timeline selector 才在当前回复末尾投影一个
+  `waiting-status`；15 秒内 DOM 和原有三点动画、Thinking、Tool、Content、footer 不变。
+- 15 秒后最多每 15 秒调用一次 `sessions.describe`。兼容补丁为该精确查询附加实时
+  active-run tracker 结果；只有近期明确返回
+  `hasActiveRun: true`（或等价 running 状态），60 秒文案才可以声称任务仍在运行；RPC
+  失败只降级为“无法确认”，不得结束、重发或清空当前 run。
+- 180 秒提示及 transport 断连使用 warning tone；恢复任何模型活动、收到终态、用户停止
+  或切换普通会话时立即移除。临时 session 升格为持久 session 时保留同一 run 状态。
+- OpenClaw 兼容补丁只发 `lifecycle/progress` 的 queued、preparing、waiting_model、retrying
+  白名单字段。既有 fallback 事件只读取归一化 reason，不读取或展示错误详情。
+- GatewayClient 根据 hello 中的 tick interval 监测超过两个 tick 周期的静默连接，并走既有
+  WebSocket 重连；重连不调用 `chat.send`。页面后台期间暂停超时判断，恢复可见时重新计时。
+- Lit 已有 active-turn 本地秒钟负责阈值更新，不产生 Gateway/IPC 请求。等待提示的读屏区域
+  仅在状态类别变化时替换，动画尊重 `prefers-reduced-motion`。滚动控制器在 paused 模式下
+  使用可见锚点保持位置，提示出现或更新不会强制滚到底部。
+
 相关文档：`docs/features/thinking-stream-implementation.md`。
 
 ## Goal 状态展示

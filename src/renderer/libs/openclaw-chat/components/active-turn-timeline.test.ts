@@ -83,6 +83,22 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('active-turn__footer');
   });
 
+  test('renders a temporary waiting status as polite auxiliary text', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'waiting-status',
+        key: 'waiting-status:run-1:slow-active',
+        status: { kind: 'slow-active', tone: 'neutral', quietMs: 60_000 },
+      }),
+    );
+
+    expect(rendered).toContain('waiting-status--neutral');
+    expect(rendered).toContain('role="status"');
+    expect(rendered).toContain('aria-live="polite"');
+    expect(rendered).toContain(i18nService.t('coworkWaitingSlowActive'));
+    expect(rendered).not.toContain('chat-avatar assistant');
+  });
+
   test('renders running Thinking as an independently streaming block', () => {
     const rendered = flatten(
       renderTimelineItem({

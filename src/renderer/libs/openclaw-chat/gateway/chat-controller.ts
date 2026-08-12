@@ -63,6 +63,13 @@ import {
   markOptimisticHistoryTail,
 } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { isPendingUserMessageMatch } from '@/libs/openclaw-chat/model/optimistic-user-message';
+import {
+  normalizeRunRetryReason,
+  RUN_PROBE_INTERVAL_MS,
+  RUN_STALL_NOTICE_MS,
+  type RunActivity,
+  type RunProgressStage,
+} from '@/libs/openclaw-chat/model/run-activity';
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
 import {
   hydrateGatewayHistoryForDisplay,
@@ -100,6 +107,8 @@ export interface ChatState {
   chatRunId: string | null;
   lastError: string | null;
   hello: GatewayHelloOk | null;
+  /** Ephemeral activity used only for delayed, non-persisted waiting notices. */
+  runActivity: RunActivity | null;
   /** Optimistic user message shown until gateway history loads */
   pendingUserMessage: {
     role: string;
@@ -328,6 +337,8 @@ export class ChatController {
   private subscribedMessageSessionKey: string | null = null;
   private messageSubscriptionSeq = 0;
   private suspendedRunId: string | null = null;
+  private runActivityTimer: ReturnType<typeof setTimeout> | null = null;
+  private runProbeToken: symbol | null = null;
   private terminalLifecycleSeen = false;
   private transcriptIdSequence = 0;
   private readonly transcriptDependencies: TranscriptReducerDependencies = {
@@ -378,6 +389,7 @@ export class ChatController {
       chatRunId: null,
       lastError: null,
       hello: null,
+      runActivity: null,
       pendingUserMessage: null,
       transcript: createChatTranscriptState(),
     };
@@ -395,6 +407,7 @@ export class ChatController {
       timestamp: Date.now(),
     };
     this.state.chatSending = true;
+    this.beginRunActivity(`justdo-pending-${Date.now()}`);
     this.notify();
   }
 
@@ -404,6 +417,7 @@ export class ChatController {
     this.state.chatRunId = null;
     this.state.pendingUserMessage = null;
     this.resetAssistantSnapshotSource();
+    this.clearRunActivity();
     this.notify();
   }
 
@@ -427,6 +441,150 @@ export class ChatController {
   private notifyStream(kind: ChatStreamUpdateKind = 'stream'): void {
     debugLog('[ChatCtrl] ▶ notifyStream', this._snap());
     for (const listener of this.streamListeners) listener(kind);
+  }
+
+  private beginRunActivity(runId: string, startedAt = Date.now()): void {
+    this.clearRunActivityTimer();
+    this.runProbeToken = null;
+    this.state.runActivity = {
+      runId,
+      stage: 'starting',
+      startedAt,
+      stageChangedAt: startedAt,
+      lastAgentEventAt: startedAt,
+      lastModelActivityAt: null,
+      activeRunConfirmedAt: null,
+      probeState: 'idle',
+    };
+    this.scheduleRunActivityCheck();
+  }
+
+  private updateRunActivity(
+    runId: string,
+    stage: RunProgressStage,
+    options: {
+      modelActivity?: boolean;
+      provider?: string;
+      model?: string;
+      retryReason?: unknown;
+      at?: number;
+    } = {},
+  ): void {
+    const at = options.at ?? Date.now();
+    let activity = this.state.runActivity;
+    if (!activity) {
+      this.beginRunActivity(runId, at);
+      activity = this.state.runActivity;
+    }
+    if (!activity) return;
+    if (activity.runId !== runId) {
+      if (!activity.runId.startsWith('justdo-')) return;
+      activity.runId = runId;
+    }
+    if (activity.stage !== stage) {
+      activity.stage = stage;
+      activity.stageChangedAt = at;
+    }
+    activity.lastAgentEventAt = at;
+    if (options.provider) activity.provider = options.provider;
+    if (options.model) activity.model = options.model;
+    if (options.retryReason !== undefined) {
+      activity.retryReason = normalizeRunRetryReason(options.retryReason);
+    } else if (stage !== 'retrying') {
+      delete activity.retryReason;
+    }
+    if (options.modelActivity) {
+      activity.lastModelActivityAt = at;
+      activity.probeState = 'idle';
+      activity.activeRunConfirmedAt = null;
+      this.scheduleRunActivityCheck();
+    }
+  }
+
+  private scheduleRunActivityCheck(delayMs?: number): void {
+    this.clearRunActivityTimer();
+    const activity = this.state.runActivity;
+    if (!activity || !this.state.chatSending) return;
+    const quietSince = activity.lastModelActivityAt ?? activity.startedAt;
+    const delay =
+      delayMs ?? Math.max(0, RUN_STALL_NOTICE_MS - Math.max(0, Date.now() - quietSince));
+    this.runActivityTimer = setTimeout(() => {
+      this.runActivityTimer = null;
+      if (!this.state.runActivity || !this.state.chatSending) return;
+      const runId = this.state.runActivity.runId;
+      const sessionKey = this.state.sessionKey;
+      this.notify();
+      void this.probeActiveRun().finally(() => {
+        if (
+          this.state.runActivity?.runId === runId &&
+          this.state.sessionKey === sessionKey &&
+          this.state.chatSending &&
+          !this.runActivityTimer
+        ) {
+          this.scheduleRunActivityCheck(RUN_PROBE_INTERVAL_MS);
+        }
+      });
+    }, delay);
+  }
+
+  private async probeActiveRun(): Promise<void> {
+    const activity = this.state.runActivity;
+    const client = this.state.client;
+    if (!activity || !client || !this.state.connected || this.runProbeToken) return;
+    const runId = activity.runId;
+    const sessionKey = this.state.sessionKey;
+    const modelActivityAt = activity.lastModelActivityAt;
+    const probeToken = Symbol('run-probe');
+    this.runProbeToken = probeToken;
+    activity.probeState = 'checking';
+    this.notify();
+    try {
+      const result = await client.request<{ session?: Record<string, unknown> | null }>(
+        'sessions.describe',
+        { key: sessionKey },
+      );
+      const current = this.state.runActivity;
+      if (
+        !current ||
+        current.runId !== runId ||
+        this.state.sessionKey !== sessionKey ||
+        current.lastModelActivityAt !== modelActivityAt
+      ) {
+        return;
+      }
+      const session = result?.session;
+      const active = session?.hasActiveRun === true;
+      current.probeState = active ? 'active' : 'idle';
+      current.activeRunConfirmedAt = active ? Date.now() : null;
+      this.notify();
+    } catch {
+      const current = this.state.runActivity;
+      if (
+        !current ||
+        current.runId !== runId ||
+        this.state.sessionKey !== sessionKey ||
+        current.lastModelActivityAt !== modelActivityAt
+      ) {
+        return;
+      }
+      current.probeState = 'failed';
+      current.activeRunConfirmedAt = null;
+      this.notify();
+    } finally {
+      if (this.runProbeToken === probeToken) this.runProbeToken = null;
+    }
+  }
+
+  private clearRunActivityTimer(): void {
+    if (!this.runActivityTimer) return;
+    clearTimeout(this.runActivityTimer);
+    this.runActivityTimer = null;
+  }
+
+  private clearRunActivity(): void {
+    this.clearRunActivityTimer();
+    this.runProbeToken = null;
+    this.state.runActivity = null;
   }
 
   private cacheSessionMessages(
@@ -892,6 +1050,7 @@ export class ChatController {
       this.finishCurrentTurnTiming('final', endingRunId);
       this.state.chatSending = false;
       this.state.chatRunId = null;
+      this.clearRunActivity();
       this.terminalLifecycleSeen = false;
       this.flushPendingHistoryReload();
       this.notify();
@@ -1106,6 +1265,11 @@ export class ChatController {
     this.state.transcript.historySource =
       this.historySourceBySession.get(sessionKey) ?? 'optimistic';
     this.state.chatRunId = null;
+    if (this.state.chatSending && this.state.pendingUserMessage) {
+      this.beginRunActivity(`justdo-pending-${Date.now()}`);
+    } else {
+      this.clearRunActivity();
+    }
     this.state.compactionInFlight = false;
     this.terminalLifecycleSeen = false;
     this.suspendedRunId = null;
@@ -1178,6 +1342,7 @@ export class ChatController {
     this.state.transcript.historySource =
       this.historySourceBySession.get(sessionKey) ?? 'optimistic';
     this.state.chatRunId = null;
+    if (!isTempSessionPromotion) this.clearRunActivity();
     this.suspendedRunId = null;
     this.state.compactionInFlight = false;
     this.terminalLifecycleSeen = false;
@@ -1209,6 +1374,7 @@ export class ChatController {
     this.state.connected = false;
     this.state.transportStatus = 'disconnected';
     this.state.chatSending = false;
+    this.clearRunActivity();
     this.state.compactionInFlight = false;
     this.terminalLifecycleSeen = false;
     this.suspendedRunId = null;
@@ -1244,15 +1410,16 @@ export class ChatController {
   }
 
   private handleClose(): void {
+    const runInProgress =
+      this.state.transcript.activeTurn?.status === 'running' ||
+      (this.state.chatSending && this.state.runActivity !== null);
     this.suspendedRunId =
       this.state.transcript.activeTurn?.status === 'running'
         ? this.state.transcript.activeTurn.runId
         : null;
     this.state.connected = false;
     this.state.transportStatus =
-      this.state.client && this.state.transcript.activeTurn?.status === 'running'
-        ? 'reconnecting'
-        : 'disconnected';
+      this.state.client && runInProgress ? 'reconnecting' : 'disconnected';
     // A transport interruption is not a terminal run event. Preserve the
     // active turn and sending state until history or Gateway events establish
     // the business outcome.
@@ -1275,6 +1442,7 @@ export class ChatController {
       if (this.suspendedRunId === suspendedRunId && !this.state.transcript.activeTurn) {
         this.state.chatSending = false;
         this.state.chatRunId = null;
+        this.clearRunActivity();
         this.notify();
       }
       this.suspendedRunId = null;
@@ -1325,6 +1493,7 @@ export class ChatController {
   }
 
   private handleEvent(event: GatewayEventFrame): void {
+    if (event.event === 'tick') return;
     if (event.event === 'chat') {
       const payload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
       if (payload) {
@@ -1466,6 +1635,7 @@ export class ChatController {
         this.state.currentSessionId = nextSessionId;
         this.state.chatRunId = null;
         this.state.chatSending = false;
+        this.clearRunActivity();
         this.pendingHistoryReload = false;
         this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-identity-rotation');
       }
@@ -2262,6 +2432,9 @@ export class ChatController {
       runId: payload.runId ?? null,
       textLen: payload.deltaText?.length ?? 0,
     });
+    if (payload.runId && payload.deltaText) {
+      this.updateRunActivity(payload.runId, 'responding', { modelActivity: true });
+    }
     this.notifyStream();
   }
 
@@ -2297,6 +2470,7 @@ export class ChatController {
     this.state.chatSending = false;
     this.state.compactionInFlight = false;
     this.state.chatRunId = null;
+    this.clearRunActivity();
     this.suspendedRunId = null;
     this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
@@ -2330,6 +2504,7 @@ export class ChatController {
     this.state.chatSending = false;
     this.state.compactionInFlight = false;
     this.state.chatRunId = null;
+    this.clearRunActivity();
     this.suspendedRunId = null;
     this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
@@ -2344,6 +2519,7 @@ export class ChatController {
     this.state.chatSending = false;
     this.state.compactionInFlight = false;
     this.state.chatRunId = null;
+    this.clearRunActivity();
     this.suspendedRunId = null;
     this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
@@ -2390,6 +2566,7 @@ export class ChatController {
         this.state.chatSending = true;
         this.state.chatRunId = runId;
       }
+      this.updateRunActivity(runId, 'thinking', { modelActivity: true });
       debugLog('[ChatCtrl] ▶ thinking', {
         sourceEvent,
         runId,
@@ -2413,6 +2590,7 @@ export class ChatController {
       }
 
       this.assistantSnapshotRunId = runId ?? this.state.chatRunId;
+      this.updateRunActivity(runId, 'responding', { modelActivity: true });
 
       debugLog('[ChatCtrl] ▶ assistant', {
         sourceEvent,
@@ -2454,6 +2632,39 @@ export class ChatController {
         if (runId && !this.state.chatRunId) {
           this.state.chatRunId = runId;
         }
+        this.updateRunActivity(runId, 'starting', { at: payload.timestamp });
+        this.notifyStream();
+      }
+      if (phase === 'progress') {
+        const progressStage = typeof data.stage === 'string' ? data.stage : '';
+        const mappedStage: RunProgressStage | null =
+          progressStage === 'queued'
+            ? 'queued'
+            : progressStage === 'preparing'
+              ? 'preparing'
+              : progressStage === 'waiting_model'
+                ? 'waiting-model'
+                : progressStage === 'retrying'
+                  ? 'retrying'
+                  : null;
+        if (mappedStage) {
+          this.updateRunActivity(runId, mappedStage, {
+            provider: typeof data.provider === 'string' ? data.provider : undefined,
+            model: typeof data.model === 'string' ? data.model : undefined,
+            retryReason: mappedStage === 'retrying' ? data.reason : undefined,
+            at: typeof data.at === 'number' ? data.at : payload.timestamp,
+          });
+          this.notifyStream();
+        }
+      }
+      if (
+        phase === 'fallback_step' &&
+        data.fallbackStepFinalOutcome === 'next_fallback'
+      ) {
+        this.updateRunActivity(runId, 'retrying', {
+          retryReason: data.fallbackStepFromFailureReason,
+          at: payload.timestamp,
+        });
         this.notifyStream();
       }
       if (phase === 'finishing') {
@@ -2509,6 +2720,7 @@ export class ChatController {
         this.clearLocalCompactionStatus(this.state.sessionKey);
         this.terminalLifecycleSeen = false;
         this.state.chatRunId = null;
+        this.clearRunActivity();
         this.resetAssistantSnapshotSource();
         this.pendingHistoryReload = true;
         this.flushPendingHistoryReload();
@@ -2535,6 +2747,9 @@ export class ChatController {
     const hasPartialResult = data.partialResult !== undefined;
     const isNonTerminalToolEvent = isNonTerminalToolPhase(phase);
     const isTerminalToolEvent = !isNonTerminalToolEvent && isTerminalToolPhase(phase);
+    this.updateRunActivity(runId, isNonTerminalToolEvent ? 'running-tool' : 'waiting-model', {
+      modelActivity: true,
+    });
     this.notifyStream(hasPartialResult && !isTerminalToolEvent ? 'tool-partial' : 'terminal');
   }
 
@@ -2613,6 +2828,7 @@ export class ChatController {
     );
     this.state.chatSending = true;
     this.state.chatRunId = runId;
+    this.beginRunActivity(runId);
     this.resetAssistantSnapshotSource();
     this.state.lastError = null;
     this.notify();
@@ -2633,6 +2849,7 @@ export class ChatController {
 
       if (ack?.runId && this.state.sessionKey === sessionKey && this.state.chatRunId === runId) {
         this.state.chatRunId = ack.runId;
+        if (this.state.runActivity?.runId === runId) this.state.runActivity.runId = ack.runId;
       }
 
       // If status is "ok", the run already completed
@@ -2656,6 +2873,7 @@ export class ChatController {
         this.finishCurrentTurnTiming('final', ack.runId ?? runId);
         this.state.chatSending = false;
         this.state.chatRunId = null;
+        this.clearRunActivity();
         this.resetAssistantSnapshotSource();
         this.notify();
       }
@@ -2678,6 +2896,7 @@ export class ChatController {
       this.finishCurrentTurnTiming('error', runId);
       this.state.chatSending = false;
       this.state.chatRunId = null;
+      this.clearRunActivity();
       this.resetAssistantSnapshotSource();
       this.state.lastError = (err as Error).message;
       // Add error as assistant message

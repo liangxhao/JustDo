@@ -50,6 +50,7 @@ export interface GatewayHelloOk {
   server?: unknown;
   features?: unknown;
   auth?: { role?: string; scopes?: string[] };
+  policy?: { tickIntervalMs?: number };
 }
 
 export interface GatewayRequestError extends Error {
@@ -64,6 +65,13 @@ const REQUEST_TIMEOUT_MS = 90_000;
 const RECONNECT_BASE_MS = 800;
 const RECONNECT_MAX_MS = 15_000;
 const RECONNECT_FACTOR = 1.7;
+const DEFAULT_TICK_INTERVAL_MS = 30_000;
+const TICK_TIMEOUT_GRACE_MS = 5_000;
+const MIN_TICK_TIMEOUT_MS = 65_000;
+
+export function resolveGatewayTickTimeoutMs(tickIntervalMs: number): number {
+  return Math.max(MIN_TICK_TIMEOUT_MS, tickIntervalMs * 2 + TICK_TIMEOUT_GRACE_MS);
+}
 
 // ─── GatewayClient ──────────────────────────────────────────────────────────
 
@@ -75,6 +83,9 @@ export class GatewayClient {
   private backoffMs = RECONNECT_BASE_MS;
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private challengeTimer: ReturnType<typeof setTimeout> | null = null;
+  private tickWatchTimer: ReturnType<typeof setInterval> | null = null;
+  private lastFrameAt: number | null = null;
+  private tickIntervalMs = DEFAULT_TICK_INTERVAL_MS;
   private pendingRequests = new Map<
     string,
     { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
@@ -91,6 +102,7 @@ export class GatewayClient {
 
   start(): void {
     this.closed = false;
+    globalThis.document?.addEventListener('visibilitychange', this.handleVisibilityChange);
     this.connect();
   }
 
@@ -99,6 +111,7 @@ export class GatewayClient {
     this.clearTimers();
     this.ws?.close();
     this.ws = null;
+    globalThis.document?.removeEventListener('visibilitychange', this.handleVisibilityChange);
     this.flushPending(new Error('gateway client stopped'));
   }
 
@@ -158,6 +171,7 @@ export class GatewayClient {
     ws.addEventListener('close', (ev) => {
       if (this.ws !== ws) return;
       this.ws = null;
+      this.stopTickWatch();
       this.flushPending(new Error(`gateway closed (${ev.code})`));
       this.opts.onClose?.({ code: ev.code, reason: ev.reason ?? '' });
       if (!this.closed) this.scheduleReconnect();
@@ -175,6 +189,7 @@ export class GatewayClient {
     } catch {
       return;
     }
+    this.lastFrameAt = Date.now();
 
     // Event frame
     if (frame.type === 'event') {
@@ -243,7 +258,17 @@ export class GatewayClient {
     this.pendingRequests.set(id, {
       resolve: (payload) => {
         this.backoffMs = RECONNECT_BASE_MS;
-        this.opts.onHello?.(payload as GatewayHelloOk);
+        const hello = payload as GatewayHelloOk;
+        const advertisedTickInterval = hello.policy?.tickIntervalMs;
+        this.tickIntervalMs =
+          typeof advertisedTickInterval === 'number' &&
+          Number.isFinite(advertisedTickInterval) &&
+          advertisedTickInterval > 0
+            ? advertisedTickInterval
+            : DEFAULT_TICK_INTERVAL_MS;
+        this.lastFrameAt = Date.now();
+        this.startTickWatch();
+        this.opts.onHello?.(hello);
       },
       reject: () => {
         // Connect failed, will reconnect via close handler
@@ -277,6 +302,37 @@ export class GatewayClient {
   private clearTimers(): void {
     if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
     if (this.challengeTimer) { clearTimeout(this.challengeTimer); this.challengeTimer = null; }
+    this.stopTickWatch();
+  }
+
+  private readonly handleVisibilityChange = (): void => {
+    if (!globalThis.document?.hidden) this.lastFrameAt = Date.now();
+  };
+
+  private startTickWatch(): void {
+    this.stopTickWatch();
+    this.tickWatchTimer = setInterval(() => {
+      if (
+        this.closed ||
+        globalThis.document?.hidden ||
+        !this.ws ||
+        this.ws.readyState !== WebSocket.OPEN ||
+        this.lastFrameAt === null
+      ) {
+        return;
+      }
+      if (Date.now() - this.lastFrameAt > resolveGatewayTickTimeoutMs(this.tickIntervalMs)) {
+        const stalledSocket = this.ws;
+        this.stopTickWatch();
+        stalledSocket.close(4000, 'tick timeout');
+      }
+    }, this.tickIntervalMs);
+  }
+
+  private stopTickWatch(): void {
+    if (!this.tickWatchTimer) return;
+    clearInterval(this.tickWatchTimer);
+    this.tickWatchTimer = null;
   }
 
   private flushPending(err: Error): void {

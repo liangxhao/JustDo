@@ -37,14 +37,14 @@ function die(msg) {
 
 function runNpm(args, opts = {}) {
   const isWin = process.platform === 'win32';
-  const npmBin = isWin ? 'npm.cmd' : 'npm';
-  const result = spawnSync(npmBin, args, {
+  const command = isWin ? process.env.ComSpec || 'cmd.exe' : 'npm';
+  const commandArgs = isWin ? ['/d', '/s', '/c', 'npm', ...args] : args;
+  const result = spawnSync(command, commandArgs, {
     encoding: 'utf-8',
     stdio: opts.stdio || ['ignore', 'pipe', 'pipe'],
     cwd: opts.cwd,
-    shell: isWin,
     timeout: opts.timeout || 5 * 60 * 1000,
-    windowsVerbatimArguments: isWin,
+    windowsHide: true,
   });
 
   if (result.error) {

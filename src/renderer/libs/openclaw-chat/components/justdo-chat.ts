@@ -53,6 +53,7 @@ import {
   type ActiveTurnTimelineItem,
   projectTurnItems,
 } from '@/libs/openclaw-chat/model/project-turn-items';
+import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
 import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
 import {
   PersistedTimelineRenderCache,
@@ -1820,6 +1821,45 @@ export class JustDoChatElement extends LitElement {
           transform 120ms ease;
         backdrop-filter: blur(8px);
       }
+
+      .waiting-status {
+        margin-top: 2px;
+      }
+
+      .waiting-status__message {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 24px;
+        color: var(--justdo-chat-muted, #737373);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .waiting-status--warning .waiting-status__message {
+        color: var(--justdo-chat-warning, #946200);
+      }
+
+      .waiting-status__indicator {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.72;
+        animation: waiting-status-pulse 1.5s ease-in-out infinite;
+      }
+
+      @keyframes waiting-status-pulse {
+        0%,
+        100% {
+          opacity: 0.35;
+          transform: scale(0.85);
+        }
+        50% {
+          opacity: 0.9;
+          transform: scale(1);
+        }
+      }
       .new-messages-indicator:hover,
       .new-messages-indicator:focus-visible {
         background: rgba(241, 245, 249, 0.98);
@@ -1839,6 +1879,9 @@ export class JustDoChatElement extends LitElement {
       :host(.dark) .process-terminal {
         background: rgba(127, 29, 29, 0.2);
         color: #fca5a5;
+      }
+      :host(.dark) .waiting-status--warning .waiting-status__message {
+        color: var(--justdo-chat-warning, #f6c453);
       }
       :host(.dark) .new-messages-indicator {
         border-color: rgba(148, 163, 184, 0.18);
@@ -1873,6 +1916,9 @@ export class JustDoChatElement extends LitElement {
         }
         .new-messages-indicator {
           transition: none;
+        }
+        .waiting-status__indicator {
+          animation: none;
         }
       }
     `,
@@ -2782,7 +2828,17 @@ export class JustDoChatElement extends LitElement {
 
   private projectActiveTimeline() {
     const turn = this._controller?.state.transcript.activeTurn ?? null;
-    return projectTurnItems(turn, this._controller?.state.chatSending ?? false);
+    const waitingStatus = this._controller
+      ? projectWaitingStatus({
+          activity: this._controller.state.runActivity,
+          transportStatus: this._controller.state.transportStatus,
+        })
+      : null;
+    return projectTurnItems(
+      turn,
+      this._controller?.state.chatSending ?? false,
+      waitingStatus,
+    );
   }
 
   private renderItem(

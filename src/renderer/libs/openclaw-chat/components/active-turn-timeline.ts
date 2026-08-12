@@ -182,6 +182,39 @@ export function renderTimelineItem(
   if (item.kind === 'waiting') {
     return renderReadingIndicatorGroup({ showAvatar });
   }
+  if (item.kind === 'waiting-status') {
+    const key =
+      item.status.kind === 'preparing'
+        ? 'coworkWaitingPreparing'
+        : item.status.kind === 'waiting-model'
+          ? 'coworkWaitingModel'
+          : item.status.kind === 'waiting-tool'
+            ? 'coworkWaitingTool'
+          : item.status.kind === 'slow-active'
+            ? 'coworkWaitingSlowActive'
+            : item.status.kind === 'long-wait'
+              ? 'coworkWaitingLong'
+              : item.status.kind === 'rate-limited'
+                ? 'coworkWaitingRateLimited'
+                : item.status.kind === 'retrying'
+                  ? 'coworkWaitingRetrying'
+                  : item.status.kind === 'reconnecting'
+                    ? 'coworkWaitingReconnecting'
+                    : 'coworkWaitingProbeFailed';
+    return html`
+      <div
+        class=${`chat-group chat-group--assistant chat-group--continuation waiting-status waiting-status--${item.status.tone}`}
+      >
+        <div class="chat-group__avatar" aria-hidden="true"></div>
+        <div class="chat-group__content">
+          <div class="waiting-status__message" role="status" aria-live="polite">
+            <span class="waiting-status__indicator" aria-hidden="true"></span>
+            <span>${i18nService.t(key)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   if (item.kind === 'plan-update') {
     return renderPlanUpdate(item.item, showAvatar);
   }
