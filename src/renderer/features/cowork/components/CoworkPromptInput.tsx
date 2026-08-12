@@ -1961,6 +1961,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                               ref={folderButtonRef as React.RefObject<HTMLButtonElement>}
                               type="button"
                               onClick={() => setShowFolderMenu(!showFolderMenu)}
+                              aria-haspopup="dialog"
+                              aria-expanded={showFolderMenu}
+                              aria-label={i18nService.t('workspacePickerTitle')}
                               className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-lg text-sm transition-colors ${
                                 showFolderRequiredWarning
                                   ? 'ring-1 ring-warning text-warning animate-shake'
@@ -1991,6 +1994,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                             onClose={() => setShowFolderMenu(false)}
                             onSelectFolder={handleFolderSelect}
                             anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
+                            currentFolder={workingDirectory}
                           />
                           {showFolderRequiredWarning && (
                             <div className="absolute left-0 top-full mt-1 px-2 py-1 rounded-md bg-surface-raised text-warning text-xs whitespace-nowrap animate-fade-in-up shadow-subtle z-10">
