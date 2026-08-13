@@ -1997,7 +1997,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                           );
                           try {
                             await completion;
-                            if (selectionContext === modelSelectionContextRef.current) {
+                            if (!sessionId && selectionContext === modelSelectionContextRef.current) {
                               confirmedSessionModelRef.current = nextModel;
                             }
                             if (!sessionId) {

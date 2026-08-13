@@ -82,6 +82,12 @@ function buildAllPossibleModelRefs(
 
   // Always include the current displayName-based ref (from model.provider)
   refs.push(toOpenClawModelRef(model));
+  // Built-in discovery ids can themselves contain a Gateway provider prefix
+  // (for example `hdp/Glm-5.1`). Keep the raw id as a compatibility alias for
+  // sessions.describe responses that omit the local `builtin_models` prefix.
+  if (providerKey === 'builtin_models' && modelId.includes('/')) {
+    refs.push(modelId);
+  }
 
   if (isCustomProvider(providerKey)) {
     // For custom providers, try multiple possible displayNames:

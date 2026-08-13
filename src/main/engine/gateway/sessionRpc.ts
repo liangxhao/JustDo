@@ -121,7 +121,6 @@ export class SessionRpc {
       const session = this.callbacks.store.getSession(sessionId);
       if (!session) return { ok: false, error: 'Session not found' };
       const sessionKey = this.sessionKey(sessionId, agentId);
-      let previousModelRef = normalizeModelRef(session.modelRef);
 
       console.log(
         '[OpenClawRuntime] patchSessionModel: sessionId=%s, key=%s, model=%s',
@@ -130,75 +129,28 @@ export class SessionRpc {
         normalizedModel,
       );
 
-      let gatewayPatchAttempted = false;
       try {
-        try {
-          previousModelRef =
-            (await this.describeModel(client, sessionId, agentId)) ?? previousModelRef;
-        } catch {
-          // The local value remains the best rollback target when describe is unavailable.
-        }
-        gatewayPatchAttempted = true;
         await client.request('sessions.patch', { key: sessionKey, model: normalizedModel });
         const confirmedModelRef = await this.describeModel(client, sessionId, agentId);
-        if (confirmedModelRef !== normalizedModel) {
-          throw new Error(
-            confirmedModelRef
-              ? `Gateway confirmed unexpected model: ${confirmedModelRef}`
-              : 'Gateway did not confirm the updated session model',
-          );
+        if (!confirmedModelRef) {
+          return { ok: false, error: 'Gateway did not return the current session model' };
         }
         this.callbacks.store.updateSession(sessionId, { modelRef: confirmedModelRef });
         return { ok: true, modelRef: confirmedModelRef, appliesTo, source: 'gateway' };
       } catch (error) {
-        const originalError = error instanceof Error ? error.message : String(error);
-        let rollbackError = '';
-        let recoveredModelRef: string | undefined;
-        if (gatewayPatchAttempted && previousModelRef) {
-          try {
-            await client.request('sessions.patch', { key: sessionKey, model: previousModelRef });
-            const rollbackModelRef = await this.describeModel(client, sessionId, agentId);
-            if (rollbackModelRef !== previousModelRef) {
-              throw new Error(
-                rollbackModelRef
-                  ? `Gateway confirmed unexpected rollback model: ${rollbackModelRef}`
-                  : 'Gateway did not confirm the rollback model',
-              );
-            }
-            this.callbacks.store.updateSession(sessionId, { modelRef: rollbackModelRef });
-            recoveredModelRef = rollbackModelRef;
-          } catch (rollbackFailure) {
-            rollbackError =
-              rollbackFailure instanceof Error ? rollbackFailure.message : String(rollbackFailure);
-            try {
-              const currentModelRef = await this.describeModel(client, sessionId, agentId);
-              if (currentModelRef) {
-                this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
-                recoveredModelRef = currentModelRef;
-              }
-            } catch {
-              // Preserve the original and rollback errors when current state cannot be recovered.
-            }
-          }
-        } else if (gatewayPatchAttempted) {
-          try {
-            const currentModelRef = await this.describeModel(client, sessionId, agentId);
-            if (currentModelRef) {
-              this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
-              recoveredModelRef = currentModelRef;
-            }
-          } catch {
-            // Preserve the original error when no authoritative recovery state is available.
-          }
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        let currentModelRef: string | undefined;
+        try {
+          currentModelRef = (await this.describeModel(client, sessionId, agentId)) ?? undefined;
+          if (currentModelRef) this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
+        } catch {
+          // The patch failure is already actionable; do not hide it behind recovery errors.
         }
-        const errorMsg = rollbackError
-          ? `${originalError}; model rollback failed: ${rollbackError}`
-          : originalError;
         console.warn('[OpenClawRuntime] patchSessionModel: failed:', errorMsg);
         return {
           ok: false,
           error: errorMsg,
-          ...(recoveredModelRef ? { modelRef: recoveredModelRef, source: 'gateway' as const } : {}),
+          ...(currentModelRef ? { modelRef: currentModelRef, source: 'gateway' as const } : {}),
         };
       }
     });

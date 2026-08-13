@@ -59,6 +59,16 @@ describe('openclawModelRef', () => {
       const ref = toOpenClawModelRef(model);
       expect(ref).toBe('justdo/gpt-4o');
     });
+
+    test('qualifies a built-in model id that already contains a provider prefix', () => {
+      const model: Model = {
+        id: 'hdp/Glm-5.1',
+        name: 'GLM-5.1',
+        providerKey: 'builtin_models',
+      };
+
+      expect(toOpenClawModelRef(model)).toBe('builtin_models/hdp/Glm-5.1');
+    });
   });
 
   describe('resolveOpenClawModelRef', () => {

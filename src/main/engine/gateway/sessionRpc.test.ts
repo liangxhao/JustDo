@@ -52,20 +52,45 @@ describe('SessionRpc model coordination', () => {
       source: 'gateway',
     });
 
-    expect(request).toHaveBeenNthCalledWith(1, 'sessions.describe', {
-      key: 'agent:main:justdo:session-1',
-    });
-    expect(request).toHaveBeenNthCalledWith(2, 'sessions.patch', {
+    expect(request).toHaveBeenNthCalledWith(1, 'sessions.patch', {
       key: 'agent:main:justdo:session-1',
       model: 'anthropic/claude-sonnet-4',
     });
-    expect(request).toHaveBeenNthCalledWith(3, 'sessions.describe', {
+    expect(request).toHaveBeenNthCalledWith(2, 'sessions.describe', {
       key: 'agent:main:justdo:session-1',
     });
     expect(session.modelRef).toBe('anthropic/claude-sonnet-4');
   });
 
-  test('does not persist a model when gateway confirmation differs', async () => {
+  test('accepts the built-in provider alias returned by Gateway', async () => {
+    const { rpc, request, session } = createHarness();
+    let patchModel = '';
+    request.mockImplementation(async (method: string, params?: { model?: string }) => {
+      if (method === 'sessions.patch') patchModel = params?.model ?? '';
+      if (method === 'sessions.describe') {
+        return {
+          session: patchModel
+            ? { modelProvider: 'hdp', model: 'Glm-5.1' }
+            : { modelProvider: 'openai', model: 'gpt-4o' },
+        };
+      }
+      return {};
+    });
+
+    await expect(
+      rpc.patchModel('session-1', 'builtin_models/hdp/Glm-5.1'),
+    ).resolves.toMatchObject({
+      ok: true,
+      modelRef: 'hdp/Glm-5.1',
+    });
+    expect(request).toHaveBeenCalledWith('sessions.patch', {
+      key: 'agent:main:justdo:session-1',
+      model: 'builtin_models/hdp/Glm-5.1',
+    });
+    expect(session.modelRef).toBe('hdp/Glm-5.1');
+  });
+
+  test('uses the Gateway model even when its provider alias differs', async () => {
     const session = { id: 'session-1', agentId: 'main', modelRef: 'openai/gpt-4o' };
     let describeCount = 0;
     const request = vi.fn(async (method: string) => {
@@ -89,15 +114,15 @@ describe('SessionRpc model coordination', () => {
     });
 
     await expect(rpc.patchModel('session-1', 'openai/gpt-5')).resolves.toEqual({
-      ok: false,
-      error: 'Gateway confirmed unexpected model: anthropic/claude-sonnet-4',
+      ok: true,
       modelRef: 'openai/gpt-4o',
+      appliesTo: 'next-turn',
       source: 'gateway',
     });
     expect(session.modelRef).toBe('openai/gpt-4o');
     expect(request).toHaveBeenCalledWith('sessions.patch', {
       key: 'agent:main:justdo:session-1',
-      model: 'openai/gpt-4o',
+      model: 'openai/gpt-5',
     });
   });
 
@@ -128,14 +153,12 @@ describe('SessionRpc model coordination', () => {
     releasePatch();
 
     await expect(update).resolves.toEqual({
-      ok: false,
-      error: 'Gateway confirmed unexpected model: openai/gpt-4o',
+      ok: true,
       modelRef: 'openai/gpt-4o',
+      appliesTo: 'next-turn',
       source: 'gateway',
     });
-    await expect(barrier).rejects.toThrow(
-      'Gateway confirmed unexpected model: openai/gpt-4o',
-    );
+    await expect(barrier).resolves.toBeUndefined();
   });
 
   test('serializes an authoritative read with a following model patch', async () => {
@@ -178,7 +201,7 @@ describe('SessionRpc model coordination', () => {
     expect(session.modelRef).toBe('openai/gpt-5');
   });
 
-  test('rolls back an ambiguous patch rejection and returns the authoritative model', async () => {
+  test('reports an ambiguous patch rejection with the current Gateway model', async () => {
     const session = { id: 'session-1', agentId: 'main', modelRef: 'local/cached' };
     let gatewayModelRef = 'openai/gpt-4o';
     let patchCount = 0;
@@ -208,10 +231,10 @@ describe('SessionRpc model coordination', () => {
     await expect(rpc.patchModel('session-1', 'openai/gpt-5')).resolves.toEqual({
       ok: false,
       error: 'patch response timed out',
-      modelRef: 'openai/gpt-4o',
+      modelRef: 'openai/gpt-5',
       source: 'gateway',
     });
-    expect(gatewayModelRef).toBe('openai/gpt-4o');
-    expect(session.modelRef).toBe('openai/gpt-4o');
+    expect(gatewayModelRef).toBe('openai/gpt-5');
+    expect(session.modelRef).toBe('openai/gpt-5');
   });
 });

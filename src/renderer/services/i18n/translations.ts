@@ -214,7 +214,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     modelCapabilitiesHint: '能力参数不会自动探测，请根据模型文档手动修改。',
     modelCapabilitiesNeedConfirmation: '能力参数尚未确认，点击进入修改',
     modelCapabilitiesConfirmationWarning:
-      '当前使用系统默认能力参数。请参考模型文档修改；只有修改并保存后，列表才会显示已确认的能力参数。',
+      '当前使用默认参数。请务必参考模型文档进行修改',
     modelTokenLengthsPositive: '上下文长度和最大输出长度必须是正整数',
     contextLengthMustExceedMaxTokens: '上下文长度必须大于最大输出长度',
     modelTokenDefaultsHint: '默认使用 200,000 / 32,000 token，可手动修改。',
@@ -1269,7 +1269,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'Capabilities are not detected automatically. Adjust them using the model documentation.',
     modelCapabilitiesNeedConfirmation: 'Capabilities are not confirmed. Click to edit',
     modelCapabilitiesConfirmationWarning:
-      'System defaults are currently in use. Check the model documentation and adjust them. Capability values appear in the list only after you change and save them.',
+      'Default parameters are currently in use. Be sure to adjust them according to the model documentation.',
     modelTokenLengthsPositive: 'Context length and max output length must be positive integers',
     contextLengthMustExceedMaxTokens: 'Context length must be greater than max output length',
     modelTokenDefaultsHint: 'Defaults to 200,000 / 32,000 tokens and remains editable.',
