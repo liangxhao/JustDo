@@ -4,6 +4,7 @@
  */
 import { isImageMimeType } from '@shared/cowork/attachments';
 import { getPreviewableFileExtension } from '@shared/filePreview';
+import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
@@ -379,11 +380,7 @@ function renderOrderedBubble(
             `;
           }
           if (item.attachment.kind === 'image') {
-            return renderMessageImages(
-              [item.attachment],
-              role === 'assistant',
-              workingDirectory,
-            );
+            return renderMessageImages([item.attachment], role === 'assistant', workingDirectory);
           }
           return renderAssistantAttachments([item.attachment], workingDirectory);
         })}
@@ -609,12 +606,14 @@ function renderGroupFooter(
     <div class="chat-group__footer">
       ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
       <time class="chat-group__timestamp" datetime=${date.toISOString()}>${time}</time>
-      ${duration
-        ? html`
-            <span>·</span>
-            <span>${i18nService.t('coworkRunDuration').replace('{duration}', duration)}</span>
-          `
-        : nothing}
+      ${
+        duration
+          ? html`
+              <span>·</span>
+              <span>${i18nService.t('coworkRunDuration').replace('{duration}', duration)}</span>
+            `
+          : nothing
+      }
     </div>
   `;
 }
@@ -624,12 +623,10 @@ export function getGroupFooterLabel(group: MessageGroup, assistantName?: string)
     void assistantName;
     const modelName = group.modelName?.trim() ?? '';
     const senderLabel = group.senderLabel?.trim() ?? '';
-    if (modelName === 'openclaw/gateway-injected' || modelName === 'gateway-injected') {
+    if (isGatewayInjectedModelRef(modelName) || isGatewayInjectedModelRef(senderLabel)) {
       return i18nService.t('coworkSystemMessageLabel');
     }
-    return (
-      modelName || senderLabel || i18nService.t('coworkAssistantLabel')
-    );
+    return modelName || senderLabel || i18nService.t('coworkAssistantLabel');
   }
   if (group.role === 'user') {
     return i18nService.t('coworkYouLabel');

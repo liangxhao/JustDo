@@ -73,7 +73,6 @@ describe('shouldRenderGroupFooter', () => {
       true,
     );
   });
-
 });
 
 describe('shouldRenderGroupAvatarByPrevItem', () => {
@@ -124,6 +123,16 @@ describe('group footer helpers', () => {
     },
   );
 
+  test('uses the system message label while only the live sender label is available', () => {
+    expect(
+      getGroupFooterLabel({
+        ...createGroup('assistant'),
+        modelName: null,
+        senderLabel: 'OpenClaw/Internal/Gateway-Injected',
+      }),
+    ).toBe(i18nService.t('coworkSystemMessageLabel'));
+  });
+
   test('falls back to assistant label when model name is missing', () => {
     expect(getGroupFooterLabel(createGroup('assistant'))).toBe(
       i18nService.t('coworkAssistantLabel'),
@@ -159,7 +168,9 @@ describe('group footer helpers', () => {
       }),
     );
 
-    expect(rendered).toContain(i18nService.t('coworkRunDuration').replace('{duration}', '00:00:03'));
+    expect(rendered).toContain(
+      i18nService.t('coworkRunDuration').replace('{duration}', '00:00:03'),
+    );
   });
 });
 

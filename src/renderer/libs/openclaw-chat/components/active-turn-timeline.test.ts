@@ -224,6 +224,81 @@ describe('active turn timeline', () => {
     },
   );
 
+  test('removes the OpenClaw log hint from streaming active Content', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'content',
+        key: 'content:redacted',
+        item: {
+          id: 'content:redacted',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+          type: 'content',
+          status: 'streaming',
+          text: 'Task failed\nLogs: openclaw logs --follow',
+          sourceMode: 'delta',
+        },
+      }),
+    );
+
+    expect(rendered).toContain('Task failed');
+    expect(rendered).not.toContain('openclaw logs --follow');
+  });
+
+  test.each(['Logs:', 'Logs: openclaw', 'Logs: openclaw logs'])(
+    'hides the incomplete OpenClaw log hint while it is streaming: %s',
+    text => {
+      const rendered = flatten(
+        renderTimelineItem({
+          kind: 'content',
+          key: `content:partial:${text}`,
+          item: {
+            id: `content:partial:${text}`,
+            runId: 'run-1',
+            firstSeq: 1,
+            lastSeq: 1,
+            startedAt: 1,
+            updatedAt: 1,
+            type: 'content',
+            status: 'streaming',
+            text,
+            sourceMode: 'delta',
+          },
+        }),
+      );
+
+      expect(rendered).not.toContain(text);
+      expect(rendered.toLowerCase()).not.toContain('openclaw');
+    },
+  );
+
+  test('keeps an ordinary Logs heading in completed active Content', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'content',
+        key: 'content:completed-logs',
+        item: {
+          id: 'content:completed-logs',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+          type: 'content',
+          status: 'completed',
+          text: 'Logs:\nApplication started',
+          sourceMode: 'delta',
+        },
+      }),
+    );
+
+    expect(rendered).toContain('Logs:');
+    expect(rendered).toContain('Application started');
+  });
+
   test('expands archived Thinking and Tool inline in chronological order', () => {
     const rendered = flatten(renderTimelineItem(summary(), 100, true));
 

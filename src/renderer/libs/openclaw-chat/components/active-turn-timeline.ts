@@ -14,6 +14,7 @@ import type {
   ActiveTurnTimelineItem,
   ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
+import { stripOpenClawLogHintText } from '../pipeline/message-normalizer';
 import { renderChatAvatar } from './chat-avatar';
 import { toSanitizedMarkdownHtml } from './markdown';
 import {
@@ -190,17 +191,17 @@ export function renderTimelineItem(
           ? 'coworkWaitingModel'
           : item.status.kind === 'waiting-tool'
             ? 'coworkWaitingTool'
-          : item.status.kind === 'slow-active'
-            ? 'coworkWaitingSlowActive'
-            : item.status.kind === 'long-wait'
-              ? 'coworkWaitingLong'
-              : item.status.kind === 'rate-limited'
-                ? 'coworkWaitingRateLimited'
-                : item.status.kind === 'retrying'
-                  ? 'coworkWaitingRetrying'
-                  : item.status.kind === 'reconnecting'
-                    ? 'coworkWaitingReconnecting'
-                    : 'coworkWaitingProbeFailed';
+            : item.status.kind === 'slow-active'
+              ? 'coworkWaitingSlowActive'
+              : item.status.kind === 'long-wait'
+                ? 'coworkWaitingLong'
+                : item.status.kind === 'rate-limited'
+                  ? 'coworkWaitingRateLimited'
+                  : item.status.kind === 'retrying'
+                    ? 'coworkWaitingRetrying'
+                    : item.status.kind === 'reconnecting'
+                      ? 'coworkWaitingReconnecting'
+                      : 'coworkWaitingProbeFailed';
     return html`
       <div
         class=${`chat-group chat-group--assistant chat-group--continuation waiting-status waiting-status--${item.status.tone}`}
@@ -357,12 +358,15 @@ ${toolResult(process)}</pre>
     );
   }
   if (item.kind === 'content') {
-    return renderAssistantTimelineContent(item.item.text, {
-      key: item.key,
-      timestamp: item.item.startedAt,
-      streaming: item.item.status === 'streaming',
-      showAvatar,
-    });
+    return renderAssistantTimelineContent(
+      stripOpenClawLogHintText(item.item.text, item.item.status === 'streaming'),
+      {
+        key: item.key,
+        timestamp: item.item.startedAt,
+        streaming: item.item.status === 'streaming',
+        showAvatar,
+      },
+    );
   }
   return renderAssistantTimelineRow(
     html`

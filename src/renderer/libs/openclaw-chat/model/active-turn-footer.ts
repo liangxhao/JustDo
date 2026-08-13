@@ -1,4 +1,8 @@
-import { normalizeModelRef, readModelRef } from '@shared/openclaw/modelRef';
+import {
+  isGatewayInjectedModelRef,
+  normalizeModelRef,
+  readModelRef,
+} from '@shared/openclaw/modelRef';
 
 import type { AssistantTurnTiming } from './chat-transcript-state';
 
@@ -7,11 +11,6 @@ export interface ActiveTurnFooter {
   durationMs: number;
   running: boolean;
   modelRef?: string;
-}
-
-function isGatewayInjectedModel(modelRef: string): boolean {
-  const normalized = modelRef.trim().toLowerCase();
-  return normalized === 'gateway-injected' || normalized.endsWith('/gateway-injected');
 }
 
 /**
@@ -25,7 +24,7 @@ export function resolveActiveTurnModel(
   currentProvider?: unknown,
 ): string {
   const progressModel = normalizeModelRef(currentModel, currentProvider);
-  if (progressModel && !isGatewayInjectedModel(progressModel)) return progressModel;
+  if (progressModel && !isGatewayInjectedModelRef(progressModel)) return progressModel;
 
   let currentTurnStart = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -43,7 +42,7 @@ export function resolveActiveTurnModel(
     const role = String((message as Record<string, unknown>).role ?? '').toLowerCase();
     if (role !== 'assistant') continue;
     const modelRef = readModelRef(message);
-    if (modelRef && !isGatewayInjectedModel(modelRef)) return modelRef;
+    if (modelRef && !isGatewayInjectedModelRef(modelRef)) return modelRef;
   }
   return '';
 }
@@ -59,9 +58,7 @@ export function projectActiveTurnFooter(
   if (!turn) return null;
   const running = turn.status === 'running';
   const completedAt = running ? null : (turn.endedAt ?? turn.startedAt);
-  const durationEnd = running
-    ? Math.max(now, turn.startedAt)
-    : (completedAt ?? turn.startedAt);
+  const durationEnd = running ? Math.max(now, turn.startedAt) : (completedAt ?? turn.startedAt);
   return {
     completedAt,
     durationMs: Math.max(0, durationEnd - turn.startedAt),

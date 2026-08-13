@@ -130,13 +130,13 @@ assistant footer 的模型字段表示生成该条消息的实际模型，而不
 持久化 history，也不会创建消息气泡。Thinking、Assistant 文本和 Tool 事件会重置无输出
 计时；Gateway tick 只证明 transport 有活动，不能证明模型正在思考。
 
-- 连续 15 秒无模型活动后，timeline selector 才在当前回复末尾投影一个
-  `waiting-status`；15 秒内 DOM 和原有三点动画、Thinking、Tool、Content、footer 不变。
-- 15 秒后最多每 15 秒调用一次 `sessions.describe`。兼容补丁为该精确查询附加实时
+- 连续 20 秒无模型活动后，timeline selector 才在当前回复末尾投影一个
+  `waiting-status`；20 秒内 DOM 和原有三点动画、Thinking、Tool、Content、footer 不变。
+- 20 秒后最多每 15 秒调用一次 `sessions.describe`。兼容补丁为该精确查询附加实时
   active-run tracker 结果；只有近期明确返回
-  `hasActiveRun: true`（或等价 running 状态），60 秒文案才可以声称任务仍在运行；RPC
-  失败只降级为“无法确认”，不得结束、重发或清空当前 run。
-- 180 秒提示及 transport 断连使用 warning tone；恢复任何模型活动、收到终态、用户停止
+  `hasActiveRun: true`，60 秒及 240 秒文案才可以声称任务仍在运行；RPC
+  失败只保持“正在确认”状态，不得结束、重发或清空当前 run。
+- 经近期 active-run 确认的 240 秒提示及 transport 断连使用 warning tone；恢复任何模型活动、收到终态、用户停止
   或切换普通会话时立即移除。临时 session 升格为持久 session 时保留同一 run 状态。
 - OpenClaw 兼容补丁只发 `lifecycle/progress` 的 queued、preparing、waiting_model、retrying
   白名单字段。既有 fallback 事件只读取归一化 reason，不读取或展示错误详情。

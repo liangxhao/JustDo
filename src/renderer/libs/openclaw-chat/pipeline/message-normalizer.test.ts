@@ -232,6 +232,38 @@ describe('normalizeMessage gateway-injected log hint', () => {
     expect(message.content).toEqual([]);
   });
 
+  test('removes the plural OpenClaw logs hint identified by the live sender label', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'Task failed\nLogs: openclaw logs --follow',
+      senderLabel: 'openclaw/gateway-injected',
+    });
+
+    expect(message.content).toEqual([{ type: 'text', text: 'Task failed' }]);
+  });
+
+  test('recognizes case-insensitive multi-segment gateway-injected model refs', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'Logs: openclaw logs --follow',
+      modelName: 'OpenClaw/Internal/Gateway-Injected',
+    });
+
+    expect(message.content).toEqual([]);
+  });
+
+  test('only removes a standalone log hint line and tolerates Markdown or extra spacing', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'Blog: openclaw logs --follow\nLogs: `openclaw  logs   --follow`\nStill visible',
+      modelName: 'gateway-injected',
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: 'Blog: openclaw logs --follow\nStill visible' },
+    ]);
+  });
+
   test('removes every OpenClaw log hint from gateway-injected messages', () => {
     const message = normalizeMessage({
       role: 'assistant',
@@ -240,17 +272,27 @@ describe('normalizeMessage gateway-injected log hint', () => {
       modelName: 'gateway-injected',
     });
 
-    expect(message.content).toEqual([{ type: 'text', text: 'Task failed\n\nRetry failed' }]);
+    expect(message.content).toEqual([{ type: 'text', text: 'Task failed\nRetry failed' }]);
   });
 
-  test('keeps the same text from regular assistant messages', () => {
+  test('removes the internal log hint from regular assistant messages too', () => {
     const message = normalizeMessage({
       role: 'assistant',
       content: 'Log: openclaw logs --follow',
       model: 'gpt-4.1',
     });
 
-    expect(message.content).toEqual([{ type: 'text', text: 'Log: openclaw logs --follow' }]);
+    expect(message.content).toEqual([]);
+  });
+
+  test('keeps an ordinary Logs heading in a completed message', () => {
+    const message = normalizeMessage({
+      role: 'assistant',
+      content: 'Logs:\nApplication started',
+      model: 'gpt-4.1',
+    });
+
+    expect(message.content).toEqual([{ type: 'text', text: 'Logs:\nApplication started' }]);
   });
 });
 

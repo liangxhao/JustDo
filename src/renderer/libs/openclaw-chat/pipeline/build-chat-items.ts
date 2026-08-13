@@ -3,19 +3,34 @@ import {
   isAssistantHeartbeatAckForDisplay,
   stripHeartbeatTokenForDisplay,
 } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
-import { CHAT_HISTORY_RENDER_CHAR_BUDGET, CHAT_HISTORY_RENDER_LIMIT } from '@/libs/openclaw-chat/pipeline/history-limits';
-import { extractTextCached, extractThinkingCached } from '@/libs/openclaw-chat/pipeline/message-extract';
+import {
+  CHAT_HISTORY_RENDER_CHAR_BUDGET,
+  CHAT_HISTORY_RENDER_LIMIT,
+} from '@/libs/openclaw-chat/pipeline/history-limits';
+import {
+  extractTextCached,
+  extractThinkingCached,
+} from '@/libs/openclaw-chat/pipeline/message-extract';
 import {
   normalizeMessage,
   stripMessageDisplayMetadataText,
+  stripOpenClawLogHintText,
   stripUnreliableGoalZeroUsageText,
 } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { messageMatchesSearchQuery } from '@/libs/openclaw-chat/pipeline/search-match';
 import { trimAccumulatedStreamPrefix } from '@/libs/openclaw-chat/pipeline/stream-text';
-import { extractToolCardsCached, extractToolPreview } from '@/libs/openclaw-chat/pipeline/tool-cards';
+import {
+  extractToolCardsCached,
+  extractToolPreview,
+} from '@/libs/openclaw-chat/pipeline/tool-cards';
 import { buildUserChatMessageContentBlocks } from '@/libs/openclaw-chat/pipeline/user-message-content';
-import type { ChatItem, MessageGroup, NormalizedMessage, ToolCard } from '@/libs/openclaw-chat/types';
+import type {
+  ChatItem,
+  MessageGroup,
+  NormalizedMessage,
+  ToolCard,
+} from '@/libs/openclaw-chat/types';
 import type { ChatQueueItem } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
@@ -193,9 +208,8 @@ function isLiveThinkingOnlyMessage(
     return false;
   }
   if (
-    normalizeRoleForGrouping(
-      typeof raw.role === 'string' ? raw.role : '',
-    ).toLowerCase() !== 'assistant'
+    normalizeRoleForGrouping(typeof raw.role === 'string' ? raw.role : '').toLowerCase() !==
+    'assistant'
   ) {
     return false;
   }
@@ -270,7 +284,9 @@ function isToolMessageRole(message: unknown): boolean {
       continue;
     }
     const type = typeof item.type === 'string' ? item.type.toLowerCase() : '';
-    if (['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(type)) {
+    if (
+      ['toolcall', 'tool_call', 'tooluse', 'tool_use', 'toolresult', 'tool_result'].includes(type)
+    ) {
       hasToolBlock = true;
       continue;
     }
@@ -567,7 +583,10 @@ function hasRenderableNormalizedMessage(message: unknown): boolean {
 }
 
 function sanitizeStreamText(text: string): string {
-  const stripped = stripUnreliableGoalZeroUsageText(stripMessageDisplayMetadataText(text));
+  const stripped = stripOpenClawLogHintText(
+    stripUnreliableGoalZeroUsageText(stripMessageDisplayMetadataText(text)),
+    true,
+  );
   return stripped.trim().length > 0 ? stripped : '';
 }
 
@@ -817,7 +836,13 @@ function enrichToolResultsWithInputs(messages: unknown[]): unknown[] {
   };
 
   const resolveToolInput = (source: Record<string, unknown>): unknown => {
-    for (const value of [source.toolInput, source.tool_input, source.arguments, source.args, source.input]) {
+    for (const value of [
+      source.toolInput,
+      source.tool_input,
+      source.arguments,
+      source.args,
+      source.input,
+    ]) {
       const coerced = coerceToolInput(value);
       if (hasMeaningfulToolInput(coerced)) return coerced;
     }
@@ -1113,7 +1138,11 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
           kind: 'message',
           key: `stream-seg:${props.sessionKey}:${i}`,
           message: liveThinkingTail
-            ? mergeLiveThinkingWithTextMessage(liveThinkingTail.message, visibleText, segments[i].ts)
+            ? mergeLiveThinkingWithTextMessage(
+                liveThinkingTail.message,
+                visibleText,
+                segments[i].ts,
+              )
             : {
                 role: 'assistant',
                 content: visibleText,

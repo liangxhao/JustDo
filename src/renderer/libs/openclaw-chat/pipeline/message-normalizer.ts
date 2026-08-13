@@ -399,10 +399,7 @@ const stripZeroTokenUsageLine = (text: string): string =>
     .join('\n')
     .trim();
 
-export const stripUnreliableGoalZeroUsageText = (
-  text: string,
-  goalReplyContext = text,
-): string => {
+export const stripUnreliableGoalZeroUsageText = (text: string, goalReplyContext = text): string => {
   if (!GOAL_REPLY_PATTERN.test(goalReplyContext)) return text;
   return stripZeroTokenUsageLine(text);
 };
@@ -420,21 +417,34 @@ const stripUnreliableGoalZeroUsage = (content: MessageContentItem[]): MessageCon
   });
 };
 
-const GATEWAY_INJECTED_MODEL_NAMES = new Set([
-  'openclaw/gateway-injected',
-  'gateway-injected',
-]);
-const GATEWAY_INJECTED_LOG_HINT = 'Log: openclaw logs --follow';
+const OPENCLAW_LOG_HINT_COMMAND = 'openclaw logs --follow';
+const OPENCLAW_LOG_HINT_LINE_PATTERN = /^[\t ]*Logs?:[\t ]*(.*)$/i;
 
-const stripGatewayInjectedLogHint = (
-  content: MessageContentItem[],
-  modelName: string | null,
-): MessageContentItem[] => {
-  if (!modelName || !GATEWAY_INJECTED_MODEL_NAMES.has(modelName)) return content;
+function isOpenClawLogHintLine(line: string, hidePartial: boolean): boolean {
+  const match = OPENCLAW_LOG_HINT_LINE_PATTERN.exec(line);
+  if (!match) return false;
+  const candidate = (match[1] ?? '')
+    .trim()
+    .replace(/^`/, '')
+    .replace(/`$/, '')
+    .trim()
+    .replace(/[\t ]+/g, ' ')
+    .toLowerCase();
+  return hidePartial
+    ? OPENCLAW_LOG_HINT_COMMAND.startsWith(candidate)
+    : candidate === OPENCLAW_LOG_HINT_COMMAND;
+}
 
+export const stripOpenClawLogHintText = (text: string, hidePartial = false): string => {
+  const lines = text.split(/\r?\n/);
+  if (!lines.some(line => isOpenClawLogHintLine(line, hidePartial))) return text;
+  return lines.filter(line => !isOpenClawLogHintLine(line, hidePartial)).join('\n');
+};
+
+const stripOpenClawLogHint = (content: MessageContentItem[]): MessageContentItem[] => {
   return content.flatMap(item => {
     if (item.type !== 'text' || typeof item.text !== 'string') return [item];
-    const text = item.text.split(GATEWAY_INJECTED_LOG_HINT).join('').trim();
+    const text = stripOpenClawLogHintText(item.text).trim();
     return text ? [{ ...item, text }] : [];
   });
 };
@@ -634,7 +644,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
   content = stripMessageDisplayMetadata(content);
   if (isAssistantMessage) {
     content = stripUnreliableGoalZeroUsage(content);
-    content = stripGatewayInjectedLogHint(content, modelName);
+    content = stripOpenClawLogHint(content);
   }
 
   return {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { normalizeModelRef, readModelRef } from './modelRef';
+import { isGatewayInjectedModelRef, normalizeModelRef, readModelRef } from './modelRef';
 
 describe('modelRef', () => {
   test('keeps qualified models and qualifies bare models with their provider', () => {
@@ -10,6 +10,12 @@ describe('modelRef', () => {
 
   test('keeps a bare legacy model when no provider is available', () => {
     expect(normalizeModelRef('legacy-model')).toBe('legacy-model');
+  });
+
+  test('recognizes gateway-injected refs regardless of case or provider depth', () => {
+    expect(isGatewayInjectedModelRef('gateway-injected')).toBe(true);
+    expect(isGatewayInjectedModelRef('OpenClaw/Internal/Gateway-Injected')).toBe(true);
+    expect(isGatewayInjectedModelRef('openai/gpt-5')).toBe(false);
   });
 
   test('reads gateway model provider fields before returning a normalized ref', () => {

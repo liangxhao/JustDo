@@ -10,6 +10,12 @@ export function normalizeModelRef(model: unknown, provider?: unknown): string | 
   return normalizedProvider ? `${normalizedProvider}/${normalizedModel}` : normalizedModel;
 }
 
+export function isGatewayInjectedModelRef(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'gateway-injected' || normalized.endsWith('/gateway-injected');
+}
+
 export function readModelRef(source: unknown): string | null {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
   const record = source as Record<string, unknown>;

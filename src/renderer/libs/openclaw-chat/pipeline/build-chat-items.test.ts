@@ -106,6 +106,15 @@ test('does not add live Tool messages to stream items', () => {
   expect(stream).not.toHaveProperty('toolMessages');
 });
 
+test('removes the OpenClaw log hint from the legacy assistant stream', () => {
+  const items = build({
+    stream: 'Task failed\nLogs: openclaw logs --follow',
+    streamStartedAt: 1,
+  });
+
+  expect(streams(items)[0]?.text).toBe('Task failed');
+});
+
 test('preserves assistant model names on ordinary Content groups', () => {
   const items = build({
     messages: [

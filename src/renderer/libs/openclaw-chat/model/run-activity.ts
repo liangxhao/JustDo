@@ -1,6 +1,6 @@
-export const RUN_STALL_NOTICE_MS = 15_000;
+export const RUN_STALL_NOTICE_MS = 20_000;
 export const RUN_SLOW_NOTICE_MS = 60_000;
-export const RUN_LONG_NOTICE_MS = 180_000;
+export const RUN_LONG_NOTICE_MS = 240_000;
 export const RUN_PROBE_INTERVAL_MS = 15_000;
 export const RUN_CONFIRMATION_FRESH_MS = RUN_PROBE_INTERVAL_MS * 2;
 
@@ -69,7 +69,10 @@ export function projectWaitingStatus(params: {
     return { kind: 'reconnecting', tone: 'warning', quietMs };
   }
   if (quietMs < RUN_STALL_NOTICE_MS) return null;
-  if (quietMs >= RUN_LONG_NOTICE_MS) {
+  const confirmationFresh =
+    activity.activeRunConfirmedAt !== null &&
+    now - activity.activeRunConfirmedAt <= RUN_CONFIRMATION_FRESH_MS;
+  if (quietMs >= RUN_LONG_NOTICE_MS && confirmationFresh) {
     return { kind: 'long-wait', tone: 'warning', quietMs };
   }
   if (activity.stage === 'retrying') {
@@ -82,9 +85,6 @@ export function projectWaitingStatus(params: {
   if (activity.probeState === 'failed') {
     return { kind: 'probe-failed', tone: 'neutral', quietMs };
   }
-  const confirmationFresh =
-    activity.activeRunConfirmedAt !== null &&
-    now - activity.activeRunConfirmedAt <= RUN_CONFIRMATION_FRESH_MS;
   if (quietMs >= RUN_SLOW_NOTICE_MS && confirmationFresh) {
     return { kind: 'slow-active', tone: 'neutral', quietMs };
   }

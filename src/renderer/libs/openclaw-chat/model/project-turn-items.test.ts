@@ -61,7 +61,7 @@ describe('projectTurnItems', () => {
     const result = projectTurnItems(null, true, {
       kind: 'waiting-model',
       tone: 'neutral',
-      quietMs: 15_000,
+      quietMs: 20_000,
     });
 
     expect(result.map(entry => entry.kind)).toEqual(['waiting', 'waiting-status']);

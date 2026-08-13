@@ -9,7 +9,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-test('shows a stalled-run status at 15 seconds and clears it on model activity', async () => {
+test('shows a stalled-run status at 20 seconds and clears it on model activity', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(1_000_000);
   const sessionKey = 'agent:main:justdo:session-1';
@@ -27,7 +27,7 @@ test('shows a stalled-run status at 15 seconds and clears it on model activity',
   controller.state.sessionKey = sessionKey;
 
   await controller.sendMessage('slow request');
-  await vi.advanceTimersByTimeAsync(14_999);
+  await vi.advanceTimersByTimeAsync(19_999);
   expect(
     projectWaitingStatus({
       activity: controller.state.runActivity,
@@ -121,7 +121,7 @@ test('clears the notice when a delayed model event is received', async () => {
   controller.state.transportStatus = 'connected';
   controller.state.sessionKey = 'agent:main:justdo:session-1';
   controller.setPendingUserMessage('wait for delayed delivery');
-  await vi.advanceTimersByTimeAsync(15_000);
+  await vi.advanceTimersByTimeAsync(20_000);
 
   (
     controller as unknown as {
@@ -154,7 +154,7 @@ test('covers request preparation before the Gateway assigns a run id', async () 
   controller.state.transportStatus = 'connected';
 
   controller.setPendingUserMessage('prepare an externally started run');
-  await vi.advanceTimersByTimeAsync(15_000);
+  await vi.advanceTimersByTimeAsync(20_000);
 
   expect(controller.state.runActivity).toMatchObject({
     runId: expect.stringMatching(/^justdo-pending-/),
@@ -339,7 +339,7 @@ test('discards a delayed probe result after model activity and keeps the exact n
   controller.state.sessionKey = 'agent:main:justdo:session-1';
   await controller.sendMessage('slow describe');
 
-  await vi.advanceTimersByTimeAsync(15_000);
+  await vi.advanceTimersByTimeAsync(20_000);
   await vi.advanceTimersByTimeAsync(5_000);
   (
     controller as unknown as {
@@ -364,7 +364,7 @@ test('discards a delayed probe result after model activity and keeps the exact n
     probeState: 'idle',
     activeRunConfirmedAt: null,
   });
-  await vi.advanceTimersByTimeAsync(4_999);
+  await vi.advanceTimersByTimeAsync(9_999);
   expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(1);
   await vi.advanceTimersByTimeAsync(1);
   expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(2);

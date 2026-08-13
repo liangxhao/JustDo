@@ -55,22 +55,53 @@ describe('projectWaitingStatus', () => {
     ).toMatchObject({ kind: 'slow-active' });
   });
 
-  it('uses warning copy for a long wait without claiming the run is active', () => {
+  it('uses warning copy for a long wait only after fresh active-run confirmation', () => {
+    const now = 1_000 + RUN_LONG_NOTICE_MS;
     expect(
       projectWaitingStatus({
-        activity: activity(),
+        activity: activity({ activeRunConfirmedAt: now - 1_000, probeState: 'active' }),
         transportStatus: 'connected',
-        now: 1_000 + RUN_LONG_NOTICE_MS,
+        now,
       }),
     ).toMatchObject({ kind: 'long-wait', tone: 'warning' });
   });
 
-  it('uses the long-wait warning after three minutes even while retrying', () => {
+  it('does not claim a four-minute request is active without fresh confirmation', () => {
+    const now = 1_000 + RUN_LONG_NOTICE_MS;
+    expect(
+      projectWaitingStatus({ activity: activity(), transportStatus: 'connected', now }),
+    ).toMatchObject({ kind: 'waiting-model', tone: 'neutral' });
     expect(
       projectWaitingStatus({
-        activity: activity({ stage: 'retrying', retryReason: 'rate_limit' }),
+        activity: activity({
+          activeRunConfirmedAt: now - 31_000,
+          probeState: 'idle',
+        }),
         transportStatus: 'connected',
-        now: 1_000 + RUN_LONG_NOTICE_MS,
+        now,
+      }),
+    ).toMatchObject({ kind: 'waiting-model', tone: 'neutral' });
+    expect(
+      projectWaitingStatus({
+        activity: activity({ probeState: 'failed' }),
+        transportStatus: 'connected',
+        now,
+      }),
+    ).toMatchObject({ kind: 'probe-failed', tone: 'neutral' });
+  });
+
+  it('uses the long-wait warning after four minutes even while retrying', () => {
+    const now = 1_000 + RUN_LONG_NOTICE_MS;
+    expect(
+      projectWaitingStatus({
+        activity: activity({
+          stage: 'retrying',
+          retryReason: 'rate_limit',
+          activeRunConfirmedAt: now - 1_000,
+          probeState: 'active',
+        }),
+        transportStatus: 'connected',
+        now,
       }),
     ).toMatchObject({ kind: 'long-wait', tone: 'warning' });
   });
@@ -93,11 +124,16 @@ describe('projectWaitingStatus', () => {
   });
 
   it('uses a factual notice when a visible tool has no activity', () => {
+    const now = 1_000 + RUN_LONG_NOTICE_MS;
     expect(
       projectWaitingStatus({
-        activity: activity({ stage: 'running-tool' }),
+        activity: activity({
+          stage: 'running-tool',
+          activeRunConfirmedAt: now - 1_000,
+          probeState: 'active',
+        }),
         transportStatus: 'connected',
-        now: 1_000 + RUN_LONG_NOTICE_MS,
+        now,
       }),
     ).toMatchObject({ kind: 'long-wait', tone: 'warning' });
   });
