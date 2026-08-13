@@ -7,6 +7,7 @@ import {
   ClockIcon,
   ExclamationTriangleIcon,
   PauseIcon,
+  PencilSquareIcon,
   PlayIcon,
   PlusIcon,
   TrashIcon,
@@ -89,10 +90,9 @@ function defaultScheduleForm(): ScheduleFormState {
   };
 }
 
-function parseEveryInterval(everyMs: number): Pick<
-  ScheduleFormState,
-  'intervalValue' | 'intervalUnit'
-> {
+function parseEveryInterval(
+  everyMs: number,
+): Pick<ScheduleFormState, 'intervalValue' | 'intervalUnit'> {
   if (everyMs % 86_400_000 === 0) {
     return { intervalValue: everyMs / 86_400_000, intervalUnit: 'days' };
   }
@@ -208,10 +208,7 @@ export function buildScheduleFromForm(form: ScheduleFormState): Schedule {
   return { kind: 'cron', expr };
 }
 
-export function computeNextRunPreview(
-  form: ScheduleFormState,
-  now = new Date(),
-): string | null {
+export function computeNextRunPreview(form: ScheduleFormState, now = new Date()): string | null {
   if (form.mode === 'once') {
     const dateTime = new Date(`${form.onceDate}T${form.onceTime || '00:00'}`);
     return Number.isNaN(dateTime.getTime()) ? null : dateTime.toLocaleString();
@@ -310,43 +307,63 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
   return (
     <div
       data-testid={'cron-job-card-' + job.id}
-      className="group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border border-transparent bg-transparent p-4 transition-all hover:bg-black/5 dark:hover:bg-white/5"
+      className={
+        'group relative flex h-full min-h-[190px] cursor-pointer flex-col overflow-hidden rounded-[18px] border bg-surface shadow-subtle transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card ' +
+        (isEnabled
+          ? 'border-border-subtle hover:border-primary/25'
+          : 'border-border-subtle opacity-75 hover:border-border hover:opacity-100')
+      }
       onClick={onEdit}
     >
-      <div className="mb-2.5 flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-black/5 bg-black/5 shadow-sm transition-transform group-hover:scale-105 dark:border-white/10 dark:bg-white/5">
-            <ClockIcon className="h-4 w-4 text-foreground" />
+      <div
+        className={
+          'absolute inset-x-0 top-0 h-0.5 transition-colors ' +
+          (isEnabled ? 'bg-primary' : 'bg-border')
+        }
+      />
+
+      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <div
+            className={
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ' +
+              (isEnabled ? 'bg-primary/10 text-primary' : 'bg-surface-raised text-secondary')
+            }
+          >
+            <ClockIcon className="h-4 w-4" />
           </div>
-          <div className="flex flex-col min-w-0 flex-1">
-            <div className="mb-0.5 flex min-w-0 items-center gap-2">
-              <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">
-                {job.name}
-              </h3>
-              <div
-                className={
-                  'h-1.5 w-1.5 shrink-0 rounded-full ' +
-                  (isEnabled ? 'bg-green-500' : 'bg-muted-foreground')
-                }
-                title={isEnabled ? t('cronStatsActive') : t('cronStatsPaused')}
-              />
-            </div>
-            <p className="text-meta text-secondary flex items-center gap-1.5 min-w-0">
-              <ClockIcon className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{formatScheduleLabel(job.schedule)}</span>
-            </p>
-          </div>
+          <h3 className="min-w-0 truncate text-[15px] font-semibold leading-5 text-foreground">
+            {job.name}
+          </h3>
+          <span
+            className={
+              'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ' +
+              (isEnabled
+                ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                : 'bg-surface-raised text-secondary')
+            }
+          >
+            <span
+              className={
+                'h-1.5 w-1.5 rounded-full ' + (isEnabled ? 'bg-green-500' : 'bg-secondary')
+              }
+            />
+            {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
+          </span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+        <div className="shrink-0" onClick={e => e.stopPropagation()}>
           <button
             type="button"
+            role="switch"
+            aria-checked={isEnabled}
+            aria-label={t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
             onClick={e => {
               e.stopPropagation();
               onToggle(!job.enabled);
             }}
             className={
-              'relative shrink-0 w-9 h-5 rounded-full transition-colors ' +
+              'relative h-5 w-9 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ' +
               (isEnabled ? 'bg-primary' : 'bg-border')
             }
           >
@@ -360,85 +377,105 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
         </div>
       </div>
 
-      <div className="min-w-0 pl-[52px]">
-        <div className="mb-2 flex min-w-0 items-start gap-1.5">
-          <ChatBubbleLeftRightIcon className="h-3.5 w-3.5 mt-0.5 text-secondary shrink-0" />
-          <p className="text-sm text-secondary line-clamp-2 leading-[1.5] min-w-0 flex-1 break-all">
-            {promptText}
-          </p>
-        </div>
+      <div className="grid min-w-0 grid-cols-[16px_minmax(0,1fr)] gap-x-2.5 gap-y-2.5 px-5 pb-3 text-xs text-secondary">
+        <ClockIcon className="h-4 w-4" />
+        <p className="min-w-0 truncate font-medium leading-4">
+          {formatScheduleLabel(job.schedule)}
+        </p>
 
-        <div className="mb-2 flex flex-col gap-y-1.5 text-xs font-medium text-secondary">
-          {hasLastRun && (
-            <span className="flex w-full items-center gap-1.5">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <ClockIcon className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">
-                  {t('cronCardLast')}: {formatDateTime(new Date(job.state.lastRunAtMs!))}
-                </span>
-                {lastStatus === 'success' ? (
-                  <CheckCircleIcon className="h-3.5 w-3.5 shrink-0 text-green-500" />
-                ) : lastStatus === 'error' ? (
-                  <XCircleIcon className="h-3.5 w-3.5 shrink-0 text-red-500" />
-                ) : null}
+        <ChatBubbleLeftRightIcon className="mt-0.5 h-4 w-4" />
+        <p className="line-clamp-2 min-w-0 break-all text-[13px] leading-5 text-foreground/80">
+          {promptText}
+        </p>
+
+        {hasLastRun && (
+          <>
+            <ClockIcon className="h-4 w-4" />
+            <span className="flex min-w-0 items-center gap-1.5 leading-4">
+              <span className="truncate">
+                {t('cronCardLast')}: {formatDateTime(new Date(job.state.lastRunAtMs!))}
               </span>
+              {lastStatus === 'success' ? (
+                <CheckCircleIcon className="h-3.5 w-3.5 shrink-0 text-green-500" />
+              ) : lastStatus === 'error' ? (
+                <XCircleIcon className="h-3.5 w-3.5 shrink-0 text-red-500" />
+              ) : null}
               {lastError && lastStatus === 'error' && (
                 <span
                   className="ml-auto inline-flex shrink-0 cursor-help text-red-500"
                   title={lastError}
                   aria-label={lastError}
                 >
-                  <ExclamationTriangleIcon className="h-5 w-5" strokeWidth={2.25} />
+                  <ExclamationTriangleIcon className="h-4 w-4" strokeWidth={2.25} />
                 </span>
               )}
             </span>
-          )}
+          </>
+        )}
 
-          {nextRunMs && isEnabled && (
-            <span className="flex items-center gap-1.5">
-              <CalendarIcon className="h-3.5 w-3.5" />
+        {nextRunMs && isEnabled && (
+          <>
+            <CalendarIcon className="h-4 w-4" />
+            <span className="truncate leading-4">
               {t('cronCardNext')}: {formatDateTime(new Date(nextRunMs))}
             </span>
-          )}
-        </div>
+          </>
+        )}
+      </div>
 
-        <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            type="button"
-            onClick={e => {
-              e.stopPropagation();
-              void handleTrigger(e);
-            }}
-            disabled={triggering}
-            className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-foreground/70 transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
-          >
-            {triggering ? (
-              <ArrowPathIcon className="mr-1 h-3 w-3 animate-spin" />
-            ) : (
-              <PlayIcon className="mr-1 h-3 w-3" />
-            )}
-            {t('cronCardRunNow')}
-          </button>
-          <button
-            type="button"
-            onClick={e => {
-              e.stopPropagation();
-              onHistory();
-            }}
-            className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-foreground/70 transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
-          >
-            <ClockIcon className="mr-1 h-3 w-3" />
-            {t('cronCardHistory')}
-          </button>
-          <button
-            type="button"
-            onClick={handleDeleteClick}
-            className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-red-500/70 transition-colors hover:bg-red-500/10 hover:text-red-500"
-          >
-            <TrashIcon className="mr-1 h-3 w-3" />
-            {t('delete')}
-          </button>
-        </div>
+      <div
+        className="mt-auto flex items-center gap-1 border-t border-border-subtle px-3 py-2"
+        onClick={e => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={e => {
+            e.stopPropagation();
+            void handleTrigger(e);
+          }}
+          disabled={triggering}
+          className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary/10 px-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+        >
+          {triggering ? (
+            <ArrowPathIcon className="mr-1 h-3 w-3 animate-spin" />
+          ) : (
+            <PlayIcon className="mr-1 h-3 w-3" />
+          )}
+          {t('cronCardRunNow')}
+        </button>
+        <button
+          type="button"
+          onClick={e => {
+            e.stopPropagation();
+            onHistory();
+          }}
+          className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+        >
+          <ClockIcon className="mr-1 h-3 w-3" />
+          {t('cronCardHistory')}
+        </button>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={e => {
+            e.stopPropagation();
+            onEdit();
+          }}
+          title={t('cronDialogEditTitle')}
+          aria-label={t('cronDialogEditTitle')}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+        >
+          <PencilSquareIcon className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleDeleteClick}
+          title={t('delete')}
+          aria-label={t('delete')}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
+        >
+          <TrashIcon className="h-4 w-4" />
+        </button>
       </div>
     </div>
   );
@@ -891,7 +928,10 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
                           : t('cronDialogDeliveryModeAnnounce')}
                       </span>
                       {selected && (
-                        <CheckCircleIcon className="h-5 w-5 shrink-0 text-primary" strokeWidth={2.5} />
+                        <CheckCircleIcon
+                          className="h-5 w-5 shrink-0 text-primary"
+                          strokeWidth={2.5}
+                        />
                       )}
                     </div>
                     <div className="text-xs text-secondary mt-0.5">
@@ -925,9 +965,7 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
                   ))}
                 </select>
                 <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-                {errors.delivery && (
-                  <p className="mt-1 text-xs text-red-500">{errors.delivery}</p>
-                )}
+                {errors.delivery && <p className="mt-1 text-xs text-red-500">{errors.delivery}</p>}
               </div>
             )}
           </div>
@@ -1043,20 +1081,23 @@ export const CronView: React.FC<CronViewProps> = ({
     [editingJob, t],
   );
 
-  const handleToggle = useCallback(async (id: string, enabled: boolean) => {
-    try {
-      await scheduledTaskService.toggleTask(id, enabled);
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', {
-          detail: enabled ? t('cronToastEnabled') : t('cronToastPaused'),
-        }),
-      );
-    } catch {
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: t('cronToastFailedUpdate') }),
-      );
-    }
-  }, [t]);
+  const handleToggle = useCallback(
+    async (id: string, enabled: boolean) => {
+      try {
+        await scheduledTaskService.toggleTask(id, enabled);
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: enabled ? t('cronToastEnabled') : t('cronToastPaused'),
+          }),
+        );
+      } catch {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: t('cronToastFailedUpdate') }),
+        );
+      }
+    },
+    [t],
+  );
 
   const handleDelete = useCallback(async () => {
     if (!jobToDelete) return;
@@ -1113,7 +1154,7 @@ export const CronView: React.FC<CronViewProps> = ({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="w-full max-w-5xl mx-auto flex flex-col p-6 md:p-8">
+        <div className="mx-auto flex w-full max-w-7xl flex-col p-6 md:p-8">
           <div className="mb-6 flex gap-1 self-center rounded-xl bg-surface-raised p-1">
             {(['tasks', 'results'] as const).map(tab => (
               <button
@@ -1126,11 +1167,7 @@ export const CronView: React.FC<CronViewProps> = ({
                     : 'text-secondary hover:text-foreground'
                 }`}
               >
-                {t(
-                  tab === 'tasks'
-                    ? 'scheduledTasksTabTasks'
-                    : 'scheduledTasksTabResults',
-                )}
+                {t(tab === 'tasks' ? 'scheduledTasksTabTasks' : 'scheduledTasksTabResults')}
               </button>
             ))}
           </div>
@@ -1138,127 +1175,129 @@ export const CronView: React.FC<CronViewProps> = ({
             <ResultInbox />
           ) : (
             <>
-          {/* Hero Header */}
-          <div className="flex flex-col gap-4 mb-6 shrink-0 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-secondary">{t('cronSubtitle')}</p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => scheduledTaskService.loadTasks()}
-                className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-secondary shadow-sm transition-colors hover:bg-surface-raised hover:text-foreground"
-              >
-                <ArrowPathIcon className="h-3.5 w-3.5" />
-                {t('cronRefresh')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingJob(undefined);
-                  setShowDialog(true);
-                }}
-                className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-hover active:scale-[0.98]"
-              >
-                <PlusIcon className="h-3.5 w-3.5" />
-                {t('cronNewTask')}
-              </button>
-            </div>
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div className="mb-8 p-4 rounded-xl border border-red-500/50 bg-red-500/10 flex items-center gap-3">
-              <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
-              <span className="text-red-600 dark:text-red-400 text-sm font-medium">{error}</span>
-            </div>
-          )}
-
-          {/* Statistics */}
-          <div className="grid grid-cols-2 gap-3 mb-8 md:grid-cols-4">
-            {[
-              {
-                label: 'cronStatsTotal',
-                value: tasks.length,
-                Icon: ClockIcon,
-                color: 'bg-primary/10 text-primary',
-              },
-              {
-                label: 'cronStatsActive',
-                value: activeJobs.length,
-                Icon: PlayIcon,
-                color: 'bg-green-500/10 text-green-600 dark:text-green-500',
-              },
-              {
-                label: 'cronStatsPaused',
-                value: pausedJobs.length,
-                Icon: PauseIcon,
-                color: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-500',
-              },
-              {
-                label: 'cronStatsFailed',
-                value: failedJobs.length,
-                Icon: XCircleIcon,
-                color: 'bg-red-500/10 text-red-500',
-              },
-            ].map(stat => (
-              <div
-                key={stat.label}
-                className="flex min-h-[72px] flex-col items-center justify-between rounded-xl border border-border-subtle bg-surface p-2.5 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-border hover:shadow-md"
-              >
-                <div
-                  className={
-                    'flex h-7 w-7 items-center justify-center rounded-full ' + stat.color
-                  }
-                >
-                  <stat.Icon
-                    className={stat.label === 'cronStatsTotal' ? 'h-6 w-6' : 'h-3.5 w-3.5'}
-                  />
-                </div>
-                <div className="mt-1 flex items-baseline justify-center gap-1.5">
-                  <p className="text-lg font-semibold tabular-nums text-foreground">
-                    {stat.value}
-                  </p>
-                  <p className="text-xs font-medium text-secondary">{t(stat.label)}</p>
+              {/* Hero Header */}
+              <div className="flex flex-col gap-4 mb-6 shrink-0 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-secondary">{t('cronSubtitle')}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => scheduledTaskService.loadTasks()}
+                    className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-secondary shadow-sm transition-colors hover:bg-surface-raised hover:text-foreground"
+                  >
+                    <ArrowPathIcon className="h-3.5 w-3.5" />
+                    {t('cronRefresh')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingJob(undefined);
+                      setShowDialog(true);
+                    }}
+                    className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-hover active:scale-[0.98]"
+                  >
+                    <PlusIcon className="h-3.5 w-3.5" />
+                    {t('cronNewTask')}
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
 
-          {/* Jobs Grid / Empty State */}
-          {tasks.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-secondary bg-black/5 dark:bg-white/5 rounded-3xl border border-dashed border-border">
-              <ClockIcon className="h-12 w-12 mb-4 opacity-40" />
-              <h3 className="text-lg font-medium mb-2 text-foreground">{t('cronEmptyTitle')}</h3>
-              <p className="text-sm text-center mb-6 max-w-md">{t('cronEmptyDescription')}</p>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingJob(undefined);
-                  setShowDialog(true);
-                }}
-                className="px-6 py-2.5 text-sm font-medium rounded-full bg-primary text-white hover:bg-primary-hover transition-colors inline-flex items-center gap-2"
-              >
-                <PlusIcon className="h-4 w-4" />
-                {t('cronEmptyCreate')}
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-x-4 gap-y-2 md:grid-cols-2">
-              {tasks.map(job => (
-                <CronJobCard
-                  key={job.id}
-                  job={job}
-                  onToggle={enabled => handleToggle(job.id, enabled)}
-                  onEdit={() => {
-                    setEditingJob(job);
-                    setShowDialog(true);
-                  }}
-                  onDelete={() => setJobToDelete(job)}
-                  onTrigger={() => scheduledTaskService.runManually(job.id)}
-                  onHistory={() => setHistoryTaskId(job.id)}
-                />
-              ))}
-            </div>
-          )}
+              {/* Error */}
+              {error && (
+                <div className="mb-8 p-4 rounded-xl border border-red-500/50 bg-red-500/10 flex items-center gap-3">
+                  <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
+                  <span className="text-red-600 dark:text-red-400 text-sm font-medium">
+                    {error}
+                  </span>
+                </div>
+              )}
+
+              {/* Statistics */}
+              <div className="mb-8 grid grid-cols-2 gap-3 md:grid-cols-4">
+                {[
+                  {
+                    label: 'cronStatsTotal',
+                    value: tasks.length,
+                    Icon: ClockIcon,
+                    color: 'bg-primary/10 text-primary',
+                  },
+                  {
+                    label: 'cronStatsActive',
+                    value: activeJobs.length,
+                    Icon: PlayIcon,
+                    color: 'bg-green-500/10 text-green-600 dark:text-green-500',
+                  },
+                  {
+                    label: 'cronStatsPaused',
+                    value: pausedJobs.length,
+                    Icon: PauseIcon,
+                    color: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-500',
+                  },
+                  {
+                    label: 'cronStatsFailed',
+                    value: failedJobs.length,
+                    Icon: XCircleIcon,
+                    color: 'bg-red-500/10 text-red-500',
+                  },
+                ].map(stat => (
+                  <div
+                    key={stat.label}
+                    className="flex min-h-[76px] flex-col items-center justify-between rounded-2xl border border-border-subtle bg-surface p-2.5 text-center shadow-subtle transition-all hover:-translate-y-0.5 hover:border-border hover:shadow-card"
+                  >
+                    <div
+                      className={
+                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ' + stat.color
+                      }
+                    >
+                      <stat.Icon className="h-[18px] w-[18px]" />
+                    </div>
+                    <div className="flex items-baseline justify-center gap-1.5">
+                      <p className="text-lg font-semibold tabular-nums text-foreground">
+                        {stat.value}
+                      </p>
+                      <p className="text-xs font-medium text-secondary">{t(stat.label)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Jobs Grid / Empty State */}
+              {tasks.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-secondary bg-black/5 dark:bg-white/5 rounded-3xl border border-dashed border-border">
+                  <ClockIcon className="h-12 w-12 mb-4 opacity-40" />
+                  <h3 className="text-lg font-medium mb-2 text-foreground">
+                    {t('cronEmptyTitle')}
+                  </h3>
+                  <p className="text-sm text-center mb-6 max-w-md">{t('cronEmptyDescription')}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingJob(undefined);
+                      setShowDialog(true);
+                    }}
+                    className="px-6 py-2.5 text-sm font-medium rounded-full bg-primary text-white hover:bg-primary-hover transition-colors inline-flex items-center gap-2"
+                  >
+                    <PlusIcon className="h-4 w-4" />
+                    {t('cronEmptyCreate')}
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {tasks.map(job => (
+                    <CronJobCard
+                      key={job.id}
+                      job={job}
+                      onToggle={enabled => handleToggle(job.id, enabled)}
+                      onEdit={() => {
+                        setEditingJob(job);
+                        setShowDialog(true);
+                      }}
+                      onDelete={() => setJobToDelete(job)}
+                      onTrigger={() => scheduledTaskService.runManually(job.id)}
+                      onHistory={() => setHistoryTaskId(job.id)}
+                    />
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>
