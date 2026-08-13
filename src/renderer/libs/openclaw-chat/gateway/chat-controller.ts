@@ -27,6 +27,7 @@ import type {
   OpenClawPagedHistoryParams,
   OpenClawPagedHistoryResult,
 } from '@shared/openclaw/historyIpc';
+import { normalizeModelRef } from '@shared/openclaw/modelRef';
 import {
   resolveSlashCommandBehavior,
   SlashCommandBeforeSendHook,
@@ -488,6 +489,15 @@ export class ChatController {
     activity.lastAgentEventAt = at;
     if (options.provider) activity.provider = options.provider;
     if (options.model) activity.model = options.model;
+    const modelRef = normalizeModelRef(activity.model, activity.provider);
+    const activeTurn = this.state.transcript.activeTurn;
+    if (
+      modelRef &&
+      activeTurn &&
+      (activeTurn.runId === activity.runId || activeTurn.runId.startsWith('justdo-'))
+    ) {
+      activeTurn.modelRef = modelRef;
+    }
     if (options.retryReason !== undefined) {
       activity.retryReason = normalizeRunRetryReason(options.retryReason);
     } else if (stage !== 'retrying') {
@@ -619,6 +629,9 @@ export class ChatController {
       status: turn.status,
       startedAt,
       ...(turn.endedAt !== undefined ? { endedAt: turn.endedAt } : {}),
+      ...(turn.modelRef || (existing?.runId === turn.runId && existing.modelRef)
+        ? { modelRef: turn.modelRef ?? existing?.modelRef }
+        : {}),
     });
     if (this.turnTimingBySession.size > 20) {
       const oldestSettledKey = [...this.turnTimingBySession].find(
@@ -708,6 +721,9 @@ export class ChatController {
         ? Math.min(cached.startedAt, activeTurn.startedAt)
         : activeTurn.startedAt,
       ...(activeTurn.endedAt !== undefined ? { endedAt: activeTurn.endedAt } : {}),
+      ...(activeTurn.modelRef || (canResumeCachedStart && cached.modelRef)
+        ? { modelRef: activeTurn.modelRef ?? cached?.modelRef }
+        : {}),
     };
   }
 

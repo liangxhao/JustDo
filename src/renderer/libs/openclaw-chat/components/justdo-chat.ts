@@ -6,7 +6,6 @@
  * 1. Directly via properties (messages, stream, etc.)
  * 2. Via a ChatController reference (controller property)
  */
-import { readModelRef } from '@shared/openclaw/modelRef';
 import katexStyles from 'katex/dist/katex.min.css?inline';
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -31,6 +30,7 @@ import {
   formatActiveTurnDuration,
   formatActiveTurnTimestamp,
   projectActiveTurnFooter,
+  resolveActiveTurnModel,
 } from '@/libs/openclaw-chat/model/active-turn-footer';
 import {
   type ChatMinimapEntry,
@@ -2607,11 +2607,12 @@ export class JustDoChatElement extends LitElement {
     footer: ActiveTurnFooter,
     persistedMessages: GatewayMessage[],
   ): TemplateResult {
-    const assistantMessage = [...persistedMessages]
-      .reverse()
-      .find(message => String(message.role ?? '').toLowerCase() === 'assistant') as
-      Record<string, unknown> | undefined;
-    const model = readModelRef(assistantMessage) ?? '';
+    const activity = this._controller?.state.runActivity;
+    const model = resolveActiveTurnModel(
+      persistedMessages,
+      footer.modelRef ?? activity?.model,
+      footer.modelRef ? undefined : activity?.provider,
+    );
     const duration = formatActiveTurnDuration(footer.durationMs);
     const completedDate = footer.completedAt === null ? null : new Date(footer.completedAt);
     return html`

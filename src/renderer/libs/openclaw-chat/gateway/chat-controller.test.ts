@@ -67,6 +67,52 @@ test('shows a stalled-run status at 15 seconds and clears it on model activity',
   ).toBeNull();
 });
 
+test('keeps the confirmed run model in the footer timing after final clears activity', async () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'started' });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  await controller.sendMessage('use the newly selected model');
+
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'lifecycle',
+      data: {
+        phase: 'progress',
+        stage: 'waiting_model',
+        provider: 'current-provider',
+        model: 'current-model',
+      },
+    },
+  });
+
+  expect(controller.getCurrentTurnTiming()?.modelRef).toBe('current-provider/current-model');
+
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey,
+      runId: 'run-1',
+      state: 'final',
+      message: { role: 'assistant', content: 'done without model metadata' },
+    },
+  });
+
+  expect(controller.state.runActivity).toBeNull();
+  expect(controller.getCurrentTurnTiming()?.modelRef).toBe('current-provider/current-model');
+});
+
 test('clears the notice when a delayed model event is received', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(1_250_000);

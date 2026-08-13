@@ -4,6 +4,7 @@ import {
   formatActiveTurnDuration,
   formatActiveTurnTimestamp,
   projectActiveTurnFooter,
+  resolveActiveTurnModel,
 } from './active-turn-footer';
 import type { AssistantTurn, TurnItem } from './chat-transcript-state';
 
@@ -80,5 +81,62 @@ describe('active turn footer', () => {
 
   test('formats duration as a clock value', () => {
     expect(formatActiveTurnDuration(7_338_999)).toBe('02:02:18');
+  });
+});
+
+describe('resolveActiveTurnModel', () => {
+  test('prefers model metadata emitted for the current run', () => {
+    expect(
+      resolveActiveTurnModel(
+        [{ role: 'assistant', provider: 'old-provider', model: 'old-model' }],
+        'current-model',
+        'current-provider',
+      ),
+    ).toBe('current-provider/current-model');
+  });
+
+  test('skips gateway-injected assistant records when falling back to history', () => {
+    expect(
+      resolveActiveTurnModel([
+        { role: 'user', content: 'first turn' },
+        { role: 'assistant', provider: 'custom-provider', model: 'actual-model' },
+        { role: 'user', content: 'current turn' },
+        { role: 'assistant', provider: 'openclaw', model: 'gateway-injected' },
+      ]),
+    ).toBe('');
+  });
+
+  test('uses only assistant metadata from the current user turn', () => {
+    expect(
+      resolveActiveTurnModel([
+        { role: 'user', content: 'first turn' },
+        { role: 'assistant', provider: 'old-provider', model: 'old-model' },
+        { role: 'user', content: 'current turn' },
+        { role: 'assistant', provider: 'current-provider', model: 'current-model' },
+        { role: 'assistant', provider: 'openclaw', model: 'gateway-injected' },
+      ]),
+    ).toBe('current-provider/current-model');
+  });
+
+  test('does not guess from assistant-only history without a current turn boundary', () => {
+    expect(
+      resolveActiveTurnModel([
+        { role: 'assistant', provider: 'old-provider', model: 'old-model' },
+      ]),
+    ).toBe('');
+  });
+
+  test('does not expose gateway-injected progress metadata in the footer', () => {
+    expect(
+      resolveActiveTurnModel(
+        [{ role: 'assistant', model: 'gateway-injected' }],
+        'gateway-injected',
+        'openclaw',
+      ),
+    ).toBe('');
+  });
+
+  test('filters case-insensitive multi-segment gateway-injected model refs', () => {
+    expect(resolveActiveTurnModel([], 'Vendor/OpenClaw/Gateway-Injected')).toBe('');
   });
 });

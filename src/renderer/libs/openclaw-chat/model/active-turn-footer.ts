@@ -1,9 +1,51 @@
+import { normalizeModelRef, readModelRef } from '@shared/openclaw/modelRef';
+
 import type { AssistantTurnTiming } from './chat-transcript-state';
 
 export interface ActiveTurnFooter {
   completedAt: number | null;
   durationMs: number;
   running: boolean;
+  modelRef?: string;
+}
+
+function isGatewayInjectedModel(modelRef: string): boolean {
+  const normalized = modelRef.trim().toLowerCase();
+  return normalized === 'gateway-injected' || normalized.endsWith('/gateway-injected');
+}
+
+/**
+ * Resolve the model for the live turn without treating OpenClaw's internal
+ * gateway-injected assistant records as model output. Progress metadata is
+ * authoritative for the current run; history is only a display fallback.
+ */
+export function resolveActiveTurnModel(
+  messages: readonly unknown[],
+  currentModel?: unknown,
+  currentProvider?: unknown,
+): string {
+  const progressModel = normalizeModelRef(currentModel, currentProvider);
+  if (progressModel && !isGatewayInjectedModel(progressModel)) return progressModel;
+
+  let currentTurnStart = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || typeof message !== 'object' || Array.isArray(message)) continue;
+    if (String((message as Record<string, unknown>).role ?? '').toLowerCase() === 'user') {
+      currentTurnStart = index;
+      break;
+    }
+  }
+  if (currentTurnStart < 0) return '';
+  for (let index = messages.length - 1; index > currentTurnStart; index -= 1) {
+    const message = messages[index];
+    if (!message || typeof message !== 'object' || Array.isArray(message)) continue;
+    const role = String((message as Record<string, unknown>).role ?? '').toLowerCase();
+    if (role !== 'assistant') continue;
+    const modelRef = readModelRef(message);
+    if (modelRef && !isGatewayInjectedModel(modelRef)) return modelRef;
+  }
+  return '';
 }
 
 /**
@@ -24,6 +66,7 @@ export function projectActiveTurnFooter(
     completedAt,
     durationMs: Math.max(0, durationEnd - turn.startedAt),
     running,
+    ...(turn.modelRef ? { modelRef: turn.modelRef } : {}),
   };
 }
 

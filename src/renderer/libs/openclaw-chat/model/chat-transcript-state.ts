@@ -56,13 +56,14 @@ export interface AssistantTurn {
   lastAgentSeq: number;
   startedAt: number;
   endedAt?: number;
+  modelRef?: string;
   items: TurnItem[];
   toolById: Map<string, ToolItem>;
 }
 
 export type AssistantTurnTiming = Pick<
   AssistantTurn,
-  'runId' | 'status' | 'startedAt' | 'endedAt'
+  'runId' | 'status' | 'startedAt' | 'endedAt' | 'modelRef'
 >;
 
 export interface RecentRunState {
