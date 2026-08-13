@@ -43,7 +43,46 @@ export class SessionRpc {
       'sessions.describe',
       { key: this.sessionKey(sessionId, agentId) },
     );
-    return readModelRef(result.session);
+    const session = result.session;
+    if (session && typeof session === 'object') {
+      const override = normalizeModelRef(session.modelOverride, session.providerOverride);
+      if (override) return override;
+    }
+    return readModelRef(session);
+  }
+
+  private async readPersistedModel(
+    client: GatewayClientLike,
+    sessionId: string,
+    agentId?: string,
+  ): Promise<string | null> {
+    const result = await client.request<Record<string, unknown>>('sessions.get', {
+      key: this.sessionKey(sessionId, agentId),
+    });
+    const candidate =
+      result.session && typeof result.session === 'object'
+        ? result.session
+        : result.entry && typeof result.entry === 'object'
+          ? result.entry
+          : result;
+    if (!candidate || typeof candidate !== 'object') return null;
+    const record = candidate as Record<string, unknown>;
+    const override = normalizeModelRef(record.modelOverride, record.providerOverride);
+    return override || readModelRef(record);
+  }
+
+  private async readCurrentModel(
+    client: GatewayClientLike,
+    sessionId: string,
+    agentId?: string,
+  ): Promise<string | null> {
+    try {
+      const persisted = await this.readPersistedModel(client, sessionId, agentId);
+      if (persisted) return persisted;
+    } catch {
+      // Older Gateways may not expose sessions.get; use sessions.describe below.
+    }
+    return this.describeModel(client, sessionId, agentId);
   }
 
   private enqueueModelUpdate(
@@ -78,7 +117,7 @@ export class SessionRpc {
       const client = this.callbacks.getGatewayClient();
       if (client) {
         try {
-          const modelRef = await this.describeModel(client, sessionId, agentId);
+          const modelRef = await this.readCurrentModel(client, sessionId, agentId);
           if (modelRef) {
             this.callbacks.store.updateSession(sessionId, { modelRef });
             return { ok: true, modelRef, appliesTo: 'next-turn', source: 'gateway' };
@@ -131,17 +170,18 @@ export class SessionRpc {
 
       try {
         await client.request('sessions.patch', { key: sessionKey, model: normalizedModel });
-        const confirmedModelRef = await this.describeModel(client, sessionId, agentId);
-        if (!confirmedModelRef) {
-          return { ok: false, error: 'Gateway did not return the current session model' };
-        }
-        this.callbacks.store.updateSession(sessionId, { modelRef: confirmedModelRef });
-        return { ok: true, modelRef: confirmedModelRef, appliesTo, source: 'gateway' };
+        // `sessions.patch` persists the session override, while the runtime
+        // model reported by `sessions.describe` may remain on the previous
+        // model until the next call starts. Treat a successful patch as the
+        // source of truth for the selection instead of rejecting it because
+        // an immediate read is stale.
+        this.callbacks.store.updateSession(sessionId, { modelRef: normalizedModel });
+        return { ok: true, modelRef: normalizedModel, appliesTo, source: 'gateway' };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         let currentModelRef: string | undefined;
         try {
-          currentModelRef = (await this.describeModel(client, sessionId, agentId)) ?? undefined;
+          currentModelRef = (await this.readCurrentModel(client, sessionId, agentId)) ?? undefined;
           if (currentModelRef) this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
         } catch {
           // The patch failure is already actionable; do not hide it behind recovery errors.

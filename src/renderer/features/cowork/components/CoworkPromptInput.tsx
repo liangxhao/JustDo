@@ -1939,6 +1939,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                   throw new Error(result.error || 'setDefaultModel failed');
                                 }
                               } else {
+                                // Keep the managed OpenClaw default and agent model in sync
+                                // with the session selection. The session patch below applies
+                                // it immediately to the current Gateway session.
+                                const defaultResult = await coworkService.setDefaultModel({
+                                  modelId: nextModel.id,
+                                  providerKey: nextModel.providerKey,
+                                  agentId: effectiveAgentId,
+                                });
+                                if (!defaultResult.success) {
+                                  throw new Error(defaultResult.error || 'setDefaultModel failed');
+                                }
                                 const modelRef = toOpenClawModelRef(nextModel);
                                 if (modelRef) {
                                   const result = await coworkService.patchSessionModel({
@@ -2030,11 +2041,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                           }
                         }}
                       />
-                      {modelUpdatePending && (
-                        <span className="max-w-60 text-[11px] leading-4 text-secondary" role="status">
-                          {i18nService.t('coworkModelApplying')}
-                        </span>
-                      )}
                       {modelUpdateError && (
                         <span className="max-w-60 text-[11px] leading-4 text-red-500" role="alert">
                           {i18nService

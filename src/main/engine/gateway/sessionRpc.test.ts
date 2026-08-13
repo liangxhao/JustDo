@@ -40,7 +40,7 @@ const createHarness = () => {
 };
 
 describe('SessionRpc model coordination', () => {
-  test('patches, confirms, and persists the qualified gateway model', async () => {
+  test('patches and persists the selected model without rejecting stale runtime reads', async () => {
     const { rpc, request, session } = createHarness();
 
     await expect(
@@ -56,9 +56,7 @@ describe('SessionRpc model coordination', () => {
       key: 'agent:main:justdo:session-1',
       model: 'anthropic/claude-sonnet-4',
     });
-    expect(request).toHaveBeenNthCalledWith(2, 'sessions.describe', {
-      key: 'agent:main:justdo:session-1',
-    });
+    expect(request).toHaveBeenCalledTimes(1);
     expect(session.modelRef).toBe('anthropic/claude-sonnet-4');
   });
 
@@ -81,16 +79,48 @@ describe('SessionRpc model coordination', () => {
       rpc.patchModel('session-1', 'builtin_models/hdp/Glm-5.1'),
     ).resolves.toMatchObject({
       ok: true,
-      modelRef: 'hdp/Glm-5.1',
+      modelRef: 'builtin_models/hdp/Glm-5.1',
     });
     expect(request).toHaveBeenCalledWith('sessions.patch', {
       key: 'agent:main:justdo:session-1',
       model: 'builtin_models/hdp/Glm-5.1',
     });
-    expect(session.modelRef).toBe('hdp/Glm-5.1');
+    expect(session.modelRef).toBe('builtin_models/hdp/Glm-5.1');
   });
 
-  test('uses the Gateway model even when its provider alias differs', async () => {
+  test('prefers a persisted session model override over the last runtime model', async () => {
+    const session = { id: 'session-1', agentId: 'main', modelRef: 'openai/gpt-4o' };
+    const request = vi.fn(async (method: string) =>
+      method === 'sessions.describe'
+        ? {
+            session: {
+              modelProvider: 'builtin_models',
+              model: 'deepseek-v4-pro',
+              providerOverride: 'openai',
+              modelOverride: 'gpt-5',
+            },
+          }
+        : {},
+    );
+    const rpc = new SessionRpc({
+      getGatewayClient: () => ({ request } as unknown as GatewayClientLike),
+      store: {
+        getSession: () => session,
+        getAgent: () => ({ model: session.modelRef }),
+        updateSession: vi.fn((_id: string, updates: { modelRef?: string }) => {
+          if (updates.modelRef) session.modelRef = updates.modelRef;
+        }),
+      } as unknown as CoworkStore,
+    });
+
+    await expect(rpc.getModel('session-1')).resolves.toMatchObject({
+      ok: true,
+      modelRef: 'openai/gpt-5',
+      source: 'gateway',
+    });
+  });
+
+  test('accepts a patch even when the immediate runtime read would be stale', async () => {
     const session = { id: 'session-1', agentId: 'main', modelRef: 'openai/gpt-4o' };
     let describeCount = 0;
     const request = vi.fn(async (method: string) => {
@@ -115,11 +145,11 @@ describe('SessionRpc model coordination', () => {
 
     await expect(rpc.patchModel('session-1', 'openai/gpt-5')).resolves.toEqual({
       ok: true,
-      modelRef: 'openai/gpt-4o',
+      modelRef: 'openai/gpt-5',
       appliesTo: 'next-turn',
       source: 'gateway',
     });
-    expect(session.modelRef).toBe('openai/gpt-4o');
+    expect(session.modelRef).toBe('openai/gpt-5');
     expect(request).toHaveBeenCalledWith('sessions.patch', {
       key: 'agent:main:justdo:session-1',
       model: 'openai/gpt-5',
@@ -152,9 +182,9 @@ describe('SessionRpc model coordination', () => {
     const barrier = rpc.waitForModelUpdate('session-1');
     releasePatch();
 
-    await expect(update).resolves.toEqual({
+    await expect(update).resolves.toMatchObject({
       ok: true,
-      modelRef: 'openai/gpt-4o',
+      modelRef: 'openai/gpt-5',
       appliesTo: 'next-turn',
       source: 'gateway',
     });

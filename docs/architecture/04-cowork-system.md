@@ -199,10 +199,11 @@ flowchart LR
 
 继续会话会复用本地 session id 和 Gateway session key。若 Gateway session key 缺失，应通过历史同步/repair 逻辑尽量恢复；恢复失败时要给用户明确错误，而不是静默创建无关联新会话。
 
-Agent 模型只决定新会话默认值。已有会话以 Gateway `sessions.describe` 的
-`modelProvider/model` 为权威，模型切换按 session 串行执行 `sessions.patch` 后再次
-describe 确认，并把确认值缓存到 `cowork_sessions.model_ref`。发送新 turn 必须等待该
-队列清空。运行中切换不会改变已经在途的推理，只影响当前任务后续尚未开始的主会话模型调用。
+模型选择会先同步 Agent 默认模型和 `openclaw.json`，再按 session 串行执行
+Gateway `sessions.patch`；已有会话最终以 `sessions.describe` 返回的
+`modelProvider/model` 为权威，并把确认值缓存到 `cowork_sessions.model_ref`。发送新
+turn 必须等待该队列清空。运行中切换不会改变已经在途的推理，只影响当前任务后续尚未
+开始的主会话模型调用。
 
 ### Stop Session
 
