@@ -139,7 +139,11 @@ assistant footer 的模型字段表示生成该条消息的实际模型，而不
 - 经近期 active-run 确认的 240 秒提示及 transport 断连使用 warning tone；恢复任何模型活动、收到终态、用户停止
   或切换普通会话时立即移除。临时 session 升格为持久 session 时保留同一 run 状态。
 - OpenClaw 兼容补丁只发 `lifecycle/progress` 的 queued、preparing、waiting_model、retrying
-  白名单字段。既有 fallback 事件只读取归一化 reason，不读取或展示错误详情。
+  白名单字段。queued、preparing 和 starting 仅作为内部诊断阶段，等待提示统一使用
+  “正在等待模型返回内容”，不据此声称模型请求尚未发出。既有 fallback 事件只读取归一化
+  reason，不读取或展示错误详情。
+- active turn 中存在运行中的 Tool 时不投影模型卡顿提示。最后一个 Tool 终止后重新开始
+  模型等待计时，连续 20 秒无模型活动才显示“正在等待模型返回内容”。
 - GatewayClient 根据 hello 中的 tick interval 监测超过两个 tick 周期的静默连接，并走既有
   WebSocket 重连；重连不调用 `chat.send`。页面后台期间暂停超时判断，恢复可见时重新计时。
 - Lit 已有 active-turn 本地秒钟负责阈值更新，不产生 Gateway/IPC 请求。等待提示的读屏区域

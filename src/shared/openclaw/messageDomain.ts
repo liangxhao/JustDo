@@ -96,9 +96,14 @@ export function normalizeToolTerminalStatus(
   phase: unknown,
   failed: boolean,
 ): 'running' | 'completed' | 'failed' | 'cancelled' {
-  if (failed) return 'failed';
   const normalized = typeof phase === 'string' ? phase.trim().toLowerCase() : '';
-  if (normalized === 'cancelled' || normalized === 'canceled' || normalized === 'aborted') {
+  if (failed || normalized === 'error' || normalized === 'failed') return 'failed';
+  if (
+    normalized === 'cancel' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'aborted'
+  ) {
     return 'cancelled';
   }
   if (
@@ -106,7 +111,9 @@ export function normalizeToolTerminalStatus(
     normalized === 'end' ||
     normalized === 'complete' ||
     normalized === 'completed' ||
-    normalized === 'done'
+    normalized === 'done' ||
+    normalized === 'finish' ||
+    normalized === 'finished'
   ) {
     return 'completed';
   }

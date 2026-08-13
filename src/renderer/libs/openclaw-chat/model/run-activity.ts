@@ -23,6 +23,7 @@ export interface RunActivity {
   stageChangedAt: number;
   lastAgentEventAt: number;
   lastModelActivityAt: number | null;
+  hasRunningTool: boolean;
   provider?: string;
   model?: string;
   retryReason?: RunRetryReason;
@@ -31,9 +32,7 @@ export interface RunActivity {
 }
 
 export type WaitingStatusKind =
-  | 'preparing'
   | 'waiting-model'
-  | 'waiting-tool'
   | 'slow-active'
   | 'long-wait'
   | 'retrying'
@@ -68,6 +67,9 @@ export function projectWaitingStatus(params: {
   if (transportStatus === 'reconnecting') {
     return { kind: 'reconnecting', tone: 'warning', quietMs };
   }
+  // A running tool is observable work, not evidence that the model is stalled.
+  // Resume model-wait notices only after the last running tool settles.
+  if (activity.hasRunningTool) return null;
   if (quietMs < RUN_STALL_NOTICE_MS) return null;
   const confirmationFresh =
     activity.activeRunConfirmedAt !== null &&
@@ -87,12 +89,6 @@ export function projectWaitingStatus(params: {
   }
   if (quietMs >= RUN_SLOW_NOTICE_MS && confirmationFresh) {
     return { kind: 'slow-active', tone: 'neutral', quietMs };
-  }
-  if (activity.stage === 'queued' || activity.stage === 'preparing' || activity.stage === 'starting') {
-    return { kind: 'preparing', tone: 'neutral', quietMs };
-  }
-  if (activity.stage === 'running-tool') {
-    return { kind: 'waiting-tool', tone: 'neutral', quietMs };
   }
   return { kind: 'waiting-model', tone: 'neutral', quietMs };
 }

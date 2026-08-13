@@ -225,3 +225,19 @@ describe('shared OpenClaw message-domain corpus', () => {
     ).toBe('ignored-run');
   });
 });
+
+describe('normalizeToolEvent terminal phases', () => {
+  test.each([
+    ['error', 'failed'],
+    ['failed', 'failed'],
+    ['cancel', 'cancelled'],
+    ['cancelled', 'cancelled'],
+    ['canceled', 'cancelled'],
+    ['aborted', 'cancelled'],
+    ['finish', 'completed'],
+    ['finished', 'completed'],
+    ['done', 'completed'],
+  ] as const)('normalizes %s as %s', (phase, status) => {
+    expect(normalizeToolEvent({ phase, toolCallId: 'tool-1' }).status).toBe(status);
+  });
+});

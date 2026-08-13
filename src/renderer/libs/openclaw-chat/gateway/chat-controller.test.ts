@@ -41,7 +41,7 @@ test('shows a stalled-run status at 20 seconds and clears it on model activity',
       activity: controller.state.runActivity,
       transportStatus: controller.state.transportStatus,
     }),
-  ).toMatchObject({ kind: 'preparing' });
+  ).toMatchObject({ kind: 'waiting-model' });
   expect(request).toHaveBeenCalledWith('sessions.describe', { key: sessionKey });
 
   (
@@ -147,7 +147,97 @@ test('clears the notice when a delayed model event is received', async () => {
   ).toBeNull();
 });
 
-test('covers request preparation before the Gateway assigns a run id', async () => {
+test('suppresses model-stall notices until every running tool has settled', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_400_000);
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.state.transportStatus = 'connected';
+  controller.setPendingUserMessage('run two tools');
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const toolEvent = (seq: number, phase: 'start' | 'result', toolCallId: string) => ({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq,
+      stream: 'tool',
+      data: { phase, toolCallId, name: 'read', ...(phase === 'result' ? { result: 'ok' } : {}) },
+    },
+  });
+
+  handleEvent(toolEvent(1, 'start', 'tool-1'));
+  handleEvent(toolEvent(2, 'start', 'tool-2'));
+  expect(controller.state.runActivity?.stage).toBe('running-tool');
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 3,
+      stream: 'thinking',
+      data: { text: 'interleaved thinking' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 4,
+      stream: 'assistant',
+      data: { text: 'interleaved assistant content' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 5,
+      stream: 'lifecycle',
+      data: { phase: 'progress', stage: 'retrying', reason: 'rate_limit' },
+    },
+  });
+  expect(controller.state.runActivity).toMatchObject({
+    stage: 'retrying',
+    hasRunningTool: true,
+  });
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toBeNull();
+
+  handleEvent(toolEvent(6, 'result', 'tool-1'));
+  expect(controller.state.runActivity?.stage).toBe('running-tool');
+  handleEvent(toolEvent(7, 'result', 'tool-2'));
+  expect(controller.state.runActivity?.stage).toBe('waiting-model');
+
+  await vi.advanceTimersByTimeAsync(19_999);
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toBeNull();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(
+    projectWaitingStatus({
+      activity: controller.state.runActivity,
+      transportStatus: controller.state.transportStatus,
+    }),
+  ).toMatchObject({ kind: 'waiting-model' });
+});
+
+test('shows model waiting before the Gateway assigns a run id', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(1_500_000);
   const controller = new ChatController();
@@ -165,7 +255,7 @@ test('covers request preparation before the Gateway assigns a run id', async () 
       activity: controller.state.runActivity,
       transportStatus: controller.state.transportStatus,
     }),
-  ).toMatchObject({ kind: 'preparing' });
+  ).toMatchObject({ kind: 'waiting-model' });
 });
 
 test('preserves preparation timing when the initial Gateway connection starts', async () => {
@@ -249,7 +339,7 @@ test('only claims the run is active after a fresh sessions.describe confirmation
       activity: controller.state.runActivity,
       transportStatus: controller.state.transportStatus,
     }),
-  ).toMatchObject({ kind: 'preparing' });
+  ).toMatchObject({ kind: 'waiting-model' });
 });
 
 test('does not treat a persisted running status as active-run confirmation', async () => {
@@ -276,7 +366,7 @@ test('does not treat a persisted running status as active-run confirmation', asy
       activity: controller.state.runActivity,
       transportStatus: controller.state.transportStatus,
     }),
-  ).toMatchObject({ kind: 'preparing' });
+  ).toMatchObject({ kind: 'waiting-model' });
 });
 
 test('does not let an old probe release the current run probe lock', async () => {

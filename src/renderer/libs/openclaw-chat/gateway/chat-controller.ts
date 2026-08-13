@@ -454,6 +454,7 @@ export class ChatController {
       stageChangedAt: startedAt,
       lastAgentEventAt: startedAt,
       lastModelActivityAt: null,
+      hasRunningTool: false,
       activeRunConfirmedAt: null,
       probeState: 'idle',
     };
@@ -487,6 +488,9 @@ export class ChatController {
       activity.stageChangedAt = at;
     }
     activity.lastAgentEventAt = at;
+    activity.hasRunningTool = [
+      ...(this.state.transcript.activeTurn?.toolById.values() ?? []),
+    ].some(tool => tool.status === 'running');
     if (options.provider) activity.provider = options.provider;
     if (options.model) activity.model = options.model;
     const modelRef = normalizeModelRef(activity.model, activity.provider);
@@ -2763,7 +2767,10 @@ export class ChatController {
     const hasPartialResult = data.partialResult !== undefined;
     const isNonTerminalToolEvent = isNonTerminalToolPhase(phase);
     const isTerminalToolEvent = !isNonTerminalToolEvent && isTerminalToolPhase(phase);
-    this.updateRunActivity(runId, isNonTerminalToolEvent ? 'running-tool' : 'waiting-model', {
+    const hasRunningTool = [
+      ...(this.state.transcript.activeTurn?.toolById.values() ?? []),
+    ].some(tool => tool.status === 'running');
+    this.updateRunActivity(runId, hasRunningTool ? 'running-tool' : 'waiting-model', {
       modelActivity: true,
     });
     this.notifyStream(hasPartialResult && !isTerminalToolEvent ? 'tool-partial' : 'terminal');
@@ -3497,13 +3504,27 @@ function hasSimilarDisplayText(left: string, right: string): boolean {
 }
 
 function isTerminalToolPhase(phase: string): boolean {
-  return ['end', 'complete', 'completed', 'finish', 'finished', 'result', 'error'].includes(
-    phase.toLowerCase(),
-  );
+  return [
+    'end',
+    'complete',
+    'completed',
+    'done',
+    'finish',
+    'finished',
+    'result',
+    'error',
+    'failed',
+    'cancel',
+    'cancelled',
+    'canceled',
+    'aborted',
+  ].includes(phase.toLowerCase());
 }
 
 function isNonTerminalToolPhase(phase: string): boolean {
-  return ['delta', 'partial', 'progress', 'update', 'streaming'].includes(phase.toLowerCase());
+  return ['start', 'delta', 'partial', 'progress', 'update', 'streaming'].includes(
+    phase.toLowerCase(),
+  );
 }
 
 function isUnknownMethodError(err: unknown): boolean {

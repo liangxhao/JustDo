@@ -15,6 +15,7 @@ const activity = (overrides: Partial<RunActivity> = {}): RunActivity => ({
   stageChangedAt: 1_000,
   lastAgentEventAt: 1_000,
   lastModelActivityAt: null,
+  hasRunningTool: false,
   activeRunConfirmedAt: null,
   probeState: 'idle',
   ...overrides,
@@ -40,6 +41,19 @@ describe('projectWaitingStatus', () => {
       }),
     ).toMatchObject({ kind: 'waiting-model', tone: 'neutral' });
   });
+
+  it.each(['starting', 'queued', 'preparing'] as const)(
+    'shows model waiting for the internal %s stage',
+    stage => {
+      expect(
+        projectWaitingStatus({
+          activity: activity({ stage }),
+          transportStatus: 'connected',
+          now: 1_000 + RUN_STALL_NOTICE_MS,
+        }),
+      ).toMatchObject({ kind: 'waiting-model', tone: 'neutral' });
+    },
+  );
 
   it('only claims a slow active run after a fresh gateway confirmation', () => {
     const now = 1_000 + RUN_SLOW_NOTICE_MS;
@@ -123,28 +137,29 @@ describe('projectWaitingStatus', () => {
     ).toMatchObject({ kind: 'rate-limited' });
   });
 
-  it('uses a factual notice when a visible tool has no activity', () => {
+  it('does not show a model-stall notice while a tool is still running', () => {
     const now = 1_000 + RUN_LONG_NOTICE_MS;
     expect(
       projectWaitingStatus({
         activity: activity({
           stage: 'running-tool',
+          hasRunningTool: true,
           activeRunConfirmedAt: now - 1_000,
           probeState: 'active',
         }),
         transportStatus: 'connected',
         now,
       }),
-    ).toMatchObject({ kind: 'long-wait', tone: 'warning' });
+    ).toBeNull();
   });
 
-  it('identifies a stalled tool before the long-wait threshold', () => {
+  it('keeps tool execution free of model-stall notices at the first threshold', () => {
     expect(
       projectWaitingStatus({
-        activity: activity({ stage: 'running-tool' }),
+        activity: activity({ stage: 'running-tool', hasRunningTool: true }),
         transportStatus: 'connected',
         now: 1_000 + RUN_STALL_NOTICE_MS,
       }),
-    ).toMatchObject({ kind: 'waiting-tool', tone: 'neutral' });
+    ).toBeNull();
   });
 });
