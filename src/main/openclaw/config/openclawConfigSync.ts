@@ -418,6 +418,11 @@ export const OPENCLAW_STUCK_SESSION_WARN_MS = 10 * 60 * 1000;
 export const OPENCLAW_STUCK_SESSION_ABORT_MS = 40 * 60 * 1000;
 // OpenClaw treats zero as "never archive" for completed run-mode subagents.
 export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
+// Keep model execution bounded while allowing a small per-parent backlog.
+// These values are written to OpenClaw config so a future settings surface can
+// replace the defaults without changing runtime admission behavior.
+export const OPENCLAW_SUBAGENT_MAX_CONCURRENT = 3;
+export const OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT = 5;
 // Allow substantial work while still terminating runaway subagent runs.
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
@@ -436,6 +441,14 @@ export const buildManagedOpenClawSessionConfig = () => ({
     pruneAfter: OPENCLAW_SESSION_PRUNE_AFTER,
     maxEntries: OPENCLAW_SESSION_MAX_ENTRIES,
   },
+});
+
+export const buildManagedOpenClawSubagentConfig = () => ({
+  maxSpawnDepth: 1,
+  maxChildrenPerAgent: OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
+  maxConcurrent: OPENCLAW_SUBAGENT_MAX_CONCURRENT,
+  runTimeoutSeconds: OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS,
+  archiveAfterMinutes: OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES,
 });
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
@@ -1198,13 +1211,7 @@ export class OpenClawConfigSync {
           heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           workspace: resolvedWorkspaceDir,
-          subagents: {
-            maxSpawnDepth: 1,
-            maxChildrenPerAgent: 5,
-            maxConcurrent: 8,
-            runTimeoutSeconds: OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS,
-            archiveAfterMinutes: OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES,
-          },
+          subagents: buildManagedOpenClawSubagentConfig(),
         },
         ...this.buildAgentsList(primaryModel, availableModelRefs),
       },

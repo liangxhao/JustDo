@@ -3,6 +3,7 @@ import type { GatewayClientLike } from '../gateway/types';
 export type GatewayRequestClient = Pick<GatewayClientLike, 'request'>;
 
 export const SUBAGENT_STATUSES = {
+  PENDING: 'pending',
   RUNNING: 'running',
   DONE: 'done',
   FAILED: 'failed',
@@ -34,6 +35,9 @@ const isSubagentStatus = (value: unknown): value is SubagentStatus =>
   Object.values(SUBAGENT_STATUSES).includes(value as SubagentStatus);
 
 const resolveStatus = (row: Record<string, unknown>): SubagentStatus => {
+  if (row.status === 'pending' || row.subagentRunState === 'pending') {
+    return SUBAGENT_STATUSES.PENDING;
+  }
   if (
     row.hasActiveRun === true ||
     row.hasActiveSubagentRun === true ||
@@ -128,6 +132,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const resolveToolStatus = (value: unknown): SubagentStatus => {
+  if (value === 'pending') return SUBAGENT_STATUSES.PENDING;
   if (value === 'running' || value === 'active') return SUBAGENT_STATUSES.RUNNING;
   if (isSubagentStatus(value)) return value;
   if (value === 'error') return SUBAGENT_STATUSES.FAILED;

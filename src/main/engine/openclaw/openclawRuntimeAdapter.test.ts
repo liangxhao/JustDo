@@ -1116,6 +1116,40 @@ test('getSessionRuntimeStatus treats a visible announce stream as locally runnin
   });
 });
 
+test('getSessionRuntimeStatus treats a pending subagent as active', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({
+    sessions: [
+      {
+        key: 'agent:main:justdo:session-1',
+        status: 'completed',
+      },
+      {
+        key: 'agent:main:subagent:queued-child',
+        spawnedBy: 'agent:main:justdo:session-1',
+        status: 'pending',
+        subagentRunState: 'pending',
+        hasActiveSubagentRun: true,
+      },
+    ],
+  });
+
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { includeSubagents: true }),
+  ).resolves.toEqual({
+    known: true,
+    mainRunning: false,
+    subagentRunning: true,
+    running: true,
+  });
+});
+
 test('getSessionRuntimeStatus treats manual context compaction as locally running', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

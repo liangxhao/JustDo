@@ -795,7 +795,7 @@ interface IElectronAPI {
         sessionKey: string;
         sessionId?: string;
         label: string;
-        status: 'running' | 'done' | 'failed' | 'killed' | 'timeout';
+        status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout';
         task?: string;
         model?: string;
         startedAt?: number;

@@ -616,7 +616,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           pendingParentKeys.push(subagent.sessionKey);
         }
         if (
-          subagent.status === SUBAGENT_STATUSES.RUNNING &&
+          (subagent.status === SUBAGENT_STATUSES.PENDING ||
+            subagent.status === SUBAGENT_STATUSES.RUNNING) &&
           !runningKeys.has(subagent.sessionKey)
         ) {
           runningKeys.add(subagent.sessionKey);
@@ -3311,7 +3312,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const cachedSubagents = this.subagentStatusCache.get(sessionId);
         if (cachedSubagents && cachedSubagents.expiresAt > Date.now()) {
           subagentRunning ||= cachedSubagents.subagents.some(
-            subagent => subagent.status === SUBAGENT_STATUSES.RUNNING,
+            subagent =>
+              subagent.status === SUBAGENT_STATUSES.PENDING ||
+              subagent.status === SUBAGENT_STATUSES.RUNNING,
           );
         }
       }
@@ -3333,9 +3336,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return (
       row.hasActiveRun === true ||
       row.hasActiveSubagentRun === true ||
+      row.status === 'pending' ||
       row.status === 'running' ||
       row.runState === 'active' ||
-      row.subagentRunState === 'active'
+      row.subagentRunState === 'active' ||
+      row.subagentRunState === 'pending'
     );
   }
 

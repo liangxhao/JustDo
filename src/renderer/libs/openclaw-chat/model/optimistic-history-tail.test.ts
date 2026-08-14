@@ -44,6 +44,35 @@ describe('optimistic history tail ownership', () => {
     expect(state.activeTurn).toBeNull();
   });
 
+  test('keeps authoritative tool calls exactly once after retiring the live projection', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-1' }, dependencies);
+    turn.status = 'final';
+    const persisted = {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'dispatch work' },
+        { type: 'text', text: 'Starting the worker.' },
+        {
+          type: 'toolCall',
+          id: 'call-1',
+          name: 'sessions_spawn',
+          arguments: { task: 'Generate the PDF' },
+        },
+      ],
+    };
+
+    expect(retireSettledActiveTurn(state, [persisted])).toBe(true);
+    expect(projectPersistedMessagesForActiveTurn([persisted], state.activeTurn)).toEqual([
+      persisted,
+    ]);
+    expect(
+      persisted.content.filter(
+        (block) => block.type === 'toolCall' && 'id' in block && block.id === 'call-1',
+      ),
+    ).toHaveLength(1);
+  });
+
   test('keeps the completed active turn while history has not caught up', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-1' }, dependencies);

@@ -7,6 +7,7 @@ import Modal from '@/shared/components/common/Modal';
 import { reconcileSubagentLabel } from './subagentLabel';
 
 export const SUBAGENT_STATUSES = {
+  PENDING: 'pending',
   RUNNING: 'running',
   DONE: 'done',
   FAILED: 'failed',
@@ -31,6 +32,7 @@ export type Subagent = {
 };
 
 export const subagentStatusStyles: Record<SubagentStatus, string> = {
+  pending: 'bg-amber-500 animate-pulse',
   running: 'bg-blue-500 animate-pulse',
   done: 'bg-green-500',
   failed: 'bg-red-500',
@@ -167,8 +169,10 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
       ]
     : [];
 
-  const runningCount = subagents.filter(
-    subagent => subagent.status === SUBAGENT_STATUSES.RUNNING,
+  const activeCount = subagents.filter(
+    subagent =>
+      subagent.status === SUBAGENT_STATUSES.PENDING ||
+      subagent.status === SUBAGENT_STATUSES.RUNNING,
   ).length;
 
   return (
@@ -194,7 +198,7 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
           <circle cx="19" cy="16" r="2.5" />
           <path d="M12 11v2M7.5 14.5 10 13m6.5 1.5L14 13" />
         </svg>
-        {runningCount > 0 && (
+        {activeCount > 0 && (
           <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-2 ring-background" />
         )}
       </button>

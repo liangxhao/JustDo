@@ -347,6 +347,75 @@ test('maps a recovered active child session to running', async () => {
   ]);
 });
 
+test('preserves pending before generic active flags in the session projection', async () => {
+  const client = {
+    request: vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          key: 'agent:main:subagent:queued-child',
+          spawnedBy: 'agent:main:cowork:parent',
+          status: 'pending',
+          subagentRunState: 'pending',
+          hasActiveSubagentRun: true,
+        },
+      ],
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({
+      client,
+      parentKeys: ['agent:main:cowork:parent'],
+      includePersistedHistory: false,
+      includeStructuredTool: false,
+    }),
+  ).resolves.toMatchObject([
+    {
+      sessionKey: 'agent:main:subagent:queued-child',
+      status: 'pending',
+    },
+  ]);
+});
+
+test('maps structured pending rows without creating fallback failures', async () => {
+  const client = {
+    request: vi.fn().mockImplementation(async (method: string) =>
+      method === 'tools.invoke'
+        ? {
+            ok: true,
+            output: {
+              details: {
+                status: 'ok',
+                active: [
+                  {
+                    sessionKey: 'agent:main:subagent:queued-child',
+                    label: 'Queued worker',
+                    status: 'pending',
+                  },
+                ],
+                recent: [],
+              },
+            },
+          }
+        : { sessions: [] },
+    ),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({
+      client,
+      parentKeys: ['agent:main:cowork:parent'],
+      includePersistedHistory: false,
+    }),
+  ).resolves.toMatchObject([
+    {
+      sessionKey: 'agent:main:subagent:queued-child',
+      label: 'Queued worker',
+      status: 'pending',
+    },
+  ]);
+});
+
 test('maps interrupted registry rows to failed', async () => {
   const client = {
     request: vi.fn().mockResolvedValue({

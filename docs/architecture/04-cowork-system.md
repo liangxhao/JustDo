@@ -256,6 +256,23 @@ Subagent 状态由 Gateway 提供，JustDo 只负责桥接和展示：
 - `cowork.getSubTaskStatus()` 查询 session 下子任务状态。
 - `cowork.getSubTaskSession(sessionKey)` 解析子任务会话。
 
+Subagent 执行受 Gateway 配置的两级硬约束控制：
+
+- `agents.defaults.subagents.maxConcurrent` 限制 native subagent lane 中实际运行的数量；超出的 accepted native run 留在 lane 队列中，不占用模型推理槽位。ACP 仅共享下面的每父会话 active-child 准入限制，其执行并发由 ACP backend（例如 `acp.maxConcurrentSessions`）管理。
+- `agents.defaults.subagents.maxChildrenPerAgent` 限制每个父会话的运行中与排队中 child 总数；超限的 `sessions_spawn` 返回 `forbidden`。
+- `sessions_spawn` 先完成无异步副作用的参数、runtime 与 policy 语义校验，再在第一次 `await` 前同步占用按父会话隔离的初始化 reservation；准入按“活动 child + 初始化 reservation”计算，因此同批 9 个合法调用在上限为 5 时严格得到 5 个 accepted、4 个 `forbidden`，不会因前一个 child 极快结束而让同批后续调用补位。校验失败不占活动名额；accepted reservation 在 child 登记成功或初始化失败后释放，由 registry 活动记录接管成功项；不同父会话互不阻塞。
+- 成功登记但尚未开始执行的 child 状态为 `pending`：native 通常是在等待 subagent lane 槽位，ACP 则是在等待其 backend 启动 run；两者都只在 Gateway 收到对应 lifecycle `start` 事件后切换为 `running`。
+- 准入阶段的 `forbidden` 或其他创建前错误不会登记 child session/run，因此不出现在 Subagent 列表，只作为父会话的 tool result 返回。若 backend 已启动后 registry 登记失败，Runtime 会尽力删除 provisional session 并返回明确错误；清理本身失败时可能保留一个真实的 provisional child，作为异常恢复对象显示。
+- 限制只基于 canonical 父会话、活动 child 与初始化 reservation，不使用 `taskName` 去重；不同 Tool Call 合法地运行同名任务。
+
+JustDo 当前同步的默认值分别为 3 和 5：整个 subagent lane 最多同时运行 3 个 child，每个父会话最多保留 5 个活动 child。无其他 lane 竞争且调度及时，通常表现为 3 个运行、2 个排队；存在其他父会话竞争时，同一父会话的 5 个 child 都可能处于 `pending`。排队任务不发起模型推理，但仍保留 session、run registry 和完成通知状态，所以总活动数不能无限增长。
+
+Subagent completion 自动驱动父模型继续编排时，同一 canonical 父会话按完成事件到达顺序严格 FIFO。Registry 在 completion 进入 terminal 状态时分配并持久化单调 `queueSequence`；只有最早的未终结 delivery 可以尝试投递，队首失败后的 retry 保留原位置，Gateway 重启后也按持久化顺序恢复。每个事件先等待当前父回合完整结束，再从最新 canonical transcript 启动 direct agent turn；若 direct 调用只返回 non-terminal acknowledgement，Runtime 会等待该 requester run 结束并通过相同 idempotency key 取得 terminal result。OpenClaw 会把 prompt 执行期间落盘的 Tool Call、Tool Result 与 `sessions_yield` 暂存为 side branch；embedded run finalizer 之后，外层 completion delivery 仍可能追加 delivery mirror 和 `leaf` control，因此不能在 embedded finalizer 中提前提升。只有 outer delivery 完整提交并返回成功后，Runtime 才在 FIFO 锁内重新从磁盘打开 requester transcript、取得 session write lock，并把最新 side branch 提升为 canonical leaf；提升完成后才释放 FIFO，使下一项读取到上一项完整的 Tool Call/Result。提升失败会令本次 delivery 保持未完成，恢复流程通过相同 idempotency key 重试提交边界，不重新执行一个新的模型回合。cleanup bookkeeping 异常会重新调度已提交项以完成 registry 回收；若 delivery 已 terminal，也会立即唤醒此前被 gate 的后续事件。父回合繁忙、Gateway 关闭、abort 或调用失败时，事件保持未交付并由原生 announce 恢复机制重试，不会提升未完成分支，也不会回退到冻结 prompt 执行；abort 会立即结束本次等待而不占满 announce timeout。不同父会话仍可并行。
+
+`sessions_yield` 的等待条件不能只看 child 是否已经 `ended`。Runtime 同时检查活动 child 和尚未投递的 required completion；只要其中任一项能在未来唤醒父会话，就允许结束当前回合等待。正在执行当前模型回合的 completion 会按其 `announce:v1:<childSessionKey>:<runId>` 身份从未来唤醒源中排除，避免最后一条 completion 把自己误认为下一条事件而永久等待。只有活动 child 与其他待投递 completion 都不存在时，Tool 才返回兼容的 `no_active_subagents` 结果并要求模型继续当前回合。
+
+Gateway `chat.history` 对 mixed assistant content 的投影保留原顺序的 thinking、text 和 Tool Call；commentary assistant 即使只有 Tool Call、没有附带文本也不能被提前过滤，配对 Tool Result 继续按 `toolCallId` 留在权威历史。Renderer 在权威历史到达后退役 live projection，保证消息界面、原始 transcript 和 Runtime admission 记录可按 Tool Call 对账，既不丢失也不重复显示。
+
 新增 subagent 功能时，优先要求 Gateway 提供稳定 child session id，而不是从 tool output 文本猜测。
 
 ## Attachment Flow

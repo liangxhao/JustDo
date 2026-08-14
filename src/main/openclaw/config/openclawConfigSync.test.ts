@@ -16,6 +16,7 @@ import {
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawHeartbeatConfig,
   buildManagedOpenClawSessionConfig,
+  buildManagedOpenClawSubagentConfig,
   buildOpenClawConfigMeta,
   buildProviderSelection,
   hasOpenClawConfigChanged,
@@ -28,6 +29,8 @@ import {
   OPENCLAW_SESSION_PRUNE_AFTER,
   OPENCLAW_STUCK_SESSION_ABORT_MS,
   OPENCLAW_STUCK_SESSION_WARN_MS,
+  OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
+  OPENCLAW_SUBAGENT_MAX_CONCURRENT,
   resolveFileToolsWorkspaceOnly,
   resolvePermissionPolicy,
 } from './openclawConfigSync';
@@ -376,6 +379,22 @@ describe('OpenClaw managed connectivity config', () => {
         dangerouslyAllowPrivateNetwork: true,
       },
     });
+  });
+});
+
+describe('OpenClaw managed subagent config', () => {
+  test('bounds concurrent runs below the per-parent active child limit', () => {
+    expect(buildManagedOpenClawSubagentConfig()).toEqual(
+      expect.objectContaining({
+        maxConcurrent: 3,
+        maxChildrenPerAgent: 5,
+      }),
+    );
+    expect(OPENCLAW_SUBAGENT_MAX_CONCURRENT).toBeGreaterThanOrEqual(1);
+    expect(OPENCLAW_SUBAGENT_MAX_CONCURRENT).toBeLessThanOrEqual(
+      OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
+    );
+    expect(OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT).toBeLessThanOrEqual(20);
   });
 });
 

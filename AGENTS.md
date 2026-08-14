@@ -141,7 +141,9 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 `017-tool-error-reasoning-recovery.cjs`,
 `018-persistent-interactive-approvals.cjs`,
 `019-compaction-emergency-fallback.cjs`,
-`020-run-progress-events.cjs`.
+`020-run-progress-events.cjs`,
+`021-atomic-sessions-spawn-admission.cjs`,
+`022-subagent-pending-status.cjs`.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 

@@ -28,8 +28,8 @@ scripts/patches/v2026.6.11/
 | `002-agent-announce-reasoning-stream.cjs`        | Agent reasoning announcement stream                                                                                                                                                                                            |
 | `003-openai-content-reasoning-tags.cjs`          | OpenAI content reasoning tag handling                                                                                                                                                                                          |
 | `004-windows-mcp-package-runner.cjs`             | Windows MCP stdio/package runner compatibility                                                                                                                                                                                 |
-| `005-history-thinking-and-subagent-yield.cjs`    | History thinking content and subagent yield compatibility                                                                                                                                                                      |
-| `006-sessions-yield-active-guard.cjs`            | Session yield active guard                                                                                                                                                                                                     |
+| `005-history-thinking-and-subagent-yield.cjs`    | Preserve auditable thinking/tool-call history, promote announce side branches only after outer delivery commit, and enforce a persistent per-requester completion delivery queue through canonical transcript commit              |
+| `006-sessions-yield-active-guard.cjs`            | Allow yield only when an active child or a future required completion delivery can wake the parent; exclude the completion currently being consumed                                                                            |
 | `007-allow-managed-pip-config-env.cjs`           | JustDo-managed pip config env passthrough                                                                                                                                                                                      |
 | `008-dedupe-visible-subagent-announces.cjs`      | Deduplicate sibling completion announces already visible in parent history                                                                                                                                                     |
 | `009-reply-session-init-conflict-retry.cjs`      | Fresh writer snapshots, key-order-independent revisions, and bounded retry for reply initialization conflicts                                                                                                                  |
@@ -43,6 +43,9 @@ scripts/patches/v2026.6.11/
 | `017-tool-error-reasoning-recovery.cjs`          | Retry reasoning-only post-tool-error turns with bounded request-only user recovery messages                                                                                                                                    |
 | `018-persistent-interactive-approvals.cjs`       | Keep interactive approvals pending until a decision, preserve timeout-free Gateway waits, suppress the suspended turn's duplicate reply, and resume webchat exec work with a hidden internal prompt only after a real decision |
 | `019-compaction-emergency-fallback.cjs`          | Commit a bounded local handoff when model-backed summarization cannot run, then use bounded retries and an aggressive recent-tail pass before reporting irreducible context                                                    |
+| `020-run-progress-events.cjs`                    | Publish sanitized run progress events for long-running turns                                                                                                                                                                   |
+| `021-atomic-sessions-spawn-admission.cjs`        | After each native/ACP synchronous preflight, reserve per-parent child capacity before the first initialization await and hold it through shared registry admission                                                            |
+| `022-subagent-pending-status.cjs`                | Project accepted native and ACP children without a lifecycle `start` as `pending`, then switch to `running` on `start`, including starts observed just before registry admission                                                  |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -50,6 +53,14 @@ Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for re
 its helper before the live-context publisher injected by `014`; the numeric
 filenames are the required application order. Reassess these dependencies
 before removing any of those patches.
+
+Subagent responsibilities stay split by runtime boundary: `005` owns history,
+and completion-announce consistency; `006` owns the final future-wake check for
+`sessions_yield`; `021` owns child creation admission and initialization reservations; `022` only projects accepted queued
+runs as `pending`. These are separate lifecycle stages, so the completion FIFO
+and stricter admission extend their existing owners instead of adding another
+overlapping patch. Admission never compares `taskName`: repeated names remain
+valid when they come from distinct Tool Calls and capacity is available.
 
 `016` applies its normal-request and safeguard-compaction changes together to a
 pristine generated bundle. It intentionally rejects a bundle containing an
@@ -164,8 +175,8 @@ Patch removal is a real change:
 | `002-agent-announce-reasoning-stream.cjs`        | Reasoning event compatibility                                                     | Remove when upstream agent announcements include reasoning stream                                                                                                 |
 | `003-openai-content-reasoning-tags.cjs`          | Provider content parsing                                                          | Remove when upstream provider parser preserves reasoning tags                                                                                                     |
 | `004-windows-mcp-package-runner.cjs`             | Windows process compatibility                                                     | Remove when upstream MCP package runner handles Windows stdio launch reliably                                                                                     |
-| `005-history-thinking-and-subagent-yield.cjs`    | History/subagent compatibility                                                    | Remove when upstream history includes thinking and subagent yield data                                                                                            |
-| `006-sessions-yield-active-guard.cjs`            | Runtime race guard                                                                | Remove when upstream session yield state is guarded                                                                                                               |
+| `005-history-thinking-and-subagent-yield.cjs`    | History/subagent consistency                                                      | Remove when upstream preserves tool-only commentary/history, promotes announce branches after outer delivery commit, and persistently orders completion retries/restores per requester |
+| `006-sessions-yield-active-guard.cjs`            | Completion-aware session yield guard                                              | Remove when upstream distinguishes active children, undelivered required completions, and the completion currently consumed before allowing `sessions_yield`      |
 | `007-allow-managed-pip-config-env.cjs`           | Managed dependency config passthrough                                             | Remove when upstream supports scoped dependency manager env passthrough                                                                                           |
 | `008-dedupe-visible-subagent-announces.cjs`      | Subagent completion delivery compatibility                                        | Remove when upstream coalesces sibling announces or credits results already visible in parent history                                                             |
 | `009-reply-session-init-conflict-retry.cjs`      | Runtime session concurrency guard                                                 | Remove when upstream aligns reply snapshot/commit cache consistency, uses key-order-independent revisions, and retries genuine conflicts                          |
@@ -179,6 +190,9 @@ Patch removal is a real change:
 | `017-tool-error-reasoning-recovery.cjs`          | Reasoning-only turns silently stop after tool errors                              | Remove when OpenClaw supports bounded request-only recovery messages without transcript persistence                                                               |
 | `018-persistent-interactive-approvals.cjs`       | Interactive approval lifetime and run suspension                                  | Remove when OpenClaw preserves timeout-free approval waits and resumes approved webchat exec work outside the originating run lifetime only after a real decision |
 | `019-compaction-emergency-fallback.cjs`          | Compaction liveness                                                               | Remove when OpenClaw commits a deterministic bounded fallback instead of cancelling compaction after summarizer, model, or credential failures                    |
+| `020-run-progress-events.cjs`                    | Missing sanitized run progress events                                             | Remove when OpenClaw emits stable, bounded progress events for active runs                                                                                        |
+| `021-atomic-sessions-spawn-admission.cjs`        | Runtime child-admission race guard                                                | Remove when OpenClaw atomically reserves per-parent child capacity before asynchronous native-subagent and ACP spawn initialization                               |
+| `022-subagent-pending-status.cjs`                | Missing pre-start subagent registry state                                         | Remove when OpenClaw projects accepted child runs without lifecycle `start` separately from runs that have emitted `start`                                       |
 
 ### Compaction patch upgrade warning
 
