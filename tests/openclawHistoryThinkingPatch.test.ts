@@ -35,6 +35,29 @@ const DELIVERY_EVIDENCE = `function hasCommittedOutboundDeliveryEvidence(result)
 \treturn hasMessagingToolDeliveryEvidence(result) || Array.isArray(result.acceptedSessionSpawns) && hasAcceptedSessionSpawn(result.acceptedSessionSpawns) || hasPositiveNumber(result.successfulCronAdds);
 }`;
 
+const CLI_TRANSCRIPT_GAP_FILL = `async function persistCliTurnTranscript(params) {
+  const replyText = resolveCliTranscriptReplyText(params.result);
+  const provider = params.result.meta.agentMeta?.provider?.trim() ?? "cli";
+  const model = params.result.meta.agentMeta?.model?.trim() ?? "default";
+  const gapFill = params.embeddedAssistantGapFill ?? false;
+  return await persistTextTurnTranscript({
+    body: gapFill ? "" : params.body,
+    transcriptBody: gapFill ? void 0 : params.transcriptBody,
+    ...!gapFill && params.userMessage ? { userMessage: params.userMessage } : {},
+    finalText: replyText,
+    assistant: {
+      api: "cli",
+      provider,
+      model
+    }
+  });
+}`;
+
+const CLI_TRANSCRIPT_GAP_FILL_DIST = CLI_TRANSCRIPT_GAP_FILL.replace(/^ {4}/gm, '\t\t').replace(
+  /^ {2}/gm,
+  '\t',
+);
+
 test('preserves history thinking blocks and treats sessions_yield as delivery evidence', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-history-patch-'));
   try {
@@ -52,6 +75,44 @@ test('preserves history thinking blocks and treats sessions_yield as delivery ev
     expect(patched).toContain('entry.type === "thinking"');
     expect(patched).toContain('isToolHistoryBlockType(entry.type)');
     expect(patched).toContain('result.meta.toolSummary.tools.includes("sessions_yield")');
+    expect(applyPatch(runtimeDir)).toEqual([]);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('does not mirror visible assistant text after an embedded yielded turn', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-history-patch-'));
+  try {
+    const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+    fs.writeFileSync(bundlePath, CLI_TRANSCRIPT_GAP_FILL, 'utf8');
+
+    expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
+    const patched = fs.readFileSync(bundlePath, 'utf8');
+    expect(patched).toContain(
+      'const suppressYieldedGapFill = gapFill && params.result.meta.yielded === true;',
+    );
+    expect(patched).toContain('finalText: suppressYieldedGapFill ? "" : replyText');
+    expect(applyPatch(runtimeDir)).toEqual([]);
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('applies yielded transcript gap-fill suppression to dist output', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-history-patch-'));
+  try {
+    const distDir = path.join(runtimeDir, 'dist');
+    const distPath = path.join(distDir, 'runtime.js');
+    fs.mkdirSync(distDir);
+    fs.writeFileSync(distPath, CLI_TRANSCRIPT_GAP_FILL_DIST, 'utf8');
+
+    expect(applyPatch(runtimeDir)).toEqual([path.join('dist', 'runtime.js')]);
+    const patched = fs.readFileSync(distPath, 'utf8');
+    expect(patched).toContain(
+      '\tconst suppressYieldedGapFill = gapFill && params.result.meta.yielded === true;',
+    );
+    expect(patched).toContain('\t\tfinalText: suppressYieldedGapFill ? "" : replyText');
     expect(applyPatch(runtimeDir)).toEqual([]);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
@@ -348,9 +409,11 @@ test('serializes completion delivery per requester without blocking other parent
     );
     applyPatch(runtimeDir);
     const patched = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
-    const helperSource = patched.match(
-      /const subagentCompletionAnnounceTails[\s\S]*?\n}\nasync function deliverSubagentAnnouncement/,
-    )?.[0].replace(/\nasync function deliverSubagentAnnouncement$/, '');
+    const helperSource = patched
+      .match(
+        /const subagentCompletionAnnounceTails[\s\S]*?\n}\nasync function deliverSubagentAnnouncement/,
+      )?.[0]
+      .replace(/\nasync function deliverSubagentAnnouncement$/, '');
     expect(helperSource).toBeTruthy();
     const withLock = new Function(
       `${helperSource}; return withSubagentCompletionAnnounceLock;`,
@@ -358,7 +421,7 @@ test('serializes completion delivery per requester without blocking other parent
 
     const events: string[] = [];
     let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
+    const firstGate = new Promise<void>(resolve => {
       releaseFirst = resolve;
     });
     const first = withLock('parent-a', async () => {
@@ -459,9 +522,7 @@ test('serializes completion delivery per requester without blocking other parent
     expect(patched).toContain(
       '(normalizeOptionalLowercaseString(params.sourceTool) ?? "subagent_announce") === "subagent_announce"',
     );
-    expect(patched).toContain(
-      'steer: strictCompletion ? async () => ({ status: "dropped" })',
-    );
+    expect(patched).toContain('steer: strictCompletion ? async () => ({ status: "dropped" })');
     expect(patched).toContain('operation: "completion direct announce terminal confirmation"');
 
     const requesterWaitSource = patched.match(
@@ -482,7 +543,10 @@ test('serializes completion delivery per requester without blocking other parent
     await expect(abortedWait).resolves.toBe(false);
 
     const directStart = patched.indexOf('async function sendSubagentAnnounceDirectly');
-    const directEnd = patched.indexOf('\nasync function waitForSubagentRequesterRunEnd', directStart);
+    const directEnd = patched.indexOf(
+      '\nasync function waitForSubagentRequesterRunEnd',
+      directStart,
+    );
     const directSource =
       directStart >= 0 && directEnd > directStart
         ? patched.slice(directStart, directEnd)
@@ -576,11 +640,7 @@ const REGISTRY_QUEUE_FIXTURE = `function createSubagentRegistryLifecycleControll
 test('keeps failed completion retries at the persistent per-parent queue head', async () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-history-patch-'));
   try {
-    fs.writeFileSync(
-      path.join(runtimeDir, 'gateway-bundle.mjs'),
-      REGISTRY_QUEUE_FIXTURE,
-      'utf8',
-    );
+    fs.writeFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), REGISTRY_QUEUE_FIXTURE, 'utf8');
     expect(applyPatch(runtimeDir)).toEqual(['gateway-bundle.mjs']);
     const patched = fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8');
     expect(patched).toContain(
@@ -605,10 +665,7 @@ test('keeps failed completion retries at the persistent per-parent queue head', 
       `${queueHelpers}; return { ensureCompletionDeliveryQueueSequence, hasEarlierPendingCompletionDelivery };`,
     )(params, ensureDeliveryState) as {
       ensureCompletionDeliveryQueueSequence: (entry: Record<string, any>) => boolean;
-      hasEarlierPendingCompletionDelivery: (
-        runId: string,
-        entry: Record<string, any>,
-      ) => boolean;
+      hasEarlierPendingCompletionDelivery: (runId: string, entry: Record<string, any>) => boolean;
     };
     const first = {
       runId: 'run-a',
@@ -644,23 +701,14 @@ test('keeps failed completion retries at the persistent per-parent queue head', 
       'ensureDeliveryState',
       `${queueHelpers}; return { hasEarlierPendingCompletionDelivery };`,
     )({ runs: restoredRuns }, ensureDeliveryState) as {
-      hasEarlierPendingCompletionDelivery: (
-        runId: string,
-        entry: Record<string, any>,
-      ) => boolean;
+      hasEarlierPendingCompletionDelivery: (runId: string, entry: Record<string, any>) => boolean;
     };
     expect(
-      restoredQueue.hasEarlierPendingCompletionDelivery(
-        'run-b',
-        restoredRuns.get('run-b')!,
-      ),
+      restoredQueue.hasEarlierPendingCompletionDelivery('run-b', restoredRuns.get('run-b')!),
     ).toBe(true);
     restoredRuns.get('run-a')!.delivery.status = 'delivered';
     expect(
-      restoredQueue.hasEarlierPendingCompletionDelivery(
-        'run-b',
-        restoredRuns.get('run-b')!,
-      ),
+      restoredQueue.hasEarlierPendingCompletionDelivery('run-b', restoredRuns.get('run-b')!),
     ).toBe(false);
 
     first.delivery.status = 'delivered';
@@ -698,7 +746,10 @@ test('keeps failed completion retries at the persistent per-parent queue head', 
 
     const runRecoveryEdge = async (
       id: string,
-      mutateBeforeThrow: (caseRuns: Map<string, Record<string, any>>, entry: Record<string, any>) => void,
+      mutateBeforeThrow: (
+        caseRuns: Map<string, Record<string, any>>,
+        entry: Record<string, any>,
+      ) => void,
       throwOnRecoveryPersist = false,
     ) => {
       const entry = {
@@ -743,9 +794,9 @@ test('keeps failed completion retries at the persistent per-parent queue head', 
         entry.cleanupCompletedAt = Date.now();
       }),
     ).resolves.toEqual([]);
-    await expect(
-      runRecoveryEdge('recovery-persist-fails', () => {}, true),
-    ).resolves.toEqual(['recovery-persist-fails']);
+    await expect(runRecoveryEdge('recovery-persist-fails', () => {}, true)).resolves.toEqual([
+      'recovery-persist-fails',
+    ]);
   } finally {
     fs.rmSync(runtimeDir, { recursive: true, force: true });
   }

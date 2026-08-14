@@ -3,7 +3,8 @@
 // Purpose: Preserve streamed thinking and tool-call blocks after chat.history
 // refreshes, promote finalized completion branches before the next prompt,
 // serialize completion announcements per requester, treat sessions_yield completion
-// handoffs as committed outbound delivery evidence, accept intentional silent
+// handoffs as committed outbound delivery evidence, suppress redundant CLI transcript
+// gap-fill after an embedded yielded turn, accept intentional silent
 // completion turns that reply NO_REPLY, and accept visible stop turns regardless
 // of usage metadata.
 // OpenAI-compatible providers may omit usage or report zero usage for complete
@@ -15,7 +16,8 @@
 // Remove when: OpenClaw preserves display thinking/tool calls in chat.history,
 // promotes finalized completion side branches, serializes completion delivery
 // from the latest requester transcript, records sessions_yield handoffs as
-// committed delivery evidence natively, accepts intentional silent completion
+// committed delivery evidence natively, avoids mirroring already-persisted yielded
+// assistant text as a CLI transcript message, accepts intentional silent completion
 // turns for subagent announcements, and no longer uses token usage metadata to
 // retry visible stop turns.
 // Upstream tracking: TODO(openclaw): file issue/PR with JustDo long-task
@@ -244,11 +246,7 @@ function patchFile(filePath) {
         return true;
       }
       getLeafEntry() {`;
-  result = replaceOnce(
-    content,
-    sessionLeafPromotionBundleBefore,
-    sessionLeafPromotionBundleAfter,
-  );
+  result = replaceOnce(content, sessionLeafPromotionBundleBefore, sessionLeafPromotionBundleAfter);
   content = result.content;
   changed ||= result.changed;
 
@@ -269,11 +267,7 @@ function patchFile(filePath) {
 \t\treturn true;
 \t}
 \tgetLeafEntry() {`;
-  result = replaceOnce(
-    content,
-    sessionLeafPromotionDistBefore,
-    sessionLeafPromotionDistAfter,
-  );
+  result = replaceOnce(content, sessionLeafPromotionDistBefore, sessionLeafPromotionDistAfter);
   content = result.content;
   changed ||= result.changed;
 
@@ -321,10 +315,13 @@ function patchFile(filePath) {
 
   // Strict completion delivery needs to wait for the active requester run
   // instead of steering a completion into its already-prepared prompt.
-  const runsImportPattern = /import \{ ([^\n]*?\bi as formatEmbeddedAgentQueueFailureSummary,[^\n]*?) \} from "(\.\/runs-[^"]+\.js)";/;
+  const runsImportPattern =
+    /import \{ ([^\n]*?\bi as formatEmbeddedAgentQueueFailureSummary,[^\n]*?) \} from "(\.\/runs-[^"]+\.js)";/;
   if (!content.includes('waitForEmbeddedAgentRunEnd') && runsImportPattern.test(content)) {
-    content = content.replace(runsImportPattern, (_match, imports, modulePath) =>
-      `import { S as waitForEmbeddedAgentRunEnd, ${imports} } from "${modulePath}";`,
+    content = content.replace(
+      runsImportPattern,
+      (_match, imports, modulePath) =>
+        `import { S as waitForEmbeddedAgentRunEnd, ${imports} } from "${modulePath}";`,
     );
     changed = true;
   }
@@ -544,8 +541,14 @@ function patchFile(filePath) {
     const helper = content.includes('\n\tconst beginSubagentCleanup = (runId) => {')
       ? registryQueueHelpersDist
       : registryQueueHelpersBundle;
-    content = content.replace('  const beginSubagentCleanup = (runId) => {', `${helper}  const beginSubagentCleanup = (runId) => {`);
-    content = content.replace('\tconst beginSubagentCleanup = (runId) => {', `${helper}\tconst beginSubagentCleanup = (runId) => {`);
+    content = content.replace(
+      '  const beginSubagentCleanup = (runId) => {',
+      `${helper}  const beginSubagentCleanup = (runId) => {`,
+    );
+    content = content.replace(
+      '\tconst beginSubagentCleanup = (runId) => {',
+      `${helper}\tconst beginSubagentCleanup = (runId) => {`,
+    );
     changed = true;
   }
 
@@ -652,7 +655,8 @@ function patchFile(filePath) {
   // Every cleanup-finalize catch delegates to one recovery helper. It wakes
   // deferred completions even when bookkeeping already removed/completed the
   // entry, and a second persistence failure cannot prevent wake or retry.
-  const cleanupCatchPattern = /^(\s*)const current = params\.runs\.get\(runId\);\n\1if \(!current \|\| current\.cleanupCompletedAt\) return;\n\1current\.cleanupHandled = false;\n(?:\1params\.resumedRuns\.delete\(runId\);\n)?\1params\.persist\(\);(?:\n\1if \(isCompletionDeliveryQueueTerminal\(current\)\) retryDeferredCompletedAnnounces\(runId\);)?(?:\n\1scheduleResumeSubagentRun\(runId, current, resolveAnnounceRetryDelayMs\(getDeliveryAttemptCount\(current\)\)\);)?/gm;
+  const cleanupCatchPattern =
+    /^(\s*)const current = params\.runs\.get\(runId\);\n\1if \(!current \|\| current\.cleanupCompletedAt\) return;\n\1current\.cleanupHandled = false;\n(?:\1params\.resumedRuns\.delete\(runId\);\n)?\1params\.persist\(\);(?:\n\1if \(isCompletionDeliveryQueueTerminal\(current\)\) retryDeferredCompletedAnnounces\(runId\);)?(?:\n\1scheduleResumeSubagentRun\(runId, current, resolveAnnounceRetryDelayMs\(getDeliveryAttemptCount\(current\)\)\);)?/gm;
   if (cleanupCatchPattern.test(content)) {
     content = content.replace(
       cleanupCatchPattern,
@@ -728,9 +732,9 @@ async function withSubagentCompletionAnnounceLock(key, task) {
       .find(
         name =>
           /^session-manager-[^.]+\.js$/.test(name) &&
-          fs.readFileSync(path.join(path.dirname(filePath), name), 'utf8').includes(
-            'SessionManager as t',
-          ),
+          fs
+            .readFileSync(path.join(path.dirname(filePath), name), 'utf8')
+            .includes('SessionManager as t'),
       );
     if (sessionManagerFile) {
       content = `import { t as SessionManager } from "./${sessionManagerFile}";\n${content}`;
@@ -742,16 +746,14 @@ async function withSubagentCompletionAnnounceLock(key, task) {
     content.includes('async function deliverSubagentAnnouncement(params) {') &&
     !content.includes('as acquireSessionWriteLock } from "./session-write-lock-')
   ) {
-    const sessionWriteLockFile = fs
-      .readdirSync(path.dirname(filePath))
-      .find(name => {
-        if (!/^session-write-lock-[^.]+\.js$/.test(name)) return false;
-        const candidate = fs.readFileSync(path.join(path.dirname(filePath), name), 'utf8');
-        return (
-          candidate.includes('resolveSessionWriteLockOptions as s') &&
-          candidate.includes('acquireSessionWriteLock as t')
-        );
-      });
+    const sessionWriteLockFile = fs.readdirSync(path.dirname(filePath)).find(name => {
+      if (!/^session-write-lock-[^.]+\.js$/.test(name)) return false;
+      const candidate = fs.readFileSync(path.join(path.dirname(filePath), name), 'utf8');
+      return (
+        candidate.includes('resolveSessionWriteLockOptions as s') &&
+        candidate.includes('acquireSessionWriteLock as t')
+      );
+    });
     if (sessionWriteLockFile) {
       content = `import { s as resolveSessionWriteLockOptions, t as acquireSessionWriteLock } from "./${sessionWriteLockFile}";\n${content}`;
       changed = true;
@@ -796,12 +798,13 @@ async function withSubagentCompletionAnnounceLock(key, task) {
       candidate.includes('acquireSessionWriteLock as t')
     );
   });
-  const completionPromotionHelperGateway = sessionManagerRuntimeFile && sessionWriteLockRuntimeFile
-    ? completionPromotionHelperBundle.replace(
-        '  const { cfg, entry } = loadRequesterSessionEntry(canonicalRequesterSessionKey);',
-        `  const [{ t: SessionManager }, { s: resolveSessionWriteLockOptions, t: acquireSessionWriteLock }] = await Promise.all([\n    import("./dist/${sessionManagerRuntimeFile}"),\n    import("./dist/${sessionWriteLockRuntimeFile}")\n  ]);\n  const { cfg, entry } = loadRequesterSessionEntry(canonicalRequesterSessionKey);`,
-      )
-    : completionPromotionHelperBundle;
+  const completionPromotionHelperGateway =
+    sessionManagerRuntimeFile && sessionWriteLockRuntimeFile
+      ? completionPromotionHelperBundle.replace(
+          '  const { cfg, entry } = loadRequesterSessionEntry(canonicalRequesterSessionKey);',
+          `  const [{ t: SessionManager }, { s: resolveSessionWriteLockOptions, t: acquireSessionWriteLock }] = await Promise.all([\n    import("./dist/${sessionManagerRuntimeFile}"),\n    import("./dist/${sessionWriteLockRuntimeFile}")\n  ]);\n  const { cfg, entry } = loadRequesterSessionEntry(canonicalRequesterSessionKey);`,
+        )
+      : completionPromotionHelperBundle;
   if (
     path.basename(filePath) === 'gateway-bundle.mjs' &&
     completionPromotionHelperGateway !== completionPromotionHelperBundle
@@ -818,9 +821,10 @@ async function withSubagentCompletionAnnounceLock(key, task) {
     !content.includes('async function promoteDeliveredSubagentCompletionBranch(') &&
     content.includes('async function withSubagentCompletionAnnounceLock(key, task) {')
   ) {
-    const helper = path.basename(filePath) === 'gateway-bundle.mjs'
-      ? completionPromotionHelperGateway
-      : completionPromotionHelperDist;
+    const helper =
+      path.basename(filePath) === 'gateway-bundle.mjs'
+        ? completionPromotionHelperGateway
+        : completionPromotionHelperDist;
     content = content.replace(
       'async function withSubagentCompletionAnnounceLock(key, task) {',
       `${helper}\nasync function withSubagentCompletionAnnounceLock(key, task) {`,
@@ -916,7 +920,9 @@ async function withSubagentCompletionAnnounceLock(key, task) {
   return await withSubagentCompletionAnnounceLock(key, deliver);
 }`;
   if (
-    content.includes('if (delivery.delivered) await promoteDeliveredSubagentCompletionBranch(key);') &&
+    content.includes(
+      'if (delivery.delivered) await promoteDeliveredSubagentCompletionBranch(key);',
+    ) &&
     content.includes(detachedStaleCompletionLockBundle)
   ) {
     content = content.replace(detachedStaleCompletionLockBundle, '}');
@@ -939,7 +945,9 @@ async function withSubagentCompletionAnnounceLock(key, task) {
 \treturn await withSubagentCompletionAnnounceLock(key, deliver);
 }`;
   if (
-    content.includes('if (delivery.delivered) await promoteDeliveredSubagentCompletionBranch(key);') &&
+    content.includes(
+      'if (delivery.delivered) await promoteDeliveredSubagentCompletionBranch(key);',
+    ) &&
     content.includes(detachedStaleCompletionLockDist)
   ) {
     content = content.replace(detachedStaleCompletionLockDist, '}');
@@ -1157,6 +1165,45 @@ async function withSubagentCompletionAnnounceLock(key, task) {
   content = result.content;
   changed ||= result.changed;
 
+  // An embedded run that reaches sessions_yield has already persisted every
+  // visible assistant block before the tool call. Its finalAssistantVisibleText
+  // points back to that same block, while the transcript tail is now a tool
+  // result/custom yield marker. Upstream mistakes that tail for a missing entry
+  // and appends an identical api="cli" transcript mirror.
+  const yieldedGapFillBundleBefore = `  const gapFill = params.embeddedAssistantGapFill ?? false;
+  return await persistTextTurnTranscript({
+    body: gapFill ? "" : params.body,
+    transcriptBody: gapFill ? void 0 : params.transcriptBody,
+    ...!gapFill && params.userMessage ? { userMessage: params.userMessage } : {},
+    finalText: replyText,`;
+  const yieldedGapFillBundleAfter = `  const gapFill = params.embeddedAssistantGapFill ?? false;
+  const suppressYieldedGapFill = gapFill && params.result.meta.yielded === true;
+  return await persistTextTurnTranscript({
+    body: gapFill ? "" : params.body,
+    transcriptBody: gapFill ? void 0 : params.transcriptBody,
+    ...!gapFill && params.userMessage ? { userMessage: params.userMessage } : {},
+    finalText: suppressYieldedGapFill ? "" : replyText,`;
+  result = replaceOnce(content, yieldedGapFillBundleBefore, yieldedGapFillBundleAfter);
+  content = result.content;
+  changed ||= result.changed;
+
+  const yieldedGapFillDistBefore = `\tconst gapFill = params.embeddedAssistantGapFill ?? false;
+\treturn await persistTextTurnTranscript({
+\t\tbody: gapFill ? "" : params.body,
+\t\ttranscriptBody: gapFill ? void 0 : params.transcriptBody,
+\t\t...!gapFill && params.userMessage ? { userMessage: params.userMessage } : {},
+\t\tfinalText: replyText,`;
+  const yieldedGapFillDistAfter = `\tconst gapFill = params.embeddedAssistantGapFill ?? false;
+\tconst suppressYieldedGapFill = gapFill && params.result.meta.yielded === true;
+\treturn await persistTextTurnTranscript({
+\t\tbody: gapFill ? "" : params.body,
+\t\ttranscriptBody: gapFill ? void 0 : params.transcriptBody,
+\t\t...!gapFill && params.userMessage ? { userMessage: params.userMessage } : {},
+\t\tfinalText: suppressYieldedGapFill ? "" : replyText,`;
+  result = replaceOnce(content, yieldedGapFillDistBefore, yieldedGapFillDistAfter);
+  content = result.content;
+  changed ||= result.changed;
+
   // Older revisions of this patch treated absent usage as proof of a partial
   // stream. Normalize every generated variant after the compatibility
   // replacements above so OpenAI-compatible providers may omit usage without
@@ -1203,6 +1250,7 @@ function verifyPatch(runtimeDir) {
     'result.meta?.toolSummary?.tools) && result.meta.toolSummary.tools.includes("sessions_yield")',
     'if (hasIntentionalSilentGatewayAgentPayload(response)) return void 0;',
     'const acceptsIntentionalSilentCompletion = hasIntentionalSilentGatewayAgentPayload(directAnnounceResponse);',
+    'const suppressYieldedGapFill = gapFill && params.result.meta.yielded === true;',
     'if (isToolHistoryBlockType(entry.type)) {',
     'return hasToolHistoryBlock;',
     'promotePromptReleasedSideBranch() {',
@@ -1231,6 +1279,10 @@ function verifyPatch(runtimeDir) {
     {
       name: 'history tool-call projection',
       marker: 'return hasToolHistoryBlock;',
+    },
+    {
+      name: 'yielded embedded transcript gap-fill suppression',
+      marker: 'const suppressYieldedGapFill = gapFill && params.result.meta.yielded === true;',
     },
     {
       name: 'completion side-branch leaf promotion',
@@ -1273,7 +1325,9 @@ function verifyPatch(runtimeDir) {
     }
   }
   if (missing.length > 0) {
-    throw new Error(`History thinking and subagent yield patch is incomplete: ${missing.join(', ')}`);
+    throw new Error(
+      `History thinking and subagent yield patch is incomplete: ${missing.join(', ')}`,
+    );
   }
   return true;
 }

@@ -4,17 +4,17 @@ Cowork 是 JustDo 的 AI 工作会话系统。用户在 renderer 中创建或继
 
 ## 关键文件
 
-| 文件                                          | 作用                                     |
-| --------------------------------------------- | ---------------------------------------- |
-| `src/renderer/features/cowork/`               | Cowork UI、Redux slice、service、组件    |
-| `src/main/ipc/cowork/`                        | Cowork IPC handlers                      |
-| `src/main/engine/cowork/coworkEngineService.ts` | Cowork engine service                  |
-| `src/main/engine/cowork/coworkEngineRouter.ts`  | session routing facade                 |
-| `src/main/engine/openclaw/openclawRuntimeAdapter.ts` | Gateway adapter                   |
-| `src/main/engine/cowork/coworkRuntimeForwarder.ts` | runtime events -> IPC events       |
-| `src/main/data/coworkStore.ts`                | local session/message/agent persistence  |
-| `src/main/openclaw/sessions/`                 | Gateway session key/history/text helpers |
-| `src/main/engine/openclaw/subagentGateway.ts` | subagent status/history bridge           |
+| 文件                                                 | 作用                                     |
+| ---------------------------------------------------- | ---------------------------------------- |
+| `src/renderer/features/cowork/`                      | Cowork UI、Redux slice、service、组件    |
+| `src/main/ipc/cowork/`                               | Cowork IPC handlers                      |
+| `src/main/engine/cowork/coworkEngineService.ts`      | Cowork engine service                    |
+| `src/main/engine/cowork/coworkEngineRouter.ts`       | session routing facade                   |
+| `src/main/engine/openclaw/openclawRuntimeAdapter.ts` | Gateway adapter                          |
+| `src/main/engine/cowork/coworkRuntimeForwarder.ts`   | runtime events -> IPC events             |
+| `src/main/data/coworkStore.ts`                       | local session/message/agent persistence  |
+| `src/main/openclaw/sessions/`                        | Gateway session key/history/text helpers |
+| `src/main/engine/openclaw/subagentGateway.ts`        | subagent status/history bridge           |
 
 ## 会话生命周期
 
@@ -267,11 +267,11 @@ Subagent 执行受 Gateway 配置的两级硬约束控制：
 
 JustDo 当前同步的默认值分别为 3 和 5：整个 subagent lane 最多同时运行 3 个 child，每个父会话最多保留 5 个活动 child。无其他 lane 竞争且调度及时，通常表现为 3 个运行、2 个排队；存在其他父会话竞争时，同一父会话的 5 个 child 都可能处于 `pending`。排队任务不发起模型推理，但仍保留 session、run registry 和完成通知状态，所以总活动数不能无限增长。
 
-Subagent completion 自动驱动父模型继续编排时，同一 canonical 父会话按完成事件到达顺序严格 FIFO。Registry 在 completion 进入 terminal 状态时分配并持久化单调 `queueSequence`；只有最早的未终结 delivery 可以尝试投递，队首失败后的 retry 保留原位置，Gateway 重启后也按持久化顺序恢复。每个事件先等待当前父回合完整结束，再从最新 canonical transcript 启动 direct agent turn；若 direct 调用只返回 non-terminal acknowledgement，Runtime 会等待该 requester run 结束并通过相同 idempotency key 取得 terminal result。OpenClaw 会把 prompt 执行期间落盘的 Tool Call、Tool Result 与 `sessions_yield` 暂存为 side branch；embedded run finalizer 之后，外层 completion delivery 仍可能追加 delivery mirror 和 `leaf` control，因此不能在 embedded finalizer 中提前提升。只有 outer delivery 完整提交并返回成功后，Runtime 才在 FIFO 锁内重新从磁盘打开 requester transcript、取得 session write lock，并把最新 side branch 提升为 canonical leaf；提升完成后才释放 FIFO，使下一项读取到上一项完整的 Tool Call/Result。提升失败会令本次 delivery 保持未完成，恢复流程通过相同 idempotency key 重试提交边界，不重新执行一个新的模型回合。cleanup bookkeeping 异常会重新调度已提交项以完成 registry 回收；若 delivery 已 terminal，也会立即唤醒此前被 gate 的后续事件。父回合繁忙、Gateway 关闭、abort 或调用失败时，事件保持未交付并由原生 announce 恢复机制重试，不会提升未完成分支，也不会回退到冻结 prompt 执行；abort 会立即结束本次等待而不占满 announce timeout。不同父会话仍可并行。
+Subagent completion 自动驱动父模型继续编排时，同一 canonical 父会话按完成事件到达顺序严格 FIFO。Registry 在 completion 进入 terminal 状态时分配并持久化单调 `queueSequence`；只有最早的未终结 delivery 可以尝试投递，队首失败后的 retry 保留原位置，Gateway 重启后也按持久化顺序恢复。每个事件先等待当前父回合完整结束，再从最新 canonical transcript 启动 direct agent turn；若 direct 调用只返回 non-terminal acknowledgement，Runtime 会等待该 requester run 结束并通过相同 idempotency key 取得 terminal result。OpenClaw 会把 prompt 执行期间落盘的 Tool Call、Tool Result 与 `sessions_yield` 暂存为 side branch；embedded run finalizer 之后，外层 completion delivery 仍可能追加 delivery mirror 和 `leaf` control，因此不能在 embedded finalizer 中提前提升。对于已通过 `sessions_yield` 结束的 embedded turn，可见 assistant 文本已经随原始消息落盘，CLI transcript gap-fill 必须跳过，避免在 Tool Result 和 yield marker 后追加内容相同的 `api: cli` 镜像消息。只有 outer delivery 完整提交并返回成功后，Runtime 才在 FIFO 锁内重新从磁盘打开 requester transcript、取得 session write lock，并把最新 side branch 提升为 canonical leaf；提升完成后才释放 FIFO，使下一项读取到上一项完整的 Tool Call/Result。提升失败会令本次 delivery 保持未完成，恢复流程通过相同 idempotency key 重试提交边界，不重新执行一个新的模型回合。cleanup bookkeeping 异常会重新调度已提交项以完成 registry 回收；若 delivery 已 terminal，也会立即唤醒此前被 gate 的后续事件。父回合繁忙、Gateway 关闭、abort 或调用失败时，事件保持未交付并由原生 announce 恢复机制重试，不会提升未完成分支，也不会回退到冻结 prompt 执行；abort 会立即结束本次等待而不占满 announce timeout。不同父会话仍可并行。
 
 `sessions_yield` 的等待条件不能只看 child 是否已经 `ended`。Runtime 同时检查活动 child 和尚未投递的 required completion；只要其中任一项能在未来唤醒父会话，就允许结束当前回合等待。正在执行当前模型回合的 completion 会按其 `announce:v1:<childSessionKey>:<runId>` 身份从未来唤醒源中排除，避免最后一条 completion 把自己误认为下一条事件而永久等待。只有活动 child 与其他待投递 completion 都不存在时，Tool 才返回兼容的 `no_active_subagents` 结果并要求模型继续当前回合。
 
-Gateway `chat.history` 对 mixed assistant content 的投影保留原顺序的 thinking、text 和 Tool Call；commentary assistant 即使只有 Tool Call、没有附带文本也不能被提前过滤，配对 Tool Result 继续按 `toolCallId` 留在权威历史。Renderer 在权威历史到达后退役 live projection，保证消息界面、原始 transcript 和 Runtime admission 记录可按 Tool Call 对账，既不丢失也不重复显示。
+Gateway `chat.history` 对 mixed assistant content 的投影保留原顺序的 thinking、text 和 Tool Call；commentary assistant 即使只有 Tool Call、没有附带文本也不能被提前过滤，配对 Tool Result 继续按 `toolCallId` 留在权威历史。运行中的 Tool Call 可能在 active turn 结束前就进入权威历史，Renderer 此时按 `toolCallId` 暂时隐藏已由 active timeline 表示的历史消息，待 turn 结束后再由权威历史接管，避免接管窗口短暂显示两份。Renderer 在权威历史到达后退役 live projection，保证消息界面、原始 transcript 和 Runtime admission 记录可按 Tool Call 对账，既不丢失也不重复显示。
 
 新增 subagent 功能时，优先要求 Gateway 提供稳定 child session id，而不是从 tool output 文本猜测。
 

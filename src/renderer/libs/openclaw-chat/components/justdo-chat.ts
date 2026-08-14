@@ -1940,13 +1940,14 @@ export class JustDoChatElement extends LitElement {
     const pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
     messages = mergePendingUserMessageForDisplay(messages, pendingMessage);
 
-    const terminalProjectionVariant =
-      activeTurn && activeTurn.status !== 'running'
-        ? `${activeTurn.runId}:${activeTurn.status}:${activeTurn.items
+    const activeProjectionVariant = activeTurn
+      ? activeTurn.status === 'running'
+        ? `${activeTurn.runId}:running:${[...activeTurn.toolById.keys()].join(',')}`
+        : `${activeTurn.runId}:${activeTurn.status}:${activeTurn.items
             .filter(item => item.type === 'content')
             .map(item => item.text)
             .join('\n')}`
-        : 'live';
+      : 'idle';
     const getHistoryTimeline = () =>
       this.persistedTimelineCache.get(
         {
@@ -1955,7 +1956,7 @@ export class JustDoChatElement extends LitElement {
           historyGeneration: ctrl?.state.transcript.historyGeneration ?? 0,
           messages: persistedMessages,
           pendingMessage,
-          projectionVariant: terminalProjectionVariant,
+          projectionVariant: activeProjectionVariant,
         },
         () => projectPersistedTimeline(messages),
       );
@@ -2346,7 +2347,8 @@ export class JustDoChatElement extends LitElement {
     const image = event
       .composedPath()
       .find(
-        node => node instanceof HTMLImageElement && node.classList.contains('markdown-inline-image'),
+        node =>
+          node instanceof HTMLImageElement && node.classList.contains('markdown-inline-image'),
       ) as HTMLImageElement | undefined;
     if (!image) return;
     void showImageContextMenu(event, image.currentSrc || image.src);
@@ -2617,14 +2619,16 @@ export class JustDoChatElement extends LitElement {
     const completedDate = footer.completedAt === null ? null : new Date(footer.completedAt);
     return html`
       ${model ? html`<span>${model}</span>` : nothing}
-      ${completedDate
-        ? html`
-            ${model ? html`<span>·</span>` : nothing}
-            <time datetime=${completedDate.toISOString()}
-              >${formatActiveTurnTimestamp(completedDate)}</time
-            >
-          `
-        : nothing}
+      ${
+        completedDate
+          ? html`
+              ${model ? html`<span>·</span>` : nothing}
+              <time datetime=${completedDate.toISOString()}
+                >${formatActiveTurnTimestamp(completedDate)}</time
+              >
+            `
+          : nothing
+      }
       ${model || completedDate ? html`<span>·</span>` : nothing}
       <span>${i18nService.t('coworkRunDuration').replace('{duration}', duration)}</span>
     `;
@@ -2835,11 +2839,7 @@ export class JustDoChatElement extends LitElement {
           transportStatus: this._controller.state.transportStatus,
         })
       : null;
-    return projectTurnItems(
-      turn,
-      this._controller?.state.chatSending ?? false,
-      waitingStatus,
-    );
+    return projectTurnItems(turn, this._controller?.state.chatSending ?? false, waitingStatus);
   }
 
   private renderItem(
