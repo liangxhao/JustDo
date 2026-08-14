@@ -83,6 +83,25 @@ function shouldExclude(entryPath) {
   return false;
 }
 
+function isPythonDistributionLicense(entryPath) {
+  const normalized = entryPath.replace(/\\/g, '/');
+  const basename = path.basename(normalized);
+  const isLicenseName = /^(license|licence|copying|notice|authors)(\.(md|txt|rst))?$/i.test(
+    basename,
+  );
+  return (
+    (!normalized.includes('/') && isLicenseName) ||
+    /\.dist-info\/licenses\//i.test(normalized) ||
+    (/\.dist-info\//i.test(normalized) && isLicenseName)
+  );
+}
+
+function shouldExcludeForSource(entryPath, preservePythonLicenses) {
+  return preservePythonLicenses && isPythonDistributionLicense(entryPath)
+    ? false
+    : shouldExclude(entryPath);
+}
+
 function shouldExcludeFromSource(entryPath, excludedPaths = []) {
   const normalized = entryPath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
   return excludedPaths.some(excludedPath => {
@@ -160,7 +179,7 @@ function packMultipleSources(sources, outputTar) {
 
   // Pack first source (creates the tar)
   let first = true;
-  for (const { dir, prefix, exclude = [] } of sources) {
+  for (const { dir, prefix, exclude = [], preservePythonLicenses = false } of sources) {
     if (!fs.existsSync(dir)) {
       console.log(`[pack-openclaw-tar]   Skipping ${prefix}: ${dir} not found`);
       continue;
@@ -181,7 +200,8 @@ function packMultipleSources(sources, outputTar) {
         if (item.isDirectory()) {
           if (!EXCLUDED_DIRS.has(item.name.toLowerCase())) countFiles(fullPath, relativePath);
         } else if (item.isFile()) {
-          if (!shouldExclude(item.name)) entries.push(item.name);
+          if (!shouldExcludeForSource(relativePath, preservePythonLicenses))
+            entries.push(item.name);
           else totalSkipped++;
         }
       }
@@ -195,7 +215,9 @@ function packMultipleSources(sources, outputTar) {
       prefix,
       sync: true,
       follow: true,
-      filter: filePath => !shouldExclude(filePath) && !shouldExcludeFromSource(filePath, exclude),
+      filter: filePath =>
+        !shouldExcludeForSource(filePath, preservePythonLicenses) &&
+        !shouldExcludeFromSource(filePath, exclude),
     };
 
     if (first) {
@@ -241,7 +263,11 @@ function main() {
         prefix: 'cfmind',
         exclude: ['gateway.asar'],
       },
-      { dir: path.join(projectRoot, 'resources', 'python-win'), prefix: 'python-win' },
+      {
+        dir: path.join(projectRoot, 'resources', 'python-win'),
+        prefix: 'python-win',
+        preservePythonLicenses: true,
+      },
     ];
 
     console.log(`[pack-openclaw-tar] Packing combined Windows tar: ${outputTar}`);

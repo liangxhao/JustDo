@@ -61,6 +61,8 @@ For docs-only changes, run `git diff --check`.
 
 Windows packaging uses bundled MinGit/Python runtime assets via
 `scripts/setup-mingit.js` and `scripts/setup-python-runtime.js`.
+The Windows Python runtime also installs the hashed lock in
+`resources/python-requirements.txt` into `Lib/bundled-site-packages`.
 
 ## Architecture
 

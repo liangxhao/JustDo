@@ -90,7 +90,7 @@ npm run dist:mac
 npm run dist:linux
 ```
 
-Windows 打包会通过 `scripts/` 下的脚本准备 MinGit 和 Python runtime。生产包会包含应用运行所需的 runtime 资源。
+Windows 打包会通过 `scripts/` 下的脚本准备 MinGit 和 Python runtime。生产包会包含应用运行所需的 runtime 资源，并预装锁定版本的 `requests`、`PyYAML`、`openpyxl`、`pypdf` 和 `beautifulsoup4`。
 
 ## 重要目录
 

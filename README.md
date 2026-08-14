@@ -96,7 +96,9 @@ npm run dist:linux
 ```
 
 Windows packaging prepares MinGit and a Python runtime through the scripts in
-`scripts/`. Production packages include the runtime resources needed by the app.
+`scripts/`. Production packages include the runtime resources needed by the app,
+including locked `requests`, `PyYAML`, `openpyxl`, `pypdf`, and `beautifulsoup4`
+Python packages.
 
 ## Important Directories
 

@@ -15,6 +15,30 @@ const processHelper = readFileSync(
 );
 const tempDirs: string[] = [];
 
+function writePythonRuntimeFixture(runtimeRoot: string): void {
+  mkdirSync(path.join(runtimeRoot, 'Scripts'), { recursive: true });
+  mkdirSync(path.join(runtimeRoot, 'Lib', 'site-packages', 'pip'), { recursive: true });
+  for (const importName of ['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4']) {
+    const importRoot = path.join(runtimeRoot, 'Lib', 'bundled-site-packages', importName);
+    mkdirSync(importRoot, {
+      recursive: true,
+    });
+    writeFileSync(path.join(importRoot, '__init__.py'), importName);
+  }
+  writeFileSync(path.join(runtimeRoot, 'python.exe'), 'python');
+  writeFileSync(path.join(runtimeRoot, 'python3.exe'), 'python');
+  writeFileSync(
+    path.join(runtimeRoot, 'python312._pth'),
+    'python312.zip\n.\nLib\\site-packages\nLib\\bundled-site-packages\nimport site\n',
+  );
+  writeFileSync(path.join(runtimeRoot, 'Scripts', 'pip.exe'), 'pip');
+  writeFileSync(path.join(runtimeRoot, 'Lib', 'site-packages', 'pip', '__main__.py'), 'pip');
+  writeFileSync(
+    path.join(runtimeRoot, 'Lib', 'site-packages', 'sitecustomize.py'),
+    'sitecustomize',
+  );
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -77,7 +101,7 @@ describe('Windows installer process handling', () => {
   });
 
   it('removes the previous Git runtime before extracting MinGit during upgrades', () => {
-    const backupIndex = unpackScript.indexOf('fs.renameSync(minGitDir, minGitBackupDir)');
+    const backupIndex = unpackScript.indexOf('fs.renameSync(runtime.dir, runtime.backupDir)');
     const extractionIndex = unpackScript.indexOf('tar.extract({');
 
     expect(backupIndex).toBeGreaterThan(-1);
@@ -91,6 +115,19 @@ describe('Windows installer process handling', () => {
     expect(unpackScript).toContain(
       "const cfmindBackupDir = path.join(destDir, '.cfmind-upgrade-backup')",
     );
+    expect(unpackScript).toContain("const pythonDir = path.join(destDir, 'python-win')");
+    expect(unpackScript).toContain(
+      "const pythonBackupDir = path.join(destDir, '.python-win-upgrade-backup')",
+    );
+    expect(unpackScript).toContain('fs.renameSync(runtime.dir, runtime.backupDir)');
+    expect(unpackScript).toContain('fs.renameSync(runtime.backupDir, runtime.dir)');
+    expect(unpackScript).toContain('import pip, requests, yaml, openpyxl, pypdf, bs4');
+  });
+
+  it('passes userData to the resource migrator instead of deleting the legacy runtime', () => {
+    expect(nsisScript).toContain('"$APPDATA\\${PRODUCT_NAME}"');
+    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\runtimes\\python-win"');
+    expect(unpackScript).toContain('migrateLegacyPythonRuntime()');
   });
 
   it('does not retain old Git files or OpenClaw skills in an upgraded installation', () => {
@@ -99,6 +136,7 @@ describe('Windows installer process handling', () => {
     const archiveRoot = path.join(root, 'archive');
     const installResources = path.join(root, 'installed-resources');
     const archivePath = path.join(root, 'win-resources.tar');
+    const userDataRoot = path.join(root, 'user-data');
     const staleBashPath = path.join(installResources, 'mingit', 'bin', 'bash.exe');
     const staleSkillPath = path.join(
       installResources,
@@ -115,29 +153,68 @@ describe('Windows installer process handling', () => {
       'SKILL.md',
     );
     const installedGitPath = path.join(installResources, 'mingit', 'cmd', 'git.exe');
+    const installedPythonPath = path.join(installResources, 'python-win', 'python.exe');
+    const stalePythonPackagePath = path.join(
+      installResources,
+      'python-win',
+      'Lib',
+      'site-packages',
+      'stale-package.py',
+    );
+    const legacyUserPackagePath = path.join(
+      userDataRoot,
+      'runtimes',
+      'python-win',
+      'Lib',
+      'site-packages',
+      'user-package.py',
+    );
+    const migratedUserPackagePath = path.join(
+      userDataRoot,
+      'python-user',
+      'Python312',
+      'legacy-site-packages',
+      'user-package.py',
+    );
 
     mkdirSync(path.join(archiveRoot, 'cfmind', 'skills', 'custom-skill'), { recursive: true });
     mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
+    writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
     mkdirSync(path.dirname(staleBashPath), { recursive: true });
     mkdirSync(path.dirname(staleSkillPath), { recursive: true });
+    mkdirSync(path.dirname(stalePythonPackagePath), { recursive: true });
+    mkdirSync(path.dirname(legacyUserPackagePath), { recursive: true });
     writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
     writeFileSync(path.join(archiveRoot, 'cfmind', 'skills', 'custom-skill', 'SKILL.md'), 'custom');
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'mingit');
     writeFileSync(staleBashPath, 'portable-git');
     writeFileSync(staleSkillPath, 'default');
-    createTar({ cwd: archiveRoot, file: archivePath, sync: true }, ['cfmind', 'mingit']);
+    writeFileSync(stalePythonPackagePath, 'stale');
+    writeFileSync(legacyUserPackagePath, 'user-package');
+    createTar({ cwd: archiveRoot, file: archivePath, sync: true }, [
+      'cfmind',
+      'mingit',
+      'python-win',
+    ]);
 
-    const result = spawnSync(process.execPath, [unpackScriptPath, archivePath, installResources], {
-      encoding: 'utf8',
-    });
+    const result = spawnSync(
+      process.execPath,
+      [unpackScriptPath, archivePath, installResources, userDataRoot],
+      { encoding: 'utf8' },
+    );
 
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(installedGitPath)).toBe(true);
+    expect(existsSync(installedPythonPath)).toBe(true);
     expect(existsSync(staleBashPath)).toBe(false);
     expect(existsSync(staleSkillPath)).toBe(false);
+    expect(existsSync(stalePythonPackagePath)).toBe(false);
+    expect(readFileSync(migratedUserPackagePath, 'utf8')).toBe('user-package');
+    expect(existsSync(path.join(userDataRoot, 'runtimes', 'python-win'))).toBe(false);
     expect(existsSync(customSkillPath)).toBe(true);
     expect(existsSync(path.join(installResources, '.cfmind-upgrade-backup'))).toBe(false);
     expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
+    expect(existsSync(path.join(installResources, '.python-win-upgrade-backup'))).toBe(false);
   });
 
   it('restores PortableGit when the replacement archive is invalid', () => {
@@ -146,9 +223,12 @@ describe('Windows installer process handling', () => {
     const installResources = path.join(root, 'installed-resources');
     const archivePath = path.join(root, 'invalid-resources.tar');
     const staleBashPath = path.join(installResources, 'mingit', 'bin', 'bash.exe');
+    const previousPythonPath = path.join(installResources, 'python-win', 'python.exe');
 
     mkdirSync(path.dirname(staleBashPath), { recursive: true });
+    mkdirSync(path.dirname(previousPythonPath), { recursive: true });
     writeFileSync(staleBashPath, 'portable-git');
+    writeFileSync(previousPythonPath, 'previous-python');
     writeFileSync(archivePath, 'not a tar archive');
 
     const result = spawnSync(process.execPath, [unpackScriptPath, archivePath, installResources], {
@@ -157,7 +237,9 @@ describe('Windows installer process handling', () => {
 
     expect(result.status).not.toBe(0);
     expect(existsSync(staleBashPath)).toBe(true);
+    expect(readFileSync(previousPythonPath, 'utf8')).toBe('previous-python');
     expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
+    expect(existsSync(path.join(installResources, '.python-win-upgrade-backup'))).toBe(false);
   });
 
   it('rejects a resource archive without git.exe and restores PortableGit', () => {
@@ -181,6 +263,182 @@ describe('Windows installer process handling', () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('missing a non-empty git.exe');
     expect(existsSync(staleBashPath)).toBe(true);
+  });
+
+  it('rejects an incomplete Python runtime and restores the previous one', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-python-runtime-rollback-'));
+    tempDirs.push(root);
+    const archiveRoot = path.join(root, 'archive');
+    const installResources = path.join(root, 'installed-resources');
+    const archivePath = path.join(root, 'win-resources.tar');
+    const previousPythonPath = path.join(installResources, 'python-win', 'python.exe');
+
+    mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
+    mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
+    writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
+    rmSync(path.join(archiveRoot, 'python-win', 'Lib', 'site-packages', 'sitecustomize.py'));
+    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'git');
+    createTar({ cwd: archiveRoot, file: archivePath, sync: true }, [
+      'cfmind',
+      'mingit',
+      'python-win',
+    ]);
+
+    writePythonRuntimeFixture(path.join(installResources, 'python-win'));
+    writeFileSync(previousPythonPath, 'previous-python');
+
+    const result = spawnSync(process.execPath, [unpackScriptPath, archivePath, installResources], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('missing required file');
+    expect(readFileSync(previousPythonPath, 'utf8')).toBe('previous-python');
+    expect(existsSync(path.join(installResources, '.python-win-upgrade-backup'))).toBe(false);
+  });
+
+  it('restores already-backed-up runtimes when a later backup rename fails', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-backup-failure-'));
+    tempDirs.push(root);
+    const installResources = path.join(root, 'installed-resources');
+    const archivePath = path.join(root, 'unused.tar');
+    const faultPreloadPath = path.join(root, 'fail-mingit-backup.cjs');
+    const oldCfmindPath = path.join(installResources, 'cfmind', 'package.json');
+    const oldGitPath = path.join(installResources, 'mingit', 'cmd', 'git.exe');
+    const oldPythonPath = path.join(installResources, 'python-win', 'python.exe');
+
+    mkdirSync(path.dirname(oldCfmindPath), { recursive: true });
+    mkdirSync(path.dirname(oldGitPath), { recursive: true });
+    mkdirSync(path.dirname(oldPythonPath), { recursive: true });
+    writeFileSync(oldCfmindPath, 'old-cfmind');
+    writeFileSync(oldGitPath, 'old-git');
+    writeFileSync(oldPythonPath, 'old-python');
+    writeFileSync(archivePath, 'unused');
+    writeFileSync(
+      faultPreloadPath,
+      `const fs = require('fs');
+const path = require('path');
+const originalRename = fs.renameSync;
+fs.renameSync = (source, destination) => {
+  if (path.basename(source) === 'mingit' && path.basename(destination) === '.mingit-upgrade-backup') {
+    throw new Error('injected backup rename failure');
+  }
+  return originalRename(source, destination);
+};
+`,
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      ['--require', faultPreloadPath, unpackScriptPath, archivePath, installResources],
+      { encoding: 'utf8' },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(readFileSync(oldCfmindPath, 'utf8')).toBe('old-cfmind');
+    expect(readFileSync(oldGitPath, 'utf8')).toBe('old-git');
+    expect(readFileSync(oldPythonPath, 'utf8')).toBe('old-python');
+    expect(existsSync(path.join(installResources, '.cfmind-upgrade-backup'))).toBe(false);
+  });
+
+  it('keeps verified runtimes when committed backup cleanup fails', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-cleanup-failure-'));
+    tempDirs.push(root);
+    const archiveRoot = path.join(root, 'archive');
+    const installResources = path.join(root, 'installed-resources');
+    const archivePath = path.join(root, 'win-resources.tar');
+    const faultPreloadPath = path.join(root, 'fail-python-backup-cleanup.cjs');
+
+    mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
+    mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
+    writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
+    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), 'new-cfmind');
+    writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'new-git');
+    createTar({ cwd: archiveRoot, file: archivePath, sync: true }, [
+      'cfmind',
+      'mingit',
+      'python-win',
+    ]);
+
+    mkdirSync(path.join(installResources, 'cfmind'), { recursive: true });
+    mkdirSync(path.join(installResources, 'mingit', 'cmd'), { recursive: true });
+    writePythonRuntimeFixture(path.join(installResources, 'python-win'));
+    writeFileSync(path.join(installResources, 'cfmind', 'package.json'), 'old-cfmind');
+    writeFileSync(path.join(installResources, 'mingit', 'cmd', 'git.exe'), 'old-git');
+    writeFileSync(path.join(installResources, 'python-win', 'python.exe'), 'old-python');
+    writeFileSync(
+      faultPreloadPath,
+      `const fs = require('fs');
+const path = require('path');
+const originalRemove = fs.rmSync;
+fs.rmSync = (target, options) => {
+  if (path.basename(target) === '.python-win-upgrade-backup') {
+    throw new Error('injected backup cleanup failure');
+  }
+  return originalRemove(target, options);
+};
+`,
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      ['--require', faultPreloadPath, unpackScriptPath, archivePath, installResources],
+      { encoding: 'utf8' },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(path.join(installResources, 'cfmind', 'package.json'), 'utf8')).toBe(
+      'new-cfmind',
+    );
+    expect(readFileSync(path.join(installResources, 'mingit', 'cmd', 'git.exe'), 'utf8')).toBe(
+      'new-git',
+    );
+    expect(readFileSync(path.join(installResources, 'python-win', 'python.exe'), 'utf8')).toBe(
+      'python',
+    );
+    expect(existsSync(path.join(installResources, '.python-win-upgrade-backup'))).toBe(true);
+  });
+
+  it('restores healthy backups even when a crash tears the transaction marker', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-interrupted-extract-'));
+    tempDirs.push(root);
+    const installResources = path.join(root, 'installed-resources');
+    const archivePath = path.join(root, 'invalid-resources.tar');
+    const runtimePairs = [
+      ['cfmind', '.cfmind-upgrade-backup', 'package.json'],
+      ['mingit', '.mingit-upgrade-backup', path.join('cmd', 'git.exe')],
+      ['python-win', '.python-win-upgrade-backup', 'python.exe'],
+    ];
+
+    for (const [currentName, backupName, markerPath] of runtimePairs) {
+      const currentMarker = path.join(installResources, currentName, markerPath);
+      const backupMarker = path.join(installResources, backupName, markerPath);
+      mkdirSync(path.dirname(currentMarker), { recursive: true });
+      mkdirSync(path.dirname(backupMarker), { recursive: true });
+      writeFileSync(currentMarker, 'partial');
+      writeFileSync(backupMarker, `healthy-${currentName}`);
+    }
+    writeFileSync(
+      path.join(installResources, '.runtime-upgrade-in-progress.json'),
+      '{"hadOriginal":',
+    );
+    writeFileSync(archivePath, 'not a tar archive');
+
+    const result = spawnSync(process.execPath, [unpackScriptPath, archivePath, installResources], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).not.toBe(0);
+    for (const [currentName, backupName, markerPath] of runtimePairs) {
+      expect(readFileSync(path.join(installResources, currentName, markerPath), 'utf8')).toBe(
+        `healthy-${currentName}`,
+      );
+      expect(existsSync(path.join(installResources, backupName))).toBe(false);
+    }
+    expect(existsSync(path.join(installResources, '.runtime-upgrade-in-progress.json'))).toBe(
+      false,
+    );
   });
 });
 

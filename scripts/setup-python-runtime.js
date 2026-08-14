@@ -6,7 +6,7 @@
  * - Supports local offline archive via JUSTDO_PORTABLE_PYTHON_ARCHIVE
  * - Supports optional mirror URL via JUSTDO_PORTABLE_PYTHON_URL
  * - Can run cross-platform for Windows packaging
- * - Bundles interpreter runtime only (no preinstalled skill dependencies)
+ * - Bundles a small, locked set of common Python packages
  */
 
 'use strict';
@@ -31,6 +31,10 @@ const { path7za } = (() => {
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'python-win');
 const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', 'python-win-runtime.zip');
+const DEFAULT_REQUIREMENTS_PATH = path.join(PROJECT_ROOT, 'resources', 'python-requirements.txt');
+const DEFAULT_SITE_CUSTOMIZE_PATH = path.join(PROJECT_ROOT, 'resources', 'python-sitecustomize.py');
+const MANAGED_SITE_PACKAGES_REL_PATH = path.join('Lib', 'bundled-site-packages');
+const MANAGED_SITE_PACKAGES_PTH_ENTRY = 'Lib\\bundled-site-packages';
 const DEFAULT_WINDOWS_EMBED_PYTHON_VERSION =
   process.env.JUSTDO_WINDOWS_EMBED_PYTHON_VERSION || '3.12.10';
 const DEFAULT_WINDOWS_EMBED_PYTHON_ZIP = `python-${DEFAULT_WINDOWS_EMBED_PYTHON_VERSION}-embed-amd64.zip`;
@@ -43,6 +47,7 @@ const DEFAULT_PIP_PYZ_URL =
   process.env.JUSTDO_WINDOWS_PIP_PYZ_URL || 'https://bootstrap.pypa.io/pip/pip.pyz';
 const DEFAULT_RUNTIME_URL = DEFAULT_WINDOWS_EMBED_PYTHON_URL;
 
+const SITE_CUSTOMIZE_REL_PATH = path.join('Lib', 'site-packages', 'sitecustomize.py');
 const REQUIRED_FILES = ['python.exe', 'python3.exe'];
 const PIP_EXECUTABLE_CANDIDATES = [
   path.join('Scripts', 'pip.exe'),
@@ -55,6 +60,7 @@ const PIP_EXECUTABLE_CANDIDATES = [
 const PIP_RUNTIME_ARCHIVE_REL_PATH = path.join('tools', 'pip.pyz');
 const PIP_MODULE_MAIN_REL_PATH = path.join('Lib', 'site-packages', 'pip', '__main__.py');
 const PIP_MODULE_INIT_REL_PATH = path.join('Lib', 'site-packages', 'pip', '__init__.py');
+const MANAGED_PACKAGE_IMPORTS = ['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4'];
 
 function hasPipCommand(rootDir) {
   return PIP_EXECUTABLE_CANDIDATES.some(relPath => fs.existsSync(path.join(rootDir, relPath)));
@@ -485,6 +491,102 @@ function runCommand(command, args, options = {}) {
   }
 }
 
+function findHostPython(requirePip = false) {
+  for (const candidate of ['python3', 'python']) {
+    const args = requirePip ? ['-m', 'pip', '--version'] : ['--version'];
+    const result = spawnSync(candidate, args, {
+      encoding: 'utf8',
+      stdio: 'pipe',
+      timeout: 20_000,
+    });
+    if (result.status === 0) return candidate;
+  }
+  return null;
+}
+
+function buildManagedPipInstallArgs(targetDir, requirementsPath) {
+  return [
+    'install',
+    '--disable-pip-version-check',
+    '--only-binary=:all:',
+    '--platform',
+    'win_amd64',
+    '--implementation',
+    'cp',
+    '--python-version',
+    '3.12',
+    '--abi',
+    'cp312',
+    '--require-hashes',
+    '--target',
+    targetDir,
+    '--requirement',
+    requirementsPath,
+  ];
+}
+
+function installManagedPackagesWithPip(rootDir, targetDir, requirementsPath) {
+  const pipArgs = buildManagedPipInstallArgs(targetDir, requirementsPath);
+  if (process.platform === 'win32') {
+    const pythonPath = findPortablePythonExecutable(rootDir);
+    if (!pythonPath) {
+      throw new Error('Bundled Python executable is unavailable for package installation.');
+    }
+    runCommand(pythonPath, ['-m', 'pip', ...pipArgs], { timeout: 5 * 60 * 1000 });
+    return;
+  }
+
+  const hostPython = findHostPython();
+  const pipPyzPath = path.join(rootDir, PIP_RUNTIME_ARCHIVE_REL_PATH);
+  if (!hostPython) {
+    throw new Error(
+      'Cross-platform Windows package preparation requires a host Python executable.',
+    );
+  }
+  if (isNonEmptyFile(pipPyzPath)) {
+    runCommand(hostPython, [pipPyzPath, ...pipArgs], { timeout: 5 * 60 * 1000 });
+    return;
+  }
+  const hostPythonWithPip = findHostPython(true);
+  if (!hostPythonWithPip) {
+    throw new Error('Cross-platform Windows package preparation requires host Python with pip.');
+  }
+  runCommand(hostPythonWithPip, ['-m', 'pip', ...pipArgs], { timeout: 5 * 60 * 1000 });
+}
+
+function verifyManagedPackageImports(rootDir) {
+  if (process.platform !== 'win32') return;
+  const pythonPath = findPortablePythonExecutable(rootDir);
+  if (!pythonPath) {
+    throw new Error('Bundled Python executable is unavailable for package verification.');
+  }
+
+  const script = [
+    'import importlib',
+    `imports = ${JSON.stringify(MANAGED_PACKAGE_IMPORTS)}`,
+    'for name in imports: importlib.import_module(name)',
+  ].join('\n');
+  runCommand(pythonPath, ['-c', script], { timeout: 60_000 });
+}
+
+function ensureBundledPythonPackages(rootDir) {
+  if (!isNonEmptyFile(DEFAULT_REQUIREMENTS_PATH)) {
+    throw new Error(`Python requirements file is missing or empty: ${DEFAULT_REQUIREMENTS_PATH}`);
+  }
+  const managedDir = path.join(rootDir, MANAGED_SITE_PACKAGES_REL_PATH);
+  if (fs.existsSync(managedDir)) {
+    fs.rmSync(managedDir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(managedDir, { recursive: true });
+  console.log('[setup-python-runtime] Installing locked bundled Python packages...');
+  installManagedPackagesWithPip(rootDir, managedDir, DEFAULT_REQUIREMENTS_PATH);
+  const siteCustomizePath = path.join(rootDir, SITE_CUSTOMIZE_REL_PATH);
+  fs.mkdirSync(path.dirname(siteCustomizePath), { recursive: true });
+  fs.copyFileSync(DEFAULT_SITE_CUSTOMIZE_PATH, siteCustomizePath);
+  verifyManagedPackageImports(rootDir);
+  console.log('[setup-python-runtime] Locked bundled Python packages ready');
+}
+
 function enableSitePackages(rootDir) {
   const pthCandidates = fs.readdirSync(rootDir).filter(name => name.endsWith('._pth'));
   if (pthCandidates.length === 0) {
@@ -496,6 +598,7 @@ function enableSitePackages(rootDir) {
   const lines = raw.split(/\r?\n/);
   const updated = [];
   let hasSitePackages = false;
+  let hasManagedSitePackages = false;
   let hasImportSite = false;
 
   for (const line of lines) {
@@ -513,11 +616,22 @@ function enableSitePackages(rootDir) {
       hasSitePackages = true;
       continue;
     }
+    if (
+      trimmed.toLowerCase() === MANAGED_SITE_PACKAGES_PTH_ENTRY.toLowerCase() ||
+      trimmed.toLowerCase() === MANAGED_SITE_PACKAGES_PTH_ENTRY.replace(/\\/g, '/').toLowerCase()
+    ) {
+      updated.push(MANAGED_SITE_PACKAGES_PTH_ENTRY);
+      hasManagedSitePackages = true;
+      continue;
+    }
     updated.push(line);
   }
 
   if (!hasSitePackages) {
     updated.push('Lib\\site-packages');
+  }
+  if (!hasManagedSitePackages) {
+    updated.push(MANAGED_SITE_PACKAGES_PTH_ENTRY);
   }
   if (!hasImportSite) {
     updated.push('import site');
@@ -667,6 +781,8 @@ async function ensurePortablePythonRuntime(options = {}) {
     await ensurePipPayload(OUTPUT_DIR, { required: true });
     const existingFullHealth = checkRuntimeHealth(OUTPUT_DIR, { requirePip: true });
     if (existingFullHealth.ok) {
+      enableSitePackages(OUTPUT_DIR);
+      ensureBundledPythonPackages(OUTPUT_DIR);
       const pythonPath = findPortablePythonExecutable(OUTPUT_DIR);
       console.log(`[setup-python-runtime] Runtime already prepared: ${pythonPath || OUTPUT_DIR}`);
       return { ok: true, skipped: false, pythonPath };
@@ -712,6 +828,8 @@ async function ensurePortablePythonRuntime(options = {}) {
         finalHealth.missing.join(', '),
     );
   }
+  enableSitePackages(OUTPUT_DIR);
+  ensureBundledPythonPackages(OUTPUT_DIR);
   const finalSize = getDirSize(OUTPUT_DIR);
   console.log(`[setup-python-runtime] Portable Python runtime ready: ${pythonPath || OUTPUT_DIR}`);
   console.log(`[setup-python-runtime] Total size: ~${(finalSize / 1024 / 1024).toFixed(1)} MB`);
@@ -735,6 +853,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildManagedPipInstallArgs,
+  enableSitePackages,
+  ensureBundledPythonPackages,
   ensurePortablePythonRuntime,
   findPortablePythonExecutable,
   checkRuntimeHealth,

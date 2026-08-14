@@ -397,6 +397,8 @@ FunctionEnd
   FileWrite $2 "set-electron-run-as-node: start$\r$\n"
   System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "1")i'
   Pop $0
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "1")i'
+  Pop $0
   FileWrite $2 "set-electron-run-as-node: result=$0$\r$\n"
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
@@ -407,7 +409,7 @@ FunctionEnd
   !insertmacro JustDoAddInstallActivity \
     "正在整理核心资源" \
     "Preparing core resources"
-  FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar $INSTDIR\resources$\r$\n"
+  FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar $INSTDIR\resources $APPDATA\${PRODUCT_NAME}$\r$\n"
   ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     FileWrite $2 "app-exe: exists$\r$\n"
   ${Else}
@@ -425,7 +427,7 @@ FunctionEnd
   ${EndIf}
 
   SetDetailsPrint listonly
-  nsExec::ExecToLog '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar" "$INSTDIR\resources"'
+  nsExec::ExecToLog '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar" "$INSTDIR\resources" "$APPDATA\${PRODUCT_NAME}"'
   Pop $0
   SetDetailsPrint none
   FileWrite $2 "tar-extract-process-exit: $0$\r$\n"
@@ -440,6 +442,7 @@ FunctionEnd
     ${EndIf}
     MessageBox MB_OK|MB_ICONEXCLAMATION "$1"
     System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "")i'
     SetDetailsPrint both
     FileClose $2
     Abort "Resource extraction failed."
@@ -508,6 +511,8 @@ FunctionEnd
 
   FileWrite $2 "clear-electron-run-as-node: start$\r$\n"
   System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
+  Pop $0
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "")i'
   Pop $0
   FileWrite $2 "clear-electron-run-as-node: result=$0$\r$\n"
 

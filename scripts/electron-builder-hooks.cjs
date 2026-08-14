@@ -699,6 +699,7 @@ async function beforePack(context) {
         label: 'Python runtime',
         dir: pythonRoot,
         prefix: 'python-win',
+        preservePythonLicenses: true,
       },
       {
         label: 'MinGit',
@@ -771,18 +772,34 @@ async function beforePack(context) {
       'cfmind/docs/reference/templates/AGENTS.md',
       ...enabledSkillIds.map(skillId => `cfmind/skills/${skillId}/SKILL.md`),
       'python-win/python.exe',
+      'python-win/python3.exe',
+      'python-win/python312._pth',
+      'python-win/Lib/site-packages/sitecustomize.py',
+      'python-win/Lib/site-packages/pip/__main__.py',
+      ...['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4'].map(
+        importName => `python-win/Lib/bundled-site-packages/${importName}/__init__.py`,
+      ),
       ...runtimeCompanionTarEntries,
     ];
     const missingTarEntries = requiredTarEntries.filter(entry => !tarEntryPaths.has(entry));
     const hasMinGit =
       tarEntryPaths.has('mingit/bin/git.exe') || tarEntryPaths.has('mingit/cmd/git.exe');
+    const hasPythonPipCommand = [
+      'python-win/Scripts/pip.exe',
+      'python-win/Scripts/pip3.exe',
+      'python-win/Scripts/pip.cmd',
+      'python-win/Scripts/pip3.cmd',
+      'python-win/Scripts/pip',
+      'python-win/Scripts/pip3',
+    ].some(entry => tarEntryPaths.has(entry));
 
-    if (missingTarEntries.length > 0 || !hasMinGit) {
+    if (missingTarEntries.length > 0 || !hasMinGit || !hasPythonPipCommand) {
       throw new Error(
         '[electron-builder-hooks] Combined tar validation FAILED. Missing critical entries: ' +
           [
             ...missingTarEntries,
             ...(!hasMinGit ? ['mingit/bin/git.exe or mingit/cmd/git.exe'] : []),
+            ...(!hasPythonPipCommand ? ['python-win/Scripts/pip command'] : []),
           ].join(', '),
       );
     }
