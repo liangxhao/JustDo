@@ -1,11 +1,11 @@
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { SaveTextFileErrorCode } from '@shared/dialogIpc';
-import { parseGoalStartObjective } from '@shared/slashCommands';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { resolveAgentModelSelection } from '@/features/cowork/components/agentModelSelection';
+import { submitCoworkMessage } from '@/features/cowork/components/coworkMessageSubmit';
 import CoworkPromptInput, {
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/CoworkPromptInput';
@@ -13,6 +13,7 @@ import ExportSessionModal from '@/features/cowork/components/ExportSessionModal'
 import FilePreviewDrawer, {
   type FilePreview,
 } from '@/features/cowork/components/FilePreviewDrawer';
+import { inferInitialGoalObjective } from '@/features/cowork/components/goalPendingObjective';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
@@ -141,12 +142,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     : isStreaming;
   const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
-  const latestUserMessage = [...(currentSession?.messages ?? [])]
-    .reverse()
-    .find(message => message.type === 'user');
-  const initialGoalObjective = currentSessionRuntimeRunning
-    ? parseGoalStartObjective(latestUserMessage?.content ?? '')
-    : null;
+  const sessionHasAssistantMessage =
+    currentSession?.messages.some(message => message.type === 'assistant') ?? false;
+  const initialGoalObjective = inferInitialGoalObjective(
+    currentSession?.messages ?? [],
+    currentSessionRuntimeRunning,
+  );
   const backgroundSessionIdsKey = sessions
     .map(session => session.id)
     .filter(sessionId => sessionId !== currentSessionId && !sessionId.startsWith('temp-'))
@@ -667,21 +668,28 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   // When there's a current session, show the session detail view
   if (currentSession) {
-    const handleSendMessage = async (prompt: string, attachments?: CoworkAttachmentPayload[]) => {
+    const handleSendMessage = async (
+      prompt: string,
+      attachments?: CoworkAttachmentPayload[],
+      gatewayPrompt?: string,
+    ) => {
       coworkService.markSessionInProgress(currentSession.id);
-      try {
-        const chatWrapper = chatWrapperRef.current;
-        if (!chatWrapper) throw new Error('Chat controller is not ready');
-        await chatWrapper.sendMessage(prompt, attachments);
-      } catch (err) {
-        coworkService.clearSessionInProgress(currentSession.id);
-        const message = err instanceof Error ? err.message : String(err);
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', {
-            detail: i18nService.t('coworkErrorSessionStartFailed').replace('{error}', message),
-          }),
-        );
-      }
+      return submitCoworkMessage(
+        async () => {
+          const chatWrapper = chatWrapperRef.current;
+          if (!chatWrapper) throw new Error('Chat controller is not ready');
+          await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt);
+        },
+        err => {
+          coworkService.clearSessionInProgress(currentSession.id);
+          const message = err instanceof Error ? err.message : String(err);
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkErrorSessionStartFailed').replace('{error}', message),
+            }),
+          );
+        },
+      );
     };
 
     const handleOpenSessionExport = () => {
@@ -939,9 +947,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                   sessionId={currentSession.id}
                   modelAgentId={currentSession.agentId}
                   sessionModelRef={currentSession.modelRef}
-                  hasAssistantMessage={currentSession.messages.some(
-                    message => message.type === 'assistant',
-                  )}
+                  hasAssistantMessage={sessionHasAssistantMessage}
                   initialGoalObjective={initialGoalObjective}
                   goalRunProgress={goalRunProgress}
                 />

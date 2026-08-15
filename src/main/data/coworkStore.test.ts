@@ -70,7 +70,8 @@ function setupDb(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS cowork_config (
       key TEXT PRIMARY KEY,
-      value TEXT
+      value TEXT,
+      updated_at INTEGER NOT NULL DEFAULT 0
     );
   `);
 
@@ -236,6 +237,26 @@ test('session metadata updates do not change recent activity time', () => {
     modelRef: 'provider/model',
     updatedAt: activityTime,
   });
+});
+
+test('persists terminal goal execution snapshots and removes them with the session', () => {
+  const sid = 'sess-goal-execution';
+  insertSession(sid);
+  store.setGoalExecutionSnapshot({
+    sessionId: sid,
+    goalId: 'goal-1',
+    phase: 'awaiting_confirmation',
+    continuationCount: 2,
+    updatedAt: 123,
+  });
+
+  expect(store.getGoalExecutionSnapshot(sid)).toMatchObject({
+    goalId: 'goal-1',
+    phase: 'awaiting_confirmation',
+  });
+
+  store.deleteSession(sid);
+  expect(store.getGoalExecutionSnapshot(sid)).toBeNull();
 });
 
 test('resetting stale running sessions does not change recent activity time', () => {

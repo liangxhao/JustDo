@@ -1,3 +1,4 @@
+import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
@@ -111,6 +112,77 @@ test('keeps the confirmed run model in the footer timing after final clears acti
 
   expect(controller.state.runActivity).toBeNull();
   expect(controller.getCurrentTurnTiming()?.modelRef).toBe('current-provider/current-model');
+});
+
+test('can display user feedback while sending a combined goal command to the Gateway', async () => {
+  const request = vi.fn((method: string) =>
+    Promise.resolve(
+      method === 'sessions.create'
+        ? { sessionId: 'gateway-session-1' }
+        : { runId: 'run-1', status: 'started' },
+    ),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'gateway-session-1';
+
+  await controller.sendMessage(
+    'Please improve chapter two.',
+    [],
+    buildGoalFollowUpPrompt('Write the novel', 'Please improve chapter two.'),
+  );
+
+  expect(controller.state.chatMessages[controller.state.chatMessages.length - 1]).toMatchObject({
+    role: 'user',
+    content: 'Please improve chapter two.',
+  });
+  expect(request).toHaveBeenCalledWith(
+    'chat.send',
+    expect.objectContaining({
+      message: buildGoalFollowUpPrompt('Write the novel', 'Please improve chapter two.'),
+    }),
+  );
+});
+
+test('never renders an internal goal follow-up prompt when no display override is supplied', async () => {
+  const request = vi.fn((method: string) =>
+    Promise.resolve(
+      method === 'sessions.create'
+        ? { sessionId: 'gateway-session-1' }
+        : { runId: 'run-1', status: 'started' },
+    ),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'gateway-session-1';
+  const gatewayPrompt = buildGoalFollowUpPrompt('Write five poems', '再来一首');
+
+  await controller.sendMessage(gatewayPrompt);
+
+  expect(controller.state.chatMessages[controller.state.chatMessages.length - 1]).toMatchObject({
+    role: 'user',
+    content: '再来一首',
+  });
+  expect(request).toHaveBeenCalledWith(
+    'chat.send',
+    expect.objectContaining({ message: gatewayPrompt }),
+  );
+});
+
+test('rejects a second message while a run is active instead of silently dropping it', async () => {
+  const controller = new ChatController();
+  controller.state.client = { request: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+
+  await expect(controller.sendMessage('replacement feedback')).rejects.toThrow(
+    'already being sent',
+  );
 });
 
 test('clears the notice when a delayed model event is received', async () => {
@@ -269,11 +341,7 @@ test('preserves preparation timing when the initial Gateway connection starts', 
   const controller = new ChatController();
   controller.setPendingUserMessage('first-session preparation');
 
-  await controller.connect(
-    'ws://gateway.test',
-    'token',
-    'agent:main:justdo:temp-session-1',
-  );
+  await controller.connect('ws://gateway.test', 'token', 'agent:main:justdo:temp-session-1');
 
   expect(controller.state.runActivity).toMatchObject({
     runId: expect.stringMatching(/^justdo-pending-/),
@@ -375,14 +443,16 @@ test('does not let an old probe release the current run probe lock', async () =>
   const request = vi
     .fn()
     .mockImplementationOnce(
-      () => new Promise(resolve => {
-        resolveFirst = resolve;
-      }),
+      () =>
+        new Promise(resolve => {
+          resolveFirst = resolve;
+        }),
     )
     .mockImplementationOnce(
-      () => new Promise(resolve => {
-        resolveSecond = resolve;
-      }),
+      () =>
+        new Promise(resolve => {
+          resolveSecond = resolve;
+        }),
     );
   const controller = new ChatController();
   controller.state.client = { request } as never;
@@ -2318,6 +2388,250 @@ test('marks an aborted terminal message as the active turn fallback', () => {
     expect.objectContaining({
       role: 'assistant',
       __justdoOptimisticHistoryTail: true,
+    }),
+  ]);
+});
+
+test('does not persist hidden control replies from an aborted run', () => {
+  const setItem = vi.fn();
+  vi.stubGlobal('localStorage', { getItem: vi.fn().mockReturnValue(null), setItem });
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  (
+    controller as unknown as {
+      handleAborted(payload: { runId: string; message: unknown }): void;
+    }
+  ).handleAborted({
+    runId: 'hidden-run',
+    message: { role: 'assistant', content: 'NO_REPLY' },
+  });
+
+  expect(controller.state.chatMessages).toEqual([]);
+  expect(setItem).not.toHaveBeenCalled();
+});
+
+test('keeps streamed thinking as a truncated message when an aborted run has no final message', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-thinking';
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-thinking' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+  turn.items.push({
+    id: 'thinking-1',
+    runId: 'run-thinking',
+    firstSeq: 1,
+    lastSeq: 2,
+    startedAt: 100,
+    updatedAt: 200,
+    type: 'thinking',
+    status: 'running',
+    text: 'Partial reasoning before the user stopped the run.',
+  });
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      runId: 'run-thinking',
+      session: controller.state.sessionKey,
+      seq: 3,
+      stream: 'lifecycle',
+      data: { phase: 'end', aborted: true },
+    },
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      __justdoOptimisticHistoryTail: true,
+      content: [
+        expect.objectContaining({
+          type: 'thinking',
+          thinking: 'Partial reasoning before the user stopped the run.',
+        }),
+      ],
+    }),
+  ]);
+});
+
+test('keeps streamed assistant text as a truncated message when an aborted run has no final message', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-content';
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-content' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+  turn.items.push({
+    id: 'content-1',
+    runId: 'run-content',
+    firstSeq: 1,
+    lastSeq: 2,
+    startedAt: 100,
+    updatedAt: 200,
+    type: 'content',
+    status: 'streaming',
+    sourceMode: 'snapshot',
+    text: 'Partial answer before the user stopped the run.',
+  });
+
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      runId: 'run-content',
+      session: controller.state.sessionKey,
+      seq: 3,
+      stream: 'lifecycle',
+      data: { phase: 'end', aborted: true },
+    },
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      runId: 'run-content',
+      interrupted: true,
+      content: [
+        expect.objectContaining({
+          type: 'text',
+          text: 'Partial answer before the user stopped the run.',
+          interrupted: true,
+        }),
+      ],
+    }),
+  ]);
+
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: controller.state.sessionKey,
+      runId: 'run-content',
+      state: 'aborted',
+      message: { role: 'assistant', content: 'Partial answer before the user stopped the run.' },
+    },
+  });
+
+  expect(controller.state.chatMessages).toHaveLength(1);
+});
+
+test('accepts a later chat.aborted message after an empty lifecycle abort', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-late-abort';
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-late-abort' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      runId: 'run-late-abort',
+      session: controller.state.sessionKey,
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'end', aborted: true },
+    },
+  });
+  expect(controller.state.chatMessages).toEqual([]);
+
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: controller.state.sessionKey,
+      runId: 'run-late-abort',
+      state: 'aborted',
+      message: { role: 'assistant', content: 'The final partial response.' },
+    },
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      runId: 'run-late-abort',
+      content: 'The final partial response.',
+    }),
+  ]);
+});
+
+test('replaces a short lifecycle abort projection with a richer chat.aborted message', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-richer-abort';
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-richer-abort' },
+    { now: () => 100, createId: prefix => `${prefix}-1` },
+  );
+  turn.items.push({
+    id: 'content-short',
+    runId: 'run-richer-abort',
+    firstSeq: 1,
+    lastSeq: 1,
+    startedAt: 100,
+    updatedAt: 100,
+    type: 'content',
+    status: 'streaming',
+    sourceMode: 'snapshot',
+    text: 'Short partial.',
+  });
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      runId: 'run-richer-abort',
+      session: controller.state.sessionKey,
+      seq: 2,
+      stream: 'lifecycle',
+      data: { phase: 'end', aborted: true },
+    },
+  });
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: controller.state.sessionKey,
+      runId: 'run-richer-abort',
+      state: 'aborted',
+      message: { role: 'assistant', content: 'Short partial. Richer ending.' },
+    },
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      runId: 'run-richer-abort',
+      content: 'Short partial. Richer ending.',
     }),
   ]);
 });

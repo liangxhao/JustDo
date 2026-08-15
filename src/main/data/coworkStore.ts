@@ -10,6 +10,7 @@ import {
   resolvePermissionMode,
 } from '../../shared/openclaw/approvals';
 import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
+import { GoalExecutionPhase, type GoalExecutionSnapshot } from '../../shared/sessionGoal';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -17,6 +18,7 @@ const getDefaultWorkingDirectory = (): string => {
 };
 
 const TASK_WORKSPACE_CONTAINER_DIR = '.justdo-tasks';
+const GOAL_EXECUTION_CONFIG_PREFIX = 'goalExecution:';
 
 const normalizeRecentWorkspacePath = (cwd: string): string => {
   const resolved = path.resolve(cwd);
@@ -371,12 +373,15 @@ export class CoworkStore {
 
   deleteSession(id: string): void {
     this.db.prepare('DELETE FROM cowork_sessions WHERE id = ?').run(id);
+    this.clearGoalExecutionSnapshot(id);
   }
 
   deleteSessions(ids: string[]): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
     this.db.prepare(`DELETE FROM cowork_sessions WHERE id IN (${placeholders})`).run(...ids);
+    const goalKeys = ids.map(id => `${GOAL_EXECUTION_CONFIG_PREFIX}${id}`);
+    this.db.prepare(`DELETE FROM cowork_config WHERE key IN (${placeholders})`).run(...goalKeys);
   }
 
   setSessionPinned(id: string, pinned: boolean): void {
@@ -846,8 +851,60 @@ export class CoworkStore {
   }
 
   // Config operations
+  getGoalExecutionSnapshot(sessionId: string): GoalExecutionSnapshot | null {
+    const row = this.getOne<{ value: string }>('SELECT value FROM cowork_config WHERE key = ?', [
+      `${GOAL_EXECUTION_CONFIG_PREFIX}${sessionId}`,
+    ]);
+    if (!row?.value) return null;
+    try {
+      const parsed = JSON.parse(row.value) as Partial<GoalExecutionSnapshot>;
+      const phases = new Set<string>(Object.values(GoalExecutionPhase));
+      if (
+        parsed.sessionId !== sessionId ||
+        typeof parsed.phase !== 'string' ||
+        !phases.has(parsed.phase) ||
+        typeof parsed.continuationCount !== 'number' ||
+        typeof parsed.updatedAt !== 'number'
+      ) {
+        return null;
+      }
+      return parsed as GoalExecutionSnapshot;
+    } catch {
+      return null;
+    }
+  }
+
+  setGoalExecutionSnapshot(snapshot: GoalExecutionSnapshot): void {
+    this.db
+      .prepare(
+        `
+        INSERT INTO cowork_config (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run(
+        `${GOAL_EXECUTION_CONFIG_PREFIX}${snapshot.sessionId}`,
+        JSON.stringify(snapshot),
+        Date.now(),
+      );
+  }
+
+  clearGoalExecutionSnapshot(sessionId: string): void {
+    this.db
+      .prepare('DELETE FROM cowork_config WHERE key = ?')
+      .run(`${GOAL_EXECUTION_CONFIG_PREFIX}${sessionId}`);
+  }
+
   getConfig(): CoworkConfig {
-    const configKeys = ['workingDirectory', 'executionMode', 'agentEngine', 'permissionMode'] as const;
+    const configKeys = [
+      'workingDirectory',
+      'executionMode',
+      'agentEngine',
+      'permissionMode',
+    ] as const;
     const configRows = this.getAll<{ key: string; value: string }>(
       `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
       [...configKeys],

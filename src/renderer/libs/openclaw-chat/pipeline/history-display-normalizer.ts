@@ -1,12 +1,24 @@
+import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
+
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
 const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
 const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const INTERRUPTED_MESSAGE_STORAGE_KEY = 'justdo-openclaw-interrupted-messages';
+const INTERRUPTED_MESSAGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 type FailedRunRecord = {
   sessionKey: string;
   runId: string | null;
   error: string;
+  timestamp: number;
+};
+
+type InterruptedMessageRecord = {
+  id: string;
+  sessionKey: string;
+  runId: string | null;
+  message: unknown;
   timestamp: number;
 };
 
@@ -24,10 +36,8 @@ type HistoryDisplayBridge = {
 export interface HistoryDisplayNormalizationOptions {
   sessionKey: string;
   lastError?: string | null;
-  enrichCompactionMarkers?: (
-    messages: unknown[],
-    sessionKey: string,
-  ) => Promise<unknown[]>;
+  includeInterruptedOverlays?: boolean;
+  enrichCompactionMarkers?: (messages: unknown[], sessionKey: string) => Promise<unknown[]>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -70,6 +80,85 @@ function messageText(content: unknown): string {
       return typeof record?.text === 'string' ? [record.text] : [];
     })
     .join('\n');
+}
+
+function readInterruptedMessages(): InterruptedMessageRecord[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const value = JSON.parse(localStorage.getItem(INTERRUPTED_MESSAGE_STORAGE_KEY) ?? '[]');
+    if (!Array.isArray(value)) return [];
+    const cutoff = Date.now() - INTERRUPTED_MESSAGE_RETENTION_MS;
+    return value.filter(
+      (item): item is InterruptedMessageRecord =>
+        typeof item?.id === 'string' &&
+        typeof item.sessionKey === 'string' &&
+        (typeof item.runId === 'string' || item.runId === null) &&
+        typeof item.timestamp === 'number' &&
+        item.timestamp >= cutoff &&
+        Boolean(asRecord(item.message)),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function persistInterruptedMessage(
+  sessionKey: string,
+  runId: string | null,
+  message: unknown,
+): unknown {
+  if (typeof localStorage === 'undefined') return message;
+  const record = asRecord(message);
+  if (!record || !sessionKey) return message;
+  const timestamp = typeof record.timestamp === 'number' ? record.timestamp : Date.now();
+  const id = runId ? `${sessionKey}:${runId}` : `${sessionKey}:${timestamp}:${timestamp}`;
+  const persistedMessage = { ...record, __justdoInterruptedOverlayId: id };
+  const existing = readInterruptedMessages().filter(
+    item => !(item.sessionKey === sessionKey && item.id === id),
+  );
+  try {
+    localStorage.setItem(
+      INTERRUPTED_MESSAGE_STORAGE_KEY,
+      JSON.stringify(
+        [...existing, { id, sessionKey, runId, message: persistedMessage, timestamp }].slice(-100),
+      ),
+    );
+  } catch {
+    return message;
+  }
+  return persistedMessage;
+}
+
+function mergeInterruptedMessages(messages: unknown[], sessionKey: string): unknown[] {
+  const overlays = readInterruptedMessages().filter(item => item.sessionKey === sessionKey);
+  if (overlays.length === 0) return messages;
+  const result = [...messages];
+  for (const overlay of overlays) {
+    const overlayRecord = asRecord(overlay.message);
+    const overlayText = messageText(overlayRecord?.content);
+    const alreadyPersisted = result.some(message => {
+      const record = asRecord(message);
+      const role = String(record?.role ?? '').toLowerCase();
+      if (role !== 'assistant') return false;
+      if (record?.__justdoInterruptedOverlayId === overlay.id) return true;
+      if (overlay.runId && record?.runId === overlay.runId) return true;
+      const timestamp = record?.timestamp;
+      return (
+        overlayText.length > 0 &&
+        messageText(record?.content) === overlayText &&
+        typeof timestamp === 'number' &&
+        Math.abs(timestamp - overlay.timestamp) < 60_000
+      );
+    });
+    if (alreadyPersisted) continue;
+    const insertAt = result.findIndex(message => {
+      const timestamp = asRecord(message)?.timestamp;
+      return typeof timestamp === 'number' && timestamp > overlay.timestamp;
+    });
+    if (insertAt < 0) result.push(overlay.message);
+    else result.splice(insertAt, 0, overlay.message);
+  }
+  return result;
 }
 
 export function stripSilentReplySuffixFromText(text: string): string {
@@ -128,9 +217,34 @@ export function shouldHideMessage(message: unknown): boolean {
 
 export function projectGatewayHistoryForDisplay(messages: unknown[]): unknown[] {
   return messages
+    .map(projectGoalFeedbackForDisplay)
     .map(stripAssistantSilentReplySuffix)
     .filter(message => !shouldHideMessage(message))
     .filter(message => !asRecord(message)?.__openclawStreamFallback);
+}
+
+function projectGoalFeedbackForDisplay(message: unknown): unknown {
+  const record = asRecord(message);
+  if (!record || String(record.role ?? '').toLowerCase() !== 'user') return message;
+  if (typeof record.content === 'string') {
+    const feedback = extractGoalFollowUpRequest(record.content);
+    return feedback === null ? message : { ...record, content: feedback };
+  }
+  if (typeof record.text === 'string') {
+    const feedback = extractGoalFollowUpRequest(record.text);
+    return feedback === null ? message : { ...record, text: feedback };
+  }
+  if (!Array.isArray(record.content)) return message;
+  let changed = false;
+  const content = record.content.map(block => {
+    const item = asRecord(block);
+    if (item?.type !== 'text' || typeof item.text !== 'string') return block;
+    const feedback = extractGoalFollowUpRequest(item.text);
+    if (feedback === null) return block;
+    changed = true;
+    return { ...item, text: feedback };
+  });
+  return changed ? { ...record, content } : message;
 }
 
 function readFailedRuns(): FailedRunRecord[] {
@@ -290,10 +404,7 @@ async function hydrateMissingCompactionDetails(
   let result:
     | {
         success?: boolean;
-        details?: Record<
-          string,
-          { summary?: string; tokensBefore?: number; tokensAfter?: number }
-        >;
+        details?: Record<string, { summary?: string; tokensBefore?: number; tokensAfter?: number }>;
       }
     | undefined;
   try {
@@ -329,9 +440,13 @@ export async function hydrateGatewayHistoryForDisplay(
   messages: unknown[],
   options: HistoryDisplayNormalizationOptions,
 ): Promise<unknown[]> {
+  const messagesWithInterruptedOverlays =
+    options.includeInterruptedOverlays === false
+      ? messages
+      : mergeInterruptedMessages(messages, options.sessionKey);
   const withGatewayCompactionDetails = options.enrichCompactionMarkers
-    ? await options.enrichCompactionMarkers(messages, options.sessionKey)
-    : messages;
+    ? await options.enrichCompactionMarkers(messagesWithInterruptedOverlays, options.sessionKey)
+    : messagesWithInterruptedOverlays;
   const withLocalCompactionDetails = await hydrateMissingCompactionDetails(
     options.sessionKey,
     withGatewayCompactionDetails,

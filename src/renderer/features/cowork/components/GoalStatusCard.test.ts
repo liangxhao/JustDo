@@ -1,3 +1,4 @@
+import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { GoalExecutionPhase, SessionGoalStatus } from '@shared/sessionGoal';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -59,23 +60,64 @@ describe('GoalStatusCard', () => {
     expect(rendered).not.toContain('<button');
   });
 
-  it('renders an idle active goal as waiting for manual continuation without token progress', () => {
+  it('shows only the literal follow-up request for a templated Goal objective', () => {
+    const command = buildGoalFollowUpPrompt('Write five poems.', 'Write one more poem.');
+    const rendered = renderToStaticMarkup(
+      React.createElement(GoalStatusCard, {
+        goal: {
+          ...activeGoal,
+          objective: command.slice('/goal start '.length),
+        },
+        onCommand: vi.fn(),
+        onPause: vi.fn(),
+      }),
+    );
+
+    expect(rendered).toContain('Write one more poem.');
+    expect(rendered).not.toContain('Write five poems.');
+    expect(rendered).not.toContain('sole task for this goal');
+  });
+
+  it('never presents an active goal as waiting for confirmation', () => {
     const rendered = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {
         goal: activeGoal,
         execution: null,
         onCommand: vi.fn(),
-        onContinue: vi.fn(),
-        onComplete: vi.fn(),
+        onPause: vi.fn(),
       }),
     );
 
     expect(rendered).toContain(i18nService.t('coworkGoalActiveHint'));
-    expect(rendered).toContain(i18nService.t('coworkGoalContinue'));
-    expect(rendered).toContain(i18nService.t('coworkGoalMarkComplete'));
-    expect(rendered).not.toContain(`>${i18nService.t('coworkGoalPause')}<`);
+    expect(rendered).toContain(`>${i18nService.t('coworkGoalPause')}<`);
+    expect(rendered).not.toContain(`>${i18nService.t('coworkGoalContinue')}<`);
+    expect(rendered).not.toContain(i18nService.t('coworkGoalMarkComplete'));
     expect(rendered).not.toContain('42k');
     expect(rendered).not.toContain('50k');
+  });
+
+  it('keeps an active goal live while its execution snapshot is not matched yet', () => {
+    const rendered = renderToStaticMarkup(
+      React.createElement(GoalStatusCard, {
+        goal: activeGoal,
+        execution: {
+          sessionId: 'session-1',
+          phase: GoalExecutionPhase.Running,
+          runId: 'initial-run',
+          continuationCount: 0,
+          updatedAt: Date.now(),
+        },
+        isRunning: true,
+        onCommand: vi.fn(),
+        onPause: vi.fn(),
+      }),
+    );
+
+    expect(rendered).toContain(i18nService.t('coworkGoalPhaseRunning'));
+    expect(rendered).toContain(`>${i18nService.t('coworkGoalPause')}<`);
+    expect(rendered).not.toContain(`>${i18nService.t('coworkGoalContinue')}<`);
+    expect(rendered).not.toContain(`>${i18nService.t('coworkGoalMarkComplete')}<`);
+    expect(rendered).not.toContain(i18nService.t('coworkGoalActiveHint'));
   });
 
   it('renders a pausable automatic continuation with its current count', () => {
@@ -114,79 +156,162 @@ describe('GoalStatusCard', () => {
           updatedAt: Date.now(),
         },
         onCommand: vi.fn(),
-        onContinue: vi.fn(),
-        onComplete: vi.fn(),
+        onPause: vi.fn(),
       }),
     );
 
     expect(rendered).toContain(i18nService.t('coworkGoalActiveHint'));
-    expect(rendered).toContain(i18nService.t('coworkGoalContinue'));
+    expect(rendered).toContain(i18nService.t('coworkGoalPause'));
     expect(rendered).not.toContain(i18nService.t('coworkGoalPhaseRunning'));
-    expect(rendered).not.toContain(`>${i18nService.t('coworkGoalPause')}<`);
   });
 
-  it.each([
-    [GoalExecutionPhase.Stopped, 'coworkGoalStoppedHint', 'coworkGoalContinue'],
-    [GoalExecutionPhase.Failed, 'coworkGoalFailedHint', 'coworkGoalRetry'],
-  ] as const)('renders an active %s execution with its recovery action', (phase, hintKey, actionKey) => {
+  it('renders continue after an active goal is explicitly stopped', () => {
+    const onContinue = vi.fn();
+    const tree = GoalStatusCard({
+      goal: activeGoal,
+      execution: {
+        sessionId: 'session-1',
+        goalId: 'goal-1',
+        phase: GoalExecutionPhase.Stopped,
+        continuationCount: 1,
+        updatedAt: Date.now(),
+      },
+      isRunning: true,
+      onCommand: vi.fn(),
+      onPause: vi.fn(),
+      onContinue,
+    });
+    const continueButton = findButtonByLabel(tree, i18nService.t('coworkGoalContinue'));
+    const rendered = renderToStaticMarkup(tree);
+
+    expect(rendered).toContain(i18nService.t('coworkGoalStoppedHint'));
+    expect(rendered).not.toContain(`>${i18nService.t('coworkGoalPause')}<`);
+    expect(continueButton).not.toBeNull();
+    continueButton?.props.onClick?.();
+    expect(onContinue).toHaveBeenCalledOnce();
+  });
+
+  it('renders an active retrying execution without a confirmation action', () => {
     const rendered = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {
         goal: activeGoal,
         execution: {
           sessionId: 'session-1',
           goalId: 'goal-1',
-          phase,
+          phase: GoalExecutionPhase.Retrying,
           continuationCount: 1,
           updatedAt: Date.now(),
         },
         onCommand: vi.fn(),
-        onContinue: vi.fn(),
-        onComplete: vi.fn(),
+        onPause: vi.fn(),
       }),
     );
 
-    expect(rendered).toContain(i18nService.t(hintKey));
-    expect(rendered).toContain(i18nService.t(actionKey));
-    expect(rendered).toContain(i18nService.t('coworkGoalMarkComplete'));
+    expect(rendered).toContain(i18nService.t('coworkGoalRetryingHint'));
+    expect(rendered).toContain(i18nService.t('coworkGoalPause'));
+    expect(rendered).not.toContain(i18nService.t('coworkGoalMarkComplete'));
   });
 
   it.each([
     [SessionGoalStatus.Paused, 'coworkGoalPaused'],
     [SessionGoalStatus.Blocked, 'coworkGoalBlocked'],
-    [SessionGoalStatus.UsageLimited, 'coworkGoalUsageLimited'],
-    [SessionGoalStatus.BudgetLimited, 'coworkGoalBudgetLimited'],
-  ] as const)('renders resume and end actions for OpenClaw %s lifecycle state', (status, labelKey) => {
-    const rendered = renderToStaticMarkup(
-      React.createElement(GoalStatusCard, {
-        goal: { ...activeGoal, status },
-        execution: {
-          sessionId: 'session-1',
-          phase: GoalExecutionPhase.Waiting,
-          continuationCount: 0,
-          updatedAt: Date.now(),
-        },
-        onCommand: vi.fn(),
-      }),
-    );
+  ] as const)(
+    'renders resume and end actions for OpenClaw %s lifecycle state',
+    (status, labelKey) => {
+      const rendered = renderToStaticMarkup(
+        React.createElement(GoalStatusCard, {
+          goal: { ...activeGoal, status },
+          execution: {
+            sessionId: 'session-1',
+            phase: GoalExecutionPhase.Waiting,
+            continuationCount: 0,
+            updatedAt: Date.now(),
+          },
+          onCommand: vi.fn(),
+        }),
+      );
 
-    expect(rendered).toContain(i18nService.t(labelKey));
-    expect(rendered).toContain(i18nService.t('coworkGoalResume'));
-    expect(rendered).toContain(i18nService.t('coworkGoalEnd'));
-    expect(rendered).not.toContain(`>${i18nService.t('coworkGoalContinue')}<`);
-  });
+      expect(rendered).toContain(i18nService.t(labelKey));
+      expect(rendered).toContain(i18nService.t('coworkGoalResume'));
+      expect(rendered).toContain(i18nService.t('coworkGoalEnd'));
+      expect(rendered).not.toContain(`>${i18nService.t('coworkGoalContinue')}<`);
+    },
+  );
 
-  it('renders only clear for a completed goal', () => {
+  it('renders continue improving and confirm complete for a completed goal', () => {
     const rendered = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {
         goal: { ...activeGoal, status: SessionGoalStatus.Complete },
         onCommand: vi.fn(),
+        onContinueImproving: vi.fn(),
       }),
     );
 
     expect(rendered).toContain(i18nService.t('coworkGoalComplete'));
-    expect(rendered).toContain(i18nService.t('coworkGoalClear'));
+    expect(rendered).toContain(i18nService.t('coworkGoalContinueImproving'));
+    expect(rendered).toContain(i18nService.t('coworkGoalMarkComplete'));
+    expect(rendered).not.toContain(i18nService.t('coworkGoalClear'));
     expect(rendered).not.toContain(i18nService.t('coworkGoalEnd'));
     expect(rendered).not.toContain(i18nService.t('coworkGoalResume'));
+  });
+
+  it('uses an awaiting-confirmation execution before complete metadata arrives', () => {
+    const rendered = renderToStaticMarkup(
+      React.createElement(GoalStatusCard, {
+        goal: activeGoal,
+        execution: {
+          sessionId: 'session-1',
+          phase: GoalExecutionPhase.AwaitingConfirmation,
+          continuationCount: 2,
+          updatedAt: Date.now(),
+        },
+        onCommand: vi.fn(),
+        onPause: vi.fn(),
+      }),
+    );
+
+    expect(rendered).toContain(i18nService.t('coworkGoalComplete'));
+    expect(rendered).toContain(i18nService.t('coworkGoalMarkComplete'));
+    expect(rendered).not.toContain(i18nService.t('coworkGoalPause'));
+    expect(rendered).not.toContain(`>${i18nService.t('coworkGoalContinue')}<`);
+  });
+
+  it('clears the goal when completion is confirmed', () => {
+    const onCommand = vi.fn();
+    const tree = GoalStatusCard({
+      goal: { ...activeGoal, status: SessionGoalStatus.Complete },
+      onCommand,
+    });
+    const confirmButton = findButtonByLabel(tree, i18nService.t('coworkGoalMarkComplete'));
+
+    expect(confirmButton).not.toBeNull();
+    confirmButton?.props.onClick?.();
+    expect(onCommand).toHaveBeenCalledWith('/goal clear');
+  });
+
+  it('enters and cancels completion feedback without changing the goal', () => {
+    const onContinueImproving = vi.fn();
+    const onCancelContinueImproving = vi.fn();
+    const initialTree = GoalStatusCard({
+      goal: { ...activeGoal, status: SessionGoalStatus.Complete },
+      onCommand: vi.fn(),
+      onContinueImproving,
+    });
+    findButtonByLabel(initialTree, i18nService.t('coworkGoalContinueImproving'))?.props.onClick?.();
+
+    const feedbackTree = GoalStatusCard({
+      goal: { ...activeGoal, status: SessionGoalStatus.Complete },
+      completionFeedbackActive: true,
+      onCommand: vi.fn(),
+      onCancelContinueImproving,
+    });
+    const feedbackMarkup = renderToStaticMarkup(feedbackTree);
+    findButtonByLabel(feedbackTree, i18nService.t('coworkGoalCancelImproving'))?.props.onClick?.();
+
+    expect(onContinueImproving).toHaveBeenCalledOnce();
+    expect(feedbackMarkup).toContain(i18nService.t('coworkGoalCompletionFeedbackHint'));
+    expect(feedbackMarkup).not.toContain(i18nService.t('coworkGoalMarkComplete'));
+    expect(onCancelContinueImproving).toHaveBeenCalledOnce();
   });
 
   it('delegates the end action instead of clearing the goal directly', () => {

@@ -322,6 +322,14 @@ contextBridge.exposeInMainWorld('electron', {
     getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),
     getGoalExecution: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Get, sessionId),
     continueGoal: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Continue, sessionId),
+    resumeGoalForUserInput: (sessionId: string) =>
+      ipcRenderer.invoke(GoalExecutionIpc.ResumeForUserInput, sessionId),
+    restartCompletedGoalForFeedback: (sessionId: string, goalId: string, objective?: string) =>
+      ipcRenderer.invoke(GoalExecutionIpc.RestartCompletedForFeedback, {
+        sessionId,
+        goalId,
+        objective,
+      }),
     getContextUsage: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
     deleteMessage: (sessionId: string, messageId: string) =>
@@ -566,26 +574,20 @@ contextBridge.exposeInMainWorld('electron', {
     },
     listResults: (query?: ScheduledTaskResultQuery) =>
       ipcRenderer.invoke(ScheduledTaskIpc.ListResults, query),
-    markResultRead: (runId: string) =>
-      ipcRenderer.invoke(ScheduledTaskIpc.MarkResultRead, runId),
+    markResultRead: (runId: string) => ipcRenderer.invoke(ScheduledTaskIpc.MarkResultRead, runId),
     markAllResultsRead: (taskId?: string) =>
       ipcRenderer.invoke(ScheduledTaskIpc.MarkAllResultsRead, taskId),
-    deleteResult: (runId: string) =>
-      ipcRenderer.invoke(ScheduledTaskIpc.DeleteResult, runId),
+    deleteResult: (runId: string) => ipcRenderer.invoke(ScheduledTaskIpc.DeleteResult, runId),
     reconcileResults: () => ipcRenderer.invoke(ScheduledTaskIpc.ReconcileResults),
     onResultUpserted: (callback: (data: ScheduledTaskResultUpsertedEvent) => void) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        data: ScheduledTaskResultUpsertedEvent,
-      ) => callback(data);
+      const handler = (_event: Electron.IpcRendererEvent, data: ScheduledTaskResultUpsertedEvent) =>
+        callback(data);
       ipcRenderer.on(ScheduledTaskIpc.ResultUpserted, handler);
       return () => ipcRenderer.removeListener(ScheduledTaskIpc.ResultUpserted, handler);
     },
     onUnreadCountChanged: (callback: (data: ScheduledTaskUnreadCountEvent) => void) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        data: ScheduledTaskUnreadCountEvent,
-      ) => callback(data);
+      const handler = (_event: Electron.IpcRendererEvent, data: ScheduledTaskUnreadCountEvent) =>
+        callback(data);
       ipcRenderer.on(ScheduledTaskIpc.UnreadCountChanged, handler);
       return () => ipcRenderer.removeListener(ScheduledTaskIpc.UnreadCountChanged, handler);
     },

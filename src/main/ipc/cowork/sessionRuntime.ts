@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 
 import {
   GoalExecutionIpc,
-  isSessionGoalStatus,
+  normalizeSessionGoal,
   type SessionGoal,
 } from '../../../shared/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -26,48 +26,8 @@ const nonNegativeNumber = (value: unknown): number | undefined =>
 const nonEmptyString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
-export const readSessionGoal = (value: unknown): SessionGoal | undefined => {
-  if (!value || typeof value !== 'object') return undefined;
-  const source = value as Record<string, unknown>;
-  const objective = typeof source.objective === 'string' ? source.objective.trim() : '';
-  const id = typeof source.id === 'string' ? source.id.trim() : '';
-  if (source.schemaVersion !== 1 || !isSessionGoalStatus(source.status) || !objective || !id) {
-    return undefined;
-  }
-
-  const numeric = (key: string, fallback = 0) => nonNegativeNumber(source[key]) ?? fallback;
-  const optionalNumeric = (key: string) => {
-    const result = nonNegativeNumber(source[key]);
-    return result === undefined ? {} : { [key]: result };
-  };
-  const tokenBudget = nonNegativeNumber(source.tokenBudget);
-  const lastStatusNote =
-    typeof source.lastStatusNote === 'string' && source.lastStatusNote.trim()
-      ? source.lastStatusNote.trim()
-      : undefined;
-
-  return {
-    schemaVersion: 1,
-    id,
-    objective,
-    status: source.status,
-    createdAt: numeric('createdAt'),
-    updatedAt: numeric('updatedAt'),
-    tokenStart: numeric('tokenStart'),
-    ...(typeof source.tokenStartFresh === 'boolean'
-      ? { tokenStartFresh: source.tokenStartFresh }
-      : {}),
-    tokensUsed: numeric('tokensUsed'),
-    ...(tokenBudget === undefined ? {} : { tokenBudget }),
-    continuationTurns: numeric('continuationTurns'),
-    ...(lastStatusNote ? { lastStatusNote } : {}),
-    ...optionalNumeric('pausedAt'),
-    ...optionalNumeric('blockedAt'),
-    ...optionalNumeric('completedAt'),
-    ...optionalNumeric('usageLimitedAt'),
-    ...optionalNumeric('budgetLimitedAt'),
-  };
-};
+export const readSessionGoal = (value: unknown): SessionGoal | undefined =>
+  normalizeSessionGoal(value);
 
 export const readUsage = (session: Record<string, unknown>) => {
   const budget =
@@ -237,6 +197,41 @@ export const registerCoworkSessionRuntimeHandlers = ({
       };
     }
   });
+
+  ipcMain.handle(GoalExecutionIpc.ResumeForUserInput, async (_event, sessionId: string) => {
+    try {
+      const runtime = getRuntime();
+      if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
+      await runtime.resumeGoalForUserInput(sessionId);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to resume blocked goal',
+      };
+    }
+  });
+
+  ipcMain.handle(
+    GoalExecutionIpc.RestartCompletedForFeedback,
+    async (_event, options: { sessionId: string; goalId: string; objective?: string }) => {
+      try {
+        const runtime = getRuntime();
+        if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
+        const result = await runtime.restartCompletedGoalForFeedback(
+          options.sessionId,
+          options.goalId,
+          options.objective,
+        );
+        return { success: true, ...result };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to restart completed goal',
+        };
+      }
+    },
+  );
 
   ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
     try {

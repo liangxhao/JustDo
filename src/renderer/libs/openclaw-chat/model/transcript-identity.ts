@@ -22,6 +22,10 @@ function readScalar(value: unknown): string | null {
 export function readTranscriptIdentity(message: unknown): TranscriptIdentity | null {
   const record = asRecord(message);
   if (!record) return null;
+  const interruptedOverlayId = readScalar(record.__justdoInterruptedOverlayId);
+  if (interruptedOverlayId) {
+    return { kind: 'durable-id', value: `interrupted:${interruptedOverlayId}` };
+  }
   const marker = asRecord(record.__openclaw);
   const openClawId = readScalar(marker?.id);
   if (openClawId) return { kind: 'openclaw-id', value: openClawId };

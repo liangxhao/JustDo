@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   hasSlashCommandBeforeSendHook,
+  isGoalClearCommand,
   parseGoalStartObjective,
   parseSlashCommand,
   resolveSlashCommandBehavior,
@@ -62,5 +63,15 @@ describe('parseGoalStartObjective', () => {
     expect(parseGoalStartObjective('/goal status')).toBeNull();
     expect(parseGoalStartObjective('/goal complete')).toBeNull();
     expect(parseGoalStartObjective('write a goal')).toBeNull();
+  });
+});
+
+describe('isGoalClearCommand', () => {
+  it('matches only the clear lifecycle command', () => {
+    expect(isGoalClearCommand('/goal clear')).toBe(true);
+    expect(isGoalClearCommand('/GOAL CLEAR')).toBe(true);
+    expect(isGoalClearCommand('/goal clear now')).toBe(false);
+    expect(isGoalClearCommand('/goal write clear instructions')).toBe(false);
+    expect(isGoalClearCommand('/goal complete')).toBe(false);
   });
 });

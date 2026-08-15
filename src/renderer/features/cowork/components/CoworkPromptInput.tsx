@@ -1,7 +1,14 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
-import type { GoalExecutionSnapshot, SessionGoal } from '@shared/sessionGoal';
 import {
+  GoalExecutionPhase,
+  type GoalExecutionSnapshot,
+  type SessionGoal,
+  SessionGoalStatus,
+} from '@shared/sessionGoal';
+import {
+  isGoalClearCommand,
+  isGoalSlashCommand,
   parseGoalStartObjective,
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/slashCommands';
@@ -25,6 +32,14 @@ import {
 } from '@/features/cowork/components/coworkRunActivity';
 import FolderSelectorPopover from '@/features/cowork/components/FolderSelectorPopover';
 import { runGoalActionSingleFlight } from '@/features/cowork/components/goalActionSingleFlight';
+import {
+  shouldDiscardGoalCompletionFeedback,
+  submitGoalCompletionFeedback,
+} from '@/features/cowork/components/goalCompletionFeedback';
+import {
+  resolveGoalClearFetch,
+  resolvePendingGoalObjectiveOnSessionChange,
+} from '@/features/cowork/components/goalPendingObjective';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import GoalStatusCard from '@/features/cowork/components/GoalStatusCard';
 import { LatestSerialTaskQueue } from '@/features/cowork/components/latestSerialTaskQueue';
@@ -148,6 +163,7 @@ interface CoworkPromptInputProps {
   onSubmit: (
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
+    gatewayPrompt?: string,
   ) => boolean | void | Promise<boolean | void>;
   onStop?: () => boolean | void | Promise<boolean | void>;
   isStreaming?: boolean;
@@ -172,6 +188,14 @@ interface CoworkPromptInputProps {
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
 }
+
+interface GoalCompletionFeedbackState {
+  completedGoalId: string;
+  preparedObjective?: string;
+}
+
+const goalFeedbackStorageKey = (sessionId: string): string =>
+  `justdo:goal-completion-feedback:${sessionId}`;
 
 const formatContextLength = (tokens: number): string => {
   if (tokens >= 1_000_000)
@@ -249,12 +273,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [modelUpdateError, setModelUpdateError] = useState<string | null>(null);
     const [goalActionPending, setGoalActionPending] = useState(false);
     const goalActionPendingRef = useRef(false);
+    const [completionFeedback, setCompletionFeedback] =
+      useState<GoalCompletionFeedbackState | null>(null);
+    const completionFeedbackRef = useRef<GoalCompletionFeedbackState | null>(null);
     const [endingGoalId, setEndingGoalId] = useState<string | null>(null);
     const goalEndCancelButtonRef = useRef<HTMLButtonElement>(null);
     const goalEndConfirmButtonRef = useRef<HTMLButtonElement>(null);
     const optimisticSessionModelRef = useRef<Model | null>(null);
     const confirmedSessionModelRef = useRef<Model | null>(baseSelectedModel);
     const modelSelectionContextRef = useRef(0);
+    const renderedSessionIdRef = useRef(sessionId);
+    renderedSessionIdRef.current = sessionId;
     const modelSelectionQueueRef = useRef(new LatestSerialTaskQueue());
     const automaticModelRepairKeyRef = useRef('');
     const effectiveSelectedModel = optimisticSessionModel ?? baseSelectedModel;
@@ -280,6 +309,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [pendingGoalObjective, setPendingGoalObjective] = useState<string | null>(
       initialGoalObjective,
     );
+    const goalStateSessionIdRef = useRef(sessionId);
+    const initialGoalObjectiveRef = useRef(initialGoalObjective);
+    initialGoalObjectiveRef.current = initialGoalObjective;
     const isRunActive = isCoworkRunActive(isStreaming, goalRunProgress);
     const canStopRun = canStopCoworkRun(isStreaming, goalRunProgress);
 
@@ -293,13 +325,40 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [slashCommands, setSlashCommands] = useState<SlashCommandDef[]>(SLASH_COMMANDS);
     const slashCommandRefreshPendingRef = useRef(false);
     const slashCommandRefreshSeqRef = useRef(0);
+    const goalClearPendingRef = useRef(false);
+    const goalClearTargetIdRef = useRef<string | null>(null);
     const latestValueRef = useRef(value);
     const contextUsageRunRef = useRef<{ sessionId?: string; active: boolean }>({
       sessionId,
       active: isRunActive,
     });
+    const updateCompletionFeedback = useCallback((next: GoalCompletionFeedbackState | null) => {
+      completionFeedbackRef.current = next;
+      setCompletionFeedback(next);
+    }, []);
+    const applyAcceptedGoalClear = useCallback(() => {
+      sessionGoalRef.current = null;
+      setSessionGoal(null);
+      setPendingGoalObjective(null);
+      setGoalExecution(null);
+      if (sessionId && !sessionId.startsWith('temp-')) {
+        window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+      }
+      updateCompletionFeedback(null);
+    }, [sessionId, updateCompletionFeedback]);
+    const beginGoalClear = useCallback(() => {
+      goalClearPendingRef.current = true;
+      goalClearTargetIdRef.current = sessionGoalRef.current?.id ?? null;
+    }, []);
+    const cancelGoalClear = useCallback(() => {
+      goalClearPendingRef.current = false;
+      goalClearTargetIdRef.current = null;
+    }, []);
 
     useEffect(() => {
+      const previousSessionId = goalStateSessionIdRef.current;
+      goalStateSessionIdRef.current = sessionId;
+      cancelGoalClear();
       modelSelectionContextRef.current += 1;
       modelSelectionQueueRef.current.invalidate();
       automaticModelRepairKeyRef.current = '';
@@ -312,9 +371,32 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setSessionGoal(null);
       sessionGoalRef.current = null;
       setGoalExecution(null);
+      let restoredFeedback: GoalCompletionFeedbackState | null = null;
+      if (sessionId && !sessionId.startsWith('temp-')) {
+        try {
+          const raw = window.localStorage.getItem(goalFeedbackStorageKey(sessionId));
+          const parsed = raw ? (JSON.parse(raw) as Partial<GoalCompletionFeedbackState>) : null;
+          if (parsed?.completedGoalId) {
+            restoredFeedback = {
+              completedGoalId: parsed.completedGoalId,
+              ...(parsed.preparedObjective ? { preparedObjective: parsed.preparedObjective } : {}),
+            };
+          }
+        } catch {
+          window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+        }
+      }
+      updateCompletionFeedback(restoredFeedback);
       setEndingGoalId(null);
-      setPendingGoalObjective(null);
-    }, [sessionId, effectiveAgentId]);
+      setPendingGoalObjective(current =>
+        resolvePendingGoalObjectiveOnSessionChange({
+          previousSessionId,
+          nextSessionId: sessionId,
+          currentObjective: current,
+          initialObjective: initialGoalObjectiveRef.current,
+        }),
+      );
+    }, [cancelGoalClear, sessionId, effectiveAgentId, updateCompletionFeedback]);
 
     useEffect(() => {
       if (!sessionId || remoteManaged) return;
@@ -410,12 +492,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       remoteManaged,
       sessionId,
     ]);
-
-    useEffect(() => {
-      if (initialGoalObjective && !sessionGoal) {
-        setPendingGoalObjective(initialGoalObjective);
-      }
-    }, [initialGoalObjective, sessionGoal]);
 
     const resetSlashMenuState = useCallback(() => {
       setSlashMenuOpen(false);
@@ -616,6 +692,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
         const promptValue = promptOverride ?? value;
         const trimmedValue = promptValue.trim();
+        const submissionContext = modelSelectionContextRef.current;
+        const submittedCompletionFeedback = completionFeedbackRef.current;
+        const submissionIsCurrent = () =>
+          modelSelectionContextRef.current === submissionContext &&
+          renderedSessionIdRef.current === sessionId;
         // Require user text even when attachments exist; empty prompts produce poor session titles.
         if (!trimmedValue || isRunActive || disabled || modelUpdatePending) return;
         setShowFolderRequiredWarning(false);
@@ -688,18 +769,94 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           return;
         }
 
-        const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
-        const goalObjective = parseGoalStartObjective(trimmedValue);
-        if (goalObjective) {
-          setPendingGoalObjective(goalObjective);
-        }
-
-        const clearSubmittedInput = () => {
-          setValue('');
+        const clearSubmittedInput = (clearVisibleValue = true) => {
+          if (clearVisibleValue) setValue('');
           dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
           dispatch(clearDraftAttachments(draftKey));
           setImageVisionHint(false);
         };
+        const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
+        const feedback = submittedCompletionFeedback;
+        if (feedback && sessionId && !trimmedValue.startsWith('/')) {
+          const outcome = await submitGoalCompletionFeedback({
+            completedGoalId: feedback.completedGoalId,
+            preparedObjective: feedback.preparedObjective,
+            restart: (goalId, objective) =>
+              window.electron.cowork.restartCompletedGoalForFeedback(sessionId, goalId, objective),
+            onPrepared: objective => {
+              const nextFeedback = {
+                completedGoalId: feedback.completedGoalId,
+                preparedObjective: objective,
+              };
+              window.localStorage.setItem(
+                goalFeedbackStorageKey(sessionId),
+                JSON.stringify(nextFeedback),
+              );
+              if (submissionIsCurrent()) updateCompletionFeedback(nextFeedback);
+            },
+            canSend: submissionIsCurrent,
+            feedback: finalPrompt,
+            send: async gatewayPrompt =>
+              onSubmit(
+                finalPrompt,
+                attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
+                gatewayPrompt,
+              ),
+          });
+          if (outcome === 'context_changed') return;
+          if (outcome === 'restart_failed') {
+            if (!submissionIsCurrent()) return;
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService.t('coworkGoalContinueImprovingFailed'),
+              }),
+            );
+            return;
+          }
+          if (outcome === 'send_failed') {
+            if (submissionIsCurrent()) {
+              window.dispatchEvent(
+                new CustomEvent('app:showToast', {
+                  detail: i18nService.t('coworkGoalFeedbackSendFailed'),
+                }),
+              );
+            }
+            return;
+          }
+          const submissionStillCurrent = submissionIsCurrent();
+          clearSubmittedInput(submissionStillCurrent);
+          if (submissionStillCurrent) {
+            window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+            updateCompletionFeedback(null);
+          }
+          return;
+        }
+        if (
+          sessionId &&
+          (sessionGoalRef.current?.status === SessionGoalStatus.Blocked ||
+            goalExecution?.phase === GoalExecutionPhase.AwaitingInput) &&
+          !isGoalSlashCommand(trimmedValue)
+        ) {
+          const resumed = await window.electron.cowork.resumeGoalForUserInput(sessionId);
+          if (!resumed.success) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService.t('coworkGoalResumeForInputFailed'),
+              }),
+            );
+            return;
+          }
+        }
+        const goalObjective = parseGoalStartObjective(trimmedValue);
+        const goalClear = isGoalClearCommand(trimmedValue);
+        if (goalObjective) {
+          cancelGoalClear();
+          setPendingGoalObjective(goalObjective);
+        }
+        if (goalClear) {
+          beginGoalClear();
+        }
+
         const clearBeforeSubmit = shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
         if (clearBeforeSubmit) {
           clearSubmittedInput();
@@ -711,17 +868,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
           );
         } catch (error) {
+          if (goalClear) cancelGoalClear();
           if (goalObjective) {
             setPendingGoalObjective(current => (current === goalObjective ? null : current));
           }
           throw error;
         }
         if (result === false) {
+          if (goalClear) cancelGoalClear();
           if (goalObjective) {
             setPendingGoalObjective(current => (current === goalObjective ? null : current));
           }
           return;
         }
+        if (goalClear) applyAcceptedGoalClear();
         if (!clearBeforeSubmit) {
           clearSubmittedInput();
         }
@@ -738,6 +898,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         draftKey,
         modelSupportsImage,
         modelUpdatePending,
+        sessionId,
+        goalExecution?.phase,
+        applyAcceptedGoalClear,
+        beginGoalClear,
+        cancelGoalClear,
+        updateCompletionFeedback,
       ],
     );
 
@@ -1472,8 +1638,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ];
     }, [disabled, isRunActive, value, contextMenuPos]);
 
-    const canSubmit =
-      !disabled && !modelUpdatePending && !hasNoAvailableModels && !!value.trim();
+    const canSubmit = !disabled && !modelUpdatePending && !hasNoAvailableModels && !!value.trim();
+    const effectivePlaceholder = completionFeedback
+      ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
+      : placeholder;
     const enhancedContainerClass = isDraggingFiles
       ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
       : containerClass;
@@ -1500,8 +1668,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       let cancelled = false;
       let retryId: number | null = null;
       let requestInFlight = false;
+      let refreshQueued = false;
       const fetchGoal = async (allowRetry = true) => {
-        if (cancelled || requestInFlight) return;
+        if (cancelled) return;
+        if (requestInFlight) {
+          refreshQueued = true;
+          return;
+        }
         requestInFlight = true;
         try {
           const result = await window.electron.cowork.getSessionGoal(sessionId);
@@ -1512,11 +1685,34 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             }
             return;
           }
-          sessionGoalRef.current = result.goal ?? null;
-          setSessionGoal(result.goal ?? null);
-          if (result.goal) {
-            setPendingGoalObjective(null);
-          } else if (!isRunActive) {
+          const nextGoal = result.goal ?? null;
+          if (goalClearPendingRef.current) {
+            const clearDecision = resolveGoalClearFetch(
+              goalClearTargetIdRef.current,
+              nextGoal?.id ?? null,
+            );
+            if (clearDecision === 'cleared') {
+              cancelGoalClear();
+              applyAcceptedGoalClear();
+              return;
+            }
+            if (clearDecision === 'ignore_old_goal') return;
+            cancelGoalClear();
+          }
+          sessionGoalRef.current = nextGoal;
+          setSessionGoal(nextGoal);
+          const feedback = completionFeedbackRef.current;
+          if (
+            feedback &&
+            shouldDiscardGoalCompletionFeedback(feedback.completedGoalId, nextGoal?.id)
+          ) {
+            window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+            updateCompletionFeedback(null);
+          }
+          // A successful null response can occur between command acceptance and Gateway metadata
+          // convergence. Keep the optimistic card mounted until a canonical Goal replaces it;
+          // submission failures and unrelated session changes clear the pending objective explicitly.
+          if (nextGoal) {
             setPendingGoalObjective(null);
           }
         } catch {
@@ -1525,6 +1721,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
         } finally {
           requestInFlight = false;
+          if (refreshQueued && !cancelled) {
+            refreshQueued = false;
+            void fetchGoal(allowRetry);
+          }
         }
       };
       void fetchGoal();
@@ -1545,7 +1745,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         removeExecutionListener();
         if (retryId !== null) window.clearTimeout(retryId);
       };
-    }, [sessionId, isRunActive]);
+    }, [applyAcceptedGoalClear, cancelGoalClear, sessionId, updateCompletionFeedback]);
 
     // During a run, Gateway can expose a live prompt estimate before the final usage lands.
     // Keep the last valid value visible and refresh it without overlapping requests.
@@ -1591,24 +1791,35 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         runGoalActionSingleFlight(goalActionPendingRef, setGoalActionPending, action),
       [],
     );
+    const submitGoalCommand = useCallback(
+      async (command: string) => {
+        const goalClear = isGoalClearCommand(command);
+        if (goalClear) beginGoalClear();
+        try {
+          const result = await onSubmit(command);
+          if (result === false) {
+            if (goalClear) cancelGoalClear();
+            return false;
+          }
+          if (goalClear) applyAcceptedGoalClear();
+          return true;
+        } catch (error) {
+          if (goalClear) cancelGoalClear();
+          throw error;
+        }
+      },
+      [applyAcceptedGoalClear, beginGoalClear, cancelGoalClear, onSubmit],
+    );
 
     const handleGoalCommand = useCallback(
       (command: string) => {
         if (disabled || isRunActive) return;
         void runGoalAction(async () => {
-          await onSubmit(command);
+          await submitGoalCommand(command);
         });
       },
-      [disabled, isRunActive, onSubmit, runGoalAction],
+      [disabled, isRunActive, runGoalAction, submitGoalCommand],
     );
-
-    const handleGoalContinue = useCallback(async () => {
-      if (!sessionId || disabled) return;
-      await runGoalAction(async () => {
-        const result = await window.electron.cowork.continueGoal(sessionId);
-        if (result.success && result.execution) setGoalExecution(result.execution);
-      });
-    }, [disabled, runGoalAction, sessionId]);
 
     const handleGoalPause = useCallback(async () => {
       if (disabled || !onStop) return;
@@ -1619,12 +1830,55 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       });
     }, [disabled, onStop, onSubmit, runGoalAction]);
 
-    const handleGoalComplete = useCallback(async () => {
-      if (disabled) return;
+    const handleGoalContinue = useCallback(async () => {
+      if (
+        !sessionId ||
+        sessionId.startsWith('temp-') ||
+        disabled ||
+        (isRunActive && goalExecution?.phase !== GoalExecutionPhase.Stopped)
+      ) {
+        return;
+      }
       await runGoalAction(async () => {
-        await onSubmit('/goal complete');
+        const result = await window.electron.cowork.continueGoal(sessionId);
+        if (!result.success) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkGoalContinueFailed'),
+            }),
+          );
+          return;
+        }
+        if (result.execution) setGoalExecution(result.execution);
       });
-    }, [disabled, onSubmit, runGoalAction]);
+    }, [disabled, goalExecution?.phase, isRunActive, runGoalAction, sessionId]);
+
+    const handleGoalContinueImproving = useCallback(() => {
+      const goal = sessionGoalRef.current;
+      const completionVisible =
+        goal?.status === SessionGoalStatus.Complete ||
+        goalExecution?.phase === GoalExecutionPhase.AwaitingConfirmation;
+      if (!goal || !completionVisible || disabled) return;
+      const nextFeedback = {
+        completedGoalId: goal.id,
+        preparedObjective: goal.objective,
+      };
+      if (sessionId && !sessionId.startsWith('temp-')) {
+        window.localStorage.setItem(
+          goalFeedbackStorageKey(sessionId),
+          JSON.stringify(nextFeedback),
+        );
+      }
+      updateCompletionFeedback(nextFeedback);
+      window.requestAnimationFrame(() => textareaRef.current?.focus());
+    }, [disabled, goalExecution?.phase, sessionId, updateCompletionFeedback]);
+
+    const handleGoalCancelImproving = useCallback(() => {
+      if (sessionId && !sessionId.startsWith('temp-')) {
+        window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+      }
+      updateCompletionFeedback(null);
+    }, [sessionId, updateCompletionFeedback]);
 
     const handleGoalEndRequest = useCallback(() => {
       const goal = sessionGoalRef.current;
@@ -1637,9 +1891,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setEndingGoalId(null);
       if (!goalId || disabled || sessionGoalRef.current?.id !== goalId) return;
       await runGoalAction(async () => {
-        await onSubmit('/goal clear');
+        await submitGoalCommand('/goal clear');
       });
-    }, [disabled, endingGoalId, onSubmit, runGoalAction]);
+    }, [disabled, endingGoalId, runGoalAction, submitGoalCommand]);
 
     const handleGoalEndDialogKeyDown = useCallback(
       (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1701,11 +1955,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             pendingObjective={pendingGoalObjective}
             execution={goalExecution}
             isRunning={isRunActive}
+            completionFeedbackActive={completionFeedback !== null}
             disabled={disabled || goalActionPending}
             onCommand={handleGoalCommand}
-            onContinue={handleGoalContinue}
             onPause={handleGoalPause}
-            onComplete={handleGoalComplete}
+            onContinue={handleGoalContinue}
+            onContinueImproving={handleGoalContinueImproving}
+            onCancelContinueImproving={handleGoalCancelImproving}
             onEnd={handleGoalEndRequest}
           />
         )}
@@ -1905,7 +2161,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 onContextMenu={handleContextMenu}
-                placeholder={placeholder}
+                placeholder={effectivePlaceholder}
                 disabled={disabled}
                 rows={isLarge ? 2 : 1}
                 className={textareaClass}
@@ -2008,7 +2264,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                           );
                           try {
                             await completion;
-                            if (!sessionId && selectionContext === modelSelectionContextRef.current) {
+                            if (
+                              !sessionId &&
+                              selectionContext === modelSelectionContextRef.current
+                            ) {
                               confirmedSessionModelRef.current = nextModel;
                             }
                             if (!sessionId) {
@@ -2167,7 +2426,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 onContextMenu={handleContextMenu}
-                placeholder={placeholder}
+                placeholder={effectivePlaceholder}
                 disabled={disabled}
                 rows={1}
                 className={textareaClass}

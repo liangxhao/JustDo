@@ -44,7 +44,11 @@ interface JustDoChatWrapperProps {
 }
 
 export interface JustDoChatWrapperRef {
-  sendMessage: (text: string, attachments?: CoworkAttachmentPayload[]) => Promise<void>;
+  sendMessage: (
+    text: string,
+    attachments?: CoworkAttachmentPayload[],
+    gatewayMessage?: string,
+  ) => Promise<void>;
   getExportSnapshot: () => {
     messages: unknown[];
     runtimeSessionId: string | null;
@@ -105,10 +109,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             isLoading: !controller?.state.connected || controller.state.chatLoading,
           };
         },
-        sendMessage: async (text: string, attachments = []) => {
+        sendMessage: async (text: string, attachments = [], gatewayMessage) => {
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
-          await controller.sendMessage(text, attachments);
+          await controller.sendMessage(text, attachments, gatewayMessage);
         },
         setPendingUserMessage: (text: string, attachments = []) => {
           const controller = controllerRef.current;

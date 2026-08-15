@@ -29,7 +29,11 @@ import { readModelRef } from '../../../shared/openclaw/modelRef';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
   GoalExecutionIpc,
+  GoalExecutionPhase,
   type GoalExecutionSnapshot,
+  type GoalFeedbackPreparationResult,
+  normalizeSessionGoal,
+  type SessionGoal,
   SessionGoalIpc,
   SessionGoalStatus,
 } from '../../../shared/sessionGoal';
@@ -115,7 +119,6 @@ const TICK_TIMEOUT_MS = 90_000;
 const AGENT_ACTIVITY_ALIVE_WINDOW_MS = 60_000;
 const MESSAGE_UPDATE_THROTTLE_MS = 200;
 const CLIENT_TIMEOUT_GRACE_MS = 30_000;
-const GATEWAY_RECONNECT_MAX_ATTEMPTS = 10;
 const GATEWAY_RECONNECT_DELAYS = [2_000, 5_000, 10_000, 15_000, 30_000];
 const GATEWAY_CONNECT_RETRY_DELAYS = [500, 1_500, 3_000];
 const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
@@ -254,6 +257,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayStoppingIntentionally = false;
   private gatewayReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private gatewayReconnectAttempt = 0;
+  private goalRecoveryGeneration: number | null = null;
+  private goalRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly goalReplacementPromises = new Map<
+    string,
+    Promise<GoalFeedbackPreparationResult>
+  >();
+  private readonly goalsAwaitingResumeInput = new Map<string, string>();
 
   // Tick watchdog
   private lastTickTimestamp = 0;
@@ -320,7 +330,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.ensureActiveTurn(sessionId, sessionKey, runId);
       },
       onRunFailed: sessionId => this.cleanupSessionTurn(sessionId),
-      onSnapshot: snapshot => this.broadcastGoalExecution(snapshot),
+      onSnapshot: snapshot => {
+        if (
+          snapshot.phase === GoalExecutionPhase.AwaitingConfirmation ||
+          snapshot.phase === GoalExecutionPhase.AwaitingInput ||
+          snapshot.phase === GoalExecutionPhase.Stopped
+        ) {
+          if (snapshot.identityPending === false) {
+            this.store.setGoalExecutionSnapshot?.(snapshot);
+          } else {
+            this.store.setGoalExecutionSnapshot?.({ ...snapshot, identityPending: true });
+            void this.persistTerminalGoalSnapshot(snapshot);
+          }
+        } else if (
+          snapshot.phase === GoalExecutionPhase.Running ||
+          snapshot.phase === GoalExecutionPhase.Continuing ||
+          snapshot.phase === GoalExecutionPhase.Retrying
+        ) {
+          this.store.clearGoalExecutionSnapshot?.(snapshot.sessionId);
+        }
+        this.broadcastGoalExecution(snapshot);
+      },
       waitBeforeAutomaticContinuation: () =>
         new Promise(resolve => setTimeout(resolve, 1_600)),
     });
@@ -450,7 +480,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   getGoalExecution(sessionId: string): GoalExecutionSnapshot | null {
-    return this.goalContinuationCoordinator.getSnapshot(sessionId);
+    return (
+      this.goalContinuationCoordinator.getSnapshot(sessionId) ??
+      this.store.getGoalExecutionSnapshot?.(sessionId)
+    );
   }
 
   async continueGoal(sessionId: string): Promise<GoalExecutionSnapshot> {
@@ -476,6 +509,256 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     if (!sessionKey) throw new Error('The session does not have an active goal');
     return this.goalContinuationCoordinator.continue(sessionId, sessionKey);
+  }
+
+  private async persistTerminalGoalSnapshot(snapshot: GoalExecutionSnapshot): Promise<void> {
+    const generation = this.gatewayClientGeneration;
+    const session = this.store.getSession(snapshot.sessionId);
+    const client = this.gatewayClient;
+    let canonicalGoal: SessionGoal | null = null;
+    if (session && client) {
+      const candidateKeys = [
+        ...this.getSessionKeysForSession(snapshot.sessionId),
+        buildManagedSessionKey(
+          snapshot.sessionId,
+          session.agentId || DEFAULT_MANAGED_AGENT_ID,
+        ),
+        buildManagedSessionKey(snapshot.sessionId, DEFAULT_MANAGED_AGENT_ID),
+      ];
+      for (const delayMs of [0, 100, 250, 500, 1_000] as const) {
+        if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+        if (generation !== this.gatewayClientGeneration || this.gatewayClient !== client) return;
+        for (const candidateKey of new Set(candidateKeys)) {
+          try {
+            const result = await client.request<{ session?: { goal?: unknown } | null }>(
+              'sessions.describe',
+              { key: candidateKey },
+            );
+            const goal = normalizeSessionGoal(result.session?.goal);
+            if (goal) canonicalGoal = goal;
+          } catch {
+            // A later retry or reconnect recovery can converge the snapshot.
+          }
+          if (canonicalGoal) break;
+        }
+      }
+    }
+    const current = this.goalContinuationCoordinator.getSnapshot(snapshot.sessionId);
+    if (
+      current?.phase !== snapshot.phase ||
+      current.runId !== snapshot.runId ||
+      current.updatedAt !== snapshot.updatedAt
+    ) {
+      return;
+    }
+    const persisted = {
+      ...snapshot,
+      ...(canonicalGoal ? { goalId: canonicalGoal.id } : {}),
+      identityPending: !canonicalGoal,
+    };
+    if (persisted.goalId !== snapshot.goalId || persisted.identityPending !== true) {
+      this.goalContinuationCoordinator.restoreSnapshot(persisted);
+    } else {
+      this.store.setGoalExecutionSnapshot?.(persisted);
+    }
+  }
+
+  async resumeGoalForUserInput(sessionId: string): Promise<void> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error('Session not found');
+    const client = this.requireGatewayClient();
+    const generation = this.gatewayClientGeneration;
+    const candidateKeys = [
+      ...this.getSessionKeysForSession(sessionId),
+      buildManagedSessionKey(sessionId, session.agentId || DEFAULT_MANAGED_AGENT_ID),
+      buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
+    ];
+    let sessionKey = '';
+    let blockedGoalId = '';
+    for (const candidateKey of new Set(candidateKeys)) {
+      const result = await client.request<{ session?: { key?: string; goal?: unknown } | null }>(
+        'sessions.describe',
+        { key: candidateKey },
+      );
+      if (!result.session || !isRecord(result.session.goal)) continue;
+      const status = result.session.goal.status;
+      if (status === SessionGoalStatus.Active) return;
+      if (
+        status !== SessionGoalStatus.Blocked &&
+        status !== SessionGoalStatus.UsageLimited &&
+        status !== SessionGoalStatus.BudgetLimited
+      ) {
+        continue;
+      }
+      sessionKey = result.session.key?.trim() || candidateKey;
+      blockedGoalId =
+        typeof result.session.goal.id === 'string' ? result.session.goal.id.trim() : '';
+      break;
+    }
+    if (!sessionKey || !blockedGoalId) throw new Error('The session does not have a blocked goal');
+
+    const runId = `justdo-goal-resume-input-${randomUUID()}`;
+    this.rememberSessionKey(sessionId, sessionKey);
+    this.sessionIdByRunId.set(runId, sessionId);
+    this.goalContinuationCoordinator.registerControlRun(runId);
+    let commandAccepted = false;
+    try {
+      const result = await client.request<{ runId?: string }>('chat.send', {
+        sessionKey,
+        message: '/goal resume',
+        deliver: false,
+        justdoUserInitiated: true,
+        idempotencyKey: runId,
+      });
+      commandAccepted = true;
+      this.goalsAwaitingResumeInput.set(sessionId, blockedGoalId);
+      if (result.runId && result.runId !== runId) {
+        this.sessionIdByRunId.set(result.runId, sessionId);
+        this.goalContinuationCoordinator.registerControlRun(result.runId);
+      }
+      let resumed = false;
+      for (const delayMs of [0, 100, 250, 500, 1_000] as const) {
+        if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+        if (generation !== this.gatewayClientGeneration) {
+          throw new Error('OpenClaw Gateway connection changed');
+        }
+        const described = await client.request<{ session?: { goal?: unknown } | null }>(
+          'sessions.describe',
+          { key: sessionKey },
+        );
+        if (isRecord(described.session?.goal) && described.session.goal.status === 'active') {
+          resumed = true;
+          break;
+        }
+      }
+      if (!resumed) throw new Error('The blocked goal could not be resumed');
+    } catch (error) {
+      if (!commandAccepted) this.goalContinuationCoordinator.unregisterControlRun(runId);
+      throw error;
+    }
+  }
+
+  async restartCompletedGoalForFeedback(
+    sessionId: string,
+    expectedGoalId: string,
+    preparedObjective?: string,
+  ): Promise<GoalFeedbackPreparationResult> {
+    const existing = this.goalReplacementPromises.get(sessionId);
+    if (existing) return existing;
+    const replacement = this.performCompletedGoalReplacement(
+      sessionId,
+      expectedGoalId,
+      preparedObjective,
+    );
+    this.goalReplacementPromises.set(sessionId, replacement);
+    try {
+      return await replacement;
+    } finally {
+      if (this.goalReplacementPromises.get(sessionId) === replacement) {
+        this.goalReplacementPromises.delete(sessionId);
+      }
+    }
+  }
+
+  private async performCompletedGoalReplacement(
+    sessionId: string,
+    expectedGoalId: string,
+    preparedObjective?: string,
+  ): Promise<GoalFeedbackPreparationResult> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error('Session not found');
+    const client = this.requireGatewayClient();
+    const generation = this.gatewayClientGeneration;
+    const candidateKeys = [
+      ...this.getSessionKeysForSession(sessionId),
+      buildManagedSessionKey(sessionId, session.agentId || DEFAULT_MANAGED_AGENT_ID),
+      buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID),
+    ];
+    let sessionKey = '';
+    let completedGoal: SessionGoal | null = null;
+    let observedGoal: SessionGoal | null = null;
+    const convergenceDelays = [0, 100, 250, 500] as const;
+    for (const delayMs of convergenceDelays) {
+      if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+      let expectedGoalStillActive = false;
+      for (const candidateKey of new Set(candidateKeys)) {
+        const result = await client.request<{ session?: { key?: string; goal?: unknown } | null }>(
+          'sessions.describe',
+          { key: candidateKey },
+        );
+        const goal = normalizeSessionGoal(result.session?.goal);
+        if (!goal) {
+          sessionKey ||= result.session?.key?.trim() || candidateKey;
+          continue;
+        }
+        observedGoal = goal;
+        if (goal.id !== expectedGoalId) continue;
+        if (goal.status === SessionGoalStatus.Active) expectedGoalStillActive = true;
+        const execution = this.goalContinuationCoordinator.getSnapshot(sessionId);
+        const completionLatched =
+          goal.status === SessionGoalStatus.Active &&
+          execution?.phase === GoalExecutionPhase.AwaitingConfirmation &&
+          (!execution.goalId || execution.goalId === expectedGoalId);
+        if (goal.status !== SessionGoalStatus.Complete && !completionLatched) continue;
+        sessionKey = result.session?.key?.trim() || candidateKey;
+        completedGoal = goal;
+        break;
+      }
+      if (completedGoal) break;
+      if (
+        !expectedGoalStillActive ||
+        this.goalContinuationCoordinator.getSnapshot(sessionId)?.phase !==
+          GoalExecutionPhase.AwaitingConfirmation
+      ) {
+        break;
+      }
+      if (generation !== this.gatewayClientGeneration) {
+        throw new Error('OpenClaw Gateway connection changed');
+      }
+    }
+    if (!sessionKey || !completedGoal) {
+      const fallbackObjective = preparedObjective?.trim();
+      if (!observedGoal && fallbackObjective) {
+        return { objective: fallbackObjective };
+      }
+      throw new Error('The completed goal changed before feedback could be submitted');
+    }
+    this.rememberSessionKey(sessionId, sessionKey);
+    const objective = completedGoal.objective.trim() || preparedObjective?.trim();
+    if (!objective) throw new Error('The completed goal does not have an objective');
+
+    await client.request<{ ok: boolean; cleared: boolean; key: string }>('sessions.goal.clear', {
+      key: sessionKey,
+    });
+
+    let cleared = false;
+    for (const delayMs of [0, 100, 250, 500, 1_000, 2_000] as const) {
+      if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+      if (generation !== this.gatewayClientGeneration) {
+        throw new Error('OpenClaw Gateway connection changed');
+      }
+      const described = await client.request<{ session?: { goal?: unknown } | null }>(
+        'sessions.describe',
+        { key: sessionKey },
+      );
+      const goal = normalizeSessionGoal(described.session?.goal);
+      if (!goal) {
+        cleared = true;
+        break;
+      }
+      if (goal.id !== expectedGoalId) {
+        throw new Error('The completed goal changed while it was being cleared');
+      }
+    }
+    if (!cleared) throw new Error('The completed goal could not be cleared');
+
+    this.goalContinuationCoordinator.restoreSnapshot({
+      sessionId,
+      phase: GoalExecutionPhase.Waiting,
+      continuationCount: 0,
+      updatedAt: Date.now(),
+    });
+    return { objective };
   }
 
   async stopAllSessions(): Promise<void> {
@@ -760,6 +1043,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         idempotencyKey: runId,
         ...(attachments ? { attachments } : {}),
       });
+      if (!prompt.trimStart().startsWith('/')) {
+        this.goalsAwaitingResumeInput.delete(sessionId);
+      }
     } catch (error) {
       this.cleanupSessionTurn(sessionId);
       this.store.updateSession(sessionId, { status: 'error' });
@@ -1153,6 +1439,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (stream === 'lifecycle' && sessionKey) {
       const phase = typeof p.data.phase === 'string' ? p.data.phase : '';
       if (phase === 'start' || phase === 'end' || phase === 'error') {
+        if (
+          phase === 'start' &&
+          !p.spawnedBy &&
+          this.goalContinuationCoordinator.isUserInputRun(runId)
+        ) {
+          const inputSessionId =
+            this.sessionIdByRunId.get(runId) ?? this.resolveSessionIdBySessionKey(sessionKey);
+          if (inputSessionId && this.goalsAwaitingResumeInput.has(inputSessionId)) {
+            this.goalsAwaitingResumeInput.delete(inputSessionId);
+          }
+        }
         void this.goalContinuationCoordinator.handleLifecycle({
           runId,
           sessionKey,
@@ -2815,7 +3112,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         settleResolve();
         this.lastTickTimestamp = Date.now();
         this.startTickWatchdog();
-        void this.subscribeGatewaySessions();
+        void this.handleGatewayReady(generation);
         void this.reconcilePendingApprovals(generation);
       },
       onConnectError: (error: Error) => settleReject(error),
@@ -2859,6 +3156,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private stopGatewayClient(): void {
     this.goalContinuationCoordinator.clear();
+    this.cancelGoalRecovery();
     this.gatewayClientGeneration++;
     this.gatewayStoppingIntentionally = true;
     this.cancelGatewayReconnect();
@@ -2904,12 +3202,128 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  private async handleGatewayReady(generation: number): Promise<void> {
+    await this.subscribeGatewaySessions();
+    await this.recoverActiveGoals(generation);
+  }
+
+  private async recoverActiveGoals(generation: number): Promise<void> {
+    if (generation !== this.gatewayClientGeneration || this.goalRecoveryGeneration === generation) {
+      return;
+    }
+    if (this.goalRecoveryTimer) {
+      clearTimeout(this.goalRecoveryTimer);
+      this.goalRecoveryTimer = null;
+    }
+    this.goalRecoveryGeneration = generation;
+    try {
+      const runtimeSnapshot = await this.getRuntimeSessionSnapshot(true);
+      if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
+      if (!runtimeSnapshot.known) {
+        this.goalRecoveryGeneration = null;
+        this.scheduleGoalRecovery(generation);
+        return;
+      }
+      let hadInspectionFailure = false;
+      const runtimeRowsByKey = new Map(
+        runtimeSnapshot.sessions
+          .map(row => [this.runtimeRowString(row.key), row] as const)
+          .filter(([key]) => Boolean(key)),
+      );
+      for (const session of this.store.listSessions()) {
+        if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
+        const candidateKeys = [
+          ...this.getSessionKeysForSession(session.id),
+          buildManagedSessionKey(session.id, session.agentId || DEFAULT_MANAGED_AGENT_ID),
+          buildManagedSessionKey(session.id, DEFAULT_MANAGED_AGENT_ID),
+        ];
+        for (const candidateKey of new Set(candidateKeys)) {
+          let result: { session?: { key?: string; goal?: unknown } | null };
+          try {
+            result = await this.gatewayClient.request('sessions.describe', { key: candidateKey });
+          } catch (error) {
+            hadInspectionFailure = true;
+            coworkLog('WARN', 'GoalContinuation', 'Failed to inspect a goal during recovery', {
+              sessionId: session.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            continue;
+          }
+          if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
+          if (!result.session || !isRecord(result.session.goal)) continue;
+          if (result.session.goal.status !== SessionGoalStatus.Active) continue;
+          const goalId =
+            typeof result.session.goal.id === 'string' ? result.session.goal.id.trim() : '';
+          if (!goalId) continue;
+          const sessionKey = result.session.key?.trim() || candidateKey;
+          this.rememberSessionKey(session.id, sessionKey);
+          const persistedExecution = this.store.getGoalExecutionSnapshot?.(session.id) ?? null;
+          if (
+            persistedExecution &&
+            (persistedExecution.identityPending === true ||
+              persistedExecution.goalId === goalId) &&
+            (persistedExecution.phase === GoalExecutionPhase.AwaitingConfirmation ||
+              persistedExecution.phase === GoalExecutionPhase.AwaitingInput ||
+              persistedExecution.phase === GoalExecutionPhase.Stopped)
+          ) {
+            this.goalContinuationCoordinator.restoreSnapshot({
+              ...persistedExecution,
+              goalId,
+              identityPending: false,
+            });
+            break;
+          }
+          if (this.goalsAwaitingResumeInput.get(session.id) === goalId) break;
+          const runtimeRow = runtimeRowsByKey.get(sessionKey);
+          if (runtimeRow && this.isRuntimeSessionRowActive(runtimeRow)) {
+            const runId = this.runtimeRowString(runtimeRow.runId);
+            this.goalContinuationCoordinator.restoreRunning(
+              session.id,
+              goalId,
+              runId || undefined,
+            );
+          } else {
+            await this.goalContinuationCoordinator.continue(session.id, sessionKey);
+          }
+          break;
+        }
+      }
+      if (hadInspectionFailure && generation === this.gatewayClientGeneration) {
+        this.goalRecoveryGeneration = null;
+        this.scheduleGoalRecovery(generation);
+      }
+    } catch (error) {
+      if (generation === this.gatewayClientGeneration) {
+        this.goalRecoveryGeneration = null;
+        this.scheduleGoalRecovery(generation);
+        coworkLog('WARN', 'GoalContinuation', 'Failed to recover active goals after reconnect', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private scheduleGoalRecovery(generation: number): void {
+    if (this.goalRecoveryTimer || generation !== this.gatewayClientGeneration) return;
+    this.goalRecoveryTimer = setTimeout(() => {
+      this.goalRecoveryTimer = null;
+      void this.recoverActiveGoals(generation);
+    }, 2_000);
+  }
+
+  private cancelGoalRecovery(): void {
+    if (this.goalRecoveryTimer) clearTimeout(this.goalRecoveryTimer);
+    this.goalRecoveryTimer = null;
+    this.goalRecoveryGeneration = null;
+  }
+
   /** Clean up internal gateway client state without calling client.stop().
    *  Used when the connection is already closed (onClose) — calling stop()
    *  on a closed connection would reject all pending requests with
    *  "gateway client stopped" noise. */
   private cleanupGatewayClientState(): void {
     this.goalContinuationCoordinator.clear();
+    this.cancelGoalRecovery();
     this.cancelGatewayReconnect();
     this.stopTickWatchdog();
     this.gatewayClient = null;
@@ -3007,7 +3421,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private scheduleGatewayReconnect(): void {
-    if (this.gatewayReconnectAttempt >= GATEWAY_RECONNECT_MAX_ATTEMPTS) return;
     const delays = GATEWAY_RECONNECT_DELAYS;
     const delay = delays[Math.min(this.gatewayReconnectAttempt, delays.length - 1)];
     this.gatewayReconnectAttempt++;
@@ -3146,6 +3559,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.cleanupSessionTurn(sessionId);
     this.confirmationModeBySession.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
+    this.goalsAwaitingResumeInput.delete(sessionId);
     this.terminalLifecycleSessionIds.delete(sessionId);
     this.channelSessionSync?.onSessionDeleted(sessionId);
 

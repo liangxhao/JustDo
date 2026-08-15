@@ -28,6 +28,7 @@ import type {
   OpenClawPagedHistoryResult,
 } from '@shared/openclaw/historyIpc';
 import { normalizeModelRef } from '@shared/openclaw/modelRef';
+import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import {
   resolveSlashCommandBehavior,
   SlashCommandBeforeSendHook,
@@ -75,6 +76,7 @@ import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-id
 import {
   hydrateGatewayHistoryForDisplay,
   persistFailedRun,
+  persistInterruptedMessage,
   projectGatewayHistoryForDisplay,
   shouldHideMessage,
   stripAssistantSilentReplySuffix,
@@ -488,9 +490,9 @@ export class ChatController {
       activity.stageChangedAt = at;
     }
     activity.lastAgentEventAt = at;
-    activity.hasRunningTool = [
-      ...(this.state.transcript.activeTurn?.toolById.values() ?? []),
-    ].some(tool => tool.status === 'running');
+    activity.hasRunningTool = [...(this.state.transcript.activeTurn?.toolById.values() ?? [])].some(
+      tool => tool.status === 'running',
+    );
     if (options.provider) activity.provider = options.provider;
     if (options.model) activity.model = options.model;
     const modelRef = normalizeModelRef(activity.model, activity.provider);
@@ -1651,7 +1653,8 @@ export class ChatController {
       const nextSessionId = normalizeSessionId(payload?.sessionId);
       const currentSessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
       if (nextSessionId && currentSessionId && nextSessionId !== currentSessionId) {
-        const reason = typeof payload?.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
+        const reason =
+          typeof payload?.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
         const explicitIdentityChange =
           reason === 'new' || reason === 'reset' || reason === 'delete';
         const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
@@ -1949,6 +1952,7 @@ export class ChatController {
     return hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
       sessionKey,
       lastError: this.state.lastError,
+      includeInterruptedOverlays: false,
       enrichCompactionMarkers: (projectedMessages, key) =>
         this.enrichCompactionMarkers(projectedMessages, key),
     });
@@ -2524,14 +2528,45 @@ export class ChatController {
   }
 
   private handleAborted(payload: NormalizedChatEvent): void {
+    const abortedRunId = payload.runId?.trim() || null;
     this.clearLifecycleEndFallback();
     this.finishCurrentTurnTiming('aborted', payload.runId);
-    const message = payload.message;
-    debugLog('[ChatCtrl] ▶ chat.aborted', { hasMessage: !!message, ...this._snap() });
-    if (message && !shouldHideMessage(message)) {
+    const liveThinkingText = collectActiveThinkingText(this.state.transcript.activeTurn);
+    const liveContentText = collectActiveContentText(this.state.transcript.activeTurn);
+    const interruptedMessage = payload.message
+      ? liveThinkingText
+        ? withThinkingContent(payload.message, liveThinkingText)
+        : payload.message
+      : liveThinkingText || liveContentText
+        ? buildInterruptedTurnMessage(liveThinkingText, liveContentText, abortedRunId)
+        : null;
+    const message =
+      interruptedMessage && abortedRunId && typeof interruptedMessage === 'object'
+        ? { ...(interruptedMessage as Record<string, unknown>), runId: abortedRunId }
+        : interruptedMessage;
+    const renderable = Boolean(message && !shouldHideMessage(message));
+    const persistedMessage = renderable
+      ? persistInterruptedMessage(this.state.sessionKey, payload.runId, message)
+      : null;
+    const willAppend = Boolean(persistedMessage);
+    debugLog('[ChatCtrl] ▶ chat.aborted', {
+      hasMessage: !!message,
+      liveThinkingLen: liveThinkingText?.length ?? 0,
+      liveContentLen: liveContentText?.length ?? 0,
+      ...this._snap(),
+    });
+    if (willAppend) {
+      const retainedMessages = this.state.chatMessages.filter(existingMessage => {
+        if (!abortedRunId || !existingMessage || typeof existingMessage !== 'object') return true;
+        const existing = existingMessage as Record<string, unknown>;
+        return !(
+          existing.runId === abortedRunId &&
+          (existing.__justdoOptimisticHistoryTail === true || existing.interrupted === true)
+        );
+      });
       this.setCurrentSessionMessages([
-        ...this.state.chatMessages,
-        markOptimisticHistoryTail(message),
+        ...retainedMessages,
+        markOptimisticHistoryTail(persistedMessage),
       ]);
     }
     this.state.chatSending = false;
@@ -2541,7 +2576,14 @@ export class ChatController {
     this.suspendedRunId = null;
     this.terminalLifecycleSeen = false;
     this.resetAssistantSnapshotSource();
-    this.flushPendingHistoryReload();
+    if (willAppend) {
+      // Gateway history often has no assistant message for an interrupted
+      // thinking-only turn. Keep the optimistic truncated projection instead of
+      // immediately replacing it with that shorter authoritative history.
+      this.pendingHistoryReload = false;
+    } else {
+      this.flushPendingHistoryReload();
+    }
     this.notify();
   }
 
@@ -2580,6 +2622,7 @@ export class ChatController {
     const runId = payload.runId;
     const agentSeq = payload.agentSeq;
     const data = payload.data;
+
 
     const eventSession = payload.sessionKey ?? '';
     if (!this.acceptRunId(runId, Boolean(eventSession))) {
@@ -2690,10 +2733,7 @@ export class ChatController {
           this.notifyStream();
         }
       }
-      if (
-        phase === 'fallback_step' &&
-        data.fallbackStepFinalOutcome === 'next_fallback'
-      ) {
+      if (phase === 'fallback_step' && data.fallbackStepFinalOutcome === 'next_fallback') {
         this.updateRunActivity(runId, 'retrying', {
           retryReason: data.fallbackStepFromFailureReason,
           at: payload.timestamp,
@@ -2710,6 +2750,23 @@ export class ChatController {
         this.notifyStream();
       }
       if (phase === 'end') {
+        if (data.aborted === true) {
+          const abortedEvent: NormalizedChatEvent = {
+            runId,
+            sessionKey: this.state.sessionKey,
+            sessionId: this.state.currentSessionId,
+            lifecycleGeneration: this.state.transcript.activeTurn?.lifecycleGeneration ?? null,
+            frameSeq: null,
+            state: 'aborted',
+            replace: false,
+          };
+          reduceChatEvent(this.state.transcript, abortedEvent, this.transcriptDependencies);
+          // The lifecycle reducer may already have marked the turn terminal.
+          // Still reconcile the visible partial output: thinking-only aborted
+          // runs do not necessarily produce a later chat.aborted frame.
+          this.handleAborted(abortedEvent);
+          return;
+        }
         this.terminalLifecycleSeen = true;
         // Do not retire the canonical active turn here. chat.final is the
         // authoritative terminal event; lifecycle:end may arrive while more
@@ -2780,9 +2837,9 @@ export class ChatController {
     const hasPartialResult = data.partialResult !== undefined;
     const isNonTerminalToolEvent = isNonTerminalToolPhase(phase);
     const isTerminalToolEvent = !isNonTerminalToolEvent && isTerminalToolPhase(phase);
-    const hasRunningTool = [
-      ...(this.state.transcript.activeTurn?.toolById.values() ?? []),
-    ].some(tool => tool.status === 'running');
+    const hasRunningTool = [...(this.state.transcript.activeTurn?.toolById.values() ?? [])].some(
+      tool => tool.status === 'running',
+    );
     this.updateRunActivity(runId, hasRunningTool ? 'running-tool' : 'waiting-model', {
       modelActivity: true,
     });
@@ -2791,12 +2848,17 @@ export class ChatController {
 
   // ─── Send Message ─────────────────────────────────────────────────────
 
-  async sendMessage(message: string, attachments: CoworkAttachmentPayload[] = []): Promise<void> {
+  async sendMessage(
+    message: string,
+    attachments: CoworkAttachmentPayload[] = [],
+    gatewayMessage = message,
+  ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
-    if (this.state.chatSending) return;
+    if (this.state.chatSending) throw new Error('A message is already being sent');
 
-    const slashCommand = resolveSlashCommandBehavior(message);
+    const displayMessage = extractGoalFollowUpRequest(gatewayMessage) ?? message;
+    const slashCommand = resolveSlashCommandBehavior(gatewayMessage);
     if (slashCommand?.execution === SlashCommandExecution.Blocked) {
       const error = new Error(
         `/${slashCommand.name} is managed by the application and cannot be sent as a chat command.`,
@@ -2833,7 +2895,7 @@ export class ChatController {
     }
 
     const runId = `justdo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    debugLog('[ChatCtrl] sendMessage:', message.slice(0, 60), {
+    debugLog('[ChatCtrl] sendMessage:', displayMessage.slice(0, 60), {
       sessionKey,
       runId,
     });
@@ -2848,8 +2910,8 @@ export class ChatController {
       role: 'user',
       content:
         attachmentBlocks.length > 0
-          ? [{ type: 'text', text: message }, ...attachmentBlocks]
-          : message,
+          ? [{ type: 'text', text: displayMessage }, ...attachmentBlocks]
+          : displayMessage,
       timestamp: Date.now(),
     };
     this.setCurrentSessionMessages([...this.state.chatMessages, userMessage]);
@@ -2876,7 +2938,7 @@ export class ChatController {
       const ack = await client.request<{ runId?: string; status?: string }>('chat.send', {
         sessionKey,
         ...(this.state.currentSessionId ? { sessionId: this.state.currentSessionId } : {}),
-        message,
+        message: gatewayMessage,
         deliver: false,
         justdoUserInitiated: true,
         idempotencyKey: runId,
@@ -3327,6 +3389,33 @@ function collectActiveThinkingText(turn: AssistantTurn | null): string | null {
     .join('\n')
     .trim();
   return text || null;
+}
+
+function collectActiveContentText(turn: AssistantTurn | null): string | null {
+  const text = (turn?.items ?? [])
+    .filter(item => item.type === 'content')
+    .map(item => item.text)
+    .filter(Boolean)
+    .join('')
+    .trim();
+  return text || null;
+}
+
+function buildInterruptedTurnMessage(
+  thinkingText: string | null,
+  contentText: string | null,
+  runId: string | null,
+): unknown {
+  return {
+    role: 'assistant',
+    content: [
+      ...(thinkingText ? [{ type: 'thinking', thinking: thinkingText }] : []),
+      ...(contentText ? [{ type: 'text', text: contentText, interrupted: true }] : []),
+    ],
+    timestamp: Date.now(),
+    interrupted: true,
+    ...(runId ? { runId } : {}),
+  };
 }
 
 function withThinkingContent(message: unknown, thinkingText: string): unknown {

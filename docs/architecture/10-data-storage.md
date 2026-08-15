@@ -53,18 +53,18 @@ flowchart TB
 
 ## 当前核心表
 
-| 表                              | 用途                                                      |
-| ------------------------------- | --------------------------------------------------------- |
-| `kv`                            | 通用 key/value 配置                                       |
-| `cowork_sessions`               | Cowork 会话 UI 元数据和 Gateway session id 映射           |
-| `cowork_messages`               | Cowork 消息 UI cache                                      |
-| `cowork_config`                 | Cowork 配置，包括工作目录、engine 和当前 runtime 权限快照 |
-| `agents`                        | Agent 定义、模型、技能绑定                                |
-| `mcp_servers`                   | MCP server 配置                                           |
-| `openclaw_hooks`                | OpenClaw hook 配置                                        |
-| `session_groups`                | 会话分组                                                  |
-| `scheduled_task_run_receipts`   | 定时任务结果快照与持久已读回执                            |
-| `scheduled_task_result_cleanup` | 跨 OpenClaw 删除失败时的 transcript 清理续传状态          |
+| 表                              | 用途                                                                                           |
+| ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `kv`                            | 通用 key/value 配置                                                                            |
+| `cowork_sessions`               | Cowork 会话 UI 元数据和 Gateway session id 映射                                                |
+| `cowork_messages`               | Cowork 消息 UI cache                                                                           |
+| `cowork_config`                 | Cowork 配置、当前 runtime 权限快照，以及按 Session 保存的 Goal terminal/stopped execution 快照 |
+| `agents`                        | Agent 定义、模型、技能绑定                                                                     |
+| `mcp_servers`                   | MCP server 配置                                                                                |
+| `openclaw_hooks`                | OpenClaw hook 配置                                                                             |
+| `session_groups`                | 会话分组                                                                                       |
+| `scheduled_task_run_receipts`   | 定时任务结果快照与持久已读回执                                                                 |
+| `scheduled_task_result_cleanup` | 跨 OpenClaw 删除失败时的 transcript 清理续传状态                                               |
 
 ```mermaid
 erDiagram
@@ -151,14 +151,14 @@ erDiagram
 
 ## Store 层
 
-| 文件                                 | 作用                                 |
-| ------------------------------------ | ------------------------------------ |
-| `sqliteStore.ts`                     | DB 初始化、kv store、migration       |
-| `coworkStore.ts`                     | Cowork sessions/messages/agents CRUD |
-| `groupStore.ts`                      | session group CRUD                   |
+| 文件                                 | 作用                                               |
+| ------------------------------------ | -------------------------------------------------- |
+| `sqliteStore.ts`                     | DB 初始化、kv store、migration                     |
+| `coworkStore.ts`                     | Cowork sessions/messages/agents CRUD               |
+| `groupStore.ts`                      | session group CRUD                                 |
 | `scheduledTaskResultStore.ts`        | 定时任务结果 upsert、分页、未读统计和 read receipt |
-| `plugins/mcp/mcpStore.ts`            | MCP server store                     |
-| `plugins/hooks/openclawHookStore.ts` | hook store                           |
+| `plugins/mcp/mcpStore.ts`            | MCP server store                                   |
+| `plugins/hooks/openclawHookStore.ts` | hook store                                         |
 
 ## 权威边界
 

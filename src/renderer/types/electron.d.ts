@@ -720,6 +720,16 @@ interface IElectronAPI {
       execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
       error?: string;
     }>;
+    resumeGoalForUserInput: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+    restartCompletedGoalForFeedback: (
+      sessionId: string,
+      goalId: string,
+      objective?: string,
+    ) => Promise<{
+      success: boolean;
+      objective?: string;
+      error?: string;
+    }>;
     getContextUsage: (sessionId: string) => Promise<{
       success: boolean;
       totalTokens?: number;
@@ -856,9 +866,7 @@ interface IElectronAPI {
   };
   shell: {
     showAttachmentContextMenu: () => Promise<'open' | 'open-with-system' | 'show-in-folder' | null>;
-    showImageContextMenu: (
-      imageUrl: string,
-    ) => Promise<{ success: boolean; error?: string }>;
+    showImageContextMenu: (imageUrl: string) => Promise<{ success: boolean; error?: string }>;
     openPath: (
       filePath: string,
       workingDirectory?: string,
@@ -997,12 +1005,8 @@ interface IElectronAPI {
       error?: string;
     }>;
     reconcileResults: () => Promise<{ success: boolean; error?: string }>;
-    onResultUpserted: (
-      callback: (data: ScheduledTaskResultUpsertedEvent) => void,
-    ) => () => void;
-    onUnreadCountChanged: (
-      callback: (data: ScheduledTaskUnreadCountEvent) => void,
-    ) => () => void;
+    onResultUpserted: (callback: (data: ScheduledTaskResultUpsertedEvent) => void) => () => void;
+    onUnreadCountChanged: (callback: (data: ScheduledTaskUnreadCountEvent) => void) => () => void;
     onRefresh: (callback: () => void) => () => void;
   };
   permissions: {

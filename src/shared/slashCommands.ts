@@ -106,6 +106,12 @@ const GOAL_CREATE_ACTIONS = new Set(['create', 'set', 'start']);
 export const isGoalSlashCommand = (value: string): boolean =>
   parseSlashCommand(value)?.name === 'goal';
 
+export const isGoalClearCommand = (value: string): boolean => {
+  const command = parseSlashCommand(value);
+  if (command?.name !== 'goal') return false;
+  return command.argumentsText.toLowerCase() === 'clear';
+};
+
 /** Returns the objective only when the command starts a new goal. */
 export const parseGoalStartObjective = (value: string): string | null => {
   const trimmed = value.trim();

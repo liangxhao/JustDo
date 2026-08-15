@@ -18,8 +18,7 @@ describe('queryGatewaySession', () => {
     });
     const result = await queryGatewaySession(
       {
-        getCoworkStore: () =>
-          ({ getSession: () => ({ agentId: 'main' }) }) as never,
+        getCoworkStore: () => ({ getSession: () => ({ agentId: 'main' }) }) as never,
         getRuntime: () =>
           ({
             getGatewayClient: () => ({ request }),
@@ -181,6 +180,20 @@ describe('readUsage', () => {
       modelRef: 'openai/gpt-5',
     });
   });
+
+  it.each(['usage_limited', 'budget_limited'])(
+    'normalizes unsupported %s goals to blocked',
+    status => {
+      expect(
+        readSessionGoal({
+          schemaVersion: 1,
+          id: 'goal-1',
+          objective: 'Ship it',
+          status,
+        }),
+      ).toMatchObject({ status: 'blocked' });
+    },
+  );
 });
 
 describe('createSingleFlightTtlLookup', () => {

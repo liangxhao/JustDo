@@ -7,6 +7,6 @@ describe('goal presentation', () => {
   it('maps every runtime status to an intentional tone', () => {
     expect(
       Object.values(SessionGoalStatus).map(status => getGoalPresentation(status).tone),
-    ).toEqual(['active', 'muted', 'warning', 'danger', 'warning', 'success']);
+    ).toEqual(['active', 'muted', 'warning', 'warning', 'warning', 'success']);
   });
 });
