@@ -8,7 +8,7 @@ vi.mock('./markdown', () => ({
   toStreamingMarkdownHtml: (text: string) => text,
 }));
 
-import type { ProcessSummaryTimelineItem } from '../model/project-turn-items';
+import { latestPlanUpdateKey, type ProcessSummaryTimelineItem } from '../model/project-turn-items';
 import { renderTimelineItem } from './active-turn-timeline';
 
 function flatten(value: unknown): string {
@@ -153,34 +153,40 @@ describe('active turn timeline', () => {
   });
 
   test('renders update_plan as an always-visible ordered plan card', () => {
-    const rendered = flatten(
-      renderTimelineItem({
-        kind: 'plan-update',
-        key: 'plan:tool-plan',
-        item: {
-          id: 'tool-plan',
-          runId: 'run-1',
-          firstSeq: 1,
-          lastSeq: 1,
-          startedAt: 1,
-          updatedAt: 1,
-          type: 'tool',
-          status: 'running',
-          toolCallId: 'call-plan',
-          name: 'update_plan',
-          input: {
-            explanation: 'Starting the implementation',
-            plan: [
-              { step: 'Inspect existing code', status: 'completed' },
-              { step: 'Build the timeline card', status: 'in_progress' },
-              { step: 'Run validation', status: 'pending' },
-            ],
-          },
+    const plan = {
+      kind: 'plan-update' as const,
+      key: 'plan:tool-plan',
+      item: {
+        id: 'tool-plan',
+        runId: 'run-1',
+        firstSeq: 1,
+        lastSeq: 1,
+        startedAt: 1,
+        updatedAt: 1,
+        type: 'tool' as const,
+        status: 'running' as const,
+        toolCallId: 'call-plan',
+        name: 'update_plan',
+        input: {
+          explanation: 'Starting the implementation',
+          plan: [
+            { step: 'Inspect existing code', status: 'completed' },
+            { step: 'Build the timeline card', status: 'in_progress' },
+            { step: 'Run validation', status: 'pending' },
+          ],
         },
-      }),
-    );
+      },
+    };
+    const rendered = flatten(renderTimelineItem(plan));
+    const liveRendered = flatten(renderTimelineItem(plan, Date.now(), false, true, true));
+    const latestPlan = {
+      ...plan,
+      key: 'plan:tool-plan-latest',
+      item: { ...plan.item, id: 'tool-plan-latest' },
+    };
 
     expect(rendered).toContain('data-plan-update-id');
+    expect(rendered).toContain('chat-group--plan-update');
     expect(rendered).toContain('更新计划');
     expect(rendered).toContain('已完成 1/3');
     expect(rendered.indexOf('<strong>更新计划</strong>')).toBeLessThan(
@@ -197,6 +203,9 @@ describe('active turn timeline', () => {
     expect(rendered.match(/aria-label=进行中/g)).toHaveLength(1);
     expect(rendered.match(/aria-label=待处理/g)).toHaveLength(1);
     expect(rendered).not.toContain('<details');
+    expect(rendered).not.toContain('execution-plan-update--live');
+    expect(liveRendered).toContain('execution-plan-update--live');
+    expect(latestPlanUpdateKey([plan, latestPlan])).toBe(latestPlan.key);
   });
 
   test('does not put archived details or Tool input into the main timeline DOM', () => {

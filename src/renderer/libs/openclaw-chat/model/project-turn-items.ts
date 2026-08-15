@@ -64,13 +64,23 @@ export type ActiveTurnTimelineItem =
   | WaitingTimelineItem
   | WaitingStatusTimelineItem;
 
+export function latestPlanUpdateKey(items: readonly ActiveTurnTimelineItem[]): string | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind === 'plan-update') return item.key;
+  }
+  return undefined;
+}
+
 export function projectTurnItems(
   turn: AssistantTurn | null,
   isAwaitingTurn = false,
   waitingStatus: WaitingStatusProjection | null = null,
 ): ActiveTurnTimelineItem[] {
   if (!turn) {
-    const pending = isAwaitingTurn ? [{ kind: 'waiting' as const, key: 'waiting:pending-turn' }] : [];
+    const pending = isAwaitingTurn
+      ? [{ kind: 'waiting' as const, key: 'waiting:pending-turn' }]
+      : [];
     return waitingStatus
       ? [
           ...pending,

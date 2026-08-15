@@ -175,6 +175,26 @@ describe('group footer helpers', () => {
 });
 
 describe('renderMessageBlock', () => {
+  test('marks ordinary messages as content rows for consistent bubble spacing', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        kind: 'group',
+        key: 'content-spacing',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'message-1',
+            message: { role: 'assistant', content: 'First response' },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      }),
+    );
+
+    expect(rendered).toContain('chat-group--content');
+  });
+
   test('applies Markdown styles to user message content', () => {
     const rendered = stringifyTemplate(
       renderMessageBlock({

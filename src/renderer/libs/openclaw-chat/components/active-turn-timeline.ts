@@ -10,9 +10,10 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { i18nService } from '@/services/i18n';
 
 import { MAX_LIVE_TOOL_OUTPUT_CHARS, type ToolItem } from '../model/chat-transcript-state';
-import type {
-  ActiveTurnTimelineItem,
-  ProcessSummaryTimelineItem,
+import {
+  type ActiveTurnTimelineItem,
+  latestPlanUpdateKey,
+  type ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
 import { stripOpenClawLogHintText } from '../pipeline/message-normalizer';
 import { renderChatAvatar } from './chat-avatar';
@@ -96,7 +97,7 @@ function planStepStatusLabel(step: ExecutionPlanStep): string {
   return i18nService.t(key);
 }
 
-function renderPlanUpdate(tool: ToolItem, showAvatar: boolean): TemplateResult {
+function renderPlanUpdate(tool: ToolItem, showAvatar: boolean, isLive: boolean): TemplateResult {
   const update = parseExecutionPlanUpdate(tool.input);
   if (!update) {
     return renderAssistantTimelineRow(
@@ -110,16 +111,19 @@ function renderPlanUpdate(tool: ToolItem, showAvatar: boolean): TemplateResult {
   return renderAssistantTimelineRow(
     html`
       <section
-        class="execution-plan-update execution-plan-update--${tool.status}"
+        class=${`execution-plan-update execution-plan-update--${tool.status}${
+          isLive ? ' execution-plan-update--live' : ''
+        }`}
         data-plan-update-id=${tool.id}
         aria-label=${i18nService.t('coworkExecutionPlanTitle')}
       >
         <header class="execution-plan-update__header">
-          <span
-            class="process-summary__tool-status process-summary__tool-status--${tool.status}"
-            role="img"
-            aria-label=${toolStateLabel(tool)}
-          ></span>
+          <span class="execution-plan-update__icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none">
+              <path d="M4.25 4.25h7.5M4.25 8h7.5M4.25 11.75h4.5" />
+              <path d="m2 4.25.55.55L3.6 3.7M2 8l.55.55L3.6 7.45M2 11.75l.55.55 1.05-1.1" />
+            </svg>
+          </span>
           <strong>${i18nService.t('coworkExecutionPlanTitle')}</strong>
           <span class="execution-plan-update__count"
             >${i18nService
@@ -128,6 +132,14 @@ function renderPlanUpdate(tool: ToolItem, showAvatar: boolean): TemplateResult {
               .replace('{total}', String(update.plan.length))}</span
           >
         </header>
+        <div class="execution-plan-update__progress" aria-hidden="true">
+          ${update.plan.map(
+            step =>
+              html`<span
+                class="execution-plan-update__progress-segment execution-plan-update__progress-segment--${step.status}"
+              ></span>`,
+          )}
+        </div>
         ${
           update.explanation
             ? html`<p class="execution-plan-update__explanation">${update.explanation}</p>`
@@ -135,7 +147,7 @@ function renderPlanUpdate(tool: ToolItem, showAvatar: boolean): TemplateResult {
         }
         <ol class="execution-plan-update__steps">
           ${update.plan.map(
-            step => html`
+            (step, index) => html`
               <li class="execution-plan-update__step execution-plan-update__step--${step.status}">
                 <span
                   class="execution-plan-update__marker"
@@ -147,7 +159,7 @@ function renderPlanUpdate(tool: ToolItem, showAvatar: boolean): TemplateResult {
                       ? '✓'
                       : step.status === ExecutionPlanStepStatus.InProgress
                         ? '•'
-                        : ''
+                        : String(index + 1)
                   }
                 </span>
                 <span class="execution-plan-update__step-text">${step.step}</span>
@@ -158,15 +170,20 @@ function renderPlanUpdate(tool: ToolItem, showAvatar: boolean): TemplateResult {
       </section>
     `,
     showAvatar,
+    'chat-group--plan-update',
   );
 }
 
-function renderAssistantTimelineRow(content: TemplateResult, showAvatar: boolean): TemplateResult {
+function renderAssistantTimelineRow(
+  content: TemplateResult,
+  showAvatar: boolean,
+  rowClass = '',
+): TemplateResult {
   return html`
     <div
       class=${`chat-group chat-group--assistant chat-group--timeline${
         showAvatar ? '' : ' chat-group--continuation'
-      }`}
+      }${rowClass ? ` ${rowClass}` : ''}`}
     >
       <div class="chat-group__avatar">${showAvatar ? renderChatAvatar('assistant') : nothing}</div>
       <div class="chat-group__content">${content}</div>
@@ -179,6 +196,7 @@ export function renderTimelineItem(
   _now = Date.now(),
   expanded = false,
   showAvatar = true,
+  animatePlan = false,
 ): TemplateResult {
   if (item.kind === 'waiting') {
     return renderReadingIndicatorGroup({ showAvatar });
@@ -213,7 +231,7 @@ export function renderTimelineItem(
     `;
   }
   if (item.kind === 'plan-update') {
-    return renderPlanUpdate(item.item, showAvatar);
+    return renderPlanUpdate(item.item, showAvatar, animatePlan);
   }
   if (item.kind === 'live-process') {
     if (item.item.type === 'thinking') {
@@ -380,12 +398,20 @@ export function renderActiveTurnTimeline(
   now = Date.now(),
   expandedSummaryKeys: ReadonlySet<string> = new Set(),
 ): TemplateResult {
+  const latestPlanKey = latestPlanUpdateKey(items);
   return html`
     <section class="active-turn-timeline">
       ${repeat(
         items,
         item => item.key,
-        item => renderTimelineItem(item, now, expandedSummaryKeys.has(item.key)),
+        item =>
+          renderTimelineItem(
+            item,
+            now,
+            expandedSummaryKeys.has(item.key),
+            true,
+            item.kind === 'plan-update' && item.key === latestPlanKey,
+          ),
       )}
     </section>
   `;

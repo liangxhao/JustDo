@@ -408,7 +408,9 @@ export function renderMessageBlock(
 
   return html`
     <div
-      class=${`chat-group chat-group--${role}${isContinuation ? ' chat-group--continuation' : ''}`}
+      class=${`chat-group chat-group--${role} chat-group--content${
+        isContinuation ? ' chat-group--continuation' : ''
+      }`}
       data-group-key=${group.key}
     >
       <div class="chat-group__avatar">${(opts?.showAvatar ?? true) ? avatar : nothing}</div>
@@ -434,7 +436,7 @@ export function renderMessageBlockWithTrailingStream(
 
   return html`
     <div
-      class=${`chat-group chat-group--${role} chat-group--streaming${
+      class=${`chat-group chat-group--${role} chat-group--content chat-group--streaming${
         isContinuation ? ' chat-group--continuation' : ''
       }`}
       data-group-key=${group.key}
@@ -712,7 +714,7 @@ export function renderStreamingGroup(
   const isContinuation = opts?.showAvatar === false;
   return html`
     <div
-      class=${`chat-group chat-group--assistant chat-group--streaming${
+      class=${`chat-group chat-group--assistant chat-group--content chat-group--streaming${
         isContinuation ? ' chat-group--continuation' : ''
       }`}
     >

@@ -51,6 +51,7 @@ import {
 } from '@/libs/openclaw-chat/model/project-history-timeline';
 import {
   type ActiveTurnTimelineItem,
+  latestPlanUpdateKey,
   projectTurnItems,
 } from '@/libs/openclaw-chat/model/project-turn-items';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
@@ -397,6 +398,14 @@ export class JustDoChatElement extends LitElement {
       .chat-group--continuation {
         padding-top: 0;
         padding-bottom: 0;
+      }
+
+      .chat-group--content + .chat-group--content {
+        margin-top: 8px;
+      }
+
+      .chat-group--content .chat-bubble + .chat-bubble {
+        margin-top: 8px;
       }
 
       .chat-group--user {
@@ -1484,6 +1493,9 @@ export class JustDoChatElement extends LitElement {
       .chat-group--timeline {
         padding-block: 0;
       }
+      .chat-group--plan-update {
+        margin-bottom: 8px;
+      }
       .chat-group--timeline .chat-group__content {
         padding-top: 1px;
       }
@@ -1678,97 +1690,149 @@ export class JustDoChatElement extends LitElement {
       .execution-plan-update {
         width: min(100%, 680px);
         box-sizing: border-box;
-        border: 1px solid color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 82%, transparent);
-        border-left: 3px solid color-mix(in srgb, #22c55e 72%, #94a3b8);
-        border-radius: 8px;
-        padding: 10px 12px 11px;
+        border: 1px solid color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 62%, transparent);
+        border-radius: 12px;
+        padding: 12px 14px;
         background: color-mix(
           in srgb,
-          var(--surface-raised, #ffffff) 88%,
+          var(--surface-raised, #ffffff) 94%,
           var(--justdo-chat-process-bg, #f1f5f9)
         );
-        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+        box-shadow:
+          0 1px 2px rgba(15, 23, 42, 0.04),
+          0 6px 18px rgba(15, 23, 42, 0.035);
         color: var(--justdo-chat-text, #111827);
         font-size: 13px;
       }
       .execution-plan-update--failed {
-        border-left-color: #ef4444;
+        border-color: color-mix(in srgb, #ef4444 36%, transparent);
       }
       .execution-plan-update__header {
         display: flex;
         min-width: 0;
         align-items: center;
-        gap: 7px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid
-          color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 60%, transparent);
+        gap: 9px;
+      }
+      .execution-plan-update__icon {
+        display: inline-grid;
+        width: 22px;
+        height: 22px;
+        flex: 0 0 auto;
+        place-items: center;
+        border-radius: 6px;
+        background: color-mix(in srgb, #3b82f6 11%, transparent);
+        color: color-mix(in srgb, #2563eb 88%, var(--justdo-chat-text, #111827));
+      }
+      .execution-plan-update__icon svg {
+        width: 15px;
+        height: 15px;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.35;
       }
       .execution-plan-update__header strong {
+        min-width: 0;
         font-size: 13px;
+        font-weight: 600;
         line-height: 1.3;
       }
       .execution-plan-update__count {
+        margin-left: auto;
         flex: 0 0 auto;
-        border-radius: 999px;
-        padding: 2px 7px;
-        background: color-mix(in srgb, #22c55e 10%, transparent);
-        color: color-mix(in srgb, #15803d 82%, var(--justdo-chat-text, #111827));
+        color: var(--justdo-chat-muted, #64748b);
         font-size: 11px;
-        font-weight: 500;
+        font-weight: 550;
         font-variant-numeric: tabular-nums;
         line-height: 1.4;
       }
+      .execution-plan-update__progress {
+        display: flex;
+        gap: 3px;
+        height: 3px;
+        margin: 9px 0 8px;
+      }
+      .execution-plan-update__progress-segment {
+        min-width: 0;
+        flex: 1 1 0;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 55%, transparent);
+      }
+      .execution-plan-update__progress-segment--completed {
+        background: #22c55e;
+      }
+      .execution-plan-update__progress-segment--in_progress {
+        background: color-mix(in srgb, #3b82f6 30%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, #3b82f6 14%, transparent);
+      }
       .execution-plan-update__explanation {
-        margin: 8px 1px 0;
+        margin: 0 0 11px;
         color: var(--justdo-chat-muted, #64748b);
         font-size: 12px;
         line-height: 1.55;
       }
       .execution-plan-update__steps {
         display: grid;
-        gap: 3px;
-        margin: 8px 0 0;
+        gap: 0;
+        margin: 0;
         padding: 0;
         list-style: none;
       }
       .execution-plan-update__step {
+        position: relative;
         display: grid;
         min-width: 0;
-        grid-template-columns: 15px minmax(0, 1fr);
-        gap: 8px;
-        align-items: start;
-        border-radius: 6px;
-        padding: 4px 6px;
+        grid-template-columns: 18px minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        padding: 4px 3px;
         line-height: 1.5;
+      }
+      .execution-plan-update__step:not(:last-child)::after {
+        position: absolute;
+        top: 21px;
+        bottom: -4px;
+        left: 11.5px;
+        width: 1px;
+        background: color-mix(in srgb, var(--justdo-chat-border, #cbd5e1) 62%, transparent);
+        content: '';
       }
       .execution-plan-update__marker {
         display: inline-grid;
-        width: 13px;
-        height: 13px;
+        z-index: 1;
+        width: 17px;
+        height: 17px;
         place-items: center;
-        margin-top: 3px;
-        border: 1px solid var(--justdo-chat-border, rgba(100, 116, 139, 0.55));
-        border-radius: 2px;
-        color: white;
+        box-sizing: border-box;
+        border: 1px solid color-mix(in srgb, var(--justdo-chat-muted, #64748b) 42%, transparent);
+        border-radius: 999px;
+        background: var(--surface-raised, #ffffff);
+        color: var(--justdo-chat-muted, #64748b);
         font-size: 9px;
-        font-weight: 700;
+        font-weight: 600;
         line-height: 1;
       }
       .execution-plan-update__step--completed {
         color: var(--justdo-chat-muted, #64748b);
       }
       .execution-plan-update__step--in_progress {
-        background: color-mix(in srgb, #3b82f6 8%, transparent);
         color: var(--justdo-chat-text, #111827);
-        font-weight: 500;
+        font-weight: 550;
       }
       .execution-plan-update__step--completed .execution-plan-update__marker {
         border-color: #22c55e;
         background: #22c55e;
+        color: #ffffff;
       }
       .execution-plan-update__step--in_progress .execution-plan-update__marker {
-        border-color: #3b82f6;
-        border-radius: 999px;
+        border: 4px solid color-mix(in srgb, #3b82f6 12%, var(--surface-raised, #ffffff));
+        background: #3b82f6;
+        color: transparent;
+      }
+      .execution-plan-update--live
+        .execution-plan-update__step--in_progress
+        .execution-plan-update__marker {
+        border-color: color-mix(in srgb, #3b82f6 24%, var(--surface-raised, #ffffff));
         background: #3b82f6;
         animation: process-pulse 1.4s ease-in-out infinite;
       }
@@ -1911,7 +1975,9 @@ export class JustDoChatElement extends LitElement {
       @media (prefers-reduced-motion: reduce) {
         .process-summary__thinking-marker--running,
         .process-summary__tool-status--running,
-        .execution-plan-update__step--in_progress .execution-plan-update__marker {
+        .execution-plan-update--live
+          .execution-plan-update__step--in_progress
+          .execution-plan-update__marker {
           animation: none;
         }
         .new-messages-indicator {
@@ -1964,6 +2030,8 @@ export class JustDoChatElement extends LitElement {
     if (ctrl) {
       const historyTimeline = getHistoryTimeline();
       const activeTimeline = this.projectActiveTimeline();
+      const livePlanKey =
+        activeTurn?.status === 'running' ? latestPlanUpdateKey(activeTimeline) : undefined;
       const activeTurnFooter = projectActiveTurnFooter(ctrl.getCurrentTurnTiming());
       const timelineView = projectIncrementalTimelineView({
         persisted: this.persistedTimelineRenderCache.get(historyTimeline),
@@ -2014,7 +2082,13 @@ export class JustDoChatElement extends LitElement {
             ${repeat(
               timelineView.activeRows,
               row => row.item.key,
-              row => this.renderVisibleTimelineItem(row.item, row.showAvatar, row.showFooter),
+              row =>
+                this.renderVisibleTimelineItem(
+                  row.item,
+                  row.showAvatar,
+                  row.showFooter,
+                  row.item.kind === 'plan-update' && row.item.key === livePlanKey,
+                ),
             )}
             ${
               activeTurnFooter
@@ -2638,6 +2712,7 @@ export class JustDoChatElement extends LitElement {
     item: PersistedTimelineItem | ActiveTurnTimelineItem,
     showAvatar: boolean,
     showFooter: boolean,
+    animatePlan = false,
   ): TemplateResult | typeof nothing {
     if (item.kind === 'history-message') {
       const historyItems = this.buildItems([item.message], [], [], null).map(historyItem =>
@@ -2661,6 +2736,7 @@ export class JustDoChatElement extends LitElement {
           !this.renderedCollapsedProcessSummaryKeys.has(item.key)) ||
           this.renderedOpenProcessSummaryKey === item.key),
       showAvatar,
+      animatePlan,
     );
   }
 
