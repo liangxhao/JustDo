@@ -46,6 +46,7 @@ scripts/patches/v2026.6.11/
 | `020-run-progress-events.cjs`                    | Publish sanitized run progress events for long-running turns                                                                                                                                                                                              |
 | `021-atomic-sessions-spawn-admission.cjs`        | After each native/ACP synchronous preflight, reserve per-parent child capacity before the first initialization await and hold it through shared registry admission                                                                                        |
 | `022-subagent-pending-status.cjs`                | Project accepted native and ACP children without a lifecycle `start` as `pending`, then switch to `running` on `start`, including starts observed just before registry admission                                                                          |
+| `023-managed-subagent-join.cjs`                  | Incrementally join completed subagents inside the original JustDo parent run and pin managed logical sessions to their existing Gateway session id                                                                                                        |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -57,7 +58,8 @@ before removing any of those patches.
 Subagent responsibilities stay split by runtime boundary: `005` owns history,
 and completion-announce consistency; `006` owns the final future-wake check for
 `sessions_yield`; `021` owns child creation admission and initialization reservations; `022` only projects accepted queued
-runs as `pending`. These are separate lifecycle stages, so the completion FIFO
+runs as `pending`; `023` replaces yield/announce with a transcript-committed incremental same-run Join for the JustDo-managed ancestry and prevents normal
+managed continuation requests from rotating their Gateway session id. These are separate lifecycle stages, so the completion FIFO
 and stricter admission extend their existing owners instead of adding another
 overlapping patch. Admission never compares `taskName`: repeated names remain
 valid when they come from distinct Tool Calls and capacity is available.
@@ -193,6 +195,7 @@ Patch removal is a real change:
 | `020-run-progress-events.cjs`                    | Missing sanitized run progress events                                             | Remove when OpenClaw emits stable, bounded progress events for active runs                                                                                                                                                        |
 | `021-atomic-sessions-spawn-admission.cjs`        | Runtime child-admission race guard                                                | Remove when OpenClaw atomically reserves per-parent child capacity before asynchronous native-subagent and ACP spawn initialization                                                                                               |
 | `022-subagent-pending-status.cjs`                | Missing pre-start subagent registry state                                         | Remove when OpenClaw projects accepted child runs without lifecycle `start` separately from runs that have emitted `start`                                                                                                        |
+| `023-managed-subagent-join.cjs`                  | Managed parent run/session continuity                                             | Remove when OpenClaw can join child results into the original parent run and preserve logical session ids except for explicit new/reset/delete operations                                                                         |
 
 ### Compaction patch upgrade warning
 

@@ -3037,6 +3037,32 @@ test('invalidates in-flight history when sessions.changed rotates the session id
   expect(controller.state.transcript.activeTurn).toBeNull();
 });
 
+test('rejects automatic session id rotation for a managed JustDo session', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'sid-stable';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  controller.state.transcript.sessionId = 'sid-stable';
+  const generation = controller.state.transcript.historyGeneration;
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'sid-unexpected',
+      reason: 'update',
+    },
+  });
+
+  expect(controller.state.currentSessionId).toBe('sid-stable');
+  expect(controller.state.transcript.sessionId).toBe('sid-stable');
+  expect(controller.state.transcript.historyGeneration).toBe(generation);
+});
+
 test('appends a selected-session external final once when no run is active', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:session-1';

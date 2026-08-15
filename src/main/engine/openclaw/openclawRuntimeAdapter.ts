@@ -63,6 +63,7 @@ import {
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
+  isManagedSessionKey,
   type OpenClawChannelSessionSync,
 } from '../../openclaw/sessions/openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../../openclaw/sessions/openclawHistory';
@@ -752,7 +753,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         message: prompt.trim(),
         deliver: false,
         justdoUserInitiated: true,
-        timeoutMs: this.agentTimeoutSeconds * 1000,
+        // Gateway timeout 0 means timer-safe "no timeout". JustDo owns the
+        // user-turn watchdog below so it can suspend that deadline while
+        // managed subagents are still running in an in-place sessions_yield.
+        timeoutMs: 0,
         idempotencyKey: runId,
         ...(attachments ? { attachments } : {}),
       });
@@ -2528,13 +2532,39 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!turn) return;
     const timeoutMs = this.agentTimeoutSeconds * 1000 + CLIENT_TIMEOUT_GRACE_MS;
     setTimeout(() => {
-      const currentTurn = this.activeTurns.get(sessionId);
-      if (!currentTurn || currentTurn.turnToken !== turn.turnToken) return;
-      this.cleanupSessionTurn(sessionId);
-      this.store.updateSession(sessionId, { status: 'idle' });
-      this.terminalLifecycleSessionIds.add(sessionId);
-      this.resolveTurn(sessionId);
+      void this.handleTurnTimeoutWatchdog(sessionId, turn);
     }, timeoutMs);
+  }
+
+  private async handleTurnTimeoutWatchdog(sessionId: string, turn: SessionTurn): Promise<void> {
+    const currentTurn = this.activeTurns.get(sessionId);
+    if (!currentTurn || currentTurn.turnToken !== turn.turnToken) return;
+
+    const client = this.gatewayClient;
+    if (isManagedSessionKey(turn.sessionKey)) {
+      try {
+        if (client) await this.collectRunningSubagentSessionKeys(client, [turn.sessionKey]);
+      } catch (error) {
+        coworkLog('WARN', 'OpenClawRuntime', 'Failed to inspect subagents at turn timeout', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const latestTurn = this.activeTurns.get(sessionId);
+      if (!latestTurn || latestTurn.turnToken !== turn.turnToken) return;
+      // Managed chat.send has no Gateway deadline. Its local watchdog must not
+      // manufacture a terminal state while the same run is between incremental
+      // joins, processing a Tool Result, waiting on a child, or temporarily
+      // unable to query Gateway state. Explicit Stop and lifecycle terminal
+      // events remain authoritative.
+      this.startTurnTimeoutWatchdog(sessionId);
+      return;
+    }
+
+    this.cleanupSessionTurn(sessionId);
+    this.store.updateSession(sessionId, { status: 'idle' });
+    this.terminalLifecycleSessionIds.add(sessionId);
+    this.resolveTurn(sessionId);
   }
 
   private isSessionInStopCooldown(sessionId: string): boolean {

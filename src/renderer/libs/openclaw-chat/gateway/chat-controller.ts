@@ -1651,6 +1651,19 @@ export class ChatController {
       const nextSessionId = normalizeSessionId(payload?.sessionId);
       const currentSessionId = this.state.currentSessionId ?? this.state.transcript.sessionId;
       if (nextSessionId && currentSessionId && nextSessionId !== currentSessionId) {
+        const reason = typeof payload?.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
+        const explicitIdentityChange =
+          reason === 'new' || reason === 'reset' || reason === 'delete';
+        const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
+        if (managedSession && !explicitIdentityChange) {
+          debugLog('[ChatCtrl] rejected unexpected managed session id rotation', {
+            sessionKey: this.state.sessionKey,
+            currentSessionId,
+            nextSessionId,
+            reason,
+          });
+          return;
+        }
         this.resetTranscriptForSession(this.state.sessionKey, nextSessionId, false);
         this.state.currentSessionId = nextSessionId;
         this.state.chatRunId = null;

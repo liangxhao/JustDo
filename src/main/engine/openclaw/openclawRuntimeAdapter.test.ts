@@ -102,6 +102,67 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
   ...overrides,
 });
 
+test('keeps a managed parent turn alive during an incremental-join refill gap', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const turn = createSessionTurn();
+  const collectRunningSubagentSessionKeys = vi
+    .fn()
+    .mockResolvedValue([]);
+  const startTurnTimeoutWatchdog = vi.fn();
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    gatewayClient: GatewayClientLike | null;
+    collectRunningSubagentSessionKeys: typeof collectRunningSubagentSessionKeys;
+    startTurnTimeoutWatchdog: typeof startTurnTimeoutWatchdog;
+    handleTurnTimeoutWatchdog: (sessionId: string, turn: SessionTurn) => Promise<void>;
+  };
+  internals.activeTurns.set(turn.sessionId, turn);
+  internals.gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn(),
+  };
+  internals.collectRunningSubagentSessionKeys = collectRunningSubagentSessionKeys;
+  internals.startTurnTimeoutWatchdog = startTurnTimeoutWatchdog;
+
+  await internals.handleTurnTimeoutWatchdog(turn.sessionId, turn);
+
+  expect(collectRunningSubagentSessionKeys).toHaveBeenCalledWith(internals.gatewayClient, [
+    turn.sessionKey,
+  ]);
+  expect(startTurnTimeoutWatchdog).toHaveBeenCalledWith(turn.sessionId);
+  expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
+});
+
+test('keeps a managed parent turn alive when watchdog subagent inspection fails', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const turn = createSessionTurn();
+  const collectRunningSubagentSessionKeys = vi.fn().mockRejectedValue(new Error('offline'));
+  const startTurnTimeoutWatchdog = vi.fn();
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    gatewayClient: GatewayClientLike | null;
+    collectRunningSubagentSessionKeys: typeof collectRunningSubagentSessionKeys;
+    startTurnTimeoutWatchdog: typeof startTurnTimeoutWatchdog;
+    handleTurnTimeoutWatchdog: (sessionId: string, turn: SessionTurn) => Promise<void>;
+  };
+  internals.activeTurns.set(turn.sessionId, turn);
+  internals.gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn(),
+  };
+  internals.collectRunningSubagentSessionKeys = collectRunningSubagentSessionKeys;
+  internals.startTurnTimeoutWatchdog = startTurnTimeoutWatchdog;
+
+  await internals.handleTurnTimeoutWatchdog(turn.sessionId, turn);
+
+  expect(startTurnTimeoutWatchdog).toHaveBeenCalledWith(turn.sessionId);
+  expect(internals.activeTurns.get(turn.sessionId)).toBe(turn);
+});
+
 test('resolves the Gateway session ID used by title generation', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
