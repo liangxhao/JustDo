@@ -324,9 +324,8 @@ export class CoworkStore {
       >
     >,
   ): void {
-    const now = Date.now();
-    const setClauses: string[] = ['updated_at = ?'];
-    const values: (string | number | null)[] = [now];
+    const setClauses: string[] = [];
+    const values: (string | number | null)[] = [];
 
     if (updates.title !== undefined) {
       setClauses.push('title = ?');
@@ -355,6 +354,8 @@ export class CoworkStore {
       setClauses.push('model_ref = ?');
       values.push(updates.modelRef.trim() || null);
     }
+
+    if (setClauses.length === 0) return;
 
     values.push(id);
     this.db
@@ -426,16 +427,15 @@ export class CoworkStore {
   }
 
   resetRunningSessions(): number {
-    const now = Date.now();
     const result = this.db
       .prepare(
         `
       UPDATE cowork_sessions
-      SET status = 'idle', updated_at = ?
+      SET status = 'idle'
       WHERE status = 'running'
     `,
       )
-      .run(now);
+      .run();
     return result.changes;
   }
 

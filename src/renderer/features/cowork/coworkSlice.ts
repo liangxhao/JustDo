@@ -212,13 +212,11 @@ const coworkSlice = createSlice({
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
       if (sessionIndex !== -1) {
         state.sessions[sessionIndex].status = status;
-        state.sessions[sessionIndex].updatedAt = Date.now();
       }
 
       // Update current session if applicable
       if (state.currentSession?.id === sessionId) {
         state.currentSession.status = status;
-        state.currentSession.updatedAt = Date.now();
       }
     },
 
@@ -408,11 +406,9 @@ const coworkSlice = createSlice({
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
       if (sessionIndex !== -1) {
         state.sessions[sessionIndex].title = title;
-        state.sessions[sessionIndex].updatedAt = Date.now();
       }
       if (state.currentSession?.id === sessionId) {
         state.currentSession.title = title;
-        state.currentSession.updatedAt = Date.now();
       }
     },
 

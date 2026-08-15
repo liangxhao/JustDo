@@ -230,7 +230,9 @@ JustDo SQLite 中的会话列表和消息缓存独立于该运行时保留策略
 - `idx_cowork_sessions_agent_order`
 - `idx_cowork_sessions_order`
 
-排序规则通常是 pinned 优先，再按 updated_at 倒序。
+排序规则通常是 pinned 优先，再按 updated_at 倒序。`updated_at` 表示最近对话活动时间：
+新增消息以及流式消息内容变化会推进该时间；标题、状态、工作目录、执行模式、权限模式、
+模型、置顶和分组等会话元数据变化不推进该时间，避免未发生实际对话的会话改变列表顺序。
 
 ### `cowork_messages`
 

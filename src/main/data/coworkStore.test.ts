@@ -43,6 +43,7 @@ function setupDb(): void {
       system_prompt TEXT NOT NULL DEFAULT '',
       execution_mode TEXT NOT NULL DEFAULT 'local',
       permission_mode TEXT,
+      model_ref TEXT,
       active_skill_ids TEXT,
       agent_id TEXT NOT NULL DEFAULT 'main',
       created_at INTEGER NOT NULL,
@@ -95,12 +96,12 @@ function setupDb(): void {
 }
 
 /** Insert a session row directly. */
-function insertSession(id: string): void {
-  const now = Date.now();
+function insertSession(id: string, updatedAt: number = Date.now()): void {
+  const createdAt = updatedAt;
   db.prepare(
     `INSERT INTO cowork_sessions (id, title, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, created_at, updated_at)
      VALUES (?, 'test', 'idle', 0, '/tmp', '', 'local', '[]', 'main', ?, ?)`,
-  ).run(id, now, now);
+  ).run(id, createdAt, updatedAt);
 }
 
 /** Insert a message row directly, bypassing CoworkStore.addMessage. */
@@ -209,6 +210,53 @@ test('no console.warn when all metadata is valid or null', () => {
   expect(warnSpy).not.toHaveBeenCalled();
 
   warnSpy.mockRestore();
+});
+
+test('session metadata updates do not change recent activity time', () => {
+  const sid = 'sess-metadata';
+  const activityTime = 1_700_000_000_000;
+  insertSession(sid, activityTime);
+
+  store.updateSession(sid, {
+    title: 'renamed',
+    status: 'running',
+    cwd: '/other',
+    executionMode: 'sandbox',
+    permissionMode: 'ask',
+    modelRef: 'provider/model',
+  });
+
+  const session = store.getSession(sid);
+  expect(session).toMatchObject({
+    title: 'renamed',
+    status: 'running',
+    cwd: '/other',
+    executionMode: 'sandbox',
+    permissionMode: 'ask',
+    modelRef: 'provider/model',
+    updatedAt: activityTime,
+  });
+});
+
+test('resetting stale running sessions does not change recent activity time', () => {
+  const sid = 'sess-running';
+  const activityTime = 1_700_000_000_000;
+  insertSession(sid, activityTime);
+  db.prepare("UPDATE cowork_sessions SET status = 'running' WHERE id = ?").run(sid);
+
+  expect(store.resetRunningSessions()).toBe(1);
+  expect(store.getSession(sid)).toMatchObject({ status: 'idle', updatedAt: activityTime });
+});
+
+test('adding a message advances recent activity time', () => {
+  const sid = 'sess-message';
+  const activityTime = 1_700_000_000_000;
+  insertSession(sid, activityTime);
+
+  const message = store.addMessage(sid, { type: 'user', content: 'hello' });
+
+  expect(message.timestamp).toBeGreaterThan(activityTime);
+  expect(store.getSession(sid)?.updatedAt).toBe(message.timestamp);
 });
 
 test('backfillEmptyAgentModels assigns the current default model to empty agents only', () => {

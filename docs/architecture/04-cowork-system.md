@@ -150,7 +150,8 @@ UI 只能保留降级状态，不应使用 label、tool-call id 或 transcript �
 - `agent_id`：绑定 Agent。
 - `model_ref`：Gateway 最近确认的 `provider/model` 会话模型，仅作为 UI 恢复缓存。
 - `group_id`：会话分组。
-- `pinned`、`created_at`、`updated_at`：列表展示和排序。
+- `pinned`、`created_at`、`updated_at`：列表展示和排序；`updated_at` 仅表示最近对话活动，
+  会话元数据和运行状态变化不推进该时间。
 
 这些字段可以驱动 UI，但不能替代 Gateway 的真实运行状态。运行中状态应优先从 Gateway runtime status 和 stream event 获取。
 

@@ -5,6 +5,9 @@ import coworkReducer, {
   clearCurrentSession,
   hydrateDraftImageAttachment,
   setConfig,
+  setSessions,
+  updateSessionStatus,
+  updateSessionTitle,
 } from './coworkSlice';
 
 describe('cowork session permissions', () => {
@@ -65,5 +68,55 @@ describe('cowork draft attachments', () => {
     );
 
     expect(state.draftAttachments.__home__).toBeUndefined();
+  });
+});
+
+describe('cowork session recent activity', () => {
+  const activityTime = 1_700_000_000_000;
+
+  test('keeps activity time when status changes', () => {
+    const loaded = coworkReducer(
+      undefined,
+      setSessions([
+        {
+          id: 'session-1',
+          title: 'Session',
+          status: 'idle',
+          pinned: false,
+          createdAt: activityTime,
+          updatedAt: activityTime,
+        },
+      ]),
+    );
+
+    const updated = coworkReducer(
+      loaded,
+      updateSessionStatus({ sessionId: 'session-1', status: 'running' }),
+    );
+
+    expect(updated.sessions[0]).toMatchObject({ status: 'running', updatedAt: activityTime });
+  });
+
+  test('keeps activity time when title changes', () => {
+    const loaded = coworkReducer(
+      undefined,
+      setSessions([
+        {
+          id: 'session-1',
+          title: 'Session',
+          status: 'idle',
+          pinned: false,
+          createdAt: activityTime,
+          updatedAt: activityTime,
+        },
+      ]),
+    );
+
+    const updated = coworkReducer(
+      loaded,
+      updateSessionTitle({ sessionId: 'session-1', title: 'Renamed' }),
+    );
+
+    expect(updated.sessions[0]).toMatchObject({ title: 'Renamed', updatedAt: activityTime });
   });
 });
