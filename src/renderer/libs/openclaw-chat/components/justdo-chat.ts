@@ -2365,6 +2365,7 @@ export class JustDoChatElement extends LitElement {
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
     if (summaryButton) {
       const summaryKey = summaryButton.dataset.processSummaryKey ?? null;
+      this.chatScrollController.preserveAnchorForInteraction(summaryButton);
       if (this.processSummariesExpanded && summaryKey) {
         const collapsedKeys = new Set(this.renderedCollapsedProcessSummaryKeys);
         if (collapsedKeys.has(summaryKey)) {

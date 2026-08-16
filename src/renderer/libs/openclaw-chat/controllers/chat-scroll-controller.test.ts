@@ -43,6 +43,79 @@ describe('ChatScrollController', () => {
     expect(target.scrollTop).toBe(1000);
   });
 
+  test('keeps a clicked disclosure fixed instead of following the expanded content', () => {
+    const target = host();
+    let anchorTop = 240;
+    const anchor = {
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: anchorTop, bottom: anchorTop + 32 }),
+    };
+    const onStateChange = vi.fn();
+    const controller = new ChatScrollController(onStateChange);
+    controller.connect(target as unknown as HTMLElement);
+    controller.afterRender(1);
+    target.scrollTop = 700;
+
+    controller.preserveAnchorForInteraction(anchor as unknown as HTMLElement);
+    controller.beforeRender();
+    anchorTop = 180;
+    controller.afterRender(1);
+
+    expect(controller.state).toEqual({ mode: 'paused', unseenRevisions: 0 });
+    expect(target.scrollTop).toBe(640);
+    expect(onStateChange).toHaveBeenCalled();
+  });
+
+  test('falls back to a nearby anchor when the clicked disclosure is replaced', () => {
+    const target = host() as ReturnType<typeof host> & {
+      shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+      getBoundingClientRect: () => { top: number };
+    };
+    let fallbackTop = 300;
+    const fallback = {
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: fallbackTop, bottom: fallbackTop + 40 }),
+    };
+    const clicked = {
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: 240, bottom: 272 }),
+    };
+    target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [fallback] };
+    target.getBoundingClientRect = () => ({ top: 0 });
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    controller.afterRender(1);
+    target.scrollTop = 700;
+
+    controller.preserveAnchorForInteraction(clicked as unknown as HTMLElement);
+    controller.beforeRender();
+    clicked.isConnected = false;
+    fallbackTop = 260;
+    controller.afterRender(1);
+
+    expect(target.scrollTop).toBe(660);
+  });
+
+  test('preserves unseen revisions when opening a disclosure while paused', async () => {
+    const target = host();
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    controller.afterRender(1);
+    await Promise.resolve();
+    target.scrollTop = 500;
+    target.emitScroll();
+    controller.beforeRender();
+    controller.afterRender(2);
+    const anchor = {
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: 240, bottom: 272 }),
+    };
+
+    controller.preserveAnchorForInteraction(anchor as unknown as HTMLElement);
+
+    expect(controller.state).toEqual({ mode: 'paused', unseenRevisions: 1 });
+  });
+
   test('requests an older page when the user scrolls near the top', () => {
     const target = host();
     const loadOlder = vi.fn();

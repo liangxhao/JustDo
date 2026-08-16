@@ -11,6 +11,7 @@ export class ChatScrollController {
   private resizeObserver: ResizeObserver | null = null;
   private observedContent: Element | null = null;
   private pausedAnchors: Array<{ element: HTMLElement; offset: number }> = [];
+  private interactionAnchor: { element: HTMLElement; offset: number } | null = null;
 
   constructor(
     private readonly onStateChange: () => void,
@@ -37,7 +38,9 @@ export class ChatScrollController {
   beforeRender(): void {
     if (!this.host) return;
     this.previousScrollTop = this.host.scrollTop;
-    this.pausedAnchors = this.mode === 'paused' ? this.captureVisibleAnchors(this.host) : [];
+    if (!this.interactionAnchor) {
+      this.pausedAnchors = this.mode === 'paused' ? this.captureVisibleAnchors(this.host) : [];
+    }
   }
 
   afterRender(revision: number): void {
@@ -50,13 +53,17 @@ export class ChatScrollController {
       this.observeContent();
       return;
     }
-    const survivingAnchor = this.pausedAnchors.find(anchor => anchor.element.isConnected);
+    const survivingAnchor =
+      this.interactionAnchor?.element.isConnected === true
+        ? this.interactionAnchor
+        : this.pausedAnchors.find(anchor => anchor.element.isConnected);
     if (survivingAnchor) {
       const nextOffset = survivingAnchor.element.getBoundingClientRect().top;
       this.setScrollTop(
         Math.max(0, this.previousScrollTop + (nextOffset - survivingAnchor.offset)),
       );
     }
+    this.interactionAnchor = null;
     if (changed) {
       this.unseenRevisions += 1;
       this.onStateChange();
@@ -68,14 +75,28 @@ export class ChatScrollController {
   jumpToLatest(): void {
     this.mode = 'follow';
     this.unseenRevisions = 0;
+    this.interactionAnchor = null;
     this.scrollToBottom();
     this.onStateChange();
+  }
+
+  preserveAnchorForInteraction(element: HTMLElement): void {
+    if (!this.host || !element.isConnected) return;
+    const modeChanged = this.mode !== 'paused';
+    this.mode = 'paused';
+    this.interactionAnchor = {
+      element,
+      offset: element.getBoundingClientRect().top,
+    };
+    this.pausedAnchors = this.captureVisibleAnchors(this.host);
+    if (modeChanged) this.onStateChange();
   }
 
   reset(): void {
     this.mode = 'follow';
     this.unseenRevisions = 0;
     this.previousRevision = -1;
+    this.interactionAnchor = null;
     this.onStateChange();
   }
 
@@ -85,6 +106,7 @@ export class ChatScrollController {
     this.resizeObserver = null;
     this.observedContent = null;
     this.host = null;
+    this.interactionAnchor = null;
   }
 
   private readonly handleScroll = (): void => {
