@@ -145,7 +145,8 @@ OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
 `021-atomic-sessions-spawn-admission.cjs`,
 `022-subagent-pending-status.cjs`,
 `023-managed-subagent-join.cjs`,
-`024-silent-goal-clear.cjs`.
+`024-silent-goal-clear.cjs`,
+`025-subagent-session-title-metadata.cjs`.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 

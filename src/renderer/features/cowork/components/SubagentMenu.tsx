@@ -4,7 +4,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
-import { reconcileSubagentLabel } from './subagentLabel';
+import {
+  reconcileSubagentLabel,
+  type SubagentLabelSource,
+} from './subagentLabel';
 
 export const SUBAGENT_STATUSES = {
   PENDING: 'pending',
@@ -22,6 +25,7 @@ export type Subagent = {
   sessionKey: string;
   sessionId?: string;
   label: string;
+  labelSource: SubagentLabelSource;
   status: SubagentStatus;
   task?: string;
   model?: string;
@@ -56,7 +60,9 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   const [subagents, setSubagents] = useState<Subagent[]>([]);
   const [detailSubagent, setDetailSubagent] = useState<Subagent | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const subagentLabelsRef = useRef(new Map<string, string>());
+  const subagentLabelsRef = useRef(
+    new Map<string, { label: string; labelSource: SubagentLabelSource }>(),
+  );
   const refreshInFlightRef = useRef(false);
   const hasLoadedRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
@@ -70,16 +76,18 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
       const result = await window.electron.cowork.getSubTaskStatus(sessionId);
       if (result.success && sessionIdRef.current === sessionId) {
         const nextSubagents = (result.subagents as Subagent[] | undefined) ?? [];
-        const normalizedSubagents = nextSubagents.map(subagent => ({
-          ...subagent,
-          label: reconcileSubagentLabel(
-            subagent,
-            subagentLabelsRef.current.get(subagent.id),
-            subagent.label,
-          ),
-        }));
+        const normalizedSubagents = nextSubagents.map(subagent => {
+          const resolved = reconcileSubagentLabel(subagentLabelsRef.current.get(subagent.id), {
+            label: subagent.label,
+            labelSource: subagent.labelSource,
+          });
+          return { ...subagent, ...resolved };
+        });
         subagentLabelsRef.current = new Map(
-          normalizedSubagents.map(subagent => [subagent.id, subagent.label]),
+          normalizedSubagents.map(subagent => [
+            subagent.id,
+            { label: subagent.label, labelSource: subagent.labelSource },
+          ]),
         );
         setSubagents(normalizedSubagents);
         setDetailSubagent(current => {

@@ -13,7 +13,7 @@
 | 开发端口 | `43127` |
 | Redux slices | 6 |
 | 内置 Skills | 7 个声明，7 个默认启用 |
-| 当前 Runtime patches | 19 个，位于 `scripts/patches/v2026.6.11/` |
+| 当前 Runtime patches | 25 个，位于 `scripts/patches/v2026.6.11/` |
 
 ## 架构文档
 

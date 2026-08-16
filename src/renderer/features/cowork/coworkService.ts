@@ -1047,6 +1047,7 @@ class CoworkService {
       sessionKey: string;
       sessionId?: string;
       label: string;
+      labelSource: 'taskName' | 'label' | 'task';
       status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout';
       task?: string;
       model?: string;

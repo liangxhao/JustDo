@@ -256,6 +256,7 @@ Subagent 状态由 Gateway 提供，JustDo 只负责桥接和展示：
 - `SubagentMessageDrawer` 展示子任务消息。
 - `cowork.getSubTaskStatus()` 查询 session 下子任务状态。
 - `cowork.getSubTaskSession(sessionKey)` 解析子任务会话。
+- Subagent 标题只使用 registry 的 `taskName`、显式 `label` 或 `task` 首行摘要，优先级依次递减；三者全空的损坏记录会被跳过并记录去重警告。实时状态继续使用 24 小时 `subagents` 窗口，永久历史由分页 `sessions.list` 投影同一份 registry 命名元数据，不读取 transcript 派生标题。
 
 Subagent 执行受 Gateway 配置的两级硬约束控制：
 

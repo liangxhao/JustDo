@@ -1,40 +1,49 @@
 import { describe, expect, test } from 'vitest';
 
-import {
-  isInternalSubagentLabel,
-  reconcileSubagentLabel,
-} from '@/features/cowork/components/subagentLabel';
-
-const subagent = {
-  sessionKey: 'agent:main:subagent:a263de4c-ea07-47f2-b8ce-108053a89f70',
-};
+import { reconcileSubagentLabel } from '@/features/cowork/components/subagentLabel';
 
 describe('reconcileSubagentLabel', () => {
-  test('upgrades a dated session id fallback to a structured task name', () => {
-    expect(reconcileSubagentLabel(subagent, 'bb6214b9 (2026-07-16)', 'blessing-4')).toBe(
-      'blessing-4',
-    );
-  });
-
-  test('upgrades a session key suffix fallback to a structured task name', () => {
+  test('uses the incoming title when there is no previous snapshot', () => {
     expect(
-      reconcileSubagentLabel(subagent, 'a263de4c-ea07-47f2-b8ce-108053a89f70', 'blessing-4'),
-    ).toBe('blessing-4');
+      reconcileSubagentLabel(undefined, { label: 'Task summary', labelSource: 'task' }),
+    ).toEqual({ label: 'Task summary', labelSource: 'task' });
   });
 
-  test('keeps a stable task name when a later response temporarily falls back', () => {
-    expect(reconcileSubagentLabel(subagent, 'blessing-4', 'bb6214b9 (2026-07-16)')).toBe(
-      'blessing-4',
-    );
+  test('upgrades a label to a task name', () => {
+    expect(
+      reconcileSubagentLabel(
+        { label: 'Friendly label', labelSource: 'label' },
+        { label: 'stable-task-name', labelSource: 'taskName' },
+      ),
+    ).toEqual({ label: 'stable-task-name', labelSource: 'taskName' });
   });
 
-  test('keeps the first stable task name when derived titles change', () => {
-    expect(reconcileSubagentLabel(subagent, 'blessing-4', 'Changing title')).toBe('blessing-4');
+  test('upgrades a task summary to an explicit label', () => {
+    expect(
+      reconcileSubagentLabel(
+        { label: 'Task summary', labelSource: 'task' },
+        { label: 'Friendly label', labelSource: 'label' },
+      ),
+    ).toEqual({ label: 'Friendly label', labelSource: 'label' });
   });
-});
 
-describe('isInternalSubagentLabel', () => {
-  test('does not classify a user-provided hexadecimal-looking task name as a fallback', () => {
-    expect(isInternalSubagentLabel(subagent, 'deadbeef-worker')).toBe(false);
+  test('does not downgrade a task name to a label or task summary', () => {
+    const taskName = { label: 'stable-task-name', labelSource: 'taskName' as const };
+
+    expect(
+      reconcileSubagentLabel(taskName, { label: 'Friendly label', labelSource: 'label' }),
+    ).toEqual(taskName);
+    expect(
+      reconcileSubagentLabel(taskName, { label: 'Task summary', labelSource: 'task' }),
+    ).toEqual(taskName);
+  });
+
+  test('accepts updates from the same source', () => {
+    expect(
+      reconcileSubagentLabel(
+        { label: 'Old task name', labelSource: 'taskName' },
+        { label: 'New task name', labelSource: 'taskName' },
+      ),
+    ).toEqual({ label: 'New task name', labelSource: 'taskName' });
   });
 });

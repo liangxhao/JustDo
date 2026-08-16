@@ -14,11 +14,21 @@ export const SUBAGENT_STATUSES = {
 export type SubagentStatus =
   (typeof SUBAGENT_STATUSES)[keyof typeof SUBAGENT_STATUSES];
 
+export const SUBAGENT_LABEL_SOURCES = {
+  TASK_NAME: 'taskName',
+  LABEL: 'label',
+  TASK: 'task',
+} as const;
+
+export type SubagentLabelSource =
+  (typeof SUBAGENT_LABEL_SOURCES)[keyof typeof SUBAGENT_LABEL_SOURCES];
+
 export type GatewaySubagent = {
   id: string;
   sessionKey: string;
   sessionId?: string;
   label: string;
+  labelSource: SubagentLabelSource;
   status: SubagentStatus;
   task?: string;
   model?: string;
@@ -28,8 +38,28 @@ export type GatewaySubagent = {
   totalTokens?: number;
 };
 
+type GatewaySubagentProjection = Omit<GatewaySubagent, 'label' | 'labelSource'> & {
+  label?: string;
+  labelSource?: SubagentLabelSource;
+};
+
+type ListGatewaySubagentsOptions = {
+  client: GatewayClientLike;
+  parentKeys: string[];
+  includePersistedHistory?: boolean;
+  includeStructuredTool?: boolean;
+  includeMalformedForRuntimeControl?: boolean;
+};
+
 const SUBAGENT_RECENT_MINUTES = 24 * 60;
 const PERSISTED_SESSION_PAGE_SIZE = 500;
+const SUBAGENT_TASK_TITLE_MAX_CHARS = 48;
+const warnedMalformedSubagentKeys = new Set<string>();
+const SUBAGENT_LABEL_SOURCE_PRIORITY: Record<SubagentLabelSource, number> = {
+  [SUBAGENT_LABEL_SOURCES.TASK_NAME]: 0,
+  [SUBAGENT_LABEL_SOURCES.LABEL]: 1,
+  [SUBAGENT_LABEL_SOURCES.TASK]: 2,
+};
 
 const isSubagentStatus = (value: unknown): value is SubagentStatus =>
   Object.values(SUBAGENT_STATUSES).includes(value as SubagentStatus);
@@ -50,64 +80,68 @@ const resolveStatus = (row: Record<string, unknown>): SubagentStatus => {
   return SUBAGENT_STATUSES.DONE;
 };
 
-const resolveLabel = (row: Record<string, unknown>, sessionKey: string): string => {
-  // OpenClaw's registry naming semantics first; session-derived fields are
-  // fallbacks because older Gateway versions do not project taskName/task.
-  for (const value of [
-    row.label,
-    row.taskName,
-    row.task,
-    row.derivedTitle,
-    row.displayName,
-  ]) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return sessionKey.split(':').at(-1) || 'Subagent';
-};
-
-const resolveSessionTitle = (row: Record<string, unknown>): string | undefined => {
-  for (const value of [row.derivedTitle, row.title, row.displayName, row.taskName]) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return undefined;
-};
-
 const optionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
 const optionalNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
-const looksLikeInternalFallbackLabel = (
-  subagent: GatewaySubagent,
-  row: Record<string, unknown>,
-): boolean => {
-  const label = subagent.label.trim();
-  const sessionSuffix = subagent.sessionKey.split(':').at(-1);
-  const sessionId = optionalString(row.sessionId) || optionalString(row.id);
-  const task = subagent.task?.trim();
+const summarizeTask = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const firstLine = value
+    .split(/\r?\n/u)
+    .map(line => line.trim())
+    .find(Boolean);
+  if (!firstLine) return undefined;
+  const normalized = firstLine.replace(/\s+/gu, ' ');
+  const characters = Array.from(normalized);
+  if (characters.length <= SUBAGENT_TASK_TITLE_MAX_CHARS) return normalized;
+  return `${characters.slice(0, SUBAGENT_TASK_TITLE_MAX_CHARS).join('')}…`;
+};
 
-  return (
-    label === '' ||
-    label === sessionSuffix ||
-    label === subagent.sessionKey ||
-    (task !== undefined && label === task) ||
-    /^[0-9a-f]{8}(?:-[0-9a-f-]{27})?(?: \(\d{4}-\d{2}-\d{2}\))?$/i.test(label) ||
-    (sessionId !== undefined && label.startsWith(sessionId.slice(0, 8)))
-  );
+const resolveSubagentTitle = (
+  row: Record<string, unknown>,
+): { label: string; labelSource: SubagentLabelSource } | null => {
+  const taskName = optionalString(row.taskName);
+  if (taskName) {
+    return { label: taskName, labelSource: SUBAGENT_LABEL_SOURCES.TASK_NAME };
+  }
+  const label = optionalString(row.label);
+  if (label) {
+    return { label, labelSource: SUBAGENT_LABEL_SOURCES.LABEL };
+  }
+  const task = summarizeTask(row.task);
+  if (task) {
+    return { label: task, labelSource: SUBAGENT_LABEL_SOURCES.TASK };
+  }
+  return null;
+};
+
+const warnMalformedSubagentOnce = (sessionKey: string): void => {
+  if (warnedMalformedSubagentKeys.has(sessionKey)) return;
+  warnedMalformedSubagentKeys.add(sessionKey);
+  console.warn('[SubagentGateway] Skipping subagent without taskName, label, or task', {
+    sessionKey,
+  });
 };
 
 const mergeSessionProjection = (
-  target: Map<string, GatewaySubagent>,
+  target: Map<string, GatewaySubagentProjection>,
   sessionKey: string,
   row: Record<string, unknown>,
 ): boolean => {
   const existing = target.get(sessionKey);
   if (!existing) return false;
 
-  const title = resolveSessionTitle(row);
-  if (title && looksLikeInternalFallbackLabel(existing, row)) {
-    existing.label = title;
+  const title = resolveSubagentTitle(row);
+  if (
+    title &&
+    (existing.labelSource === undefined ||
+      SUBAGENT_LABEL_SOURCE_PRIORITY[title.labelSource] <=
+        SUBAGENT_LABEL_SOURCE_PRIORITY[existing.labelSource])
+  ) {
+    existing.label = title.label;
+    existing.labelSource = title.labelSource;
   }
   existing.model ??= optionalString(row.model);
   existing.sessionId ??= optionalString(row.sessionId);
@@ -146,7 +180,7 @@ const extractToolDetails = (result: unknown): Record<string, unknown> | null => 
 };
 
 const addToolSubagents = (
-  target: Map<string, GatewaySubagent>,
+  target: Map<string, GatewaySubagentProjection>,
   details: Record<string, unknown>,
 ): void => {
   const rows = [
@@ -157,16 +191,12 @@ const addToolSubagents = (
     if (!isRecord(value)) continue;
     const sessionKey = optionalString(value.sessionKey);
     if (!sessionKey) continue;
+    const title = resolveSubagentTitle(value);
     target.set(sessionKey, {
       id: sessionKey,
       sessionKey,
       sessionId: optionalString(value.sessionId),
-      label:
-        optionalString(value.taskName) ||
-        optionalString(value.label) ||
-        optionalString(value.task) ||
-        sessionKey.split(':').at(-1) ||
-        'Subagent',
+      ...(title ?? {}),
       status: resolveToolStatus(value.status),
       task: optionalString(value.task),
       model: optionalString(value.model),
@@ -190,7 +220,6 @@ export const listPersistedGatewaySessions = async (
     }>('sessions.list', {
       limit: PERSISTED_SESSION_PAGE_SIZE,
       offset,
-      includeDerivedTitles: true,
     });
     const page = result.sessions ?? [];
     sessions.push(...page);
@@ -207,13 +236,16 @@ export const listPersistedGatewaySessions = async (
  * 24-hour maximum recent window. Lightweight runtime polling can opt out of the
  * structured tool to avoid touching the parent session's tool-loop counters.
  */
-export const listGatewaySubagents = async (options: {
-  client: GatewayClientLike;
-  parentKeys: string[];
-  includePersistedHistory?: boolean;
-  includeStructuredTool?: boolean;
-}): Promise<GatewaySubagent[]> => {
-  const bySessionKey = new Map<string, GatewaySubagent>();
+export function listGatewaySubagents(
+  options: ListGatewaySubagentsOptions & { includeMalformedForRuntimeControl: true },
+): Promise<GatewaySubagentProjection[]>;
+export function listGatewaySubagents(
+  options: ListGatewaySubagentsOptions,
+): Promise<GatewaySubagent[]>;
+export async function listGatewaySubagents(
+  options: ListGatewaySubagentsOptions,
+): Promise<GatewaySubagentProjection[]> {
+  const bySessionKey = new Map<string, GatewaySubagentProjection>();
 
   for (const parentKey of options.parentKeys) {
     if (options.includeStructuredTool !== false) {
@@ -243,18 +275,18 @@ export const listGatewaySubagents = async (options: {
     }>('sessions.list', {
       spawnedBy: parentKey,
       limit: 100,
-      includeDerivedTitles: true,
     });
 
     for (const row of result.sessions ?? []) {
       const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
       if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
       if (mergeSessionProjection(bySessionKey, sessionKey, row)) continue;
+      const title = resolveSubagentTitle(row);
       bySessionKey.set(sessionKey, {
         id: sessionKey,
         sessionKey,
         sessionId: optionalString(row.sessionId),
-        label: resolveLabel(row, sessionKey),
+        ...(title ?? {}),
         status: resolveStatus(row),
         model: optionalString(row.model),
         startedAt: optionalNumber(row.startedAt),
@@ -277,11 +309,12 @@ export const listGatewaySubagents = async (options: {
         if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
         if (!rowBelongsToParent(row, parentKeySet)) continue;
         if (mergeSessionProjection(bySessionKey, sessionKey, row)) continue;
+        const title = resolveSubagentTitle(row);
         bySessionKey.set(sessionKey, {
           id: sessionKey,
           sessionKey,
           sessionId: optionalString(row.sessionId),
-          label: resolveLabel(row, sessionKey),
+          ...(title ?? {}),
           status: resolveStatus(row),
           task: optionalString(row.task),
           model: optionalString(row.model),
@@ -298,5 +331,15 @@ export const listGatewaySubagents = async (options: {
     }
   }
 
-  return [...bySessionKey.values()];
-};
+  const subagents = [...bySessionKey.values()];
+  for (const subagent of subagents) {
+    if (subagent.label === undefined || subagent.labelSource === undefined) {
+      warnMalformedSubagentOnce(subagent.sessionKey);
+    }
+  }
+  if (options.includeMalformedForRuntimeControl) return subagents;
+  return subagents.filter(
+    (subagent): subagent is GatewaySubagent =>
+      typeof subagent.label === 'string' && subagent.labelSource !== undefined,
+  );
+}

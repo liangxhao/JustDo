@@ -100,6 +100,7 @@ import {
   type GatewaySubagent,
   listGatewaySubagents,
   SUBAGENT_STATUSES,
+  type SubagentLabelSource,
   type SubagentStatus,
 } from './subagentGateway';
 import {
@@ -894,6 +895,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         parentKeys: [parentKey],
         includePersistedHistory: false,
         includeStructuredTool: false,
+        includeMalformedForRuntimeControl: true,
       });
       for (const subagent of subagents) {
         if (!visitedParentKeys.has(subagent.sessionKey)) {
@@ -3636,6 +3638,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       sessionKey: string;
       sessionId?: string;
       label: string;
+      labelSource: SubagentLabelSource;
       status: SubagentStatus;
       task?: string;
       model?: string;

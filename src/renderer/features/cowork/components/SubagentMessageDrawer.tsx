@@ -97,7 +97,10 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
             return {
               ...previous,
               ...latest,
-              label: reconcileSubagentLabel(latest, previous.label, latest.label),
+              ...reconcileSubagentLabel(
+                { label: previous.label, labelSource: previous.labelSource },
+                { label: latest.label, labelSource: latest.labelSource },
+              ),
             };
           });
         }

@@ -48,6 +48,7 @@ scripts/patches/v2026.6.11/
 | `022-subagent-pending-status.cjs`                | Project accepted native and ACP children without a lifecycle `start` as `pending`, then switch to `running` on `start`, including starts observed just before registry admission                                                                          |
 | `023-managed-subagent-join.cjs`                  | Incrementally join completed subagents inside the original JustDo parent run and pin managed logical sessions to their existing Gateway session id                                                                                                        |
 | `024-silent-goal-clear.cjs`                      | Expose a narrow operator-admin RPC for clearing canonical Goal metadata without writing an application lifecycle command into model-visible chat history                                                                                                  |
+| `025-subagent-session-title-metadata.cjs`        | Project durable subagent `taskName`, explicit `label`, and `task` metadata on Gateway `sessions.list` rows so retained history keeps authoritative titles                                                                                                  |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
@@ -198,6 +199,7 @@ Patch removal is a real change:
 | `022-subagent-pending-status.cjs`                | Missing pre-start subagent registry state                                         | Remove when OpenClaw projects accepted child runs without lifecycle `start` separately from runs that have emitted `start`                                                                                                        |
 | `023-managed-subagent-join.cjs`                  | Managed parent run/session continuity                                             | Remove when OpenClaw can join child results into the original parent run and preserve logical session ids except for explicit new/reset/delete operations                                                                         |
 | `024-silent-goal-clear.cjs`                      | Model-invisible Goal lifecycle mutation                                           | Remove when OpenClaw exposes a native authenticated Gateway API for clearing Goal metadata without persisting a chat message                                                                                                      |
+| `025-subagent-session-title-metadata.cjs`        | Missing durable subagent naming metadata                                          | Remove when OpenClaw projects registry-backed `taskName`, explicit `label`, and `task` fields on Gateway `sessions.list` rows                                                                                                      |
 
 ### Compaction patch upgrade warning
 

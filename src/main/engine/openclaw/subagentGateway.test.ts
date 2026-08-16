@@ -39,7 +39,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
             {
               key: 'agent:main:subagent:timeout',
               sessionId: 'timeout-session-id',
-              displayName: 'Slow worker',
+              label: 'Slow worker',
               status: 'timeout',
               subagentRunState: 'historical',
               model: 'openai/gpt-5',
@@ -60,12 +60,10 @@ test('lists subagents from the registry-backed sessions projection', async () =>
   expect(request).toHaveBeenCalledWith('sessions.list', {
     spawnedBy: 'agent:main:cowork:parent',
     limit: 100,
-    includeDerivedTitles: true,
   });
   expect(request).toHaveBeenCalledWith('sessions.list', {
     limit: 500,
     offset: 0,
-    includeDerivedTitles: true,
   });
   expect(request).toHaveBeenCalledWith('tools.invoke', {
     name: 'subagents',
@@ -81,6 +79,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
       sessionKey: 'agent:main:subagent:running',
       sessionId: 'running-session-id',
       label: 'research-task',
+      labelSource: 'taskName',
       status: 'running',
       task: 'Research the topic',
       model: 'openai/gpt-5',
@@ -93,6 +92,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
       sessionKey: 'agent:main:subagent:timeout',
       sessionId: 'timeout-session-id',
       label: 'Slow worker',
+      labelSource: 'label',
       status: 'timeout',
       model: 'openai/gpt-5',
       startedAt: 100,
@@ -103,7 +103,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
   ]);
 });
 
-test('replaces internal fallback labels with the persisted session title', async () => {
+test('uses persisted taskName instead of a transcript-derived title', async () => {
   const client = {
     request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'tools.invoke') {
@@ -115,9 +115,9 @@ test('replaces internal fallback labels with the persisted session title', async
               active: [],
               recent: [
                 {
-                  sessionKey: 'agent:main:subagent:child-20',
-                  label: '93624b49 (2026-07-15)',
-                  task: '请写一句中文祝福语，主题是"万事如意"。',
+                  sessionKey: 'agent:main:subagent:b3577f7e-222a-4a2d-b683-5ce4548b2920',
+                  label: '6a6891e1 (2026-08-16)',
+                  task: 'Research recent environmental news',
                   status: 'done',
                 },
               ],
@@ -129,9 +129,11 @@ test('replaces internal fallback labels with the persisted session title', async
         sessions: params?.spawnedBy
           ? [
               {
-                key: 'agent:main:subagent:child-20',
-                sessionId: '93624b49-cad5-41de-944f-8cbae6a70108',
-                derivedTitle: 'blessing_20',
+                key: 'agent:main:subagent:b3577f7e-222a-4a2d-b683-5ce4548b2920',
+                sessionId: '6a6891e1-9dc4-4744-936b-2edb99f928e6',
+                taskName: 'news_environment',
+                derivedTitle: '[Subagent Context] internal prompt',
+                task: 'Research recent environmental news',
                 status: 'done',
               },
             ]
@@ -141,19 +143,23 @@ test('replaces internal fallback labels with the persisted session title', async
   } as unknown as GatewayClientLike;
 
   await expect(
-    listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
+    listGatewaySubagents({
+      client,
+      parentKeys: ['agent:main:cowork:6d2a40c5-2ebf-495b-8968-fa551b80e64a'],
+    }),
   ).resolves.toMatchObject([
     {
-      sessionKey: 'agent:main:subagent:child-20',
-      sessionId: '93624b49-cad5-41de-944f-8cbae6a70108',
-      label: 'blessing_20',
-      task: '请写一句中文祝福语，主题是"万事如意"。',
+      sessionKey: 'agent:main:subagent:b3577f7e-222a-4a2d-b683-5ce4548b2920',
+      sessionId: '6a6891e1-9dc4-4744-936b-2edb99f928e6',
+      label: 'news_environment',
+      labelSource: 'taskName',
+      task: 'Research recent environmental news',
       status: 'done',
     },
   ]);
 });
 
-test('keeps explicit structured task names when the session projection also has a title', async () => {
+test('does not let a session label replace a structured taskName', async () => {
   const client = {
     request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'tools.invoke') {
@@ -181,7 +187,8 @@ test('keeps explicit structured task names when the session projection also has 
           ? [
               {
                 key: 'agent:main:subagent:named-task',
-                derivedTitle: 'Changing title',
+                label: 'Changing title',
+                task: 'Research the topic',
                 status: 'done',
               },
             ]
@@ -196,6 +203,7 @@ test('keeps explicit structured task names when the session projection also has 
     {
       sessionKey: 'agent:main:subagent:named-task',
       label: 'research-task',
+      labelSource: 'taskName',
       task: 'Research the topic',
     },
   ]);
@@ -260,7 +268,6 @@ test('keeps persisted subagents after OpenClaw child links age out', async () =>
   expect(client.request).toHaveBeenCalledWith('sessions.list', {
     limit: 500,
     offset: 500,
-    includeDerivedTitles: true,
   });
 });
 
@@ -285,6 +292,7 @@ test('can skip persisted history lookup for lightweight runtime polling', async 
               {
                 key: 'agent:main:subagent:live-child',
                 spawnedBy: 'agent:main:cowork:parent',
+                task: 'Live child task',
                 status: 'running',
               },
             ]
@@ -292,6 +300,7 @@ test('can skip persisted history lookup for lightweight runtime polling', async 
               {
                 key: 'agent:main:subagent:persisted-only',
                 spawnedBy: 'agent:main:cowork:parent',
+                task: 'Persisted child task',
                 status: 'done',
               },
             ],
@@ -314,7 +323,6 @@ test('can skip persisted history lookup for lightweight runtime polling', async 
   expect(client.request).not.toHaveBeenCalledWith('sessions.list', {
     limit: 500,
     offset: 0,
-    includeDerivedTitles: true,
   });
 });
 
@@ -325,6 +333,7 @@ test('maps a recovered active child session to running', async () => {
         {
           key: 'agent:main:subagent:recovered-child',
           spawnedBy: 'agent:main:cowork:parent',
+          task: 'Recovered child task',
           status: 'done',
           hasActiveRun: true,
         },
@@ -354,6 +363,7 @@ test('preserves pending before generic active flags in the session projection', 
         {
           key: 'agent:main:subagent:queued-child',
           spawnedBy: 'agent:main:cowork:parent',
+          task: 'Queued child task',
           status: 'pending',
           subagentRunState: 'pending',
           hasActiveSubagentRun: true,
@@ -375,6 +385,48 @@ test('preserves pending before generic active flags in the session projection', 
       status: 'pending',
     },
   ]);
+});
+
+test('waits until projections are merged before warning about missing title metadata', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const client = {
+    request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'tools.invoke') {
+        return {
+          ok: true,
+          output: {
+            status: 'ok',
+            details: {
+              active: [
+                {
+                  sessionKey: 'agent:main:subagent:late-title',
+                  status: 'running',
+                },
+              ],
+              recent: [],
+            },
+          },
+        };
+      }
+      return {
+        sessions: params?.spawnedBy
+          ? [
+              {
+                key: 'agent:main:subagent:late-title',
+                task: 'Durable task metadata',
+                status: 'running',
+              },
+            ]
+          : [],
+      };
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
+  ).resolves.toMatchObject([{ label: 'Durable task metadata', labelSource: 'task' }]);
+  expect(warn).not.toHaveBeenCalled();
+  warn.mockRestore();
 });
 
 test('maps structured pending rows without creating fallback failures', async () => {
@@ -422,7 +474,7 @@ test('maps interrupted registry rows to failed', async () => {
       sessions: [
         {
           key: 'agent:main:subagent:interrupted',
-          derivedTitle: 'Interrupted worker',
+          task: 'Interrupted worker task',
           subagentRunState: 'interrupted',
         },
       ],
@@ -485,7 +537,63 @@ test('prefers registry task fields and never uses the last reply as a title', as
   await expect(
     listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
   ).resolves.toMatchObject([
-    { label: 'Named task' },
-    { label: 'Fallback task instructions' },
+    { label: 'Named task', labelSource: 'taskName' },
+    { label: 'Fallback task instructions', labelSource: 'task' },
   ]);
+});
+
+test('uses the first non-empty task line and truncates it without splitting emoji', async () => {
+  const longTask = `\n\n  ${'研究😀'.repeat(20)}  \nIgnore this line`;
+  const client = {
+    request: vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          key: 'agent:main:subagent:task-summary',
+          task: longTask,
+          status: 'done',
+        },
+      ],
+    }),
+  } as unknown as GatewayClientLike;
+
+  const result = await listGatewaySubagents({
+    client,
+    parentKeys: ['agent:main:cowork:parent'],
+  });
+
+  expect(Array.from(result[0]?.label ?? '')).toHaveLength(49);
+  expect(result[0]).toMatchObject({
+    label: `${Array.from('研究😀'.repeat(20)).slice(0, 48).join('')}…`,
+    labelSource: 'task',
+  });
+});
+
+test('skips malformed rows and warns only once per session key', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const client = {
+    request: vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          key: 'agent:main:subagent:missing-title-fields',
+          derivedTitle: '[Subagent Context] must stay hidden',
+          displayName: 'Must stay hidden too',
+          status: 'done',
+        },
+      ],
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
+  ).resolves.toEqual([]);
+  await expect(
+    listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
+  ).resolves.toEqual([]);
+
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    '[SubagentGateway] Skipping subagent without taskName, label, or task',
+    { sessionKey: 'agent:main:subagent:missing-title-fields' },
+  );
+  warn.mockRestore();
 });
