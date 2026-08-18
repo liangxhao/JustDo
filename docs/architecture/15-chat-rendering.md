@@ -182,7 +182,7 @@ Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产�
 - `ChatController` 分别通过 local handler 和 before-send hook 表执行行为；新增特殊命令时注册对应 handler/hook，不新增命令名判断链。
 - 主进程首页首轮发送也读取同一 before-send hook，确保两条发送路径的 session 前置条件一致。
 - 命令特有的展示语义（例如 `/goal` optimistic objective）可以保留独立解析器，但必须复用统一命令解析结果。
-- `/compact` 通过 `sessions.compact` 本地执行。OpenClaw v2026.6.11 Gateway RPC 不接受自定义摘要指令，命令菜单因此不展示参数提示；如果用户仍输入参数，JustDo 与当前 OpenClaw Control UI 一致，执行压缩并静默忽略参数。升级 OpenClaw 时必须重新核对 `sessions.compact` 是否已支持 `customInstructions`。
+- `/compact` 通过 `sessions.compact` 本地执行。OpenClaw v2026.7.1-2 的 Gateway RPC 仍只接收会话定位参数，不能转发自定义摘要指令；上游 Control UI 的命令描述虽然暴露了 instructions，实际 RPC 调用仍会忽略。JustDo 因此不展示误导性的参数提示；如果用户仍输入参数，则执行压缩并静默忽略参数。后续升级 OpenClaw 时必须以 Gateway RPC schema 和调用链重新核对 `customInstructions`，不能只依据命令菜单声明。
 
 ## 上下文压缩展示
 
@@ -228,7 +228,7 @@ IPC 状态。
 ## 版本
 
 - JustDo: `v2026.8.10`
-- OpenClaw Gateway: `v2026.6.11`
+- OpenClaw Gateway: `v2026.7.1-2`
 
 ## 组件职责
 

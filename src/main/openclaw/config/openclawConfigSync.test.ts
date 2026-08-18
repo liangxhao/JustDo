@@ -520,4 +520,70 @@ describe('OpenClaw skill config merging', () => {
       },
     });
   });
+
+  test('pins app-installed extensions while preserving bundled plugin discovery', () => {
+    expect(
+      mergeOpenClawPluginConfig(
+        {
+          entries: { existing: { enabled: false } },
+          allow: ['existing-trusted'],
+        },
+        { 'file-permission-policy': { enabled: true } },
+        ['justdo-skill-only-example', 'justdo-skill-only-example'],
+      ),
+    ).toEqual({
+      enabled: true,
+      allow: [
+        'existing-trusted',
+        'justdo-skill-only-example',
+        'file-permission-policy',
+      ],
+      bundledDiscovery: 'compat',
+      entries: {
+        existing: { enabled: false },
+        'file-permission-policy': { enabled: true },
+      },
+    });
+  });
+
+  test('adds managed bundled entries to an existing allowlist', () => {
+    expect(
+      mergeOpenClawPluginConfig(
+        {
+          allow: ['workboard'],
+        },
+        {
+          'ask-user-question': {
+            enabled: true,
+            config: { callbackUrl: 'http://127.0.0.1:43127/askuser' },
+          },
+        },
+      ),
+    ).toEqual({
+      allow: ['workboard', 'ask-user-question'],
+      bundledDiscovery: 'compat',
+      entries: {
+        'ask-user-question': {
+          enabled: true,
+          config: { callbackUrl: 'http://127.0.0.1:43127/askuser' },
+        },
+      },
+    });
+  });
+
+  test('adds managed bundled entries when installed extensions create an allowlist', () => {
+    expect(
+      mergeOpenClawPluginConfig(
+        {},
+        {
+          'ask-user-question': { enabled: true },
+          workboard: { enabled: true },
+        },
+        ['installed-extension'],
+      ),
+    ).toMatchObject({
+      allow: ['installed-extension', 'ask-user-question', 'workboard'],
+      bundledDiscovery: 'compat',
+    });
+  });
 });

@@ -1,8 +1,9 @@
 # 浏览器设置设计
 
-> 本文是设计与前置条件记录，不代表当前版本已经实现 extension driver、relay 或对应 IPC。
-> 文中列出的 `src/...` 文件名是拟议实现位置；当前仓库仍明确以 OpenClaw
-> `v2026.6.11` 不支持 extension 为准。
+> 本文是设计与前置条件记录，不代表 JustDo 已经交付 extension 配对、状态管理或对应 IPC。
+> 文中列出的 `src/...` 文件名是拟议实现位置。当前捆绑 OpenClaw `v2026.7.1-2`
+> 已包含 upstream extension driver、relay、CLI 与配置能力，但 JustDo 的产品集成和发布流程
+> 尚未完成。
 
 ## 1. 目标与版本前提
 
@@ -13,28 +14,28 @@
 2. 用户离开电脑后，定时任务仍能使用已登录的 Chrome。
 3. 面向小白用户，正常流程不能要求输入命令、端口、路径或配对字符串。
 
-本文核对了两套不同版本的事实：
+本文最初核对了旧 runtime 与 upstream 新方案；升级后又按当前捆绑产物复核：
 
-- JustDo 当前捆绑 OpenClaw `v2026.6.11`。该版本删除了 Chrome Extension
-  driver，只包含 managed browser、Chrome MCP existing-session 和 CDP。
+- 历史基线 OpenClaw `v2026.6.11` 删除了 Chrome Extension driver，只包含 managed
+  browser、Chrome MCP existing-session 和 CDP。
 - OpenClaw 官网当前跟随 `main` / `2026.7.x`。提交
   `d6801f23d4`（2026-07-06）重新实现了
   `driver: "extension"`，最早包含在 `v2026.7.1-beta.3`。
+- JustDo 当前捆绑 OpenClaw `v2026.7.1-2`，其 npm 产物包含 browser extension driver、
+  loopback relay、extension CLI 和相关配置 schema；打包 prune policy 也保留 `browser`
+  extension。
 - 官网的 Chrome Extension 是当前新方案，不是应当废弃的旧方案。
 
 参考：
 
-- `../openclaw` 的 `v2026.6.11` 和 `origin/main`
+- 历史设计比对使用 `../openclaw` 的 `v2026.6.11` 和当时的 `origin/main`
+- 当前 runtime 基准为 npm `openclaw@2026.7.1-2`
 - [Browser control API](https://docs.openclaw.ai/tools/browser-control)
 - [Chrome Extension](https://docs.openclaw.ai/tools/chrome-extension)
 
-因此第三种模式不能在当前 JustDo runtime 上仅靠 UI 实现。进入开发前必须先：
-
-1. 升级到包含新 extension relay 的稳定 OpenClaw 版本；或
-2. 有控制地回移新 extension driver、relay、CLI、配置 schema、doctor、安全校验
-   和测试。
-
-推荐等待并升级稳定版本，不把大型新能力做成 JustDo 私有 runtime patch。
+runtime 前置已经满足，但第三种模式仍不能仅靠增加一个 UI 选项上线。进入产品开发前必须完成
+packaged runtime 的 driver/relay/CLI/doctor 验证、配对与凭据生命周期、状态 IPC、发布渠道和
+fail-closed 测试。该能力应复用 upstream browser extension，不做 JustDo 私有 runtime patch。
 
 ## 2. 三种产品模式
 
@@ -432,9 +433,10 @@ type BrowserConnectionStatus = {
 
 ### Phase 0：Runtime 前置
 
-1. 选择包含新 extension driver 的稳定 OpenClaw release。
-2. 完成现有 patches、bundle、plugin contracts 和回归测试的版本升级。
-3. 验证 `driver=extension`、extension CLI、relay、doctor 和 `browser.request`。
+1. 以当前捆绑 `openclaw@2026.7.1-2` 为唯一 runtime 基准。
+2. 已完成版本升级及 `browser` extension 的打包保留；仍需补齐 packaged-runtime 契约验证。
+3. 在 Electron 内嵌 Node 下验证 `driver=extension`、extension CLI、relay、doctor 和
+   `browser.request`，失败时保持产品入口关闭。
 
 ### Phase 1：设置与手工上游流程
 
@@ -455,7 +457,8 @@ type BrowserConnectionStatus = {
 ## 12. 测试清单
 
 - 三种模式生成正确 OpenClaw Profile。
-- `v2026.6.11` runtime 明确报告不支持 extension，不显示伪成功。
+- `v2026.7.1-2` packaged runtime 的 extension driver、relay、CLI 与 schema 契约可验证；
+  在 JustDo 集成未完成或验证失败时不显示伪成功。
 - Extension 未安装、等待确认、配对、连接、断开的状态转换。
 - Pairing token 不进入 Renderer、日志、URL query 或 `app_config`。
 - Extension 只能控制 OpenClaw 标签组。

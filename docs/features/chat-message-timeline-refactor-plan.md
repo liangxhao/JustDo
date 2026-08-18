@@ -2,6 +2,9 @@
 
 ## Status
 
+- Historical implementation baseline: the compatibility target below records the
+  2026-07-25 cutover. The current bundled runtime is OpenClaw `v2026.7.1-2`; use
+  `scripts/patches/v2026.7.1-2/README.md` for the current capability inventory.
 - Implementation status: production renderer cut over on 2026-07-25; automated
   Electron visual proof remains pending because the implementation environment
   exposed neither a controllable browser nor the Windows automation service.

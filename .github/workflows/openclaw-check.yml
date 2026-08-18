@@ -4,34 +4,74 @@ on:
   push:
     paths:
       - 'package.json'
-      - 'scripts/ensure-openclaw-version.cjs'
+      - 'package-lock.json'
+      - '.nvmrc'
+      - 'electron-builder.config.cjs'
+      - 'electron-builder.json'
+      - 'resources/builtin-skills.json'
+      - 'resources/openclaw-extension-prune.json'
+      - 'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs'
       - 'scripts/**openclaw*'
+      - 'scripts/patches/**'
+      - 'tests/openclaw*'
   pull_request:
     paths:
       - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
+      - 'electron-builder.config.cjs'
+      - 'electron-builder.json'
+      - 'resources/builtin-skills.json'
+      - 'resources/openclaw-extension-prune.json'
+      - 'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs'
+      - 'scripts/**openclaw*'
+      - 'scripts/patches/**'
+      - 'tests/openclaw*'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   check-openclaw-version:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.target }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            electron_smoke: true
+          - os: ubuntu-latest
+            target: linux-arm64
+          - os: windows-latest
+            target: win-x64
+            electron_smoke: true
+          - os: windows-latest
+            target: win-arm64
+          - os: macos-latest
+            target: mac-x64
+          - os: macos-latest
+            target: mac-arm64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.x'
-      
+          node-version-file: '.nvmrc'
+
       - name: Check OpenClaw Version Format
         run: |
           VERSION=$(node -p "require('./package.json').openclaw.version")
-          if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]]; then
             echo "❌ Invalid OpenClaw version format: $VERSION"
-            echo "Expected format: vX.Y.Z (e.g., v2026.3.2)"
+            echo "Expected format: vX.Y.Z or vX.Y.Z-N (e.g., v2026.7.1-2)"
             exit 1
           fi
           echo "✓ OpenClaw version format valid: $VERSION"
-      
+
       - name: Validate OpenClaw Repository
         run: |
           REPO=$(node -p "require('./package.json').openclaw.repo")
@@ -40,7 +80,7 @@ jobs:
             exit 1
           fi
           echo "✓ OpenClaw repository URL valid: $REPO"
-      
+
       - name: Validate OpenClaw Plugins
         run: |
           node -e "
@@ -77,31 +117,69 @@ jobs:
             
             console.log('✓ All plugins have required fields');
           "
-      
+
       - name: Check OpenClaw Scripts Exist
         run: |
           SCRIPTS=(
-            "scripts/ensure-openclaw-version.cjs"
-            "scripts/apply-openclaw-patches.cjs"
+            "scripts/install-openclaw-runtime.cjs"
+            "scripts/patch-openclaw-runtime.cjs"
+            "scripts/verify-openclaw-pristine-contracts.cjs"
+            "scripts/verify-openclaw-runtime-patches.cjs"
             "scripts/bundle-openclaw-gateway.cjs"
             "scripts/ensure-openclaw-plugins.cjs"
-            "scripts/sync-local-openclaw-extensions.cjs"
+            "scripts/sync-openclaw-runtime-resources.cjs"
             "scripts/precompile-openclaw-extensions.cjs"
             "scripts/prune-openclaw-runtime.cjs"
-            "scripts/run-build-openclaw-runtime.cjs"
             "scripts/sync-openclaw-runtime-current.cjs"
           )
-          
+
           MISSING=0
           for script in "${SCRIPTS[@]}"; do
             if [ -f "$script" ]; then
               echo "✓ $script"
             else
-              echo "⚠ $script not found"
+              echo "❌ $script not found"
               MISSING=$((MISSING + 1))
             fi
           done
-          
+
           if [ $MISSING -gt 0 ]; then
-            echo "⚠ $MISSING OpenClaw scripts missing (this may be expected for new projects)"
+            echo "❌ $MISSING required OpenClaw scripts missing"
+            exit 1
           fi
+
+      - name: Validate OpenClaw Patch Set
+        run: |
+          VERSION=$(node -p "require('./package.json').openclaw.version")
+          PATCH_DIR="scripts/patches/$VERSION"
+          test -d "$PATCH_DIR" || { echo "❌ Missing patch directory: $PATCH_DIR"; exit 1; }
+          test -f "$PATCH_DIR/README.md" || { echo "❌ Missing capability audit: $PATCH_DIR/README.md"; exit 1; }
+          COUNT=$(find "$PATCH_DIR" -maxdepth 1 -name '*.cjs' -type f | wc -l)
+          test "$COUNT" -gt 0 || { echo "❌ No patches found in $PATCH_DIR"; exit 1; }
+          echo "✓ Found $COUNT audited patches for $VERSION"
+
+      - name: Install repository dependencies
+        run: npm install
+
+      - name: Build and verify pristine OpenClaw runtime
+        shell: bash
+        env:
+          OPENCLAW_FORCE_INSTALL: '1'
+        run: |
+          node scripts/install-openclaw-runtime.cjs "${{ matrix.target }}"
+          node scripts/sync-openclaw-runtime-current.cjs "${{ matrix.target }}"
+          node scripts/bundle-openclaw-gateway.cjs
+          node scripts/verify-openclaw-runtime-patches.cjs
+          BEFORE=$(node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('vendor/openclaw-runtime/current/gateway-bundle.mjs')).digest('hex'))")
+          node scripts/patch-openclaw-runtime.cjs vendor/openclaw-runtime/current
+          node scripts/verify-openclaw-runtime-patches.cjs
+          AFTER=$(node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('vendor/openclaw-runtime/current/gateway-bundle.mjs')).digest('hex'))")
+          test "$BEFORE" = "$AFTER" || { echo "❌ Second patch pass changed bundle bytes"; exit 1; }
+
+      - name: Run OpenClaw capability contracts
+        run: npx vitest run tests/openclawV202671*.test.ts tests/openclawPristineContracts.test.ts tests/openclawRuntimePatchManifest.test.ts
+
+      - name: Smoke-test the gateway bundle under Electron Node
+        if: ${{ matrix.electron_smoke }}
+        run: |
+          node -e 'const { spawnSync } = require("child_process"); const result = spawnSync(require("electron"), ["vendor/openclaw-runtime/current/gateway-launcher.cjs", "--help"], { encoding: "utf8", timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }); const output = `${result.stdout || ""}${result.stderr || ""}`; if (result.error || result.status !== 0 || !output.includes("OpenClaw")) { console.error(output); throw result.error || new Error(`Gateway smoke failed with status ${result.status}`); }'

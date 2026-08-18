@@ -4,20 +4,20 @@
 
 ## 职责矩阵
 
-| 能力 | OpenClaw Gateway | JustDo |
-| --- | --- | --- |
-| Chat turn execution | 权威 | 发起请求、展示状态 |
-| Chat history | 权威 | UI cache、搜索、展示 |
-| Subagent lifecycle | 权威 | 展示、跳转、历史读取 |
-| Skills runtime | 权威 | 管理 UI、本地导入、marketplace adapter |
-| MCP runtime config | 读取/执行 | 本地 CRUD、配置同步、探测 |
-| Hooks runtime config | 读取/执行 | 本地 CRUD、配置同步 |
-| Cron execution | 权威 | 任务 UI、轮询、运行历史展示 |
-| Provider config | 使用配置 | 本地配置和同步 |
-| Desktop shell | 无 | 权威 |
-| SQLite | 无 | 本地产品数据和 UI cache |
-| Ask-user interaction UI | 发起交互请求 | 用户回答和响应 |
-| Runtime patches | 被 patch 目标 | 小型兼容 shim |
+| 能力                    | OpenClaw Gateway | JustDo                                 |
+| ----------------------- | ---------------- | -------------------------------------- |
+| Chat turn execution     | 权威             | 发起请求、展示状态                     |
+| Chat history            | 权威             | UI cache、搜索、展示                   |
+| Subagent lifecycle      | 权威             | 展示、跳转、历史读取                   |
+| Skills runtime          | 权威             | 管理 UI、本地导入、marketplace adapter |
+| MCP runtime config      | 读取/执行        | 本地 CRUD、配置同步、探测              |
+| Hooks runtime config    | 读取/执行        | 本地 CRUD、配置同步                    |
+| Cron execution          | 权威             | 任务 UI、轮询、运行历史展示            |
+| Provider config         | 使用配置         | 本地配置和同步                         |
+| Desktop shell           | 无               | 权威                                   |
+| SQLite                  | 无               | 本地产品数据和 UI cache                |
+| Ask-user interaction UI | 发起交互请求     | 用户回答和响应                         |
+| Runtime patches         | 被 patch 目标    | 小型兼容 shim                          |
 
 ```mermaid
 flowchart TB
@@ -78,17 +78,12 @@ flowchart TB
 
 ## 当前 Runtime Patches
 
-当前 OpenClaw 版本 `v2026.6.11` 的 patch 位于 `scripts/patches/v2026.6.11/`：
+当前 OpenClaw `v2026.7.1-2` 的 capability patches 位于
+`scripts/patches/v2026.7.1-2/`。逐能力的上游复现结论、保留或删除理由、补丁与测试映射以及
+remove condition，以该目录的 `README.md` 为权威清单。`scripts/patches/v2026.6.11/`
+只保留为历史审计资料，目标版本 loader 不会加载其中的旧补丁。
 
-- `001-thinking-stream.cjs`
-- `002-agent-announce-reasoning-stream.cjs`
-- `003-openai-content-reasoning-tags.cjs`
-- `004-windows-mcp-package-runner.cjs`
-- `005-history-thinking-and-subagent-yield.cjs`
-- `006-sessions-yield-active-guard.cjs`
-- `007-allow-managed-pip-config-env.cjs`
-
-Patch 维护规则见 `scripts/patches/README.md`。
+通用 Patch 维护规则见 `scripts/patches/README.md`。
 
 ## 新功能判断
 

@@ -16,7 +16,7 @@
 - `AGENTS.md`；
 - `docs/architecture/11-security-model.md`；
 - `../openclaw/AGENTS.md`；
-- OpenClaw v2026.6.11 的公开 config、Gateway approvals、cron pagination 和
+- OpenClaw v2026.7.1-2 的公开 config、Gateway approvals、cron pagination 和
   trusted-tool-policy contract。
 
 OpenClaw 是 npm 安装的第三方 runtime。不得修改 `../openclaw` 源码、compiled runtime，
@@ -52,7 +52,7 @@ Browser、消息、MCP、marketplace、第三方插件和其他 Gateway operator
 - exec policy 使用公开的 `exec.approvals.get/set` 和 `baseHash`；
 - approvals 更新后会验证响应 hash、回读 hash、defaults 以及所有提交的 agent entry；
 - 文件审批适配器通过公开的 `registerTrustedToolPolicy` 和 plugin approval transport
-  接入，并锁定 OpenClaw v2026.6.11；
+  接入，并锁定 OpenClaw v2026.7.1-2；
 - `auto` 下文件修改暂时降级为人工 `ask`；
 - `full` 需要二次确认；
 - UI 已移除运行时配置、快照和同步进度等技术提示，只在保存或应用失败时展示错误；
@@ -128,7 +128,7 @@ RPC 存活不能证明 trusted policy 已进入 active registry。
 1. adapter info 只用于版本和配置诊断，不得参与 active/readiness 成功判断；
 2. 再次核对 packaged runtime 是否提供公开、权威的 registry/effective snapshot；当前审计
    结论是没有；
-3. 产品决定保留正常文件审批能力，继续使用与 OpenClaw v2026.6.11 锁定的 compatibility
+3. 产品决定保留正常文件审批能力，继续使用与 OpenClaw v2026.7.1-2 锁定的 compatibility
    adapter，不把它描述成权威 active-policy 证明；
 4. packaged runtime 中真实 `write/edit/apply_patch` 的副作用前审批 smoke 被列为当前功能
    验收项，但不能替代未来的权威 readiness。

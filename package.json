@@ -10,7 +10,7 @@
   "license": "MIT",
   "version": "v2026.8.12",
   "openclaw": {
-    "version": "v2026.6.11",
+    "version": "v2026.7.1-2",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": []
   },
@@ -19,7 +19,7 @@
   },
   "main": "dist-electron/main.js",
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24.15.0 <25"
   },
   "scripts": {
     "dev": "vite",

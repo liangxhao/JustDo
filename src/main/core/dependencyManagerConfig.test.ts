@@ -6,6 +6,7 @@ import { afterEach, expect, test } from 'vitest';
 import {
   applyDependencyManagerConfigEnv,
   ensureDependencyManagerConfig,
+  JUSTDO_MANAGED_PIP_CONFIG_FILE_ENV,
 } from './dependencyManagerConfig';
 
 const tempDirs: string[] = [];
@@ -69,6 +70,28 @@ test('points npm and pip environment variables at managed config files', () => {
   expect(env.NPM_CONFIG_USERCONFIG).toBe(paths.npmUserConfigPath);
   expect(env.npm_config_userconfig).toBe(paths.npmUserConfigPath);
   expect(env.PIP_CONFIG_FILE).toBe(paths.pipConfigPath);
+  expect(env[JUSTDO_MANAGED_PIP_CONFIG_FILE_ENV]).toBe(paths.pipConfigPath);
+});
+
+test('replaces inherited pip provenance only when installing the managed config', () => {
+  const userDataPath = createTempDir();
+  const resourceDir = createTempDir();
+  const env: Record<string, string | undefined> = {
+    PIP_CONFIG_FILE: 'C:\\untrusted\\pip.ini',
+    justdo_managed_pip_config_file: 'C:\\untrusted\\pip.ini',
+  };
+
+  applyDependencyManagerConfigEnv(env, userDataPath, resourceDir);
+
+  expect(env.PIP_CONFIG_FILE).toBe('C:\\untrusted\\pip.ini');
+  expect(env[JUSTDO_MANAGED_PIP_CONFIG_FILE_ENV]).toBeUndefined();
+  expect(env.justdo_managed_pip_config_file).toBeUndefined();
+
+  fs.writeFileSync(path.join(resourceDir, 'pip.ini'), '[global]\n');
+  const paths = applyDependencyManagerConfigEnv(env, userDataPath, resourceDir);
+
+  expect(env.PIP_CONFIG_FILE).toBe(paths.pipConfigPath);
+  expect(env[JUSTDO_MANAGED_PIP_CONFIG_FILE_ENV]).toBe(paths.pipConfigPath);
 });
 
 test('skips missing resource files without setting their environment variables', () => {

@@ -153,6 +153,10 @@ export class OpenClawConfigSyncService {
     return this.enqueueSyncOperation(() => this.syncConfigExclusive(options));
   }
 
+  runConfigMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.enqueueSyncOperation(operation);
+  }
+
   private enqueueSyncOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.syncTail.then(operation, operation);
     this.syncTail = result.then(

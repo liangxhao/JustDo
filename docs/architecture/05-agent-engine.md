@@ -1,6 +1,6 @@
 # Agent Engine 与 OpenClaw 集成
 
-JustDo 当前只有一个 AI 执行引擎：OpenClaw Gateway `v2026.6.11`。Main 进程负责启动、停止、配置同步和状态展示，任务执行由 Gateway 完成。
+JustDo 当前只有一个 AI 执行引擎：OpenClaw Gateway `v2026.7.1-2`。Main 进程负责启动、停止、配置同步和状态展示，任务执行由 Gateway 完成。
 
 ## 关键文件
 
@@ -96,7 +96,7 @@ tool calling 的模型可以调用 OpenClaw 原生 `update_plan`。该能力仍�
 `tools.experimental`、既有 deny 列表和 web 配置。
 
 JustDo 同时启用 OpenClaw 原生 `tools.toolSearch.mode: "directory"`，并通过
-`010-defer-selected-tool-schemas.cjs` 将其 catalog predicate 收窄到显式名单，目前为
+`009-selective-tool-schema-catalog.cjs` 将其 catalog predicate 收窄到显式名单，目前为
 原生 `browser`、`cron`、`get_goal`、`create_goal`、`update_goal`、`memory_search`
 和 `memory_get` tool。其他授权工具仍直接暴露；普通请求只看到精简目录项和 Tool Search
 控制工具，相关请求则由 Gateway 加载对应完整 schema。工具最终仍通过 Gateway 的正常
@@ -110,47 +110,39 @@ handoff 思路：摘要强调用户意图、约束、已验证进度、未完成
 重复占用 16,000-character 摘要预算的 preserved-turn suffix。OpenClaw 的结构化质量
 校验会强制恢复其 `##` 模板，因此 Codex 模式下关闭该校验。配置刻意不写
 `keepRecentTokens`：自动压缩仍继承 OpenClaw 的安全 recent-tail
-默认值，而手动 `/compact` 会启用 `v2026.6.11` 的强化边界，真正丢弃旧工具结果，
+默认值，而手动 `/compact` 会使用 `v2026.7.1-2` 的同一压缩语义，真正丢弃旧工具结果，
 形成接近 Codex 的“用户原话 + 摘要”检查点。mid-turn precheck 会在长工具循环中提前
 检查上下文压力。
 
 OpenClaw 的公开 compaction provider 可以替换摘要，但拿不到当前模型认证；公开
 `before_compaction` / `after_compaction` hook 又不能修改压缩结果。因此
-`011-retain-user-messages-across-compaction.cjs` 只补足原生 hook 无法表达的一层：
-从整个压缩前有效分支提取真实 user 文本，在 compaction details 中跨轮滚动保存，并在
-后续模型上下文中重放。完整性标记让重复压缩只追加上次边界之后的新输入，并能从旧版
-不完整 metadata 补收 recent tail 中的用户原话。手动压缩的顺序是“用户原话 → 摘要”；
-自动或 mid-turn 压缩则只回放 native recent tail 之前的用户原话，再接上 OpenClaw 为
-安全连续执行而保留的 recent tail，避免 tail 内用户输入重复。用户原话预算与 Codex
-一致，约为 20,000 tokens；超限时优先保留较新的完整输入，只截断最老的边界输入。摘要生成仍
-完全走 OpenClaw 原生 safeguard hook，但会把 cut point 后的 user、assistant 和 tool
-消息按原顺序追加到摘要材料。split-turn 会保持“旧历史 → turn prefix → recent
-suffix”顺序，避免 tool result 排在对应 tool call 之前；重复压缩继续以 previous
-summary 为基础，再合并本轮全部新回复。Tool result 和 bash output 单条最多保留 6,000
-characters，每段摘要输入合计最多保留 24,000 characters；从最新结果向前分配预算，超额的旧
-结果合并成一个有界省略标记。这确保最后一条用户消息和最近助手回复参与摘要，而大型
-工具输出不会挤占全部摘要上下文。对升级前已经存在、尚无 retention metadata 的
-compaction entry，重放层会从 JSONL 中仍保留的旧 message entries 回填一次用户原话。
+`029-retained-user-compaction-context.cjs` 只补足原生 hook 无法表达的一层：在
+`CompactionEntry.details.justdoRetainedUserMessages` 中维护版本化 retained-user archive，
+跨重复压缩合并、按 transcript identity 去重并按约 20,000 tokens 裁剪用户原文；
+`buildSessionContext` 在 summary 后以隐藏但模型可读的 user context 重放。目标版本原生
+负责 previous summary、recent assistant/tool tail、split-turn 排序、identifier
+preservation、suffix 保护和 workspace context；补丁不复制这些能力。没有 retained
+metadata 的旧 transcript 会从当前仍可见的用户消息开始建立该字段。
 
-模型摘要并不是压缩可用性的单点依赖。`019-compaction-emergency-fallback.cjs` 在
+模型摘要并不是压缩可用性的单点依赖。`031-compaction-emergency-handoff.cjs` 在
 safeguard 无法解析摘要模型或认证，以及摘要请求超时、溢出或被 provider 拒绝时，不再
 取消 compaction；它会提交一个最多 16,000 characters 的本地应急交接摘要，其中包含
 最多 4,000 characters 的旧交接、最多 8,000 characters 的最近 user/assistant 对话，
 以及有界的工具失败与文件操作信息。最近对话优先于旧交接，避免总预算截断最新用户请求。
-正常的 compaction entry、`011` 的用户原话滚动保留和 native recent tail 仍然生效，
+正常的 compaction entry、`029` 的用户原话滚动保留和 native recent tail 仍然生效，
 因此外层会把这次压缩视为成功并自动重试当前轮。只有明确的用户取消仍保持 cancel
 语义。overflow 最多执行三次有界 compact-and-retry；第二次起使用 `keepRecentTokens: 0`
-压缩剩余 recent tail，用户原话仍由 `011` 保留。如果系统提示和工具 schema 本身已经
+压缩剩余 recent tail，用户原话仍由 `029` 保留。如果系统提示和工具 schema 本身已经
 超过模型容量，最终会显示准确的不可降载提示，而不再建议反复调大
 `reserveTokensFloor`。该配置只决定提前量，不再承担摘要服务失败后的恢复职责。
 
-`012-codex-compaction-template.cjs` 替换 SDK 内建的首次、重复和 split-turn 摘要提示词、
-摘要 system wording 与回放前缀，并旁路 safeguard 强制的 `## Goal` / `## Progress`
-等结构与诊断后缀。用户原话仍由 `011` 作为独立 user 消息重放，不重复塞入 summary
-正文；assistant thinking 随完整 assistant 消息参与摘要，压缩后只保留其归纳结果。
-`016-litellm-session-id.cjs` 覆盖普通 agent stream、safeguard 自己的分阶段摘要调用、
+`030-codex-continuation-compaction.cjs` 复用目标版本原生 `customInstructions` 数据流，
+只替换首次、重复、split-turn 的默认 continuation wording 与 replay wrapper wording；
+原生质量检查、identifier preservation、suffix 裁剪和 workspace context 保持不变。
+`026-parent-session-identity.cjs`、`027-agent-request-metadata.cjs` 与
+`028-request-purpose-metadata.cjs` 分别覆盖父会话稳定身份、普通 agent stream、safeguard 自己的分阶段摘要调用、
 OpenClaw 原生 `compact()` 回退，以及 `tools.exec.reviewer` 使用的 simple-completion 调用。补丁为关联到会话的
-OpenAI-compatible 请求注入权威的 `metadata.session_id`，subagent 请求还会注入直接父级
+`builtin_models` / `justdo` LiteLLM OpenAI-compatible 请求注入权威的 `metadata.session_id`，subagent 请求还会注入直接父级
 Gateway UUID `metadata.parent_session_id`，并用
 `metadata.request_purpose` 区分 `agent`、`context_compaction` 和 `exec_review`；真实用户
 直接发起的顶层 agent turn 只有第一次 provider 请求会带上
@@ -168,11 +160,9 @@ reviewer prompt。原生 `compact()` 会复用普通 agent stream；补丁会保
 因此手动、threshold、overflow、mid-turn 压缩以及模型安全审查都能在 LiteLLM 中与
 原会话关联并按用途统计。
 
-`011`、`012` 和 `019` 都是仅针对 OpenClaw `v2026.6.11` 生成 bundle 的精确文本 patch，并
-故意在锚点变化时失败。升级 OpenClaw 时不得把它们原样复制到新版本目录：先检查上游
-是否已提供用户原话重放、可替换摘要模板和 replay wrapper；仍需 patch 时，必须根据
-新 bundle 重新定位并重写锚点，再分别验证手动、threshold/overflow、mid-turn、重复
-压缩和 split-turn。`../openclaw` 只用于源码比对，不参与 JustDo 打包。
+当前能力审计、删除理由、补丁与测试映射以
+`scripts/patches/v2026.7.1-2/README.md` 为准。旧 `v2026.6.11` 目录只作历史资料，loader
+不会为目标版本加载它；`../openclaw` 只用于源码比对，不参与 JustDo 打包。
 
 配置应用按所有权明确分为四类：
 
@@ -296,7 +286,7 @@ continuation user prompt 不进入历史，而 assistant、thinking 和工具活
 活动或重复相同工具结果都不会触发本地熔断。生命周期错误、意外 abort 与 Gateway 请求
 失败进入 `retrying`，按 2、5、10、30、60 秒退避并在 60 秒封顶后无限重试。新手动
 消息、用户 Stop、Goal 进入等待状态或被清除会取消待执行重试。
-为补足 OpenClaw v2026.6.11 尚未提供的 per-turn active Goal context，隐藏 user prompt
+为补足 OpenClaw v2026.7.1-2 尚未提供的 per-turn active Goal context，隐藏 user prompt
 每轮直接携带权威 `goal.objective`；目标文本不提升为 system instruction。附加 system
 prompt 要求先审计现有历史、产物和工具证据，避免重复已完成工作，并在完成时用
 `update_goal` note 留下简短验证证据。blocked 判定与上游工具契约一致：同一阻碍至少
@@ -453,7 +443,7 @@ JustDo exposes ordered, system-only regular-expression replacements through
 OpenClaw state directory in `system-prompt-replacements.json`.
 
 The Gateway receives the file path through
-`JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH`. Runtime patch `015` reloads changed
+`JUSTDO_SYSTEM_PROMPT_REPLACEMENTS_PATH`. Runtime patch `010` reloads changed
 rules after OpenClaw prompt hooks have completed and before prompt-cache setup,
 overflow preflight, lifecycle observation, and model submission. It updates
 the active session system prompt, so subsequent tool-loop calls use the same

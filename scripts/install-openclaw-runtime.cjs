@@ -12,18 +12,31 @@
  */
 
 const { spawnSync } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
+const {
+  commitStagedRuntime,
+  prepareStagedRuntimeForCommit,
+} = require('./openclaw-runtime-staging.cjs');
+const { verifyPristineOpenClawContracts } = require('./verify-openclaw-pristine-contracts.cjs');
+const {
+  buildOpenClawBuildRecipeFingerprint,
+  buildOpenClawPatchSetFingerprint,
+  hashFile,
+  readOpenClawSourceLock,
+} = require('./verify-openclaw-runtime-patches.cjs');
+
+const RUNTIME_DEPENDENCY_LOCK_FILENAME = 'npm-shrinkwrap.json';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function fail(message) {
-  console.error(`[install-openclaw-runtime] ${message}`);
-  process.exit(1);
+  throw new Error(`[install-openclaw-runtime] ${message}`);
 }
 
 function runNpm(args, opts = {}) {
@@ -34,6 +47,7 @@ function runNpm(args, opts = {}) {
     encoding: 'utf-8',
     stdio: opts.stdio || ['ignore', 'pipe', 'pipe'],
     cwd: opts.cwd,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
     timeout: opts.timeout || 10 * 60 * 1000,
     windowsHide: true,
   });
@@ -78,6 +92,7 @@ if (!openclawVersion) {
 // Strip leading "v" for npm specifier (npm uses "2026.5.22", not "v2026.5.22").
 const npmVersion = openclawVersion.replace(/^v/, '');
 const npmSpec = `openclaw@${npmVersion}`;
+const sourceLock = readOpenClawSourceLock(rootDir, openclawVersion);
 
 const outDir = path.join(rootDir, 'vendor', 'openclaw-runtime', targetId);
 const currentRuntimeDir = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
@@ -102,13 +117,36 @@ console.log(
 );
 console.log(`[install-openclaw-runtime] Package: ${npmSpec}`);
 
+const patchSetSha256 = buildOpenClawPatchSetFingerprint(rootDir, openclawVersion);
+const buildRecipeSha256 = buildOpenClawBuildRecipeFingerprint(rootDir, openclawVersion);
+
 // ---------------------------------------------------------------------------
 // 2. Build cache check
 // ---------------------------------------------------------------------------
 
 if (process.env.OPENCLAW_FORCE_INSTALL !== '1') {
   const buildInfo = readJsonFile(path.join(outDir, 'runtime-build-info.json'));
-  if (buildInfo && buildInfo.openclawVersion === openclawVersion) {
+  const cachedAsarPath = path.join(outDir, 'gateway.asar');
+  const cachedPackagePath = path.join(outDir, 'package.json');
+  const cachedPackageLockPath = path.join(outDir, RUNTIME_DEPENDENCY_LOCK_FILENAME);
+  if (
+    buildInfo &&
+    buildInfo.openclawVersion === openclawVersion &&
+    buildInfo.target === targetId &&
+    buildInfo.installMethod === 'npm-package' &&
+    buildInfo.npmPackageVersion === sourceLock.version &&
+    buildInfo.npmIntegrity === sourceLock.integrity &&
+    buildInfo.npmTarballSha256 === sourceLock.tarballSha256 &&
+    buildInfo.patchSetSha256 === patchSetSha256 &&
+    buildInfo.buildRecipeSha256 === buildRecipeSha256 &&
+    buildInfo.runtimePackageLockPath === RUNTIME_DEPENDENCY_LOCK_FILENAME &&
+    fs.existsSync(cachedAsarPath) &&
+    fs.existsSync(cachedPackagePath) &&
+    fs.existsSync(cachedPackageLockPath) &&
+    buildInfo.gatewayAsarSha256 === hashFile(cachedAsarPath) &&
+    buildInfo.runtimePackageSha256 === hashFile(cachedPackagePath) &&
+    buildInfo.runtimePackageLockSha256 === hashFile(cachedPackageLockPath)
+  ) {
     console.log(
       `[install-openclaw-runtime] Already installed ${openclawVersion} (target=${targetId}), skipping.`,
     );
@@ -124,12 +162,17 @@ if (process.env.OPENCLAW_FORCE_INSTALL !== '1') {
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-install-'));
 const packDir = path.join(tmpDir, 'pack');
 const extractDir = path.join(tmpDir, 'extract');
+const stagingOutDir = path.join(
+  path.dirname(outDir),
+  `.${path.basename(outDir)}.staging-${process.pid}-${Date.now()}`,
+);
+let commitCandidateDir = stagingOutDir;
 fs.mkdirSync(packDir, { recursive: true });
 fs.mkdirSync(extractDir, { recursive: true });
 
 (async () => {
   try {
-    console.log(`[install-openclaw-runtime] [1/7] Downloading ${npmSpec} from npm...`);
+    console.log(`[install-openclaw-runtime] [1/8] Downloading ${npmSpec} from npm...`);
     runNpm(['pack', npmSpec, '--pack-destination', packDir]);
 
     const tarball = fs.readdirSync(packDir).find(f => f.endsWith('.tgz'));
@@ -137,12 +180,33 @@ fs.mkdirSync(extractDir, { recursive: true });
       fail('npm pack did not produce a tarball.');
     }
     const tarballPath = path.join(packDir, tarball);
+    const npmIntegrityRaw = runNpm(['view', npmSpec, 'dist.integrity', '--json']);
+    const npmIntegrity = JSON.parse(npmIntegrityRaw);
+    if (typeof npmIntegrity !== 'string' || !npmIntegrity.startsWith('sha512-')) {
+      fail(`npm registry returned an invalid integrity for ${npmSpec}.`);
+    }
+    const npmTarballSha256 = hashFile(tarballPath);
+    const localIntegrity = `sha512-${crypto
+      .createHash('sha512')
+      .update(fs.readFileSync(tarballPath))
+      .digest('base64')}`;
+    if (
+      npmIntegrity !== sourceLock.integrity ||
+      localIntegrity !== sourceLock.integrity ||
+      npmTarballSha256 !== sourceLock.tarballSha256
+    ) {
+      fail(
+        `npm source proof mismatch for ${npmSpec}; registry metadata, downloaded bytes, and source-lock.json must agree.`,
+      );
+    }
     console.log(`[install-openclaw-runtime] Downloaded: ${tarball}`);
 
     // ---------------------------------------------------------------------------
     // 4. Extract tarball
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [2/7] Extracting tarball...`);
+    console.log(
+      `[install-openclaw-runtime] [2/8] Extracting tarball and auditing pristine contracts...`,
+    );
     const tar = require('tar');
     tar.x({ file: tarballPath, cwd: extractDir, sync: true });
 
@@ -150,76 +214,64 @@ fs.mkdirSync(extractDir, { recursive: true });
     if (!fs.existsSync(pkgDir)) {
       fail('Extracted package directory not found.');
     }
+    const extractedPackage = readJsonFile(path.join(pkgDir, 'package.json'));
+    if (extractedPackage?.name !== 'openclaw' || extractedPackage?.version !== npmVersion) {
+      fail(
+        `Unexpected npm package identity: ${String(extractedPackage?.name)}@${String(
+          extractedPackage?.version,
+        )}; expected openclaw@${npmVersion}.`,
+      );
+    }
+    const pristineAudit = verifyPristineOpenClawContracts(pkgDir, { repoRoot: rootDir });
+    console.log(
+      `[install-openclaw-runtime] Pristine contracts: ${Object.keys(pristineAudit.upstream).length} upstream, ` +
+        `${pristineAudit.retainedGaps.length} retained gaps.`,
+    );
 
     // ---------------------------------------------------------------------------
     // 5. Copy to output directory
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [3/7] Copying to ${outDir}...`);
-    // On Windows, deleting a directory that is still the target of the
-    // `current` junction can fail with EPERM. Detach only when the junction
-    // points at the target being replaced. The following
-    // sync-openclaw-runtime-current step recreates it.
-    if (process.platform === 'win32') {
-      try {
-        const currentStat = fs.lstatSync(currentRuntimeDir);
-        if (currentStat.isSymbolicLink()) {
-          const linkedTarget = path.resolve(
-            path.dirname(currentRuntimeDir),
-            fs.readlinkSync(currentRuntimeDir),
-          );
-          if (path.resolve(linkedTarget).toLowerCase() === path.resolve(outDir).toLowerCase()) {
-            fs.unlinkSync(currentRuntimeDir);
-            console.log(
-              `[install-openclaw-runtime] Detached current junction before replacing ${targetId}.`,
-            );
-          }
-        }
-      } catch (error) {
-        if (error?.code !== 'ENOENT') {
-          throw error;
-        }
-      }
-    }
-    if (fs.existsSync(outDir)) {
-      fs.rmSync(outDir, { recursive: true, force: true });
-    }
+    console.log(`[install-openclaw-runtime] [3/8] Copying to staging runtime...`);
     fs.mkdirSync(path.dirname(outDir), { recursive: true });
-    fs.cpSync(pkgDir, outDir, { recursive: true, force: true });
+    fs.cpSync(pkgDir, stagingOutDir, { recursive: true, force: true });
 
     // ---------------------------------------------------------------------------
     // 6. Patch facade-runtime JS dist (critical for esbuild bundling)
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [4/7] Patching facade-runtime for esbuild bundling...`);
-    patchFacadeRuntime(outDir);
+    console.log(`[install-openclaw-runtime] [4/8] Patching facade-runtime for esbuild bundling...`);
+    patchFacadeRuntime(stagingOutDir);
 
     // ---------------------------------------------------------------------------
     // 7. Patch compiled OpenClaw dist for JustDo integration
     // ---------------------------------------------------------------------------
     console.log(`[install-openclaw-runtime] [5/8] Patching OpenClaw integration...`);
-    patchOpenClawRuntime(outDir, { label: 'install-openclaw-runtime' });
+    patchOpenClawRuntime(stagingOutDir, {
+      label: 'install-openclaw-runtime',
+      pristineInstallPass: true,
+    });
 
     // ---------------------------------------------------------------------------
     // 8. Process skills
     // ---------------------------------------------------------------------------
     console.log(`[install-openclaw-runtime] [6/8] Processing skills...`);
-    processSkills(rootDir, outDir);
+    processSkills(rootDir, stagingOutDir);
 
     // ---------------------------------------------------------------------------
     // 9. Install production dependencies
     // ---------------------------------------------------------------------------
     console.log(`[install-openclaw-runtime] [7/8] Installing production dependencies...`);
-    installProdDeps(outDir, npmTargetPlatform, targetArch);
+    installProdDeps(stagingOutDir, npmTargetPlatform, targetArch);
 
     // ---------------------------------------------------------------------------
     // 10. Pack gateway.asar
     // ---------------------------------------------------------------------------
     console.log(`[install-openclaw-runtime] [8/8] Packing gateway.asar...`);
-    await packGatewayAsar(rootDir, outDir);
+    await packGatewayAsar(rootDir, stagingOutDir);
 
     // ---------------------------------------------------------------------------
     // 11. Sanity checks
     // ---------------------------------------------------------------------------
-    verifyRuntimeLayout(outDir);
+    verifyRuntimeLayout(stagingOutDir);
 
     // ---------------------------------------------------------------------------
     // 12. Save runtime-build-info.json
@@ -230,11 +282,33 @@ fs.mkdirSync(extractDir, { recursive: true });
       openclawVersion,
       installMethod: 'npm-package',
       npmPackageVersion: npmVersion,
+      npmIntegrity,
+      npmTarballSha256,
+      patchSetSha256,
+      buildRecipeSha256,
+      gatewayAsarSha256: hashFile(path.join(stagingOutDir, 'gateway.asar')),
+      runtimePackageSha256: hashFile(path.join(stagingOutDir, 'package.json')),
+      runtimePackageLockPath: RUNTIME_DEPENDENCY_LOCK_FILENAME,
+      runtimePackageLockSha256: hashFile(
+        path.join(stagingOutDir, RUNTIME_DEPENDENCY_LOCK_FILENAME),
+      ),
     };
     fs.writeFileSync(
-      path.join(outDir, 'runtime-build-info.json'),
+      path.join(stagingOutDir, 'runtime-build-info.json'),
       JSON.stringify(buildMeta, null, 2) + '\n',
     );
+
+    commitCandidateDir = prepareStagedRuntimeForCommit(stagingOutDir, outDir);
+    verifyRuntimeLayout(commitCandidateDir);
+    if (
+      hashFile(path.join(commitCandidateDir, 'gateway.asar')) !== buildMeta.gatewayAsarSha256 ||
+      hashFile(path.join(commitCandidateDir, 'package.json')) !== buildMeta.runtimePackageSha256 ||
+      hashFile(path.join(commitCandidateDir, RUNTIME_DEPENDENCY_LOCK_FILENAME)) !==
+        buildMeta.runtimePackageLockSha256
+    ) {
+      fail('Prepared runtime commit candidate does not match the staged source proof.');
+    }
+    commitStagedRuntime(commitCandidateDir, outDir, currentRuntimeDir);
 
     console.log(`[install-openclaw-runtime] Done. Runtime: ${outDir}`);
   } finally {
@@ -244,6 +318,14 @@ fs.mkdirSync(extractDir, { recursive: true });
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {}
+    try {
+      fs.rmSync(stagingOutDir, { recursive: true, force: true });
+    } catch {}
+    if (commitCandidateDir !== stagingOutDir) {
+      try {
+        fs.rmSync(commitCandidateDir, { recursive: true, force: true });
+      } catch {}
+    }
   }
 })().catch(error => {
   console.error(error?.stack || String(error));
@@ -261,83 +343,122 @@ function patchFacadeRuntime(runtimeDir) {
   }
 
   const facadeFiles = fs.readdirSync(distDir).filter(f => /^facade-runtime-.*\.js$/.test(f));
-  if (facadeFiles.length === 0) {
-    fail('facade-runtime-*.js not found in dist/. The npm package structure may have changed.');
-  }
-  if (facadeFiles.length > 1) {
-    console.warn(
-      `[install-openclaw-runtime] Warning: Multiple facade-runtime files found: ${facadeFiles.join(', ')}`,
+  if (facadeFiles.length !== 1) {
+    throw new Error(
+      `facade-runtime target count is ${facadeFiles.length}, expected 1: ${facadeFiles.join(', ')}`,
     );
   }
 
   const facadePath = path.join(distDir, facadeFiles[0]);
   let content = fs.readFileSync(facadePath, 'utf8');
 
-  // Verify the dynamic pattern exists (not already patched).
-  if (!content.includes('createRequire(import.meta.url)')) {
-    console.log(
-      `[install-openclaw-runtime] facade-runtime already patched or pattern changed, skipping.`,
-    );
-    return;
-  }
-  if (!content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES')) {
-    console.warn(
-      `[install-openclaw-runtime] Warning: FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES not found. Pattern may have changed.`,
-    );
+  const staticImport =
+    'import * as _facadeActivationCheckStatic from "./facade-activation-check.runtime.js";';
+  const isFullyPatched =
+    content.includes(staticImport) &&
+    /function loadFacadeActivationCheckRuntime\(\)\s*\{\s*return _facadeActivationCheckStatic;\s*\}/.test(
+      content,
+    ) &&
+    /async function loadFacadeActivationCheckRuntimeAsync\(\)\s*\{\s*return _facadeActivationCheckStatic;\s*\}/.test(
+      content,
+    ) &&
+    !content.includes('createRequire(import.meta.url)') &&
+    !content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES') &&
+    !content.includes('facadeActivationCheckRuntimeModule ??=');
+  if (isFullyPatched) {
+    console.log('[install-openclaw-runtime] facade-runtime static loader already verified.');
     return;
   }
 
+  // Only a pristine target is eligible. A partial or unknown facade must fail closed.
+  if (!content.includes('createRequire(import.meta.url)')) {
+    throw new Error(
+      'facade-runtime is neither pristine nor completely patched; rebuild from the locked npm tarball.',
+    );
+  }
+  if (!content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES')) {
+    throw new Error(
+      'facade-runtime pristine candidate loader anchor is missing; npm package structure changed.',
+    );
+  }
+
+  const replaceRequired = (pattern, replacement, description) => {
+    const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+    const count = [...content.matchAll(new RegExp(pattern.source, flags))].length;
+    if (count !== 1) throw new Error(`${description} count is ${count}, expected 1`);
+    content = content.replace(pattern, replacement);
+  };
+
   // 1. Remove unused imports.
-  content = content.replace(/import\s*\{\s*createRequire\s*\}\s*from\s*"node:module";\s*\n?/g, '');
-  content = content.replace(
+  replaceRequired(
+    /import\s*\{\s*createRequire\s*\}\s*from\s*"node:module";\s*\n?/,
+    '',
+    'facade createRequire import',
+  );
+  replaceRequired(
     /import\s*\{\s*r\s+as\s+getCachedPluginSourceModuleLoader\s*\}\s*from\s*"[^"]*plugin-module-loader-cache[^"]*";\s*\n?/g,
     '',
+    'facade plugin source loader import',
   );
 
   // 2. Add static import after the last existing import statement.
   const lastImportIdx = findLastImportEnd(content);
-  const staticImport =
-    'import * as _facadeActivationCheckStatic from "./facade-activation-check.runtime.js";\n';
-  content = content.slice(0, lastImportIdx) + staticImport + content.slice(lastImportIdx);
+  if (lastImportIdx === 0) throw new Error('facade-runtime import boundary was not found');
+  content = content.slice(0, lastImportIdx) + `\n${staticImport}` + content.slice(lastImportIdx);
 
   // 3. Remove dead code: variable declarations and helper functions.
   // Remove: const nodeRequire = createRequire(import.meta.url);
-  content = content.replace(
+  replaceRequired(
     /const\s+nodeRequire\s*=\s*createRequire\(import\.meta\.url\);\s*\n?/g,
     '',
+    'facade nodeRequire declaration',
   );
 
   // Remove: const FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES = [...];
-  content = content.replace(
+  replaceRequired(
     /const\s+FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES\s*=\s*\[[\s\S]*?\];\s*\n?/g,
     '',
+    'facade runtime candidates',
   );
 
   // Remove: let facadeActivationCheckRuntimeModule;
-  content = content.replace(/let\s+facadeActivationCheckRuntimeModule;\s*\n?/g, '');
+  replaceRequired(
+    /let\s+facadeActivationCheckRuntimeModule;\s*\n?/,
+    '',
+    'facade dynamic module cache',
+  );
 
   // Remove: const facadeActivationCheckRuntimeLoaders = /* @__PURE__ */ new Map();
-  content = content.replace(
+  replaceRequired(
     /const\s+facadeActivationCheckRuntimeLoaders\s*=\s*\/\*\s*@__PURE__\s*\*\/\s*new\s+Map\(\);\s*\n?/g,
     '',
+    'facade dynamic loader cache',
   );
 
   // Remove: getFacadeActivationCheckRuntimeSourceLoader function
-  content = content.replace(
+  replaceRequired(
     /function\s+getFacadeActivationCheckRuntimeSourceLoader\([\s\S]*?\n\}\n/g,
     '',
+    'facade source loader helper',
   );
 
   // Remove: loadFacadeActivationCheckRuntimeFromCandidates function
-  content = content.replace(
+  replaceRequired(
     /function\s+loadFacadeActivationCheckRuntimeFromCandidates\([\s\S]*?\n\}\n/g,
     '',
+    'facade candidate loader helper',
   );
 
   // 4. Replace loadFacadeActivationCheckRuntime function body.
-  content = content.replace(
+  replaceRequired(
     /function\s+loadFacadeActivationCheckRuntime\(\)\s*\{[\s\S]*?\n\}/,
     'function loadFacadeActivationCheckRuntime() {\n\treturn _facadeActivationCheckStatic;\n}',
+    'facade synchronous loader',
+  );
+  replaceRequired(
+    /async function\s+loadFacadeActivationCheckRuntimeAsync\(\)\s*\{[\s\S]*?\n\}/,
+    'async function loadFacadeActivationCheckRuntimeAsync() {\n\treturn _facadeActivationCheckStatic;\n}',
+    'facade asynchronous loader',
   );
 
   // 5. Make setFacadeActivationCheckRuntimeForTest a no-op (if present).
@@ -354,6 +475,15 @@ function patchFacadeRuntime(runtimeDir) {
 
   // Clean up any double blank lines left by removals.
   content = content.replace(/\n{3,}/g, '\n\n');
+
+  if (
+    !content.includes(staticImport) ||
+    content.includes('createRequire(import.meta.url)') ||
+    content.includes('FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES') ||
+    content.includes('facadeActivationCheckRuntimeModule ??=')
+  ) {
+    throw new Error('facade-runtime static-loader verification failed before commit');
+  }
 
   fs.writeFileSync(facadePath, content, 'utf8');
   console.log(`[install-openclaw-runtime] Patched: ${path.relative(runtimeDir, facadePath)}`);
@@ -443,13 +573,28 @@ function installProdDeps(runtimeDir, npmPlatform, npmArch) {
   const runtimePkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
   delete runtimePkg.devDependencies;
   delete runtimePkg.packageManager;
+  // @mistralai/mistralai declares its telemetry API as an optional peer even
+  // though the ESM observability modules import it statically. The gateway
+  // bundle reaches those modules, so the production runtime must carry the
+  // peer rather than leaving an unresolved import for startup time.
+  runtimePkg.dependencies = {
+    ...runtimePkg.dependencies,
+    '@opentelemetry/api': '^1.9.0',
+  };
   fs.writeFileSync(pkgPath, JSON.stringify(runtimePkg, null, 2) + '\n');
 
   // Install production dependencies for the target platform.
-  runNpm(['install', '--omit=dev', '--no-audit', '--no-fund'], {
+  runNpm(['install', '--omit=dev', '--package-lock=true', '--no-audit', '--no-fund'], {
     cwd: runtimeDir,
     stdio: 'inherit',
     timeout: 10 * 60 * 1000,
+    env: {
+      npm_config_platform: npmPlatform,
+      npm_config_arch: npmArch,
+      npm_config_target_platform: npmPlatform,
+      npm_config_target_arch: npmArch,
+      npm_config_package_lock: 'true',
+    },
   });
 }
 

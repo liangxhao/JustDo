@@ -100,7 +100,10 @@ import {
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
 import type { AskUserExtensionConfig } from './openclaw/config/openclawConfigSync';
-import { buildProviderSelection } from './openclaw/config/openclawConfigSync';
+import {
+  buildProviderSelection,
+  listManagedOpenClawPluginIds,
+} from './openclaw/config/openclawConfigSync';
 import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
 import { resolveQualifiedAgentModelRef } from './openclaw/models/openclawAgentModels';
 import { SessionPermissionModeCoordinator } from './openclaw/permissions/sessionPermissionModeCoordinator';
@@ -843,6 +846,9 @@ if (!gotTheLock) {
   registerExtensionHandlers({
     extensionImportService: new OpenClawExtensionImportService({
       getOpenClawEngineManager,
+      getManagedPluginIds: listManagedOpenClawPluginIds,
+      runConfigMutationExclusive: operation =>
+        getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
       directoryOperations: getOpenClawDirectoryOperations(),
     }),
     installationService: pluginInstallationService,

@@ -74,15 +74,16 @@ OpenClaw 的 Goal 是生命周期权威，JustDo 只负责展示和连续派发�
 
 ### 模型请求和服务同步
 
-OpenAI-compatible 请求现在携带用途和关联元数据：
+`builtin_models` / `justdo` LiteLLM 的 OpenAI-compatible 请求现在携带用途和关联元数据；
+自定义或其他 strict-compatible provider 保持上游原始 payload：
 
-| 用途 | `metadata.request_purpose` | 说明 |
-| --- | --- | --- |
-| Agent turn | `agent` | 普通执行请求 |
-| 上下文压缩 | `context_compaction` | safeguard/compaction 请求 |
-| Exec review | `exec_review` | 自动审核请求 |
-| 标题生成 | `title_generation` | 会话标题请求 |
-| 模型连接测试 | `connection_test` | 设置页最小测试请求 |
+| 用途         | `metadata.request_purpose` | 说明                      |
+| ------------ | -------------------------- | ------------------------- |
+| Agent turn   | `agent`                    | 普通执行请求              |
+| 上下文压缩   | `context_compaction`       | safeguard/compaction 请求 |
+| Exec review  | `exec_review`              | 自动审核请求              |
+| 标题生成     | `title_generation`         | 会话标题请求              |
+| 模型连接测试 | `connection_test`          | 设置页最小测试请求        |
 
 关联会话使用 `metadata.session_id`；subagent 额外使用直接父级 `metadata.parent_session_id`。
 只有真实用户直接发起的顶层首个请求标记 `metadata.user_initiated=true`，自动续跑、系统
@@ -103,7 +104,8 @@ provenance、同一 turn 后续请求和 subagent 不携带该标记。
 
 ## 当前仍不是已完成能力
 
-- 浏览器 extension driver 仍不受当前 OpenClaw `v2026.6.11` runtime 支持；浏览器设置文档是设计和
+- 当前 OpenClaw `v2026.7.1-2` runtime 已包含 browser extension driver 与 relay，且打包策略保留
+  `browser` extension；JustDo 尚未交付配对、状态 IPC 和发布流程，因此浏览器设置文档仍是设计和
   前置条件，不代表扩展路径已上线。
 - 内置模型登录/退出生命周期已有 Main 协调入口，但认证 handler 尚未接入；该文档仍是集成契约。
 - 权限文档中的 packaged-runtime 文件工具 smoke、可信 cron run attestation 和隔离执行环境仍是后续
@@ -112,13 +114,13 @@ provenance、同一 turn 后续请求和 subagent 不携带该标记。
 
 ## 代码入口
 
-| 领域 | 主要入口 |
-| --- | --- |
-| Goal | `src/main/openclaw/goals/goalContinuationCoordinator.ts`、`src/shared/sessionGoal.ts` |
-| 会话/subagent | `src/main/engine/openclaw/subagentGateway.ts`、`src/renderer/features/cowork/components/Subagent*` |
-| 权限 | `src/main/openclaw/permissions/sessionPermissionModeCoordinator.ts`、`src/main/ipc/cowork/config.ts` |
-| Cron | `src/main/scheduler/cronJobService.ts`、`src/main/scheduler/scheduledTaskResultSyncService.ts` |
-| 插件文件事务 | `src/main/core/managedDirectoryOperations.ts` |
-| 请求元数据 | `src/main/engine/openclaw/openclawRuntimeAdapter.ts`、`scripts/patches/v2026.6.11/016-litellm-session-id.cjs` |
-| 客户同步 | `src/main/core/customerRegistrationService.ts` |
-| 模型连接测试 | `src/renderer/features/settings/modelConnectionTest.ts` |
+| 领域          | 主要入口                                                                                                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Goal          | `src/main/openclaw/goals/goalContinuationCoordinator.ts`、`src/shared/sessionGoal.ts`                                                                                                     |
+| 会话/subagent | `src/main/engine/openclaw/subagentGateway.ts`、`src/renderer/features/cowork/components/Subagent*`                                                                                        |
+| 权限          | `src/main/openclaw/permissions/sessionPermissionModeCoordinator.ts`、`src/main/ipc/cowork/config.ts`                                                                                      |
+| Cron          | `src/main/scheduler/cronJobService.ts`、`src/main/scheduler/scheduledTaskResultSyncService.ts`                                                                                            |
+| 插件文件事务  | `src/main/core/managedDirectoryOperations.ts`                                                                                                                                             |
+| 请求元数据    | `src/main/engine/openclaw/openclawRuntimeAdapter.ts`、`scripts/patches/v2026.7.1-2/026-parent-session-identity.cjs`、`027-agent-request-metadata.cjs`、`028-request-purpose-metadata.cjs` |
+| 客户同步      | `src/main/core/customerRegistrationService.ts`                                                                                                                                            |
+| 模型连接测试  | `src/renderer/features/settings/modelConnectionTest.ts`                                                                                                                                   |

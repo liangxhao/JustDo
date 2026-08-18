@@ -2,11 +2,14 @@
 
 Status: implemented
 
-Baseline:
+Historical implementation baseline:
 
 - OpenClaw Gateway: `v2026.6.11`
 - Planning tool: experimental native `update_plan`
 - Implementation date: 2026-07-26
+
+The current bundled runtime is OpenClaw `v2026.7.1-2`; the version above records
+the environment in which this implemented feature was designed and verified.
 
 ## Product decision
 

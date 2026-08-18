@@ -39,7 +39,7 @@ JustDo 提供 `ask`、`auto`、`full` 三档产品预设，提交 npm runtime �
 `tools.exec.mode` 与 `tools.fs.workspaceOnly`，并通过 Gateway `exec.approvals.get/set`
 更新 host policy。写入使用 Gateway 返回的 `baseHash`，JustDo 不直接访问 approvals 文件。
 
-npm OpenClaw v2026.6.11 尚无独立文件 mode。JustDo 因此维护
+npm OpenClaw v2026.7.1-2 尚无独立文件 mode。JustDo 因此维护
 `file-permission-policy` bundled compatibility extension，通过公开的
 `registerTrustedToolPolicy` 接口在已审计的 core 文件修改工具执行前请求 plugin approval。
 该适配器与 `package.json.openclaw.version` 一起版本锁定；升级 OpenClaw 时必须重新审计精确的
@@ -173,7 +173,7 @@ host approvals。权限配置写入、reload、回读或回滚无法确认时，
 开启 `full` 前必须由用户在权限选择器中二次确认；core 文件修改与主机命令都不再审批。
 定时任务不继承交互会话 grant，也不会触发全局权限切换。Full 下任务按 Full 无人值守执行；
 Ask/Smart 下产生的命令、文件或第三方插件审批保持交互式，超时默认拒绝。Main 不把 cron-shaped
-session key 当作可信运行证明：OpenClaw v2026.6.11 的公开 API 只能证明 job 存在，不能证明 approval
+session key 当作可信运行证明：OpenClaw v2026.7.1-2 的公开 API 只能证明 job 存在，不能证明 approval
 来自该 job 的真实 active run，自动放行会允许伪造 session 获得 run-scoped Full。
 Agent 可以通过原生 cron 工具创建和管理任务，JustDo UI 通过 Main RPC 管理任务。任务执行仍按届时
 生效的权限模式处理，不继承创建任务时的交互会话 grant，也不会因为由 Agent 创建而自动放行审批。

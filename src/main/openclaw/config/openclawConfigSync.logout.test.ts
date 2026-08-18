@@ -230,12 +230,18 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.exec.mode).toBe('full');
     expect(config.tools.fs.workspaceOnly).toBe(false);
     expect(config.plugins.enabled).toBe(true);
-    expect(config.plugins.allow).toEqual(['custom-plugin', 'file-permission-policy']);
+    expect(config.plugins.allow).toEqual([
+      'custom-plugin',
+      'browser',
+      'ask-user-question',
+      'file-permission-policy',
+    ]);
     expect(config.plugins.deny).toEqual(['other-denied-plugin']);
     expect(config.plugins.entries['file-permission-policy']).toEqual({
       enabled: true,
       config: { mode: 'full' },
     });
+    expect(config.plugins.entries.browser).toEqual({ enabled: true });
   });
 
   test('a second no-model sync replaces the managed browser profile', () => {
@@ -265,6 +271,31 @@ describe('OpenClaw auth logout config sync', () => {
         },
       },
     });
+  });
+
+  test('minimal config explicitly trusts extensions installed in app-managed state', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-plugin-trust-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const extensionDir = path.join(directory, 'extensions', 'justdo-skill-only-example');
+    fs.mkdirSync(extensionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(extensionDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'justdo-skill-only-example' }),
+      'utf8',
+    );
+
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.allow).toEqual([
+      'justdo-skill-only-example',
+      'browser',
+      'ask-user-question',
+      'file-permission-policy',
+    ]);
+    expect(config.plugins.entries.browser).toEqual({ enabled: true });
+    expect(config.plugins.bundledDiscovery).toBe('compat');
   });
 
   test('removes the built-in provider placeholder before its environment variable is revoked', () => {

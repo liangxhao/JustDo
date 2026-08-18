@@ -23,6 +23,7 @@ import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngin
 import {
   buildBundledExtensionEntries,
   buildBundledExtensionToolContracts,
+  bundledOpenClawExtensions,
   hasBundledOpenClawExtension,
 } from '../../plugins/extensions';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
@@ -61,6 +62,32 @@ export const buildOpenClawMcpServers = (
       return [server.name, config];
     }),
   );
+};
+
+export const listInstalledOpenClawExtensionIds = (stateDir: string): string[] => {
+  const extensionsDir = path.join(stateDir, 'extensions');
+  try {
+    return [
+      ...new Set(
+        fs
+          .readdirSync(extensionsDir, { withFileTypes: true })
+          .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+          .flatMap(entry => {
+            try {
+              const manifestPath = path.join(extensionsDir, entry.name, 'openclaw.plugin.json');
+              const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as unknown;
+              if (!isRecord(manifest) || typeof manifest.id !== 'string') return [];
+              const id = manifest.id.trim();
+              return id ? [id] : [];
+            } catch {
+              return [];
+            }
+          }),
+      ),
+    ].sort();
+  } catch {
+    return [];
+  }
 };
 
 export const buildOpenClawHookConfig = (
@@ -343,32 +370,55 @@ const buildAuthScopedOpenClawConfig = (
 export const mergeOpenClawPluginConfig = (
   existingPlugins: Record<string, unknown>,
   managedEntries: Record<string, unknown>,
+  trustedInstalledExtensionIds: string[] = [],
 ): Record<string, unknown> => {
   const mergedEntries = {
     ...(isRecord(existingPlugins.entries) ? existingPlugins.entries : {}),
     ...managedEntries,
   };
-  if (Object.keys(mergedEntries).length === 0) return existingPlugins;
+  const trustedIds = [
+    ...new Set(trustedInstalledExtensionIds.map(id => id.trim()).filter(Boolean)),
+  ];
+  const managedIds = Object.keys(managedEntries);
+  if (Object.keys(mergedEntries).length === 0 && trustedIds.length === 0) return existingPlugins;
 
   const protectsPermissionPolicy = Object.hasOwn(
     managedEntries,
     OpenClawExtensionId.PERMISSION_POLICY,
   );
-  if (!protectsPermissionPolicy) return { ...existingPlugins, entries: mergedEntries };
-
   const existingAllow = Array.isArray(existingPlugins.allow)
     ? existingPlugins.allow.filter((value): value is string => typeof value === 'string')
     : null;
   const existingDeny = Array.isArray(existingPlugins.deny)
     ? existingPlugins.deny.filter((value): value is string => typeof value === 'string')
     : null;
+  const shouldPinInstalledExtensions = trustedIds.length > 0;
+  const allow = existingAllow
+    ? [
+        ...new Set([
+          ...existingAllow,
+          ...trustedIds,
+          ...managedIds,
+          ...(protectsPermissionPolicy ? [OpenClawExtensionId.PERMISSION_POLICY] : []),
+        ]),
+      ]
+    : shouldPinInstalledExtensions
+      ? [
+          ...new Set([
+            ...trustedIds,
+            ...managedIds,
+            ...(protectsPermissionPolicy ? [OpenClawExtensionId.PERMISSION_POLICY] : []),
+          ]),
+        ]
+      : null;
   return {
     ...existingPlugins,
-    enabled: true,
-    ...(existingAllow
-      ? { allow: [...new Set([...existingAllow, OpenClawExtensionId.PERMISSION_POLICY])] }
+    ...(protectsPermissionPolicy ? { enabled: true } : {}),
+    ...(allow ? { allow } : {}),
+    ...(allow && existingPlugins.bundledDiscovery === undefined
+      ? { bundledDiscovery: 'compat' }
       : {}),
-    ...(existingDeny
+    ...(protectsPermissionPolicy && existingDeny
       ? { deny: existingDeny.filter(id => id !== OpenClawExtensionId.PERMISSION_POLICY) }
       : {}),
     entries: mergedEntries,
@@ -950,6 +1000,16 @@ const readPreinstalledPluginIds = (): string[] => {
 const isBundledPluginAvailable = (pluginId: string): boolean => {
   return hasBundledOpenClawExtension(pluginId);
 };
+
+export const listManagedOpenClawPluginIds = (): string[] => [
+  ...new Set([
+    ...readPreinstalledPluginIds().filter(id => isBundledPluginAvailable(id)),
+    ...bundledOpenClawExtensions
+      .filter(extension => isBundledPluginAvailable(extension.id))
+      .map(extension => extension.id),
+    'workboard',
+  ]),
+];
 export type OpenClawConfigSyncResult = {
   ok: boolean;
   changed: boolean;
@@ -1149,14 +1209,20 @@ export class OpenClawConfigSync {
       isBundledPluginAvailable(id),
     );
     const askUserConfig = this.getAskUserExtensionConfig?.() ?? null;
-    const bundledExtensionEntries = buildBundledExtensionEntries(
-      {
-        askUser: askUserConfig,
-        permissionMode: coworkConfig.permissionMode,
-      },
-      isBundledPluginAvailable,
-    );
+    const bundledExtensionEntries = {
+      [OpenClawExtensionId.BROWSER]: { enabled: true },
+      ...buildBundledExtensionEntries(
+        {
+          askUser: askUserConfig,
+          permissionMode: coworkConfig.permissionMode,
+        },
+        isBundledPluginAvailable,
+      ),
+    };
     const mcpServers = buildOpenClawMcpServers(this.getMcpServers?.() ?? []);
+    const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
+      this.engineManager.getStateDir(),
+    );
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
@@ -1282,7 +1348,11 @@ export class OpenClawConfigSync {
           workboard: { enabled: true },
         };
 
-        const mergedPlugins = mergeOpenClawPluginConfig(existingPlugins, pluginEntries);
+        const mergedPlugins = mergeOpenClawPluginConfig(
+          existingPlugins,
+          pluginEntries,
+          trustedInstalledExtensionIds,
+        );
         return Object.keys(mergedPlugins).length > 0
           ? {
               // Plugin installs and setup commands write user-owned entries and
@@ -1715,12 +1785,18 @@ export class OpenClawConfigSync {
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
-    const bundledExtensionEntries = buildBundledExtensionEntries(
-      {
-        askUser: this.getAskUserExtensionConfig?.() ?? null,
-        permissionMode: coworkConfig.permissionMode,
-      },
-      isBundledPluginAvailable,
+    const bundledExtensionEntries = {
+      [OpenClawExtensionId.BROWSER]: { enabled: true },
+      ...buildBundledExtensionEntries(
+        {
+          askUser: this.getAskUserExtensionConfig?.() ?? null,
+          permissionMode: coworkConfig.permissionMode,
+        },
+        isBundledPluginAvailable,
+      ),
+    };
+    const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
+      this.engineManager.getStateDir(),
     );
     const minimalConfig: Record<string, unknown> = withDisabledMemorySearch({
       gateway: {
@@ -1761,7 +1837,11 @@ export class OpenClawConfigSync {
           mode: coworkConfig.permissionMode,
         },
       },
-      plugins: mergeOpenClawPluginConfig({}, bundledExtensionEntries),
+      plugins: mergeOpenClawPluginConfig(
+        {},
+        bundledExtensionEntries,
+        trustedInstalledExtensionIds,
+      ),
       meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
       // The managed permission extension is part of Gateway readiness even
       // before a model is configured. Runtime extensions are precompiled.
@@ -1863,7 +1943,11 @@ export class OpenClawConfigSync {
                   mode: coworkConfig.permissionMode,
                 },
               },
-              plugins: mergeOpenClawPluginConfig(existingPlugins, bundledExtensionEntries),
+              plugins: mergeOpenClawPluginConfig(
+                existingPlugins,
+                bundledExtensionEntries,
+                trustedInstalledExtensionIds,
+              ),
               meta: minimalConfig.meta,
             });
             const mergedContent = `${JSON.stringify(mergedConfig, null, 2)}\n`;

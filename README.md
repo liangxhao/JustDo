@@ -12,15 +12,15 @@ desktop app available in the background.
 
 ## What It Does
 
-| Capability | Current implementation |
-| --- | --- |
-| AI work sessions | OpenClaw Gateway is the execution engine. JustDo manages the desktop shell, UI state, permissions, and local cache. |
-| Chat UI | React owns the application shell; `<justdo-chat>` is a Lit custom element backed by the local OpenClaw Gateway WebSocket. |
-| Local storage | `better-sqlite3` stores UI cache, app settings, agents, MCP servers, hooks, session groups, and cowork metadata. |
-| Skills | 7 bundled skills are listed in `resources/builtin-skills.json`; all 7 are enabled by default. |
-| MCP and hooks | Managed from the Plugins screen, persisted locally, then synced into OpenClaw configuration. |
-| Scheduled tasks | UI CRUD and polling are handled by JustDo; execution is delegated to the OpenClaw cron runtime. |
-| Desktop integration | Tray, auto launch, prevent sleep, local file preview, logs, proxy handling, and packaged platform resources. |
+| Capability          | Current implementation                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| AI work sessions    | OpenClaw Gateway is the execution engine. JustDo manages the desktop shell, UI state, permissions, and local cache.       |
+| Chat UI             | React owns the application shell; `<justdo-chat>` is a Lit custom element backed by the local OpenClaw Gateway WebSocket. |
+| Local storage       | `better-sqlite3` stores UI cache, app settings, agents, MCP servers, hooks, session groups, and cowork metadata.          |
+| Skills              | 7 bundled skills are listed in `resources/builtin-skills.json`; all 7 are enabled by default.                             |
+| MCP and hooks       | Managed from the Plugins screen, persisted locally, then synced into OpenClaw configuration.                              |
+| Scheduled tasks     | UI CRUD and polling are handled by JustDo; execution is delegated to the OpenClaw cron runtime.                           |
+| Desktop integration | Tray, auto launch, prevent sleep, local file preview, logs, proxy handling, and packaged platform resources.              |
 
 ## Architecture
 
@@ -41,7 +41,7 @@ The main rule is process isolation:
 
 ## Quick Start
 
-Use Node.js 24. The project is engine-strict and expects `>=24 <25`.
+Use Node.js 24. The project is engine-strict and expects `>=24.15.0 <25`.
 
 ```bash
 nvm use 24
@@ -102,19 +102,19 @@ Python packages.
 
 ## Important Directories
 
-| Path | Purpose |
-| --- | --- |
-| `src/main/core/` | app constants, window/tray, logging, proxy, CSP, Python runtime, local file protocol |
-| `src/main/data/` | SQLite wrapper plus cowork and session group stores |
-| `src/main/engine/` | cowork routing, Gateway adapter, runtime forwarding, command safety |
-| `src/main/openclaw/` | Gateway config sync, runtime lifecycle, model/session/slash-command helpers |
-| `src/main/plugins/` | skills, MCP, hooks, extensions, and marketplace services |
-| `src/main/scheduler/` | scheduled task prompt/runtime bridge |
-| `src/renderer/features/` | React feature modules for cowork, agents, models, plugins, scheduled tasks, settings |
-| `src/renderer/libs/openclaw-chat/` | Lit chat element and message rendering pipeline |
-| `src/shared/` | shared contracts for cowork, OpenClaw, providers, plugins, scheduled tasks, slash commands |
-| `resources/skills/` | bundled skill source folders |
-| `vendor/openclaw-runtime/` | downloaded/synced OpenClaw runtime artifacts |
+| Path                               | Purpose                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| `src/main/core/`                   | app constants, window/tray, logging, proxy, CSP, Python runtime, local file protocol       |
+| `src/main/data/`                   | SQLite wrapper plus cowork and session group stores                                        |
+| `src/main/engine/`                 | cowork routing, Gateway adapter, runtime forwarding, command safety                        |
+| `src/main/openclaw/`               | Gateway config sync, runtime lifecycle, model/session/slash-command helpers                |
+| `src/main/plugins/`                | skills, MCP, hooks, extensions, and marketplace services                                   |
+| `src/main/scheduler/`              | scheduled task prompt/runtime bridge                                                       |
+| `src/renderer/features/`           | React feature modules for cowork, agents, models, plugins, scheduled tasks, settings       |
+| `src/renderer/libs/openclaw-chat/` | Lit chat element and message rendering pipeline                                            |
+| `src/shared/`                      | shared contracts for cowork, OpenClaw, providers, plugins, scheduled tasks, slash commands |
+| `resources/skills/`                | bundled skill source folders                                                               |
+| `vendor/openclaw-runtime/`         | downloaded/synced OpenClaw runtime artifacts                                               |
 
 ## State Model
 
@@ -155,7 +155,7 @@ OpenClaw integration is declared in `package.json`:
 {
   "version": "v2026.8.10",
   "openclaw": {
-    "version": "v2026.6.11",
+    "version": "v2026.7.1-2",
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {

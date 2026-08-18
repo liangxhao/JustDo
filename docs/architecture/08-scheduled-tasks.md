@@ -173,7 +173,7 @@ Agent 会话；显式传入的 `announce` 和 `webhook` 保持不变。这样“
 当前应由用户明确选择 Full。
 
 JustDo 不再根据 `agent:<agentId>:cron:<jobId>:run:<runId>` session key 和 job existence 自动放行。
-session key 可由 Gateway 客户端构造，而 OpenClaw v2026.6.11 的公开 API 没有提供可与 approval 绑定的
+session key 可由 Gateway 客户端构造，而 OpenClaw v2026.7.1-2 的公开 API 没有提供可与 approval 绑定的
 可信 active-run attestation；在该证明缺失时自动 `allow-once` 会形成权限提升边界。
 
 Agent 可以在对话中通过原生 cron 工具调用 add/update/remove/run；JustDo UI 则通过

@@ -5,6 +5,8 @@ const DEPENDENCY_CONFIG_DIR_NAME = 'dependency-config';
 const NPMRC_FILE_NAME = '.npmrc';
 const PIP_INI_FILE_NAME = 'pip.ini';
 
+export const JUSTDO_MANAGED_PIP_CONFIG_FILE_ENV = 'JUSTDO_MANAGED_PIP_CONFIG_FILE';
+
 export interface DependencyManagerConfigPaths {
   npmUserConfigPath?: string;
   pipConfigPath?: string;
@@ -19,9 +21,7 @@ export const resolveDependencyManagerConfigPaths = (
 
 const resolveDefaultResourceDir = (): string | null => {
   const candidates = [
-    process.resourcesPath
-      ? path.join(process.resourcesPath, DEPENDENCY_CONFIG_DIR_NAME)
-      : null,
+    process.resourcesPath ? path.join(process.resourcesPath, DEPENDENCY_CONFIG_DIR_NAME) : null,
     path.join(process.cwd(), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
     path.join(path.resolve(__dirname, '..', '..'), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
     path.join(path.resolve(__dirname, '..', '..', '..'), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
@@ -79,6 +79,10 @@ export const applyDependencyManagerConfigEnv = (
   userDataPath: string,
   resourceDir?: string | null,
 ): DependencyManagerConfigPaths => {
+  // Never trust provenance inherited from the host. This function owns the exact value pair.
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === JUSTDO_MANAGED_PIP_CONFIG_FILE_ENV) delete env[key];
+  }
   const paths = ensureDependencyManagerConfig(userDataPath, resourceDir);
   if (paths.npmUserConfigPath) {
     env.NPM_CONFIG_USERCONFIG = paths.npmUserConfigPath;
@@ -86,6 +90,7 @@ export const applyDependencyManagerConfigEnv = (
   }
   if (paths.pipConfigPath) {
     env.PIP_CONFIG_FILE = paths.pipConfigPath;
+    env[JUSTDO_MANAGED_PIP_CONFIG_FILE_ENV] = paths.pipConfigPath;
   }
   return paths;
 };

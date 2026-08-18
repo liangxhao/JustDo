@@ -6,8 +6,7 @@ type PluginConfig = {
   mode: PermissionMode;
 };
 
-// These are the exact core tool ids audited in npm OpenClaw v2026.6.11.
-// This compatibility adapter must be re-audited instead of guessing aliases.
+// These are the core file-mutation tool ids covered by this policy.
 const FILE_MUTATION_TOOLS = new Set(['apply_patch', 'edit', 'write']);
 
 const parsePluginConfig = (value: unknown): PluginConfig => {
@@ -49,8 +48,8 @@ const plugin = {
     const config = parsePluginConfig(api.pluginConfig);
     const effectiveMode: 'ask' | 'full' = config.mode === 'full' ? 'full' : 'ask';
     api.registerTrustedToolPolicy({
-      id: 'core-file-mutation-v2026-6-11',
-      description: 'Version-locked policy for OpenClaw v2026.6.11 file mutations.',
+      id: 'core-file-mutation',
+      description: 'Policy for OpenClaw core file mutations.',
       evaluate: async event => {
         if (effectiveMode === 'full' || !FILE_MUTATION_TOOLS.has(event.toolName)) {
           return;
@@ -76,14 +75,13 @@ const plugin = {
         respond(true, {
           loaded: true,
           adapterVersion: 1,
-          compatibleOpenClawVersion: 'v2026.6.11',
           configuredMode: config.mode,
         });
       },
       { scope: 'operator.read' },
     );
     api.logger.info(
-      `[file-permission-policy] v2026.6.11 compatibility policy enabled (${config.mode} -> ${effectiveMode}).`,
+      `[file-permission-policy] policy enabled (${config.mode} -> ${effectiveMode}).`,
     );
   },
 };

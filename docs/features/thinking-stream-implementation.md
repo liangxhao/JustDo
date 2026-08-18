@@ -1,6 +1,6 @@
 # Thinking Stream Display
 
-Thinking/reasoning stream display is currently implemented through OpenClaw Gateway stream behavior plus JustDo runtime compatibility patches for `v2026.6.11`.
+Thinking/reasoning stream display uses native OpenClaw `v2026.7.1-2` event delivery plus two narrowly scoped JustDo capability patches.
 
 ## Current Behavior
 
@@ -13,10 +13,9 @@ Thinking/reasoning stream display is currently implemented through OpenClaw Gate
 
 ## Related Files
 
-- `scripts/patches/v2026.6.11/001-thinking-stream.cjs`
-- `scripts/patches/v2026.6.11/002-agent-announce-reasoning-stream.cjs`
-- `scripts/patches/v2026.6.11/003-openai-content-reasoning-tags.cjs`
-- `scripts/patches/v2026.6.11/005-history-thinking-and-subagent-yield.cjs`
+- `scripts/patches/v2026.7.1-2/003-openai-think-tag-reasoning.cjs`
+- `scripts/patches/v2026.7.1-2/004-history-display-projection.cjs`
+- `scripts/patches/v2026.7.1-2/README.md`
 - `src/main/engine/cowork/coworkRuntimeForwarder.ts`
 - `src/main/engine/openclaw/openclawRuntimeAdapter.ts`
 - `src/renderer/libs/openclaw-chat/pipeline/stream-text.ts`
@@ -29,7 +28,7 @@ When upstream OpenClaw exposes equivalent reasoning stream and history behavior,
 
 ```text
 Provider/Gateway reasoning content
-  -> OpenClaw runtime patch preserves/emits thinking data
+  -> OpenClaw emits native reasoning events; targeted patches preserve provider/history gaps
   -> OpenClawRuntimeAdapter receives stream/history
   -> coworkRuntimeForwarder emits thinkingUpdate
   -> Renderer chat pipeline updates thinking block
@@ -62,11 +61,11 @@ Gateway history wins when available; cache is fallback.
 
 ## Patch Dependency
 
-This feature currently depends on runtime patches for `v2026.6.11`. If a patch fails to apply, symptoms may include:
+Live reasoning delivery and announce reasoning defaults are native in `v2026.7.1-2`.
+The two remaining patches cover OpenAI-compatible `<think>` content and history
+projection only. If either fails to apply, symptoms may include:
 
-- no thinking stream during live turn.
 - thinking lost after reopening history.
 - reasoning tags displayed as normal answer text.
-- subagent thinking/yield content missing.
 
 When diagnosing, check patch logs before changing renderer code.

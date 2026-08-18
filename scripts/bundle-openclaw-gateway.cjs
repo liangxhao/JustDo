@@ -15,10 +15,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const {
-  ensureOpenClawRuntimePatches,
-  patchOpenClawRuntime,
-} = require('./patch-openclaw-runtime.cjs');
+const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
+const { verifyOpenClawPatchManifest } = require('./verify-openclaw-runtime-patches.cjs');
 const {
   ensureOpenClawGatewayBundleLauncher,
 } = require('../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs');
@@ -61,13 +59,20 @@ if (fs.existsSync(bundleOutPath)) {
   const entryStat = fs.statSync(entryPath);
   const scriptStat = fs.statSync(scriptPath);
   if (bundleStat.mtimeMs > Math.max(entryStat.mtimeMs, scriptStat.mtimeMs)) {
-    console.log(`[bundle-openclaw-gateway] Bundle is up-to-date, skipping.`);
-    ensureOpenClawRuntimePatches(runtimeDir, {
-      label: 'bundle-openclaw-gateway',
-      verbose: true,
-    });
-    ensureGatewayLauncher();
-    process.exit(0);
+    try {
+      const manifest = verifyOpenClawPatchManifest(runtimeDir, { repoRoot: rootDir });
+      console.log(`[bundle-openclaw-gateway] Bundle is up-to-date, skipping.`);
+      console.log(
+        `[bundle-openclaw-gateway] Patch manifest is current; skipped ${manifest.patches.length} patch(es).`,
+      );
+      ensureGatewayLauncher();
+      process.exit(0);
+    } catch (error) {
+      console.log(
+        `[bundle-openclaw-gateway] Bundle proof is stale or missing; rebuilding from source. ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
 
@@ -78,7 +83,8 @@ console.log(`[bundle-openclaw-gateway] Output:   ${path.relative(runtimeDir, bun
 // These are resolved at runtime from node_modules/.
 const EXTERNAL_PACKAGES = [
   // Native image processing
-  'sharp', '@img/*',
+  'sharp',
+  '@img/*',
   // Native terminal
   '@lydell/*',
   // Native clipboard
@@ -96,7 +102,9 @@ const EXTERNAL_PACKAGES = [
   // FFmpeg binary (large, optional)
   'ffmpeg-static',
   // Browser automation (large, optional)
-  'chromium-bidi', 'playwright-core', 'playwright',
+  'chromium-bidi',
+  'playwright-core',
+  'playwright',
   // Native SQLite
   'better-sqlite3',
   // TypeScript runtime compiler — uses dynamic require("../dist/babel.cjs")
@@ -137,7 +145,7 @@ function createRuntimeImportMetaUrlPlugin(openclawRuntimeDir) {
     // The caller already validates runtime existence before bundling.
   }
 
-  const runtimeRootCandidates = runtimeRoots.map((rootPath) => ({
+  const runtimeRootCandidates = runtimeRoots.map(rootPath => ({
     runtimeRoot: rootPath,
     distRoot: path.join(rootPath, 'dist'),
   }));
@@ -145,11 +153,11 @@ function createRuntimeImportMetaUrlPlugin(openclawRuntimeDir) {
   return {
     name: 'openclaw-runtime-import-meta-url',
     setup(build) {
-      build.onLoad({ filter: /\.[cm]?js$/ }, (args) => {
+      build.onLoad({ filter: /\.[cm]?js$/ }, args => {
         const filePath = path.resolve(args.path);
-        const matchedRoot = runtimeRootCandidates.find(({ distRoot }) => (
-          isPathInside(distRoot, filePath)
-        ));
+        const matchedRoot = runtimeRootCandidates.find(({ distRoot }) =>
+          isPathInside(distRoot, filePath),
+        );
         if (!matchedRoot) {
           return null;
         }
@@ -178,6 +186,10 @@ function createRuntimeImportMetaUrlPlugin(openclawRuntimeDir) {
         contents = contents.replace(
           /resolveCodeModeWorkerUrl\(\s*import\.meta\.url\s*\)/g,
           `resolveCodeModeWorkerUrl(${replacement})`,
+        );
+        contents = contents.replace(
+          /resolveAuditEventWriterUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/g,
+          `resolveAuditEventWriterUrl(currentModuleUrl = ${replacement})`,
         );
 
         if (contents === source) {
@@ -210,6 +222,10 @@ const RUNTIME_COMPANION_CHECKS = [
     marker: 'code-mode.worker.js',
     path: 'dist/agents/code-mode.worker.js',
   },
+  {
+    marker: 'audit-event-writer.worker.js',
+    path: 'dist/audit/audit-event-writer.worker.js',
+  },
 ];
 
 const STALE_RUNTIME_IMPORT_META_PATTERNS = [
@@ -217,44 +233,42 @@ const STALE_RUNTIME_IMPORT_META_PATTERNS = [
   /resolveProviderAuthWarmWorkerUrl\(\s*import\.meta\.url\s*\)/,
   /resolveCompactionPlanningWorkerUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/,
   /resolveCodeModeWorkerUrl\(\s*import\.meta\.url\s*\)/,
+  /resolveAuditEventWriterUrl\(\s*currentModuleUrl\s*=\s*import\.meta\.url\s*\)/,
 ];
 
 function listBundleReferencedRuntimeCompanions(bundle) {
-  return RUNTIME_COMPANION_CHECKS
-    .filter(({ marker }) => bundle.includes(marker))
-    .map(({ path: relativePath }) => relativePath);
+  return RUNTIME_COMPANION_CHECKS.filter(({ marker }) => bundle.includes(marker)).map(
+    ({ path: relativePath }) => relativePath,
+  );
 }
 
 function verifyBundledRuntimeCompanions(openclawRuntimeDir, bundledPath) {
   const bundle = fs.readFileSync(bundledPath, 'utf8');
-  const stalePatterns = STALE_RUNTIME_IMPORT_META_PATTERNS.filter(
-    (pattern) => pattern.test(bundle),
-  );
+  const stalePatterns = STALE_RUNTIME_IMPORT_META_PATTERNS.filter(pattern => pattern.test(bundle));
 
   if (stalePatterns.length > 0) {
     throw new Error(
-      'Bundled gateway still contains runtime-relative import.meta.url call sites. '
-        + 'Update createRuntimeImportMetaUrlPlugin() before shipping this bundle.',
+      'Bundled gateway still contains runtime-relative import.meta.url call sites. ' +
+        'Update createRuntimeImportMetaUrlPlugin() before shipping this bundle.',
     );
   }
 
   const referencedCompanions = listBundleReferencedRuntimeCompanions(bundle);
   if (referencedCompanions.length === 0) {
     console.log(
-      '[bundle-openclaw-gateway] No known runtime companion references found in bundle; '
-        + 'assuming OpenClaw inlined or renamed them.',
+      '[bundle-openclaw-gateway] No known runtime companion references found in bundle; ' +
+        'assuming OpenClaw inlined or renamed them.',
     );
     return;
   }
 
   const missing = referencedCompanions.filter(
-    (relativePath) => !fs.existsSync(path.join(openclawRuntimeDir, relativePath)),
+    relativePath => !fs.existsSync(path.join(openclawRuntimeDir, relativePath)),
   );
 
   if (missing.length > 0) {
     throw new Error(
-      'Bundled gateway companion files referenced by the bundle are missing: '
-        + missing.join(', '),
+      'Bundled gateway companion files referenced by the bundle are missing: ' + missing.join(', '),
     );
   }
 }
@@ -271,11 +285,12 @@ esbuild
     // Without this, CJS modules (e.g. @smithy/*) that call require("buffer")
     // fail with "Dynamic require of X is not supported" when loaded via import().
     banner: {
-      js: `import { createRequire as __bundleCreateRequire } from 'node:module';\n` +
-          `import { fileURLToPath as __bundleFileURLToPath } from 'node:url';\n` +
-          `const require = __bundleCreateRequire(import.meta.url);\n` +
-          `const __filename = __bundleFileURLToPath(import.meta.url);\n` +
-          `const __dirname = __bundleFileURLToPath(new URL('.', import.meta.url));\n`,
+      js:
+        `import { createRequire as __bundleCreateRequire } from 'node:module';\n` +
+        `import { fileURLToPath as __bundleFileURLToPath } from 'node:url';\n` +
+        `const require = __bundleCreateRequire(import.meta.url);\n` +
+        `const __filename = __bundleFileURLToPath(import.meta.url);\n` +
+        `const __dirname = __bundleFileURLToPath(new URL('.', import.meta.url));\n`,
     },
     // Silence warnings about __dirname/__filename in ESM (they're polyfilled above).
     // Also silence the "ignored-bare-import" warning for packages like zod with sideEffects:false.
@@ -283,13 +298,14 @@ esbuild
     logOverride: {
       'ignored-bare-import': 'silent',
     },
-    plugins: [
-      createRuntimeImportMetaUrlPlugin(runtimeDir),
-    ],
+    plugins: [createRuntimeImportMetaUrlPlugin(runtimeDir)],
   })
-  .then((result) => {
+  .then(result => {
     verifyBundledRuntimeCompanions(runtimeDir, bundleOutPath);
-    patchOpenClawRuntime(runtimeDir, { label: 'bundle-openclaw-gateway' });
+    patchOpenClawRuntime(runtimeDir, {
+      label: 'bundle-openclaw-gateway',
+      freshBundlePass: true,
+    });
     ensureGatewayLauncher();
     const elapsed = Date.now() - t0;
     const sizeKB = Math.round(fs.statSync(bundleOutPath).size / 1024);
@@ -298,7 +314,7 @@ esbuild
         (result.warnings.length ? `, ${result.warnings.length} warnings` : ''),
     );
   })
-  .catch((err) => {
+  .catch(err => {
     console.error('[bundle-openclaw-gateway] esbuild failed:', err.message || err);
     process.exit(1);
   });

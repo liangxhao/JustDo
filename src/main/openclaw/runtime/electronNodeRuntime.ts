@@ -6,6 +6,122 @@ import { coworkLog } from '../../cowork/coworkLogger';
 
 let cachedElectronNodeRuntimePath: string | null = null;
 
+const assertSafeShimPath = (value: string): string => {
+  if (/\r|\n/.test(value)) throw new Error('Runtime shim paths cannot contain line breaks.');
+  return value;
+};
+
+const quotePosixLiteral = (value: string): string => {
+  return `'${assertSafeShimPath(value).replace(/'/g, `'"'"'`)}'`;
+};
+
+const quoteWindowsBatchArgument = (value: string): string => {
+  return `"${assertSafeShimPath(value).replace(/%/g, '%%').replace(/"/g, '""')}"`;
+};
+
+export const buildWindowsChildProcessPreload = (): string =>
+  [
+    "'use strict';",
+    "const childProcess = require('node:child_process');",
+    "const { syncBuiltinESMExports } = require('node:module');",
+    'const withWindowsHide = options => ({ ...(options || {}), windowsHide: true });',
+    'const originalSpawn = childProcess.spawn;',
+    'childProcess.spawn = function hiddenWindowsSpawn(command, args, options) {',
+    '  return Array.isArray(args)',
+    '    ? originalSpawn.call(this, command, args, withWindowsHide(options))',
+    '    : originalSpawn.call(this, command, withWindowsHide(args));',
+    '};',
+    'const originalSpawnSync = childProcess.spawnSync;',
+    'childProcess.spawnSync = function hiddenWindowsSpawnSync(command, args, options) {',
+    '  return Array.isArray(args)',
+    '    ? originalSpawnSync.call(this, command, args, withWindowsHide(options))',
+    '    : originalSpawnSync.call(this, command, withWindowsHide(args));',
+    '};',
+    'const originalExec = childProcess.exec;',
+    'childProcess.exec = function hiddenWindowsExec(command, options, callback) {',
+    "  return typeof options === 'function'",
+    '    ? originalExec.call(this, command, withWindowsHide(), options)',
+    '    : originalExec.call(this, command, withWindowsHide(options), callback);',
+    '};',
+    'const originalExecSync = childProcess.execSync;',
+    'childProcess.execSync = function hiddenWindowsExecSync(command, options) {',
+    '  return originalExecSync.call(this, command, withWindowsHide(options));',
+    '};',
+    'const originalExecFile = childProcess.execFile;',
+    'childProcess.execFile = function hiddenWindowsExecFile(file, args, options, callback) {',
+    '  if (Array.isArray(args)) {',
+    "    return typeof options === 'function'",
+    '      ? originalExecFile.call(this, file, args, withWindowsHide(), options)',
+    '      : originalExecFile.call(this, file, args, withWindowsHide(options), callback);',
+    '  }',
+    "  return typeof args === 'function'",
+    '    ? originalExecFile.call(this, file, withWindowsHide(), args)',
+    '    : originalExecFile.call(this, file, withWindowsHide(args), options);',
+    '};',
+    'const originalExecFileSync = childProcess.execFileSync;',
+    'childProcess.execFileSync = function hiddenWindowsExecFileSync(file, args, options) {',
+    '  return Array.isArray(args)',
+    '    ? originalExecFileSync.call(this, file, args, withWindowsHide(options))',
+    '    : originalExecFileSync.call(this, file, withWindowsHide(args));',
+    '};',
+    'const originalFork = childProcess.fork;',
+    'childProcess.fork = function hiddenWindowsFork(modulePath, args, options) {',
+    '  return Array.isArray(args)',
+    '    ? originalFork.call(this, modulePath, args, withWindowsHide(options))',
+    '    : originalFork.call(this, modulePath, withWindowsHide(args));',
+    '};',
+    '// Keep ESM named imports in sync with the patched CommonJS builtin exports.',
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\r\n');
+
+export const appendNodeRequireOption = (nodeOptions: string | undefined, filePath: string): string => {
+  const safePath = assertSafeShimPath(filePath).replace(/\\/g, '/').replace(/"/g, '\\"');
+  const requireOption = `--require="${safePath}"`;
+  if (nodeOptions?.includes(requireOption)) return nodeOptions;
+  return [nodeOptions?.trim(), requireOption].filter(Boolean).join(' ');
+};
+
+export const buildElectronNodeShimScripts = (
+  electronPath: string,
+  npmBinDir?: string,
+): {
+  nodeSh: string;
+  nodeCmd: string;
+  packageSh: (command: 'npm' | 'npx') => string;
+  packageCmd: (command: 'npm' | 'npx') => string;
+} => {
+  const quotedElectronSh = quotePosixLiteral(electronPath);
+  const quotedElectronCmd = quoteWindowsBatchArgument(electronPath);
+  const resolveCliPath = (command: 'npm' | 'npx'): string => {
+    if (!npmBinDir) throw new Error('npm bin directory is required for package runner shims.');
+    return join(npmBinDir, `${command}-cli.js`);
+  };
+
+  return {
+    nodeSh: [
+      '#!/usr/bin/env bash',
+      `exec env ELECTRON_RUN_AS_NODE=1 ${quotedElectronSh} "$@"`,
+      '',
+    ].join('\n'),
+    nodeCmd: ['@echo off', 'set ELECTRON_RUN_AS_NODE=1', `${quotedElectronCmd} %*`, ''].join(
+      '\r\n',
+    ),
+    packageSh: command => [
+      '#!/usr/bin/env bash',
+      'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
+      `exec "$SCRIPT_DIR/node" ${quotePosixLiteral(resolveCliPath(command))} "$@"`,
+      '',
+    ].join('\n'),
+    packageCmd: command =>
+      [
+        '@echo off',
+        `"%~dp0node.cmd" ${quoteWindowsBatchArgument(resolveCliPath(command))} %*`,
+        '',
+      ].join('\r\n'),
+  };
+};
+
 function resolveElectronNodeRuntimePath(): string {
   if (!app.isPackaged || process.platform !== 'darwin') {
     return process.execPath;
@@ -60,21 +176,10 @@ export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string)
   try {
     const shimDir = join(app.getPath('userData'), 'cowork', 'bin');
     mkdirSync(shimDir, { recursive: true });
+    const shimScripts = buildElectronNodeShimScripts(electronPath, npmBinDir);
 
     const nodeSh = join(shimDir, 'node');
-    writeFileSync(
-      nodeSh,
-      [
-        '#!/usr/bin/env bash',
-        'if [ -z "${JUSTDO_ELECTRON_PATH:-}" ]; then',
-        '  echo "JUSTDO_ELECTRON_PATH is not set" >&2',
-        '  exit 127',
-        'fi',
-        'exec env ELECTRON_RUN_AS_NODE=1 "${JUSTDO_ELECTRON_PATH}" "$@"',
-        '',
-      ].join('\n'),
-      'utf8',
-    );
+    writeFileSync(nodeSh, shimScripts.nodeSh, 'utf8');
     try {
       chmodSync(nodeSh, 0o755);
     } catch {
@@ -83,33 +188,11 @@ export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string)
 
     if (process.platform === 'win32') {
       const hideChildProcessPreload = join(shimDir, 'hide-child-process-windows.cjs');
-      writeFileSync(
-        hideChildProcessPreload,
-        [
-          "'use strict';",
-          "const childProcess = require('node:child_process');",
-          'const originalSpawn = childProcess.spawn;',
-          'childProcess.spawn = function hiddenWindowsSpawn(command, args, options) {',
-          '  if (!Array.isArray(args)) { options = args; args = []; }',
-          '  return originalSpawn.call(this, command, args, { ...(options || {}), windowsHide: true });',
-          '};',
-          '',
-        ].join('\r\n'),
-        'utf8',
-      );
+      writeFileSync(hideChildProcessPreload, buildWindowsChildProcessPreload(), 'utf8');
 
       writeFileSync(
         join(shimDir, 'node.cmd'),
-        [
-          '@echo off',
-          'if "%JUSTDO_ELECTRON_PATH%"=="" (',
-          '  echo JUSTDO_ELECTRON_PATH is not set 1>&2',
-          '  exit /b 127',
-          ')',
-          'set ELECTRON_RUN_AS_NODE=1',
-          '"%JUSTDO_ELECTRON_PATH%" %*',
-          '',
-        ].join('\r\n'),
+        shimScripts.nodeCmd,
         'utf8',
       );
     }
@@ -120,16 +203,7 @@ export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string)
         if (!existsSync(cliPath)) continue;
 
         const shellShim = join(shimDir, command);
-        writeFileSync(
-          shellShim,
-          [
-            '#!/usr/bin/env bash',
-            'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
-            `exec "$SCRIPT_DIR/node" "${cliPath.replace(/\\/g, '/')}" "$@"`,
-            '',
-          ].join('\n'),
-          'utf8',
-        );
+        writeFileSync(shellShim, shimScripts.packageSh(command), 'utf8');
         try {
           chmodSync(shellShim, 0o755);
         } catch {
@@ -139,9 +213,7 @@ export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string)
         if (process.platform === 'win32') {
           writeFileSync(
             join(shimDir, `${command}.cmd`),
-            ['@echo off', `"%~dp0node.cmd" "%JUSTDO_NPM_BIN_DIR%\\${command}-cli.js" %*`, ''].join(
-              '\r\n',
-            ),
+            shimScripts.packageCmd(command),
             'utf8',
           );
         }

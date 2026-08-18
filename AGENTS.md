@@ -8,10 +8,10 @@ accurate and dense; detailed design belongs in `docs/architecture/`.
 JustDo is a local-first Electron + React desktop assistant. Agents execute real
 tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 
-- App: `v2026.8.5`
+- App: `v2026.8.12`
 - Electron: `42.6.0`
-- OpenClaw: `v2026.6.11`
-- Node: `>=24 <25` (`.nvmrc`)
+- OpenClaw: `v2026.7.1-2`
+- Node: `>=24.15.0 <25` (`.nvmrc`)
 - Package manager: npm
 - Dev server port: `43127`
 - License: MIT
@@ -124,29 +124,10 @@ SQLite core tables in `src/main/data/sqliteStore.ts`:
 Built-in skills are declared in `resources/builtin-skills.json`: **15 skills**,
 **14 enabled** by default, `agent-browser` disabled.
 
-OpenClaw runtime patches live in `scripts/patches/v2026.6.11/`:
-`001-thinking-stream.cjs`, `002-agent-announce-reasoning-stream.cjs`,
-`003-openai-content-reasoning-tags.cjs`, `004-windows-mcp-package-runner.cjs`,
-`005-history-thinking-and-subagent-yield.cjs`,
-`006-sessions-yield-active-guard.cjs`, `007-allow-managed-pip-config-env.cjs`,
-`008-dedupe-visible-subagent-announces.cjs`,
-`009-reply-session-init-conflict-retry.cjs`,
-`010-defer-selected-tool-schemas.cjs`,
-`011-retain-user-messages-across-compaction.cjs`,
-`012-codex-compaction-template.cjs`,
-`013-default-cron-delivery-none.cjs`,
-`014-live-context-budget-status.cjs`,
-`015-final-system-prompt-replacements.cjs`,
-`016-litellm-session-id.cjs`,
-`017-tool-error-reasoning-recovery.cjs`,
-`018-persistent-interactive-approvals.cjs`,
-`019-compaction-emergency-fallback.cjs`,
-`020-run-progress-events.cjs`,
-`021-atomic-sessions-spawn-admission.cjs`,
-`022-subagent-pending-status.cjs`,
-`023-managed-subagent-join.cjs`,
-`024-silent-goal-clear.cjs`,
-`025-subagent-session-title-metadata.cjs`.
+OpenClaw runtime patches live in `scripts/patches/v2026.7.1-2/`. They are
+new-version capability patches, not migrations of the historical
+`scripts/patches/v2026.6.11/` files. The target directory README is the
+authoritative capability-to-patch and upstream-disposition inventory.
 
 `docs/res/` was removed because no docs referenced its old image asset.
 

@@ -80,7 +80,9 @@ Extension 是原生 OpenClaw 扩展包，manifest 为 `openclaw.plugin.json`。�
 
 Extension 可以声明配置字段和敏感字段。Renderer 只提交字符串值；Main process 限制字段数量、路径长度和值长度，并由 Extension service 写入配置。敏感值不得进入日志或 UI 明文回显。
 
-Extension 的导入、更新、删除、启用和配置更新由 `OpenClawExtensionImportService` 统一处理。导入、更新和删除的 CLI 目录事务接入公共 `ManagedDirectoryOperationCoordinator`，与 Skill 文件变更互斥，并复用 Gateway 句柄释放和外部锁诊断。由 Extension 提供的 Skill、MCP 或 Hook 不应在子能力页面直接删除，否则可能破坏 Extension 包完整性。
+Extension 的导入、更新、删除、启用和配置更新由 `OpenClawExtensionImportService` 统一处理。完整的 Extension 变更（包括 CLI、配置后置条件和 Gateway 重启）串行执行，并与 OpenClaw 全局配置同步共享配置写入队列。导入、更新和删除的 CLI 目录事务还接入公共 `ManagedDirectoryOperationCoordinator`，与 Skill 文件变更互斥，并复用 Gateway 句柄释放和外部锁诊断。由 Extension 提供的 Skill、MCP 或 Hook 不应在子能力页面直接删除，否则可能破坏 Extension 包完整性。
+
+配置同步会读取由 Extension 管理界面负责管理的 App state `extensions/`，把其中 manifest 有效的插件 ID 显式并入 `plugins.allow`。当配置已经存在 allowlist 时，JustDo 生成配置的 bundled Extension entries 也会显式并入，避免出现“entry 有配置但不在 allowlist”的启动告警。这既关闭 OpenClaw 的开放式自动发现告警，也让本地插件的信任决定持久化；已有用户 allow 条目继续保留，`plugins.bundledDiscovery="compat"` 保证该 allowlist 不会意外屏蔽 OpenClaw/JustDo 的 bundled plugins。缺失或损坏 manifest 的目录不会被自动信任。管理界面导入或重新启用插件时也会在 Gateway 重启前幂等写入 allowlist；关闭插件只修改 entry 的启用状态并保留信任，便于之后恢复；卸载则移除对应 allow 条目。
 
 内置 `ask-user-question` Extension 通过 Main process 的 loopback HTTP callback server 把结构化问题交给 renderer。Callback server 使用动态端口，因此必须先开始监听，再把当前 URL 和 secret placeholder 同步到 Gateway 配置。每次确保 Gateway 可用时都会先检查 callback host；如果端口变化而 Gateway 仍在运行，Gateway watcher 会热重载 Extension 配置，使它不再请求上一次进程留下的失效端口。只有 secret 环境变量或 Extension manifest 变化才需要 JustDo 硬重启 Gateway。Callback URL 只在 HTTP server 确实处于 listening 状态时对外发布。
 
@@ -164,6 +166,8 @@ MCP server 定义存放在 SQLite `mcp_servers`。`McpStore` 是用户配置的�
 MCP 的已安装视图同时展示“用户配置”和“扩展提供”两组。`mcp:list` 先独立返回 SQLite 用户配置，不等待扩展发现。扩展 MCP 由 Main process 通过 OpenClaw `plugins inspect --all --json` 读取已安装 Bundle 的 MCP 清单，再由独立 IPC 异步返回，不复制到 SQLite。Renderer 对这些条目只读展示，标注所属扩展及其启用状态；启停、更新和删除仍由 Extension 生命周期管理。扩展清单发现失败不影响用户配置展示。
 
 MCP probe 和 resource read 在 Main process 执行。Renderer 不启动子进程、不直接请求 MCP endpoint，也不读取 server credential。配置同步通过 `mcp:config:syncStart` 和 `mcp:config:syncDone` 广播进度。
+
+Windows 的 npm/npx stdio MCP 通过 Electron 的 Node mode 启动。Main process 生成的 `node`、`npm`、`npx` shim 包含已解析的 Electron 和 npm CLI 路径，因此即使 OpenClaw 按 MCP 安全边界收窄 child environment，也不依赖 `JUSTDO_ELECTRON_PATH` 或 `JUSTDO_NPM_BIN_DIR` 才能启动。
 
 主要 preload API：
 

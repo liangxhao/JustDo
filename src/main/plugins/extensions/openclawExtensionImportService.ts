@@ -69,6 +69,8 @@ type CommandOptions = {
 
 type OpenClawExtensionImportServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
+  getManagedPluginIds?: () => string[];
+  runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>;
   directoryOperations?: ManagedDirectoryOperationCoordinator;
   runCommand?: (
     executable: string,
@@ -355,6 +357,66 @@ const isExtensionEnabled = (manager: OpenClawEngineManager, extensionId: string)
   );
 };
 
+const updateExtensionAllowlist = (
+  configPath: string,
+  extensionId: string,
+  operation: 'add' | 'remove',
+  managedPluginIds: string[] = [],
+  disableBeforeEnable = false,
+): void => {
+  let config: Record<string, unknown> = {};
+  if (fs.existsSync(configPath)) {
+    const parsed = JSON5.parse(fs.readFileSync(configPath, 'utf8')) as unknown;
+    if (!isRecord(parsed)) throw new Error('OpenClaw configuration is not an object.');
+    config = parsed;
+  }
+
+  const plugins = isRecord(config.plugins) ? config.plugins : {};
+  const existingAllow = Array.isArray(plugins.allow)
+    ? plugins.allow.filter((id): id is string => typeof id === 'string')
+    : [];
+  const managedIds = operation === 'add' && existingAllow.length === 0 ? managedPluginIds : [];
+  const allow =
+    operation === 'add'
+      ? [...new Set([...existingAllow, ...managedIds, extensionId])]
+      : existingAllow.filter(id => id !== extensionId);
+  const shouldSetBundledDiscovery = operation === 'add' && plugins.bundledDiscovery === undefined;
+  const entries = isRecord(plugins.entries) ? plugins.entries : {};
+  const extensionEntry = isRecord(entries[extensionId]) ? entries[extensionId] : {};
+  const shouldDisableEntry = disableBeforeEnable && extensionEntry.enabled !== false;
+  if (
+    !shouldSetBundledDiscovery &&
+    !shouldDisableEntry &&
+    allow.length === existingAllow.length &&
+    allow.every((id, index) => id === existingAllow[index])
+  ) {
+    return;
+  }
+
+  plugins.allow = allow;
+  if (shouldSetBundledDiscovery) {
+    plugins.bundledDiscovery = 'compat';
+  }
+  if (shouldDisableEntry) {
+    entries[extensionId] = { ...extensionEntry, enabled: false };
+    plugins.entries = entries;
+  }
+  config.plugins = plugins;
+
+  const temporaryPath = `${configPath}.tmp-extension-allowlist-${process.pid}-${Date.now()}`;
+  try {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+    fs.renameSync(temporaryPath, configPath);
+  } finally {
+    try {
+      if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+    } catch {
+      // Best-effort cleanup for an interrupted atomic write.
+    }
+  }
+};
+
 const runCommand = (
   executable: string,
   args: string[],
@@ -488,6 +550,7 @@ const inferInstallerFailureStage = (
 export class OpenClawExtensionImportService {
   private readonly runCommand: NonNullable<OpenClawExtensionImportServiceDeps['runCommand']>;
   private readonly directoryOperations: ManagedDirectoryOperationCoordinator;
+  private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: OpenClawExtensionImportServiceDeps) {
     this.runCommand = deps.runCommand ?? runCommand;
@@ -507,6 +570,19 @@ export class OpenClawExtensionImportService {
           },
         },
       });
+  }
+
+  private runMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const run = (): Promise<T> =>
+      this.deps.runConfigMutationExclusive
+        ? this.deps.runConfigMutationExclusive(operation)
+        : operation();
+    const result = this.mutationTail.then(run, run);
+    this.mutationTail = result.then(
+      (): void => undefined,
+      (): void => undefined,
+    );
+    return result;
   }
 
   private async runDirectoryCommand(
@@ -597,6 +673,15 @@ export class OpenClawExtensionImportService {
     extensionId: string,
     values: Record<string, string>,
   ): Promise<{ success: boolean; error?: string }> {
+    return this.runMutationExclusive(() =>
+      this.updateConfigurationExclusive(extensionId, values),
+    );
+  }
+
+  private async updateConfigurationExclusive(
+    extensionId: string,
+    values: Record<string, string>,
+  ): Promise<{ success: boolean; error?: string }> {
     if (isProtectedExtension(extensionId)) {
       return { success: false, error: 'This extension is managed by the application.' };
     }
@@ -665,6 +750,12 @@ export class OpenClawExtensionImportService {
   }
 
   async delete(extensionId: string): Promise<{ success: boolean; error?: string }> {
+    return this.runMutationExclusive(() => this.deleteExclusive(extensionId));
+  }
+
+  private async deleteExclusive(
+    extensionId: string,
+  ): Promise<{ success: boolean; error?: string }> {
     if (isProtectedExtension(extensionId)) {
       return { success: false, error: 'This extension is required by the permission system.' };
     }
@@ -676,8 +767,9 @@ export class OpenClawExtensionImportService {
     const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
     try {
       const cli = await manager.buildCliEnvironment();
-      const command = await this.runDirectoryCommand(installed.installPath, () =>
-        this.runCommand(
+      let allowlistError = '';
+      const command = await this.runDirectoryCommand(installed.installPath, async () => {
+        const result = await this.runCommand(
           process.execPath,
           [cli.openclawEntry, 'plugins', 'uninstall', extensionId, '--force'],
           {
@@ -689,8 +781,19 @@ export class OpenClawExtensionImportService {
             },
             successPattern: OPENCLAW_UNINSTALL_SUCCESS_PATTERN,
           },
-        ),
-      );
+        );
+        if (
+          result.exitCode === 0 &&
+          !this.listInstalled().some(extension => extension.id === extensionId)
+        ) {
+          try {
+            updateExtensionAllowlist(manager.getConfigPath(), extensionId, 'remove');
+          } catch (error) {
+            allowlistError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        return result;
+      });
       const result = command.result;
       if (result.exitCode !== 0) {
         const error = command.error ?? formatCommandError(result);
@@ -715,6 +818,12 @@ export class OpenClawExtensionImportService {
           };
         }
       }
+      if (allowlistError) {
+        return {
+          success: false,
+          error: `Extension removed, but its allowlist entry could not be cleaned up: ${allowlistError}`,
+        };
+      }
       return { success: true };
     } catch (error) {
       return {
@@ -725,6 +834,13 @@ export class OpenClawExtensionImportService {
   }
 
   async setEnabled(
+    extensionId: string,
+    enabled: boolean,
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.runMutationExclusive(() => this.setEnabledExclusive(extensionId, enabled));
+  }
+
+  private async setEnabledExclusive(
     extensionId: string,
     enabled: boolean,
   ): Promise<{ success: boolean; error?: string }> {
@@ -740,6 +856,15 @@ export class OpenClawExtensionImportService {
     const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
     try {
       const cli = await manager.buildCliEnvironment();
+      if (enabled) {
+        updateExtensionAllowlist(
+          manager.getConfigPath(),
+          extensionId,
+          'add',
+          this.deps.getManagedPluginIds?.() ?? [],
+          true,
+        );
+      }
       const result = await this.runCommand(
         process.execPath,
         [cli.openclawEntry, 'plugins', enabled ? 'enable' : 'disable', extensionId],
@@ -788,6 +913,13 @@ export class OpenClawExtensionImportService {
   }
 
   async importPath(
+    sourcePath: string,
+    onProgress?: (progress: Omit<ExtensionImportProgress, 'requestId' | 'sourcePath'>) => void,
+  ): Promise<ExtensionImportResult> {
+    return this.runMutationExclusive(() => this.importPathExclusive(sourcePath, onProgress));
+  }
+
+  private async importPathExclusive(
     sourcePath: string,
     onProgress?: (progress: Omit<ExtensionImportProgress, 'requestId' | 'sourcePath'>) => void,
   ): Promise<ExtensionImportResult> {
@@ -879,8 +1011,13 @@ export class OpenClawExtensionImportService {
           : isPathWithinDirectory(extensionsRoot, defaultTargetPath)
             ? defaultTargetPath
             : extensionsRoot;
-      const command = await this.runDirectoryCommand(targetPath, () =>
-        this.runCommand(process.execPath, installArgs, {
+      const configPath =
+        typeof manager.getConfigPath === 'function'
+          ? manager.getConfigPath()
+          : path.join(stateDir, 'openclaw.json');
+      let allowlistError = '';
+      const command = await this.runDirectoryCommand(targetPath, async () => {
+        const result = await this.runCommand(process.execPath, installArgs, {
           cwd: cli.runtimeRoot,
           env: installEnv,
           successPattern: createInstallSuccessPattern(extensionId),
@@ -894,8 +1031,21 @@ export class OpenClawExtensionImportService {
               reportProgress('installing_dependencies', 65);
             }
           },
-        }),
-      );
+        });
+        if (result.exitCode === 0 && extensionId) {
+          try {
+            updateExtensionAllowlist(
+              configPath,
+              extensionId,
+              'add',
+              this.deps.getManagedPluginIds?.() ?? [],
+            );
+          } catch (error) {
+            allowlistError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        return result;
+      });
       const result = command.result;
       if (result.exitCode !== 0) {
         const failedStage = inferInstallerFailureStage(result, currentStage);
@@ -921,6 +1071,15 @@ export class OpenClawExtensionImportService {
             failedStage: currentStage,
           };
         }
+      }
+
+      if (allowlistError) {
+        return {
+          success: false,
+          extensionId,
+          error: `Extension installed, but it could not be added to the plugin allowlist: ${allowlistError}`,
+          failedStage: currentStage,
+        };
       }
 
       reportProgress('completed', 100);

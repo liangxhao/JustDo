@@ -20,6 +20,31 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
 });
 
+test('keeps Electron readiness probes quiet and bounded', () => {
+  const devRunner = fs.readFileSync(
+    path.resolve(__dirname, '../scripts/run-electron-dev.cjs'),
+    'utf8',
+  );
+
+  expect(devRunner).toContain('wait-on -t 120000 -d 20000 --simultaneous 1');
+  expect(devRunner).not.toContain('wait-on -v');
+});
+
+test('rewrites and packages the OpenClaw audit writer companion', () => {
+  const bundleScript = fs.readFileSync(
+    path.resolve(__dirname, '../scripts/bundle-openclaw-gateway.cjs'),
+    'utf8',
+  );
+  const builderHooks = fs.readFileSync(
+    path.resolve(__dirname, '../scripts/electron-builder-hooks.cjs'),
+    'utf8',
+  );
+
+  expect(bundleScript).toContain('resolveAuditEventWriterUrl');
+  expect(bundleScript).toContain('dist/audit/audit-event-writer.worker.js');
+  expect(builderHooks).toContain('dist/audit/audit-event-writer.worker.js');
+});
+
 test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   const rebuildScript = fs.readFileSync(
     path.resolve(__dirname, '../scripts/rebuild-electron-native.cjs'),

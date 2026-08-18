@@ -9,15 +9,15 @@ JustDo 是一个基于 Electron、React、SQLite 和 OpenClaw Gateway 的桌面 
 
 ## 当前能力
 
-| 能力 | 当前实现 |
-| --- | --- |
-| AI 工作会话 | OpenClaw Gateway 是执行引擎。JustDo 负责桌面壳、UI 状态、权限和本地缓存。 |
-| 聊天 UI | React 负责应用外壳；`<justdo-chat>` 是 Lit 自定义元素，直连本地 OpenClaw Gateway WebSocket。 |
-| 本地存储 | `better-sqlite3` 保存 UI 缓存、应用设置、Agent、MCP、hooks、会话分组和 cowork 元数据。 |
-| Skills | `resources/builtin-skills.json` 声明 7 个内置技能，全部默认启用。 |
-| MCP 与 hooks | 在 Plugins 页面管理，本地持久化后同步到 OpenClaw 配置。 |
-| 定时任务 | JustDo 负责 UI CRUD 和轮询；任务执行交给 OpenClaw cron runtime。 |
-| 桌面集成 | 托盘、开机启动、防休眠、本地文件预览、日志、代理处理和平台打包资源。 |
+| 能力         | 当前实现                                                                                     |
+| ------------ | -------------------------------------------------------------------------------------------- |
+| AI 工作会话  | OpenClaw Gateway 是执行引擎。JustDo 负责桌面壳、UI 状态、权限和本地缓存。                    |
+| 聊天 UI      | React 负责应用外壳；`<justdo-chat>` 是 Lit 自定义元素，直连本地 OpenClaw Gateway WebSocket。 |
+| 本地存储     | `better-sqlite3` 保存 UI 缓存、应用设置、Agent、MCP、hooks、会话分组和 cowork 元数据。       |
+| Skills       | `resources/builtin-skills.json` 声明 7 个内置技能，全部默认启用。                            |
+| MCP 与 hooks | 在 Plugins 页面管理，本地持久化后同步到 OpenClaw 配置。                                      |
+| 定时任务     | JustDo 负责 UI CRUD 和轮询；任务执行交给 OpenClaw cron runtime。                             |
+| 桌面集成     | 托盘、开机启动、防休眠、本地文件预览、日志、代理处理和平台打包资源。                         |
 
 ## 架构概览
 
@@ -38,7 +38,7 @@ Renderer (React + Redux + Lit)
 
 ## 快速开始
 
-项目使用 Node.js 24，`package.json` 限制为 `>=24 <25`。
+项目使用 Node.js 24，`package.json` 限制为 `>=24.15.0 <25`。
 
 ```bash
 nvm use 24
@@ -94,19 +94,19 @@ Windows 打包会通过 `scripts/` 下的脚本准备 MinGit 和 Python runtime�
 
 ## 重要目录
 
-| 路径 | 作用 |
-| --- | --- |
-| `src/main/core/` | 应用常量、窗口/托盘、日志、代理、CSP、Python runtime、本地文件协议 |
-| `src/main/data/` | SQLite 包装层、cowork store、会话分组 store |
-| `src/main/engine/` | cowork 路由、Gateway adapter、runtime 转发、命令安全 |
-| `src/main/openclaw/` | Gateway 配置同步、runtime 生命周期、模型/会话/slash command 辅助逻辑 |
-| `src/main/plugins/` | skills、MCP、hooks、extensions、marketplace 服务 |
-| `src/main/scheduler/` | 定时任务 prompt/runtime 桥接 |
-| `src/renderer/features/` | cowork、agents、models、plugins、scheduled tasks、settings 等 React feature |
-| `src/renderer/libs/openclaw-chat/` | Lit 聊天元素与消息渲染管线 |
-| `src/shared/` | cowork、OpenClaw、providers、plugins、scheduled tasks、slash commands 共享契约 |
-| `resources/skills/` | 内置技能源目录 |
-| `vendor/openclaw-runtime/` | 下载并同步的 OpenClaw runtime 产物 |
+| 路径                               | 作用                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| `src/main/core/`                   | 应用常量、窗口/托盘、日志、代理、CSP、Python runtime、本地文件协议             |
+| `src/main/data/`                   | SQLite 包装层、cowork store、会话分组 store                                    |
+| `src/main/engine/`                 | cowork 路由、Gateway adapter、runtime 转发、命令安全                           |
+| `src/main/openclaw/`               | Gateway 配置同步、runtime 生命周期、模型/会话/slash command 辅助逻辑           |
+| `src/main/plugins/`                | skills、MCP、hooks、extensions、marketplace 服务                               |
+| `src/main/scheduler/`              | 定时任务 prompt/runtime 桥接                                                   |
+| `src/renderer/features/`           | cowork、agents、models、plugins、scheduled tasks、settings 等 React feature    |
+| `src/renderer/libs/openclaw-chat/` | Lit 聊天元素与消息渲染管线                                                     |
+| `src/shared/`                      | cowork、OpenClaw、providers、plugins、scheduled tasks、slash commands 共享契约 |
+| `resources/skills/`                | 内置技能源目录                                                                 |
+| `vendor/openclaw-runtime/`         | 下载并同步的 OpenClaw runtime 产物                                             |
 
 ## 状态模型
 
@@ -144,7 +144,7 @@ OpenClaw 集成在 `package.json` 中声明：
 {
   "version": "v2026.8.10",
   "openclaw": {
-    "version": "v2026.6.11",
+    "version": "v2026.7.1-2",
     "repo": "https://github.com/openclaw/openclaw.git"
   },
   "devServer": {

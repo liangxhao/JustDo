@@ -21,6 +21,7 @@ import {
 } from '../../core/trustedCertificates';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
 import {
+  appendNodeRequireOption,
   ensureElectronNodeShim,
   getElectronNodeRuntimePath,
   resolvePackagedNpmBinDir,
@@ -554,10 +555,15 @@ export class OpenClawEngineManager extends EventEmitter {
       env.PATH = [nodeShimDir, curPath].filter(Boolean).join(path.delimiter);
       if (process.platform === 'win32') {
         env.Path = env.PATH;
-        env.JUSTDO_WINDOWS_HIDE_PRELOAD = path.join(
+        const windowsHidePreload = path.join(
           nodeShimDir,
           'hide-child-process-windows.cjs',
         ).replace(/\\/g, '/');
+        env.JUSTDO_WINDOWS_HIDE_PRELOAD = windowsHidePreload;
+        // Load this before OpenClaw imports child_process so direct Gateway
+        // launches are covered. The Windows MCP package-runner patch also
+        // restores this exact preload after the MCP environment sanitizer.
+        env.NODE_OPTIONS = appendNodeRequireOption(env.NODE_OPTIONS, windowsHidePreload);
       }
       env.JUSTDO_NPM_BIN_DIR = npmBinDir || '';
     }

@@ -84,7 +84,7 @@ describe('file permission policy extension', () => {
     await expect(beforeToolCall({ toolName: 'exec' })).resolves.toBeUndefined();
   });
 
-  it('does not guess aliases outside the version-locked core tool contract', async () => {
+  it('does not guess aliases outside the declared core tool contract', async () => {
     const beforeToolCall = registerPolicy('ask');
 
     await expect(beforeToolCall({ toolName: 'write_file' })).resolves.toBeUndefined();

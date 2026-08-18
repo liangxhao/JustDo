@@ -1435,13 +1435,12 @@ test('recovers an idle active goal after a Gateway reconnect', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async (method: string) => {
-    if (method === 'sessions.list') return { sessions: [] };
-    if (method === 'sessions.describe') {
+    if (method === 'sessions.list') {
       return {
-        session: {
+        sessions: [{
           key: 'agent:main:justdo:session-1',
           goal: { id: 'goal-1', status: 'active' },
-        },
+        }],
       };
     }
     throw new Error(`unexpected method ${method}`);
@@ -1462,6 +1461,41 @@ test('recovers an idle active goal after a Gateway reconnect', async () => {
 
   expect(continueGoal).toHaveBeenCalledWith('session-1', 'agent:main:justdo:session-1');
   expect(continueGoal).toHaveBeenCalledTimes(1);
+  expect(request.mock.calls.some(([method]) => method === 'sessions.describe')).toBe(false);
+});
+
+test('falls back to sessions.describe when the recovery session list is truncated', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.list') return { sessions: [], hasMore: true };
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          key: 'agent:main:justdo:session-1',
+          goal: { id: 'goal-1', status: 'active' },
+        },
+      };
+    }
+    throw new Error(`unexpected method ${method}`);
+  });
+  const continueGoal = vi.fn().mockResolvedValue(undefined);
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    gatewayClientGeneration: number;
+    recoverActiveGoals: (generation: number) => Promise<void>;
+    goalContinuationCoordinator: { continue: typeof continueGoal };
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.gatewayClientGeneration = 4;
+  internals.goalContinuationCoordinator.continue = continueGoal;
+
+  await internals.recoverActiveGoals(4);
+
+  expect(request).toHaveBeenCalledWith('sessions.describe', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(continueGoal).toHaveBeenCalledOnce();
 });
 
 test('restores a persisted completed execution instead of auto-running stale active metadata', async () => {
@@ -1475,13 +1509,12 @@ test('restores a persisted completed execution instead of auto-running stale act
     identityPending: true,
   });
   const request = vi.fn(async (method: string) => {
-    if (method === 'sessions.list') return { sessions: [] };
-    if (method === 'sessions.describe') {
+    if (method === 'sessions.list') {
       return {
-        session: {
+        sessions: [{
           key: 'agent:main:justdo:session-1',
           goal: { id: 'goal-1', objective: 'Ship the release', status: 'active' },
-        },
+        }],
       };
     }
     throw new Error(`unexpected method ${method}`);
@@ -1574,16 +1607,9 @@ test('restores but does not duplicate a goal run already active after reconnect'
             key: 'agent:main:justdo:session-1',
             runId: 'active-run',
             hasActiveRun: true,
+            goal: { id: 'goal-1', status: 'active' },
           },
         ],
-      };
-    }
-    if (method === 'sessions.describe') {
-      return {
-        session: {
-          key: 'agent:main:justdo:session-1',
-          goal: { id: 'goal-1', status: 'active' },
-        },
       };
     }
     throw new Error(`unexpected method ${method}`);
@@ -1614,13 +1640,12 @@ test('does not recover a resumed blocked goal before user input is accepted', as
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async (method: string) => {
-    if (method === 'sessions.list') return { sessions: [] };
-    if (method === 'sessions.describe') {
+    if (method === 'sessions.list') {
       return {
-        session: {
+        sessions: [{
           key: 'agent:main:justdo:session-1',
           goal: { id: 'goal-1', status: 'active' },
-        },
+        }],
       };
     }
     throw new Error(`unexpected method ${method}`);
@@ -1681,13 +1706,12 @@ test.each(['paused', 'blocked', 'complete'])('does not recover a %s goal after r
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async (method: string) => {
-    if (method === 'sessions.list') return { sessions: [] };
-    if (method === 'sessions.describe') {
+    if (method === 'sessions.list') {
       return {
-        session: {
+        sessions: [{
           key: 'agent:main:justdo:session-1',
           goal: { id: 'goal-1', status },
-        },
+        }],
       };
     }
     throw new Error(`unexpected method ${method}`);

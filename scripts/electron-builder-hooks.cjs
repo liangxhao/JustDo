@@ -122,7 +122,10 @@ function syncCurrentOpenClawRuntimeForTarget(context) {
 
   const targetRoot = path.join(runtimeBase, targetId);
   if (!existsSync(targetRoot)) {
-    return { runtimeRoot: currentRoot, targetId };
+    throw new Error(
+      `[electron-builder-hooks] Missing OpenClaw runtime for packaging target ${targetId}: ${targetRoot}. ` +
+        `Run \`${getOpenClawRuntimeBuildHint(targetId)}\` before packaging.`,
+    );
   }
 
   const currentBuildInfo = readRuntimeBuildInfo(currentRoot);
@@ -173,37 +176,6 @@ function verifyPreinstalledPlugins(runtimeRoot, buildHint) {
   );
 }
 
-function verifyOpenClawReasoningStreamPatches(gatewayBundlePath, buildHint) {
-  const bundle = readFileSync(gatewayBundlePath, 'utf8');
-  const requiredPatterns = [
-    {
-      label: 'reasoning stream callback gate',
-      pattern: /streamReasoning:\s*reasoningMode === "stream" && canShowReasoning,/,
-    },
-    {
-      label: 'tagged reasoning delta forwarding',
-      pattern:
-        /const appendPartitionedVisibleDelta = \(delta\) => \{\s*appendRoutedContentDelta\(delta\);\s*\};/,
-    },
-    {
-      label: 'strict streaming for content reasoning tags',
-      pattern: /const routedDeltas = reasoningTagTextPartitioner\.push\(contentDelta\.text\);/,
-    },
-  ];
-  const missing = requiredPatterns
-    .filter(({ pattern }) => !pattern.test(bundle))
-    .map(({ label }) => label);
-
-  if (missing.length > 0) {
-    throw new Error(
-      '[electron-builder-hooks] OpenClaw reasoning stream patches are incomplete. ' +
-        `Missing: ${missing.join(', ')}. Run \`${buildHint}\` before packaging.`,
-    );
-  }
-
-  console.log('[electron-builder-hooks] Verified OpenClaw reasoning stream patches.');
-}
-
 function verifyRequiredPathSet(rootDir, relativePaths, label, buildHint) {
   const missing = relativePaths.filter(
     relativePath => !existsSync(path.join(rootDir, relativePath)),
@@ -233,6 +205,10 @@ const OPENCLAW_RUNTIME_COMPANION_CHECKS = [
   {
     marker: 'code-mode.worker.js',
     path: 'dist/agents/code-mode.worker.js',
+  },
+  {
+    marker: 'audit-event-writer.worker.js',
+    path: 'dist/audit/audit-event-writer.worker.js',
   },
 ];
 
@@ -348,9 +324,8 @@ function ensureBundledOpenClawRuntime(context) {
     );
   }
   verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, buildHint);
-  verifyOpenClawReasoningStreamPatches(gatewayBundlePath, buildHint);
   try {
-    const manifest = verifyOpenClawPatchManifest(runtimeRoot);
+    const manifest = verifyOpenClawPatchManifest(runtimeRoot, { expectedTarget: targetId });
     console.log(
       `[electron-builder-hooks] Verified all ${manifest.patches.length} OpenClaw runtime patches.`,
     );
@@ -1057,7 +1032,10 @@ function verifyPackagedOpenClawRuntime(context) {
     try {
       const requiredEntries = new Set([
         `cfmind/${PATCH_MANIFEST_FILENAME}`,
+        'cfmind/runtime-build-info.json',
         'cfmind/gateway-bundle.mjs',
+        'cfmind/package.json',
+        'cfmind/npm-shrinkwrap.json',
       ]);
       const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
       tarModule.extract({
@@ -1066,12 +1044,17 @@ function verifyPackagedOpenClawRuntime(context) {
         sync: true,
         filter: entryPath => requiredEntries.has(entryPath.replace(/^\.\//, '')),
       });
-      verifyOpenClawPatchManifest(path.join(temporaryRoot, 'cfmind'));
+      verifyOpenClawPatchManifest(path.join(temporaryRoot, 'cfmind'), {
+        expectedTarget: resolveOpenClawRuntimeTargetId(context),
+        allowOmittedGatewayAsar: true,
+      });
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
     }
   } else {
-    verifyOpenClawPatchManifest(path.join(resourcesRoot, 'cfmind'));
+    verifyOpenClawPatchManifest(path.join(resourcesRoot, 'cfmind'), {
+      expectedTarget: resolveOpenClawRuntimeTargetId(context),
+    });
   }
 
   console.log('[electron-builder-hooks] Verified patches in packaged OpenClaw runtime.');

@@ -9,7 +9,7 @@ JustDo is an OpenClaw desktop frontend, not a long-term fork of OpenClaw Runtime
 ```json
 {
   "openclaw": {
-    "version": "v2026.6.11"
+    "version": "v2026.7.1-2"
   }
 }
 ```
@@ -17,10 +17,15 @@ JustDo is an OpenClaw desktop frontend, not a long-term fork of OpenClaw Runtime
 ## Current Patch Location
 
 ```text
-scripts/patches/v2026.6.11/
+scripts/patches/v2026.7.1-2/
 ```
 
-## Current Patch Set
+The authoritative current capability inventory, pristine-package evidence,
+per-patch behavior, inter-patch relationships, retention rationale, mapping,
+and removal conditions live in
+`scripts/patches/v2026.7.1-2/README.md`.
+
+## Historical v2026.6.11 Patch Set
 
 | Patch                                            | Purpose                                                                                                                                                                                                                                                   |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -48,46 +53,51 @@ scripts/patches/v2026.6.11/
 | `022-subagent-pending-status.cjs`                | Project accepted native and ACP children without a lifecycle `start` as `pending`, then switch to `running` on `start`, including starts observed just before registry admission                                                                          |
 | `023-managed-subagent-join.cjs`                  | Incrementally join completed subagents inside the original JustDo parent run and pin managed logical sessions to their existing Gateway session id                                                                                                        |
 | `024-silent-goal-clear.cjs`                      | Expose a narrow operator-admin RPC for clearing canonical Goal metadata without writing an application lifecycle command into model-visible chat history                                                                                                  |
-| `025-subagent-session-title-metadata.cjs`        | Project durable subagent `taskName`, explicit `label`, and `task` metadata on Gateway `sessions.list` rows so retained history keeps authoritative titles                                                                                                  |
+| `025-subagent-session-title-metadata.cjs`        | Project durable subagent `taskName`, explicit `label`, and `task` metadata on Gateway `sessions.list` rows so retained history keeps authoritative titles                                                                                                 |
 
 Historical patches for `v2026.6.9` remain in `scripts/patches/v2026.6.9/` for reference only.
 
-`012` depends on the sanitization helper injected by `011`, and `015` places
-its helper before the live-context publisher injected by `014`; the numeric
-filenames are the required application order. Reassess these dependencies
-before removing any of those patches.
+The historical numbers above describe only the archived `v2026.6.11` files.
+They are not current IDs and must not be used to infer current dependencies.
 
-Subagent responsibilities stay split by runtime boundary: `005` owns history,
-and completion-announce consistency; `006` owns the final future-wake check for
-`sessions_yield`; `021` owns child creation admission and initialization reservations; `022` only projects accepted queued
-runs as `pending`; `023` replaces yield/announce with a transcript-committed incremental same-run Join for the JustDo-managed ancestry and prevents normal
-managed continuation requests from rotating their Gateway session id. These are separate lifecycle stages, so the completion FIFO
-and stricter admission extend their existing owners instead of adding another
-overlapping patch. Admission never compares `taskName`: repeated names remain
-valid when they come from distinct Tool Calls and capacity is available.
+## Current Ordering Convention
 
-`016` applies its normal-request and safeguard-compaction changes together to a
-pristine generated bundle. It intentionally rejects a bundle containing an
-earlier or partial `016` revision; regenerate the runtime (for example with
-`OPENCLAW_FORCE_INSTALL=1`) instead of layering patch revisions.
+The `v2026.7.1-2` directory contains exactly 34 capability patches named with a
+continuous three-digit prefix, `001` through `034`. The loader sorts filenames
+lexicographically, so the prefix is the actual application order:
+
+| Range       | Capability group                                                            |
+| ----------- | --------------------------------------------------------------------------- |
+| `001`–`004` | Managed environment, live Thinking, reasoning transport, history projection |
+| `005`–`012` | Cron, Windows/Chrome MCP, Tool Search, prompt and session RPC projections   |
+| `013`–`021` | Subagent admission, lifecycle, completion delivery and managed join         |
+| `022`–`025` | Persistent interactive approval lifecycle                                   |
+| `026`–`028` | Parent identity and LiteLLM request metadata                                |
+| `029`–`031` | Retained user context, Codex-style continuation and compaction fallback     |
+| `032`–`034` | Sanitized progress, bounded recovery and live context budget publication    |
+
+Within a dependency chain, producers precede consumers. In particular,
+`015` precedes `016`, `017`–`021` are the managed-join state machine,
+`022` precedes `023`–`025`, and `026` precedes provider metadata patches
+`027`–`028`. The authoritative per-file behavior, tests, removal conditions,
+and deleted-capability decisions remain in the target directory README.
 
 ## Required Patch Header
 
 Every patch must follow the policy in `scripts/patches/README.md` and include:
 
 ```js
-// Purpose: Why this patch exists.
-// Affected OpenClaw version: vYYYY.M.DD.
-// Risk: What behavior can diverge from upstream.
+// Capability: The independently removable user-visible behavior.
+// Target: The exact pristine OpenClaw npm version and missing native behavior.
+// Scope: The request paths, sessions, platforms, or files affected.
+// Safety: The fail-closed boundaries and native behavior that must remain.
 // Remove when: The exact condition that makes this patch unnecessary.
-// Upstream tracking: Issue or PR URL, or TODO with owner/date if not filed yet.
-// Temporary: yes/no.
 ```
 
 ## Maintenance Checklist
 
 - Confirm the patch targets the currently declared OpenClaw version.
-- Keep patch names numbered and descriptive.
+- Keep patch names continuous, three-digit, ordered by dependency, and descriptive.
 - Prefer upstream OpenClaw issues or PRs over expanding local patch logic.
 - Do not make SQLite, tool-call ids, labels, or local state a second source of truth.
 - Make patch failure visible in build or startup logs.
@@ -151,16 +161,28 @@ After changing patches:
 5. Run related Vitest tests if adapter behavior changed.
 6. Update this guide and any feature docs.
 
-Every successful full patch pass writes `runtime-patch-manifest.json` into the
-runtime root, but only after every patch module's read-only `verifyPatch()` has
-asserted that all critical final replacements are present. The manifest binds
-the declared OpenClaw version and the SHA-256 of every current patch script to
-the exact `gateway-bundle.mjs` bytes produced after patching. Electron Builder
-verifies this manifest before packaging and again against the runtime copied
-into the packaged app. On Windows, the second check extracts the manifest and
-gateway bundle from the packaged `win-resources.tar`. A silent no-op,
-missing/stale patch, rebuilt bundle, or packaging omission therefore fails the
-build before an installer is emitted.
+Every successful full patch pass writes manifest format 2 as
+`runtime-patch-manifest.json`, but only after every patch module's read-only
+`verifyPatch()` has checked the final runtime. The proof binds the npm integrity
+and tarball hash, target platform/architecture, ordered patch hashes, patch
+helper and source-lock hashes, build-recipe fingerprint, package/dependency
+lock, immutable runtime artifacts, and final bundle bytes. Patch application
+snapshots all JavaScript targets and rolls the entire pass back byte-for-byte if
+any apply or verification step fails. Electron Builder revalidates the proof
+before packaging and against the staged product; Windows validates the contents
+of `win-resources.tar` while allowing only the intentionally omitted standalone
+asar. A partial patch, stale cache, reordered patch, rebuilt bundle, or packaging
+omission therefore fails before an installer is emitted.
+
+The current-version patch helper also uses that immutable transaction snapshot
+as a phase-local file/content index. Target discovery decodes each JavaScript
+file once, repeated identical searches are cached, and `writeIfChanged()`
+updates the affected content and cached query results before the next patch or
+verification runs. Current-version patches must therefore route runtime
+JavaScript writes through `writeIfChanged()`; direct writes would bypass the
+index and are not allowed. The index is discarded at the end of every success
+or rollback, so it does not weaken pristine-source, idempotence, or manifest
+validation.
 
 ### 5. Remove
 
@@ -173,35 +195,14 @@ Patch removal is a real change:
 
 ## Current Patch Rationale
 
-| Patch                                            | Category                                                                          | Removal direction                                                                                                                                                                                                                 |
-| ------------------------------------------------ | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `001-thinking-stream.cjs`                        | Reasoning stream compatibility                                                    | Remove when Gateway emits stable thinking stream/history and bounded thinking diagnostics                                                                                                                                         |
-| `002-agent-announce-reasoning-stream.cjs`        | Reasoning event compatibility                                                     | Remove when upstream agent announcements include reasoning stream                                                                                                                                                                 |
-| `003-openai-content-reasoning-tags.cjs`          | Provider content parsing                                                          | Remove when upstream provider parser preserves reasoning tags                                                                                                                                                                     |
-| `004-windows-mcp-package-runner.cjs`             | Windows process compatibility                                                     | Remove when upstream MCP package runner handles Windows stdio launch reliably                                                                                                                                                     |
-| `005-history-thinking-and-subagent-yield.cjs`    | History/subagent consistency                                                      | Remove when upstream preserves tool-only commentary/history, skips yielded embedded transcript mirrors, promotes announce branches after outer delivery commit, and persistently orders completion retries/restores per requester |
-| `006-sessions-yield-active-guard.cjs`            | Completion-aware session yield guard                                              | Remove when upstream distinguishes active children, undelivered required completions, and the completion currently consumed before allowing `sessions_yield`                                                                      |
-| `007-allow-managed-pip-config-env.cjs`           | Managed dependency config passthrough                                             | Remove when upstream supports scoped dependency manager env passthrough                                                                                                                                                           |
-| `008-dedupe-visible-subagent-announces.cjs`      | Subagent completion delivery compatibility                                        | Remove when upstream coalesces sibling announces or credits results already visible in parent history                                                                                                                             |
-| `009-reply-session-init-conflict-retry.cjs`      | Runtime session concurrency guard                                                 | Remove when upstream aligns reply snapshot/commit cache consistency, uses key-order-independent revisions, and retries genuine conflicts                                                                                          |
-| `010-defer-selected-tool-schemas.cjs`            | Tool context compaction                                                           | Remove when upstream supports a configurable per-tool Tool Search defer list                                                                                                                                                      |
-| `011-retain-user-messages-across-compaction.cjs` | Compaction fidelity                                                               | Remove when upstream persists and replays retained user messages across compaction entries                                                                                                                                        |
-| `012-codex-compaction-template.cjs`              | Compaction fidelity                                                               | Remove when upstream supports replacing the compaction template, replay wrapper, and suffix assembly                                                                                                                              |
-| `013-default-cron-delivery-none.cjs`             | Scheduled-task delivery default                                                   | Remove when upstream exposes a configurable default cron delivery mode                                                                                                                                                            |
-| `014-live-context-budget-status.cjs`             | Missing live Gateway usage state                                                  | Remove when Gateway exposes current context budget status during active runs                                                                                                                                                      |
-| `015-final-system-prompt-replacements.cjs`       | Missing final prompt transform                                                    | Remove when Gateway exposes a final, system-only prompt transform hook                                                                                                                                                            |
-| `016-litellm-session-id.cjs`                     | Missing provider request correlation, purpose, and human-user initiation metadata | Remove when OpenClaw forwards its session UUID, direct-parent UUID, request purpose, and human-user initiation for agent, compaction, and exec-review requests                                                                    |
-| `017-tool-error-reasoning-recovery.cjs`          | Reasoning-only turns silently stop after tool errors                              | Remove when OpenClaw supports bounded request-only recovery messages without transcript persistence                                                                                                                               |
-| `018-persistent-interactive-approvals.cjs`       | Interactive approval lifetime and run suspension                                  | Remove when OpenClaw preserves timeout-free approval waits and resumes approved webchat exec work outside the originating run lifetime only after a real decision                                                                 |
-| `019-compaction-emergency-fallback.cjs`          | Compaction liveness                                                               | Remove when OpenClaw commits a deterministic bounded fallback instead of cancelling compaction after summarizer, model, or credential failures                                                                                    |
-| `020-run-progress-events.cjs`                    | Missing sanitized run progress events                                             | Remove when OpenClaw emits stable, bounded progress events for active runs                                                                                                                                                        |
-| `021-atomic-sessions-spawn-admission.cjs`        | Runtime child-admission race guard                                                | Remove when OpenClaw atomically reserves per-parent child capacity before asynchronous native-subagent and ACP spawn initialization                                                                                               |
-| `022-subagent-pending-status.cjs`                | Missing pre-start subagent registry state                                         | Remove when OpenClaw projects accepted child runs without lifecycle `start` separately from runs that have emitted `start`                                                                                                        |
-| `023-managed-subagent-join.cjs`                  | Managed parent run/session continuity                                             | Remove when OpenClaw can join child results into the original parent run and preserve logical session ids except for explicit new/reset/delete operations                                                                         |
-| `024-silent-goal-clear.cjs`                      | Model-invisible Goal lifecycle mutation                                           | Remove when OpenClaw exposes a native authenticated Gateway API for clearing Goal metadata without persisting a chat message                                                                                                      |
-| `025-subagent-session-title-metadata.cjs`        | Missing durable subagent naming metadata                                          | Remove when OpenClaw projects registry-backed `taskName`, explicit `label`, and `task` fields on Gateway `sessions.list` rows                                                                                                      |
+The authoritative, capability-level inventory for the current target is
+[`scripts/patches/v2026.7.1-2/README.md`](../../scripts/patches/v2026.7.1-2/README.md).
+It records every user-visible contract, pristine evidence, retained patch,
+deleted upstream capability, focused test, and removal condition. Do not copy a
+second file-level table here: it becomes stale as soon as a large historical
+patch is split.
 
-### Compaction patch upgrade warning
+### Historical v2026.6.11 compaction upgrade warning
 
 `011`, `012`, and `019` match exact text emitted by the OpenClaw `v2026.6.11`
 bundle. They intentionally fail loudly when those anchors change. On every OpenClaw

@@ -93,10 +93,14 @@ export const discoverExtensionMcpServers = async (
   commandRunner: RunCommand = runCommand,
 ): Promise<ExtensionProvidedMcpServer[]> => {
   const cli = await manager.buildCliEnvironment();
+  const electronNodeRuntime = cli.env.JUSTDO_ELECTRON_PATH?.trim() || process.execPath;
   const result = await commandRunner(
-    process.execPath,
+    electronNodeRuntime,
     [cli.openclawEntry, 'plugins', 'inspect', '--all', '--json'],
-    { cwd: cli.runtimeRoot, env: cli.env },
+    {
+      cwd: cli.runtimeRoot,
+      env: { ...cli.env, ELECTRON_RUN_AS_NODE: '1' },
+    },
   );
   return parseExtensionMcpInventory(JSON.parse(result.stdout) as unknown);
 };

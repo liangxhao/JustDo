@@ -68,7 +68,10 @@ describe('parseExtensionMcpInventory', () => {
   it('uses the OpenClaw plugin inspection JSON command', async () => {
     const manager = {
       buildCliEnvironment: vi.fn(async () => ({
-        env: { OPENCLAW_STATE_DIR: 'state' },
+        env: {
+          OPENCLAW_STATE_DIR: 'state',
+          JUSTDO_ELECTRON_PATH: 'electron-node-runtime',
+        },
         runtimeRoot: 'runtime',
         openclawEntry: 'openclaw.mjs',
       })),
@@ -77,11 +80,15 @@ describe('parseExtensionMcpInventory', () => {
 
     await expect(discoverExtensionMcpServers(manager, commandRunner)).resolves.toEqual([]);
     expect(commandRunner).toHaveBeenCalledWith(
-      process.execPath,
+      'electron-node-runtime',
       ['openclaw.mjs', 'plugins', 'inspect', '--all', '--json'],
       {
         cwd: 'runtime',
-        env: { OPENCLAW_STATE_DIR: 'state' },
+        env: {
+          OPENCLAW_STATE_DIR: 'state',
+          JUSTDO_ELECTRON_PATH: 'electron-node-runtime',
+          ELECTRON_RUN_AS_NODE: '1',
+        },
       },
     );
   });

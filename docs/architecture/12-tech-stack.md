@@ -4,51 +4,51 @@
 
 ## Runtime
 
-| 项 | 当前值 |
-| --- | --- |
-| Node.js | `>=24 <25` |
-| Electron | `^42.6.0` |
-| OpenClaw Gateway | `v2026.6.11` |
-| Package manager | npm |
-| Dev server port | `43127` |
+| 项               | 当前值          |
+| ---------------- | --------------- |
+| Node.js          | `>=24.15.0 <25` |
+| Electron         | `^42.6.0`       |
+| OpenClaw Gateway | `v2026.7.1-2`   |
+| Package manager  | npm             |
+| Dev server port  | `43127`         |
 
 ## Frontend
 
-| 技术 | 用途 |
-| --- | --- |
-| React 18 | 应用 shell 和 feature UI |
-| React DOM | DOM 渲染 |
-| Redux Toolkit | Renderer 状态 |
-| React Redux | Store binding |
-| Lit | `<justdo-chat>` 自定义元素 |
-| Tailwind CSS | 样式工具 |
-| Monaco Editor | 编辑器能力 |
+| 技术                                         | 用途                           |
+| -------------------------------------------- | ------------------------------ |
+| React 18                                     | 应用 shell 和 feature UI       |
+| React DOM                                    | DOM 渲染                       |
+| Redux Toolkit                                | Renderer 状态                  |
+| React Redux                                  | Store binding                  |
+| Lit                                          | `<justdo-chat>` 自定义元素     |
+| Tailwind CSS                                 | 样式工具                       |
+| Monaco Editor                                | 编辑器能力                     |
 | markdown-it / KaTeX / Mermaid / highlight.js | Markdown、公式、图表、代码高亮 |
-| DOMPurify | HTML sanitizer |
+| DOMPurify                                    | HTML sanitizer                 |
 
 ## Main Process
 
-| 技术 | 用途 |
-| --- | --- |
-| better-sqlite3 | 本地 SQLite |
-| electron-log | 日志 |
-| @modelcontextprotocol/sdk | MCP |
-| http-mitm-proxy / proxy-agent | 代理相关 |
-| js-yaml | 配置解析 |
+| 技术                                | 用途                   |
+| ----------------------------------- | ---------------------- |
+| better-sqlite3                      | 本地 SQLite            |
+| electron-log                        | 日志                   |
+| @modelcontextprotocol/sdk           | MCP                    |
+| http-mitm-proxy / proxy-agent       | 代理相关               |
+| js-yaml                             | 配置解析               |
 | tar / yazl / extract-zip / 7zip-bin | runtime 和资源打包处理 |
 
 ## Build Tooling
 
-| 工具 | 用途 |
-| --- | --- |
-| TypeScript 5.7 | 类型检查 |
-| Vite 8 | Renderer build/dev server |
-| vite-plugin-electron | Main/preload build |
-| electron-builder 26 | 桌面打包 |
-| ESLint 9 | lint |
-| Prettier 3 | format |
-| Vitest 4 | tests |
-| Husky + commitlint | commit hook |
+| 工具                 | 用途                      |
+| -------------------- | ------------------------- |
+| TypeScript 5.7       | 类型检查                  |
+| Vite 8               | Renderer build/dev server |
+| vite-plugin-electron | Main/preload build        |
+| electron-builder 26  | 桌面打包                  |
+| ESLint 9             | lint                      |
+| Prettier 3           | format                    |
+| Vitest 4             | tests                     |
+| Husky + commitlint   | commit hook               |
 
 ## Scripts
 
@@ -100,12 +100,12 @@ npm run openclaw:runtime:linux-x64
 
 项目有多个 TypeScript 配置，分别服务不同 runtime：
 
-| 配置 | 作用 |
-| --- | --- |
-| `tsconfig.json` | Renderer/Vite 侧严格类型检查，ESNext module |
-| `electron-tsconfig.json` | Main/preload 编译，CommonJS 目标 |
-| `tsconfig.node.json` | Vite/config 侧 Node 类型 |
-| `vitest.config.ts` | Vitest alias 和 test environment |
+| 配置                     | 作用                                        |
+| ------------------------ | ------------------------------------------- |
+| `tsconfig.json`          | Renderer/Vite 侧严格类型检查，ESNext module |
+| `electron-tsconfig.json` | Main/preload 编译，CommonJS 目标            |
+| `tsconfig.node.json`     | Vite/config 侧 Node 类型                    |
+| `vitest.config.ts`       | Vitest alias 和 test environment            |
 
 分层原因是 Main process、Renderer 和 build tooling 的 module system 不一致。Shared code 必须同时适配 Main 和 Renderer，因此不能依赖某一侧专有 API。
 
@@ -131,11 +131,11 @@ Main bundle 需要 external 部分 native/Electron/runtime 依赖，例如：
 
 `electron-builder.json` 定义平台资源和过滤规则：
 
-| 平台 | 输出 | 资源策略 |
-| --- | --- | --- |
-| macOS | DMG | `vendor/openclaw-runtime/current` 作为 extraResources，内置 skills 随 runtime 提供 |
-| Windows | NSIS | 使用 `build-tar/win-resources.tar` 和 unpack script，内置 skills 仅保留 runtime 内的一份 |
-| Linux | AppImage/deb | runtime 作为 extraResources，内置 skills 随 runtime 提供 |
+| 平台    | 输出         | 资源策略                                                                                 |
+| ------- | ------------ | ---------------------------------------------------------------------------------------- |
+| macOS   | DMG          | `vendor/openclaw-runtime/current` 作为 extraResources，内置 skills 随 runtime 提供       |
+| Windows | NSIS         | 使用 `build-tar/win-resources.tar` 和 unpack script，内置 skills 仅保留 runtime 内的一份 |
+| Linux   | AppImage/deb | runtime 作为 extraResources，内置 skills 随 runtime 提供                                 |
 
 生产构建关闭 source map 并启用压缩。打包过滤会排除 README、license、tests、map、d.ts
 以及 `compile:electron` 产生但运行时不使用的 `dist-electron/src`。新增 runtime 必需资产时要确认

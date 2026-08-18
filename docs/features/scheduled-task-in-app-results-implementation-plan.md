@@ -2,11 +2,14 @@
 
 Status: implemented
 
-Baseline:
+Historical implementation baseline:
 
 - JustDo: `v2026.8.10`
 - OpenClaw Gateway: `v2026.6.11`
 - Planning date: 2026-07-28
+
+The current bundled runtime is OpenClaw `v2026.7.1-2`; the baseline above is kept
+to identify the environment used for the original implementation and verification.
 
 ## Goal
 
@@ -66,13 +69,13 @@ channel plugin.
 Application retention is owned by JustDo Main and SQLite. It occurs regardless
 of the task's external delivery configuration:
 
-| Execution | External delivery | In-app result |
-| --- | --- | --- |
-| Success | Not configured | Saved |
-| Success | Success | Saved |
-| Success | Failure | Saved, with delivery warning |
-| Failure | Not attempted | Saved, with execution error |
-| Skipped | Not attempted | Saved, with skipped status |
+| Execution | External delivery | In-app result                |
+| --------- | ----------------- | ---------------------------- |
+| Success   | Not configured    | Saved                        |
+| Success   | Success           | Saved                        |
+| Success   | Failure           | Saved, with delivery warning |
+| Failure   | Not attempted     | Saved, with execution error  |
+| Skipped   | Not attempted     | Saved, with skipped status   |
 
 Execution status and external delivery status must remain separate in the
 domain model and UI.
@@ -158,18 +161,18 @@ flowchart LR
 
 Responsibilities:
 
-| Component | Responsibility |
-| --- | --- |
-| OpenClaw Gateway | Task definitions, schedule execution, run logs, transcripts |
-| `CronJobService` | Gateway RPC mapping and low-frequency change detection |
-| Result sync service | Reconcile Gateway runs into durable local result snapshots |
-| SQLite result store | Pagination, idempotent upsert, unread/read state |
-| Scheduled-task IPC | Query results and mutate read state |
-| Renderer | Present results, badge, toast, and full-session entry |
+| Component           | Responsibility                                              |
+| ------------------- | ----------------------------------------------------------- |
+| OpenClaw Gateway    | Task definitions, schedule execution, run logs, transcripts |
+| `CronJobService`    | Gateway RPC mapping and low-frequency change detection      |
+| Result sync service | Reconcile Gateway runs into durable local result snapshots  |
+| SQLite result store | Pagination, idempotent upsert, unread/read state            |
+| Scheduled-task IPC  | Query results and mutate read state                         |
+| Renderer            | Present results, badge, toast, and full-session entry       |
 
 ## Gateway Contract Verification
 
-Implementation verification against bundled OpenClaw `v2026.6.11`:
+Historical implementation verification against the then-bundled OpenClaw `v2026.6.11`:
 
 - `cron.runs` entries have an optional native `runId`; JustDo uses it when
   present and otherwise uses `${jobId}:${runAtMs}`, with `${jobId}:${ts}` only
@@ -183,7 +186,7 @@ Implementation verification against bundled OpenClaw `v2026.6.11`:
 - Global run history survives independently of the current job list, so startup
   reconciliation can recover results for one-time or deleted jobs.
 
-Before changing shared types, inspect the bundled OpenClaw `v2026.6.11`
+Before changing shared types, inspect the current bundled OpenClaw `v2026.7.1-2`
 `cron.runs` implementation or the live deferred schema and record the result in
 the implementation PR.
 
@@ -456,11 +459,11 @@ targets.
 Add constants under `src/shared/scheduledTask/constants.ts`:
 
 ```ts
-ListResults
-MarkResultRead
-MarkAllResultsRead
-ResultUpserted
-UnreadCountChanged
+ListResults;
+MarkResultRead;
+MarkAllResultsRead;
+ResultUpserted;
+UnreadCountChanged;
 ```
 
 Suggested preload surface:

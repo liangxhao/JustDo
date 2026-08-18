@@ -219,6 +219,7 @@ type SessionRuntimeStatus = {
 type RuntimeSessionSnapshot = {
   known: boolean;
   sessions: Array<Record<string, unknown>>;
+  hasMore: boolean;
 };
 
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {
@@ -3241,15 +3242,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         ];
         for (const candidateKey of new Set(candidateKeys)) {
           let result: { session?: { key?: string; goal?: unknown } | null };
-          try {
-            result = await this.gatewayClient.request('sessions.describe', { key: candidateKey });
-          } catch (error) {
-            hadInspectionFailure = true;
-            coworkLog('WARN', 'GoalContinuation', 'Failed to inspect a goal during recovery', {
-              sessionId: session.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-            continue;
+          const listedSession = runtimeRowsByKey.get(candidateKey);
+          if (listedSession) {
+            result = { session: listedSession };
+          } else {
+            // A complete sessions.list response is authoritative. Only fall back to
+            // per-key inspection when the Gateway reports that the list was truncated.
+            if (!runtimeSnapshot.hasMore) continue;
+            try {
+              result = await this.gatewayClient.request('sessions.describe', {
+                key: candidateKey,
+              });
+            } catch (error) {
+              hadInspectionFailure = true;
+              coworkLog('WARN', 'GoalContinuation', 'Failed to inspect a goal during recovery', {
+                sessionId: session.id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              continue;
+            }
           }
           if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
           if (!result.session || !isRecord(result.session.goal)) continue;
@@ -3805,11 +3816,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return forceRefresh ? this.getRuntimeSessionSnapshot(true) : pendingSnapshot;
     }
     const client = this.gatewayClient;
-    if (!client) return { known: false, sessions: [] };
+    if (!client) return { known: false, sessions: [], hasMore: false };
 
     this.runtimeSessionSnapshotPromise = client
-      .request<{ sessions?: Array<Record<string, unknown>> }>('sessions.list', { limit: 500 })
-      .then(result => ({ known: true, sessions: result.sessions ?? [] }))
+      .request<{ sessions?: Array<Record<string, unknown>>; hasMore?: boolean }>('sessions.list', {
+        limit: 500,
+      })
+      .then(result => {
+        const sessions = result.sessions ?? [];
+        return {
+          known: true,
+          sessions,
+          hasMore:
+            result.hasMore === true || (result.hasMore === undefined && sessions.length >= 500),
+        };
+      })
       .catch((error): RuntimeSessionSnapshot => {
         if (now - this.lastRuntimeStatusWarningAt >= RUNTIME_STATUS_WARNING_INTERVAL_MS) {
           this.lastRuntimeStatusWarningAt = now;
@@ -3817,7 +3838,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             error: error instanceof Error ? error.message : String(error),
           });
         }
-        return { known: false, sessions: [] };
+        return { known: false, sessions: [], hasMore: false };
       })
       .then(snapshot => {
         this.runtimeSessionSnapshot = {
