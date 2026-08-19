@@ -7,7 +7,14 @@
  * This replaces the Redux → CoworkMessage → gateway conversion approach
  * with a direct gateway connection, identical to OpenClaw's webchat.
  */
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useSelector } from 'react-redux';
 
 import ChatMessageDisplay from '@/features/cowork/components/ChatMessageDisplay';
@@ -220,8 +227,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       };
     }, []);
 
-    // Handle session switching
-    useEffect(() => {
+    // Synchronize the imperative controller before the browser paints the new
+    // Redux session. A passive effect leaves one frame where the chat still
+    // projects the previous/partial controller transcript; for a cold session
+    // that can expose an assistant-only snapshot until Gateway history arrives.
+    useLayoutEffect(() => {
       const controller = controllerRef.current;
       if (!controller || !currentSessionId || !currentSessionMessages) return;
 
