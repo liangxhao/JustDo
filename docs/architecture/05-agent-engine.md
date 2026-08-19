@@ -380,6 +380,12 @@ JustDo 生成的所有 `openai-completions` 模型条目都显式设置
 `compat.supportsUsageInStreaming: true`。OpenClaw 据此在流式请求中发送
 `stream_options.include_usage`，使支持该协议的模型提供商返回上下文与 token 使用统计。
 
+设置页为 provider 中的每个聊天模型保存独立的 `enabled` 选择；旧配置缺失该字段时
+视为已启用。未勾选模型仍保留在 provider 配置中，但不进入 Renderer 模型选择器、
+Main provider 解析或 OpenClaw 模型注册表。连接测试可以逐个验证所有配置模型，也可以
+从模型卡片只验证当前模型，单模型超时为 60 秒；失败模型会在当前设置草稿中自动取消勾选。红/绿状态仅表示当前设置
+窗口内的本次测试结果，不作为持久健康状态。
+
 内置模型同步会根据 `/model/info` 的 `model_info.mode` 区分聊天与 embedding
 模型。聊天模型进入应用的可选模型列表；embedding 模型按 ID 排序，并将第一个模型写入
 `agents.defaults.memorySearch`，复用同一个内置 provider 的 base URL 和 API key。若没有

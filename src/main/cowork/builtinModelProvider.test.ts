@@ -78,6 +78,39 @@ describe('syncBuiltinModelProvider', () => {
     ]);
   });
 
+  test('preserves an unchecked built-in model when refreshing the catalog', async () => {
+    const set = vi.fn();
+    const store = {
+      get: vi.fn(() => ({
+        providers: {
+          builtin_models: {
+            enabled: true,
+            apiKey: 'cached-key',
+            baseUrl: 'https://cached.example.com/v1',
+            models: [{ id: 'chat-model', name: 'Old name', enabled: false }],
+          },
+        },
+      })),
+      set,
+    } as unknown as SqliteStore;
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: [{ id: 'chat-model' }] }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [] }) }),
+    );
+
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    expect(set.mock.calls[0]?.[1].providers.builtin_models.models).toEqual([
+      expect.objectContaining({ id: 'chat-model', enabled: false }),
+    ]);
+  });
+
   test('removes the built-in provider without fetching when access is disabled', async () => {
     const appConfig = {
       model: {

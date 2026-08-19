@@ -108,6 +108,7 @@ describe('modelDiscovery', () => {
       {
         id: 'new-model',
         name: 'New model',
+        enabled: true,
         capabilitiesConfirmed: false,
       },
     ]);

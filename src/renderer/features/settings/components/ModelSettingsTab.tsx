@@ -1,5 +1,6 @@
 import {
   ArrowPathIcon,
+  CheckIcon,
   ExclamationTriangleIcon,
   MagnifyingGlassIcon,
   SignalIcon,
@@ -41,6 +42,12 @@ const formatContextLength = (tokens: number): string => {
   return String(tokens);
 };
 
+const modelToolbarButtonClassName =
+  'inline-flex h-7 items-center justify-center gap-1.5 rounded-lg border border-border bg-transparent px-2.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary-muted/50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-transparent disabled:hover:text-foreground';
+
+const modelBulkActionButtonClassName =
+  'inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] font-medium text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-secondary';
+
 interface Props {
   activeProvider: ProviderType;
   providers: ProvidersConfig;
@@ -64,11 +71,15 @@ interface Props {
     capabilitiesConfirmed?: boolean,
   ) => void;
   handleDeleteModel: (modelId: string) => void;
+  handleModelEnabledChange: (modelId: string, enabled: boolean) => void;
+  handleSetAllModelsEnabled: (enabled: boolean) => void;
   handleTestConnection: () => void;
+  handleTestModelConnection: (modelId: string) => void;
   handleRefreshBuiltinModels: () => void;
   isRefreshingBuiltinModels: boolean;
   isDetectingModels: boolean;
   modelDiscoveryMessage: string | null;
+  modelConnectionTestStatuses: Record<string, 'success' | 'failed'>;
   setDisplayNameError: (value: string | null) => void;
   setProviders: React.Dispatch<React.SetStateAction<ProvidersConfig>>;
   setError: (value: string | null) => void;
@@ -90,11 +101,15 @@ const ModelSettingsTab: React.FC<Props> = ({
   handleDetectModels,
   handleEditModel,
   handleDeleteModel,
+  handleModelEnabledChange,
+  handleSetAllModelsEnabled,
   handleTestConnection,
+  handleTestModelConnection,
   handleRefreshBuiltinModels,
   isRefreshingBuiltinModels,
   isDetectingModels,
   modelDiscoveryMessage,
+  modelConnectionTestStatuses,
   displayNameError,
   setDisplayNameError,
   setProviders,
@@ -115,6 +130,10 @@ const ModelSettingsTab: React.FC<Props> = ({
   const isReadOnly = isProviderReadOnly(activeProvider, activeConfig);
   const isBaseUrlLocked = false;
   const hasModels = (activeConfig.models?.length ?? 0) > 0;
+  const allModelsEnabled =
+    hasModels && (activeConfig.models ?? []).every(model => model.enabled !== false);
+  const noModelsEnabled =
+    hasModels && (activeConfig.models ?? []).every(model => model.enabled === false);
   const isModelActionBusy = isTesting || isDetectingModels || isRefreshingBuiltinModels;
   const actionAvailability = getModelActionAvailability({
     requiresCredentials: providerRequiresApiKey(activeProvider),
@@ -323,44 +342,48 @@ const ModelSettingsTab: React.FC<Props> = ({
       <div className="flex flex-1 min-w-0 flex-col pl-3 border-l border-border">
         <div className="flex flex-col gap-3">
           {!isBuiltinModelsProvider(activeProvider) && (
-            <div>
+            <div className="flex items-start gap-3">
               <label
                 htmlFor={`${activeProvider}-displayName`}
-                className="block text-xs font-medium text-foreground mb-1"
+                className="shrink-0 py-1.5 text-xs font-medium text-foreground"
               >
                 {i18nService.t('customDisplayName')}
               </label>
-              <input
-                type="text"
-                id={`${activeProvider}-displayName`}
-                value={(activeConfig as ProviderConfig)?.displayName ?? ''}
-                onChange={e => {
-                  const value = e.target.value;
-                  const validation = validateDisplayName(value);
-                  const duplicateName = Object.entries(providers).some(
-                    ([providerKey, providerConfig]) =>
-                      providerKey !== activeProvider &&
-                      isCustomProvider(providerKey) &&
-                      getProviderDisplayName(providerKey, providerConfig)
-                        .trim()
-                        .toLocaleLowerCase() === value.trim().toLocaleLowerCase(),
-                  );
-                  const nameError = isBuiltinProviderDisplayName(value)
-                    ? i18nService.t('providerNameConflictsBuiltin')
-                    : duplicateName
-                      ? i18nService.t('providerNameExists')
-                      : validation.valid
-                        ? undefined
-                        : i18nService.t('providerNameInvalid');
-                  setDisplayNameError(nameError ?? null);
-                  if (validation.valid && !duplicateName) {
-                    handleProviderConfigChange(activeProvider, 'displayName', value);
-                  }
-                }}
-                className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-1.5 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
-                placeholder={getCustomProviderDefaultName(activeProvider)}
-              />
-              {displayNameError && <p className="mt-1 text-xs text-red-500">{displayNameError}</p>}
+              <div className="min-w-0 flex-1">
+                <input
+                  type="text"
+                  id={`${activeProvider}-displayName`}
+                  value={(activeConfig as ProviderConfig)?.displayName ?? ''}
+                  onChange={e => {
+                    const value = e.target.value;
+                    const validation = validateDisplayName(value);
+                    const duplicateName = Object.entries(providers).some(
+                      ([providerKey, providerConfig]) =>
+                        providerKey !== activeProvider &&
+                        isCustomProvider(providerKey) &&
+                        getProviderDisplayName(providerKey, providerConfig)
+                          .trim()
+                          .toLocaleLowerCase() === value.trim().toLocaleLowerCase(),
+                    );
+                    const nameError = isBuiltinProviderDisplayName(value)
+                      ? i18nService.t('providerNameConflictsBuiltin')
+                      : duplicateName
+                        ? i18nService.t('providerNameExists')
+                        : validation.valid
+                          ? undefined
+                          : i18nService.t('providerNameInvalid');
+                    setDisplayNameError(nameError ?? null);
+                    if (validation.valid && !duplicateName) {
+                      handleProviderConfigChange(activeProvider, 'displayName', value);
+                    }
+                  }}
+                  className={`block w-full rounded-xl bg-surface-raised border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-1.5 text-xs ${displayNameError ? 'border-red-500 focus:border-red-500' : ''}`}
+                  placeholder={getCustomProviderDefaultName(activeProvider)}
+                />
+                {displayNameError && (
+                  <p className="mt-1 text-xs text-red-500">{displayNameError}</p>
+                )}
+              </div>
             </div>
           )}
 
@@ -430,9 +453,33 @@ const ModelSettingsTab: React.FC<Props> = ({
 
           <div className="flex min-h-[240px] flex-col rounded-2xl border border-border bg-surface p-3">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h3 className="shrink-0 text-xs font-semibold text-foreground">
-                {i18nService.t('availableModels')}
-              </h3>
+              <div className="flex shrink-0 items-center gap-2">
+                <h3 className="text-xs font-semibold text-foreground">
+                  {i18nService.t('availableModels')}
+                </h3>
+                {hasModels && (
+                  <div className="flex items-center gap-0.5 rounded-lg bg-surface-raised/70 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSetAllModelsEnabled(true)}
+                      disabled={isModelActionBusy || allModelsEnabled}
+                      className={modelBulkActionButtonClassName}
+                    >
+                      <CheckIcon className="h-3 w-3" />
+                      {i18nService.t('selectAllModels')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetAllModelsEnabled(false)}
+                      disabled={isModelActionBusy || noModelsEnabled}
+                      className={modelBulkActionButtonClassName}
+                    >
+                      <XMarkIcon className="h-3 w-3" />
+                      {i18nService.t('deselectAllModels')}
+                    </button>
+                  </div>
+                )}
+              </div>
               {(isBuiltinModelsProvider(activeProvider) || !isReadOnly) && (
                 <div className="flex shrink-0 items-center justify-end gap-2">
                   {!isReadOnly && (
@@ -442,12 +489,12 @@ const ModelSettingsTab: React.FC<Props> = ({
                         onClick={handleDetectModels}
                         disabled={!actionAvailability.canManageModels}
                         title={modelActionDisabledReason}
-                        className="inline-flex items-center rounded-xl bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        className={modelToolbarButtonClassName}
                       >
                         {isDetectingModels ? (
-                          <ArrowPathIcon className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                          <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                         ) : (
-                          <MagnifyingGlassIcon className="h-3.5 w-3.5 mr-1.5" />
+                          <MagnifyingGlassIcon className="h-3.5 w-3.5" />
                         )}
                         {isDetectingModels
                           ? i18nService.t('detectingModels')
@@ -458,9 +505,9 @@ const ModelSettingsTab: React.FC<Props> = ({
                         onClick={handleAddModel}
                         disabled={!actionAvailability.canManageModels}
                         title={modelActionDisabledReason}
-                        className="inline-flex items-center rounded-xl border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+                        className={modelToolbarButtonClassName}
                       >
-                        <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
+                        <PlusCircleIcon className="h-3.5 w-3.5" />
                         {i18nService.t('manualAddModel')}
                       </button>
                     </>
@@ -474,9 +521,9 @@ const ModelSettingsTab: React.FC<Props> = ({
                         ? i18nService.t('connectionTestRequiresModels')
                         : modelActionDisabledReason
                     }
-                    className="inline-flex shrink-0 items-center rounded-xl border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`${modelToolbarButtonClassName} shrink-0`}
                   >
-                    <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
+                    <SignalIcon className="h-3.5 w-3.5" />
                     {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}
                   </button>
                   {activeProvider === 'builtin_models' && (
@@ -484,10 +531,10 @@ const ModelSettingsTab: React.FC<Props> = ({
                       type="button"
                       onClick={handleRefreshBuiltinModels}
                       disabled={isModelActionBusy}
-                      className="inline-flex items-center rounded-xl border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+                      className={modelToolbarButtonClassName}
                     >
                       <ArrowPathIcon
-                        className={`h-3.5 w-3.5 mr-1.5 ${isRefreshingBuiltinModels ? 'animate-spin' : ''}`}
+                        className={`h-3.5 w-3.5 ${isRefreshingBuiltinModels ? 'animate-spin' : ''}`}
                       />
                       {i18nService.t('refresh')}
                     </button>
@@ -504,16 +551,29 @@ const ModelSettingsTab: React.FC<Props> = ({
 
             <div className="min-h-[120px] flex-1 space-y-1.5 overflow-y-auto">
               {(activeConfig.models ?? []).map(model => {
-                const capabilitiesConfirmed =
-                  isReadOnly || hasConfirmedModelCapabilities(model);
+                const capabilitiesConfirmed = isReadOnly || hasConfirmedModelCapabilities(model);
+                const connectionTestStatus = modelConnectionTestStatuses[model.id];
                 return (
                   <div
                     key={model.id}
-                    className="bg-surface p-2 rounded-xl border-border border transition-colors hover:border-primary group"
+                    className="bg-surface p-2 rounded-xl border-border border transition-colors hover:border-primary"
                   >
                     <div className="flex items-center justify-between gap-2 min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <div className="w-1.5 h-1.5 shrink-0 rounded-full bg-green-400" />
+                        <div className="flex w-3 shrink-0 items-center justify-center">
+                          {connectionTestStatus && (
+                            <div
+                              className={`h-2 w-2 rounded-full ${
+                                connectionTestStatus === 'success' ? 'bg-green-400' : 'bg-red-500'
+                              }`}
+                              title={i18nService.t(
+                                connectionTestStatus === 'success'
+                                  ? 'connectionSuccess'
+                                  : 'connectionFailed',
+                              )}
+                            />
+                          )}
+                        </div>
                         <div className="min-w-0">
                           <div className="text-foreground font-medium text-[11px] truncate">
                             {model.name}
@@ -558,6 +618,16 @@ const ModelSettingsTab: React.FC<Props> = ({
                             {i18nService.t('outputShort')} {formatContextLength(model.maxTokens)}
                           </span>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => handleTestModelConnection(model.id)}
+                          disabled={!actionAvailability.canTestConnection}
+                          className="rounded-md p-0.5 text-secondary transition-colors hover:bg-primary-muted hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                          title={i18nService.t('testThisModel')}
+                          aria-label={`${i18nService.t('testThisModel')}: ${model.name}`}
+                        >
+                          <SignalIcon className="h-3.5 w-3.5" />
+                        </button>
                         {!isReadOnly && (
                           <>
                             <button
@@ -572,19 +642,43 @@ const ModelSettingsTab: React.FC<Props> = ({
                                   model.capabilitiesConfirmed,
                                 )
                               }
-                              className="p-0.5 text-secondary hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                              disabled={isModelActionBusy}
+                              className="rounded-md p-0.5 text-secondary transition-colors hover:bg-primary-muted hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                              title={i18nService.t('editModel')}
+                              aria-label={`${i18nService.t('editModel')}: ${model.name}`}
                             >
                               <PencilIcon className="h-3.5 w-3.5" />
                             </button>
                             <button
                               type="button"
                               onClick={() => handleDeleteModel(model.id)}
-                              className="p-0.5 text-secondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                              disabled={isModelActionBusy}
+                              className="rounded-md p-0.5 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                              title={i18nService.t('deleteModel')}
+                              aria-label={`${i18nService.t('deleteModel')}: ${model.name}`}
                             >
                               <TrashIcon className="h-3.5 w-3.5" />
                             </button>
                           </>
                         )}
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={model.enabled !== false}
+                          aria-label={`${i18nService.t('includeModelInAvailableModels')}: ${model.name}`}
+                          title={i18nService.t('includeModelInAvailableModels')}
+                          disabled={isModelActionBusy}
+                          onClick={() =>
+                            handleModelEnabledChange(model.id, model.enabled === false)
+                          }
+                          className={`ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50 ${
+                            model.enabled !== false
+                              ? 'border-primary text-primary hover:border-primary-hover hover:text-primary-hover'
+                              : 'border-border text-transparent hover:border-secondary'
+                          }`}
+                        >
+                          <CheckIcon className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        </button>
                       </div>
                     </div>
                   </div>

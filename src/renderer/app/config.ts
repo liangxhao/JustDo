@@ -36,6 +36,7 @@ export interface AppConfig {
       models?: Array<{
         id: string;
         name: string;
+        enabled?: boolean;
         capabilitiesConfirmed?: boolean;
         supportsImage?: boolean;
         contextLength?: number;
@@ -86,6 +87,7 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
       models?: Array<{
         id: string;
         name: string;
+        enabled?: boolean;
         capabilitiesConfirmed?: boolean;
         supportsImage?: boolean;
         contextLength?: number;

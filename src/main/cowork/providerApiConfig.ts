@@ -4,6 +4,7 @@ import type { CoworkApiConfig } from './coworkConfigStore';
 type ProviderModel = {
   id: string;
   name?: string;
+  enabled?: boolean;
   supportsImage?: boolean;
   contextLength?: number;
   maxTokens?: number;
@@ -43,6 +44,8 @@ export type ApiConfigResolution = {
 let storeGetter: (() => SqliteStore | null) | null = null;
 let lastLoggedProviderSignature: string | null = null;
 
+const isProviderModelEnabled = (model: ProviderModel): boolean => model.enabled !== false;
+
 export function setStoreGetter(getter: () => SqliteStore | null): void {
   storeGetter = getter;
 }
@@ -79,7 +82,9 @@ function resolveMatchedProvider(appConfig: AppConfig): {
       if (!providerConfig?.enabled || !providerConfig.models?.length) {
         continue;
       }
-      const fallbackModel = providerConfig.models.find(model => model.id?.trim());
+      const fallbackModel = providerConfig.models.find(
+        model => isProviderModelEnabled(model) && model.id?.trim(),
+      );
       if (fallbackModel) {
         return {
           providerName,
@@ -108,14 +113,17 @@ function resolveMatchedProvider(appConfig: AppConfig): {
     const preferredProvider = providers[preferredProviderName];
     if (
       preferredProvider?.enabled &&
-      preferredProvider.models?.some(model => model.id === modelId)
+      preferredProvider.models?.some(model => isProviderModelEnabled(model) && model.id === modelId)
     ) {
       providerEntry = [preferredProviderName, preferredProvider];
     }
   }
 
   providerEntry ??= Object.entries(providers).find(([, provider]) => {
-    return !!provider?.enabled && !!provider.models?.some(model => model.id === modelId);
+    return (
+      !!provider?.enabled &&
+      !!provider.models?.some(model => isProviderModelEnabled(model) && model.id === modelId)
+    );
   });
 
   if (!providerEntry) {
@@ -137,7 +145,9 @@ function resolveMatchedProvider(appConfig: AppConfig): {
     return { matched: null, error: `Provider ${providerName} requires API key.` };
   }
 
-  const matchedModel = providerConfig.models?.find(model => model.id === modelId);
+  const matchedModel = providerConfig.models?.find(
+    model => isProviderModelEnabled(model) && model.id === modelId,
+  );
 
   return {
     matched: {
@@ -292,7 +302,9 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
     const baseURL = providerConfig.baseUrl?.trim() || '';
     if (!baseURL) continue;
 
-    const models = (providerConfig.models ?? []).filter(model => model.id?.trim());
+    const models = (providerConfig.models ?? []).filter(
+      model => isProviderModelEnabled(model) && model.id?.trim(),
+    );
     const embeddingModels = (providerConfig.embeddingModels ?? []).filter(model =>
       model.id?.trim(),
     );

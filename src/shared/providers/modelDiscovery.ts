@@ -13,6 +13,7 @@ export type DiscoveredProviderModel = {
 export type ConfiguredProviderModel = {
   id: string;
   name: string;
+  enabled?: boolean;
   capabilitiesConfirmed?: boolean;
   supportsImage?: boolean;
   contextLength?: number;
@@ -265,6 +266,7 @@ export const mergeDiscoveredProviderModels = (
     .map(model => ({
       id: model.id,
       name: model.name || model.id,
+      enabled: true,
       capabilitiesConfirmed: false,
     }));
 

@@ -175,11 +175,12 @@ const App: React.FC = () => {
                 (model: {
                   id: string;
                   name: string;
+                  enabled?: boolean;
                   supportsImage?: boolean;
                   contextLength?: number;
                   maxTokens?: number;
                 }) => {
-                  if (!model?.id) {
+                  if (!model?.id || model.enabled === false) {
                     return;
                   }
                   providerModels.push({
@@ -482,11 +483,12 @@ const App: React.FC = () => {
             (model: {
               id: string;
               name: string;
+              enabled?: boolean;
               supportsImage?: boolean;
               contextLength?: number;
               maxTokens?: number;
             }) => {
-              if (!model?.id) {
+              if (!model?.id || model.enabled === false) {
                 return;
               }
               allModels.push({

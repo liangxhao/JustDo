@@ -13,6 +13,13 @@ export const mergeRefreshedBuiltinProvider = (
     return nextProviders;
   }
 
+  const currentEnabledById = new Map(
+    (currentProviders.builtin_models?.models ?? []).map(model => [
+      model.id,
+      model.enabled !== false,
+    ]),
+  );
+
   return {
     ...currentProviders,
     builtin_models: {
@@ -20,6 +27,7 @@ export const mergeRefreshedBuiltinProvider = (
       apiFormat: 'openai',
       models: refreshedBuiltinProvider.models?.map(model => ({
         ...model,
+        enabled: currentEnabledById.get(model.id) ?? model.enabled ?? true,
         supportsImage: model.supportsImage ?? false,
       })),
     },

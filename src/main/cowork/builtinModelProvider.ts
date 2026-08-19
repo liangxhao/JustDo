@@ -13,6 +13,7 @@ import { BUILTIN_MODEL_PROVIDER_CONFIG } from './builtinModelProviderConfig';
 type ProviderModel = {
   id: string;
   name: string;
+  enabled?: boolean;
   supportsImage?: boolean;
   contextLength?: number;
   maxTokens?: number;
@@ -161,6 +162,14 @@ export async function syncBuiltinModelProvider(
       return;
     }
     models = fetchedModels.chatModels;
+    const previousModels = providers[ProviderName.BuiltinModels]?.models ?? [];
+    const previousEnabledById = new Map(
+      previousModels.map(model => [model.id, model.enabled !== false]),
+    );
+    models = models.map(model => ({
+      ...model,
+      enabled: previousEnabledById.get(model.id) ?? true,
+    }));
     embeddingModels = fetchedModels.embeddingModels;
     console.log(
       `[BuiltinModelProvider] Synced ${models.length} chat model(s) and ${embeddingModels.length} embedding model(s)`,

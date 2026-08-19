@@ -14,6 +14,7 @@ import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cow
 import { DeveloperConfigIpc } from '../shared/developerConfig';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
 import { LogIpc } from '../shared/logIpc';
+import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
 import {
   type ApprovalDecision,
   type ApprovalKind,
@@ -165,12 +166,9 @@ contextBridge.exposeInMainWorld('electron', {
   },
   api: {
     // 普通 API 请求（非流式）
-    fetch: (options: {
-      url: string;
-      method: string;
-      headers: Record<string, string>;
-      body?: string;
-    }) => ipcRenderer.invoke('api:fetch', options),
+    fetch: (options: ApiFetchOptions) => ipcRenderer.invoke(NetworkIpc.Fetch, options),
+    cancelFetch: (requestId: string): Promise<void> =>
+      ipcRenderer.invoke(NetworkIpc.CancelFetch, requestId),
   },
   ipcRenderer: {
     send: (channel: string, ...args: unknown[]) => {

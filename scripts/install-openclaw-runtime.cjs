@@ -584,18 +584,24 @@ function installProdDeps(runtimeDir, npmPlatform, npmArch) {
   fs.writeFileSync(pkgPath, JSON.stringify(runtimePkg, null, 2) + '\n');
 
   // Install production dependencies for the target platform.
-  runNpm(['install', '--omit=dev', '--package-lock=true', '--no-audit', '--no-fund'], {
-    cwd: runtimeDir,
-    stdio: 'inherit',
-    timeout: 10 * 60 * 1000,
-    env: {
-      npm_config_platform: npmPlatform,
-      npm_config_arch: npmArch,
-      npm_config_target_platform: npmPlatform,
-      npm_config_target_arch: npmArch,
-      npm_config_package_lock: 'true',
+  runNpm(
+    [
+      'install',
+      '--omit=dev',
+      '--package-lock=true',
+      '--no-audit',
+      '--no-fund',
+      '--os',
+      npmPlatform,
+      '--cpu',
+      npmArch,
+    ],
+    {
+      cwd: runtimeDir,
+      stdio: 'inherit',
+      timeout: 10 * 60 * 1000,
     },
-  });
+  );
 }
 
 // ===========================================================================

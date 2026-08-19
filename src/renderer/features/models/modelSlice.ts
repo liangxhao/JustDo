@@ -47,7 +47,7 @@ function buildInitialModels(): Model[] {
     Object.entries(defaultConfig.providers).forEach(([providerName, config]) => {
       if (config.enabled && config.models) {
         config.models.forEach(model => {
-          if (!model?.id) {
+          if (!model?.id || model.enabled === false) {
             return;
           }
           models.push({
@@ -63,7 +63,9 @@ function buildInitialModels(): Model[] {
       }
     });
   }
-  return models.length > 0 ? models : defaultConfig.model.availableModels.filter(model => model?.id);
+  return models.length > 0
+    ? models
+    : defaultConfig.model.availableModels.filter(model => model?.id);
 }
 
 // 初始可用模型列表（会在运行时更新）

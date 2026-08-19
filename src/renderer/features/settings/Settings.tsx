@@ -61,7 +61,12 @@ import ShortcutsSettings, {
 } from '@/features/settings/components/ShortcutsSettings';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
 import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
-import { buildModelConnectionTestRequestBody } from '@/features/settings/modelConnectionTest';
+import {
+  buildModelConnectionTestRequestBody,
+  MODEL_CONNECTION_TEST_TIMEOUT_MS,
+  selectModelsForConnectionTest,
+  withModelConnectionTestTimeout,
+} from '@/features/settings/modelConnectionTest';
 import { validateModelForm } from '@/features/settings/modelFormValidation';
 import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
 import { configService } from '@/services/config';
@@ -113,6 +118,7 @@ type ModelConnectionTestResult = {
   log?: string;
   status?: 'pending' | 'testing' | 'success' | 'failed';
 };
+type ModelConnectionTestStatus = 'success' | 'failed';
 
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'builtin_models';
 const isProviderReadOnly = (provider: ProviderType, config?: ProviderConfig): boolean =>
@@ -246,6 +252,7 @@ const getDefaultProviders = (): ProvidersConfig => {
         models: providerConfig.models?.map(model => ({
           ...model,
           name: model.name.replace('(Secure)', secureSuffix),
+          enabled: model.enabled ?? true,
           supportsImage: model.supportsImage ?? false,
         })),
       },
@@ -319,6 +326,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [testResult, setTestResult] = useState<ProviderConnectionTestResult | null>(null);
   const [isTestResultModalOpen, setIsTestResultModalOpen] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [modelConnectionTestStatuses, setModelConnectionTestStatuses] = useState<
+    Record<ProviderType, Record<string, ModelConnectionTestStatus>>
+  >({});
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(220);
   const [appVersion, setAppVersion] = useState<string>('unknown');
@@ -326,6 +336,36 @@ const Settings: React.FC<SettingsProps> = ({
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const didSaveRef = useRef(false);
+  const connectionTestRef = useRef({ generation: 0, requestId: null as string | null });
+
+  const cancelConnectionTest = useCallback((updateState = true) => {
+    connectionTestRef.current.generation += 1;
+    const requestId = connectionTestRef.current.requestId;
+    connectionTestRef.current.requestId = null;
+    if (requestId) {
+      void window.electron.api.cancelFetch(requestId).catch(() => undefined);
+    }
+    if (updateState) {
+      setIsTesting(false);
+    }
+  }, []);
+
+  const handleCloseTestResultModal = useCallback(() => {
+    cancelConnectionTest();
+    setIsTestResultModalOpen(false);
+  }, [cancelConnectionTest]);
+
+  const handleCloseSettings = useCallback(() => {
+    cancelConnectionTest();
+    onClose();
+  }, [cancelConnectionTest, onClose]);
+
+  useEffect(
+    () => () => {
+      cancelConnectionTest(false);
+    },
+    [cancelConnectionTest],
+  );
 
   useEffect(() => {
     if (activeTab === 'help') {
@@ -679,6 +719,7 @@ const Settings: React.FC<SettingsProps> = ({
               const models = providerConfig.models?.map(model => {
                 return {
                   ...model,
+                  enabled: model.enabled ?? true,
                   supportsImage: model.supportsImage ?? false,
                 };
               });
@@ -955,6 +996,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   // Handle provider change
   const handleProviderChange = (provider: ProviderType) => {
+    cancelConnectionTest();
     modelDiscoveryGenerationRef.current += 1;
     setIsDetectingModels(false);
     setIsAddingModel(false);
@@ -1183,6 +1225,9 @@ const Settings: React.FC<SettingsProps> = ({
       Object.entries(normalizedProviders).forEach(([providerName, config]) => {
         if (config.enabled && config.models) {
           config.models.forEach(model => {
+            if (model.enabled === false) {
+              return;
+            }
             allModels.push({
               id: model.id,
               name: model.name,
@@ -1198,7 +1243,7 @@ const Settings: React.FC<SettingsProps> = ({
       dispatch(setAvailableModels(allModels));
 
       didSaveRef.current = true;
-      onClose();
+      handleCloseSettings();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to save settings');
     } finally {
@@ -1317,6 +1362,28 @@ const Settings: React.FC<SettingsProps> = ({
     }));
   };
 
+  const handleModelEnabledChange = (modelId: string, enabled: boolean) => {
+    setProviders(prev => ({
+      ...prev,
+      [activeProvider]: {
+        ...prev[activeProvider],
+        models: (prev[activeProvider].models ?? []).map(model =>
+          model.id === modelId ? { ...model, enabled } : model,
+        ),
+      },
+    }));
+  };
+
+  const handleSetAllModelsEnabled = (enabled: boolean) => {
+    setProviders(prev => ({
+      ...prev,
+      [activeProvider]: {
+        ...prev[activeProvider],
+        models: (prev[activeProvider].models ?? []).map(model => ({ ...model, enabled })),
+      },
+    }));
+  };
+
   const handleSaveNewModel = () => {
     const modelId = newModelId.trim();
     const modelName = newModelName.trim();
@@ -1337,9 +1404,13 @@ const Settings: React.FC<SettingsProps> = ({
     }
 
     const capabilitiesConfirmed = modelCapabilitiesInitiallyConfirmed || modelCapabilitiesDirty;
+    const existingModel = isEditingModel
+      ? currentModels.find(model => model.id === editingModelId)
+      : undefined;
     const nextModel = {
       id: modelId,
       name: modelName,
+      enabled: existingModel?.enabled ?? true,
       capabilitiesConfirmed,
       ...(capabilitiesConfirmed
         ? {
@@ -1453,12 +1524,50 @@ const Settings: React.FC<SettingsProps> = ({
     });
   };
 
+  const applyModelConnectionTestOutcome = (
+    provider: ProviderType,
+    result: ModelConnectionTestResult,
+  ) => {
+    const status: ModelConnectionTestStatus = result.success ? 'success' : 'failed';
+    setModelConnectionTestStatuses(current => ({
+      ...current,
+      [provider]: {
+        ...current[provider],
+        [result.modelId]: status,
+      },
+    }));
+    if (!result.success) {
+      setProviders(current => ({
+        ...current,
+        [provider]: {
+          ...current[provider],
+          models: (current[provider].models ?? []).map(model =>
+            model.id === result.modelId ? { ...model, enabled: false } : model,
+          ),
+        },
+      }));
+    }
+  };
+
   // 测试 API 连接
-  const handleTestConnection = async () => {
+  const handleTestConnection = async (modelId?: string) => {
+    cancelConnectionTest();
     const testingProvider = activeProvider;
     const providerConfig = providers[testingProvider];
+    const testGeneration = connectionTestRef.current.generation;
+    const isCurrentTest = () => connectionTestRef.current.generation === testGeneration;
     setIsTesting(true);
     setTestResult(null);
+    setModelConnectionTestStatuses(current => ({
+      ...current,
+      [testingProvider]: modelId
+        ? Object.fromEntries(
+            Object.entries(current[testingProvider] ?? {}).filter(
+              ([testedModelId]) => testedModelId !== modelId,
+            ),
+          )
+        : {},
+    }));
 
     // Check if provider has valid authentication
     if (
@@ -1467,6 +1576,7 @@ const Settings: React.FC<SettingsProps> = ({
       isDetectingModels
     ) {
       setIsTesting(false);
+      connectionTestRef.current.requestId = null;
       return;
     }
 
@@ -1477,10 +1587,18 @@ const Settings: React.FC<SettingsProps> = ({
         testingProvider,
       );
       setIsTesting(false);
+      connectionTestRef.current.requestId = null;
       return;
     }
 
-    const modelsToTest = originalModels.map(model => ({ ...model }));
+    const modelsToTest = selectModelsForConnectionTest(originalModels, modelId).map(model => ({
+      ...model,
+    }));
+    if (modelsToTest.length === 0) {
+      setIsTesting(false);
+      connectionTestRef.current.requestId = null;
+      return;
+    }
 
     try {
       const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl);
@@ -1506,6 +1624,9 @@ const Settings: React.FC<SettingsProps> = ({
 
       const results: ModelConnectionTestResult[] = [];
       for (const model of modelsToTest) {
+        if (!isCurrentTest()) {
+          return;
+        }
         const modelLabel = model.name?.trim() || model.id;
         updateConnectionTestModelResult(model.id, {
           success: false,
@@ -1515,22 +1636,41 @@ const Settings: React.FC<SettingsProps> = ({
           detail: i18nService.t('connectionTestRunning'),
         });
         await waitForNextPaint();
+        if (!isCurrentTest()) {
+          return;
+        }
 
         const requestBody = buildModelConnectionTestRequestBody(
           model.id,
           CONNECTIVITY_TEST_TOKEN_BUDGET,
+          isBuiltinModelsProvider(testingProvider),
         );
         const headers = buildOpenAIJsonRequestHeaders(requestBody, effectiveApiKey, {
           includeContentLength: false,
         });
+        const requestId = `model-connection-test-${crypto.randomUUID()}`;
+        connectionTestRef.current.requestId = requestId;
 
         try {
-          const response = await window.electron.api.fetch({
-            url: openaiUrl,
-            method: 'POST',
-            headers,
-            body: requestBody,
-          });
+          const response = await withModelConnectionTestTimeout(
+            window.electron.api.fetch({
+              url: openaiUrl,
+              method: 'POST',
+              headers,
+              body: requestBody,
+              requestId,
+            }),
+            () => window.electron.api.cancelFetch(requestId),
+            i18nService
+              .t('connectionTestTimeout')
+              .replace('{seconds}', String(MODEL_CONNECTION_TEST_TIMEOUT_MS / 1000)),
+          );
+          if (!isCurrentTest()) {
+            return;
+          }
+          if (connectionTestRef.current.requestId === requestId) {
+            connectionTestRef.current.requestId = null;
+          }
           const data = response.data || {};
           if (response.ok && isValidConnectivityResponse(data)) {
             const nextResult: ModelConnectionTestResult = {
@@ -1542,6 +1682,7 @@ const Settings: React.FC<SettingsProps> = ({
             };
             results.push(nextResult);
             updateConnectionTestModelResult(model.id, nextResult);
+            applyModelConnectionTestOutcome(testingProvider, nextResult);
             continue;
           }
 
@@ -1570,7 +1711,14 @@ const Settings: React.FC<SettingsProps> = ({
           };
           results.push(nextResult);
           updateConnectionTestModelResult(model.id, nextResult);
+          applyModelConnectionTestOutcome(testingProvider, nextResult);
         } catch (err) {
+          if (!isCurrentTest()) {
+            return;
+          }
+          if (connectionTestRef.current.requestId === requestId) {
+            connectionTestRef.current.requestId = null;
+          }
           const nextResult: ModelConnectionTestResult = {
             success: false,
             status: 'failed',
@@ -1587,7 +1735,12 @@ const Settings: React.FC<SettingsProps> = ({
           };
           results.push(nextResult);
           updateConnectionTestModelResult(model.id, nextResult);
+          applyModelConnectionTestOutcome(testingProvider, nextResult);
         }
+      }
+
+      if (!isCurrentTest()) {
+        return;
       }
 
       const passedCount = results.filter(result => result.success).length;
@@ -1624,6 +1777,9 @@ const Settings: React.FC<SettingsProps> = ({
         testingProvider,
       );
     } catch (err) {
+      if (!isCurrentTest()) {
+        return;
+      }
       const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl).replace(
         /\/+$/,
         '',
@@ -1646,7 +1802,10 @@ const Settings: React.FC<SettingsProps> = ({
         testingProvider,
       );
     } finally {
-      setIsTesting(false);
+      if (isCurrentTest()) {
+        connectionTestRef.current.requestId = null;
+        setIsTesting(false);
+      }
     }
   };
 
@@ -2392,11 +2551,15 @@ const Settings: React.FC<SettingsProps> = ({
             handleDetectModels={handleDetectModels}
             handleEditModel={handleEditModel}
             handleDeleteModel={handleDeleteModel}
-            handleTestConnection={handleTestConnection}
+            handleModelEnabledChange={handleModelEnabledChange}
+            handleSetAllModelsEnabled={handleSetAllModelsEnabled}
+            handleTestConnection={() => handleTestConnection()}
+            handleTestModelConnection={modelId => handleTestConnection(modelId)}
             handleRefreshBuiltinModels={handleRefreshBuiltinModels}
             isRefreshingBuiltinModels={isRefreshingBuiltinModels}
             isDetectingModels={isDetectingModels}
             modelDiscoveryMessage={modelDiscoveryMessage}
+            modelConnectionTestStatuses={modelConnectionTestStatuses[activeProvider] ?? {}}
             setDisplayNameError={setDisplayNameError}
             setProviders={setProviders}
             setError={setError}
@@ -2483,7 +2646,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   return (
     <Modal
-      onClose={onClose}
+      onClose={handleCloseSettings}
       overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center"
     >
       <div
@@ -2557,7 +2720,7 @@ const Settings: React.FC<SettingsProps> = ({
           <div className="flex justify-between items-center px-6 pt-5 pb-3 shrink-0">
             <h3 className="text-lg font-semibold text-foreground">{activeTabLabel}</h3>
             <button
-              onClick={onClose}
+              onClick={handleCloseSettings}
               className="text-secondary hover:text-foreground p-1.5 hover:bg-surface-raised rounded-lg transition-colors"
             >
               <XMarkIcon className="h-5 w-5" />
@@ -2595,7 +2758,7 @@ const Settings: React.FC<SettingsProps> = ({
               <div className="flex justify-end space-x-4 p-4 border-border border-t bg-background shrink-0">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleCloseSettings}
                   className="px-4 py-2 text-foreground hover:bg-surface-raised rounded-xl transition-colors text-sm font-medium border border-border active:scale-[0.98]"
                 >
                   {i18nService.t('cancel')}
@@ -2617,7 +2780,7 @@ const Settings: React.FC<SettingsProps> = ({
             className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
             onClick={e => {
               if (e.target === e.currentTarget) {
-                setIsTestResultModalOpen(false);
+                handleCloseTestResultModal();
               }
             }}
           >
@@ -2635,7 +2798,7 @@ const Settings: React.FC<SettingsProps> = ({
                 </h4>
                 <button
                   type="button"
-                  onClick={() => setIsTestResultModalOpen(false)}
+                  onClick={handleCloseTestResultModal}
                   className="p-1 text-secondary hover:text-foreground rounded-md hover:bg-surface-raised"
                 >
                   <XMarkIcon className="h-4 w-4" />
@@ -2668,7 +2831,7 @@ const Settings: React.FC<SettingsProps> = ({
                   </span>
                 </div>
                 <span className="rounded-full border border-border bg-surface px-2 py-1 text-xs font-medium text-secondary">
-                  stream=false
+                  stream=false · timeout={MODEL_CONNECTION_TEST_TIMEOUT_MS / 1000}s
                 </span>
               </div>
 
@@ -2775,7 +2938,7 @@ const Settings: React.FC<SettingsProps> = ({
               <div className="mt-4 flex justify-end">
                 <button
                   type="button"
-                  onClick={() => setIsTestResultModalOpen(false)}
+                  onClick={handleCloseTestResultModal}
                   className="px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised transition-colors active:scale-[0.98]"
                 >
                   {i18nService.t('close')}

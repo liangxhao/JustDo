@@ -33,6 +33,7 @@ type BrowserConnectionTestResult = import('../../shared/browser').BrowserConnect
 type BrowserMode = import('../../shared/browser').BrowserMode;
 type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
 type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
+type ApiFetchOptions = import('../../shared/network').ApiFetchOptions;
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -480,12 +481,8 @@ interface IElectronAPI {
     list: () => Promise<Agent[]>;
   };
   api: {
-    fetch: (options: {
-      url: string;
-      method: string;
-      headers: Record<string, string>;
-      body?: string;
-    }) => Promise<ApiResponse>;
+    fetch: (options: ApiFetchOptions) => Promise<ApiResponse>;
+    cancelFetch: (requestId: string) => Promise<void>;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;
   checkApiConfig: (options?: {

@@ -7,7 +7,7 @@ import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettings
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 
 const provider = (
-  models: Array<{ id: string; name: string; supportsImage?: boolean }>,
+  models: Array<{ id: string; name: string; enabled?: boolean; supportsImage?: boolean }>,
   enabled = true,
 ): ProvidersConfig[string] => ({
   enabled,
@@ -33,14 +33,17 @@ describe('model settings refresh', () => {
     const result = mergeRefreshedBuiltinProvider(currentProviders, refreshedProviders);
 
     expect(result.builtin_models.models).toEqual([
-      { id: 'new-model', name: 'New model', supportsImage: false },
+      { id: 'new-model', name: 'New model', enabled: true, supportsImage: false },
     ]);
     expect(result.custom_0).toBe(currentProviders.custom_0);
   });
 
   test('builds the global selector list from the refreshed enabled providers', () => {
     const providers: ProvidersConfig = {
-      builtin_models: provider([{ id: 'new-model', name: 'New model', supportsImage: true }]),
+      builtin_models: provider([
+        { id: 'new-model', name: 'New model', supportsImage: true },
+        { id: 'unchecked-model', name: 'Unchecked model', enabled: false },
+      ]),
       custom_0: provider([{ id: 'disabled-model', name: 'Disabled model' }], false),
     };
 
@@ -50,6 +53,21 @@ describe('model settings refresh', () => {
         providerKey: 'builtin_models',
         supportsImage: true,
       }),
+    ]);
+  });
+
+  test('preserves an unchecked built-in model across refreshes', () => {
+    const currentProviders: ProvidersConfig = {
+      builtin_models: provider([{ id: 'same-model', name: 'Old name', enabled: false }]),
+    };
+    const refreshedProviders: ProvidersConfig = {
+      builtin_models: provider([{ id: 'same-model', name: 'New name' }]),
+    };
+
+    const result = mergeRefreshedBuiltinProvider(currentProviders, refreshedProviders);
+
+    expect(result.builtin_models.models).toEqual([
+      { id: 'same-model', name: 'New name', enabled: false, supportsImage: false },
     ]);
   });
 

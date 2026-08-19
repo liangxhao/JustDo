@@ -30,6 +30,17 @@ test('keeps Electron readiness probes quiet and bounded', () => {
   expect(devRunner).not.toContain('wait-on -v');
 });
 
+test('uses supported npm target options for OpenClaw runtime dependencies', () => {
+  const runtimeInstaller = fs.readFileSync(
+    path.resolve(__dirname, '../scripts/install-openclaw-runtime.cjs'),
+    'utf8',
+  );
+
+  expect(runtimeInstaller).toContain("'--os'");
+  expect(runtimeInstaller).toContain("'--cpu'");
+  expect(runtimeInstaller).not.toMatch(/npm_config_(?:target_)?(?:platform|arch)/);
+});
+
 test('rewrites and packages the OpenClaw audit writer companion', () => {
   const bundleScript = fs.readFileSync(
     path.resolve(__dirname, '../scripts/bundle-openclaw-gateway.cjs'),
