@@ -110,6 +110,61 @@ describe('GoalContinuationCoordinator', () => {
     });
   });
 
+  it('continues a replacement goal that is still active during reconciliation', async () => {
+    let harness: ReturnType<typeof createHarness>;
+    harness = createHarness(SessionGoalStatus.Active, async () => {
+      harness.setGoal({
+        ...goal(),
+        id: 'goal-2',
+        objective: 'Ship the replacement release',
+      });
+    });
+
+    await harness.coordinator.handleLifecycle({ runId: 'run-1', sessionKey, phase: 'end' });
+
+    const agentParams = harness.request.mock.calls.find(call => call[0] === 'agent')?.[1];
+    expect(agentParams.message).toContain('Ship the replacement release');
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-2',
+      phase: GoalExecutionPhase.Running,
+      continuationCount: 1,
+    });
+  });
+
+  it('does not let a late continuation acknowledgement overwrite a newer manual run', async () => {
+    const harness = createHarness();
+    let resolveAgent: (() => void) | undefined;
+    harness.request.mockImplementation(async (method: string) => {
+      if (method === 'sessions.describe') return { session: { key: sessionKey, goal: goal() } };
+      if (method === 'agent') {
+        await new Promise<void>(resolve => {
+          resolveAgent = resolve;
+        });
+        return { runId: 'accepted', status: 'accepted' };
+      }
+      throw new Error(`unexpected method ${method}`);
+    });
+
+    const continuation = harness.coordinator.handleLifecycle({
+      runId: 'old-run',
+      sessionKey,
+      phase: 'end',
+    });
+    await vi.waitFor(() => expect(harness.onRunAccepted).toHaveBeenCalledOnce());
+    await harness.coordinator.handleLifecycle({
+      runId: 'manual-run',
+      sessionKey,
+      phase: 'start',
+    });
+    resolveAgent?.();
+    await continuation;
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Running,
+      runId: 'manual-run',
+    });
+  });
+
   it.each([
     [SessionGoalStatus.Paused, GoalExecutionPhase.Stopped],
     [SessionGoalStatus.Blocked, GoalExecutionPhase.AwaitingInput],
@@ -214,6 +269,115 @@ describe('GoalContinuationCoordinator', () => {
     });
   });
 
+  it('keeps retrying when a retry timer fires while another dispatch is settling', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    let resolveAgent: (() => void) | undefined;
+    let agentCalls = 0;
+    harness.request.mockImplementation(async (method: string) => {
+      if (method === 'sessions.describe') return { session: { key: sessionKey, goal: goal() } };
+      if (method === 'agent') {
+        agentCalls += 1;
+        if (agentCalls === 1) {
+          await new Promise<void>(resolve => {
+            resolveAgent = resolve;
+          });
+        }
+        return { runId: 'accepted', status: 'accepted' };
+      }
+      throw new Error(`unexpected method ${method}`);
+    });
+
+    const firstDispatch = harness.coordinator.handleLifecycle({
+      runId: 'manual-run',
+      sessionKey,
+      phase: 'end',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const continuationRunId = harness.onRunAccepted.mock.calls[0]?.[2] as string;
+
+    await harness.coordinator.handleLifecycle({
+      runId: continuationRunId,
+      sessionKey,
+      phase: 'end',
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Retrying,
+      retryAttempt: 2,
+    });
+
+    resolveAgent?.();
+    await firstDispatch;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(harness.request.mock.calls.filter(call => call[0] === 'agent')).toHaveLength(2);
+  });
+
+  it('retries the current active goal when it replaces the failed goal', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'run-1');
+    await harness.coordinator.handleLifecycle({
+      runId: 'run-1',
+      sessionKey,
+      phase: 'error',
+      error: 'provider failed',
+    });
+    harness.setGoal({
+      ...goal(),
+      id: 'goal-2',
+      objective: 'Ship the replacement release',
+    });
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    const agentParams = harness.request.mock.calls.find(call => call[0] === 'agent')?.[1];
+    expect(agentParams.message).toContain('Ship the replacement release');
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-2',
+      phase: GoalExecutionPhase.Running,
+      continuationCount: 1,
+    });
+  });
+
+  it('keeps replacement-goal dispatch failures on the normal retry backoff', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.request.mockImplementation(async (method: string) => {
+      if (method === 'sessions.describe') return { session: { key: sessionKey, goal: goalState } };
+      if (method === 'agent') throw new Error('gateway unavailable');
+      throw new Error(`unexpected method ${method}`);
+    });
+    let goalState: unknown = goal();
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'run-1');
+    await harness.coordinator.handleLifecycle({
+      runId: 'run-1',
+      sessionKey,
+      phase: 'error',
+      error: 'provider failed',
+    });
+    goalState = {
+      ...goal(),
+      id: 'goal-2',
+      objective: 'Ship the replacement release',
+    };
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-2',
+      phase: GoalExecutionPhase.Retrying,
+      retryAttempt: 1,
+      continuationCount: 1,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-2',
+      phase: GoalExecutionPhase.Retrying,
+      retryAttempt: 2,
+      continuationCount: 2,
+    });
+  });
+
   it('uses 2/5/10/30/60 second retry backoff without a maximum attempt count', async () => {
     vi.useFakeTimers();
     const harness = createHarness();
@@ -274,9 +438,111 @@ describe('GoalContinuationCoordinator', () => {
     });
     harness.coordinator.confirmStop(sessionId);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(harness.request).not.toHaveBeenCalled();
+    expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
       phase: GoalExecutionPhase.Stopped,
+    });
+  });
+
+  it('does not let a later manual message implicitly resume an explicit user stop', async () => {
+    const harness = createHarness();
+    harness.coordinator.stop(sessionId);
+    harness.coordinator.confirmStop(sessionId);
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'manual-message',
+      sessionKey,
+      phase: 'start',
+    });
+    await harness.coordinator.handleLifecycle({
+      runId: 'manual-message',
+      sessionKey,
+      phase: 'end',
+    });
+
+    expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Stopped,
+    });
+  });
+
+  it('keeps Continue available when an explicit Stop is followed by a replacement goal', async () => {
+    const harness = createHarness();
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'old-run');
+    harness.coordinator.stop(sessionId);
+    harness.coordinator.confirmStop(sessionId);
+    harness.setGoal({
+      ...goal(),
+      id: 'goal-2',
+      objective: 'Ship the replacement release',
+    });
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'create-replacement',
+      sessionKey,
+      phase: 'start',
+    });
+    await harness.coordinator.handleLifecycle({
+      runId: 'create-replacement',
+      sessionKey,
+      phase: 'end',
+    });
+
+    expect(harness.request).not.toHaveBeenCalledWith('agent', expect.anything());
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-2',
+      phase: GoalExecutionPhase.Stopped,
+    });
+
+    await harness.coordinator.continue(sessionId, sessionKey);
+    const agentParams = harness.request.mock.calls.find(call => call[0] === 'agent')?.[1];
+    expect(agentParams.message).toContain('Ship the replacement release');
+  });
+
+  it('does not let a stopped terminal handler overwrite a concurrent Continue', async () => {
+    const harness = createHarness();
+    let resolveStoppedRead: (() => void) | undefined;
+    let describeCalls = 0;
+    const replacementGoal = {
+      ...goal(),
+      id: 'goal-2',
+      objective: 'Ship the replacement release',
+    };
+    harness.request.mockImplementation(async (method: string) => {
+      if (method === 'sessions.describe') {
+        describeCalls += 1;
+        if (describeCalls === 1) {
+          await new Promise<void>(resolve => {
+            resolveStoppedRead = resolve;
+          });
+        }
+        return { session: { key: sessionKey, goal: replacementGoal } };
+      }
+      if (method === 'agent') return { runId: 'accepted', status: 'accepted' };
+      throw new Error(`unexpected method ${method}`);
+    });
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'old-run');
+    harness.coordinator.stop(sessionId);
+    harness.coordinator.confirmStop(sessionId);
+    await harness.coordinator.handleLifecycle({
+      runId: 'replacement-run',
+      sessionKey,
+      phase: 'start',
+    });
+    const stoppedTerminal = harness.coordinator.handleLifecycle({
+      runId: 'replacement-run',
+      sessionKey,
+      phase: 'end',
+    });
+    await vi.waitFor(() => expect(describeCalls).toBe(1));
+
+    await harness.coordinator.continue(sessionId, sessionKey);
+    resolveStoppedRead?.();
+    await stoppedTerminal;
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: 'goal-2',
+      phase: GoalExecutionPhase.Running,
     });
   });
 

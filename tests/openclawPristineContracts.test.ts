@@ -89,6 +89,64 @@ function createPristineFixture(): string {
     ].join('\n'),
   );
   fs.writeFileSync(
+    path.join(root, 'dist', 'goal.js'),
+    `const MAX_ACTIVE_GOAL_OBJECTIVE_CHARS = 200;
+const ACTIVE_GOAL_CONTEXT_PREFIX = "Active goal: ";
+const ACTIVE_GOAL_CONTEXT_SUFFIX = " — advance it or update its status (get_goal/update_goal).";
+function formatActiveGoalContext(sessionEntry) {
+  const goal = sessionEntry?.goal;
+  if (goal?.status !== "active") return;
+  const objective = goal.objective.replace(/\\s+/g, " ").trim();
+  const boundedObjective = objective.length <= MAX_ACTIVE_GOAL_OBJECTIVE_CHARS ? objective : objective.slice(0, MAX_ACTIVE_GOAL_OBJECTIVE_CHARS);
+  return \`${'${'}ACTIVE_GOAL_CONTEXT_PREFIX}${'${'}boundedObjective}${'${'}ACTIVE_GOAL_CONTEXT_SUFFIX}\`;
+}
+async function updateSessionGoalObjective(options) {
+  const now = Date.now();
+  return patchSessionEntry({}, (entry) => {
+    const accounted = accountGoalUsage(entry, now);
+    if (TERMINAL_GOAL_STATUSES.has(accounted.status)) throw new Error("terminal");
+    return { goal: { ...accounted, objective, updatedAt: now } };
+  });
+}
+async function command(parsed) {
+  switch (parsed.action) {
+    case "edit": {
+      const goal = await updateSessionGoalObjective({ objective: parsed.text });
+      return \`Goal updated: ${'${'}goal.objective}\`;
+    }
+  }
+}
+`,
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist', 'goal-admission.js'),
+    `
+const refreshInboundContextAfterAdmissionWait = async () => {
+  activeGoalContext = formatActiveGoalContext(inboundContextSessionEntry);
+};
+`,
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist', 'chat-schema.js'),
+    `const ChatSendParamsSchema = Type.Object({
+  message: Type.String(),
+  idempotencyKey: NonEmptyString
+}, { additionalProperties: false });
+const ChatAbortParamsSchema = Type.Object({});
+`,
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist', 'codex-goal-results.js'),
+    `function isCodexToolResultError(details) {
+  const status = details.status.trim().toLowerCase();
+  return status !== "created" &&
+    status !== "updated" &&
+    status !== "found" &&
+    status !== "missing";
+}
+`,
+  );
+  fs.writeFileSync(
     path.join(root, 'dist', 'empty-response.js'),
     `function isEmptyResponseAssistantTurn(params) {
   if (params.payloadCount !== 0) return false;
@@ -302,6 +360,10 @@ describe('OpenClaw pristine artifact contracts', () => {
       '009-reply-conflict-retry',
       '014-context-budget-native-state',
       '020-active-run-native-state',
+      '021-native-active-goal-context',
+      '022-native-goal-objective-edit',
+      '023-chat-send-agent-continuation-gap',
+      '024-codex-goal-result-success',
       '005-visible-stop-usage-independent',
       '006-sessions-yield-active-or-pending',
       '011-compaction-summary-input',

@@ -1022,6 +1022,42 @@ test('does not send a first goal command when backing session creation fails', a
   expect(controller.state.chatSending).toBe(false);
 });
 
+test('propagates a Goal edit transport failure when requested by the caller', async () => {
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'sessions.create') {
+      return Promise.resolve({ sessionId: 'backing-session-1' });
+    }
+    if (method === 'chat.send') return Promise.reject(new Error('goal edit rejected'));
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'backing-session-1';
+
+  await expect(
+    controller.sendMessage('/goal edit refined objective', [], undefined, {
+      propagateRequestFailure: true,
+    }),
+  ).rejects.toThrow('goal edit rejected');
+
+  expect(controller.state.lastError).toBe('goal edit rejected');
+  expect(controller.state.chatSending).toBe(false);
+});
+
+test('keeps ordinary chat request failures handled inside the controller', async () => {
+  const controller = new ChatController();
+  controller.state.client = {
+    request: vi.fn().mockRejectedValue(new Error('ordinary send rejected')),
+  } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await expect(controller.sendMessage('hello')).resolves.toBeUndefined();
+  expect(controller.state.lastError).toBe('ordinary send rejected');
+});
+
 test('preserves optimistic prompt when promoting a temp session to a persisted session', async () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:temp-123';

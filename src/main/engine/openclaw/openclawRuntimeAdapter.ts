@@ -69,6 +69,7 @@ import {
   DEFAULT_MANAGED_AGENT_ID,
   isManagedSessionKey,
   type OpenClawChannelSessionSync,
+  parseManagedSessionKey,
 } from '../../openclaw/sessions/openclawChannelSessionSync';
 import { extractGatewayHistoryEntries } from '../../openclaw/sessions/openclawHistory';
 import {
@@ -2896,6 +2897,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private resolveSessionIdBySessionKey(sessionKey: string): string | null {
     const exact = this.sessionIdBySessionKey.get(sessionKey);
     if (exact) return exact;
+
+    // Managed keys embed the local session ID. Recover the mapping after a
+    // reconnect or other in-memory cache gap so a terminal lifecycle event
+    // cannot strand an otherwise active Goal. The store and agent checks keep
+    // arbitrary or cross-agent Gateway keys out of local sessions.
+    const managedKey = parseManagedSessionKey(sessionKey);
+    if (managedKey) {
+      const managedSession = this.store.getSession(managedKey.sessionId);
+      const managedAgentId = managedSession?.agentId?.trim() || DEFAULT_MANAGED_AGENT_ID;
+      if (!managedSession || (managedKey.agentId && managedKey.agentId !== managedAgentId)) {
+        return null;
+      }
+      this.rememberSessionKey(managedKey.sessionId, sessionKey);
+      return managedKey.sessionId;
+    }
+
     const normalized = normalizeMessageSessionKey(sessionKey);
     for (const [knownKey, sessionId] of this.sessionIdBySessionKey) {
       if (normalizeMessageSessionKey(knownKey) === normalized) return sessionId;

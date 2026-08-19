@@ -53,6 +53,25 @@ function findFunctionWithControlFlow(files, signature, required, forbidden, labe
   return matches.map(filePath => path.basename(filePath));
 }
 
+function findBlockBetween(files, startSignature, endSignature, required, forbidden, label) {
+  const matches = files.filter(filePath => {
+    const content = readRuntimeTextFile(filePath).replace(/\r\n/g, '\n');
+    const start = content.indexOf(startSignature);
+    if (start < 0) return false;
+    const end = content.indexOf(endSignature, start + startSignature.length);
+    if (end < 0) return false;
+    const blockSource = content.slice(start, end);
+    return (
+      required.every(fragment => blockSource.includes(fragment)) &&
+      forbidden.every(fragment => !blockSource.includes(fragment))
+    );
+  });
+  if (matches.length === 0) {
+    throw new Error(`Pristine OpenClaw bounded-block contract is missing: ${label}`);
+  }
+  return matches.map(filePath => path.basename(filePath));
+}
+
 function uniqueEvidence(...groups) {
   return [...new Set(groups.flat())];
 }
@@ -158,6 +177,74 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
           'native active-run response projection',
         ),
       ],
+      '021-native-active-goal-context': uniqueEvidence(
+        findFunctionWithControlFlow(
+          files,
+          'function formatActiveGoalContext(sessionEntry)',
+          [
+            'goal?.status !== "active"',
+            'objective.replace(/\\s+/g, " ").trim()',
+            'MAX_ACTIVE_GOAL_OBJECTIVE_CHARS',
+            'ACTIVE_GOAL_CONTEXT_PREFIX',
+            'ACTIVE_GOAL_CONTEXT_SUFFIX',
+          ],
+          [],
+          'active Goal context is normalized, bounded and restricted to active goals',
+        ),
+        findFileWithAll(
+          files,
+          ['MAX_ACTIVE_GOAL_OBJECTIVE_CHARS = 200', 'ACTIVE_GOAL_CONTEXT_PREFIX = "Active goal: "'],
+          'active Goal context uses the upstream bounded prompt contract',
+        ),
+        findFileWithAll(
+          files,
+          [
+            'refreshInboundContextAfterAdmissionWait',
+            'activeGoalContext = formatActiveGoalContext(inboundContextSessionEntry)',
+          ],
+          'active Goal context is refreshed after queue admission',
+        ),
+      ),
+      '022-native-goal-objective-edit': uniqueEvidence(
+        findFunctionWithControlFlow(
+          files,
+          'async function updateSessionGoalObjective(options)',
+          [
+            'const accounted = accountGoalUsage(entry, now);',
+            'TERMINAL_GOAL_STATUSES.has(accounted.status)',
+            '...accounted,',
+            'objective,',
+            'updatedAt: now',
+          ],
+          [],
+          'Goal edit preserves the accounted Goal identity, lifecycle and budget fields',
+        ),
+        findFileWithAll(
+          files,
+          ['case "edit":', 'updateSessionGoalObjective({', 'Goal updated: ${goal.objective}'],
+          '/goal edit dispatches to the native objective update operation',
+        ),
+      ),
+      '023-chat-send-agent-continuation-gap': findBlockBetween(
+        files,
+        'ChatSendParamsSchema =',
+        'ChatAbortParamsSchema =',
+        ['message:', 'idempotencyKey:', 'additionalProperties: false'],
+        ['extraSystemPrompt:', 'suppressPromptPersistence:'],
+        'chat.send cannot carry the non-persistent system policy used by direct agent continuations',
+      ),
+      '024-codex-goal-result-success': findFunctionWithControlFlow(
+        files,
+        'function isCodexToolResultError',
+        [
+          'status !== "created"',
+          'status !== "updated"',
+          'status !== "found"',
+          'status !== "missing"',
+        ],
+        [],
+        'Codex classifies successful Goal reads and writes as successful dynamic tool calls',
+      ),
       '005-visible-stop-usage-independent': uniqueEvidence(
         findFunctionWithControlFlow(
           files,

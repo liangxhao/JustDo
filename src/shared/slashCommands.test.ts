@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   hasSlashCommandBeforeSendHook,
   isGoalClearCommand,
+  isGoalEditCommand,
   parseGoalStartObjective,
   parseSlashCommand,
   resolveSlashCommandBehavior,
@@ -62,6 +63,8 @@ describe('parseGoalStartObjective', () => {
     expect(parseGoalStartObjective('/goal')).toBeNull();
     expect(parseGoalStartObjective('/goal status')).toBeNull();
     expect(parseGoalStartObjective('/goal complete')).toBeNull();
+    expect(parseGoalStartObjective('/goal edit refine the release dashboard')).toBeNull();
+    expect(parseGoalStartObjective('  /GOAL EDIT refine the release dashboard  ')).toBeNull();
     expect(parseGoalStartObjective('write a goal')).toBeNull();
   });
 });
@@ -73,5 +76,15 @@ describe('isGoalClearCommand', () => {
     expect(isGoalClearCommand('/goal clear now')).toBe(false);
     expect(isGoalClearCommand('/goal write clear instructions')).toBe(false);
     expect(isGoalClearCommand('/goal complete')).toBe(false);
+  });
+});
+
+describe('isGoalEditCommand', () => {
+  it('matches edit commands without matching new-goal objectives', () => {
+    expect(isGoalEditCommand('/goal edit refine the dashboard')).toBe(true);
+    expect(isGoalEditCommand(' /GOAL EDIT refine the dashboard ')).toBe(true);
+    expect(isGoalEditCommand('/goal edit')).toBe(true);
+    expect(isGoalEditCommand('/goal write edit instructions')).toBe(false);
+    expect(isGoalEditCommand('/goal status')).toBe(false);
   });
 });

@@ -122,6 +122,29 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
   ...overrides,
 });
 
+test('recovers a managed session ID when the in-memory session-key mapping is missing', () => {
+  const { store } = createEmptyStore();
+  const getSession = vi.spyOn(store, 'getSession');
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    sessionIdBySessionKey: Map<string, string>;
+    resolveSessionIdBySessionKey: (sessionKey: string) => string | null;
+  };
+  const sessionKey = 'agent:main:justdo:session-1';
+
+  expect(internals.sessionIdBySessionKey.size).toBe(0);
+  expect(internals.resolveSessionIdBySessionKey(sessionKey)).toBe('session-1');
+  expect(internals.sessionIdBySessionKey.get(sessionKey)).toBe('session-1');
+  expect(getSession).toHaveBeenCalledWith('session-1');
+
+  getSession.mockClear();
+  expect(internals.resolveSessionIdBySessionKey(sessionKey)).toBe('session-1');
+  expect(getSession).not.toHaveBeenCalled();
+
+  expect(internals.resolveSessionIdBySessionKey('agent:main:justdo:missing')).toBeNull();
+  expect(internals.resolveSessionIdBySessionKey('agent:other:justdo:session-1')).toBeNull();
+});
+
 test('keeps a managed parent turn alive during an incremental-join refill gap', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

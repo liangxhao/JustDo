@@ -280,12 +280,15 @@ continuation user prompt 不进入历史，而 assistant、thinking 和工具活
 活动或重复相同工具结果都不会触发本地熔断。生命周期错误、意外 abort 与 Gateway 请求
 失败进入 `retrying`，按 2、5、10、30、60 秒退避并在 60 秒封顶后无限重试。新手动
 消息、用户 Stop、Goal 进入等待状态或被清除会取消待执行重试。
-为补足 OpenClaw v2026.7.1-2 尚未提供的 per-turn active Goal context，隐藏 user prompt
-每轮直接携带权威 `goal.objective`；目标文本不提升为 system instruction。附加 system
-prompt 要求先审计现有历史、产物和工具证据，避免重复已完成工作，并在完成时用
-`update_goal` note 留下简短验证证据。blocked 判定与上游工具契约一致：同一阻碍至少
-连续三个 Goal turn 且已无其他可推进工作。升级到原生注入 Goal context 的 OpenClaw
-版本后应重新审计并移除重复注入。
+OpenClaw v2026.7.1-2 已在普通 `chat.send` 路径为 active Goal 注入最长 200 字符的
+per-turn context，并在排队准入后重新读取 Goal，普通用户轮次直接采用该原生能力。
+自动 continuation 刻意使用 backend `agent` RPC：`chat.send` 不接受 `extraSystemPrompt`
+或 `suppressPromptPersistence`，无法在不污染 user history 的同时保留 JustDo 的完成校验
+策略。因此隐藏 user prompt 每轮直接携带完整的权威 `goal.objective`；目标文本不提升为
+system instruction。附加 system prompt 要求先审计现有历史、产物和工具证据，避免重复
+已完成工作，并在完成时用 `update_goal` note 留下简短验证证据。blocked 判定与上游工具
+契约一致：同一阻碍至少连续三个 Goal turn 且已无其他可推进工作。后续只有当
+`chat.send` 提供等价的非持久化 system prompt 参数时，才重新评估合并两条路径。
 
 Goal 变为 `complete`、`blocked`、`paused` 或被清除时停止派发；其中 `complete` 等待用户
 确认后清除，`blocked` 等待用户补充信息，普通消息发送前会先原地恢复 Goal。JustDo 不创建
@@ -295,7 +298,9 @@ coordinator 禁止续跑，再 abort 当前 run，避免终态竞态；如果 Ga
 adapter 会恢复 stop 前的 execution 快照，避免仍在运行的任务被误报为已停止。幂等键由 Goal id、进程内续跑
 序号和随机 run id 构成，terminal lifecycle 按 run id 去重，同一 Session 的派发串行化。
 红色 Stop 按钮成功中断 active Goal 后保持 Goal metadata 为 `active`，但 execution 进入
-`stopped`，卡片显示“继续”；用户点击后通过 continuation IPC 恢复持续执行。停止时已经流式
+`stopped`，卡片显示“继续”；后续普通消息或 Goal 编辑不会隐式清除该停止状态，只有用户点击
+“继续”才通过 continuation IPC 恢复持续执行。若停止后创建了新的 active Goal，停止闩锁会
+更新到新 Goal 并继续显示“继续”，不会产生无入口的后台停滞。停止时已经流式
 收到的 Thinking 和正文会投影成 interrupted assistant 消息，并写入按 Session 隔离的本地历史
 overlay；后续 Gateway 历史刷新或应用重启仍会恢复该截断消息。Goal 卡片上的
 “暂停”则额外执行 `/goal pause`，形成可跨重连和应用重启保留的持久暂停。
@@ -315,9 +320,13 @@ envelope 中解码并只显示用户原始 follow-up。附件随创建新 Goal �
 但连接中断”的重试保持幂等，消息发送失败时也不清空草稿或反馈状态。
 进入继续完善编辑模式后隐藏“确认完成”，避免清除 Goal 后遗留无法提交的反馈状态。
 blocked Goal 的内部 resume 使用同样的 pending-input marker，保证重连不会抢在用户补充消息前续跑。
+OpenClaw 原生 `/goal edit <objective>` 会保留 Goal id、创建时间、预算窗口和生命周期状态；
+JustDo 在非终态且没有运行、续跑或重试时通过 Goal 卡片行内编辑调用该命令。编辑不会重置
+卡片依据 `createdAt` 计算的运行时长，也不会引入本地 Goal 副本。
 自动派发会给上一轮 `chat.final`/history reconciliation 留出短暂收敛窗口，并在窗口后再次
-执行 `sessions.describe`；Goal id/status 已变化、用户已 Stop 或新手动 run 已开始时取消
-该次派发，避免旧 lifecycle 终态覆盖新意图。
+执行 `sessions.describe`；Goal 已变为非 active、用户已 Stop 或新手动 run 已开始时取消
+该次派发。若 Goal 被替换但新的权威 Goal 仍为 active，则重置本次应用运行中的续跑计数并
+继续新 Goal；派发锁短暂重叠只进入退避重试，不能静默丢失续跑。
 OpenClaw 的 session metadata read 在 run 收尾阶段可能短暂落后于同一 run 内刚完成的
 `update_goal` mutation。coordinator 因此还会关联 `update_goal` 的 start/result tool event；
 一旦当前顶层 run 的 `complete` 或 `blocked` 更新成功，coordinator 会立即发布

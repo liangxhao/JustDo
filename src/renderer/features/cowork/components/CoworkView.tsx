@@ -1,5 +1,6 @@
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { SaveTextFileErrorCode } from '@shared/dialogIpc';
+import { isGoalEditCommand } from '@shared/slashCommands';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -673,15 +674,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
     ) => {
+      const goalEdit = isGoalEditCommand(gatewayPrompt ?? prompt);
       coworkService.markSessionInProgress(currentSession.id);
       return submitCoworkMessage(
         async () => {
           const chatWrapper = chatWrapperRef.current;
           if (!chatWrapper) throw new Error('Chat controller is not ready');
-          await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt);
+          await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt, {
+            propagateRequestFailure: goalEdit,
+          });
         },
         err => {
           coworkService.clearSessionInProgress(currentSession.id);
+          if (goalEdit) return;
           const message = err instanceof Error ? err.message : String(err);
           window.dispatchEvent(
             new CustomEvent('app:showToast', {

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
-import GoalStatusCard from './GoalStatusCard';
+import GoalStatusCard, { formatGoalElapsed } from './GoalStatusCard';
 
 const activeGoal = {
   schemaVersion: 1 as const,
@@ -84,6 +84,7 @@ describe('GoalStatusCard', () => {
         goal: activeGoal,
         execution: null,
         onCommand: vi.fn(),
+        onEdit: vi.fn(),
         onPause: vi.fn(),
       }),
     );
@@ -94,6 +95,46 @@ describe('GoalStatusCard', () => {
     expect(rendered).not.toContain(i18nService.t('coworkGoalMarkComplete'));
     expect(rendered).not.toContain('42k');
     expect(rendered).not.toContain('50k');
+    expect(rendered).toContain(i18nService.t('coworkGoalEdit'));
+  });
+
+  it('hides editing while the goal is running or complete', () => {
+    const running = renderToStaticMarkup(
+      React.createElement(GoalStatusCard, {
+        goal: activeGoal,
+        isRunning: true,
+        onCommand: vi.fn(),
+        onEdit: vi.fn(),
+        onPause: vi.fn(),
+      }),
+    );
+    const complete = renderToStaticMarkup(
+      React.createElement(GoalStatusCard, {
+        goal: { ...activeGoal, status: SessionGoalStatus.Complete },
+        onCommand: vi.fn(),
+        onEdit: vi.fn(),
+      }),
+    );
+
+    expect(running).not.toContain(`aria-label="${i18nService.t('coworkGoalEdit')}"`);
+    expect(complete).not.toContain(`aria-label="${i18nService.t('coworkGoalEdit')}"`);
+  });
+
+  it('formats elapsed goal age without exposing token progress', () => {
+    const previousLanguage = i18nService.getLanguage();
+    try {
+      i18nService.setLanguage('en', { persist: false });
+      const start = 1_000_000;
+      expect(formatGoalElapsed(start, start + 30_000)).toBe('Running for less than 1 min');
+      expect(formatGoalElapsed(start, start + 17 * 60_000)).toBe('Running for 17 min');
+      expect(formatGoalElapsed(start, start + 125 * 60_000)).toBe('Running for 2 hr 5 min');
+      expect(formatGoalElapsed(start, start + 50 * 60 * 60_000)).toBe('Running for 2 d 2 hr');
+
+      i18nService.setLanguage('zh', { persist: false });
+      expect(formatGoalElapsed(start, start + 125 * 60_000)).toBe('已运行 2 小时 5 分钟');
+    } finally {
+      i18nService.setLanguage(previousLanguage, { persist: false });
+    }
   });
 
   it('keeps an active goal live while its execution snapshot is not matched yet', () => {
@@ -178,6 +219,7 @@ describe('GoalStatusCard', () => {
       },
       isRunning: true,
       onCommand: vi.fn(),
+      onEdit: vi.fn(),
       onPause: vi.fn(),
       onContinue,
     });
@@ -186,6 +228,7 @@ describe('GoalStatusCard', () => {
 
     expect(rendered).toContain(i18nService.t('coworkGoalStoppedHint'));
     expect(rendered).not.toContain(`>${i18nService.t('coworkGoalPause')}<`);
+    expect(rendered).toContain(`aria-label="${i18nService.t('coworkGoalEdit')}"`);
     expect(continueButton).not.toBeNull();
     continueButton?.props.onClick?.();
     expect(onContinue).toHaveBeenCalledOnce();

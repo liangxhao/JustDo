@@ -165,10 +165,12 @@ Goal 状态复制到 SQLite。主进程使用 canonical session key 调用 `sess
 - active 且 execution 为 `running`/`continuing` 时，卡片只显示“目标正在执行”、本次应用启动后的自动续跑轮次和“暂停”。暂停先 abort 当前 run，再将 OpenClaw Goal 持久状态切为 `paused`；输入区原有 Stop 仍只中断当前 run。active 且等待或已停止时显示“继续”和“确认完成”。所有操作固定在卡片标题区右上角，不再使用独占高度的底部操作行。thinking、工具、回复阶段和详细耗时属于消息 timeline，不在 Goal 卡片重复投影；Goal 卡片是生命周期与执行控制面，不伪装成任务进度系统。普通 `chatSending` 只有在该 Session 已存在 active Goal 时才属于 Goal 执行，不能把任意聊天误报为 Goal run。
 - active 但没有真实 execution 时显示“目标已就绪，等待继续”，提供继续和确认完成；输入区 Stop 只停止本次自动执行并保持 Goal active。stopped/failed 提供继续或重试及确认完成，其余 Goal 状态继续使用 OpenClaw 权威操作。
 - Goal 卡片不显示 token 百分比。上下文增长不是任务完成进度；`SessionGoal.tokenBudget` 仅保留对上游旧 Goal 的兼容，JustDo 不解析 `/goal --tokens`、不创建预算，也不为自动续跑注入 token、轮数或时间上限。
+- Goal 卡片根据权威 `goal.createdAt` 显示本地化运行时长，每分钟在 renderer 本地刷新，不写入持久化状态。非终态 Goal 在没有运行、自动续跑或重试时可行内编辑；保存通过现有 `chat.send` 发送 OpenClaw 原生 `/goal edit <objective>`，失败时保留草稿，`complete` 不提供编辑。
 - 自动 continuation prompt 使用 `suppressPromptPersistence: true` 隐藏，不产生伪造的 user history；中间 assistant 回复、thinking 和工具活动照常展示，保证执行可审计。
+- 普通 `chat.send` 轮次使用 OpenClaw v2026.7.1-2 原生的 bounded active Goal context；自动 continuation 仍走 `agent` RPC，以保留 `extraSystemPrompt` 和 `suppressPromptPersistence`。两条路径不得因为都携带 Goal 语义而误合并。
 - 应用或 Gateway 重启后不自动扫描和恢复旧 active Goal；卡片等待用户手动继续，避免升级或异常退出后静默执行。
 - Goal execution、Session runtime activity 和 Goal lifecycle 是三个独立概念，UI 不允许互相推断或替代。
-- renderer 只有在 `execution.goalId` 与当前 OpenClaw `goal.id` 一致时才采用 execution 快照；Goal 被替换或事件乱序时，旧 run 不得控制新 Goal 的状态文案和按钮。连续两轮没有具体工具进展触发安全熔断时显示明确原因，并提供手动重试。
+- renderer 只有在 `execution.goalId` 与当前 OpenClaw `goal.id` 一致时才采用 execution 快照；Goal 被替换或事件乱序时，旧 run 不得控制新 Goal 的状态文案和按钮。纯文本轮次或没有工具活动不触发本地进度熔断；只有 OpenClaw 权威 lifecycle 或明确停止操作才结束持续派发。
 - Gateway 查询暂时失败时保留最后一次有效状态，切换 session 时立即清空，避免跨会话串状态。
 - `/goal` 的两条发送路径都会先通过幂等的 `sessions.create` 建立或复用 OpenClaw 会话记录并取得 `sessionId`，再调用 `chat.send`：首页首轮由主进程 `OpenClawRuntimeAdapter` 处理，已有会话的后续消息由 renderer `ChatController` 处理。预建失败时停止发送，避免命令作为普通文本进入模型；不能仅凭 `chat.startup/history` 返回的候选 ID 判断持久化记录已经存在。
 

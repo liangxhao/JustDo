@@ -97,6 +97,7 @@ const GOAL_CONTROL_ACTIONS = new Set([
   'clear',
   'complete',
   'done',
+  'edit',
   'pause',
   'resume',
   'status',
@@ -110,6 +111,13 @@ export const isGoalClearCommand = (value: string): boolean => {
   const command = parseSlashCommand(value);
   if (command?.name !== 'goal') return false;
   return command.argumentsText.toLowerCase() === 'clear';
+};
+
+export const isGoalEditCommand = (value: string): boolean => {
+  const command = parseSlashCommand(value);
+  if (command?.name !== 'goal') return false;
+  const [action = ''] = command.argumentsText.split(/\s+/, 1);
+  return action.toLowerCase() === 'edit';
 };
 
 /** Returns the objective only when the command starts a new goal. */

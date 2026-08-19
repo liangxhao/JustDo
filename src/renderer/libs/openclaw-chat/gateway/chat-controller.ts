@@ -2623,7 +2623,6 @@ export class ChatController {
     const agentSeq = payload.agentSeq;
     const data = payload.data;
 
-
     const eventSession = payload.sessionKey ?? '';
     if (!this.acceptRunId(runId, Boolean(eventSession))) {
       debugLog('[ChatCtrl] ▶ event ignored (run mismatch)', {
@@ -2852,6 +2851,7 @@ export class ChatController {
     message: string,
     attachments: CoworkAttachmentPayload[] = [],
     gatewayMessage = message,
+    options: { propagateRequestFailure?: boolean } = {},
   ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
@@ -2976,7 +2976,10 @@ export class ChatController {
         this.notify();
       }
     } catch (err) {
-      if (this.state.sessionKey !== sessionKey || this.state.chatRunId !== runId) return;
+      if (this.state.sessionKey !== sessionKey || this.state.chatRunId !== runId) {
+        if (options.propagateRequestFailure) throw err;
+        return;
+      }
       reduceChatEvent(
         this.state.transcript,
         {
@@ -3003,6 +3006,7 @@ export class ChatController {
         { role: 'assistant', content: `Error: ${(err as Error).message}`, timestamp: Date.now() },
       ]);
       this.notify();
+      if (options.propagateRequestFailure) throw err;
     }
   }
 

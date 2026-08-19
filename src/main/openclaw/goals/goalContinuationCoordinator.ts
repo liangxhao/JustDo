@@ -269,9 +269,8 @@ export class GoalContinuationCoordinator {
       if (this.controlRuns.has(event.runId)) return;
       this.latestRunIds.set(sessionId, event.runId);
       const isContinuation = this.continuationRuns.has(event.runId);
-      if (isContinuation && this.stoppedSessionIds.has(sessionId)) return;
+      if (this.stoppedSessionIds.has(sessionId)) return;
       if (!isContinuation) {
-        this.stoppedSessionIds.delete(sessionId);
         this.snapshotsBeforeStop.delete(sessionId);
         this.cancelRetry(sessionId, true);
       }
@@ -305,7 +304,33 @@ export class GoalContinuationCoordinator {
     if (latestRunId && latestRunId !== event.runId) return;
 
     const current = this.snapshots.get(sessionId);
-    if (this.stoppedSessionIds.has(sessionId)) return;
+    const generation = this.generation;
+    if (this.stoppedSessionIds.has(sessionId)) {
+      // Stop is a session-level latch and only Continue may clear it. Keep its
+      // snapshot attached to a replacement active Goal so the renderer does
+      // not hide the only recovery action because of a stale Goal identity.
+      try {
+        const stoppedGoal = await this.readGoal(event.sessionKey);
+        if (
+          generation === this.generation &&
+          this.stoppedSessionIds.has(sessionId) &&
+          this.latestRunIds.get(sessionId) === event.runId &&
+          stoppedGoal?.status === SessionGoalStatus.Active &&
+          stoppedGoal.id !== current?.goalId
+        ) {
+          this.publish({
+            sessionId,
+            goalId: stoppedGoal.id,
+            phase: GoalExecutionPhase.Stopped,
+            continuationCount: 0,
+            updatedAt: this.now(),
+          });
+        }
+      } catch {
+        // Preserve the explicit Stop when the Gateway cannot be inspected.
+      }
+      return;
+    }
     if (terminalStatus) {
       this.cancelRetry(sessionId, true);
       this.publish({
@@ -327,9 +352,16 @@ export class GoalContinuationCoordinator {
       return;
     }
     this.retryAttempts.delete(sessionId);
-    if (this.dispatchingSessionIds.has(sessionId)) return;
+    if (this.dispatchingSessionIds.has(sessionId)) {
+      this.scheduleRetry(
+        sessionId,
+        event.sessionKey,
+        current?.goalId,
+        'Goal continuation dispatch is still settling',
+      );
+      return;
+    }
 
-    const generation = this.generation;
     this.dispatchingSessionIds.add(sessionId);
     try {
       let goal = await this.readGoal(event.sessionKey);
@@ -363,9 +395,12 @@ export class GoalContinuationCoordinator {
       ) {
         return;
       }
-      if (!goal || goal.status !== SessionGoalStatus.Active || goal.id !== goalId) {
+      if (!goal || goal.status !== SessionGoalStatus.Active) {
         this.publishGoalState(sessionId, goal, 0);
         return;
+      }
+      if (goal.id !== goalId) {
+        this.publishGoalState(sessionId, goal, 0);
       }
       try {
         await this.dispatchContinuation(sessionId, event.sessionKey, goal, generation);
@@ -447,6 +482,9 @@ export class GoalContinuationCoordinator {
     this.latestRunIds.set(sessionId, runId);
     this.dependencies.onRunAccepted(sessionId, sessionKey, runId);
     try {
+      // Normal chat.send turns receive OpenClaw's native bounded active-Goal context. Automatic
+      // continuations use the lower-level agent RPC so the synthetic prompt stays out of history
+      // and JustDo can retain its stricter completion and blocked-state policy.
       await client.request('agent', {
         message: buildContinuationPrompt(goal),
         extraSystemPrompt: CONTINUATION_SYSTEM_PROMPT,
@@ -461,7 +499,14 @@ export class GoalContinuationCoordinator {
       this.dependencies.onRunFailed(sessionId, runId);
       throw error;
     }
-    if (generation !== this.generation || this.stoppedSessionIds.has(sessionId)) return;
+    if (
+      generation !== this.generation ||
+      this.stoppedSessionIds.has(sessionId) ||
+      this.latestRunIds.get(sessionId) !== runId ||
+      this.processedTerminalRuns.has(runId)
+    ) {
+      return;
+    }
     this.cancelRetry(sessionId, false);
     this.publish({
       sessionId,
@@ -520,30 +565,35 @@ export class GoalContinuationCoordinator {
     expectedGoalId: string | undefined,
     generation: number,
   ): Promise<void> {
-    if (
-      generation !== this.generation ||
-      this.stoppedSessionIds.has(sessionId) ||
-      this.dispatchingSessionIds.has(sessionId)
-    ) {
+    if (generation !== this.generation || this.stoppedSessionIds.has(sessionId)) return;
+    if (this.dispatchingSessionIds.has(sessionId)) {
+      this.scheduleRetry(
+        sessionId,
+        sessionKey,
+        expectedGoalId,
+        'Goal continuation dispatch is still in progress',
+      );
       return;
     }
     this.dispatchingSessionIds.add(sessionId);
+    let retryGoalId = expectedGoalId;
     try {
       const goal = await this.readGoal(sessionKey);
       if (generation !== this.generation || this.stoppedSessionIds.has(sessionId)) return;
-      if (
-        !goal ||
-        goal.status !== SessionGoalStatus.Active ||
-        (expectedGoalId && goal.id !== expectedGoalId)
-      ) {
+      if (!goal || goal.status !== SessionGoalStatus.Active) {
         this.cancelRetry(sessionId, true);
         this.publishGoalState(sessionId, goal, this.snapshots.get(sessionId)?.continuationCount ?? 0);
         return;
       }
+      if (expectedGoalId && goal.id !== expectedGoalId) {
+        this.cancelRetry(sessionId, true);
+        this.publishGoalState(sessionId, goal, 0);
+      }
+      retryGoalId = goal.id;
       await this.dispatchContinuation(sessionId, sessionKey, goal, generation);
     } catch (error) {
       if (generation === this.generation && !this.stoppedSessionIds.has(sessionId)) {
-        this.scheduleRetry(sessionId, sessionKey, expectedGoalId, error);
+        this.scheduleRetry(sessionId, sessionKey, retryGoalId, error);
       }
     } finally {
       this.dispatchingSessionIds.delete(sessionId);

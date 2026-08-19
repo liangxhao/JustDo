@@ -25,6 +25,15 @@ describe('goal pending objective', () => {
     ).toBeNull();
   });
 
+  it('does not infer an optimistic goal from the edit lifecycle command', () => {
+    expect(
+      inferInitialGoalObjective(
+        [{ type: 'user', content: '/goal edit refine the release dashboard' }],
+        true,
+      ),
+    ).toBeNull();
+  });
+
   it('carries an optimistic goal from a temporary session into its canonical session', () => {
     expect(
       resolvePendingGoalObjectiveOnSessionChange({

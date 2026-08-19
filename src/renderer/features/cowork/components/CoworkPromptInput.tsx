@@ -1821,6 +1821,51 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       [disabled, isRunActive, runGoalAction, submitGoalCommand],
     );
 
+    const handleGoalEdit = useCallback(
+      async (objective: string): Promise<boolean> => {
+        const currentGoal = sessionGoalRef.current;
+        const stoppedCurrentGoal =
+          goalExecution?.phase === GoalExecutionPhase.Stopped &&
+          !!currentGoal &&
+          (!goalExecution.goalId || goalExecution.goalId === currentGoal.id);
+        const normalizedObjective = objective.trim();
+        if (
+          !currentGoal ||
+          currentGoal.status === SessionGoalStatus.Complete ||
+          goalExecution?.phase === GoalExecutionPhase.AwaitingConfirmation ||
+          !normalizedObjective ||
+          disabled ||
+          (isRunActive && !stoppedCurrentGoal) ||
+          goalActionPendingRef.current
+        ) {
+          return false;
+        }
+        let accepted = false;
+        try {
+          const started = await runGoalAction(async () => {
+            accepted = await submitGoalCommand(`/goal edit ${normalizedObjective}`);
+          });
+          if (started && accepted) return true;
+        } catch {
+          // submitGoalCommand failures are surfaced as a Goal-specific toast below.
+        }
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkGoalEditFailed'),
+          }),
+        );
+        return false;
+      },
+      [
+        disabled,
+        goalExecution?.goalId,
+        goalExecution?.phase,
+        isRunActive,
+        runGoalAction,
+        submitGoalCommand,
+      ],
+    );
+
     const handleGoalPause = useCallback(async () => {
       if (disabled || !onStop) return;
       await runGoalAction(async () => {
@@ -1958,6 +2003,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             completionFeedbackActive={completionFeedback !== null}
             disabled={disabled || goalActionPending}
             onCommand={handleGoalCommand}
+            onEdit={handleGoalEdit}
             onPause={handleGoalPause}
             onContinue={handleGoalContinue}
             onContinueImproving={handleGoalContinueImproving}
