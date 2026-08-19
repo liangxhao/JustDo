@@ -53,6 +53,7 @@ const EXPECTED_PATCH_FILES = [
   '032-sanitized-run-progress-events.cjs',
   '033-tool-error-reasoning-recovery.cjs',
   '034-live-context-budget-publication.cjs',
+  '035-codex-local-compaction-semantics.cjs',
 ] as const;
 
 function createPristineFixture(): string {

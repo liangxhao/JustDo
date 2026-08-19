@@ -1,8 +1,9 @@
 'use strict';
 
-// Capability: persist and replay a rolling 20k-token archive of original user messages.
+// Capability: install Codex-local replacement history with a rolling 20k-token user archive.
 // Target: pristine openclaw@2026.7.1-2, whose compaction entry has no retained-user archive.
-// Scope: writes versioned CompactionEntry.details metadata and replays it in buildSessionContext.
+// Scope: writes versioned CompactionEntry.details metadata, replays individual user messages before
+// the summary, and suppresses the native assistant/tool tail for marked Codex-local checkpoints.
 // Safety: never embeds metadata in summary text; preserves native details and transcript identity.
 // Remove when: upstream persists and replays an equivalent bounded retained-user metadata field.
 
@@ -33,27 +34,49 @@ function readJustDoUserText(message) {
     .join("\\n");
 }
 function estimateJustDoUserTextTokens(text) {
-  return estimateTokens({ role: "user", content: [{ type: "text", text }], timestamp: 0 });
+  return Math.ceil(Buffer.byteLength(text, "utf8") / 4);
 }
 function sliceJustDoUserTextToTokenBudget(text, tokenBudget) {
   if (tokenBudget <= 0) return "";
   if (estimateJustDoUserTextTokens(text) <= tokenBudget) return text;
-  let low = 0;
-  let high = text.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    let candidate = text.slice(middle);
-    if (candidate && /[\\uDC00-\\uDFFF]/.test(candidate[0])) candidate = candidate.slice(1);
-    if (estimateJustDoUserTextTokens(candidate) <= tokenBudget) high = middle;
-    else low = middle + 1;
+  const maxBytes = tokenBudget * 4;
+  const totalBytes = Buffer.byteLength(text, "utf8");
+  let removedTokens = Math.ceil(Math.max(0, totalBytes - maxBytes) / 4);
+  let marker = "…" + removedTokens + " tokens truncated…";
+  let contentBudget = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8"));
+  removedTokens = Math.ceil(Math.max(0, totalBytes - contentBudget) / 4);
+  marker = "…" + removedTokens + " tokens truncated…";
+  contentBudget = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8"));
+  const leftBudget = Math.floor(contentBudget / 2);
+  const rightBudget = contentBudget - leftBudget;
+  let prefixEnd = 0;
+  let prefixBytes = 0;
+  for (const character of text) {
+    const bytes = Buffer.byteLength(character, "utf8");
+    if (prefixBytes + bytes > leftBudget) break;
+    prefixBytes += bytes;
+    prefixEnd += character.length;
   }
-  let result = text.slice(low);
-  if (result && /[\\uDC00-\\uDFFF]/.test(result[0])) result = result.slice(1);
-  return result;
+  let suffixStart = text.length;
+  let suffixBytes = 0;
+  for (let index = text.length; index > prefixEnd;) {
+    const lastCodeUnit = text.charCodeAt(index - 1);
+    const width = lastCodeUnit >= 0xdc00 && lastCodeUnit <= 0xdfff ? 2 : 1;
+    const start = index - width;
+    const character = text.slice(start, index);
+    const bytes = Buffer.byteLength(character, "utf8");
+    if (suffixBytes + bytes > rightBudget) break;
+    suffixBytes += bytes;
+    suffixStart = start;
+    index = start;
+  }
+  if (suffixStart < prefixEnd) suffixStart = prefixEnd;
+  return text.slice(0, prefixEnd) + marker + text.slice(suffixStart);
 }
 function readJustDoRetainedUserArchive(details) {
   const archive = details?.justdoRetainedUserMessages;
-  if (archive?.version !== JUSTDO_RETAINED_USER_ARCHIVE_VERSION || !Array.isArray(archive.messages)) return [];
+  if (!archive || !Array.isArray(archive.messages)) return [];
+  if (archive.version !== void 0 && archive.version !== JUSTDO_RETAINED_USER_ARCHIVE_VERSION) return [];
   return archive.messages.filter((record) =>
     record && typeof record === "object" && typeof record.text === "string" && record.text.length > 0
   ).map((record) => ({
@@ -104,21 +127,13 @@ function ${HELPER}(pathEntries, historyEnd, previousDetails) {
     messages: retained
   };
 }
-function buildJustDoRetainedUserReplayMessage(compaction) {
+function buildJustDoRetainedUserReplayMessages(compaction) {
   const records = readJustDoRetainedUserArchive(compaction.details);
-  if (records.length === 0) return null;
-  const content = [{
-    type: "text",
-    text: "Historical user messages retained verbatim across compaction; preserve their intent and ordering."
-  }];
-  for (const record of records) content.push({ type: "text", text: record.text });
-  return asAgentMessage(createCustomMessage(
-    "justdo.retained-user-context",
-    content,
-    false,
-    { runtimeContextCarrier: true },
-    compaction.timestamp
-  ));
+  return records.map((record) => ({
+    role: "user",
+    content: record.text,
+    timestamp: Number.isFinite(record.timestamp) ? record.timestamp : Date.parse(compaction.timestamp)
+  }));
 }
 /** Build model context from the active session branch and its latest state markers. */`,
     `${filePath}: retained user metadata helpers`,
@@ -126,11 +141,22 @@ function buildJustDoRetainedUserReplayMessage(compaction) {
 
   updated = replaceUniquePattern(
     updated,
-    /(messages\.push\(asAgentMessage\(createCompactionSummaryMessage\(compaction\.summary, compaction\.tokensBefore, compaction\.timestamp\)\)\);)/,
-    `$1
-    const justDoRetainedUserReplay = buildJustDoRetainedUserReplayMessage(compaction);
-    if (justDoRetainedUserReplay) messages.push(justDoRetainedUserReplay);`,
-    `${filePath}: buildSessionContext retained-user replay`,
+    /messages\.push\(asAgentMessage\(createCompactionSummaryMessage\(compaction\.summary, compaction\.tokensBefore, compaction\.timestamp\)\)\);/,
+    `const justDoCodexLocalCompaction =
+      compaction.details?.justdoCompaction?.semantics === "codex-local";
+    const justDoRetainedUserReplay = buildJustDoRetainedUserReplayMessages(compaction);
+    if (justDoRetainedUserReplay.length > 0) messages.push(...justDoRetainedUserReplay);
+    messages.push(asAgentMessage(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp)));`,
+    `${filePath}: buildSessionContext Codex-local replay order`,
+  );
+  updated = replaceUniquePattern(
+    updated,
+    /(\s*let foundFirstKept = false;[\s\S]*?)(\s*for \(let i = compactionIdx \+ 1;)/,
+    `
+    if (!justDoCodexLocalCompaction) {$1
+    }
+    $2`,
+    `${filePath}: suppress native retained tail for Codex-local checkpoints`,
   );
   updated = replaceUniquePattern(
     updated,
@@ -149,22 +175,26 @@ function buildJustDoRetainedUserReplayMessage(compaction) {
     /(const fileOps = extractFileOperations\(messagesToSummarize, pathEntries, prevCompactionIndex\);)/,
     `const justDoRetainedUserMessages = ${HELPER}(
     pathEntries,
-    historyEnd,
+    pathEntries.length,
     justDoPreviousCompactionDetails
   );
+  const justDoPreviousGeneration = justDoPreviousCompactionDetails?.justdoCompaction?.generation;
+  const justDoCompactionGeneration = Number.isFinite(justDoPreviousGeneration)
+    ? Math.max(1, Math.floor(justDoPreviousGeneration) + 1)
+    : 1;
   $1`,
     `${filePath}: retained-user archive collection`,
   );
   updated = replaceUniquePattern(
     updated,
     /(return ok\(\{\s*firstKeptEntryId,\s*messagesToSummarize,\s*turnPrefixMessages,\s*isSplitTurn: cutPoint\.isSplitTurn,\s*tokensBefore,\s*previousSummary,\s*fileOps,)/,
-    '$1\n    justDoRetainedUserMessages,',
+    '$1\n    justDoRetainedUserMessages,\n    justDoCompactionGeneration,',
     `${filePath}: retained-user preparation field`,
   );
   updated = replaceUniquePattern(
     updated,
     /const \{ firstKeptEntryId, messagesToSummarize, turnPrefixMessages, isSplitTurn, tokensBefore, previousSummary, fileOps, settings \} = preparation;/,
-    'const { firstKeptEntryId, messagesToSummarize, turnPrefixMessages, isSplitTurn, tokensBefore, previousSummary, fileOps, settings, justDoRetainedUserMessages } = preparation;',
+    'const { firstKeptEntryId, messagesToSummarize, turnPrefixMessages, isSplitTurn, tokensBefore, previousSummary, fileOps, settings, justDoRetainedUserMessages, justDoCompactionGeneration } = preparation;',
     `${filePath}: compact retained-user preparation`,
   );
   updated = replaceUniquePattern(
@@ -216,8 +246,9 @@ function verifyPatch(runtimeDir) {
     const content = fs.readFileSync(filePath, 'utf8');
     for (const contract of [
       'justdoRetainedUserMessages: preparation.justDoRetainedUserMessages',
-      'buildJustDoRetainedUserReplayMessage(compaction)',
-      'justdo.retained-user-context',
+      'buildJustDoRetainedUserReplayMessages(compaction)',
+      'justDoCodexLocalCompaction',
+      'justDoCompactionGeneration',
       'sourceEntryId: entry.id',
     ]) {
       if (!content.includes(contract)) {
@@ -229,6 +260,9 @@ function verifyPatch(runtimeDir) {
     }
     if (content.includes('<justdo-retained-user-messages')) {
       throw new Error(`${filePath}: retained-user metadata leaked into summary text`);
+    }
+    if (content.includes('justdo.retained-user-context')) {
+      throw new Error(`${filePath}: retained users are still replayed as a custom carrier`);
     }
   }
 }

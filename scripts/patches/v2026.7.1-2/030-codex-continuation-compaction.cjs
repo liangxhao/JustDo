@@ -1,9 +1,9 @@
 'use strict';
 
-// Capability: use a Codex-style continuation handoff for first, repeated and split compaction.
+// Capability: use Codex's local fallback prompt and replay prefix for every compaction phase.
 // Target: pristine openclaw@2026.7.1-2 default templates and compaction replay wrapper.
-// Scope: changes only default wording/wrapper while retaining customInstructions composition.
-// Safety: quality repair, exact identifiers, suffix limits and workspace context remain upstream.
+// Scope: changes only default wording/wrapper; patch 035 selects the exact Codex-local flow.
+// Safety: non-Codex compaction retains upstream structure, quality and suffix behavior.
 // Remove when: OpenClaw exposes default-template and replay-wrapper replacement through config.
 
 const fs = require('fs');
@@ -33,20 +33,20 @@ function transformCore(content, filePath) {
   let out = replaceUniquePattern(
     content,
     /const COMPACTION_SUMMARY_PREFIX = `[\s\S]*?`;\s*const COMPACTION_SUMMARY_SUFFIX = `[\s\S]*?`;/,
-    'const COMPACTION_SUMMARY_PREFIX = `Another language model started to solve this problem and produced a continuation handoff. Use it to continue the work without duplicating completed steps:\n\n`;\nconst COMPACTION_SUMMARY_SUFFIX = ``;',
+    'const COMPACTION_SUMMARY_PREFIX = `Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\n`;\nconst COMPACTION_SUMMARY_SUFFIX = ``;',
     `${filePath}: replay wrapper`,
   );
   out = replaceUniquePattern(
     out,
     /const SUMMARIZATION_PROMPT = `[\s\S]*?`;\s*const UPDATE_SUMMARIZATION_PROMPT = `[\s\S]*?`;/,
-    `const SUMMARIZATION_PROMPT = \`${MARKER} Create a handoff for another model that will resume the task. Include current progress, decisions, constraints, unresolved asks, concrete next steps, critical context and exact identifiers. Be concise.\`;
-const UPDATE_SUMMARIZATION_PROMPT = \`${MARKER} Re-distill the existing handoff with the new messages. Preserve still-relevant facts, remove stale duplicates, and state concrete next steps for the next model.\`;`,
+    `const SUMMARIZATION_PROMPT = \`${MARKER} Create a handoff summary for another LLM that will resume the task.\n\nInclude:\n- Current progress and key decisions made\n- Important context, constraints, or user preferences\n- What remains to be done (clear next steps)\n- Any critical data, examples, or references needed to continue\n\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.\`;
+const UPDATE_SUMMARIZATION_PROMPT = SUMMARIZATION_PROMPT;`,
     `${filePath}: first and repeated templates`,
   );
   out = replaceUniquePattern(
     out,
     /const TURN_PREFIX_SUMMARIZATION_PROMPT = `[\s\S]*?`;/,
-    `const TURN_PREFIX_SUMMARIZATION_PROMPT = \`${MARKER} Summarize this prefix of a split turn as continuation context for the retained suffix. Preserve the original request, early progress, decisions, constraints and exact identifiers needed to continue.\`;`,
+    'const TURN_PREFIX_SUMMARIZATION_PROMPT = SUMMARIZATION_PROMPT;',
     `${filePath}: split-turn template`,
   );
   return out;
@@ -69,6 +69,7 @@ function applyPatch(runtimeDir) {
   ]);
   if (cores.length === 0)
     cores = findFilesContaining(runtimeDir, [
+      'COMPACTION_SUMMARY_PREFIX =',
       'Another language model started to solve this problem',
       MARKER,
     ]);
@@ -103,6 +104,7 @@ function verifyPatch(runtimeDir) {
     MARKER,
   ]);
   const cores = findFilesContaining(runtimeDir, [
+    'COMPACTION_SUMMARY_PREFIX =',
     'Another language model started to solve this problem',
     MARKER,
   ]);

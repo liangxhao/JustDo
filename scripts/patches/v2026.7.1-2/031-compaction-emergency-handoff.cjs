@@ -2,9 +2,9 @@
 
 // Capability: deterministic fail-open handoffs for safeguard and native compaction failures.
 // Target: pristine openclaw@2026.7.1-2, whose model/auth/provider/native failures cancel.
-// Scope: every handoff contains prior summary, the explicit retained-user details contract,
+// Scope: non-Codex handoffs contain prior summary, the explicit retained-user details contract,
 // and a bounded recent transcript tail; missing-model/auth/provider/timeout/staged/native
-// failures continue while explicit aborts retain native cancellation semantics.
+// failures continue while Codex-local failures preserve history and cancel without committing.
 // Safety: summaries are deterministic and <= the upstream 16k limit, existing details/file
 // operations survive, and no helper/marker from patch 029 or patch ordering is required.
 // Remove when: both compaction paths natively commit equivalent fallbacks without stale state.
@@ -92,6 +92,11 @@ function buildJustDoEmergencyCompaction(preparation, messages, reason) {
   } };
 }
 function ${SAFEGUARD_HELPER}(sessionManager, preparation, messages, reason) {
+  if (preparation?.justDoCodexLocal === true) {
+    const message = truncateFailureText(normalizeFailureText(reason || "local summarization unavailable"), MAX_TOOL_FAILURE_CHARS);
+    setCompactionSafeguardCancelReason(sessionManager, "Codex-local compaction failed without replacing history: " + message);
+    return { cancel: true };
+  }
   const fallback = buildJustDoEmergencyCompaction(preparation, messages, reason);
   setCompactionSafeguardCancelReason(sessionManager, void 0);
   return fallback;
@@ -219,7 +224,7 @@ function ${NATIVE_HELPER}(preparation, reason) {
   };
 }
 function recoverJustDoNativeCompaction(preparation, signal, failure) {
-  if (signal?.aborted || failure?.name === "AbortError" || failure?.code === "ABORT_ERR") return err(failure);
+  if (preparation?.justDoCodexLocal === true || signal?.aborted || failure?.name === "AbortError" || failure?.code === "ABORT_ERR") return err(failure);
   return ok(${NATIVE_HELPER}(preparation, failure));
 }
 /** Generate compaction summary data from prepared session history. */`,

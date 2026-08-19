@@ -533,8 +533,16 @@ export const applyManagedOpenClawHeartbeatConfig = (
  */
 export const buildManagedOpenClawCompactionConfig = () => ({
   mode: 'safeguard',
+  // Versioned runtime patches use this explicit switch for Codex-local
+  // checkpoint layout and trigger semantics. Do not infer the mode from the
+  // prompt text: custom instructions are user-facing data, not a capability
+  // discriminator.
+  justdoCodexLocal: true,
   reserveTokens: 24_000,
-  reserveTokensFloor: 50_000,
+  // In Codex-local mode the runtime derives the automatic threshold from the
+  // effective context window (90%). The reserve remains summarization budget
+  // only and must not move the trigger earlier.
+  reserveTokensFloor: 0,
   // Memory flush is an internal best-effort turn, but OpenClaw currently
   // surfaces its file-tool failures as the user turn result. Keep it disabled
   // so an attempted memory write cannot block the user's actual operation.

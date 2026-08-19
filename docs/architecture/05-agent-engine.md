@@ -104,41 +104,35 @@ JustDo 同时启用 OpenClaw 原生 `tools.toolSearch.mode: "directory"`，并�
 tool。OpenClaw 提供受支持的 per-tool defer 名单后，应删除此版本级 patch 并改用原生
 配置。
 
-JustDo 通过受支持的 `agents.defaults.compaction` 配置启用 OpenClaw 内置
-`compaction-safeguard` hook，而不复制压缩引擎。策略借鉴 Codex 的 continuation
-handoff 思路：摘要强调用户意图、约束、已验证进度、未完成事项和精确标识符；关闭会
-重复占用 16,000-character 摘要预算的 preserved-turn suffix。OpenClaw 的结构化质量
-校验会强制恢复其 `##` 模板，因此 Codex 模式下关闭该校验。配置刻意不写
-`keepRecentTokens`：自动压缩仍继承 OpenClaw 的安全 recent-tail
-默认值，而手动 `/compact` 会使用 `v2026.7.1-2` 的同一压缩语义，真正丢弃旧工具结果，
-形成接近 Codex 的“用户原话 + 摘要”检查点。mid-turn precheck 会在长工具循环中提前
-检查上下文压力。
+JustDo 通过 `agents.defaults.compaction.justdoCodexLocal=true` 显式选择版本补丁提供的
+Codex-local 语义；不通过提示词内容猜测运行模式。自动压缩以有效 context window 的 90%
+为阈值，优先采用 provider usage；pre-turn 检查既有上下文，mid-turn 只在新增工具结果后、
+下一次模型采样前检查。`reserveTokens` 只作为摘要请求预算，不再提前移动自动阈值。
+内置 agent auto-compaction 仍由 safeguard guard 关闭，避免和外层 preflight/mid-turn 状态机
+重复触发。
 
 OpenClaw 的公开 compaction provider 可以替换摘要，但拿不到当前模型认证；公开
 `before_compaction` / `after_compaction` hook 又不能修改压缩结果。因此
 `029-retained-user-compaction-context.cjs` 只补足原生 hook 无法表达的一层：在
 `CompactionEntry.details.justdoRetainedUserMessages` 中维护版本化 retained-user archive，
-跨重复压缩合并、按 transcript identity 去重并按约 20,000 tokens 裁剪用户原文；
-`buildSessionContext` 在 summary 后以隐藏但模型可读的 user context 重放。目标版本原生
-负责 previous summary、recent assistant/tool tail、split-turn 排序、identifier
-preservation、suffix 保护和 workspace context；补丁不复制这些能力。没有 retained
-metadata 的旧 transcript 会从当前仍可见的用户消息开始建立该字段。
+跨重复压缩合并、按 transcript identity 去重，并以 UTF-8 bytes/4 的 Codex 本地估算按约
+20,000 tokens 做 Unicode-safe 首尾裁剪；
+`buildSessionContext` 将每条原文恢复为独立 `user` message，再把 compaction summary 放在
+checkpoint 最后。标记为 Codex-local 的 checkpoint 不回放旧 assistant/tool recent tail；
+压缩后的新消息正常追加在 summary 之后。split-turn 同样扫描完整压缩范围，因此当前用户请求
+不会落在 archive 与 retained tail 的空隙中。旧 archive 可直接读取，并在下一次压缩时自然升级。
 
-模型摘要并不是压缩可用性的单点依赖。`031-compaction-emergency-handoff.cjs` 在
-safeguard 无法解析摘要模型或认证，以及摘要请求超时、溢出或被 provider 拒绝时，不再
-取消 compaction；它会提交一个最多 16,000 characters 的本地应急交接摘要，其中包含
-最多 4,000 characters 的旧交接、最多 8,000 characters 的最近 user/assistant 对话，
-以及有界的工具失败与文件操作信息。最近对话优先于旧交接，避免总预算截断最新用户请求。
-正常的 compaction entry、`029` 的用户原话滚动保留和 native recent tail 仍然生效，
-因此外层会把这次压缩视为成功并自动重试当前轮。只有明确的用户取消仍保持 cancel
-语义。overflow 最多执行三次有界 compact-and-retry；第二次起使用 `keepRecentTokens: 0`
-压缩剩余 recent tail，用户原话仍由 `029` 保留。如果系统提示和工具 schema 本身已经
-超过模型容量，最终会显示准确的不可降载提示，而不再建议反复调大
-`reserveTokensFloor`。该配置只决定提前量，不再承担摘要服务失败后的恢复职责。
+`031-compaction-emergency-handoff.cjs` 的 deterministic handoff 只服务非 Codex 模式。
+Codex-local 摘要遇到缺模型、认证、超时或普通 provider 失败时不重试、不提交 checkpoint、
+不替换原历史；只有摘要请求自身发生 context overflow，才从最旧的完整 user turn 开始裁剪
+并重试。所有安全重试耗尽、没有新 transcript，或压缩后用量没有下降/自动压缩后仍高于 90%
+阈值时均 fail closed。显式取消保持 cancel。普通 overflow 对同一未变化 prompt 最多执行一次
+成功的 compact-and-retry，随后必须依靠新 transcript 进展才能再次压缩，避免反复压缩同一状态。
 
-`030-codex-continuation-compaction.cjs` 复用目标版本原生 `customInstructions` 数据流，
-只替换首次、重复、split-turn 的默认 continuation wording 与 replay wrapper wording；
-原生质量检查、identifier preservation、suffix 裁剪和 workspace context 保持不变。
+`030-codex-continuation-compaction.cjs` 使用 Codex 本地 fallback 的标准 prompt 与 replay
+prefix；首次、重复和 split/mid-turn 使用同一提示。`035-codex-local-compaction-semantics.cjs`
+在显式模式下绕过 OpenClaw 固定章节、quality audit、identifier/suffix 拼接和 16k 字符后处理，
+并在 `details.justdoCompaction` 记录 generation、trigger、reason、phase 与压缩前后 token 估算。
 `026-parent-session-identity.cjs`、`027-agent-request-metadata.cjs` 与
 `028-request-purpose-metadata.cjs` 分别覆盖父会话稳定身份、普通 agent stream、safeguard 自己的分阶段摘要调用、
 OpenClaw 原生 `compact()` 回退，以及 `tools.exec.reviewer` 使用的 simple-completion 调用。补丁为关联到会话的

@@ -89,7 +89,7 @@ function loadSafeguardHelpers() {
       preparation: Record<string, unknown>,
       messages: unknown[],
       reason: unknown,
-    ) => { compaction: { summary: string; details: Record<string, unknown> } };
+    ) => { compaction: { summary: string; details: Record<string, unknown> } } | { cancel: true };
   };
   return { transformed, clearReason, ...helpers };
 }
@@ -232,6 +232,14 @@ describe('OpenClaw v2026.7.1-2 emergency compaction handoff', () => {
     expect(
       recoverJustDoNativeCompaction(preparation, { aborted: false }, new Error('fail')).ok,
     ).toBe(true);
+    const codexFailure = new Error('codex local failure');
+    expect(
+      recoverJustDoNativeCompaction(
+        { ...preparation, justDoCodexLocal: true },
+        { aborted: false },
+        codexFailure,
+      ),
+    ).toEqual({ ok: false, error: codexFailure });
   });
 
   test('all failure entries commit locally while successful fallback clears stale cancel reason', () => {
@@ -248,6 +256,19 @@ describe('OpenClaw v2026.7.1-2 emergency compaction handoff', () => {
       'staged summary failure',
     );
     expect(clearReason).toHaveBeenCalledWith(manager, undefined);
+
+    expect(
+      commitJustDoEmergencyCompaction(
+        manager,
+        { previousSummary: '', fileOps: {}, justDoCodexLocal: true },
+        [],
+        'provider failed',
+      ),
+    ).toEqual({ cancel: true });
+    expect(clearReason).toHaveBeenLastCalledWith(
+      manager,
+      expect.stringContaining('without replacing history'),
+    );
 
     const { transformed: native } = loadNativeHelpers();
     expect(native.match(/recoverJustDoNativeCompaction\(preparation, signal/g)).toHaveLength(4);

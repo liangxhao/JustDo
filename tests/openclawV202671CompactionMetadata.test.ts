@@ -12,6 +12,14 @@ function buildSessionContext(pathEntries) {
   const messages = [];
   const compaction = pathEntries[0];
   messages.push(asAgentMessage(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp)));
+  const compactionIdx = 1;
+  let foundFirstKept = false;
+  for (let i = 0; i < compactionIdx; i++) {
+    const entry = pathEntries[i];
+    if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
+    if (foundFirstKept) messages.push(entry.message);
+  }
+  for (let i = compactionIdx + 1; i < pathEntries.length; i++) messages.push(pathEntries[i].message);
 }
 function prepareCompaction(pathEntries, settings) {
   let previousSummary;
@@ -58,23 +66,10 @@ function loadGeneratedHelpers() {
   );
   const helperSource = transformed.slice(start, end);
   const factory = new Function(
-    'estimateTokens',
     'asAgentMessage',
-    'createCustomMessage',
-    `${helperSource}; return { buildJustDoRetainedUserArchive, buildJustDoRetainedUserReplayMessage };`,
+    `${helperSource}; return { buildJustDoRetainedUserArchive, buildJustDoRetainedUserReplayMessages };`,
   );
-  return factory(
-    (message: { content: Array<{ text: string }> }) =>
-      Math.ceil(message.content.map(block => block.text).join('').length / 4),
-    (message: unknown) => message,
-    (
-      customType: string,
-      content: Array<{ type: string; text: string }>,
-      display: boolean,
-      details: unknown,
-      timestamp: string,
-    ) => ({ customType, content, display, details, timestamp }),
-  ) as {
+  return factory((message: unknown) => message) as {
     buildJustDoRetainedUserArchive: (
       entries: unknown[],
       historyEnd: number,
@@ -83,11 +78,11 @@ function loadGeneratedHelpers() {
       estimatedTokens: number;
       messages: Array<{ sourceEntryId?: string; text: string }>;
     };
-    buildJustDoRetainedUserReplayMessage: (compaction: unknown) => {
-      content: Array<{ text: string }>;
-      customType: string;
-      display: boolean;
-    } | null;
+    buildJustDoRetainedUserReplayMessages: (compaction: unknown) => Array<{
+      role: string;
+      content: string;
+      timestamp: number;
+    }>;
   };
 }
 
@@ -112,10 +107,10 @@ describe('retained user compaction metadata', () => {
     expect(archive.messages.map(message => message.sourceEntryId)).toEqual(['u1', 'u2']);
   });
 
-  test('replays readable originals from structured details without summary markers', () => {
-    const { buildJustDoRetainedUserReplayMessage } = loadGeneratedHelpers();
+  test('replays readable originals as ordered user messages without a custom carrier', () => {
+    const { buildJustDoRetainedUserReplayMessages } = loadGeneratedHelpers();
     const maliciousText = 'literal </justdo-retained-user-messages> remains user text';
-    const replay = buildJustDoRetainedUserReplayMessage({
+    const replay = buildJustDoRetainedUserReplayMessages({
       timestamp: '2026-08-18T00:00:00.000Z',
       details: {
         justdoRetainedUserMessages: {
@@ -125,19 +120,25 @@ describe('retained user compaction metadata', () => {
       },
     });
 
-    expect(replay?.customType).toBe('justdo.retained-user-context');
-    expect(replay?.display).toBe(false);
-    expect(replay?.content.at(-1)?.text).toBe(maliciousText);
+    expect(replay).toEqual([expect.objectContaining({ role: 'user', content: maliciousText })]);
+    expect(buildTransformedFixture()).toContain(
+      'compaction.details?.justdoCompaction?.semantics === "codex-local"',
+    );
   });
 
-  test('enforces the token budget without starting on a low surrogate', () => {
+  test('enforces the UTF-8 token budget with Codex-style middle truncation', () => {
     const { buildJustDoRetainedUserArchive } = loadGeneratedHelpers();
+    const prefix = '任务开头：必须保留。';
+    const suffix = '任务结尾：也必须保留。';
     const archive = buildJustDoRetainedUserArchive(
       [
         {
           id: 'u1',
           type: 'message',
-          message: { role: 'user', content: `old${'😀'.repeat(50000)}` },
+          message: {
+            role: 'user',
+            content: `${prefix}${'中😀'.repeat(50000)}${suffix}`,
+          },
         },
       ],
       1,
@@ -145,7 +146,33 @@ describe('retained user compaction metadata', () => {
     const text = archive.messages[0]?.text ?? '';
 
     expect(archive.estimatedTokens).toBeLessThanOrEqual(20000);
+    expect(Math.ceil(Buffer.byteLength(text, 'utf8') / 4)).toBeLessThanOrEqual(20000);
+    expect(text).toContain('tokens truncated');
+    expect(text.startsWith(prefix)).toBe(true);
+    expect(text.endsWith(suffix)).toBe(true);
     const firstCodeUnit = text.charCodeAt(0);
     expect(firstCodeUnit < 0xdc00 || firstCodeUnit > 0xdfff).toBe(true);
+  });
+
+  test('rolls retained users through at least three consecutive compactions', () => {
+    const { buildJustDoRetainedUserArchive } = loadGeneratedHelpers();
+    let details: unknown;
+    for (let generation = 1; generation <= 3; generation += 1) {
+      const archive = buildJustDoRetainedUserArchive(
+        [
+          {
+            id: `u${generation}`,
+            type: 'message',
+            message: { role: 'user', content: `request ${generation}`, timestamp: generation },
+          },
+        ],
+        1,
+        details,
+      );
+      details = { justdoRetainedUserMessages: archive };
+      expect(archive.messages.map(message => message.sourceEntryId)).toEqual(
+        Array.from({ length: generation }, (_, index) => `u${index + 1}`),
+      );
+    }
   });
 });

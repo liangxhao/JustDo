@@ -243,6 +243,7 @@ describe('OpenClaw managed compaction config', () => {
 
     expect(compaction).toMatchObject({
       mode: 'safeguard',
+      justdoCodexLocal: true,
       recentTurnsPreserve: 0,
       identifierPolicy: 'off',
       memoryFlush: {
@@ -257,7 +258,7 @@ describe('OpenClaw managed compaction config', () => {
       },
     });
     expect(compaction.reserveTokens).toBe(24_000);
-    expect(compaction.reserveTokensFloor).toBe(50_000);
+    expect(compaction.reserveTokensFloor).toBe(0);
     expect(compaction).not.toHaveProperty('keepRecentTokens');
     expect(compaction.customInstructions).toContain(
       'You are performing a CONTEXT CHECKPOINT COMPACTION.',

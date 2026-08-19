@@ -422,8 +422,10 @@ flowchart LR
 #### `029-retained-user-compaction-context.cjs`
 
 - **做什么**：在 `CompactionEntry.details.justdoRetainedUserMessages` 中保存滚动 20k-token
-  原始用户消息，按 transcript entry identity 去重、UTF-16-safe 裁剪，并在 summary 后作为
-  hidden readable user context 重放。
+  原始用户消息，按 transcript entry identity 去重，以 Codex 一致的 UTF-8 bytes/4 预算做
+  Unicode-safe 首尾裁剪，并逐条恢复为位于 summary 之前的真实 `user` message；带 archive
+  的 checkpoint 可继续读取；只有带 Codex-local semantics marker 的 checkpoint 不回放旧
+  assistant/tool tail，避免关闭该模式后误删原生 recent tail。
 - **关系与边界**：`030` 只改 continuation wording，不保存原文；`031` 可读取该公开 details
   字段构造 emergency handoff，但字段缺失时仍能工作。metadata 不写入 16k summary suffix。
 - **当前保留原因**：原始 replay 只有 summary 和有限 native tail；重复压缩会让用户的原始约束
@@ -433,10 +435,10 @@ flowchart LR
 
 #### `030-codex-continuation-compaction.cjs`
 
-- **做什么**：把首次、重复和 split-turn compaction 的默认指令，以及 replay wrapper，改成
-  面向下一模型继续当前任务的 Codex-style handoff 语义。
-- **关系与边界**：复用上游 `customInstructions`、质量检查、identifier preservation、suffix
-  限制和 workspace context；与 `029` 没有 helper/marker 顺序依赖，也不负责保存原始用户消息。
+- **做什么**：把首次、重复和 split-turn compaction 的默认指令及 replay wrapper 替换为
+  Codex 本地 fallback 的标准 prompt/prefix，并让所有阶段使用同一 prompt。
+- **关系与边界**：`035` 负责显式选择 Codex-local 流程并绕过上游结构化 suffix；`030` 不负责
+  保存原始用户消息或决定触发阈值。
 - **当前保留原因**：目标版虽然支持追加 `customInstructions`，但固定默认模板和 replay wrapper
   仍以 OpenClaw 原生摘要语义组织，不能完整替换成 JustDo 需要的 continuation handoff。
 - **可删除条件**：上游允许通过配置替换默认模板和 replay wrapper，或产品不再要求 Codex-style
@@ -444,9 +446,9 @@ flowchart LR
 
 #### `031-compaction-emergency-handoff.cjs`
 
-- **做什么**：missing model/auth、provider error/timeout、staged summary 和 native compact
-  失败时，构造确定性的 `<=16k` 本地 handoff，包含 previous summary、可用 retained-user
-  archive 和有界 recent tail，提交后继续当前任务。
+- **做什么**：非 Codex 模式遇到 missing model/auth、provider error/timeout、staged summary
+  和 native compact 失败时，构造确定性的 `<=16k` 本地 handoff；Codex-local 模式不提交
+  fallback checkpoint 并保留原历史。
 - **关系与边界**：可消费 `029` 的公开 details，但兼容 absent/legacy，不依赖其私有 helper 或
   应用顺序；`030` 的 wording 也不是 emergency builder 前提。显式用户 abort 保持取消语义。
 - **当前保留原因**：原始两条 compaction 路径遇到非用户失败会 cancel 或留下 stale
@@ -454,7 +456,7 @@ flowchart LR
 - **可删除条件**：上游 safeguard/native compact 都能在非用户失败时提交等价 bounded fallback，
   清理状态并继续；用户 abort 仍必须取消。
 
-### 032–034：运行进度、恢复与上下文状态
+### 032–035：运行进度、恢复与上下文状态
 
 #### `032-sanitized-run-progress-events.cjs`
 
@@ -488,6 +490,20 @@ flowchart LR
   判断接近 compaction/overflow。这是实时可观测性能力，不是字段存储补丁。
 - **可删除条件**：上游 active-run API 或 `sessions.list` 原生发布实时 context budget，或 UI
   不再需要运行中状态。
+
+#### `035-codex-local-compaction-semantics.cjs`
+
+- **做什么**：新增显式 `justdoCodexLocal` 配置，按有效窗口 90% 触发 pre-turn/mid-turn
+  compaction，优先使用 provider usage；同一未变化 prompt 的 overflow compaction 限制为一次。
+  safeguard 总结当前已安装上下文，关闭固定章节、quality/suffix 和 16k 后处理，并写入版本化
+  `details.justdoCompaction` generation/trigger/reason/phase/token 元数据。只有摘要请求自身发生
+  context overflow 才从最旧的完整 user turn 开始裁剪重试；认证、模型、超时或其他 provider
+  错误以及无压缩进展均拒绝 checkpoint 并保留原历史。
+- **关系与边界**：消费 `029` 的用户 archive、`030` 的标准 Codex prompt，并让 `031` 在该模式
+  下 fail closed。所有行为均受显式配置门控，普通 OpenClaw compaction 保持原逻辑。
+- **当前保留原因**：上游没有 Codex-local strategy、90% threshold 或等价 checkpoint 元数据；
+  仅靠 customInstructions 无法改变历史替换顺序和自动触发状态机。
+- **可删除条件**：上游提供等价的显式本地策略、用户原话+末尾摘要布局、连续压缩状态和失败语义。
 
 ## 已删除或由上游/App 承担的能力
 
@@ -542,7 +558,7 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、34 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、35 项保留缺口、头注释和大小约束。                                                                      |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                     |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                         |
@@ -551,8 +567,9 @@ flowchart LR
 | `openclawV202671ManagedSubagentJoin.test.ts`          | `017`–`021` 的分类、批次、两阶段提交、恢复、identity 与 announce fence。                                                                  |
 | `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                           |
 | `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                             |
-| `openclawV202671CompactionMetadata.test.ts`           | `029` identity dedupe、可读 replay、20k token、CJK/emoji 边界。                                                                           |
-| `openclawV202671EmergencyCompaction.test.ts`          | `031` 首次/重复/legacy、全部失败入口、abort、details、source/bundle 原子性。                                                              |
+| `openclawV202671CompactionMetadata.test.ts`           | `029` identity dedupe、逐条 user replay、summary 顺序、20k token、CJK/emoji 边界。                                                        |
+| `openclawV202671EmergencyCompaction.test.ts`          | `031` 非 Codex fallback、Codex fail-closed、abort、details、source/bundle 原子性。                                                        |
+| `openclawV202671CodexLocalCompaction.test.ts`         | `035` 显式配置、90% pre/mid-turn 阈值、结构绕过、metadata 与 overflow 单次恢复。                                                          |
 | `openclawRunProgressEventsPatch.test.ts`              | `032` pristine callback gap、JustDo root/nested ancestry、native/cron/missing/conflict/cycle fail-closed、CLI/embedded allow-list event。 |
 | `openclawV202671CapabilityPatches.test.ts`            | `010`、`022`、`027`、`031`、`033` 及歧义 anchor 原子失败。                                                                                |
 | `openclawRuntimePatchManifest.test.ts`                | source lock、patch/build recipe fingerprint、cache、manifest/tamper fence。                                                               |
