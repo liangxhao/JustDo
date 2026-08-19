@@ -136,7 +136,7 @@ prefix；首次、重复和 split/mid-turn 使用同一提示。`035-codex-local
 `026-parent-session-identity.cjs`、`027-agent-request-metadata.cjs` 与
 `028-request-purpose-metadata.cjs` 分别覆盖父会话稳定身份、普通 agent stream、safeguard 自己的分阶段摘要调用、
 OpenClaw 原生 `compact()` 回退，以及 `tools.exec.reviewer` 使用的 simple-completion 调用。补丁为关联到会话的
-`builtin_models` / `justdo` LiteLLM OpenAI-compatible 请求注入权威的 `metadata.session_id`，subagent 请求还会注入直接父级
+`builtin_models` LiteLLM OpenAI Chat Completions 请求注入权威的 `metadata.session_id`，subagent 请求还会注入直接父级
 Gateway UUID `metadata.parent_session_id`，并用
 `metadata.request_purpose` 区分 `agent`、`context_compaction` 和 `exec_review`；真实用户
 直接发起的顶层 agent turn 只有第一次 provider 请求会带上

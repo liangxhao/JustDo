@@ -2,7 +2,7 @@
 
 // Capability: attach LiteLLM agent session/parent metadata and one-shot user initiation evidence.
 // Target: pristine openclaw@2026.7.1-2, which emits no equivalent provider payload metadata.
-// Scope: adds chat.send schema/registration plus builtin_models/justdo agent egress only.
+// Scope: adds chat.send schema/registration plus builtin_models agent egress only.
 // Safety: strict compatible/custom providers receive no JustDo metadata; their one-shot run
 // bookkeeping is discarded. user_initiated is consumed once and stable IDs are never rewritten.
 // Remove when: upstream supports session_id, parent_session_id and initiation metadata natively.
@@ -12,9 +12,17 @@ const path = require('path');
 const { findFilesContaining, replaceUniquePattern, writeIfChanged } = require('./_patch-utils');
 
 const CAPABILITY = 'justdo-agent-request-metadata';
-const SUPPORTED_APIS =
-  'new Set(["openai-completions", "openai-responses", "azure-openai-responses"])';
-const LITELLM_PROVIDERS = 'new Set(["builtin_models", "justdo"])';
+const SUPPORTED_APIS = 'new Set(["openai-completions"])';
+const LITELLM_PROVIDERS = 'new Set(["builtin_models"])';
+
+function narrowMetadataAllowlist(content) {
+  return content
+    .replaceAll(
+      'new Set(["openai-completions", "openai-responses", "azure-openai-responses"])',
+      SUPPORTED_APIS,
+    )
+    .replaceAll('new Set(["builtin_models", "justdo"])', LITELLM_PROVIDERS);
+}
 
 function patchSchema(content, filePath) {
   if (content.includes('justdoUserInitiated:')) return content;
@@ -61,7 +69,7 @@ function patchAgentStream(content, filePath) {
         throw new Error(`${filePath}: partial agent metadata patch (${contract})`);
       }
     }
-    return content;
+    return narrowMetadataAllowlist(content);
   }
   let updated = replaceUniquePattern(
     content,
@@ -223,6 +231,15 @@ function verifyPatch(runtimeDir) {
   ]) {
     if (!combined.includes(required))
       throw new Error(`agent metadata field is missing: ${required}`);
+  }
+  for (const unsupportedAllowlist of [
+    '["builtin_models", "justdo"]',
+    '["openai-completions", "openai-responses", "azure-openai-responses"]',
+  ]) {
+    if (combined.includes(unsupportedAllowlist))
+      throw new Error(
+        `agent metadata still includes unsupported allowlist: ${unsupportedAllowlist}`,
+      );
   }
 }
 

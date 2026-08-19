@@ -3,7 +3,7 @@
 // Capability: isolate session-scoped compaction and exec-review provider metadata.
 // Contract: native/safeguard compaction use context_compaction; reviewers use exec_review.
 // Target: pristine openclaw@2026.7.1-2; patches real runtime call chains, not API aliases.
-// Scope: only model.provider builtin_models/justdo and their OpenAI-compatible transports.
+// Scope: only model.provider builtin_models over the OpenAI Chat Completions transport.
 // Safety: custom/strict-compatible providers keep native egress; unrelated completions are untouched.
 // Remove when: upstream supports session-scoped per-purpose metadata for all three paths.
 
@@ -13,8 +13,14 @@ const { findFilesContaining, replaceUniquePattern, writeIfChanged } = require('.
 
 const COMPACTION_HELPER = 'wrapJustDoCompactionRequestMetadata';
 const SIMPLE_HELPER = 'prepareJustDoMetadataSimpleCompletionModel';
-const PROVIDERS = '["builtin_models", "justdo"]';
-const APIS = '["openai-completions", "openai-responses", "azure-openai-responses"]';
+const PROVIDERS = '["builtin_models"]';
+const APIS = '["openai-completions"]';
+
+function narrowMetadataAllowlist(content) {
+  return content
+    .replaceAll('["openai-completions", "openai-responses", "azure-openai-responses"]', APIS)
+    .replaceAll('["builtin_models", "justdo"]', PROVIDERS);
+}
 
 function replaceExactCount(content, pattern, replacement, expected, label) {
   const matches = [...content.matchAll(pattern)];
@@ -35,7 +41,7 @@ function patchNativeCompaction(content, filePath) {
         throw new Error(`${filePath}: partial native compaction metadata patch (${contract})`);
       }
     }
-    return content;
+    return narrowMetadataAllowlist(content);
   }
   let updated = replaceUniquePattern(
     content,
@@ -150,7 +156,7 @@ function patchSimpleCompletion(content, filePath) {
         throw new Error(`${filePath}: partial exec-review simple completion patch (${contract})`);
       }
     }
-    return content;
+    return narrowMetadataAllowlist(content);
   }
   let updated = replaceUniquePattern(
     content,
@@ -434,9 +440,18 @@ function verifyPatch(runtimeDir) {
   const combined = [...isolationFiles]
     .map(filePath => fs.readFileSync(filePath, 'utf8'))
     .join('\n');
-  for (const value of ['"builtin_models"', '"justdo"', 'delete payload.metadata.user_initiated']) {
+  for (const value of ['"builtin_models"', 'delete payload.metadata.user_initiated']) {
     if (!combined.includes(value))
       throw new Error(`LiteLLM metadata isolation is missing: ${value}`);
+  }
+  for (const unsupportedAllowlist of [
+    '["builtin_models", "justdo"]',
+    '["openai-completions", "openai-responses", "azure-openai-responses"]',
+  ]) {
+    if (combined.includes(unsupportedAllowlist))
+      throw new Error(
+        `LiteLLM metadata still includes unsupported allowlist: ${unsupportedAllowlist}`,
+      );
   }
 }
 

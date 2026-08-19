@@ -74,7 +74,7 @@ OpenClaw 的 Goal 是生命周期权威，JustDo 只负责展示和连续派发�
 
 ### 模型请求和服务同步
 
-`builtin_models` / `justdo` LiteLLM 的 OpenAI-compatible 请求现在携带用途和关联元数据；
+`builtin_models` LiteLLM 的 OpenAI Chat Completions 请求现在携带用途和关联元数据；
 自定义或其他 strict-compatible provider 保持上游原始 payload：
 
 | 用途         | `metadata.request_purpose` | 说明                      |

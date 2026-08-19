@@ -393,7 +393,7 @@ flowchart LR
 
 #### `027-agent-request-metadata.cjs`
 
-- **做什么**：对 `builtin_models`/`justdo` LiteLLM agent 请求发送 `session_id`、来自 `026`
+- **做什么**：对 `builtin_models` LiteLLM OpenAI Chat Completions agent 请求发送 `session_id`、来自 `026`
   的 `parent_session_id`、`request_purpose=agent`，并只在用户发起 run 的首个 provider 请求
   发送一次 `user_initiated=true`。legacy child 没有 `parentSessionId` 时，才沿 `spawnedBy`
   查询一次直接父 UUID，并在 session generation guard 下回填 child entry。
@@ -410,7 +410,7 @@ flowchart LR
 - **做什么**：native compact 和 safeguard 的 staged/chunk/retry 请求发送
   `request_purpose=context_compaction`；exec reviewer simple completion 发送
   `request_purpose=exec_review`，并携带正确 session identity。
-- **关系与边界**：与 `027` 共用 provider gating，但不依赖其 agent wrapper；确保后台请求不会
+- **关系与边界**：与 `027` 共用 `builtin_models + openai-completions` gating，但不依赖其 agent wrapper；确保后台请求不会
   错误继承 `request_purpose=agent`。custom/strict-compatible provider 不注入。
 - **当前保留原因**：原始版本无法区分正常 agent、压缩和执行审查请求；后台调用会被错误归因
   或无法按用途观测/路由。

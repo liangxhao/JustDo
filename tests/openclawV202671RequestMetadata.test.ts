@@ -173,7 +173,7 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
     const custom = wrap(original, {
       sessionId: 'session-custom',
       runId: 'custom-run',
-      modelApi: 'openai-responses',
+      modelApi: 'openai-completions',
       modelProvider: 'strict-compatible',
     });
 
@@ -188,7 +188,7 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
     const stream = wrap(vi.fn(), {
       sessionId: 'session-1',
       runId: 'run-1',
-      modelApi: 'openai-responses',
+      modelApi: 'openai-completions',
       modelProvider: 'builtin_models',
     });
 
@@ -221,8 +221,8 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
       sessionKey: 'child',
       spawnedBy: 'parent',
       runId: 'subagent-run',
-      modelApi: 'openai-responses',
-      modelProvider: 'justdo',
+      modelApi: 'openai-completions',
+      modelProvider: 'builtin_models',
       config: {},
     });
 
@@ -242,7 +242,7 @@ describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
       sessionKey: 'child',
       spawnedBy: 'parent',
       runId: 'legacy-run',
-      modelApi: 'openai-responses',
+      modelApi: 'openai-completions',
       modelProvider: 'builtin_models',
       config: {},
     });
@@ -280,16 +280,26 @@ async function spawn() {
     expect(transformed).not.toContain('entry.sessionId =');
   });
 
-  test('compaction metadata is scoped to JustDo LiteLLM and clears agent initiation', () => {
+  test('compaction metadata is scoped to builtin models and clears agent initiation', () => {
     const wrap = compactionMetadataWrapper();
     const original = vi.fn();
     expect(
-      wrap(original, { provider: 'strict-compatible', api: 'openai-responses' }, 'session-custom'),
+      wrap(
+        original,
+        { provider: 'strict-compatible', api: 'openai-completions' },
+        'session-custom',
+      ),
+    ).toBe(original);
+    expect(
+      wrap(original, { provider: 'justdo', api: 'openai-completions' }, 'session-legacy'),
+    ).toBe(original);
+    expect(
+      wrap(original, { provider: 'builtin_models', api: 'openai-responses' }, 'session-responses'),
     ).toBe(original);
 
     const stream = wrap(
       original,
-      { provider: 'justdo', api: 'openai-responses' },
+      { provider: 'builtin_models', api: 'openai-completions' },
       'session-compact',
     );
     expect(stream()).toEqual({
@@ -302,12 +312,12 @@ async function spawn() {
 
   test('exec-review metadata leaves strict-compatible models untouched', () => {
     const { helper, registered } = simpleCompletionMetadataHelper();
-    const custom = { provider: 'custom', api: 'openai-responses', id: 'strict' };
+    const custom = { provider: 'custom', api: 'openai-completions', id: 'strict' };
     expect(helper(custom, 'exec_review', 'session-custom')).toBe(custom);
     expect(registered.size).toBe(0);
 
     const prepared = helper(
-      { provider: 'builtin_models', api: 'openai-responses', id: 'reviewer' },
+      { provider: 'builtin_models', api: 'openai-completions', id: 'reviewer' },
       'exec_review',
       'session-review',
     );
