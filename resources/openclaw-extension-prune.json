@@ -1,15 +1,18 @@
 {
-  "version": 1,
+  "version": 2,
+  "openclawVersion": "2026.7.1-2",
   "runtimeExtensionsPath": "vendor/openclaw-runtime/{platform}/dist/extensions",
-  "description": "OpenClaw-managed bundled extension pruning policy for JustDo. JustDo-owned custom extensions are outside this policy. Build/startup cleanup scripts should remove only entries listed in remove.",
+  "description": "Version-scoped allowlist for OpenClaw-managed bundled extensions. Every upstream extension must be declared in keep or remove; unknown extensions fail pruning for review. JustDo-owned custom extensions are protected separately.",
   "keep": [
     "anthropic",
     "active-memory",
     "admin-http-rpc",
     "browser",
+    "codex-supervisor",
     "document-extract",
     "file-transfer",
     "llm-task",
+    "logbook",
     "memory-core",
     "memory-wiki",
     "oc-path",
@@ -26,14 +29,9 @@
       "extensions": [
         "bonjour",
         "canvas",
-        "clickclack",
         "device-pair",
         "imessage",
-        "irc",
-        "mattermost",
         "phone-control",
-        "signal",
-        "sms",
         "telegram",
         "thread-ownership",
         "webhooks"
@@ -42,10 +40,7 @@
     {
       "category": "migration-tools",
       "reason": "One-time import/migration helpers; not required for normal JustDo startup.",
-      "extensions": [
-        "migrate-claude",
-        "migrate-hermes"
-      ]
+      "extensions": ["migrate-claude", "migrate-hermes"]
     },
     {
       "category": "optional-speech-and-media",
@@ -71,30 +66,25 @@
     {
       "category": "optional-search-providers",
       "reason": "Standalone web-search providers. Remove when search is handled by MCP or another retained provider.",
-      "extensions": [
-        "duckduckgo",
-        "searxng",
-        "tavily"
-      ]
+      "extensions": ["duckduckgo"]
     },
     {
       "category": "unused-model-providers",
       "reason": "Model providers not kept in the default slim runtime. Move an extension from here to keep if the app is configured to use it.",
       "extensions": [
-
         "byteplus",
+        "clawrouter",
         "cohere",
         "copilot-proxy",
-        "fireworks",
         "github-copilot",
         "google",
         "huggingface",
         "litellm",
         "lmstudio",
         "microsoft-foundry",
+        "meta",
         "minimax",
         "mistral",
-        "moonshot",
         "novita",
         "nvidia",
         "ollama",
@@ -103,16 +93,12 @@
         "openrouter",
         "sglang",
         "synthetic",
-        "tencent",
         "together",
-        "venice",
-        "vercel-ai-gateway",
         "vllm",
         "volcengine",
         "voyage",
         "xai",
-        "xiaomi",
-        "zai"
+        "xiaomi"
       ]
     }
   ]

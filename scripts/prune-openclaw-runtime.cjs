@@ -216,10 +216,40 @@ function loadExtensionPrunePolicy(repoRoot) {
   if (!Array.isArray(policy.keep)) {
     throw new Error(`Invalid extension prune policy, "keep" must be an array: ${policyPath}`);
   }
+  if (!Array.isArray(policy.remove)) {
+    throw new Error(`Invalid extension prune policy, "remove" must be an array: ${policyPath}`);
+  }
+
+  const remove = policy.remove.flatMap((group, index) => {
+    if (!group || !Array.isArray(group.extensions)) {
+      throw new Error(
+        `Invalid extension prune policy, "remove[${index}].extensions" must be an array: ${policyPath}`,
+      );
+    }
+    return group.extensions;
+  });
+  const invalidIds = [...policy.keep, ...remove].filter(
+    extensionId => typeof extensionId !== 'string' || extensionId.trim().length === 0,
+  );
+  if (invalidIds.length > 0) {
+    throw new Error(
+      `Invalid extension prune policy, extension ids must be non-empty strings: ${policyPath}`,
+    );
+  }
+
+  const duplicates = [...policy.keep, ...remove].filter(
+    (extensionId, index, extensionIds) => extensionIds.indexOf(extensionId) !== index,
+  );
+  if (duplicates.length > 0) {
+    throw new Error(
+      `Invalid extension prune policy, duplicate extension ids: ${[...new Set(duplicates)].join(', ')}`,
+    );
+  }
 
   return {
     policyPath,
     keep: policy.keep,
+    remove,
     protected: listLocalExtensionIds(repoRoot),
   };
 }
@@ -239,10 +269,23 @@ function pruneRuntimeExtensions(runtimeRoot, stats, options = {}) {
   }
 
   const keep = new Set([...policy.keep, ...policy.protected]);
+  const reviewed = new Set([...policy.keep, ...policy.remove, ...policy.protected]);
   const removed = [];
   const protectedKept = [];
+  const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
+  const unknown = entries
+    .filter(entry => entry.isDirectory() && !reviewed.has(entry.name))
+    .map(entry => entry.name)
+    .sort();
 
-  for (const entry of fs.readdirSync(extensionsDir, { withFileTypes: true })) {
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unreviewed OpenClaw extension dirs found: ${unknown.join(', ')}. ` +
+        `Update ${policy.policyPath} before pruning this runtime.`,
+    );
+  }
+
+  for (const entry of entries) {
     if (!entry.isDirectory()) {
       continue;
     }
