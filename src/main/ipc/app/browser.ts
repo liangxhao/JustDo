@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'child_process';
-import { clipboard, ipcMain } from 'electron';
+import crypto from 'crypto';
+import { app, clipboard, ipcMain, shell } from 'electron';
 import fs from 'fs';
 import net from 'net';
 import os from 'os';
@@ -19,8 +20,13 @@ import {
   parseDevToolsActivePort,
 } from '../../../shared/browser';
 import type { GatewayClientLike } from '../../engine/gateway/types';
+import type { OpenClawCliEnvironment } from '../../openclaw/runtime/openclawEngineManager';
 
 const REMOTE_DEBUGGING_URL = 'chrome://inspect/#remote-debugging';
+const EXTENSION_MANAGEMENT_URL = 'chrome://extensions';
+const EXTENSION_RELAY_SECRET_FILE = 'browser-extension-relay.secret';
+const DEFAULT_EXTENSION_RELAY_PORT = 18_799;
+const EXTENSION_RELAY_GATEWAY_PORT_OFFSET = 10;
 const execFileAsync = promisify(execFile);
 
 type PortOwnerLookup = {
@@ -184,8 +190,8 @@ const focusRunningChrome = (): void => {
       ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
       : 'powershell.exe';
     const script = [
-      "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NativeWindow { [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd); [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); }'",
-      "$chrome = Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1",
+      'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public static class NativeWindow { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); }\'',
+      '$chrome = Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1',
       'if ($chrome) { [NativeWindow]::ShowWindowAsync($chrome.MainWindowHandle, 9) | Out-Null; [NativeWindow]::SetForegroundWindow($chrome.MainWindowHandle) | Out-Null }',
     ].join('; ');
     const child = spawn(
@@ -217,6 +223,109 @@ const focusRunningChrome = (): void => {
     child.once('error', () => {});
     child.unref();
   }
+};
+
+export const findBundledBrowserExtensionPath = (
+  environment: { isPackaged: boolean; resourcesPath: string; appPath: string },
+  pathExists: (candidate: string) => boolean = fs.existsSync,
+): string | null => {
+  const candidates = environment.isPackaged
+    ? [path.join(environment.resourcesPath, 'browser-extension')]
+    : [
+        path.join(environment.appPath, 'build', 'browser-extension'),
+        path.join(process.cwd(), 'build', 'browser-extension'),
+      ];
+  return (
+    candidates.find(candidate =>
+      pathExists(path.join(candidate, 'chrome-extension', 'manifest.json')),
+    ) ?? null
+  );
+};
+
+const normalizeExtensionRelayToken = (value: string): string | null => {
+  const token = value.trim();
+  return /^[0-9a-f]{64}$/.test(token) ? token : null;
+};
+
+const readExtensionRelayToken = (secretPath: string): string | null => {
+  try {
+    return normalizeExtensionRelayToken(fs.readFileSync(secretPath, 'utf8'));
+  } catch {
+    return null;
+  }
+};
+
+export const ensureBrowserExtensionRelayToken = (stateDir: string): string => {
+  const secretPath = path.join(stateDir, 'credentials', EXTENSION_RELAY_SECRET_FILE);
+  const existing = readExtensionRelayToken(secretPath);
+  if (existing) return existing;
+
+  const token = crypto.randomBytes(32).toString('hex');
+  fs.mkdirSync(path.dirname(secretPath), { recursive: true, mode: 0o700 });
+  try {
+    fs.writeFileSync(secretPath, `${token}\n`, { mode: 0o600, flag: 'wx' });
+    return token;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    const winner = readExtensionRelayToken(secretPath);
+    if (!winner) throw new Error('Browser extension relay secret is invalid.');
+    return winner;
+  }
+};
+
+const readConfiguredExtensionRelayPort = (configPath: string | undefined): number | null => {
+  if (!configPath) return null;
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+      browser?: { profiles?: { chrome?: { cdpPort?: unknown } } };
+    };
+    const port = Number(config.browser?.profiles?.chrome?.cdpPort);
+    return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null;
+  } catch {
+    return null;
+  }
+};
+
+export const resolveBrowserExtensionRelayPort = (cli: OpenClawCliEnvironment): number => {
+  const configured = readConfiguredExtensionRelayPort(cli.env.OPENCLAW_CONFIG_PATH);
+  if (configured) return configured;
+  const gatewayPort = Number(cli.env.OPENCLAW_GATEWAY_PORT);
+  const derived = gatewayPort + EXTENSION_RELAY_GATEWAY_PORT_OFFSET;
+  return Number.isInteger(derived) && derived > 0 && derived <= 65_535
+    ? derived
+    : DEFAULT_EXTENSION_RELAY_PORT;
+};
+
+const resolveBrowserExtensionPath = (): string => {
+  const extensionPath = findBundledBrowserExtensionPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+  });
+  if (!extensionPath) throw new Error('The bundled browser extension is missing.');
+  return extensionPath;
+};
+
+export const copyBrowserExtensionPairing = async (
+  buildCliEnvironment: () => Promise<OpenClawCliEnvironment>,
+): Promise<void> => {
+  const cli = await buildCliEnvironment();
+  const stateDir = cli.env.OPENCLAW_STATE_DIR?.trim();
+  if (!stateDir || !path.isAbsolute(stateDir)) {
+    throw new Error('Browser extension state directory is unavailable.');
+  }
+  const token = ensureBrowserExtensionRelayToken(stateDir);
+  const relayPort = resolveBrowserExtensionRelayPort(cli);
+  clipboard.writeText(`ws://127.0.0.1:${relayPort}/extension#${token}`);
+  console.log(`[BrowserSettings] Browser extension pairing copied (relayPort=${relayPort}).`);
+};
+
+export const openBrowserExtensionFolder = async (
+  extensionPath: string,
+  openPath: (targetPath: string) => Promise<string> = shell.openPath,
+): Promise<void> => {
+  const error = await openPath(extensionPath);
+  if (error) throw new Error(error);
 };
 
 const readRemoteDebuggingEnabled = (userDataDir: string): boolean => {
@@ -262,9 +371,10 @@ export const getBrowserConnectionStatus = async (): Promise<BrowserConnectionSta
     }
   }
   const portListening = activePort ? await probeLoopbackPort(activePort) : false;
-  const portOwnerLookup = activePort && portListening
-    ? await resolvePortOwner(activePort)
-    : { resolved: true, owner: null };
+  const portOwnerLookup =
+    activePort && portListening
+      ? await resolvePortOwner(activePort)
+      : { resolved: true, owner: null };
   const occupiedByOtherProcess =
     portListening &&
     portOwnerLookup.resolved &&
@@ -296,6 +406,7 @@ export const getBrowserConnectionStatus = async (): Promise<BrowserConnectionSta
 
 type BrowserHandlerDependencies = {
   getGatewayClient: () => GatewayClientLike | null;
+  buildCliEnvironment: () => Promise<OpenClawCliEnvironment>;
   setBrowserMode: (mode: BrowserModeValue) => Promise<BrowserModeUpdateResult>;
 };
 
@@ -308,6 +419,7 @@ type BrowserModeChangeDependencies = {
 
 export const testBrowserConnection = async (
   client: GatewayClientLike | null,
+  profile: 'user' | 'chrome' = 'user',
 ): Promise<BrowserConnectionTestResult> => {
   if (!client) {
     return {
@@ -320,7 +432,7 @@ export const testBrowserConnection = async (
     await client.request('browser.request', {
       method: 'GET',
       path: '/tabs',
-      query: { profile: 'user' },
+      query: { profile },
       timeoutMs: 45_000,
     });
     return { success: true };
@@ -328,9 +440,7 @@ export const testBrowserConnection = async (
     const message = error instanceof Error ? error.message : String(error);
     return {
       success: false,
-      errorCode: /timed?\s*out|timeout/i.test(message)
-        ? 'permission-timeout'
-        : 'connection-failed',
+      errorCode: /timed?\s*out|timeout/i.test(message) ? 'permission-timeout' : 'connection-failed',
       error: message,
     };
   }
@@ -365,6 +475,7 @@ export const applyBrowserModeChange = async (
 
 export const registerBrowserHandlers = ({
   getGatewayClient,
+  buildCliEnvironment,
   setBrowserMode,
 }: BrowserHandlerDependencies): void => {
   ipcMain.handle(BrowserIpc.GetStatus, async () => {
@@ -376,7 +487,11 @@ export const registerBrowserHandlers = ({
   });
 
   ipcMain.handle(BrowserIpc.SetMode, async (_event, mode: unknown) => {
-    if (mode !== BrowserMode.Isolated && mode !== BrowserMode.User) {
+    if (
+      mode !== BrowserMode.Isolated &&
+      mode !== BrowserMode.User &&
+      mode !== BrowserMode.Extension
+    ) {
       return {
         success: false,
         errorCode: 'invalid-mode',
@@ -391,6 +506,33 @@ export const registerBrowserHandlers = ({
     // the address bar, which works consistently across supported versions.
     clipboard.writeText(REMOTE_DEBUGGING_URL);
     return launchOrFocusChrome();
+  });
+
+  ipcMain.handle(BrowserIpc.OpenExtensionManagement, () => {
+    clipboard.writeText(EXTENSION_MANAGEMENT_URL);
+    return launchOrFocusChrome();
+  });
+
+  ipcMain.handle(BrowserIpc.RevealExtension, async (): Promise<BrowserActionResult> => {
+    try {
+      const extensionPath = resolveBrowserExtensionPath();
+      console.log(`[BrowserSettings] Opening browser extension folder: ${extensionPath}`);
+      await openBrowserExtensionFolder(extensionPath);
+      return { success: true };
+    } catch (error) {
+      console.error('[BrowserSettings] Failed to open browser extension folder:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle(BrowserIpc.CopyExtensionPairing, async (): Promise<BrowserActionResult> => {
+    try {
+      await copyBrowserExtensionPairing(buildCliEnvironment);
+      return { success: true };
+    } catch (error) {
+      console.error('[BrowserSettings] Failed to copy browser extension pairing:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle(BrowserIpc.TestConnection, async (): Promise<BrowserConnectionTestResult> => {
@@ -408,4 +550,10 @@ export const registerBrowserHandlers = ({
       clearTimeout(refocusTimer);
     }
   });
+
+  ipcMain.handle(
+    BrowserIpc.TestExtensionConnection,
+    async (): Promise<BrowserConnectionTestResult> =>
+      testBrowserConnection(getGatewayClient(), 'chrome'),
+  );
 };

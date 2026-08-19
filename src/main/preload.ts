@@ -154,6 +154,14 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(BrowserIpc.OpenRemoteDebugging),
     testConnection: (): Promise<BrowserConnectionTestResult> =>
       ipcRenderer.invoke(BrowserIpc.TestConnection),
+    openExtensionManagement: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.OpenExtensionManagement),
+    revealExtension: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.RevealExtension),
+    copyExtensionPairing: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.CopyExtensionPairing),
+    testExtensionConnection: (): Promise<BrowserConnectionTestResult> =>
+      ipcRenderer.invoke(BrowserIpc.TestExtensionConnection),
   },
   api: {
     // 普通 API 请求（非流式）

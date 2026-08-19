@@ -1,9 +1,8 @@
 # 浏览器设置设计
 
-> 本文是设计与前置条件记录，不代表 JustDo 已经交付 extension 配对、状态管理或对应 IPC。
-> 文中列出的 `src/...` 文件名是拟议实现位置。当前捆绑 OpenClaw `v2026.7.1-2`
-> 已包含 upstream extension driver、relay、CLI 与配置能力，但 JustDo 的产品集成和发布流程
-> 尚未完成。
+> 本文同时记录当前实现与后续产品化方向。JustDo 已基于捆绑的 OpenClaw
+> `v2026.7.1-2` 提供 extension 模式、独立扩展资源、主进程配对信息生成、连接测试和
+> 设置页引导。Chrome Web Store 分发、自动安装与自动配对仍属于后续产品化范围。
 
 ## 1. 目标与版本前提
 
@@ -33,9 +32,14 @@
 - [Browser control API](https://docs.openclaw.ai/tools/browser-control)
 - [Chrome Extension](https://docs.openclaw.ai/tools/chrome-extension)
 
-runtime 前置已经满足，但第三种模式仍不能仅靠增加一个 UI 选项上线。进入产品开发前必须完成
-packaged runtime 的 driver/relay/CLI/doctor 验证、配对与凭据生命周期、状态 IPC、发布渠道和
-fail-closed 测试。该能力应复用 upstream browser extension，不做 JustDo 私有 runtime patch。
+runtime 前置已经满足。当前实现将 upstream browser extension 复制为 JustDo 独立维护的
+`resources/browser-extension/chrome-extension` 资源，不修改捆绑 runtime。构建时从
+`package.json.productName` 生成扩展名称并复制应用图标，安装后释放到
+`<process.resourcesPath>/browser-extension/chrome-extension`；设置页打开其上一级
+`<process.resourcesPath>/browser-extension`，方便用户在 Chrome 中选择扩展子目录。
+主进程继续复用 upstream 的密钥文件、原子写入和 relay 端口规则生成本机配对信息；
+配对字符串只写入系统剪贴板，不返回 Renderer。完整的 Web Store 发布、自动配对和发布渠道
+验证仍需后续完成。
 
 ## 2. 三种产品模式
 
@@ -45,8 +49,9 @@ fail-closed 测试。该能力应复用 upstream browser extension，不做 Just
 | 用户浏览器（有人值守） | `user`           | `existing-session` | 整个当前 Chrome Profile   | 首次连接时确认        |
 | 用户浏览器（无人值守） | `chrome`         | `extension`        | 用户 Chrome，仅共享标签组 | 首次安装/配对后不需要 |
 
-设置页当前提供前两种模式供用户选择：默认使用 `openclaw` 隔离浏览器；只有用户主动选择
-“允许连接你的浏览器”后，才将默认 Profile 切换为 `user` 并显示 Chrome 授权引导。模式保存到
+设置页当前提供三种模式：默认使用 `openclaw` 隔离浏览器；“允许连接你的浏览器”将默认
+Profile 切换为 `user` 并显示 Chrome 授权引导；“通过扩展连接 Chrome”将默认 Profile 切换为
+`chrome` 并显示扩展安装、配对、共享范围和连接测试引导。模式保存到
 `app_config.browserMode`，切换后通过配置同步服务安全应用，使后续会话使用新的默认 Profile。
 
 ### 2.1 内置浏览器
@@ -73,8 +78,8 @@ OpenClaw 启动隔离 Chromium Profile。隔离性好，但不会复用日常浏
 - 端口存在时解析监听进程；无人监听时明确说明它只是 Chrome 遗留记录，其他进程占用时
   显示进程名和 PID，并且不把该端口误判为可用的 Chrome 调试端点。
 - 可复制 `chrome://inspect/#remote-debugging` 并聚焦 Chrome；由于 Chrome 可能丢弃外部
-  进程传入的 `chrome://` URL，用户需要在地址栏粘贴后回车。端口就绪后可重启 Gateway
-  并通过“测试连接”直接请求 `browser.request /tabs` 触发授权。
+  进程传入的 `chrome://` URL，用户需要在地址栏粘贴后回车。端口就绪后可通过“测试连接”
+  直接请求 `browser.request /tabs` 触发授权，无需手动重启 Gateway。
 - Windows 下 Chrome MCP 直接使用上游 stdio transport；运行时补丁会将其 `npx` 调用
   映射到 JustDo 管理的 Electron Node 与 `npx-cli.js`，并从握手开始捕获 stderr。
 - Chrome 自动连接成功但尚未建立初始页面上下文时，上游 `list_pages` 会返回
@@ -87,9 +92,9 @@ OpenClaw 启动隔离 Chromium Profile。隔离性好，但不会复用日常浏
 
 - 不出现阻塞式远程调试 Allow 对话框。
 - Extension relay 只监听 loopback，并使用主机本地 token 双向认证。
-- Agent 只能访问 OpenClaw 标签组中的标签页，不是整个浏览器。
+- Agent 只能访问以 `package.json.productName` 命名的标签组中的标签页，不是整个浏览器。
 - 用户把标签页移出该组、再次点击扩展按钮或关闭调试提示后可立即撤销。
-- Agent 新建的标签页自动进入 OpenClaw 标签组。
+- Agent 新建的标签页自动进入该产品标签组。
 - 新标签页仍使用当前用户 Chrome Profile 的 Cookie、代理、VPN、证书和登录态。
 
 这才是本产品中“用户浏览器（无人值守）”的正确技术映射。
@@ -105,7 +110,9 @@ OpenClaw 启动隔离 Chromium Profile。隔离性好，但不会复用日常浏
 5. 获取 pairing string。
 6. 打开扩展 popup 并粘贴配对信息。
 
-这个流程不能直接交给 JustDo 用户。
+当前版本在设置页中引导并简化这个流程：用户不需要运行命令，扩展目录由应用打开，pairing
+string 由主进程生成并复制；但用户仍需在 Chrome 中开启 Developer mode、点击 Load unpacked、
+选择扩展目录，并把配对信息粘贴到扩展 popup。
 
 另外，普通 Chrome 不允许桌面应用静默安装任意扩展：
 
@@ -206,7 +213,7 @@ Chrome Web Store 的权限确认不能由 JustDo 代点。页面应把这一步�
 #### 用户浏览器（无人值守）
 
 - 标签：推荐用于定时任务。
-- 说明：安装扩展后复用 Chrome 登录态；只控制 OpenClaw 标签组。
+- 说明：安装扩展后复用 Chrome 登录态；只控制产品标签组。
 - 主按钮状态机：
   - 未安装：`安装并启用`
   - 等待 Chrome：`请在 Chrome 中确认安装`
@@ -220,11 +227,11 @@ Chrome Web Store 的权限确认不能由 JustDo 代点。页面应把这一步�
 
 无人值守模式必须把“标签组即授权边界”讲清楚：
 
-- `仅共享 OpenClaw 标签组中的网页`
+- `仅共享产品标签组中的网页`
 - `新任务打开的网页会自动进入该组`
 - `将网页移出该组即可立即停止访问`
 
-首次启用完成后，可自动打开一个普通欢迎页并放入 OpenClaw 标签组，用于确认
+首次启用完成后，可自动打开一个普通欢迎页并放入产品标签组，用于确认
 连接。不能自动把用户已有标签页批量加入共享组。
 
 ### 5.3 状态与诊断
@@ -403,8 +410,8 @@ type BrowserConnectionStatus = {
 
 - Gateway/JustDo 重启：relay 自动恢复，Extension 使用已保存身份重连。
 - Chrome 重启：Extension 自动恢复连接。
-- Agent 打开新页面：自动进入 OpenClaw 标签组，不需要用户点击。
-- 已有网页：只有用户曾加入 OpenClaw 标签组后才可访问。
+- Agent 打开新页面：自动进入产品标签组，不需要用户点击。
+- 已有网页：只有用户曾加入产品标签组后才可访问。
 - 用户移出标签：立即撤销。
 - Chrome 显示可关闭的调试 banner，但它不是阻塞式确认。
 
@@ -425,7 +432,7 @@ type BrowserConnectionStatus = {
 - 解除配对时旋转或删除 host-local secret。
 - 不记录 pairing string、Gateway token、Cookie、页面内容和完整 WebSocket URL。
 - Extension ID 必须固定并纳入 allowlist。
-- 只控制 OpenClaw 标签组，不能在 JustDo 中提供“共享全部已有标签页”开关。
+- 只控制产品标签组，不能在 JustDo 中提供“共享全部已有标签页”开关。
 - 安装/升级包必须签名并来自可信发布渠道。
 - Extension 与 Gateway 版本不兼容时 fail closed。
 
@@ -461,7 +468,7 @@ type BrowserConnectionStatus = {
   在 JustDo 集成未完成或验证失败时不显示伪成功。
 - Extension 未安装、等待确认、配对、连接、断开的状态转换。
 - Pairing token 不进入 Renderer、日志、URL query 或 `app_config`。
-- Extension 只能控制 OpenClaw 标签组。
+- Extension 只能控制产品标签组。
 - Agent 新建标签自动进入组。
 - 移出标签、关闭 banner、解除配对立即撤销控制。
 - Gateway/Chrome/JustDo 分别重启后自动恢复。

@@ -25,6 +25,11 @@ const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-sk
 const { packMultipleSources } = require('./pack-openclaw-tar.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 const {
+  prepareBrowserExtension,
+  readProductName,
+  verifyBrowserExtension,
+} = require('./prepare-browser-extension.cjs');
+const {
   PATCH_MANIFEST_FILENAME,
   verifyOpenClawPatchManifest,
 } = require('./verify-openclaw-runtime-patches.cjs');
@@ -623,6 +628,7 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
+  prepareBrowserExtension();
   rebuildElectronNativeModules(context);
   // Install skill dependencies first (for all platforms)
   installSkillDependencies();
@@ -796,6 +802,7 @@ async function beforePack(context) {
 async function afterPack(context) {
   verifyPackagedNodeRuntime(context);
   verifyPackagedOpenClawRuntime(context);
+  verifyPackagedBrowserExtension(context);
 
   if (isWindowsTarget(context)) {
     verifyPackagedWindowsNativeModules(context);
@@ -825,6 +832,22 @@ async function afterPack(context) {
       console.warn(`[electron-builder-hooks] App not found at ${appPath}, skipping icon fix`);
     }
   }
+}
+
+function verifyPackagedBrowserExtension(context) {
+  const resourcesRoot = isMacTarget(context)
+    ? path.join(
+        context.appOutDir,
+        `${context.packager.appInfo.productFilename}.app`,
+        'Contents',
+        'Resources',
+      )
+    : path.join(context.appOutDir, 'resources');
+  const extensionDir = path.join(resourcesRoot, 'browser-extension', 'chrome-extension');
+  const result = verifyBrowserExtension(extensionDir, readProductName(path.join(__dirname, '..')));
+  console.log(
+    `[electron-builder-hooks] Verified packaged ${result.productName} browser extension.`,
+  );
 }
 
 function verifyPackagedNodeRuntime(context) {
@@ -1070,4 +1093,5 @@ module.exports = {
   verifyPackagedNodeRuntime,
   verifyPackagedWindowsNativeModules,
   verifyPackagedOpenClawRuntime,
+  verifyPackagedBrowserExtension,
 };

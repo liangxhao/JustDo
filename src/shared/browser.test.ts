@@ -11,6 +11,10 @@ describe('normalizeBrowserMode', () => {
   test('keeps an explicit user-browser selection', () => {
     expect(normalizeBrowserMode(BrowserMode.User)).toBe(BrowserMode.User);
   });
+
+  test('keeps an explicit extension-browser selection', () => {
+    expect(normalizeBrowserMode(BrowserMode.Extension)).toBe(BrowserMode.Extension);
+  });
 });
 
 describe('parseDevToolsActivePort', () => {

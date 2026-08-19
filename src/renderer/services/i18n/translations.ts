@@ -101,6 +101,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserModeUserTitle: '允许连接你的浏览器',
     browserModeUserDescription:
       '连接日常 Chrome，复用其中的登录状态、Cookie 和标签页，需要你主动授权。',
+    browserModeExtensionTitle: '通过扩展连接 Chrome',
+    browserModeExtensionDescription:
+      '安装并配对浏览器助手扩展，只共享指定标签页，无需每次批准远程调试。',
     browserModeChangeFailed: '浏览器模式切换失败',
     browserUserChromeTitle: '连接你的 Chrome',
     browserUserChromeDescription:
@@ -117,7 +120,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserUnknownProcess: '未知进程',
     browserStatusFailed: '无法检测 Chrome 状态',
     browserOpenSetupFailed: '无法打开 Chrome 远程调试设置页',
-    browserGatewayRestartFailed: 'Gateway 重启失败',
     browserStepChromeTitle: '1. 安装并正常启动 Google Chrome',
     browserStepChromeDescription: '请使用日常 Chrome 快捷方式启动，不要添加任何调试端口参数。',
     browserStepDebuggingTitle: '2. 开启 Chrome Remote Debugging',
@@ -135,16 +137,43 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserRefreshStatus: '刷新状态',
     browserStepAuthorizeTitle: '4. 连接并批准授权',
     browserStepAuthorizeDescription:
-      '重启 Gateway 后发起一次浏览器操作，在 Chrome 的 “Allow remote debugging?” 窗口中点击允许。',
-    browserRestartGateway: '重启 Gateway 并准备授权',
+      '点击测试连接发起一次浏览器操作，然后在 Chrome 的 “Allow remote debugging?” 窗口中点击允许。',
     browserTestConnection: '测试连接并触发授权',
     browserAuthorizationWaiting:
       '连接请求已发送。请查看 Chrome，并在窗口顶部中央的授权框中点击“允许”。',
     browserConnectionVerified: '已连接到 Chrome',
     browserPermissionTimeout:
       'Chrome 授权握手超时。请关闭 Remote Debugging 后重新开启，确认没有其他 MCP 正在连接，然后立即重试。Chrome 150/151 存在相关已知问题。',
-    browserGatewayUnavailable: 'Gateway 尚未连接，请先重启 Gateway。',
+    browserGatewayUnavailable: 'Gateway 尚未连接，请稍后重试。',
     browserConnectionFailed: 'Chrome 连接测试失败',
+    browserExtensionTitle: '通过扩展连接你的 Chrome',
+    browserExtensionDescription:
+      '当前版本需要首次手动加载并配对扩展。完成后扩展会自动重连，不再显示阻塞式远程调试授权窗口。',
+    browserExtensionScopeNotice:
+      '只有浏览器助手标签组中的网页会被共享。将网页移出该标签组，或关闭 Chrome 的调试提示，即可立即停止访问。',
+    browserExtensionStepChromeTitle: '1. 安装并启动 Google Chrome',
+    browserExtensionStepChromeDescription:
+      '扩展模式要求 Chrome 125 或更高版本，不需要开启 Remote Debugging。',
+    browserExtensionStepInstallTitle: '2. 加载浏览器助手扩展',
+    browserExtensionStepInstallDescription:
+      '打开 Chrome 扩展管理页，开启“开发者模式”，点击“加载已解压的扩展程序”，然后选择应用为你打开的扩展文件夹。',
+    browserExtensionOpenPage: '打开扩展管理页',
+    browserExtensionRevealFolder: '打开扩展文件夹',
+    browserExtensionPageCopied: '管理页地址已复制，请粘贴到 Chrome 地址栏并回车：',
+    browserExtensionOpenPageFailed: '无法打开 Chrome 扩展管理页',
+    browserExtensionRevealFailed: '无法找到或打开内置浏览器扩展',
+    browserExtensionStepPairTitle: '3. 配对扩展',
+    browserExtensionStepPairDescription:
+      '点击下方按钮复制本机配对信息；然后点击 Chrome 工具栏中的浏览器助手图标，粘贴并确认。配对信息仅用于本机连接，请勿分享。',
+    browserExtensionCopyPairing: '复制配对信息',
+    browserExtensionPairingCopied: '已复制，请粘贴到扩展中',
+    browserExtensionPairingFailed: '无法生成扩展配对信息',
+    browserExtensionStepVerifyTitle: '4. 测试连接',
+    browserExtensionStepVerifyDescription:
+      '确认扩展图标显示 ON。首次使用已有网页时，请点击扩展中的“共享此标签页”；Agent 新建的网页会自动加入共享组。',
+    browserExtensionTestConnection: '测试扩展连接',
+    browserExtensionConnectionFailed:
+      '扩展尚未连接。请确认 Gateway 正在运行、扩展显示 ON，并至少共享一个标签页。',
     shortcuts: '快捷键',
     help: '帮助',
     about: '关于',
@@ -1152,6 +1181,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserModeUserTitle: 'Allow access to your browser',
     browserModeUserDescription:
       'Connects to everyday Chrome and reuses its sign-in state, cookies, and tabs after you explicitly authorize it.',
+    browserModeExtensionTitle: 'Connect through extension',
+    browserModeExtensionDescription:
+      'Install and pair the browser assistant extension to share selected tabs without approving remote debugging every time.',
     browserModeChangeFailed: 'Failed to change browser mode',
     browserUserChromeDescription:
       'Reuse the sign-in state, cookies, and tabs from your everyday Chrome profile. Chrome requires explicit approval on the first connection.',
@@ -1167,7 +1199,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserUnknownProcess: 'Unknown process',
     browserStatusFailed: 'Unable to detect Chrome status',
     browserOpenSetupFailed: 'Unable to open Chrome remote debugging settings',
-    browserGatewayRestartFailed: 'Failed to restart Gateway',
     browserStepChromeTitle: '1. Install and start Google Chrome normally',
     browserStepChromeDescription:
       'Start your everyday Chrome shortcut without adding any remote debugging port arguments.',
@@ -1187,16 +1218,44 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserRefreshStatus: 'Refresh status',
     browserStepAuthorizeTitle: '4. Connect and approve access',
     browserStepAuthorizeDescription:
-      'Restart Gateway, request a browser action, then click Allow in Chrome’s “Allow remote debugging?” dialog.',
-    browserRestartGateway: 'Restart Gateway and prepare authorization',
+      'Test the connection to request a browser action, then click Allow in Chrome’s “Allow remote debugging?” dialog.',
     browserTestConnection: 'Test connection and request authorization',
     browserAuthorizationWaiting:
       'Connection request sent. Check Chrome and click Allow in the authorization dialog at the top center of the window.',
     browserConnectionVerified: 'Connected to Chrome',
     browserPermissionTimeout:
       'Chrome authorization timed out. Turn Remote Debugging off and on again, make sure no other MCP client is connecting, then retry immediately. Chrome 150/151 has a related known issue.',
-    browserGatewayUnavailable: 'Gateway is not connected. Restart Gateway first.',
+    browserGatewayUnavailable: 'Gateway is not connected. Try again shortly.',
     browserConnectionFailed: 'Chrome connection test failed',
+    browserExtensionTitle: 'Connect your Chrome through the extension',
+    browserExtensionDescription:
+      'This version requires you to load and pair the extension once. It reconnects automatically afterward without the blocking remote-debugging prompt.',
+    browserExtensionScopeNotice:
+      'Only pages in the browser assistant tab group are shared. Move a page out of the group, or dismiss Chrome’s debugging notice, to revoke access immediately.',
+    browserExtensionStepChromeTitle: '1. Install and start Google Chrome',
+    browserExtensionStepChromeDescription:
+      'Extension mode requires Chrome 125 or newer and does not require Remote Debugging.',
+    browserExtensionStepInstallTitle: '2. Load the browser assistant extension',
+    browserExtensionStepInstallDescription:
+      'Open Chrome’s extension management page, enable Developer mode, choose Load unpacked, then select the extension folder opened by the app.',
+    browserExtensionOpenPage: 'Open extensions page',
+    browserExtensionRevealFolder: 'Open extension folder',
+    browserExtensionPageCopied:
+      'Management address copied. Paste it into the Chrome address bar and press Enter:',
+    browserExtensionOpenPageFailed: 'Unable to open Chrome extension management',
+    browserExtensionRevealFailed: 'Unable to find or open the bundled browser extension',
+    browserExtensionStepPairTitle: '3. Pair the extension',
+    browserExtensionStepPairDescription:
+      'Copy the host-local pairing information below, then open the browser assistant toolbar popup in Chrome, paste it, and confirm. Use it only for this local connection and do not share it.',
+    browserExtensionCopyPairing: 'Copy pairing information',
+    browserExtensionPairingCopied: 'Copied; paste it into the extension',
+    browserExtensionPairingFailed: 'Unable to generate extension pairing information',
+    browserExtensionStepVerifyTitle: '4. Test the connection',
+    browserExtensionStepVerifyDescription:
+      'Confirm the extension badge shows ON. Share an existing page from the extension before first use; pages opened by the agent join the shared group automatically.',
+    browserExtensionTestConnection: 'Test extension connection',
+    browserExtensionConnectionFailed:
+      'The extension is not connected. Make sure Gateway is running, the extension shows ON, and at least one tab is shared.',
     shortcuts: 'Shortcuts',
     help: 'Help',
     about: 'About',

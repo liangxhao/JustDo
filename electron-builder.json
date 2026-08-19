@@ -55,6 +55,11 @@
       "from": "resources/dependency-config",
       "to": "dependency-config",
       "filter": ["**/*"]
+    },
+    {
+      "from": "build/browser-extension/chrome-extension",
+      "to": "browser-extension/chrome-extension",
+      "filter": ["**/*"]
     }
   ],
   "mac": {

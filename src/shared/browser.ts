@@ -3,17 +3,22 @@ export const BrowserIpc = {
   SetMode: 'browser:setMode',
   OpenRemoteDebugging: 'browser:openRemoteDebugging',
   TestConnection: 'browser:testConnection',
+  OpenExtensionManagement: 'browser:openExtensionManagement',
+  RevealExtension: 'browser:revealExtension',
+  CopyExtensionPairing: 'browser:copyExtensionPairing',
+  TestExtensionConnection: 'browser:testExtensionConnection',
 } as const;
 
 export const BrowserMode = {
   Isolated: 'isolated',
   User: 'user',
+  Extension: 'extension',
 } as const;
 
 export type BrowserMode = (typeof BrowserMode)[keyof typeof BrowserMode];
 
 export const normalizeBrowserMode = (value: unknown): BrowserMode =>
-  value === BrowserMode.User ? BrowserMode.User : BrowserMode.Isolated;
+  value === BrowserMode.User || value === BrowserMode.Extension ? value : BrowserMode.Isolated;
 
 export type BrowserConnectionIssue =
   | 'unsupported-platform'

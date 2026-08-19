@@ -614,7 +614,12 @@ export const buildManagedOpenClawConnectivityConfig = (
   },
   browser: {
     enabled: true,
-    defaultProfile: browserMode === BrowserMode.User ? 'user' : 'openclaw',
+    defaultProfile:
+      browserMode === BrowserMode.User
+        ? 'user'
+        : browserMode === BrowserMode.Extension
+          ? 'chrome'
+          : 'openclaw',
     ...(browserMode === BrowserMode.User
       ? {
           profiles: {
@@ -625,7 +630,16 @@ export const buildManagedOpenClawConnectivityConfig = (
             },
           },
         }
-      : {}),
+      : browserMode === BrowserMode.Extension
+        ? {
+            profiles: {
+              chrome: {
+                driver: 'extension',
+                color: '#FF4500',
+              },
+            },
+          }
+        : {}),
     // Local execution can already reach the user's network through command
     // tools. Keep browser behavior consistent and allow proxy Fake-IP ranges
     // plus user-authorized LAN destinations without requiring hidden setup.

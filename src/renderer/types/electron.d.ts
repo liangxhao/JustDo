@@ -340,6 +340,10 @@ interface IElectronAPI {
     setMode: (mode: BrowserMode) => Promise<BrowserModeUpdateResult>;
     openRemoteDebugging: () => Promise<BrowserActionResult>;
     testConnection: () => Promise<BrowserConnectionTestResult>;
+    openExtensionManagement: () => Promise<BrowserActionResult>;
+    revealExtension: () => Promise<BrowserActionResult>;
+    copyExtensionPairing: () => Promise<BrowserActionResult>;
+    testExtensionConnection: () => Promise<BrowserConnectionTestResult>;
   };
   platform: string;
   arch: string;

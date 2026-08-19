@@ -380,6 +380,22 @@ describe('OpenClaw managed connectivity config', () => {
       },
     });
   });
+
+  test('uses the Chrome extension profile after the user opts in', () => {
+    expect(buildManagedOpenClawConnectivityConfig(BrowserMode.Extension).browser).toEqual({
+      enabled: true,
+      defaultProfile: 'chrome',
+      profiles: {
+        chrome: {
+          driver: 'extension',
+          color: '#FF4500',
+        },
+      },
+      ssrfPolicy: {
+        dangerouslyAllowPrivateNetwork: true,
+      },
+    });
+  });
 });
 
 describe('OpenClaw managed subagent config', () => {

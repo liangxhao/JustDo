@@ -794,6 +794,7 @@ if (!gotTheLock) {
   registerLogHandlers();
   registerBrowserHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
+    buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
     setBrowserMode: mode => {
       const store = getStore();
       return applyBrowserModeChange(mode, {
