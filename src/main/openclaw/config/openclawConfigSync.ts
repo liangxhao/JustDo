@@ -11,6 +11,7 @@ import {
   OpenClawProviderId,
   ProviderName,
 } from '../../../shared/providers';
+import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   getProviderDisplayNameMap,
@@ -1310,7 +1311,7 @@ export class OpenClawConfigSync {
           workspace: resolvedWorkspaceDir,
           subagents: buildManagedOpenClawSubagentConfig(),
         },
-        ...this.buildAgentsList(primaryModel, availableModelRefs),
+        ...this.buildAgentsList(primaryModel, availableModelRefs, resolvedWorkspaceDir),
       },
       session: buildManagedOpenClawSessionConfig(),
       commands: {
@@ -1726,8 +1727,9 @@ export class OpenClawConfigSync {
   private buildAgentsList(
     defaultPrimaryModel: string,
     availableModelRefs: ReadonlySet<string>,
+    mainWorkspaceDir: string,
   ): { list?: Array<Record<string, unknown>> } {
-    const agents = this.getAgents?.() ?? [];
+    const agents = (this.getAgents?.() ?? []).filter(agent => agent.id !== ScheduledTaskAgentId);
     const mainAgent = agents.find(agent => agent.id === 'main');
     const displayNameMap = getProviderDisplayNameMap();
 
@@ -1748,6 +1750,17 @@ export class OpenClawConfigSync {
         fallbackPrimaryModel: defaultPrimaryModel,
         displayNameMap,
       }),
+      {
+        id: ScheduledTaskAgentId,
+        model: {
+          primary: defaultPrimaryModel,
+        },
+        workspace: mainWorkspaceDir,
+        tools: {
+          fs: { workspaceOnly: false },
+          exec: { host: 'gateway', mode: PermissionMode.Full },
+        },
+      },
     ].map(entry => {
       const constrainedEntry = constrainAgentEntryToAvailableModels(
         entry,

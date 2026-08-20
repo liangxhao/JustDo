@@ -200,5 +200,9 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     runtime.on('sessionStopped', sessionId => {
       this.emit('sessionStopped', sessionId);
     });
+
+    runtime.on('cronChanged', payload => {
+      this.emit('cronChanged', payload);
+    });
   }
 }

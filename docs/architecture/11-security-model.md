@@ -48,11 +48,12 @@ readiness 证明。
 扩展的 `filePermissionPolicy.info` 只证明扩展代码已加载并读到了指定配置，不证明 trusted
 policy 已进入 OpenClaw active registry。当前 OpenClaw 没有公开权威 effective permission
 snapshot。产品选择继续使用该版本锁定适配器提供文件审批功能：`ask` 与 `auto` 的文件修改
-进入人工审批，`full` 跳过文件审批。adapter info 不参与 Gateway readiness；真实 packaged
-runtime 的副作用前审批 smoke test 是每次 OpenClaw 升级和发布前的兼容门槛。
+进入人工审批，`full` 跳过文件审批。adapter info 的 loaded/version/mode/full-agent 匹配是
+Gateway readiness 的必要但不充分条件；真实 packaged runtime 的副作用前审批 smoke test
+仍是每次 OpenClaw 升级和发布前的兼容门槛。
 
-当前审批覆盖 host exec 和适配器中已审计的文件变更工具，但仍不等于所有工具权限。Browser、消息、定时任务、
-第三方 MCP/插件副作用与 sandbox/tool policy 仍是独立安全层。
+当前审批覆盖 host exec、适配器中已审计的文件变更工具，以及普通 Agent 的原生 cron
+add/update/remove/run。Browser、消息、第三方 MCP/插件副作用与 sandbox/tool policy 仍是独立安全层。
 
 需要谨慎处理的能力：
 
@@ -153,6 +154,11 @@ Renderer 不判断命令是否安全，也不自行解析命令决定放行。Ma
 `allow-always`。Gateway client 必须显式申请
 `operator.approvals`；renderer 只能使用 list/resolve 和 requested/resolved 四个窄接口。
 
+可信 JustDo ancestry 下的 exec 与 plugin 交互审批不自动过期：runtime 不为审批记录或 Gateway
+decision wait 设置截止时间，并在等待期间暂停对应 run；只有真实允许、拒绝或用户显式停止才结束
+等待。`022`–`025` 分别实现 lifetime、suspension、隐藏恢复和 stop/failure 收口，范围不扩展到
+scheduler cron 或其他 native channel。
+
 “本会话允许相同命令”由 Main 的内存 grant 实现，不写 OpenClaw 的 agent 持久化 allowlist。
 grant 以 Gateway 提供的精确 `sessionKey` 隔离，并匹配 command、argv、cwd、host、agent、
 env binding、resolved path、system-run plan、security、ask 和来源上下文；Gateway host 只提供
@@ -164,22 +170,32 @@ env key 而没有值时不允许建立会话 grant。命中后仍仅向 Gateway 
 node approvals RPC；远程 node 不是 JustDo 的产品能力。
 
 默认策略为 `security=allowlist`、`ask=on-miss`、`askFallback=deny`。用户从消息输入区附件按钮
-右侧的权限选择器切换 `ask`、`auto` 或 `full`。切换会持久化当前会话权限，热更新 OpenClaw
+右侧的权限选择器切换 `ask`、`auto` 或 `full`。切换会持久化应用级全局权限，热更新 OpenClaw
 共享 runtime 快照，再通过 Gateway CAS 更新 host policy 并回读 defaults 和所有受管 agent entry。已有待审批
-请求不自动放行。所有配置同步在 Main 内串行；成功前会回读 tools exec/fs、文件权限插件和
-host approvals。权限配置写入、reload、回读或回滚无法确认时，Main 立即断开并
+请求不自动放行。所有配置同步在 Main 内串行；成功前会回读 tools exec/fs 和 host approvals。
+新建或继续 turn 在 admission 阶段等待此前排队的全局配置同步完成，再读取全局权限并启动；该屏障
+不持有到 turn 结束，不会阻塞后续配置操作。
+权限配置写入、reload、回读或回滚无法确认时，Main 立即断开并
 停止 Gateway，将 engine 标记为权限同步错误。
 
 开启 `full` 前必须由用户在权限选择器中二次确认；core 文件修改与主机命令都不再审批。
-定时任务不继承交互会话 grant，也不会触发全局权限切换。Full 下任务按 Full 无人值守执行；
-Ask/Smart 下产生的命令、文件或第三方插件审批保持交互式，超时默认拒绝。Main 不把 cron-shaped
+AgentTurn 定时任务使用隐藏的 `justdo-scheduler` Agent；其原生 per-agent exec/fs 配置、host
+approvals entry 和文件权限 extension 例外固定为 Full。普通对话的全局 Ask/Smart/Full 不因此改变，
+也不会因为存在启用任务而禁用权限切换。Main 不把 cron-shaped
 session key 当作可信运行证明：OpenClaw v2026.7.1-2 的公开 API 只能证明 job 存在，不能证明 approval
 来自该 job 的真实 active run，自动放行会允许伪造 session 获得 run-scoped Full。
-Agent 可以通过原生 cron 工具创建和管理任务，JustDo UI 通过 Main RPC 管理任务。任务执行仍按届时
-生效的权限模式处理，不继承创建任务时的交互会话 grant，也不会因为由 Agent 创建而自动放行审批。
+Agent 可以通过原生 cron 工具创建和管理任务；Ask/Smart 下 add/update/remove/run 必须完成一次性
+人工审批。Main 使用 extension 生成的随机 nonce，并校验 agent、session 与 tool-call 身份后，从
+只读 Gateway 方法取回完整原始 cron 请求并展示；详情不可用时 Main 在 resolve 层只允许拒绝，
+避免截断、串用审批内容或让普通 Agent 把 scheduler 当作 Full 权限跳板。
+JustDo UI 通过 Main RPC 管理任务。
+启动/周期轮询分页迁移任务归属，迁移失败的已启用 AgentTurn 会被禁用；启用和手动执行前也会在
+同一个任务锁内校正。任务执行仍按届时生效的 scheduler Agent Full 处理，不继承或修改创建任务时
+的交互会话权限。原生“已批准且立即到期”任务仍可能在事件迁移前按普通 Agent 权限运行，这是
+OpenClaw 非原子 caller-scope 创建接口的剩余可用性窗口，而不是 Full 提权通道。
 Gateway operator、CLI 和 scheduler state 仍是外部信任边界；完整隔离依赖未来的独立执行凭据与
-状态目录保护。旧会话从 SQLite 恢复其权限；新会话、缺失值或非法值默认使用 `full`。
-并行任务共同使用最近一次热更新的 runtime 权限快照。
+状态目录保护。所有会话和并行任务共同使用最近一次热更新的 runtime 权限快照；会话表中的
+`permission_mode` 仅保留为历史兼容快照，不参与 runtime 激活。
 
 权限选择器只展示三档产品行为和可执行错误，不展示或推导 workspace、sandbox、
 effective policy、运行时快照或配置同步进度。

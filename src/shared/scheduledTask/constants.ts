@@ -50,6 +50,7 @@ export const GatewayStatus = {
 export type GatewayStatus = (typeof GatewayStatus)[keyof typeof GatewayStatus];
 
 export const DefaultAgentId = 'main' as const;
+export const ScheduledTaskAgentId = 'justdo-scheduler' as const;
 
 export const IpcChannel = {
   List: 'scheduledTask:list',

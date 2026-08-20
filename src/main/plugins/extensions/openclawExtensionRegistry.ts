@@ -1,5 +1,6 @@
 import type { PermissionMode } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import type { AskUserExtensionConfig } from '../../openclaw/config/openclawConfigSync';
 
 export type OpenClawExtensionContext = {
@@ -34,7 +35,7 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     id: OpenClawExtensionId.PERMISSION_POLICY,
     buildEntry: ({ permissionMode }) => ({
       enabled: true,
-      config: { mode: permissionMode },
+      config: { mode: permissionMode, fullAgentIds: [ScheduledTaskAgentId] },
     }),
   },
 ] as const;

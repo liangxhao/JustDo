@@ -30,7 +30,7 @@ describe('cowork session permission selection', () => {
     vi.unstubAllGlobals();
   });
 
-  test('activates full access when loading config for a new session', async () => {
+  test('loads the persisted global permission without changing it', async () => {
     store.dispatch(clearCurrentSession());
     store.dispatch(
       setCoworkConfig({
@@ -40,11 +40,7 @@ describe('cowork session permission selection', () => {
         permissionMode: 'ask',
       }),
     );
-    let permissionMode: 'ask' | 'full' = 'ask';
-    const setConfig = vi.fn(async (config: { permissionMode?: 'ask' | 'full' }) => {
-      permissionMode = config.permissionMode ?? permissionMode;
-      return { success: true };
-    });
+    const setConfig = vi.fn();
     vi.stubGlobal('window', {
       electron: {
         cowork: {
@@ -54,7 +50,7 @@ describe('cowork session permission selection', () => {
               workingDirectory: 'C:\\workspace',
               executionMode: 'local',
               agentEngine: 'openclaw',
-              permissionMode,
+              permissionMode: 'ask',
             },
           })),
           setConfig,
@@ -64,8 +60,69 @@ describe('cowork session permission selection', () => {
 
     await coworkService.loadConfig();
 
-    expect(setConfig).toHaveBeenCalledWith({ permissionMode: 'full' });
-    expect(store.getState().cowork.config.permissionMode).toBe('full');
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(store.getState().cowork.config.permissionMode).toBe('ask');
+  });
+
+  test('reflects a permission selection before runtime synchronization completes', async () => {
+    store.dispatch(
+      setCoworkConfig({
+        workingDirectory: 'C:\\workspace',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'ask',
+      }),
+    );
+    let finishSync: ((value: { success: true }) => void) | undefined;
+    const pendingSync = new Promise<{ success: true }>(resolve => {
+      finishSync = resolve;
+    });
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          setConfig: vi.fn(() => pendingSync),
+          getConfig: vi.fn().mockResolvedValue({
+            success: true,
+            config: {
+              workingDirectory: 'C:\\workspace',
+              executionMode: 'local',
+              agentEngine: 'openclaw',
+              permissionMode: 'auto',
+            },
+          }),
+        },
+      },
+    });
+
+    const updating = coworkService.updatePermissionMode('auto');
+
+    expect(store.getState().cowork.config.permissionMode).toBe('auto');
+    finishSync?.({ success: true });
+    await expect(updating).resolves.toEqual({ success: true });
+  });
+
+  test('rolls back an optimistic permission selection when synchronization fails', async () => {
+    store.dispatch(
+      setCoworkConfig({
+        workingDirectory: 'C:\\workspace',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'ask',
+      }),
+    );
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          setConfig: vi.fn().mockResolvedValue({ success: false, error: 'reload failed' }),
+          getConfig: vi.fn(),
+        },
+      },
+    });
+
+    const result = await coworkService.updatePermissionMode('full');
+
+    expect(result).toEqual({ success: false, error: 'reload failed' });
+    expect(store.getState().cowork.config.permissionMode).toBe('ask');
   });
 
   test('restores an old session permission without changing the active runtime on view', async () => {

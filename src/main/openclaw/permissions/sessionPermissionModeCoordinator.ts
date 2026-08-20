@@ -25,14 +25,6 @@ export type PermissionModeOperationResult =
 export class SessionPermissionModeCoordinator {
   constructor(private readonly deps: CoordinatorDependencies) {}
 
-  acquireForTurn(permissionMode: PermissionMode): Promise<PermissionModeOperationResult> {
-    return this.deps.enqueue(async () => {
-      const applied = await this.applyRuntimeMode(permissionMode, 'session-turn-permission');
-      if ('error' in applied) return applied;
-      return { success: true };
-    });
-  }
-
   setSessionMode(
     sessionId: string,
     permissionMode: PermissionMode,
@@ -42,31 +34,7 @@ export class SessionPermissionModeCoordinator {
       const session = store.getSession(sessionId);
       if (!session) return { success: false, error: 'Session not found.' };
 
-      const previousRuntimeMode = store.getConfig().permissionMode;
-      const applied = await this.applyRuntimeMode(permissionMode, 'session-permission-change');
-      if ('error' in applied) return applied;
-
-      try {
-        store.updateSession(sessionId, { permissionMode });
-        return { success: true };
-      } catch (error) {
-        const rollback = await this.applyRuntimeMode(
-          previousRuntimeMode,
-          'session-permission-persistence-rollback',
-        );
-        return {
-          success: false,
-          error:
-            'error' in rollback
-              ? `Session permission persistence and runtime rollback failed: ${
-                  rollback.error || String(error)
-                }`
-              : error instanceof Error
-                ? error.message
-                : 'Failed to persist session permission mode.',
-          ...('error' in rollback && rollback.status ? { status: rollback.status } : {}),
-        };
-      }
+      return this.applyRuntimeMode(permissionMode, 'global-permission-change');
     });
   }
 

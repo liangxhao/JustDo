@@ -291,6 +291,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly pendingSessionMessageReloadSessionIds = new Set<string>();
   private readonly sessionExecApprovalGrants = new SessionExecApprovalGrants();
   private readonly approvalResolutionByKey = new Map<string, Promise<void>>();
+  private readonly denyOnlyPluginApprovalIds = new Set<string>();
   private approvalReconciliation: {
     generation: number;
     events: Array<{ channel: string; payload: Record<string, unknown> }>;
@@ -1127,7 +1128,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (event.event === 'plugin.approval.resolved') {
+      if (isRecord(event.payload) && typeof event.payload.id === 'string') {
+        this.denyOnlyPluginApprovalIds.delete(event.payload.id);
+      }
       this.broadcastApproval(OpenClawApprovalIpc.Resolved, ApprovalKind.Plugin, event.payload);
+      return;
+    }
+
+    if (event.event === 'cron') {
+      this.emit('cronChanged', event.payload);
       return;
     }
 
@@ -1788,8 +1797,79 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  private handlePluginApprovalRequested(payload: unknown): void {
-    this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Plugin, payload);
+  private normalizePluginApprovalRequest(payload: unknown): PluginApprovalRequest | null {
+    if (!isRecord(payload) || typeof payload.id !== 'string' || !isRecord(payload.request)) {
+      return null;
+    }
+    return payload as unknown as PluginApprovalRequest;
+  }
+
+  private async enrichScheduledTaskApproval(
+    request: PluginApprovalRequest,
+  ): Promise<PluginApprovalRequest> {
+    const payload = request.request;
+    if (
+      payload.pluginId !== 'file-permission-policy' ||
+      payload.toolName !== 'cron'
+    ) {
+      this.denyOnlyPluginApprovalIds.delete(request.id);
+      return request;
+    }
+    const toolCallId = payload.toolCallId?.trim();
+    const denyOnly = (reason: string): PluginApprovalRequest => ({
+      ...request,
+      request: {
+        ...payload,
+        description: `${payload.description.trim()}\n\n${reason}`.trim(),
+        allowedDecisions: [ExecApprovalDecision.Deny],
+      },
+    });
+    const detailNonce = /^justdo-detail:([0-9a-f-]{36})\n/i.exec(payload.description)?.[1];
+    if (!detailNonce) {
+      this.denyOnlyPluginApprovalIds.add(request.id);
+      return denyOnly('Full scheduled-task details are unavailable; approval is disabled.');
+    }
+    if (!toolCallId) {
+      this.denyOnlyPluginApprovalIds.add(request.id);
+      return denyOnly('Full scheduled-task details are unavailable; approval is disabled.');
+    }
+    const client = this.gatewayClient;
+    if (!client) {
+      this.denyOnlyPluginApprovalIds.add(request.id);
+      return denyOnly('Full scheduled-task details are unavailable; approval is disabled.');
+    }
+    try {
+      const detail = await client.request<{ found?: boolean; description?: unknown }>(
+        'filePermissionPolicy.approvalDetails',
+        {
+          nonce: detailNonce,
+          toolCallId,
+          agentId: payload.agentId ?? undefined,
+          sessionKey: payload.sessionKey ?? undefined,
+        },
+      );
+      if (detail?.found === true && typeof detail.description === 'string') {
+        this.denyOnlyPluginApprovalIds.delete(request.id);
+        return {
+          ...request,
+          request: { ...payload, description: detail.description },
+        };
+      }
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to load scheduled-task approval details', {
+        approvalId: request.id,
+        toolCallId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    this.denyOnlyPluginApprovalIds.add(request.id);
+    return denyOnly('Full scheduled-task details are unavailable; approval is disabled.');
+  }
+
+  private async handlePluginApprovalRequested(payload: unknown): Promise<void> {
+    const request = this.normalizePluginApprovalRequest(payload);
+    const enriched = request ? await this.enrichScheduledTaskApproval(request) : payload;
+    this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Plugin, enriched);
   }
 
   async listPendingApprovals(): Promise<ApprovalRequest[]> {
@@ -1806,7 +1886,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
     for (const request of Array.isArray(pluginRequests) ? pluginRequests : []) {
-      requests.push({ ...request, kind: ApprovalKind.Plugin });
+      requests.push({
+        ...(await this.enrichScheduledTaskApproval(request)),
+        kind: ApprovalKind.Plugin,
+      });
     }
     return requests.sort((a, b) => a.createdAtMs - b.createdAtMs);
   }
@@ -1818,6 +1901,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<void> {
     await this.ensureGatewayClientReady();
     const client = this.requireGatewayClient();
+    if (
+      kind === ApprovalKind.Plugin &&
+      decision !== ApprovalDecision.Deny &&
+      this.denyOnlyPluginApprovalIds.has(id)
+    ) {
+      throw new Error('This approval cannot be allowed because its full details are unavailable.');
+    }
     if (decision !== ApprovalDecision.AllowForSession) {
       if (decision === ApprovalDecision.AllowOnce) {
         await this.resolveApprovalAllowOnce(kind, id);
@@ -1827,6 +1917,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve',
         { id, decision },
       );
+      if (kind === ApprovalKind.Plugin) this.denyOnlyPluginApprovalIds.delete(id);
       return;
     }
     if (kind !== ApprovalKind.Exec) {

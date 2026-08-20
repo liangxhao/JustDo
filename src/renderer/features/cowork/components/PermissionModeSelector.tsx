@@ -1,4 +1,5 @@
 import {
+  ArrowPathIcon,
   CheckIcon,
   ChevronUpIcon,
   CommandLineIcon,
@@ -26,10 +27,7 @@ const MODE_ICONS: Record<
 };
 
 const PermissionModeSelector: React.FC = () => {
-  const permissionMode = useSelector(
-    (state: RootState) =>
-      state.cowork.currentSession?.permissionMode ?? state.cowork.config.permissionMode,
-  );
+  const permissionMode = useSelector((state: RootState) => state.cowork.config.permissionMode);
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false);
@@ -75,16 +73,18 @@ const PermissionModeSelector: React.FC = () => {
     }
     setIsSaving(true);
     setError(null);
+    setConfirmingFullAccess(false);
+    setIsOpen(false);
     try {
       const result = await coworkService.updatePermissionMode(nextMode);
       if (!result.success) {
         setError(result.error || i18nService.t('permissionModeSaveFailed'));
+        setIsOpen(true);
         return;
       }
-      setConfirmingFullAccess(false);
-      setIsOpen(false);
     } catch {
       setError(i18nService.t('permissionModeSaveFailed'));
+      setIsOpen(true);
     } finally {
       setIsSaving(false);
     }
@@ -98,12 +98,13 @@ const PermissionModeSelector: React.FC = () => {
     <div ref={containerRef} className="relative flex-shrink-0">
       <button
         type="button"
+        disabled={isSaving}
         onClick={() => {
           setError(null);
           setConfirmingFullAccess(false);
           setIsOpen(open => !open);
         }}
-        className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors ${
+        className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-wait disabled:opacity-70 ${
           isFull
             ? 'bg-warning/10 text-warning hover:bg-warning/20'
             : 'text-secondary hover:bg-surface-raised hover:text-foreground'
@@ -114,9 +115,13 @@ const PermissionModeSelector: React.FC = () => {
       >
         <CurrentModeIcon className="h-3.5 w-3.5" />
         <span>{currentLabel}</span>
-        <ChevronUpIcon
-          className={`h-2.5 w-2.5 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-        />
+        {isSaving ? (
+          <ArrowPathIcon className="h-2.5 w-2.5 animate-spin" />
+        ) : (
+          <ChevronUpIcon
+            className={`h-2.5 w-2.5 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          />
+        )}
       </button>
 
       {isOpen && (

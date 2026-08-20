@@ -85,17 +85,11 @@ JustDo 通过 Main 进程桥接 host exec approvals 与文件工具 plugin appro
 Main runtime adapter 会重新建立持久事件连接，并通过两类 list API 恢复仍然有效的请求；由配置
 同步或代理设置触发的受控 Gateway 重启也必须在启动成功后主动重连 adapter。重连结果作为权威
 快照替换 renderer 的审批队列，从而移除断线期间已解决或因 Gateway 重启而消失的旧弹窗。文件工具审批只提供
-仅本次允许或拒绝，避免展示未实现的持久文件授权。来源明确为 webchat/JustDo 的交互式审批在
-Gateway 进程存活期间不自动过期；缺少交互来源的 headless/API 请求不会被升级为永久审批。webchat
-host exec 审批使用异步 follow-up，原 Agent run 在展示待审批状态后结束，用户批准或拒绝时再以
-新 turn 恢复，因此审批等待不占用模型请求或原 run 的超时预算。用于恢复任务的 completion prompt
-属于内部控制输入，不持久化或展示为用户消息；原 turn 在 approval-pending tool result 后生成的
-助手文本也不持久化，恢复后的助手结果才正常进入会话历史，避免同一次审批产生两次最终回复。cron/headless 审批仍保留上游
-超时与拒绝策略，避免无人值守任务永久占用执行资源。无截止时间会原样穿透 agent 侧 Gateway
-调用参数；等待连接异常不会被合成为拒绝结果，也不会触发新的 follow-up turn。自动 run timeout
-不会撤销待处理的文件审批，但用户显式停止会在 Gateway 确认 run 已中止后，拒绝父会话及其运行中
-subagent 的待处理 host exec 与文件审批，防止脱离原 run 的异步命令稍后被批准执行。Stop 发出的
-exec 拒绝使用内部静默取消决策，不会像用户主动点击“拒绝”那样启动恢复 turn 或生成额外回复。
+仅本次允许或拒绝，避免展示未实现的持久文件授权。可信 JustDo ancestry 下的交互审批保持无限
+等待：审批记录不设过期定时器，等待期间暂停对应 run；用户真正批准或拒绝后再通过隐藏且不写入
+聊天历史的 follow-up 恢复。该兼容能力由 `022`–`025` 四个小型、职责分离的版本锁定 patch
+提供，cron/native channel 仍保留上游超时语义。用户显式停止仍通过公开 Gateway 中止与审批清理
+接口处理父会话及其运行中 subagent 的待处理请求。
 
 Extension host 的 ask-user 是另一套交互协议，继续通过 `cowork:stream:interaction` 和
 `cowork.respondToInteraction()` 桥接，不能与 exec approval 弹窗或 decision 混用。

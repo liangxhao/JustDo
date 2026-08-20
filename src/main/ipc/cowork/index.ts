@@ -1,5 +1,9 @@
 export { registerAgentHandlers } from './agents';
-export { enqueueCoworkConfigUpdate, registerCoworkConfigHandlers } from './config';
+export {
+  enqueueCoworkConfigUpdate,
+  registerCoworkConfigHandlers,
+  waitForCoworkConfigUpdates,
+} from './config';
 export { registerDefaultModelHandlers } from './defaultModel';
 export { registerCoworkInteractionHandlers } from './interactions';
 export { registerCoworkSessionExecutionHandlers } from './sessionExecution';

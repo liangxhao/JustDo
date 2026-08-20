@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
 }));
 
 import type { CoworkConfig } from '../../data/coworkStore';
-import { registerCoworkConfigHandlers } from './config';
+import { registerCoworkConfigHandlers, waitForCoworkConfigUpdates } from './config';
 
 const baseConfig: CoworkConfig = {
   workingDirectory: 'E:/workspace/project',
@@ -132,13 +132,20 @@ describe('cowork config IPC', () => {
 
     const first = handler?.({}, { permissionMode: 'ask' });
     const second = handler?.({}, { permissionMode: 'auto' });
+    let barrierResolved = false;
+    const barrier = waitForCoworkConfigUpdates().then(() => {
+      barrierResolved = true;
+    });
 
     await vi.waitFor(() => expect(setConfig).toHaveBeenCalledTimes(1));
     expect(currentConfig.permissionMode).toBe('ask');
+    expect(barrierResolved).toBe(false);
 
     finishFirstSync?.({ success: true, changed: true });
     await expect(first).resolves.toEqual({ success: true });
     await expect(second).resolves.toEqual({ success: true });
+    await barrier;
+    expect(barrierResolved).toBe(true);
     expect(setConfig).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ permissionMode: 'auto' }),

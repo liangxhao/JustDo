@@ -438,6 +438,17 @@ type StopTestAdapter = {
   approvalReconciliation: { events: unknown[] } | null;
 };
 
+test('publishes native cron changes for global permission enforcement', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const listener = vi.fn();
+  adapter.on('cronChanged', listener);
+
+  adapter.handleGatewayEvent({ event: 'cron', payload: { action: 'added', jobId: 'job-1' } });
+
+  expect(listener).toHaveBeenCalledWith({ action: 'added', jobId: 'job-1' });
+});
+
 test.each([
   ['exec.approval.resolved', OpenClawApprovalIpc.Resolved, ApprovalKind.Exec],
   ['plugin.approval.requested', OpenClawApprovalIpc.Requested, ApprovalKind.Plugin],
@@ -523,6 +534,128 @@ test('does not auto-approve cron-shaped exec or plugin approval requests', async
     expect.stringMatching(/approval\.resolve$/),
     expect.anything(),
   );
+});
+
+test('replaces the truncated cron approval summary with complete extension details', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const completeDescription = JSON.stringify(
+    {
+      action: 'add',
+      job: {
+        name: 'Morning report',
+        schedule: { kind: 'cron', expr: '0 9 * * *' },
+        payload: { kind: 'agentTurn', message: 'A'.repeat(400) },
+      },
+    },
+    null,
+    2,
+  );
+  const request = vi.fn((method: string) => {
+    if (method === 'filePermissionPolicy.approvalDetails') {
+      return Promise.resolve({ found: true, description: completeDescription });
+    }
+    return Promise.resolve({});
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  adapter.handleGatewayEvent({
+    event: 'plugin.approval.requested',
+    payload: {
+      id: 'approval-cron',
+      request: {
+        pluginId: 'file-permission-policy',
+        title: 'Allow scheduled task change?',
+        description:
+          'justdo-detail:11111111-1111-4111-8111-111111111111\n{"action":"add"...',
+        toolName: 'cron',
+        toolCallId: 'tool-call-1',
+        agentId: 'main',
+        sessionKey: 'agent:main:justdo:session-1',
+        allowedDecisions: [ExecApprovalDecision.AllowOnce, ExecApprovalDecision.Deny],
+      },
+      createdAtMs: 1,
+      expiresAtMs: Date.now() + 60_000,
+    },
+  });
+
+  await vi.waitFor(() =>
+    expect(sendToRenderer).toHaveBeenCalledWith(OpenClawApprovalIpc.Requested, {
+      id: 'approval-cron',
+      kind: ApprovalKind.Plugin,
+      request: expect.objectContaining({ description: completeDescription }),
+      createdAtMs: 1,
+      expiresAtMs: expect.any(Number),
+    }),
+  );
+  expect(request).toHaveBeenCalledWith('filePermissionPolicy.approvalDetails', {
+    nonce: '11111111-1111-4111-8111-111111111111',
+    toolCallId: 'tool-call-1',
+    agentId: 'main',
+    sessionKey: 'agent:main:justdo:session-1',
+  });
+});
+
+test('offers deny only when complete cron approval details are unavailable', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(() => Promise.resolve({ found: false }));
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  adapter.handleGatewayEvent({
+    event: 'plugin.approval.requested',
+    payload: {
+      id: 'approval-cron-unavailable',
+      request: {
+        pluginId: 'file-permission-policy',
+        title: 'Allow scheduled task change?',
+        description:
+          'justdo-detail:22222222-2222-4222-8222-222222222222\n{"action":"update"...',
+        toolName: 'cron',
+        toolCallId: 'tool-call-missing',
+        allowedDecisions: [ExecApprovalDecision.AllowOnce, ExecApprovalDecision.Deny],
+      },
+      createdAtMs: 1,
+      expiresAtMs: Date.now() + 60_000,
+    },
+  });
+
+  await vi.waitFor(() =>
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      OpenClawApprovalIpc.Requested,
+      expect.objectContaining({
+        id: 'approval-cron-unavailable',
+        kind: ApprovalKind.Plugin,
+        request: expect.objectContaining({
+          allowedDecisions: [ExecApprovalDecision.Deny],
+          description: expect.stringContaining('approval is disabled'),
+        }),
+      }),
+    ),
+  );
+
+  (
+    adapter as unknown as { ensureGatewayClientReady: () => Promise<void> }
+  ).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  request.mockClear();
+  await expect(
+    adapter.resolveApproval(
+      'approval-cron-unavailable',
+      ApprovalDecision.AllowOnce,
+      ApprovalKind.Plugin,
+    ),
+  ).rejects.toThrow('full details are unavailable');
+  expect(request).not.toHaveBeenCalledWith('plugin.approval.resolve', expect.anything());
 });
 
 test('reuses an exact command grant only in the approved session', async () => {

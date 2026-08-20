@@ -195,7 +195,7 @@ describe('OpenClaw auth logout config sync', () => {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.plugins.entries['file-permission-policy']).toEqual({
       enabled: true,
-      config: { mode: 'ask' },
+      config: { mode: 'ask', fullAgentIds: ['justdo-scheduler'] },
     });
     expect(config.tools.fs.mode).toBeUndefined();
     expect(config.tools.fs.workspaceOnly).toBe(true);
@@ -239,7 +239,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.deny).toEqual(['other-denied-plugin']);
     expect(config.plugins.entries['file-permission-policy']).toEqual({
       enabled: true,
-      config: { mode: 'full' },
+      config: { mode: 'full', fullAgentIds: ['justdo-scheduler'] },
     });
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
   });
@@ -475,11 +475,13 @@ describe('OpenClaw auth logout config sync', () => {
         buildAgentsList: (
           fallback: string,
           available: ReadonlySet<string>,
+          workspace: string,
         ) => { list?: Array<Record<string, unknown>> };
       }
     ).buildAgentsList(
       'custom-provider/custom-model',
       new Set(['custom-provider/custom-model']),
+      'E:/workspace/project',
     );
 
     expect(result.list?.[0]).toMatchObject({
@@ -488,6 +490,16 @@ describe('OpenClaw auth logout config sync', () => {
         primary: 'custom-provider/custom-model',
       },
     });
+    expect(result.list).toContainEqual(
+      expect.objectContaining({
+        id: 'justdo-scheduler',
+        workspace: 'E:/workspace/project',
+        tools: {
+          fs: { workspaceOnly: false },
+          exec: { host: 'gateway', mode: 'full' },
+        },
+      }),
+    );
   });
 
   test('syncs the full logout config with a custom provider and stale built-in Agent model', () => {

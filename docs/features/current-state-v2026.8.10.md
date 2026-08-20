@@ -37,12 +37,12 @@ OpenClaw 的 Goal 是生命周期权威，JustDo 只负责展示和连续派发�
 - 子会话的父级关系来自 Gateway 元数据和 `spawnedBy` 回退解析，不从 tool output 文本猜测。
 - Stop 必须等待父会话、运行中的子会话和待处理审批都被确认清理后，才把 UI 收敛为 idle。
 
-### 会话级权限
+### 应用级权限
 
-- Cowork 会话持久化 `ask`、`auto`、`full` 三档权限，缺失或非法值回退到 `full`。
-- Gateway 使用全局 runtime 权限快照；打开会话不切换权限，发起新 turn 前才激活该会话权限。
+- `cowork_config` 持久化 `ask`、`auto`、`full` 三档应用级权限，缺失或非法值回退到 `full`。
+- Gateway 使用同一份全局 runtime 权限快照；打开、创建或继续会话都不会切换权限。
 - 权限修改通过公开 Gateway 配置和 approvals API 热更新，并使用 `baseHash` 做并发保护。
-- 定时任务不继承交互会话的临时授权，也不会根据可伪造的 cron session key 自动提权。
+- AgentTurn 定时任务使用 per-agent Full 的隐藏 scheduler Agent；启动/周期轮询分页迁移旧任务，失败时禁用错归属的已启用任务。Ask/Smart 下普通 Agent 的 cron 修改需要一次性审批；正常会话权限选择器始终可用。
 - JustDo 不创建或直接写入 `permission-policy.json`、`exec-approvals.json`。
 
 详见 [10-data-storage.md](../architecture/10-data-storage.md) 和

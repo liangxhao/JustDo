@@ -6,17 +6,19 @@ JustDo 使用 `better-sqlite3` 保存本地配置、UI 缓存和产品元数据�
 
 开发者功能的可见性是一个独立的启动期文件配置，不存入 SQLite。Main process 每次启动读取 `<userData>/developer/config.json`（Windows 默认为 `%APPDATA%/<package.json.productName>/developer/config.json`）；文件不存在时自动创建 `{ "showDeveloperMode": false }`。只有 `showDeveloperMode` 为 JSON 布尔值 `true` 时，Renderer 才展示“开发者模式”选项及其已启用的开发入口。文件缺失、解析失败或任何其他值都按隐藏处理，运行期间修改需重启应用生效。
 
-会话权限模式保存在 SQLite `cowork_sessions.permission_mode`；新会话、缺失值或非法值均回退为 `full`。
-`cowork_config.permissionMode` 仅保存当前激活的 runtime 权限快照。Main 通过 OpenClaw
+`cowork_config.permissionMode` 是应用级权限的唯一持久化权威；缺失值或非法值回退为 `full`。
+`cowork_sessions.permission_mode` 为历史兼容字段，新会话会快照创建时的全局值，但切换或继续会话
+不会用它改写 runtime。Main 通过 OpenClaw
 公开的 `tools.exec.mode`、`tools.fs.workspaceOnly` 与 Gateway
 `exec.approvals.get/set` 配置 npm runtime；写入 host exec policy 时使用 `baseHash` 并发保护。
 JustDo 不创建 `permission-policy.json`，也不直接读写 `exec-approvals.json`。文件修改审批由
 JustDo 自有、版本锁定的 bundled extension 通过 OpenClaw 公开 trusted tool policy 接口完成。
-打开旧会话只恢复其已存展示值；发起新 turn 前才将该会话权限激活到 runtime。
 OpenClaw 权限配置是 Gateway 全局快照。权限修改始终通过原生热更新立即生效，
-不会因为一个或多个会话正在运行而禁用或拒绝；并行任务共同使用最新的 runtime 权限快照。
-`SessionPermissionModeCoordinator` 与 cowork config IPC 共用串行队列，在 Main 中原子协调
-权限同步、会话持久化和失败回滚。
+所有会话和并行任务共同使用最新值。`SessionPermissionModeCoordinator` 的 legacy session IPC
+也只应用全局值，不再修改会话快照。定时任务不会修改该全局值；AgentTurn 任务在 OpenClaw 配置中的
+隐藏 `justdo-scheduler` Agent 上执行，其 per-agent exec/fs 配置和 host approval entry 固定为 Full。
+旧任务或原生 cron 工具创建的任务通过分页启动/周期 reconciliation 迁移到该 Agent；迁移失败的
+已启用 AgentTurn 会被禁用。Ask/Smart 下原生 cron 修改还需要一次性人工审批。
 
 `productName` 必须是长度 1–64 的单个英文单词，只允许 ASCII 字母 `A-Z` / `a-z`。构建配置和运行时都会校验该约束。更换它会直接使用新的 `userData` 和默认工程目录，不提供旧品牌目录的兼容或迁移。
 

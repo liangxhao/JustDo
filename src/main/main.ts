@@ -78,6 +78,7 @@ import {
   registerCoworkUtilityHandlers,
   registerDefaultModelHandlers,
   registerSessionGroupHandlers,
+  waitForCoworkConfigUpdates,
 } from './ipc/cowork';
 import {
   registerExtensionHandlers,
@@ -884,8 +885,7 @@ if (!gotTheLock) {
     ensureEngineRunning: ensureOpenClawRunningForCowork,
     getCoworkStore,
     getCoworkEngineRouter,
-    acquirePermissionModeForTurn: permissionMode =>
-      sessionPermissionModeCoordinator.acquireForTurn(permissionMode),
+    waitForConfigUpdates: waitForCoworkConfigUpdates,
     getEngineNotReadyResponse,
   });
 
@@ -1123,6 +1123,11 @@ if (!gotTheLock) {
     await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
 
     bindCoworkRuntimeForwarder(getCoworkEngineRouter(), getCoworkStore);
+    getCoworkEngineRouter().on('cronChanged', () => {
+      void getCronJobService().listJobs().catch(error => {
+        console.warn('[CronJobService] Failed to reconcile scheduler agent assignment:', error);
+      });
+    });
     bindOpenClawStatusForwarder();
 
     const defaultAgentModelRef = resolveDefaultAgentModelRef();

@@ -167,19 +167,35 @@ Agent 会话；显式传入的 `announce` 和 `webhook` 保持不变。这样“
 
 ### 无人值守权限
 
-任务执行读取当前全局 Ask/Smart/Full 配置，但不继承交互会话的临时授权，也不会为了运行任务
-切换全局权限。Full 下任务可以无人值守使用主机命令和文件修改；Ask/Smart 下若任务触发审批，
-请求仍按普通交互审批处理，无人响应时会按 deny 超时。因此，需要受限操作且必须完整无人值守的任务
-当前应由用户明确选择 Full。
+AgentTurn 定时任务固定使用隐藏的 `justdo-scheduler` Agent。OpenClaw 原生支持
+`agents.list[].tools.exec` 每 Agent 覆盖；该 Agent 的 exec 与文件工具策略为 Full，host approvals
+也使用独立的 per-agent Full entry。普通对话继续使用用户当前的全局 Ask/Smart/Full，任务是否启用
+不会禁用或修改权限选择器。
+
+JustDo UI 创建 AgentTurn 任务时直接写入 scheduler agent id。启动轮询、周期轮询、任务列表和
+Gateway `cron` 事件都会分页迁移旧任务及经原生 cron 工具创建的任务；迁移失败的已启用任务会被
+禁用，重新启用和手动运行则把归属校正与操作放进同一个任务锁。文件权限 compatibility extension
+只对配置中明确列出的 scheduler agent 跳过审批，不根据 session key 或 job id 推断权限。
+SystemEvent 只是唤醒目标会话，不作为独立 Full AgentTurn。
 
 JustDo 不再根据 `agent:<agentId>:cron:<jobId>:run:<runId>` session key 和 job existence 自动放行。
 session key 可由 Gateway 客户端构造，而 OpenClaw v2026.7.1-2 的公开 API 没有提供可与 approval 绑定的
 可信 active-run attestation；在该证明缺失时自动 `allow-once` 会形成权限提升边界。
 
-Agent 可以在对话中通过原生 cron 工具调用 add/update/remove/run；JustDo UI 则通过
-scheduled-task IPC 直接调用 Gateway。两条入口最终使用同一个 Gateway cron runtime，任务执行不会
-继承交互会话 grant，也不会获得额外权限。Gateway operator、CLI、状态目录以及 Full 模式下的 host
-exec 仍属于受信任边界，完整隔离需要 OpenClaw 提供独立凭据和不可写的 scheduler state。
+Agent 可以在对话中通过原生 cron 工具调用 add/update/remove/run；Ask/Smart 下这些修改操作进入
+一次性人工审批，Full 下直接执行。compatibility extension 以随机 nonce 暂存有界的完整请求，Main
+通过只读 Gateway 方法取回，并同时校验 agent、session 与 tool-call 身份；审批框以可滚动的多行
+内容展示原始 cron 参数，包括任务名称、计划、启用状态、目标与 payload。详情取回失败时 Main
+把该 approval 标记为只能拒绝，并在 resolve 层拒绝放行。批准创建只授权所展示的任务变更，
+真正到点运行不再请求批准。
+JustDo UI 则通过 scheduled-task IPC 直接调用 Gateway。两条入口最终使用同一个 Gateway cron
+runtime，AgentTurn 任务在 scheduler Agent 中执行，不继承或修改交互会话权限。
+
+OpenClaw 原生 cron 工具会先把新任务限定到调用 Agent；JustDo 收到事件后才能以 operator RPC 改为
+scheduler。因此“已批准且立即到期”的原生任务仍存在极短的归属迁移窗口，可能先按普通 Agent 权限
+执行并失败，但不会借此绕过 Ask/Smart 审批获得 Full。完全消除该窗口需要 OpenClaw 提供原子的
+受信 scheduler assignment。Gateway operator、CLI、状态目录以及 scheduler Agent 的 host exec
+仍属于受信任边界，完整隔离需要独立凭据和不可写的 scheduler state。
 
 ```mermaid
 flowchart TB

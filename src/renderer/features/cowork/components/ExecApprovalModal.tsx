@@ -47,8 +47,19 @@ export const resolveApprovalSummary = (approval: ApprovalRequest): string => {
 
   const description = approval.request.description.trim();
   const toolName = approval.request.toolName?.trim();
+  if (
+    approval.request.pluginId === 'file-permission-policy' &&
+    toolName === 'cron'
+  ) {
+    return description;
+  }
   return [toolName, description].filter(Boolean).join(' ');
 };
+
+export const isScheduledTaskApproval = (approval: ApprovalRequest): boolean =>
+  approval.kind === ApprovalKind.Plugin &&
+  approval.request.pluginId === 'file-permission-policy' &&
+  approval.request.toolName?.trim() === 'cron';
 
 export const resolveApprovalDeadline = (
   expiresAtMs: number,
@@ -84,9 +95,15 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
   const allowed = useMemo(() => resolveAllowedDecisions(approval), [approval]);
   const { remainingSeconds, expired } = resolveApprovalDeadline(approval.expiresAtMs, now);
   const isPluginApproval = approval.kind === ApprovalKind.Plugin;
-  const isFileApproval = isPluginApproval && approval.request.pluginId === 'file-permission-policy';
-  const heading = isFileApproval
-    ? i18nService.t('fileApprovalHeading')
+  const isScheduledTask = isScheduledTaskApproval(approval);
+  const isFileApproval =
+    isPluginApproval &&
+    approval.request.pluginId === 'file-permission-policy' &&
+    !isScheduledTask;
+  const heading = isScheduledTask
+    ? i18nService.t('scheduledTaskApprovalHeading')
+    : isFileApproval
+      ? i18nService.t('fileApprovalHeading')
     : isPluginApproval
       ? approval.request.title?.trim() || i18nService.t('pluginApprovalHeading')
       : i18nService.t('execApprovalHeading');
@@ -174,7 +191,11 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
         {summary && (
           <div className="px-5 pb-4">
             <div
-              className="truncate rounded-lg bg-surface/70 px-3 py-2 font-mono text-xs text-foreground"
+              className={
+                isScheduledTask
+                  ? 'max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface/70 px-3 py-2 font-mono text-xs text-foreground'
+                  : 'truncate rounded-lg bg-surface/70 px-3 py-2 font-mono text-xs text-foreground'
+              }
               title={summary}
             >
               {summary}

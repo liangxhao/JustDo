@@ -1,6 +1,7 @@
 import type { BrowserMode } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import type { PermissionMode } from '../../../shared/openclaw/approvals';
+import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import type { CoworkStore } from '../../data/coworkStore';
 import type {
   OpenClawEngineManager,
@@ -61,6 +62,15 @@ const resolveExecApprovalFields = (mode: PermissionMode) => {
 
 type ConfigSnapshot = {
   config?: {
+    agents?: {
+      list?: Array<{
+        id?: unknown;
+        tools?: {
+          exec?: { host?: unknown; mode?: unknown };
+          fs?: { workspaceOnly?: unknown };
+        };
+      }>;
+    };
     tools?: {
       exec?: { host?: unknown; mode?: unknown };
       fs?: { workspaceOnly?: unknown };
@@ -70,7 +80,9 @@ type ConfigSnapshot = {
 
 type FilePermissionPolicyInfo = {
   loaded?: boolean;
+  adapterVersion?: unknown;
   configuredMode?: unknown;
+  fullAgentIds?: unknown;
 };
 
 const removePersistentApprovalGrants = (
@@ -347,12 +359,23 @@ export class OpenClawConfigSyncService {
       this.deps.requestGateway<FilePermissionPolicyInfo>('filePermissionPolicy.info'),
     ]);
     const expectedWorkspaceOnly = mode !== 'full';
+    const schedulerAgent = snapshot.config?.agents?.list?.find(
+      agent => agent.id === ScheduledTaskAgentId,
+    );
+    const fullAgentIds = Array.isArray(pluginInfo.fullAgentIds)
+      ? pluginInfo.fullAgentIds.filter((agentId): agentId is string => typeof agentId === 'string')
+      : [];
     return (
       snapshot.config?.tools?.exec?.host === 'gateway' &&
       snapshot.config.tools.exec.mode === mode &&
       snapshot.config?.tools?.fs?.workspaceOnly === expectedWorkspaceOnly &&
+      schedulerAgent?.tools?.exec?.host === 'gateway' &&
+      schedulerAgent.tools.exec.mode === 'full' &&
+      schedulerAgent.tools.fs?.workspaceOnly === false &&
       pluginInfo.loaded === true &&
-      pluginInfo.configuredMode === mode
+      pluginInfo.adapterVersion === 2 &&
+      pluginInfo.configuredMode === mode &&
+      fullAgentIds.includes(ScheduledTaskAgentId)
     );
   }
 
@@ -364,13 +387,22 @@ export class OpenClawConfigSyncService {
       version: 1,
     };
     const policy = resolveExecApprovalFields(mode);
+    const schedulerPolicy = resolveExecApprovalFields('full');
     file.defaults = { ...(file.defaults ?? {}), ...policy };
-    file.agents = Object.fromEntries(
-      Object.entries(file.agents ?? {}).map(([agentId, entry]) => [
-        agentId,
-        removePersistentApprovalGrants({ ...entry, ...policy }),
-      ]),
-    );
+    file.agents = {
+      ...Object.fromEntries(
+        Object.entries(file.agents ?? {})
+          .filter(([agentId]) => agentId !== ScheduledTaskAgentId)
+          .map(([agentId, entry]) => [
+            agentId,
+            removePersistentApprovalGrants({ ...entry, ...policy }),
+          ]),
+      ),
+      [ScheduledTaskAgentId]: removePersistentApprovalGrants({
+        ...(file.agents?.[ScheduledTaskAgentId] ?? {}),
+        ...schedulerPolicy,
+      }),
+    };
     const submitted = await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.set', {
       file,
       ...(current.hash ? { baseHash: current.hash } : {}),
@@ -381,10 +413,12 @@ export class OpenClawConfigSyncService {
     const defaults = applied.file?.defaults;
     const agentsMatch = Object.keys(file.agents ?? {}).every(agentId => {
       const agent = applied.file?.agents?.[agentId];
+      const expectedAgentPolicy =
+        agentId === ScheduledTaskAgentId ? schedulerPolicy : expected;
       return (
-        agent?.security === expected.security &&
-        agent.ask === expected.ask &&
-        agent.askFallback === expected.askFallback
+        agent?.security === expectedAgentPolicy.security &&
+        agent.ask === expectedAgentPolicy.ask &&
+        agent.askFallback === expectedAgentPolicy.askFallback
       );
     });
     const hostApplied = (

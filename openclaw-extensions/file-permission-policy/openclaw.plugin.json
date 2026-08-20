@@ -1,7 +1,7 @@
 {
   "id": "file-permission-policy",
   "name": "File Permission Policy",
-  "description": "Policy for file-changing tools.",
+  "description": "Policy for file and scheduled-task mutation tools.",
   "contracts": {
     "trustedToolPolicies": ["core-file-mutation"]
   },
@@ -12,6 +12,11 @@
       "mode": {
         "type": "string",
         "enum": ["ask", "auto", "full"]
+      },
+      "fullAgentIds": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "uniqueItems": true
       }
     }
   }

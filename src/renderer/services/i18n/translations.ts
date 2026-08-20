@@ -806,7 +806,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // 通用设置
     autoLaunch: '开机自启动',
     permissionModeTitle: '执行权限',
-    permissionModeDescription: '控制 Agent 在本机执行命令时的审批方式。',
+    permissionModeDescription: '控制所有对话在本机执行命令时的全局审批方式。',
     permissionModeAsk: '请求批准',
     permissionModeAskDescription: '新命令和文件修改前询问',
     permissionModeAuto: '智能审批',
@@ -834,6 +834,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     fileApprovalDescription: '请确认 Agent 请求修改的文件。',
     fileApprovalTarget: '目标文件',
     fileApprovalTool: '操作',
+    scheduledTaskApprovalHeading: '需要批准定时任务变更',
     pluginApprovalSource: '插件来源',
     pluginApprovalSeverity: '风险级别',
     pluginApprovalDescription: '请求内容',
@@ -1923,7 +1924,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // General Settings
     autoLaunch: 'Launch at Login',
     permissionModeTitle: 'Execution permissions',
-    permissionModeDescription: 'Controls how host commands requested by the agent are approved.',
+    permissionModeDescription: 'Controls host-command approval globally for all conversations.',
     permissionModeAsk: 'Ask for approval',
     permissionModeAskDescription: 'Ask before new commands and file changes',
     permissionModeAuto: 'Smart approval',
@@ -1952,6 +1953,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     fileApprovalDescription: 'Review the files the agent requested to change.',
     fileApprovalTarget: 'Target files',
     fileApprovalTool: 'Operation',
+    scheduledTaskApprovalHeading: 'Approve scheduled task change',
     pluginApprovalSource: 'Plugin source',
     pluginApprovalSeverity: 'Severity',
     pluginApprovalDescription: 'Request',

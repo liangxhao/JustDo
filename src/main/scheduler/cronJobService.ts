@@ -11,7 +11,9 @@ import {
   GatewayStatus,
   IpcChannel,
   PayloadKind,
+  ScheduledTaskAgentId,
   ScheduleKind,
+  SessionTarget,
   TaskStatus,
 } from '../../shared/scheduledTask/constants';
 import { isMissingExternalChannelError } from '../../shared/scheduledTask/deliveryError';
@@ -107,6 +109,12 @@ interface GatewayJob {
   state: GatewayJobState;
   createdAtMs: number;
   updatedAtMs: number;
+}
+
+interface GatewayJobListResult {
+  jobs?: GatewayJob[];
+  hasMore?: boolean;
+  nextOffset?: number;
 }
 
 interface GatewayRunLogEntry {
@@ -507,20 +515,23 @@ export class CronJobService {
 
   private async pollOnce(): Promise<void> {
     if (!this.polling || this.pollOnceInProgress) return;
-    if (this.isCoworkBusy()) return;
     this.pollOnceInProgress = true;
 
     try {
       const client = this.getGatewayClient();
       if (!client) return;
 
-      const result = await client.request<{ jobs?: GatewayJob[] }>('cron.list', {
-        includeDisabled: true,
-        limit: 200,
-      });
+      const listedJobs = await this.listAllGatewayJobs(client);
+      const agentRepairedJobs = await this.repairScheduledTaskAgentAssignments(
+        client,
+        listedJobs,
+      );
+      // Scheduler assignment is a permission boundary and must run even while
+      // an interactive turn is active. The heavier result/delivery polling can wait.
+      if (this.isCoworkBusy()) return;
       const jobs = await this.repairInAppOnlyDeliveryBackoffs(
         client,
-        Array.isArray(result.jobs) ? result.jobs : [],
+        agentRepairedJobs,
       );
 
       this.runningJobIds.clear();
@@ -679,6 +690,106 @@ export class CronJobService {
     return repairedJobs;
   }
 
+  private async listAllGatewayJobs(client: GatewayClientLike): Promise<GatewayJob[]> {
+    const jobs: GatewayJob[] = [];
+    const seenIds = new Set<string>();
+    let offset = 0;
+
+    while (true) {
+      const result = await client.request<GatewayJobListResult>('cron.list', {
+        includeDisabled: true,
+        limit: 200,
+        offset,
+      });
+      for (const job of Array.isArray(result.jobs) ? result.jobs : []) {
+        if (seenIds.has(job.id)) continue;
+        seenIds.add(job.id);
+        jobs.push(job);
+      }
+      if (result.hasMore !== true) return jobs;
+      const nextOffset = result.nextOffset;
+      if (!Number.isFinite(nextOffset) || (nextOffset as number) <= offset) {
+        throw new Error('OpenClaw returned an invalid cron.list pagination cursor.');
+      }
+      offset = Math.floor(nextOffset as number);
+    }
+  }
+
+  private async findGatewayJob(
+    client: GatewayClientLike,
+    jobId: string,
+  ): Promise<GatewayJob | null> {
+    const result = await client.request<GatewayJobListResult>('cron.list', {
+      includeDisabled: true,
+      query: jobId,
+      limit: 20,
+    });
+    return result.jobs?.find(job => job.id === jobId) ?? null;
+  }
+
+  private async repairScheduledTaskAgentAssignments(
+    client: GatewayClientLike,
+    jobs: GatewayJob[],
+  ): Promise<GatewayJob[]> {
+    return Promise.all(
+      jobs.map(async job => {
+        if (job.payload.kind !== PayloadKind.AgentTurn || job.agentId === ScheduledTaskAgentId) {
+          return job;
+        }
+        return this.withTaskMutation(job.id, async () => {
+          const latest = (await this.findGatewayJob(client, job.id)) ?? job;
+          if (
+            latest.payload.kind !== PayloadKind.AgentTurn ||
+            latest.agentId === ScheduledTaskAgentId
+          ) {
+            return latest;
+          }
+          try {
+            const assigned = await client.request<GatewayJob>('cron.update', {
+              id: latest.id,
+              patch: { agentId: ScheduledTaskAgentId },
+            });
+            if (assigned.agentId !== ScheduledTaskAgentId) {
+              throw new Error('OpenClaw did not confirm the scheduler agent assignment.');
+            }
+            console.info(
+              `[CronJobService] Assigned agent-turn task ${latest.id} to the isolated scheduler agent.`,
+            );
+            return assigned;
+          } catch (assignmentError) {
+            if (!latest.enabled) {
+              console.warn(
+                `[CronJobService] Scheduler assignment remains pending for disabled task ${latest.id}:`,
+                assignmentError,
+              );
+              return latest;
+            }
+            try {
+              const disabled = await client.request<GatewayJob>('cron.update', {
+                id: latest.id,
+                patch: { enabled: false },
+              });
+              if (disabled.enabled !== false) {
+                throw new Error('OpenClaw did not confirm that the task was disabled.');
+              }
+              console.error(
+                `[CronJobService] Disabled task ${latest.id} because scheduler assignment failed:`,
+                assignmentError,
+              );
+              return disabled;
+            } catch (disableError) {
+              throw new Error(
+                `Failed to assign or disable scheduled task ${latest.id}: ${
+                  disableError instanceof Error ? disableError.message : String(disableError)
+                }`,
+              );
+            }
+          }
+        });
+      }),
+    );
+  }
+
   async addJob(input: ScheduledTaskInput): Promise<ScheduledTask> {
     return this.addJobLocked(input);
   }
@@ -715,7 +826,9 @@ export class CronJobService {
       wakeMode: input.wakeMode,
       payload: toGatewayPayload(input.payload),
       ...(gatewayDelivery ? { delivery: gatewayDelivery } : {}),
-      ...(input.agentId?.trim() ? { agentId: input.agentId.trim() } : {}),
+      ...(input.payload.kind === PayloadKind.AgentTurn
+        ? { agentId: ScheduledTaskAgentId }
+        : {}),
       ...(input.sessionKey?.trim() ? { sessionKey: input.sessionKey.trim() } : {}),
     });
     const mapped = mapGatewayJob(job);
@@ -748,26 +861,45 @@ export class CronJobService {
       ),
     );
     const client = await this.client();
-    const patch: Record<string, unknown> = {};
+    const job = await this.withTaskMutation(id, async () => {
+      const current = await this.findGatewayJob(client, id);
+      if (!current) throw new Error(`Scheduled task not found: ${id}`);
 
-    if (input.name !== undefined) patch.name = input.name;
-    if (input.description !== undefined) {
-      patch.description = input.description || undefined;
-    }
-    if (input.enabled !== undefined) patch.enabled = input.enabled;
-    if (input.schedule !== undefined) patch.schedule = toGatewaySchedule(input.schedule);
-    if (input.sessionTarget !== undefined) patch.sessionTarget = input.sessionTarget;
-    if (input.wakeMode !== undefined) patch.wakeMode = input.wakeMode;
-    if (input.payload !== undefined) patch.payload = toGatewayPayload(input.payload);
-    if (input.delivery !== undefined)
-      patch.delivery = toGatewayDelivery(input.delivery) ?? { mode: DeliveryMode.None };
-    if (input.agentId !== undefined) patch.agentId = input.agentId?.trim() || null;
-    if (input.sessionKey !== undefined) patch.sessionKey = input.sessionKey?.trim() || null;
+      const patch: Record<string, unknown> = {};
+      const nextPayload = input.payload ? toGatewayPayload(input.payload) : current.payload;
+      const payloadKindChanged = nextPayload.kind !== current.payload.kind;
 
-    console.log('[CronJobService][updateJob] final patch:', JSON.stringify(patch, null, 2));
-    const job = await this.withTaskMutation(id, () =>
-      client.request<GatewayJob>('cron.update', { id, patch }),
-    );
+      if (input.name !== undefined) patch.name = input.name;
+      if (input.description !== undefined) patch.description = input.description || undefined;
+      if (input.enabled !== undefined) patch.enabled = input.enabled;
+      if (input.schedule !== undefined) patch.schedule = toGatewaySchedule(input.schedule);
+      if (input.sessionTarget !== undefined) {
+        patch.sessionTarget = input.sessionTarget;
+      } else if (payloadKindChanged) {
+        patch.sessionTarget =
+          nextPayload.kind === PayloadKind.AgentTurn ? SessionTarget.Isolated : SessionTarget.Main;
+      }
+      if (input.wakeMode !== undefined) patch.wakeMode = input.wakeMode;
+      if (input.payload !== undefined) patch.payload = nextPayload;
+      if (input.delivery !== undefined) {
+        patch.delivery = toGatewayDelivery(input.delivery) ?? { mode: DeliveryMode.None };
+      }
+      if (nextPayload.kind === PayloadKind.AgentTurn) {
+        patch.agentId = ScheduledTaskAgentId;
+      } else if (input.agentId !== undefined) {
+        patch.agentId = input.agentId?.trim() || null;
+      } else if (payloadKindChanged || current.agentId === ScheduledTaskAgentId) {
+        patch.agentId = null;
+      }
+      if (input.sessionKey !== undefined) {
+        patch.sessionKey = input.sessionKey?.trim() || null;
+      } else if (payloadKindChanged) {
+        patch.sessionKey = null;
+      }
+
+      console.log('[CronJobService][updateJob] final patch:', JSON.stringify(patch, null, 2));
+      return client.request<GatewayJob>('cron.update', { id, patch });
+    });
     const mapped = mapGatewayJob(job);
     console.log('[CronJobService][updateJob] updated job id:', mapped.id, 'name:', mapped.name);
     return mapped;
@@ -782,14 +914,12 @@ export class CronJobService {
 
   async listJobs(): Promise<ScheduledTask[]> {
     const client = await this.client();
-    const result = await client.request<{ jobs?: GatewayJob[] }>('cron.list', {
-      includeDisabled: true,
-      limit: 200,
-    });
-    const jobs = await this.repairInAppOnlyDeliveryBackoffs(
+    const listedJobs = await this.listAllGatewayJobs(client);
+    const deliveryRepairedJobs = await this.repairInAppOnlyDeliveryBackoffs(
       client,
-      Array.isArray(result.jobs) ? result.jobs : [],
+      listedJobs,
     );
+    const jobs = await this.repairScheduledTaskAgentAssignments(client, deliveryRepairedJobs);
     return jobs.map(mapGatewayJob);
   }
 
@@ -801,12 +931,7 @@ export class CronJobService {
   private async getJobRaw(id: string): Promise<GatewayJob | null> {
     const client = await this.client();
     try {
-      const result = await client.request<{ jobs?: GatewayJob[] }>('cron.list', {
-        includeDisabled: true,
-        query: id,
-        limit: 20,
-      });
-      return result.jobs?.find(job => job.id === id) ?? null;
+      return await this.findGatewayJob(client, id);
     } catch {
       return null;
     }
@@ -818,9 +943,27 @@ export class CronJobService {
 
   private async toggleJobLocked(id: string, enabled: boolean): Promise<ScheduledTask> {
     const client = await this.client();
-    const job = await this.withTaskMutation(id, () =>
-      client.request<GatewayJob>('cron.update', { id, patch: { enabled } }),
-    );
+    const job = await this.withTaskMutation(id, async () => {
+      const current = await this.findGatewayJob(client, id);
+      if (!current) throw new Error(`Scheduled task not found: ${id}`);
+      const patch: Record<string, unknown> = { enabled };
+      if (
+        enabled &&
+        current.payload.kind === PayloadKind.AgentTurn &&
+        current.agentId !== ScheduledTaskAgentId
+      ) {
+        patch.agentId = ScheduledTaskAgentId;
+      }
+      const updated = await client.request<GatewayJob>('cron.update', { id, patch });
+      if (
+        enabled &&
+        updated.payload.kind === PayloadKind.AgentTurn &&
+        updated.agentId !== ScheduledTaskAgentId
+      ) {
+        throw new Error('OpenClaw did not confirm the scheduler agent assignment.');
+      }
+      return updated;
+    });
     return mapGatewayJob(job);
   }
 
@@ -830,7 +973,23 @@ export class CronJobService {
 
   private async runJobLocked(id: string): Promise<void> {
     const client = await this.client();
-    await client.request('cron.run', { id });
+    await this.withTaskMutation(id, async () => {
+      const current = await this.findGatewayJob(client, id);
+      if (!current) throw new Error(`Scheduled task not found: ${id}`);
+      if (
+        current.payload.kind === PayloadKind.AgentTurn &&
+        current.agentId !== ScheduledTaskAgentId
+      ) {
+        const assigned = await client.request<GatewayJob>('cron.update', {
+          id,
+          patch: { agentId: ScheduledTaskAgentId },
+        });
+        if (assigned.agentId !== ScheduledTaskAgentId) {
+          throw new Error('OpenClaw did not confirm the scheduler agent assignment.');
+        }
+      }
+      await client.request('cron.run', { id });
+    });
   }
 
   async deleteRunArtifacts(result: ScheduledTaskResult): Promise<void> {

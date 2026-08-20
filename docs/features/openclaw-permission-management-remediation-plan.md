@@ -6,9 +6,12 @@
 `openclaw-permission-management-plan.md`。旧文档包含已经撤销的架构方向和过时实施阶段，
 不再保留。
 
-当前结论：**对话内 `ask` / `auto` / `full` 主链路已经接通；定时任务不切换全局权限，
-也不根据可伪造的 session key 自动提权；真实文件工具的 packaged-runtime smoke 尚未完成。
-可信 cron run 证明、隔离执行环境和运行时 active-policy 权威证明作为后续安全增强保留。**
+当前结论：**`ask` / `auto` / `full` 是普通对话的应用级全局权限；AgentTurn 定时任务固定使用
+原生 per-agent Full 的隐藏 scheduler Agent，不锁定或修改正常会话权限。不实现每会话 runtime
+隔离，也不根据可伪造的 session key 做逐次提权。Ask/Smart 下普通 Agent 的原生 cron 修改需要
+一次性人工审批；启动/周期轮询分页迁移归属，失败时禁用错归属的已启用任务。可信 JustDo
+交互审批必须无限等待用户决定，因此保留职责分离且规模受控的 `022`–`025` 生命周期 patch；
+真实文件工具的 packaged-runtime smoke 尚未完成。**
 
 新会话开始时先阅读：
 
@@ -20,23 +23,24 @@
   trusted-tool-policy contract。
 
 OpenClaw 是 npm 安装的第三方 runtime。不得修改 `../openclaw` 源码、compiled runtime，
-也不得新增权限 runtime patch。
+新增权限 runtime patch 必须是公开 API 无法实现、范围受控且具备移除条件的版本兼容能力。
 
 ## 当前交付范围
 
 本轮只要求用户在桌面对话中正常使用三档权限：
 
-| 模式   | 主机命令                                           | 核心文件工具                      | 生命周期                        |
-| ------ | -------------------------------------------------- | --------------------------------- | ------------------------------- |
-| `ask`  | allowlist 命中时执行；未命中时请求批准             | `write/edit/apply_patch` 请求批准 | 按会话持久化                    |
-| `auto` | OpenClaw reviewer 自动审核；不确定或失败时请求批准 | 当前降级为人工请求批准            | 按会话持久化                    |
-| `full` | 无需批准                                           | 无需批准                          | 新会话/缺失值默认；按会话持久化 |
+| 模式   | 主机命令                                           | 核心文件工具                      | 生命周期                         |
+| ------ | -------------------------------------------------- | --------------------------------- | -------------------------------- |
+| `ask`  | allowlist 命中时执行；未命中时请求批准             | `write/edit/apply_patch` 请求批准 | 应用级持久化；交互审批无限等待   |
+| `auto` | OpenClaw reviewer 自动审核；不确定或失败时请求批准 | 当前降级为人工请求批准            | 应用级持久化；交互审批无限等待   |
+| `full` | 无需批准                                           | 无需批准                          | 缺失值默认；用户可随时切换       |
 
 Browser、消息、MCP、marketplace、第三方插件和其他 Gateway operator 客户端不自动受三档
-权限完整覆盖。Agent 可以通过原生 cron 工具创建和管理定时任务；任务执行不继承交互会话 grant，
-仍按届时生效的权限模式处理。
-会话权限按会话持久化，但 Gateway runtime 仍使用全局权限快照：打开会话不切换 runtime，
-只在发起 turn 前激活该会话权限。权限修改始终原生热更新，并行会话共同使用最新的 runtime 权限快照。
+权限完整覆盖。Agent 可以通过原生 cron 工具创建和管理定时任务；Ask/Smart 下
+add/update/remove/run 需要一次性人工审批。AgentTurn 任务会被归一化到
+`justdo-scheduler` Agent，其 exec/fs 与 host approvals 固定为 per-agent Full。普通对话权限修改
+始终原生热更新，所有普通会话共同使用最新的 runtime 权限快照，但不覆盖 scheduler Agent。
+`cowork_sessions.permission_mode` 只作为历史兼容快照，不参与会话激活。
 
 用户界面只展示三档产品行为和可执行错误，不展示“desired/effective policy”“运行时快照”
 或“正在提交并核对运行时配置”等内部实现状态。
@@ -56,14 +60,17 @@ Browser、消息、MCP、marketplace、第三方插件和其他 Gateway operator
 - `auto` 下文件修改暂时降级为人工 `ask`；
 - `full` 需要二次确认；
 - UI 已移除运行时配置、快照和同步进度等技术提示，只在保存或应用失败时展示错误；
-- `filePermissionPolicy.info` 只保留 loaded/version/configured 诊断字段。
+- `filePermissionPolicy.info` 的 loaded/version/mode/full-agent 匹配作为 readiness 的必要条件，
+  但不被描述成 trusted policy 的权威 active snapshot；
+- `022`–`025` 只为可信 JustDo ancestry 提供持久 lifetime、run suspension、隐藏恢复与 stop/failure
+  收口；不改变 cron 和其他 native channel 的上游超时。
 
 单元测试和构建结果不能替代 packaged-runtime 行为验收；应以本文 TODO 和验收状态为准。
 
 ## 独立审查事项
 
-以下四项来自独立代码审查。R0-1、R0-2 已关闭；R0-3 的 JustDo 本地入口已关闭，
-Gateway 全局入口延期；R0-4 按产品决策关闭，但真实文件工具 smoke 仍是当前功能验收项。
+以下六项来自独立代码审查。R0-1 至 R0-6 已在公开 OpenClaw 能力范围内关闭；真实文件工具和
+原生 cron 的 packaged-runtime smoke 仍是当前功能验收项。
 
 ### R0-1：配置同步失败没有完整 fail closed
 
@@ -92,24 +99,29 @@ Gateway 全局入口延期；R0-4 按产品决策关闭，但真实文件工具 
 
 ### R0-2：定时任务会被交互审批阻塞
 
-状态：**部分关闭**。Main 不要求 Full 与 cron 互斥，也不在任务运行前后切换全局权限。
-Full 下任务可完整无人值守；Ask/Smart 下的审批保持交互式并默认拒绝超时。曾实现的
-`sessionKey + cron.list job existence` 自动放行已移除，因为它不能证明 approval 来自真实 active run。
-恢复受限模式下的无人值守能力前，必须完成 `FUTURE-7` 和 `FUTURE-8`。
+状态：**已关闭（原生 per-agent 隔离和 fail-closed reconciliation）**。AgentTurn 定时任务统一
+归属隐藏 scheduler Agent；OpenClaw config、host approvals 与文件权限 extension 都只为该 Agent
+配置 Full。启动/周期轮询和任务列表分页迁移旧 agentId；Gateway cron 事件触发同一逻辑；迁移失败
+的已启用任务会被禁用，启用与手动运行在同一个任务锁内先确认归属。普通会话仍可自由切换
+Ask/Smart/Full。曾实现的 `sessionKey + cron.list job existence` 自动放行保持删除。
 
 ### R0-3：Agent 通过原生 cron 提升为无人值守权限
 
-状态：**按权限继承规则关闭**。Agent 可以调用原生 cron add/update/remove/run，但任务执行不继承
-创建任务时的交互会话 grant，也不会自动获得 Full。Ask/Auto 下的审批继续保持交互式并默认拒绝
-超时；会话权限从 SQLite 恢复，新会话、缺失值或非法值默认使用 Full。其他持有 Gateway operator
-凭据的客户端仍属于外部信任边界。
+状态：**已关闭（mutation approval + scheduler Agent）**。Agent 可以调用原生 cron
+add/update/remove/run，但 Ask/Smart 下每次修改都进入一次性人工审批，Full 下直接执行。批准后的
+AgentTurn 会由事件和周期 reconciliation 迁移到 scheduler；创建者保留的 owner scope 因后续 run
+仍需审批，不能成为 Full 跳板。系统不依赖 session key 或 job existence 做 approval 级自动放行。
+OpenClaw caller-scope 创建不是原子 scheduler assignment；已批准且立即到期的任务可能在迁移前按
+普通 Agent 权限运行并失败，完全关闭该可用性窗口需要上游提供受信原子 assignment。
+其他持有 Gateway operator 凭据的客户端仍属于外部信任边界。
 
-### R0-4：adapter info 被错误用作 active readiness
+### R0-4：adapter info 的必要性与证明边界混淆
 
-状态：**按产品决策关闭（代码与单元测试）**。adapter info 不再参与 readiness。产品要求保留
-正常文件审批能力，因此 `ask/auto` 继续通过版本锁定兼容适配器审批
-`write/edit/apply_patch`，不再通过 `tools.deny` 禁用文件修改。该选择依赖 packaged-runtime
-副作用前审批 smoke 作为发布兼容门槛，但不把 adapter info 包装成权威 readiness。
+状态：**已关闭（必要条件 + packaged smoke）**。adapter info 参与 readiness，能够在扩展缺失、
+版本、普通模式或 scheduler Full 白名单不匹配时 fail closed；它仍不被包装成 trusted registry 的
+权威 active snapshot。`ask/auto` 继续通过版本锁定兼容适配器审批
+`write/edit/apply_patch`，不通过 `tools.deny` 禁用文件修改。packaged-runtime 副作用前审批 smoke
+仍是发布兼容门槛。
 
 涉及：
 
@@ -119,13 +131,14 @@ Full 下任务可完整无人值守；Ask/Smart 下的审批保持交互式并�
 
 原问题：
 
-`verifyActivePermissionPolicy()` 仍将 adapter 的 loaded/version/configuredMode 匹配作为允许
-engine 继续运行的条件。但 `registerTrustedToolPolicy()` 不返回权威注册结果，adapter info
-RPC 存活不能证明 trusted policy 已进入 active registry。
+完全移除 adapter info 回读会让扩展缺失、版本或配置不匹配仍被视为同步成功；反过来，单凭该 RPC
+存活也不能证明 trusted policy 已进入 active registry，因为 `registerTrustedToolPolicy()` 不返回
+权威注册结果。
 
 决策与处理结果：
 
-1. adapter info 只用于版本和配置诊断，不得参与 active/readiness 成功判断；
+1. adapter info 的 loaded/version/mode/full-agent 匹配作为 readiness 必要条件，但不得单独作为
+   active trusted-policy 成功证明；
 2. 再次核对 packaged runtime 是否提供公开、权威的 registry/effective snapshot；当前审计
    结论是没有；
 3. 产品决定保留正常文件审批能力，继续使用与 OpenClaw v2026.7.1-2 锁定的 compatibility
@@ -135,6 +148,21 @@ RPC 存活不能证明 trusted policy 已进入 active registry。
 
 已核实 `plugins.entries.*.config` 变化会触发 `reloadPlugins=true`，因此“plugin config
 不会热更新”不是当前阻断项。
+
+### R0-5：全局权限降级与新 turn admission 竞态
+
+状态：**已关闭（配置队列屏障）**。新建和继续 turn 在 admission 阶段进入配置队列屏障，等待此前
+排队的权限热更新和回读完成后才读取全局权限并启动。屏障随 admission 结束立即释放，不持有到
+模型 turn 结束，因此不会把长任务和后续设置修改串行化。新会话的历史 `permission_mode` 快照也
+改为读取 Main 中的全局配置，不再信任 Renderer 请求携带的旧值。
+
+### R0-6：任务类型转换和 scheduler 校正不是原子更新
+
+状态：**已关闭（per-task atomic update）**。`updateJob` 在同一个 per-task mutation lock 中读取
+当前 Gateway job、计算最终 payload/sessionTarget/agentId/sessionKey，并只提交一次 `cron.update`。
+AgentTurn 转 SystemEvent 会清除 scheduler agent 和 cron session residue；SystemEvent 转 AgentTurn
+会补上 isolated target 与 scheduler agent。启用操作把 `enabled=true` 与 scheduler assignment 放在
+同一个 update 中，手动执行则在同一锁内确认 assignment 后才调用 `cron.run`。
 
 ## TODO List
 
@@ -149,12 +177,14 @@ RPC 存活不能证明 trusted policy 已进入 active registry。
 - [ ] `CURRENT-3`：在临时 workspace 中分别执行真实 `write`、`edit`、`apply_patch`。
       `ask/auto` 必须在副作用前请求批准；deny、timeout、no route 后文件不变；allow-once
       只消费一次。
-- [ ] `CURRENT-4`：验证 `full` 下真实命令和上述文件工具无需批准；验证应用重启后旧会话恢复
-      已保存权限，新会话、缺失值或非法值默认使用 `full`。
+- [ ] `CURRENT-4`：验证 `full` 下真实命令和上述文件工具无需批准；验证应用重启后恢复全局
+      权限，缺失值或非法值默认使用 `full`。
 - [ ] `CURRENT-5`：验证三档切换失败时只显示可执行错误，不恢复运行时快照、配置同步进度等
       技术提示。
 - [ ] `CURRENT-6`：确认并安全退出占用 `better-sqlite3` 的本仓库开发 Electron 进程后，
       运行完整 `npm test`，并重新运行 build、compile、lint 和 diff check。
+- [ ] `CURRENT-7`：在 packaged runtime 验证 Ask/Smart 下原生 cron add/update/remove/run 在副作用前
+      进入一次性审批，deny/timeout 不修改任务；Full 和 scheduler Agent 不重复提示。
 
 smoke 必须使用临时 state/workspace，不连接用户真实 Gateway，不读取或修改用户真实数据。
 
@@ -162,7 +192,8 @@ smoke 必须使用临时 state/workspace，不连接用户真实 Gateway，不�
 
 以下项目不阻塞当前对话功能，但在宣称“全局、可证明、不可绕过的权限边界”前必须完成：
 
-- [x] `FUTURE-1`：允许 Agent 使用原生 cron mutation，同时确保任务不继承创建会话的临时授权；
+- [x] `FUTURE-1`：Ask/Smart 下审批 Agent 原生 cron mutation，并把已批准的 AgentTurn 任务归一化到
+      per-agent Full 的隐藏 scheduler Agent；
       其他 Gateway operator 客户端明确保留为外部信任边界。
 - [ ] `FUTURE-2`：决定是否需要“`full` 仅允许前台命令”。如果恢复该产品约束，使用公开
       tool policy 禁用 `process`/后台交接能力，并验证 `background`、`yieldMs` 和 shell detach；
@@ -172,8 +203,10 @@ smoke 必须使用临时 state/workspace，不连接用户真实 Gateway，不�
       但不得把诊断 RPC 当成权威证明。
 - [ ] `FUTURE-4`：统一 auth logout native reload 超时的 fail-closed 行为，并同步修正安全
       架构文档中的无例外表述。
-- [ ] `FUTURE-5`：审批 UI 根据 `pluginId` 区分 JustDo 文件审批和其他 plugin approval，
-      避免把所有插件审批都显示为文件修改。
+- [x] `FUTURE-5`：审批 UI 根据 `pluginId` 与 `toolName` 区分 JustDo 文件、cron 和其他
+      plugin approval；Main 使用随机 nonce 与 agent/session/tool-call 组合校验取回完整 cron 参数，
+      并以可滚动多行内容显示；取回失败时在 resolve 层只允许拒绝，不再依赖 Gateway 最多 256
+      字符的 description，也不再误标为文件修改。
 - [ ] `FUTURE-6`：补齐 workspace 逃逸测试，包括 Windows 盘符、路径大小写、
       junction/symlink。
 - [ ] `FUTURE-7`：推动 OpenClaw 提供可信 cron run attestation，并把 exact
@@ -184,8 +217,8 @@ smoke 必须使用临时 state/workspace，不连接用户真实 Gateway，不�
 - [ ] `FUTURE-9`：让 Full→Ask/Auto 的文件策略也具备单调收紧语义。host approvals 已在配置 reload
       前收紧；文件 trusted-policy 仍需 OpenClaw 提供不会向 Renderer 暴露的 Main-only 原子切换接口。
 
-未来项目实施时先补失败测试，再修改代码；不得恢复第二权限状态源或新增 OpenClaw runtime
-patch。
+未来项目实施时先补失败测试，再修改代码；不得恢复第二权限状态源。新增 OpenClaw runtime patch
+必须保持最小职责、版本锁定、可验证且有明确删除条件。
 
 ## 架构与产品边界
 
@@ -214,7 +247,8 @@ JustDo 固定 exec host 为 Gateway，不提供 node 工具或 node approvals。
 
 - 不直接读写 `exec-approvals.json`；
 - 不恢复 `permission-policy.json` 或其他第二权限状态源；
-- 不只凭 cron session key 放行；必须通过公开 Gateway API 回查 exact job 和执行类型；
+- 不凭 cron session key 或 job existence 发放 run-scoped approval；AgentTurn 定时任务只使用
+  明确配置的 scheduler Agent Full；
 - 不用 adapter status 自证 active policy；
 - 不在 JustDo 实现 safe-bin parser、shell AST、命令 reviewer、allowlist 语义或全工具
   capability registry；
@@ -229,7 +263,7 @@ JustDo 固定 exec host 为 Gateway，不提供 node 工具或 node approvals。
 | ----------- | --------- | ------------------------ | ------------------------------ |
 | 请求批准    | `ask`     | 版本锁定适配器执行 `ask` | workspaceOnly；无 route 时拒绝 |
 | 智能审批    | `auto`    | 当前退化为人工 `ask`     | 命令不确定或审核失败时转人工   |
-| 完全权限    | `full`    | 无需批准                 | 新会话默认；选择时二次确认     |
+| 完全权限    | `full`    | 无需批准                 | 缺失值默认；用户可随时切换     |
 
 Browser、消息、MCP、marketplace 和第三方插件不自动受这三档覆盖。UI 只陈述上表中的当前
 产品行为，不把产品配置展示成全工具 effective permission。
@@ -242,21 +276,25 @@ Browser、消息、MCP、marketplace 和第三方插件不自动受这三档覆�
 
 - [x] JustDo 不存在 `permission-policy.json`；
 - [x] JustDo 不直接写 `exec-approvals.json`；
-- [x] adapter info 不参与 active readiness；
+- [x] adapter info 作为必要 readiness 条件，且文档不宣称它是权威 active snapshot；
 - [x] 权限应用或回滚无法确认时 Gateway 停止；
 - [x] UI 不展示运行时快照或配置同步进度；
-- [x] 新会话和无已存权限的会话默认为 `full`，旧会话恢复自身已存权限；
+- [x] 全局权限缺失或非法时默认为 `full`，会话切换不改变 runtime 权限；
+- [x] AgentTurn 定时任务使用 per-agent Full 的 scheduler Agent，不锁定正常会话权限；
+- [x] `022`–`025` 仅对可信 JustDo 交互审批维持无限等待、暂停、隐藏恢复和停止收口；
 - [x] cron-shaped approval 不根据 session key 与 job existence 自动放行；
-- [x] Agent 原生 cron mutation 不被文件权限策略阻断。
+- [x] Ask/Smart 下 Agent 原生 cron mutation 进入一次性人工审批，Full/scheduler 直接执行；
+- [x] 新 turn admission 等待此前排队的全局权限同步完成；
+- [x] cron 启动/周期迁移分页覆盖所有任务，错归属启用任务迁移失败时禁用。
 
 ### 当前对话功能待验收
 
 - [ ] `ask` 下真实 `write/edit/apply_patch` 在副作用前进入审批；
-- [ ] deny、timeout、no route、Gateway unavailable 均无文件变化；
+- [ ] deny、no route、Gateway unavailable 均无文件变化；交互审批不自动超时；
 - [ ] allow-once 只消费一次；
 - [ ] `auto` 在 reviewer 缺失时不静默放行；
 - [ ] `full` 下命令和核心文件工具无需批准；
-- [ ] 新会话显示并使用 `full`；旧会话从 `cowork_sessions.permission_mode` 恢复，缺失或非法值回退到 `full`；
+- [ ] 应用重启后恢复全局权限；切换会话不改变它；缺失或非法值回退到 `full`；
 - [ ] 合并前完整测试和工程检查通过。
 
 ### 未来安全边界

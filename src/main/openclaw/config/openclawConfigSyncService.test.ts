@@ -135,6 +135,10 @@ describe('OpenClawConfigSyncService', () => {
     configPath?: string;
     permissionMode?: 'ask' | 'auto' | 'full';
     reportedPermissionMode?: 'ask' | 'auto' | 'full';
+    reportedSchedulerMode?: 'ask' | 'auto' | 'full';
+    permissionPolicyLoaded?: boolean;
+    reportedPolicyMode?: 'ask' | 'auto' | 'full';
+    reportedFullAgentIds?: string[];
     syncError?: string;
   } = {}) => {
     let phase = options.phase ?? 'running';
@@ -198,6 +202,20 @@ describe('OpenClawConfigSyncService', () => {
         const permissionMode = options.reportedPermissionMode ?? options.permissionMode ?? 'ask';
         return {
           config: {
+            agents: {
+              list: [
+                {
+                  id: 'justdo-scheduler',
+                  tools: {
+                    exec: {
+                      host: 'gateway',
+                      mode: options.reportedSchedulerMode ?? 'full',
+                    },
+                    fs: { workspaceOnly: (options.reportedSchedulerMode ?? 'full') !== 'full' },
+                  },
+                },
+              ],
+            },
             tools: {
               exec: { host: 'gateway', mode: permissionMode },
               fs: { workspaceOnly: permissionMode !== 'full' },
@@ -207,8 +225,11 @@ describe('OpenClawConfigSyncService', () => {
       }
       if (method === 'filePermissionPolicy.info') {
         return {
-          loaded: true,
-          configuredMode: options.reportedPermissionMode ?? options.permissionMode ?? 'ask',
+          loaded: options.permissionPolicyLoaded ?? true,
+          adapterVersion: 2,
+          configuredMode:
+            options.reportedPolicyMode ?? options.reportedPermissionMode ?? options.permissionMode ?? 'ask',
+          fullAgentIds: options.reportedFullAgentIds ?? ['justdo-scheduler'],
         };
       }
       throw new Error(`Unexpected Gateway method: ${method}`);
@@ -479,11 +500,16 @@ describe('OpenClawConfigSyncService', () => {
       'exec.approvals.set',
       expect.objectContaining({
         file: expect.objectContaining({
-          agents: {
+          agents: expect.objectContaining({
             helper: expect.objectContaining({
               allowlist: [{ pattern: 'git diff', source: 'manual' }],
             }),
-          },
+            'justdo-scheduler': expect.objectContaining({
+              security: 'full',
+              ask: 'off',
+              askFallback: 'full',
+            }),
+          }),
         }),
       }),
     );
@@ -491,6 +517,39 @@ describe('OpenClawConfigSyncService', () => {
 
   it('fails closed when the runtime reports a stale permission mode', async () => {
     const harness = createHarness({ permissionMode: 'auto', reportedPermissionMode: 'ask' });
+
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+      success: false,
+      configSynced: false,
+      error: expect.stringContaining('Gateway was stopped'),
+    });
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when the scheduler agent is not isolated with Full access', async () => {
+    const harness = createHarness({ permissionMode: 'ask', reportedSchedulerMode: 'ask' });
+
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+      success: false,
+      configSynced: false,
+      error: expect.stringContaining('Gateway was stopped'),
+    });
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when the file permission policy extension is not active', async () => {
+    const harness = createHarness({ permissionPolicyLoaded: false });
+
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+      success: false,
+      configSynced: false,
+      error: expect.stringContaining('Gateway was stopped'),
+    });
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when the scheduler is missing from the file-policy Full allowlist', async () => {
+    const harness = createHarness({ reportedFullAgentIds: [] });
 
     await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
       success: false,

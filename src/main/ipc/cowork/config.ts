@@ -38,6 +38,9 @@ export const enqueueCoworkConfigUpdate = <T>(task: () => Promise<T>): Promise<T>
   return result;
 };
 
+export const waitForCoworkConfigUpdates = (): Promise<void> =>
+  enqueueCoworkConfigUpdate(async (): Promise<void> => undefined);
+
 export const registerCoworkConfigHandlers = ({
   getCoworkStore,
   getCoworkEngineRouter,

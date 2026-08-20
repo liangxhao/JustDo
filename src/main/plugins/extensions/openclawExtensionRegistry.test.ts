@@ -29,7 +29,7 @@ describe('openclawExtensionRegistry', () => {
       },
       [OpenClawExtensionId.PERMISSION_POLICY]: {
         enabled: true,
-        config: { mode: 'ask' },
+        config: { mode: 'ask', fullAgentIds: ['justdo-scheduler'] },
       },
     });
   });

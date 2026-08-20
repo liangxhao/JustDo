@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+  isScheduledTaskApproval,
   resolveAllowedDecisions,
   resolveApprovalDeadline,
   resolveApprovalSummary,
@@ -82,6 +83,32 @@ describe('resolveApprovalSummary', () => {
     };
 
     expect(resolveApprovalSummary(request)).toBe('write C:/project/report.md');
+  });
+
+  it('preserves multiline scheduled-task details without a redundant tool prefix', () => {
+    const description = JSON.stringify(
+      {
+        action: 'add',
+        job: { name: 'Morning report', schedule: { kind: 'cron', expr: '0 9 * * *' } },
+      },
+      null,
+      2,
+    );
+    const request: ApprovalRequest = {
+      id: 'approval-3',
+      kind: ApprovalKind.Plugin,
+      request: {
+        pluginId: 'file-permission-policy',
+        title: 'Allow scheduled task change?',
+        description,
+        toolName: 'cron',
+      },
+      createdAtMs: 1,
+      expiresAtMs: Date.now() + 60_000,
+    };
+
+    expect(isScheduledTaskApproval(request)).toBe(true);
+    expect(resolveApprovalSummary(request)).toBe(description);
   });
 });
 
