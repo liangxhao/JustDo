@@ -477,29 +477,19 @@ FunctionEnd
     FileWrite $2 "mingit-after-tar: missing$\r$\n"
   ${EndIf}
 
-  ; ─── Dependency manager config ───
-  ; Copy optional npm/pip config templates into the branded app-data directory during install.
-  ; Each file is independent: if a resource file is absent, that manager is left
-  ; unconfigured and the app will not inject the corresponding env var.
-  CreateDirectory "$APPDATA\${PRODUCT_NAME}\dependency-config"
+  ; ─── Legacy dependency manager config cleanup ───
+  ; Current builds use the packaged config directly. Remove only the two files
+  ; managed by older installers, preserving any unrelated user files.
   !insertmacro JustDoSetInstallProgress 95 \
     "正在写入本机配置…" \
     "Writing local configuration…"
   !insertmacro JustDoAddInstallActivity \
     "正在保存本机配置" \
     "Saving local configuration"
-  ${If} ${FileExists} "$INSTDIR\resources\dependency-config\.npmrc"
-    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\.npmrc" "$APPDATA\${PRODUCT_NAME}\dependency-config\.npmrc"
-    FileWrite $2 "dependency-config-npmrc: copied$\r$\n"
-  ${Else}
-    FileWrite $2 "dependency-config-npmrc: missing$\r$\n"
-  ${EndIf}
-  ${If} ${FileExists} "$INSTDIR\resources\dependency-config\pip.ini"
-    CopyFiles /SILENT "$INSTDIR\resources\dependency-config\pip.ini" "$APPDATA\${PRODUCT_NAME}\dependency-config\pip.ini"
-    FileWrite $2 "dependency-config-pip-ini: copied$\r$\n"
-  ${Else}
-    FileWrite $2 "dependency-config-pip-ini: missing$\r$\n"
-  ${EndIf}
+  Delete "$APPDATA\${PRODUCT_NAME}\dependency-config\.npmrc"
+  Delete "$APPDATA\${PRODUCT_NAME}\dependency-config\pip.ini"
+  RMDir "$APPDATA\${PRODUCT_NAME}\dependency-config"
+  FileWrite $2 "dependency-config-legacy: cleanup-complete$\r$\n"
 
   FileWrite $2 "delete-resource-tar: start$\r$\n"
   Delete "$INSTDIR\resources\win-resources.tar"
@@ -579,4 +569,3 @@ FunctionEnd
       ${EndIf}
   ${EndIf}
 !macroend
-

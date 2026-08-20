@@ -7,6 +7,13 @@ import { create as createTar } from 'tar';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const nsisScript = readFileSync(path.resolve(__dirname, '../scripts/nsis-installer.nsh'), 'utf8');
+const builderHook = readFileSync(
+  path.resolve(__dirname, '../scripts/electron-builder-hooks.cjs'),
+  'utf8',
+);
+const builderConfig = JSON.parse(
+  readFileSync(path.resolve(__dirname, '../electron-builder.json'), 'utf8'),
+) as { extraResources?: Array<{ from?: string; to?: string }> };
 const unpackScriptPath = path.resolve(__dirname, '../scripts/unpack-cfmind.cjs');
 const unpackScript = readFileSync(unpackScriptPath, 'utf8');
 const processHelper = readFileSync(
@@ -128,6 +135,25 @@ describe('Windows installer process handling', () => {
     expect(nsisScript).toContain('"$APPDATA\\${PRODUCT_NAME}"');
     expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\runtimes\\python-win"');
     expect(unpackScript).toContain('migrateLegacyPythonRuntime()');
+  });
+
+  it('uses packaged dependency config and removes legacy app-data copies', () => {
+    expect(nsisScript).not.toContain('CopyFiles /SILENT "$INSTDIR\\resources\\dependency-config');
+    expect(nsisScript).toContain('Delete "$APPDATA\\${PRODUCT_NAME}\\dependency-config\\.npmrc"');
+    expect(nsisScript).toContain('Delete "$APPDATA\\${PRODUCT_NAME}\\dependency-config\\pip.ini"');
+    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\dependency-config"');
+    expect(nsisScript).toContain('dependency-config-legacy: cleanup-complete');
+  });
+
+  it('packages dependency config once as a standalone installation resource', () => {
+    const dependencyConfigResources = (builderConfig.extraResources ?? []).filter(
+      resource => resource.from === 'resources/dependency-config',
+    );
+
+    expect(dependencyConfigResources).toEqual([
+      { from: 'resources/dependency-config', to: 'dependency-config', filter: ['**/*'] },
+    ]);
+    expect(builderHook).not.toContain("label: 'Dependency manager config'");
   });
 
   it('does not retain old Git files or OpenClaw skills in an upgraded installation', () => {

@@ -533,7 +533,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
     applyPortableGitRuntimeEnv(env as Record<string, string | undefined>);
-    applyDependencyManagerConfigEnv(env, app.getPath('userData'));
+    applyDependencyManagerConfigEnv(env);
     applyTrustedCertificateEnv(
       env,
       env.NODE_EXTRA_CA_CERTS || buildTrustedCaBundle(app.getPath('userData')),

@@ -13,10 +13,10 @@ export interface DependencyManagerConfigPaths {
 }
 
 export const resolveDependencyManagerConfigPaths = (
-  userDataPath: string,
+  resourceDir: string,
 ): Required<DependencyManagerConfigPaths> => ({
-  npmUserConfigPath: path.join(userDataPath, DEPENDENCY_CONFIG_DIR_NAME, '.npmrc'),
-  pipConfigPath: path.join(userDataPath, DEPENDENCY_CONFIG_DIR_NAME, 'pip.ini'),
+  npmUserConfigPath: path.join(resourceDir, NPMRC_FILE_NAME),
+  pipConfigPath: path.join(resourceDir, PIP_INI_FILE_NAME),
 });
 
 const resolveDefaultResourceDir = (): string | null => {
@@ -40,34 +40,23 @@ const resolveDefaultResourceDir = (): string | null => {
   return null;
 };
 
-const copyFileIfChanged = (sourcePath: string, targetPath: string): void => {
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  const content = fs.readFileSync(sourcePath);
-  if (fs.existsSync(targetPath) && fs.readFileSync(targetPath).equals(content)) {
-    return;
-  }
-  fs.writeFileSync(targetPath, content);
-};
-
-export const ensureDependencyManagerConfig = (
-  userDataPath: string,
+export const resolveDependencyManagerConfig = (
   resourceDir = resolveDefaultResourceDir(),
 ): DependencyManagerConfigPaths => {
   if (!resourceDir) {
     return {};
   }
 
-  const targetPaths = resolveDependencyManagerConfigPaths(userDataPath);
-  const sourceNpmrcPath = path.join(resourceDir, NPMRC_FILE_NAME);
-  const sourcePipIniPath = path.join(resourceDir, PIP_INI_FILE_NAME);
+  const targetPaths = resolveDependencyManagerConfigPaths(resourceDir);
   const result: DependencyManagerConfigPaths = {};
 
-  if (fs.existsSync(sourceNpmrcPath) && fs.statSync(sourceNpmrcPath).isFile()) {
-    copyFileIfChanged(sourceNpmrcPath, targetPaths.npmUserConfigPath);
+  if (
+    fs.existsSync(targetPaths.npmUserConfigPath) &&
+    fs.statSync(targetPaths.npmUserConfigPath).isFile()
+  ) {
     result.npmUserConfigPath = targetPaths.npmUserConfigPath;
   }
-  if (fs.existsSync(sourcePipIniPath) && fs.statSync(sourcePipIniPath).isFile()) {
-    copyFileIfChanged(sourcePipIniPath, targetPaths.pipConfigPath);
+  if (fs.existsSync(targetPaths.pipConfigPath) && fs.statSync(targetPaths.pipConfigPath).isFile()) {
     result.pipConfigPath = targetPaths.pipConfigPath;
   }
 
@@ -76,14 +65,13 @@ export const ensureDependencyManagerConfig = (
 
 export const applyDependencyManagerConfigEnv = (
   env: Record<string, string | undefined>,
-  userDataPath: string,
-  resourceDir?: string | null,
+  resourceDir = resolveDefaultResourceDir(),
 ): DependencyManagerConfigPaths => {
   // Never trust provenance inherited from the host. This function owns the exact value pair.
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === JUSTDO_MANAGED_PIP_CONFIG_FILE_ENV) delete env[key];
   }
-  const paths = ensureDependencyManagerConfig(userDataPath, resourceDir);
+  const paths = resolveDependencyManagerConfig(resourceDir);
   if (paths.npmUserConfigPath) {
     env.NPM_CONFIG_USERCONFIG = paths.npmUserConfigPath;
     env.npm_config_userconfig = paths.npmUserConfigPath;

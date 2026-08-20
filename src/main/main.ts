@@ -232,7 +232,7 @@ const configureUserDataPath = (): void => {
 };
 
 configureUserDataPath();
-applyDependencyManagerConfigEnv(process.env, app.getPath('userData'));
+applyDependencyManagerConfigEnv(process.env);
 initLogger();
 enableSystemCaForCurrentProcess();
 
