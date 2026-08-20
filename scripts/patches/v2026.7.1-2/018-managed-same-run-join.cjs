@@ -270,7 +270,7 @@ function verifyPatch(runtimeDir) {
       'justDoManagedJoinWaiters.has(controllerSessionKey)',
       'selectJustDoManagedJoinVisibleRuns(listControlledSubagentRuns(controllerSessionKey))',
       'reconcileJustDoManagedJoinRuns(',
-      'restoreDelivery?.(\n\t\tcontrollerSessionKey,',
+      'restoreDelivery?.(',
       '[...expectedByChildSessionKey.keys()]',
       'Managed subagent state disappeared while waiting; completion delivery was restored.',
       'state: "waiting"',

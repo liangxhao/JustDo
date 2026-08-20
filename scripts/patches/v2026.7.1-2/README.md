@@ -464,7 +464,7 @@ flowchart LR
 - **可删除条件**：上游 safeguard/native compact 都能在非用户失败时提交等价 bounded fallback，
   清理状态并继续；用户 abort 仍必须取消。
 
-### 032–036：运行进度、恢复与上下文状态
+### 032–037：运行进度、恢复与上下文状态
 
 #### `032-sanitized-run-progress-events.cjs`
 
@@ -529,6 +529,22 @@ flowchart LR
 - **可删除条件**：上游为外部托管会话提供跨 command、Gateway admission、持久化复核和隐式恢复
   的 immutable identity，同时仍保留显式 reset/delete 语义。
 
+#### `037-context-overflow-convergence.cjs`
+
+- **做什么**：保留 `035` 的首次 Codex-local checkpoint，不改变正常 90% 触发和 handoff prompt；
+  只在模型已经明确返回 context overflow 后启用最多三次恢复。后续 pass 可重新压缩没有新增
+  transcript 的 checkpoint，并把总 handoff 目标逐级收紧到窗口 50%/25%，同步缩小 user archive
+  与 summary，然后从当前 transcript 自动续跑。
+- **关系与边界**：消费 `029` archive、`035` attempt/trigger metadata 和上游 outer retry loop；
+  被取消但仍有剩余次数的 pass 不再直接终止。mid-turn/provider overflow attempt 的临时 assistant
+  error 不发布 terminal lifecycle，避免 Renderer 在恢复过程中提前结束 turn。所有分支均由
+  `justdoCodexLocal` 门控，三次仍超限才视为 system prompt/tool schema 等不可约开销。
+- **当前保留原因**：上游只对未变化 prompt 做有限重试，且 safeguard 会拒绝没有新 transcript
+  的重复压缩；真实 provider tokenization、system prompt 与 tool schema 开销可能让低于 90% 的
+  checkpoint 仍被模型拒绝，从而把可恢复的 `mid-turn precheck` 暴露为用户终态。
+- **可删除条件**：上游原生提供等价的有界、逐级收敛、保留会话身份且不发布中间 terminal
+  lifecycle 的 overflow compact-and-continue 状态机。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -582,7 +598,7 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、36 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、37 项保留缺口、头注释和大小约束。                                                                      |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                     |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                         |
@@ -595,6 +611,7 @@ flowchart LR
 | `openclawV202671CompactionMetadata.test.ts`           | `029` identity dedupe、逐条 user replay、summary 顺序、20k token、CJK/emoji 边界。                                                        |
 | `openclawV202671EmergencyCompaction.test.ts`          | `031` 非 Codex fallback、Codex fail-closed、abort、details、source/bundle 原子性。                                                        |
 | `openclawV202671CodexLocalCompaction.test.ts`         | `035` 显式配置、90% pre/mid-turn 阈值、结构绕过、metadata 与 overflow 单次恢复。                                                          |
+| `openclawV202671ContextOverflowConvergence.test.ts`   | `037` 三次有界收敛、无新增 transcript 再压缩、Unicode-safe archive、summary 上限和临时 lifecycle 围栏。                                   |
 | `openclawRunProgressEventsPatch.test.ts`              | `032` pristine callback gap、JustDo root/nested ancestry、native/cron/missing/conflict/cycle fail-closed、CLI/embedded allow-list event。 |
 | `openclawV202671CapabilityPatches.test.ts`            | `010`、`022`、`027`、`031`、`033` 及歧义 anchor 原子失败。                                                                                |
 | `openclawRuntimePatchManifest.test.ts`                | source lock、patch/build recipe fingerprint、cache、manifest/tamper fence。                                                               |

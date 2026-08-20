@@ -16,7 +16,6 @@ const REPLY_MARKER = 'JUSTDO_MANAGED_REPLY_SESSION_IDENTITY_PIN_V2026_7_1_2';
 
 function verifyCommandContent(content, filePath) {
   for (const expected of [
-    COMMAND_MARKER,
     'const preserveJustDoManagedSession =',
     '(preserveJustDoManagedSession ? sessionEntry?.sessionId : void 0) || requestedSessionId',
     'const isNewSession = preserveJustDoManagedSession ? false : !fresh && !requestedSessionId;',
@@ -31,7 +30,6 @@ function verifyCommandContent(content, filePath) {
 
 function verifyAgentContent(content, filePath) {
   for (const expected of [
-    AGENT_MARKER,
     'const justDoManagedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(canonicalKey);',
     'justDoManagedSession || (freshness?.fresh ?? false)',
     'justDoManagedSession || (freshFreshness?.fresh ?? false)',
@@ -48,7 +46,6 @@ function verifyAgentContent(content, filePath) {
 
 function verifyReplyContent(content, filePath) {
   for (const expected of [
-    REPLY_MARKER,
     'const justDoManagedReplySession = /^agent:[^:]+:justdo:[^:]+$/i.test(sessionKey);',
     'const preserveJustDoManagedReplySession =',
     'justDoManagedReplySession || typeof entry?.updatedAt === "number"',
@@ -63,7 +60,10 @@ function verifyReplyContent(content, filePath) {
 }
 
 function transformCommand(content, filePath) {
-  if (content.includes(COMMAND_MARKER)) {
+  if (
+    content.includes(COMMAND_MARKER) ||
+    content.includes('const preserveJustDoManagedSession =')
+  ) {
     verifyCommandContent(content, filePath);
     return content;
   }
@@ -88,7 +88,12 @@ function transformCommand(content, filePath) {
 }
 
 function transformAgent(content, filePath) {
-  if (content.includes(AGENT_MARKER)) {
+  if (
+    content.includes(AGENT_MARKER) ||
+    content.includes(
+      'const justDoManagedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(canonicalKey);',
+    )
+  ) {
     verifyAgentContent(content, filePath);
     return content;
   }
@@ -126,7 +131,12 @@ function transformAgent(content, filePath) {
 }
 
 function transformReply(content, filePath) {
-  if (content.includes(REPLY_MARKER)) {
+  if (
+    content.includes(REPLY_MARKER) ||
+    content.includes(
+      'const justDoManagedReplySession = /^agent:[^:]+:justdo:[^:]+$/i.test(sessionKey);',
+    )
+  ) {
     verifyReplyContent(content, filePath);
     return content;
   }

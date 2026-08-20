@@ -209,6 +209,20 @@ describe('managed session identity pin capability', () => {
     ]) {
       expect(bundleSource).toContain(marker);
     }
+
+    for (const filePath of [
+      path.join(root, 'dist', 'agent.js'),
+      path.join(root, 'dist', 'command.js'),
+      path.join(root, 'dist', 'reply.js'),
+      path.join(root, 'gateway-bundle.mjs'),
+    ]) {
+      const withoutCommentMarkers = fs
+        .readFileSync(filePath, 'utf8')
+        .replace(/JUSTDO_MANAGED_(?:COMMAND|AGENT|REPLY)_SESSION_IDENTITY_PIN_V2026_7_1_2/gu, '');
+      fs.writeFileSync(filePath, withoutCommentMarkers);
+    }
+    identityPatch.verifyPatch(root);
+    expect(identityPatch.applyPatch(root)).toEqual([]);
   });
 
   test('stages every resolver before writing any target', () => {

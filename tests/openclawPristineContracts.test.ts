@@ -55,6 +55,7 @@ const EXPECTED_PATCH_FILES = [
   '034-live-context-budget-publication.cjs',
   '035-codex-local-compaction-semantics.cjs',
   '036-managed-session-identity-pin.cjs',
+  '037-context-overflow-convergence.cjs',
 ] as const;
 
 function createPristineFixture(): string {

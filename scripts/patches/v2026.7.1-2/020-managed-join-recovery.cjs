@@ -278,7 +278,9 @@ function verifyPatch(runtimeDir) {
         'function recoverJustDoManagedJoinsAfterRestart()',
         'justDoJoinRecovery.consumedDeleteRunIds',
         'shouldRestoreJustDoManagedJoinRun(runId, entry, controller, requestedRunIds, requestedChildSessionKeys, params.onlyCommitted)',
-        "requestedChildSessionKeys?.has(entry.childSessionKey) === true && join.state === 'waiting'",
+        'requestedChildSessionKeys?.has(entry.childSessionKey) === true &&',
+        'state ===',
+        'waiting',
       ],
     ],
     [

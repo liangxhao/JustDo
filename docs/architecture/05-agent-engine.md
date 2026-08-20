@@ -129,11 +129,17 @@ checkpoint 最后。标记为 Codex-local 的 checkpoint 不回放旧 assistant/
 不会落在 archive 与 retained tail 的空隙中。旧 archive 可直接读取，并在下一次压缩时自然升级。
 
 `031-compaction-emergency-handoff.cjs` 的 deterministic handoff 只服务非 Codex 模式。
-Codex-local 摘要遇到缺模型、认证、超时或普通 provider 失败时不重试、不提交 checkpoint、
-不替换原历史；只有摘要请求自身发生 context overflow，才从最旧的完整 user turn 开始裁剪
-并重试。所有安全重试耗尽、没有新 transcript，或压缩后用量没有下降/自动压缩后仍高于 90%
-阈值时均 fail closed。显式取消保持 cancel。普通 overflow 对同一未变化 prompt 最多执行一次
-成功的 compact-and-retry，随后必须依靠新 transcript 进展才能再次压缩，避免反复压缩同一状态。
+Codex-local 摘要遇到缺模型、认证、超时或普通 provider 失败时不提交 checkpoint、不替换原
+历史；只有摘要请求自身发生 context overflow，才从最旧的完整 user turn 开始裁剪并重试。
+首次 compaction 仍完整采用上述 Codex-local 布局和 20k retained-user 策略。若模型在压缩后仍
+明确返回 context overflow，`037-context-overflow-convergence.cjs` 才进入最多三次的有界恢复：
+允许对没有新增 transcript 的最新 checkpoint 再压缩，并在后续 pass 将 checkpoint 目标依次
+收紧到窗口的 50%/25%（同时要求相对当前已安装上下文继续下降），逐级缩小 retained-user
+archive 和 summary。每次成功 checkpoint 后从当前 transcript 自动续跑；被取消但仍有剩余
+pass 的压缩也回到恢复状态机，而不是把 `prompt too large` 作为本轮终态。mid-turn/provider
+overflow 的临时 assistant error 不发布 terminal lifecycle，最终由成功的续跑 attempt 收口。
+只有三次收敛仍失败（例如 system prompt/tool schema 本身已超过真实模型窗口）才报告不可约
+overflow；显式取消仍保持 cancel，非 Codex 模式保持 OpenClaw 原行为。
 
 `030-codex-continuation-compaction.cjs` 使用 Codex 本地 fallback 的标准 prompt 与 replay
 prefix；首次、重复和 split/mid-turn 使用同一提示。`035-codex-local-compaction-semantics.cjs`

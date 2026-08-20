@@ -455,7 +455,7 @@ function verifyPatch(runtimeDir) {
   const contracts = [
     ['justdoCodexLocal: boolean().optional()'],
     ['justdoCodexLocal: compactionCfg?.justdoCodexLocal === true'],
-    [`const ${MARKER} =`, 'Math.floor(contextWindowTokens * 0.9)'],
+    [`const ${MARKER} =`, 'Math.floor(contextWindowTokens', '* 0.9)'],
     ['justDoCodexMidTurnReserveTokens'],
     ['justDoCodexLocalSummaryPipelineV1'],
     [
