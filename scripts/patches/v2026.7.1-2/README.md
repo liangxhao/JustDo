@@ -545,6 +545,18 @@ flowchart LR
 - **可删除条件**：上游原生提供等价的有界、逐级收敛、保留会话身份且不发布中间 terminal
   lifecycle 的 overflow compact-and-continue 状态机。
 
+#### `038-case-insensitive-subagent-task-names.cjs`
+
+- **做什么**：允许 `sessions_spawn.taskName` 使用并保留大写 ASCII 字母，使校验与后续本就
+  大小写不敏感的 alias resolver 一致；同步更新 Tool schema、模型提示和错误文案。
+- **关系与边界**：不改变 registry 存储、标题投影或 target resolver。仍保留 1–64 字符、
+  字母开头和 `[A-Za-z0-9_-]` 的无分隔符语法；`all`、`last` 改为大小写不敏感保留，避免
+  `ALL`/`Last` 这类可创建但永远无法寻址的别名。
+- **当前保留原因**：目标版 resolver 对 alias 使用小写归一化，却在 spawn preflight 拒绝所有
+  大写输入，形成没有消歧收益的非对称限制；其保留字检查又是大小写敏感的。
+- **可删除条件**：上游允许大小写混合的 `taskName`，并以与 resolver 一致的方式拒绝所有
+  保留字大小写变体。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -598,7 +610,7 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、37 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、38 项保留缺口、头注释和大小约束。                                                                      |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                     |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                         |
@@ -612,6 +624,7 @@ flowchart LR
 | `openclawV202671EmergencyCompaction.test.ts`          | `031` 非 Codex fallback、Codex fail-closed、abort、details、source/bundle 原子性。                                                        |
 | `openclawV202671CodexLocalCompaction.test.ts`         | `035` 显式配置、90% pre/mid-turn 阈值、结构绕过、metadata 与 overflow 单次恢复。                                                          |
 | `openclawV202671ContextOverflowConvergence.test.ts`   | `037` 三次有界收敛、无新增 transcript 再压缩、Unicode-safe archive、summary 上限和临时 lifecycle 围栏。                                   |
+| `openclawV202671SubagentTaskNameCase.test.ts`         | `038` 大小写保留、保留字大小写折叠、原有 identifier 边界、提示同步、source/bundle 幂等及歧义 anchor 拒绝。                                |
 | `openclawRunProgressEventsPatch.test.ts`              | `032` pristine callback gap、JustDo root/nested ancestry、native/cron/missing/conflict/cycle fail-closed、CLI/embedded allow-list event。 |
 | `openclawV202671CapabilityPatches.test.ts`            | `010`、`022`、`027`、`031`、`033` 及歧义 anchor 原子失败。                                                                                |
 | `openclawRuntimePatchManifest.test.ts`                | source lock、patch/build recipe fingerprint、cache、manifest/tamper fence。                                                               |

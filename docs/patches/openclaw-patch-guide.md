@@ -62,8 +62,8 @@ They are not current IDs and must not be used to infer current dependencies.
 
 ## Current Ordering Convention
 
-The `v2026.7.1-2` directory contains exactly 37 capability patches named with a
-continuous three-digit prefix, `001` through `037`. The loader sorts filenames
+The `v2026.7.1-2` directory contains exactly 38 capability patches named with a
+continuous three-digit prefix, `001` through `038`. The loader sorts filenames
 lexicographically, so the prefix is the actual application order:
 
 | Range       | Capability group                                                                                                          |
@@ -75,11 +75,13 @@ lexicographically, so the prefix is the actual application order:
 | `026`–`028` | Parent identity and LiteLLM request metadata                                                                              |
 | `029`–`031` | Retained user context, Codex-style continuation and compaction fallback                                                   |
 | `032`–`037` | Sanitized progress, bounded recovery, context budget, local compaction, managed session identity and overflow convergence |
+| `038`       | Case-preserving, case-insensitive subagent task-name aliases                                                              |
 
 Within a dependency chain, producers precede consumers. In particular,
 `015` precedes `016`, `017`–`021` are the managed-join state machine, `036`
 pins its Gateway session identity across implicit recovery, `037` consumes
 `029` and `035` to converge provider-confirmed overflow,
+`038` aligns subagent task-name validation with the case-insensitive resolver,
 `022` precedes `023`–`025`, and `026` precedes provider metadata patches
 `027`–`028`. The authoritative per-file behavior, tests, removal conditions,
 and deleted-capability decisions remain in the target directory README.
