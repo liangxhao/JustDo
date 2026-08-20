@@ -12,6 +12,8 @@ import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   applyManagedOpenClawHeartbeatConfig,
   buildBuiltinMemorySearchConfig,
+  buildManagedAcpxPluginConfig,
+  buildManagedOpenClawAcpConfig,
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawHeartbeatConfig,
@@ -412,6 +414,43 @@ describe('OpenClaw managed subagent config', () => {
       OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
     );
     expect(OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT).toBeLessThanOrEqual(20);
+  });
+});
+
+describe('OpenClaw managed ACP config', () => {
+  test('enables the pinned acpx backend for the supported coding harnesses', () => {
+    expect(buildManagedOpenClawAcpConfig()).toEqual({
+      enabled: true,
+      dispatch: { enabled: true },
+      backend: 'acpx',
+      allowedAgents: ['claude', 'codex', 'opencode'],
+      maxConcurrentSessions: 3,
+      runtime: { ttlMinutes: 120 },
+    });
+  });
+
+  test('only full permission mode allows non-interactive ACP writes and commands', () => {
+    expect(buildManagedAcpxPluginConfig(PermissionMode.Full)).toEqual({
+      enabled: true,
+      config: {
+        permissionMode: 'approve-all',
+        nonInteractivePermissions: 'fail',
+        pluginToolsMcpBridge: false,
+        openClawToolsMcpBridge: false,
+      },
+    });
+    expect(buildManagedAcpxPluginConfig(PermissionMode.Ask)).toMatchObject({
+      config: {
+        permissionMode: 'approve-reads',
+        nonInteractivePermissions: 'deny',
+      },
+    });
+    expect(buildManagedAcpxPluginConfig(PermissionMode.Auto)).toMatchObject({
+      config: {
+        permissionMode: 'approve-reads',
+        nonInteractivePermissions: 'deny',
+      },
+    });
   });
 });
 

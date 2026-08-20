@@ -33,6 +33,7 @@ export type Subagent = {
   endedAt?: number;
   runtimeMs?: number;
   totalTokens?: number;
+  runtime?: 'subagent' | 'acp';
 };
 
 export const subagentStatusStyles: Record<SubagentStatus, string> = {
@@ -166,6 +167,12 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
   const detailRows: Array<[string, string | undefined, boolean?]> = detailSubagent
     ? [
         [i18nService.t('subagentInfoStatus'), detailSubagent.status],
+        [
+          i18nService.t('subagentInfoAgentRuntime'),
+          detailSubagent.runtime === 'acp'
+            ? i18nService.t('subagentRuntimeAcp')
+            : i18nService.t('subagentRuntimeNative'),
+        ],
         [i18nService.t('subagentInfoTask'), detailSubagent.task],
         [i18nService.t('subagentInfoModel'), detailSubagent.model],
         [i18nService.t('subagentInfoRuntime'), formatRuntime(detailSubagent.runtimeMs)],
@@ -243,6 +250,11 @@ const SubagentMenu: React.FC<SubagentMenuProps> = ({
                   >
                     {subagent.label}
                   </button>
+                  {subagent.runtime === 'acp' && (
+                    <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                      {i18nService.t('subagentRuntimeAcpShort')}
+                    </span>
+                  )}
                   <button
                     type="button"
                     className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface hover:text-foreground"

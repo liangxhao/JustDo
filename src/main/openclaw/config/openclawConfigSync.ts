@@ -475,6 +475,10 @@ export const OPENCLAW_SUBAGENT_MAX_CONCURRENT = 3;
 export const OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT = 5;
 // Allow substantial work while still terminating runaway subagent runs.
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
+export const OPENCLAW_ACP_BACKEND = 'acpx';
+export const OPENCLAW_ACP_ALLOWED_AGENTS = ['claude', 'codex', 'opencode'] as const;
+export const OPENCLAW_ACP_MAX_CONCURRENT_SESSIONS = 3;
+export const OPENCLAW_ACP_RUNTIME_TTL_MINUTES = 120;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
 export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 50_000;
@@ -499,6 +503,29 @@ export const buildManagedOpenClawSubagentConfig = () => ({
   maxConcurrent: OPENCLAW_SUBAGENT_MAX_CONCURRENT,
   runTimeoutSeconds: OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS,
   archiveAfterMinutes: OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES,
+});
+
+export const buildManagedOpenClawAcpConfig = () => ({
+  enabled: true,
+  dispatch: { enabled: true },
+  backend: OPENCLAW_ACP_BACKEND,
+  allowedAgents: [...OPENCLAW_ACP_ALLOWED_AGENTS],
+  maxConcurrentSessions: OPENCLAW_ACP_MAX_CONCURRENT_SESSIONS,
+  runtime: {
+    ttlMinutes: OPENCLAW_ACP_RUNTIME_TTL_MINUTES,
+  },
+});
+
+export const buildManagedAcpxPluginConfig = (mode: PermissionModeValue) => ({
+  enabled: true,
+  config: {
+    // ACP harnesses are non-interactive. Only JustDo's explicit full-access
+    // mode may approve writes and commands; safer modes remain read-only.
+    permissionMode: mode === PermissionMode.Full ? 'approve-all' : 'approve-reads',
+    nonInteractivePermissions: mode === PermissionMode.Full ? 'fail' : 'deny',
+    pluginToolsMcpBridge: false,
+    openClawToolsMcpBridge: false,
+  },
 });
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
@@ -1303,6 +1330,7 @@ export class OpenClawConfigSync {
         },
         ...this.buildAgentsList(primaryModel, availableModelRefs),
       },
+      acp: buildManagedOpenClawAcpConfig(),
       session: buildManagedOpenClawSessionConfig(),
       commands: {
         // Internal `chat.send` turns identify the sender as bare `gateway-client`.
@@ -1367,6 +1395,7 @@ export class OpenClawConfigSync {
             }),
           ),
           ...bundledExtensionEntries,
+          [OPENCLAW_ACP_BACKEND]: buildManagedAcpxPluginConfig(coworkConfig.permissionMode),
           workboard: { enabled: true },
         };
 

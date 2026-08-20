@@ -281,6 +281,16 @@ Gateway `chat.history` 对 mixed assistant content 的投影保留原顺序的 t
 
 新增 subagent 功能时，优先要求 Gateway 提供稳定 child session id，而不是从 tool output 文本猜测。
 
+### ACP 外部 Agent 委派
+
+JustDo 随 OpenClaw runtime 固定安装 `@openclaw/acpx`，并启用 Claude Code、Codex ACP 与 OpenCode 三个 harness。OpenClaw 主 Agent 通过 `sessions_spawn({ runtime: "acp", mode: "run" })` 把一次性 coding task 委派给外部 Agent；Gateway 继续负责 session、后台任务、完成投递和取消语义，JustDo 不抓取 CLI 终端输出，也不直接启动 harness。
+
+设置中的“外部 Agent”页展示本地 ACP 运行组件和适配器状态。页面加载只检查本地文件，不启动 Agent；用户主动点击连接检测时，主进程才使用扩展固定的适配器建立并立即关闭一个禁止终端的临时 ACP 会话，不发送模型请求。Claude 检测继承用户级设置，并优先使用 PATH 中真实安装的原生 Claude Code 可执行文件以复用现有登录，找不到时才回退 SDK 内嵌版本；Codex 检测保留用户的认证目录，并覆盖固定适配器尚不支持的新版 `service_tier` 值。检测结果仅保存在当前进程内，错误输出在返回渲染进程前会移除工作区路径和常见凭据字段。
+
+ACP session key 使用 `:acp:`，与 native `:subagent:` 一起投影到 Renderer 的“委派任务”视图。Gateway session registry 仍是标题、状态、父子关系和历史的权威；JustDo 只增加 `runtime` 判别字段，不复制 ACP transcript 到新的 SQLite 表。运行态聚合、Stop 和会话树遍历必须同时覆盖两种 child key。
+
+ACP harness 在宿主机非交互运行。`permissionMode=full` 映射为 ACPX `approve-all + fail`；`ask` 与 `auto` 映射为 `approve-reads + deny`，避免无法显示的 harness 权限提示造成越权或挂起。ACP 的 plugin-tools 与 OpenClaw-tools MCP bridge 默认关闭。sandbox requester 继续由 OpenClaw 拒绝启动 ACP，不允许 JustDo 绕过该边界。
+
 ## Attachment Flow
 
 附件进入 Cowork 前应满足：

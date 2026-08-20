@@ -4,6 +4,7 @@ import {
   ChartBarIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
+  CommandLineIcon,
   CubeIcon,
   ExclamationTriangleIcon,
   GlobeAltIcon,
@@ -54,6 +55,7 @@ import {
 import { setAvailableModels } from '@/features/models/modelSlice';
 import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
 import BrowserSettingsTab from '@/features/settings/components/BrowserSettingsTab';
+import ExternalAgentsSettingsTab from '@/features/settings/components/ExternalAgentsSettingsTab';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
 import ShortcutsSettings, {
   shortcutLabelMap,
@@ -78,7 +80,16 @@ import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import appLogoUrl from '../../../../resources/logo.png';
 
-type TabType = 'general' | 'usage' | 'model' | 'browser' | 'memory' | 'im' | 'shortcuts' | 'help';
+type TabType =
+  | 'general'
+  | 'usage'
+  | 'model'
+  | 'browser'
+  | 'externalAgents'
+  | 'memory'
+  | 'im'
+  | 'shortcuts'
+  | 'help';
 
 const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
@@ -1827,6 +1838,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <GlobeAltIcon className="h-5 w-5" />,
     },
     {
+      key: 'externalAgents',
+      label: i18nService.t('externalAgentsSettings'),
+      icon: <CommandLineIcon className="h-5 w-5" />,
+    },
+    {
       key: 'memory',
       label: i18nService.t('memoryTitle'),
       icon: <BookOpenIcon className="h-5 w-5" />,
@@ -2572,6 +2588,9 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'browser':
         return <BrowserSettingsTab />;
+
+      case 'externalAgents':
+        return <ExternalAgentsSettingsTab />;
 
       case 'shortcuts':
         return <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />;

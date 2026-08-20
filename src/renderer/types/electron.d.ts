@@ -34,6 +34,11 @@ type BrowserMode = import('../../shared/browser').BrowserMode;
 type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
 type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
 type ApiFetchOptions = import('../../shared/network').ApiFetchOptions;
+type ExternalAgentId = import('../../shared/openclaw/externalAgents').ExternalAgentId;
+type ExternalAgentDiagnosticsResult =
+  import('../../shared/openclaw/externalAgents').ExternalAgentDiagnosticsResult;
+type ExternalAgentTestResult =
+  import('../../shared/openclaw/externalAgents').ExternalAgentTestResult;
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -492,6 +497,10 @@ interface IElectronAPI {
   generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   openclaw: {
+    externalAgents: {
+      list: () => Promise<ExternalAgentDiagnosticsResult>;
+      test: (agentId: ExternalAgentId) => Promise<ExternalAgentTestResult>;
+    };
     approvals: {
       list: () => Promise<{
         success: boolean;
@@ -814,6 +823,7 @@ interface IElectronAPI {
         endedAt?: number;
         runtimeMs?: number;
         totalTokens?: number;
+        runtime?: 'subagent' | 'acp';
       }>;
     }>;
     getSubTaskSession: (sessionKey: string) => Promise<{

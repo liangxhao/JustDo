@@ -1,6 +1,7 @@
 export { registerOpenClawApprovalHandlers } from './approvals';
 export { registerOpenClawEngineHandlers } from './engine';
 export { registerExtensionHandlers } from './extensions';
+export { registerExternalAgentHandlers } from './externalAgents';
 export { registerOpenClawHistoryHandlers } from './history';
 export { registerHookHandlers } from './hooks';
 export { registerMarketplaceHandlers } from './marketplace';

@@ -36,6 +36,7 @@ export type GatewaySubagent = {
   endedAt?: number;
   runtimeMs?: number;
   totalTokens?: number;
+  runtime?: 'subagent' | 'acp';
 };
 
 type GatewaySubagentProjection = Omit<GatewaySubagent, 'label' | 'labelSource'> & {
@@ -85,6 +86,15 @@ const optionalString = (value: unknown): string | undefined =>
 
 const optionalNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const resolveChildRuntime = (sessionKey: string): 'subagent' | 'acp' | undefined => {
+  if (sessionKey.includes(':acp:')) return 'acp';
+  if (sessionKey.includes(':subagent:')) return 'subagent';
+  return undefined;
+};
+
+const isDelegatedChildSessionKey = (sessionKey: string): boolean =>
+  resolveChildRuntime(sessionKey) !== undefined;
 
 const summarizeTask = (value: unknown): string | undefined => {
   if (typeof value !== 'string') return undefined;
@@ -204,6 +214,7 @@ const addToolSubagents = (
       endedAt: optionalNumber(value.endedAt),
       runtimeMs: optionalNumber(value.runtimeMs),
       totalTokens: optionalNumber(value.totalTokens),
+      runtime: resolveChildRuntime(sessionKey),
     });
   }
 };
@@ -279,7 +290,7 @@ export async function listGatewaySubagents(
 
     for (const row of result.sessions ?? []) {
       const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
-      if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
+      if (!sessionKey || !isDelegatedChildSessionKey(sessionKey)) continue;
       if (mergeSessionProjection(bySessionKey, sessionKey, row)) continue;
       const title = resolveSubagentTitle(row);
       bySessionKey.set(sessionKey, {
@@ -293,6 +304,7 @@ export async function listGatewaySubagents(
         endedAt: optionalNumber(row.endedAt),
         runtimeMs: optionalNumber(row.runtimeMs),
         totalTokens: optionalNumber(row.totalTokens),
+        runtime: resolveChildRuntime(sessionKey),
       });
     }
   }
@@ -306,7 +318,7 @@ export async function listGatewaySubagents(
     try {
       for (const row of await listPersistedGatewaySessions(options.client)) {
         const sessionKey = typeof row.key === 'string' ? row.key.trim() : '';
-        if (!sessionKey || !sessionKey.includes(':subagent:')) continue;
+        if (!sessionKey || !isDelegatedChildSessionKey(sessionKey)) continue;
         if (!rowBelongsToParent(row, parentKeySet)) continue;
         if (mergeSessionProjection(bySessionKey, sessionKey, row)) continue;
         const title = resolveSubagentTitle(row);
@@ -322,6 +334,7 @@ export async function listGatewaySubagents(
           endedAt: optionalNumber(row.endedAt),
           runtimeMs: optionalNumber(row.runtimeMs),
           totalTokens: optionalNumber(row.totalTokens),
+          runtime: resolveChildRuntime(sessionKey),
         });
       }
     } catch (error) {

@@ -84,6 +84,8 @@ Extension 的导入、更新、删除、启用和配置更新由 `OpenClawExtens
 
 配置同步会读取由 Extension 管理界面负责管理的 App state `extensions/`，把其中 manifest 有效的插件 ID 显式并入 `plugins.allow`。当配置已经存在 allowlist 时，JustDo 生成配置的 bundled Extension entries 也会显式并入，避免出现“entry 有配置但不在 allowlist”的启动告警。这既关闭 OpenClaw 的开放式自动发现告警，也让本地插件的信任决定持久化；已有用户 allow 条目继续保留，`plugins.bundledDiscovery="compat"` 保证该 allowlist 不会意外屏蔽 OpenClaw/JustDo 的 bundled plugins。缺失或损坏 manifest 的目录不会被自动信任。管理界面导入或重新启用插件时也会在 Gateway 重启前幂等写入 allowlist；关闭插件只修改 entry 的启用状态并保留信任，便于之后恢复；卸载则移除对应 allow 条目。
 
+`acpx` 是应用预装且固定版本的 OpenClaw runtime Extension，不属于用户导入插件。构建脚本根据 `package.json.openclaw.plugins` 下载其发布包、移除仅供源码 workspace 使用的 development dependency 声明、安装生产依赖并复制到目标 runtime；打包钩子缺少该 Extension 时直接失败。配置同步将它加入 `plugins.entries`/`plugins.allow`，同时生成受管 `acp` backend、harness allowlist、并发与 TTL 配置。ACP harness 的认证仍由各供应商 CLI 在宿主机管理，JustDo 不保存或复制其凭据。
+
 内置 `ask-user-question` Extension 通过 Main process 的 loopback HTTP callback server 把结构化问题交给 renderer。Callback server 使用动态端口，因此必须先开始监听，再把当前 URL 和 secret placeholder 同步到 Gateway 配置。每次确保 Gateway 可用时都会先检查 callback host；如果端口变化而 Gateway 仍在运行，Gateway watcher 会热重载 Extension 配置，使它不再请求上一次进程留下的失效端口。只有 secret 环境变量或 Extension manifest 变化才需要 JustDo 硬重启 Gateway。Callback URL 只在 HTTP server 确实处于 listening 状态时对外发布。
 
 每个问题和选项都必须声明请求内唯一的稳定 `id`，格式为 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`，且不能使用 `Object.prototype` 保留属性名。问题选项可以声明 `input: { label, placeholder? }`；存在 `input` 时，renderer 仅在该选项被选中后显示必填补充字段。答案以 question id 为键，`selected` 和 `optionInputs` 保存 option id，并可带独立的 `other` 文本；整个链路不使用展示文本或分隔符关联答案。Main process 和 Extension 会在各自的运行时边界校验问题、ID 唯一性和答案完整性，非法响应按拒绝处理。

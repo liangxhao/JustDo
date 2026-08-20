@@ -43,6 +43,22 @@ afterEach(() => {
 });
 
 describe('OpenClaw runtime extension pruning', () => {
+  test('keeps every preinstalled npm plugin declared by the app', () => {
+    const repoRoot = path.resolve(__dirname, '..');
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'),
+    ) as {
+      openclaw?: { plugins?: Array<{ id: string }> };
+    };
+    const policy = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'), 'utf8'),
+    ) as { keep: string[] };
+
+    const preinstalledPluginIds = (packageJson.openclaw?.plugins ?? []).map(plugin => plugin.id);
+
+    expect(policy.keep).toEqual(expect.arrayContaining(preinstalledPluginIds));
+  });
+
   test('keeps reviewed and local extensions while removing reviewed optional extensions', () => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const { extensionsRoot, repoRoot, runtimeRoot } = createFixture(['optional']);

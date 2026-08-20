@@ -1055,6 +1055,7 @@ class CoworkService {
       endedAt?: number;
       runtimeMs?: number;
       totalTokens?: number;
+      runtime?: 'subagent' | 'acp';
     }>;
   }> {
     const cowork = window.electron?.cowork;

@@ -4,6 +4,7 @@
   "runtimeExtensionsPath": "vendor/openclaw-runtime/{platform}/dist/extensions",
   "description": "Version-scoped allowlist for OpenClaw-managed bundled extensions. Every upstream extension must be declared in keep or remove; unknown extensions fail pruning for review. JustDo-owned custom extensions are protected separately.",
   "keep": [
+    "acpx",
     "anthropic",
     "active-memory",
     "admin-http-rpc",

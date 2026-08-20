@@ -31,6 +31,7 @@ import {
   type ExtensionSetEnabledRequest,
   type ExtensionUpdateConfigurationRequest,
 } from '../shared/openclaw/extensions';
+import { type ExternalAgentId, ExternalAgentIpc } from '../shared/openclaw/externalAgents';
 import { OpenClawHistoryIpc, type OpenClawPagedHistoryParams } from '../shared/openclaw/historyIpc';
 import { HookIpc } from '../shared/openclaw/hooks';
 import { MemoryIpc } from '../shared/openclaw/memory';
@@ -211,6 +212,10 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke(SessionTitleIpc.Generate, request),
   getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),
   openclaw: {
+    externalAgents: {
+      list: () => ipcRenderer.invoke(ExternalAgentIpc.List),
+      test: (agentId: ExternalAgentId) => ipcRenderer.invoke(ExternalAgentIpc.Test, agentId),
+    },
     approvals: {
       list: () => ipcRenderer.invoke(OpenClawApprovalIpc.List),
       resolve: (id: string, decision: ApprovalDecision, kind: ApprovalKind) =>

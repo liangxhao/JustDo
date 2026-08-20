@@ -81,6 +81,7 @@ import {
 } from './ipc/cowork';
 import {
   registerExtensionHandlers,
+  registerExternalAgentHandlers,
   registerHookHandlers,
   registerMarketplaceHandlers,
   registerMcpHandlers,
@@ -99,6 +100,7 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
+import { ExternalAgentDiagnosticsService } from './openclaw/acp/externalAgentDiagnostics';
 import type { AskUserExtensionConfig } from './openclaw/config/openclawConfigSync';
 import {
   buildProviderSelection,
@@ -833,6 +835,7 @@ if (!gotTheLock) {
   registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawApprovalHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawMemoryHandlers({ getManager: getOpenClawEngineManager });
+  registerExternalAgentHandlers(new ExternalAgentDiagnosticsService(getOpenClawEngineManager));
 
   registerSlashCommandHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,

@@ -75,6 +75,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
   });
   expect(subagents).toEqual([
     {
+      endedAt: undefined,
       id: 'agent:main:subagent:running',
       sessionKey: 'agent:main:subagent:running',
       sessionId: 'running-session-id',
@@ -83,6 +84,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
       status: 'running',
       task: 'Research the topic',
       model: 'openai/gpt-5',
+      runtime: 'subagent',
       startedAt: 100,
       runtimeMs: 50,
       totalTokens: 42,
@@ -95,6 +97,7 @@ test('lists subagents from the registry-backed sessions projection', async () =>
       labelSource: 'label',
       status: 'timeout',
       model: 'openai/gpt-5',
+      runtime: 'subagent',
       startedAt: 100,
       endedAt: 200,
       runtimeMs: 100,
@@ -352,6 +355,42 @@ test('maps a recovered active child session to running', async () => {
     {
       sessionKey: 'agent:main:subagent:recovered-child',
       status: 'running',
+    },
+  ]);
+});
+
+test('includes parent-owned ACP sessions in the delegated child projection', async () => {
+  const client = {
+    request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'tools.invoke') {
+        return { ok: true, output: { details: { status: 'ok', active: [], recent: [] } } };
+      }
+      if (params?.spawnedBy) {
+        return {
+          sessions: [
+            {
+              key: 'agent:claude:acp:implementation',
+              spawnedBy: 'agent:main:cowork:parent',
+              taskName: 'Implement ACP support',
+              task: 'Implement the feature and run tests',
+              status: 'running',
+              hasActiveRun: true,
+            },
+          ],
+        };
+      }
+      return { sessions: [] };
+    }),
+  } as unknown as GatewayClientLike;
+
+  await expect(
+    listGatewaySubagents({ client, parentKeys: ['agent:main:cowork:parent'] }),
+  ).resolves.toMatchObject([
+    {
+      sessionKey: 'agent:claude:acp:implementation',
+      label: 'Implement ACP support',
+      status: 'running',
+      runtime: 'acp',
     },
   ]);
 });

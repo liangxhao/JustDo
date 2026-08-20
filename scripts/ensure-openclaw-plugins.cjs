@@ -77,6 +77,33 @@ function readJsonFile(filePath) {
   }
 }
 
+function preparePluginPackageForProductionInstall(pluginDir, pluginPkg) {
+  if (!pluginPkg || typeof pluginPkg !== 'object') return pluginPkg;
+
+  const devDependencies = pluginPkg.devDependencies;
+  const hasWorkspaceDevDependency =
+    devDependencies &&
+    typeof devDependencies === 'object' &&
+    Object.values(devDependencies).some(
+      version => typeof version === 'string' && version.startsWith('workspace:'),
+    );
+  if (!hasWorkspaceDevDependency) return pluginPkg;
+
+  // Published workspace plugins can retain development-only `workspace:*`
+  // references. npm validates those references even with `--omit=dev`, so
+  // remove only devDependencies from the temporary package before installing
+  // the declared production dependency graph. The cached runtime package does
+  // not need source-checkout development dependencies.
+  const productionPkg = { ...pluginPkg };
+  delete productionPkg.devDependencies;
+  fs.writeFileSync(
+    path.join(pluginDir, 'package.json'),
+    JSON.stringify(productionPkg, null, 2) + '\n',
+    'utf-8',
+  );
+  return productionPkg;
+}
+
 /**
  * Find the installed package directory inside node_modules.
  * Handles scoped packages like @scope/name.
@@ -220,7 +247,10 @@ for (const plugin of plugins) {
 
       // Install the plugin's own production dependencies inside it
       // so it becomes self-contained
-      const pluginPkg = readJsonFile(path.join(pluginSrcDir, 'package.json'));
+      const pluginPkg = preparePluginPackageForProductionInstall(
+        pluginSrcDir,
+        readJsonFile(path.join(pluginSrcDir, 'package.json')),
+      );
       const hasDeps = pluginPkg &&
         pluginPkg.dependencies &&
         Object.keys(pluginPkg.dependencies).length > 0;
