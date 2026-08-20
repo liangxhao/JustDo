@@ -139,6 +139,7 @@ const writeMinimalConfig = (
   reason: string,
   permissionMode: 'ask' | 'auto' | 'full' = 'ask',
   browserMode: BrowserModeValue = BrowserMode.Isolated,
+  agents: Array<{ id: string; enabled: boolean }> = [],
 ): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
     engineManager: {
@@ -152,6 +153,7 @@ const writeMinimalConfig = (
       permissionMode,
     }),
     getBrowserMode: () => browserMode,
+    getAgents: () => agents,
   } as never);
   return (
     sync as unknown as {
@@ -193,7 +195,7 @@ describe('OpenClaw auth logout config sync', () => {
 
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['file-permission-policy']).toEqual({
+    expect(config.plugins.entries['action-approval']).toEqual({
       enabled: true,
       config: { mode: 'ask', fullAgentIds: ['justdo-scheduler'] },
     });
@@ -219,8 +221,9 @@ describe('OpenClaw auth logout config sync', () => {
     expect(writeMinimalConfig(configPath, 'startup', 'ask').ok).toBe(true);
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     existing.plugins.enabled = false;
-    existing.plugins.allow = ['custom-plugin'];
-    existing.plugins.deny = ['file-permission-policy', 'other-denied-plugin'];
+    existing.plugins.entries['file-permission-policy'] = { enabled: true };
+    existing.plugins.allow = ['custom-plugin', 'file-permission-policy'];
+    existing.plugins.deny = ['action-approval', 'other-denied-plugin'];
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
     const result = writeMinimalConfig(configPath, 'cowork-config-change', 'full');
@@ -231,17 +234,146 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.fs.workspaceOnly).toBe(false);
     expect(config.plugins.enabled).toBe(true);
     expect(config.plugins.allow).toEqual([
-      'custom-plugin',
       'browser',
       'ask-user-question',
-      'file-permission-policy',
+      'action-approval',
     ]);
-    expect(config.plugins.deny).toEqual(['other-denied-plugin']);
-    expect(config.plugins.entries['file-permission-policy']).toEqual({
+    expect(config.plugins.deny).toBeUndefined();
+    expect(config.plugins.entries['action-approval']).toEqual({
       enabled: true,
       config: { mode: 'full', fullAgentIds: ['justdo-scheduler'] },
     });
+    expect(config.plugins.entries['file-permission-policy']).toBeUndefined();
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
+  });
+
+  test('preserves discoverable custom plugins while removing stale registrations', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-plugin-inventory-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const externalPluginDir = path.join(directory, 'external-plugin');
+    const workspacePluginDir = path.join(
+      directory,
+      'workspace',
+      '.openclaw',
+      'extensions',
+      'workspace-plugin',
+    );
+    const agentWorkspacePluginDir = path.join(
+      directory,
+      'workspace',
+      'worker_one',
+      '.openclaw',
+      'extensions',
+      'agent-workspace-plugin',
+    );
+    fs.mkdirSync(externalPluginDir);
+    fs.mkdirSync(workspacePluginDir, { recursive: true });
+    fs.mkdirSync(agentWorkspacePluginDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(externalPluginDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'external-plugin' }),
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(workspacePluginDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'workspace-plugin' }),
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(agentWorkspacePluginDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'agent-workspace-plugin' }),
+      'utf8',
+    );
+
+    const agents = [{ id: 'Worker_ONE', enabled: true }];
+    expect(
+      writeMinimalConfig(configPath, 'startup', 'ask', BrowserMode.Isolated, agents).ok,
+    ).toBe(true);
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.plugins.load = { paths: [externalPluginDir] };
+    existing.plugins.entries['external-plugin'] = { enabled: false };
+    existing.plugins.entries['workspace-plugin'] = { enabled: true };
+    existing.plugins.entries['agent-workspace-plugin'] = { enabled: true };
+    existing.plugins.entries['removed-plugin'] = { enabled: true };
+    existing.plugins.allow = [
+      'external-plugin',
+      'workspace-plugin',
+      'agent-workspace-plugin',
+      'removed-plugin',
+    ];
+    existing.plugins.deny = ['removed-plugin'];
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    expect(
+      writeMinimalConfig(
+        configPath,
+        'cowork-config-change',
+        'ask',
+        BrowserMode.Isolated,
+        agents,
+      ).ok,
+    ).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.load).toEqual({ paths: [externalPluginDir] });
+    expect(config.plugins.entries['external-plugin']).toEqual({ enabled: false });
+    expect(config.plugins.entries['workspace-plugin']).toEqual({ enabled: true });
+    expect(config.plugins.entries['agent-workspace-plugin']).toEqual({ enabled: true });
+    expect(config.plugins.entries['removed-plugin']).toBeUndefined();
+    expect(config.plugins.allow).toEqual([
+      'external-plugin',
+      'workspace-plugin',
+      'agent-workspace-plugin',
+      'browser',
+      'ask-user-question',
+      'action-approval',
+    ]);
+    expect(config.plugins.deny).toBeUndefined();
+  });
+
+  test('skips cleanup when an installed extension candidate cannot be inventoried', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-plugin-fail-safe-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+    const opaqueExtensionDir = path.join(directory, 'extensions', 'opaque-extension');
+    fs.mkdirSync(opaqueExtensionDir, { recursive: true });
+    fs.writeFileSync(path.join(opaqueExtensionDir, 'package.json'), '{}', 'utf8');
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.plugins.entries['unverified-plugin'] = { enabled: false };
+    existing.plugins.allow = ['unverified-plugin'];
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    expect(writeMinimalConfig(configPath, 'cowork-config-change').ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['unverified-plugin']).toEqual({ enabled: false });
+    expect(config.plugins.allow).toContain('unverified-plugin');
+  });
+
+  test('skips cleanup for a compatible bundle used as a direct load path', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-compatible-plugin-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const bundleDir = path.join(directory, 'compatible-bundle');
+    fs.mkdirSync(path.join(bundleDir, '.codex-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(bundleDir, '.codex-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'compatible-plugin' }),
+      'utf8',
+    );
+
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.plugins.load = { paths: [bundleDir] };
+    existing.plugins.entries['compatible-plugin'] = { enabled: true };
+    existing.plugins.allow = ['compatible-plugin'];
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    expect(writeMinimalConfig(configPath, 'cowork-config-change').ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['compatible-plugin']).toEqual({ enabled: true });
+    expect(config.plugins.allow).toContain('compatible-plugin');
   });
 
   test('a second no-model sync replaces the managed browser profile', () => {
@@ -299,7 +431,7 @@ describe('OpenClaw auth logout config sync', () => {
     fs.mkdirSync(extensionDir, { recursive: true });
     fs.writeFileSync(
       path.join(extensionDir, 'openclaw.plugin.json'),
-      JSON.stringify({ id: 'justdo-skill-only-example' }),
+      "{ id: 'justdo-skill-only-example', // JSON5 manifest\n}",
       'utf8',
     );
 
@@ -310,7 +442,7 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-skill-only-example',
       'browser',
       'ask-user-question',
-      'file-permission-policy',
+      'action-approval',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBe('compat');

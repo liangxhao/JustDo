@@ -25,9 +25,14 @@ export {
   buildBundledExtensionEntries,
   buildBundledExtensionToolContracts,
   bundledOpenClawExtensions,
+  listRetiredBundledOpenClawExtensionIds,
 } from './openclawExtensionRegistry';
 export {
   hasBundledOpenClawExtension,
+  inspectBundledOpenClawExtensions,
+  inspectLocalOpenClawExtensions,
+  inspectOpenClawExtensionCandidate,
+  inspectOpenClawExtensionDirectory,
   listBundledOpenClawExtensionIds,
   listLocalOpenClawExtensionIds,
   syncLocalOpenClawExtensionsIntoRuntime,

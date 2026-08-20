@@ -78,7 +78,7 @@ type ConfigSnapshot = {
   };
 };
 
-type FilePermissionPolicyInfo = {
+type ActionApprovalInfo = {
   loaded?: boolean;
   adapterVersion?: unknown;
   configuredMode?: unknown;
@@ -356,7 +356,7 @@ export class OpenClawConfigSyncService {
   private async verifyRuntimePermissionConfig(mode: PermissionMode): Promise<boolean> {
     const [snapshot, pluginInfo] = await Promise.all([
       this.deps.requestGateway<ConfigSnapshot>('config.get'),
-      this.deps.requestGateway<FilePermissionPolicyInfo>('filePermissionPolicy.info'),
+      this.deps.requestGateway<ActionApprovalInfo>('actionApproval.info'),
     ]);
     const expectedWorkspaceOnly = mode !== 'full';
     const schedulerAgent = snapshot.config?.agents?.list?.find(

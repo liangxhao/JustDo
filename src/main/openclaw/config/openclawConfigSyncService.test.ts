@@ -223,7 +223,7 @@ describe('OpenClawConfigSyncService', () => {
           },
         };
       }
-      if (method === 'filePermissionPolicy.info') {
+      if (method === 'actionApproval.info') {
         return {
           loaded: options.permissionPolicyLoaded ?? true,
           adapterVersion: 2,
@@ -436,7 +436,7 @@ describe('OpenClawConfigSyncService', () => {
       expect.objectContaining({ baseHash: 'approval-hash' }),
     );
     expect(harness.requestGateway).toHaveBeenCalledWith('config.get');
-    expect(harness.requestGateway).toHaveBeenCalledWith('filePermissionPolicy.info');
+    expect(harness.requestGateway).toHaveBeenCalledWith('actionApproval.info');
     expect(harness.stopGateway).not.toHaveBeenCalled();
   });
 

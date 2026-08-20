@@ -31,6 +31,7 @@ import {
   OPENCLAW_STUCK_SESSION_WARN_MS,
   OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
+  removeUnavailableOpenClawPluginRegistrations,
   resolveFileToolsWorkspaceOnly,
   resolvePermissionPolicy,
 } from './openclawConfigSync';
@@ -433,6 +434,64 @@ describe('OpenClaw managed session retention', () => {
 });
 
 describe('OpenClaw plugin config merging', () => {
+  test('removes registrations for extensions that are no longer discoverable', () => {
+    expect(
+      removeUnavailableOpenClawPluginRegistrations(
+        {
+          enabled: true,
+          load: { paths: ['C:/plugins'] },
+          entries: {
+            available: { enabled: true },
+            'file-permission-policy': { enabled: true },
+          },
+          installs: {
+            available: { source: 'npm' },
+            removed: { source: 'npm' },
+          },
+          allow: ['available', 'removed', 'available'],
+          deny: ['removed'],
+          slots: {
+            memory: 'removed',
+            contextEngine: 'legacy',
+          },
+        },
+        ['available'],
+      ),
+    ).toEqual({
+      enabled: true,
+      load: { paths: ['C:/plugins'] },
+      entries: { available: { enabled: true } },
+      installs: { available: { source: 'npm' } },
+      allow: ['available'],
+      slots: { contextEngine: 'legacy' },
+    });
+  });
+
+  test('uses the available inventory while merging managed extensions', () => {
+    expect(
+      mergeOpenClawPluginConfig(
+        {
+          entries: {
+            existing: { enabled: false },
+            removed: { enabled: true },
+          },
+          allow: ['existing', 'removed'],
+        },
+        { 'action-approval': { enabled: true } },
+        [],
+        ['existing', 'action-approval'],
+      ),
+    ).toEqual({
+      enabled: true,
+      allow: ['existing', 'action-approval'],
+      bundledDiscovery: 'compat',
+      entries: {
+        existing: { enabled: false },
+        'action-approval': { enabled: true },
+      },
+    });
+  });
+
   test('preserves imported plugin entries and exclusive slots', () => {
     expect(
       mergeOpenClawPluginConfig(
@@ -544,7 +603,7 @@ describe('OpenClaw skill config merging', () => {
           entries: { existing: { enabled: false } },
           allow: ['existing-trusted'],
         },
-        { 'file-permission-policy': { enabled: true } },
+        { 'action-approval': { enabled: true } },
         ['justdo-skill-only-example', 'justdo-skill-only-example'],
       ),
     ).toEqual({
@@ -552,12 +611,12 @@ describe('OpenClaw skill config merging', () => {
       allow: [
         'existing-trusted',
         'justdo-skill-only-example',
-        'file-permission-policy',
+        'action-approval',
       ],
       bundledDiscovery: 'compat',
       entries: {
         existing: { enabled: false },
-        'file-permission-policy': { enabled: true },
+        'action-approval': { enabled: true },
       },
     });
   });

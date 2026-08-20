@@ -24,6 +24,11 @@
   ],
   "remove": [
     {
+      "category": "retired-justdo-extensions",
+      "reason": "Former JustDo extension ids retained only so upgraded runtime staging can remove stale directories after a rename.",
+      "extensions": ["file-permission-policy"]
+    },
+    {
       "category": "unused-remote-channels",
       "reason": "External IM/channel integrations. Remove when JustDo does not use remote-control messaging channels.",
       "extensions": [

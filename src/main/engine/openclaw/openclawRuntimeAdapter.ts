@@ -19,6 +19,7 @@ import {
   OpenClawApprovalIpc,
   type PluginApprovalRequest,
 } from '../../../shared/openclaw/approvals';
+import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   classifyAgentEvent,
   classifyChatEvent,
@@ -1809,7 +1810,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<PluginApprovalRequest> {
     const payload = request.request;
     if (
-      payload.pluginId !== 'file-permission-policy' ||
+      payload.pluginId !== OpenClawExtensionId.ACTION_APPROVAL ||
       payload.toolName !== 'cron'
     ) {
       this.denyOnlyPluginApprovalIds.delete(request.id);
@@ -1840,7 +1841,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     try {
       const detail = await client.request<{ found?: boolean; description?: unknown }>(
-        'filePermissionPolicy.approvalDetails',
+        'actionApproval.approvalDetails',
         {
           nonce: detailNonce,
           toolCallId,

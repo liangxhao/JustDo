@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import permissionPolicyPlugin from '../../../../openclaw-extensions/file-permission-policy/index';
+import actionApprovalPlugin from '../../../../openclaw-extensions/action-approval/index';
 
 type BeforeToolCall = (event: {
   toolName: string;
@@ -14,7 +14,7 @@ const registerPolicy = (
   fullAgentIds: string[] = [],
 ): BeforeToolCall => {
   let beforeToolCall: BeforeToolCall | undefined;
-  permissionPolicyPlugin.register({
+  actionApprovalPlugin.register({
     pluginConfig: { mode, fullAgentIds },
     logger: { info: vi.fn() },
     registerTrustedToolPolicy: (policy: { evaluate: BeforeToolCall }) => {
@@ -26,7 +26,7 @@ const registerPolicy = (
   return beforeToolCall;
 };
 
-describe('file permission policy extension', () => {
+describe('action approval extension', () => {
   it.each(['write', 'edit', 'apply_patch'])(
     'requires one-shot approval for %s in ask mode',
     async toolName => {
@@ -98,14 +98,14 @@ describe('file permission policy extension', () => {
           respond: (ok: boolean, payload: Record<string, unknown>) => void;
         }) => Promise<void>)
       | undefined;
-    permissionPolicyPlugin.register({
+    actionApprovalPlugin.register({
       pluginConfig: { mode: 'ask', fullAgentIds: [] },
       logger: { info: vi.fn() },
       registerTrustedToolPolicy: (policy: { evaluate: BeforeToolCall }) => {
         beforeToolCall = policy.evaluate;
       },
       registerGatewayMethod: (name: string, handler: typeof detailsHandler) => {
-        if (name === 'filePermissionPolicy.approvalDetails') detailsHandler = handler;
+        if (name === 'actionApproval.approvalDetails') detailsHandler = handler;
       },
     } as never);
     const params = {
@@ -157,14 +157,14 @@ describe('file permission policy extension', () => {
           respond: (ok: boolean, payload: Record<string, unknown>) => void;
         }) => Promise<void>)
       | undefined;
-    permissionPolicyPlugin.register({
+    actionApprovalPlugin.register({
       pluginConfig: { mode: 'ask', fullAgentIds: [] },
       logger: { info: vi.fn() },
       registerTrustedToolPolicy: (policy: { evaluate: BeforeToolCall }) => {
         beforeToolCall = policy.evaluate;
       },
       registerGatewayMethod: (name: string, handler: typeof detailsHandler) => {
-        if (name === 'filePermissionPolicy.approvalDetails') detailsHandler = handler;
+        if (name === 'actionApproval.approvalDetails') detailsHandler = handler;
       },
     } as never);
     const result = (await beforeToolCall?.(
@@ -244,7 +244,7 @@ describe('file permission policy extension', () => {
           respond: (ok: boolean, payload: Record<string, unknown>) => void;
         }) => Promise<void>)
       | undefined;
-    permissionPolicyPlugin.register({
+    actionApprovalPlugin.register({
       pluginConfig: { mode: 'ask', fullAgentIds: ['justdo-scheduler'] },
       logger: { info: vi.fn() },
       registerTrustedToolPolicy: vi.fn(),
@@ -261,7 +261,7 @@ describe('file permission policy extension', () => {
       },
     });
 
-    expect(methodName).toBe('filePermissionPolicy.info');
+    expect(methodName).toBe('actionApproval.info');
     expect(payload).toMatchObject({
       loaded: true,
       configuredMode: 'ask',

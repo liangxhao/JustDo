@@ -10,6 +10,7 @@ export type OpenClawExtensionContext = {
 
 export type OpenClawExtensionDescriptor = {
   id: string;
+  retiredIds?: readonly string[];
   buildEntry: (context: OpenClawExtensionContext) => Record<string, unknown>;
   buildToolContracts?: (context: OpenClawExtensionContext) => string[];
 };
@@ -32,13 +33,18 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     }),
   },
   {
-    id: OpenClawExtensionId.PERMISSION_POLICY,
+    id: OpenClawExtensionId.ACTION_APPROVAL,
+    retiredIds: ['file-permission-policy'],
     buildEntry: ({ permissionMode }) => ({
       enabled: true,
       config: { mode: permissionMode, fullAgentIds: [ScheduledTaskAgentId] },
     }),
   },
 ] as const;
+
+export const listRetiredBundledOpenClawExtensionIds = (): string[] => [
+  ...new Set(bundledOpenClawExtensions.flatMap(extension => extension.retiredIds ?? [])),
+];
 
 export const buildBundledExtensionEntries = (
   context: OpenClawExtensionContext,

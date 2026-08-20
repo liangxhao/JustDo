@@ -60,7 +60,7 @@ add/update/remove/run 需要一次性人工审批。AgentTurn 任务会被归一
 - `auto` 下文件修改暂时降级为人工 `ask`；
 - `full` 需要二次确认；
 - UI 已移除运行时配置、快照和同步进度等技术提示，只在保存或应用失败时展示错误；
-- `filePermissionPolicy.info` 的 loaded/version/mode/full-agent 匹配作为 readiness 的必要条件，
+- `actionApproval.info` 的 loaded/version/mode/full-agent 匹配作为 readiness 的必要条件，
   但不被描述成 trusted policy 的权威 active snapshot；
 - `022`–`025` 只为可信 JustDo ancestry 提供持久 lifetime、run suspension、隐藏恢复与 stop/failure
   收口；不改变 cron 和其他 native channel 的上游超时。
@@ -125,7 +125,7 @@ OpenClaw caller-scope 创建不是原子 scheduler assignment；已批准且立�
 
 涉及：
 
-- `openclaw-extensions/file-permission-policy/index.ts`；
+- `openclaw-extensions/action-approval/index.ts`；
 - `src/main/openclaw/config/openclawConfigSyncService.ts`；
 - `src/main/main.ts`。
 

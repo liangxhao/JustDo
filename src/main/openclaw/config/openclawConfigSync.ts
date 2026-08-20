@@ -1,5 +1,6 @@
 import { app } from 'electron';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
@@ -26,6 +27,11 @@ import {
   buildBundledExtensionToolContracts,
   bundledOpenClawExtensions,
   hasBundledOpenClawExtension,
+  inspectBundledOpenClawExtensions,
+  inspectLocalOpenClawExtensions,
+  inspectOpenClawExtensionCandidate,
+  inspectOpenClawExtensionDirectory,
+  listRetiredBundledOpenClawExtensionIds,
 } from '../../plugins/extensions';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
@@ -65,30 +71,184 @@ export const buildOpenClawMcpServers = (
   );
 };
 
-export const listInstalledOpenClawExtensionIds = (stateDir: string): string[] => {
-  const extensionsDir = path.join(stateDir, 'extensions');
-  try {
-    return [
-      ...new Set(
-        fs
-          .readdirSync(extensionsDir, { withFileTypes: true })
-          .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
-          .flatMap(entry => {
-            try {
-              const manifestPath = path.join(extensionsDir, entry.name, 'openclaw.plugin.json');
-              const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as unknown;
-              if (!isRecord(manifest) || typeof manifest.id !== 'string') return [];
-              const id = manifest.id.trim();
-              return id ? [id] : [];
-            } catch {
-              return [];
-            }
-          }),
-      ),
-    ].sort();
-  } catch {
-    return [];
+type ConfiguredPluginInventory = {
+  complete: boolean;
+  ids: string[];
+};
+
+export const listInstalledOpenClawExtensionIds = (stateDir: string): string[] =>
+  inspectOpenClawExtensionDirectory(path.join(stateDir, 'extensions')).ids;
+
+const resolveConfiguredPluginPath = (value: string): string => {
+  const trimmed = value.trim();
+  const homeDir = process.env.OPENCLAW_HOME?.trim() || os.homedir();
+  const expanded = trimmed.replace(/^~(?=$|[\\/])/, homeDir);
+  return path.resolve(expanded);
+};
+
+// Version-locked to OpenClaw v2026.7.1-2 routing/session-key normalizeAgentId.
+const normalizeOpenClawAgentId = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return 'main';
+  const normalized = trimmed.toLowerCase();
+  if (/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(trimmed)) return normalized;
+  return (
+    normalized
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+/, '')
+      .replace(/-+$/, '')
+      .slice(0, 64) || 'main'
+  );
+};
+
+const listKnownOpenClawWorkspaceDirs = ({
+  stateDir,
+  mainWorkspaceDir,
+  agents,
+  existingConfig,
+}: {
+  stateDir: string;
+  mainWorkspaceDir: string;
+  agents: readonly Agent[];
+  existingConfig?: Record<string, unknown> | null;
+}): string[] => {
+  const workspaceDirs = new Set([mainWorkspaceDir]);
+  const existingAgents = isRecord(existingConfig?.agents) ? existingConfig.agents : {};
+  const existingDefaults = isRecord(existingAgents.defaults) ? existingAgents.defaults : {};
+  const configuredDefaultWorkspace =
+    typeof existingDefaults.workspace === 'string' && existingDefaults.workspace.trim()
+      ? resolveConfiguredPluginPath(existingDefaults.workspace)
+      : null;
+  if (configuredDefaultWorkspace) workspaceDirs.add(configuredDefaultWorkspace);
+
+  const addDefaultAgentWorkspace = (agentId: string): void => {
+    const normalizedAgentId = normalizeOpenClawAgentId(agentId);
+    if (normalizedAgentId === 'main' || normalizedAgentId === ScheduledTaskAgentId) return;
+    // Current OpenClaw nests non-default agents under agents.defaults.workspace.
+    workspaceDirs.add(path.join(mainWorkspaceDir, normalizedAgentId));
+    if (configuredDefaultWorkspace) {
+      workspaceDirs.add(path.join(configuredDefaultWorkspace, normalizedAgentId));
+    }
+    // Also inventory the pre-defaults.workspace fallback used by older/minimal configs.
+    workspaceDirs.add(path.join(stateDir, `workspace-${normalizedAgentId}`));
+  };
+  agents.forEach(agent => addDefaultAgentWorkspace(agent.id));
+
+  const existingAgentList = Array.isArray(existingAgents.list) ? existingAgents.list : [];
+  for (const entry of existingAgentList) {
+    if (!isRecord(entry)) continue;
+    const configuredWorkspace =
+      typeof entry.workspace === 'string' ? entry.workspace.trim() : '';
+    if (configuredWorkspace) {
+      workspaceDirs.add(resolveConfiguredPluginPath(configuredWorkspace));
+      continue;
+    }
+    if (typeof entry.id === 'string') addDefaultAgentWorkspace(entry.id.trim());
   }
+  return [...workspaceDirs];
+};
+
+const isMissingConfiguredPluginPath = (error: unknown): boolean =>
+  Boolean(
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error.code === 'ENOENT' || error.code === 'ENOTDIR'),
+  );
+
+const hasCompatiblePluginBundleManifest = (pluginDir: string): boolean => {
+  for (const relativeManifestPath of [
+    path.join('.codex-plugin', 'plugin.json'),
+    path.join('.claude-plugin', 'plugin.json'),
+    path.join('.cursor-plugin', 'plugin.json'),
+  ]) {
+    try {
+      if (fs.statSync(path.join(pluginDir, relativeManifestPath)).isFile()) return true;
+    } catch (error) {
+      // A non-missing error means the candidate cannot be inventoried safely.
+      if (!isMissingConfiguredPluginPath(error)) return true;
+    }
+  }
+  return false;
+};
+
+const inspectConfiguredPluginPaths = (
+  plugins: Record<string, unknown>,
+): ConfiguredPluginInventory => {
+  const load = isRecord(plugins.load) ? plugins.load : {};
+  const loadPaths = Array.isArray(load.paths)
+    ? load.paths.filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    : [];
+  const ids = new Set<string>();
+  let complete = true;
+
+  for (const configuredPath of loadPaths) {
+    const existingPath = resolveConfiguredPluginPath(configuredPath);
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(existingPath);
+    } catch (error) {
+      if (isMissingConfiguredPluginPath(error)) continue;
+      complete = false;
+      continue;
+    }
+    if (!stats.isDirectory()) {
+      // Standalone plugin files may export an id that cannot be inferred without executing code.
+      complete = false;
+      continue;
+    }
+
+    const directInventory = inspectOpenClawExtensionCandidate(existingPath);
+    if (directInventory.complete) {
+      directInventory.ids.forEach(id => ids.add(id));
+      continue;
+    }
+    if (hasCompatiblePluginBundleManifest(existingPath)) {
+      complete = false;
+      continue;
+    }
+    const rootInventory = inspectOpenClawExtensionDirectory(existingPath);
+    rootInventory.ids.forEach(id => ids.add(id));
+    if (!rootInventory.complete) complete = false;
+  }
+
+  return { complete, ids: [...ids].sort() };
+};
+
+export const listAvailableOpenClawExtensionIds = (
+  stateDir: string,
+  plugins: Record<string, unknown>,
+  workspaceDirs: readonly string[] = [],
+): string[] | null => {
+  const bundledInventory = inspectBundledOpenClawExtensions();
+  const localInventory = inspectLocalOpenClawExtensions();
+  const installedInventory = inspectOpenClawExtensionDirectory(
+    path.join(stateDir, 'extensions'),
+  );
+  const workspaceInventories = workspaceDirs.map(workspaceDir =>
+    inspectOpenClawExtensionDirectory(path.join(workspaceDir, '.openclaw', 'extensions')),
+  );
+  const configuredInventory = inspectConfiguredPluginPaths(plugins);
+  if (
+    !bundledInventory.complete ||
+    bundledInventory.ids.length === 0 ||
+    !localInventory.complete ||
+    !installedInventory.complete ||
+    workspaceInventories.some(inventory => !inventory.complete) ||
+    !configuredInventory.complete
+  ) {
+    return null;
+  }
+  const retiredIds = new Set(listRetiredBundledOpenClawExtensionIds());
+  return [
+    ...new Set([
+      ...bundledInventory.ids,
+      ...localInventory.ids,
+      ...installedInventory.ids,
+      ...workspaceInventories.flatMap(inventory => inventory.ids),
+      ...configuredInventory.ids,
+    ].filter(id => !retiredIds.has(id))),
+  ].sort();
 };
 
 export const buildOpenClawHookConfig = (
@@ -378,39 +538,102 @@ const buildAuthScopedOpenClawConfig = (
   };
 };
 
+const RESERVED_PLUGIN_SLOT_VALUES = new Set(['legacy', 'none']);
+
+export const removeUnavailableOpenClawPluginRegistrations = (
+  plugins: Record<string, unknown>,
+  availableExtensionIds: readonly string[],
+): Record<string, unknown> => {
+  const availableIds = new Set(availableExtensionIds);
+  const filterRegistrationRecord = (value: unknown): Record<string, unknown> | undefined => {
+    if (!isRecord(value)) return undefined;
+    const filtered = Object.fromEntries(
+      Object.entries(value).filter(([extensionId]) => availableIds.has(extensionId)),
+    );
+    return Object.keys(filtered).length > 0 ? filtered : undefined;
+  };
+  const filterRegistrationList = (value: unknown): string[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const filtered = [
+      ...new Set(
+        value.filter(
+          (extensionId): extensionId is string =>
+            typeof extensionId === 'string' && availableIds.has(extensionId),
+        ),
+      ),
+    ];
+    return filtered.length > 0 ? filtered : undefined;
+  };
+
+  const entries = filterRegistrationRecord(plugins.entries);
+  const installs = filterRegistrationRecord(plugins.installs);
+  const allow = filterRegistrationList(plugins.allow);
+  const deny = filterRegistrationList(plugins.deny);
+  const slots = isRecord(plugins.slots)
+    ? Object.fromEntries(
+        Object.entries(plugins.slots).filter(([, extensionId]) =>
+          typeof extensionId !== 'string'
+            ? true
+            : RESERVED_PLUGIN_SLOT_VALUES.has(extensionId) || availableIds.has(extensionId),
+        ),
+      )
+    : undefined;
+  const cleaned = { ...plugins };
+  for (const key of ['entries', 'installs', 'allow', 'deny', 'slots']) delete cleaned[key];
+  if (entries) cleaned.entries = entries;
+  if (installs) cleaned.installs = installs;
+  if (allow) cleaned.allow = allow;
+  if (deny) cleaned.deny = deny;
+  if (slots && Object.keys(slots).length > 0) cleaned.slots = slots;
+  return cleaned;
+};
+
 export const mergeOpenClawPluginConfig = (
   existingPlugins: Record<string, unknown>,
   managedEntries: Record<string, unknown>,
   trustedInstalledExtensionIds: string[] = [],
+  availableExtensionIds: readonly string[] | null = null,
 ): Record<string, unknown> => {
+  const managedIds = Object.keys(managedEntries);
+  const sourcePlugins = availableExtensionIds
+    ? removeUnavailableOpenClawPluginRegistrations(existingPlugins, [
+        ...availableExtensionIds,
+        ...trustedInstalledExtensionIds,
+        ...managedIds,
+      ])
+    : existingPlugins;
   const mergedEntries = {
-    ...(isRecord(existingPlugins.entries) ? existingPlugins.entries : {}),
+    ...(isRecord(sourcePlugins.entries) ? sourcePlugins.entries : {}),
     ...managedEntries,
   };
   const trustedIds = [
     ...new Set(trustedInstalledExtensionIds.map(id => id.trim()).filter(Boolean)),
   ];
-  const managedIds = Object.keys(managedEntries);
-  if (Object.keys(mergedEntries).length === 0 && trustedIds.length === 0) return existingPlugins;
+  if (Object.keys(mergedEntries).length === 0 && trustedIds.length === 0) return sourcePlugins;
 
-  const protectsPermissionPolicy = Object.hasOwn(
+  const protectsActionApproval = Object.hasOwn(
     managedEntries,
-    OpenClawExtensionId.PERMISSION_POLICY,
+    OpenClawExtensionId.ACTION_APPROVAL,
   );
-  const existingAllow = Array.isArray(existingPlugins.allow)
-    ? existingPlugins.allow.filter((value): value is string => typeof value === 'string')
-    : null;
-  const existingDeny = Array.isArray(existingPlugins.deny)
-    ? existingPlugins.deny.filter((value): value is string => typeof value === 'string')
+  const existingAllow = Array.isArray(sourcePlugins.allow)
+    ? sourcePlugins.allow.filter((value): value is string => typeof value === 'string')
+    : Array.isArray(existingPlugins.allow)
+      ? []
+      : null;
+  const existingDeny = Array.isArray(sourcePlugins.deny)
+    ? sourcePlugins.deny.filter((value): value is string => typeof value === 'string')
     : null;
   const shouldPinInstalledExtensions = trustedIds.length > 0;
+  const remainingDeny = existingDeny?.filter(
+    id => id !== OpenClawExtensionId.ACTION_APPROVAL,
+  );
   const allow = existingAllow
     ? [
         ...new Set([
           ...existingAllow,
           ...trustedIds,
           ...managedIds,
-          ...(protectsPermissionPolicy ? [OpenClawExtensionId.PERMISSION_POLICY] : []),
+          ...(protectsActionApproval ? [OpenClawExtensionId.ACTION_APPROVAL] : []),
         ]),
       ]
     : shouldPinInstalledExtensions
@@ -418,19 +641,19 @@ export const mergeOpenClawPluginConfig = (
           ...new Set([
             ...trustedIds,
             ...managedIds,
-            ...(protectsPermissionPolicy ? [OpenClawExtensionId.PERMISSION_POLICY] : []),
+            ...(protectsActionApproval ? [OpenClawExtensionId.ACTION_APPROVAL] : []),
           ]),
         ]
       : null;
   return {
-    ...existingPlugins,
-    ...(protectsPermissionPolicy ? { enabled: true } : {}),
+    ...sourcePlugins,
+    ...(protectsActionApproval ? { enabled: true } : {}),
     ...(allow ? { allow } : {}),
-    ...(allow && existingPlugins.bundledDiscovery === undefined
+    ...(allow && sourcePlugins.bundledDiscovery === undefined
       ? { bundledDiscovery: 'compat' }
       : {}),
-    ...(protectsPermissionPolicy && existingDeny
-      ? { deny: existingDeny.filter(id => id !== OpenClawExtensionId.PERMISSION_POLICY) }
+    ...(protectsActionApproval && existingDeny
+      ? { deny: remainingDeny && remainingDeny.length > 0 ? remainingDeny : undefined }
       : {}),
     entries: mergedEntries,
   };
@@ -1255,6 +1478,16 @@ export class OpenClawConfigSync {
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );
+    const availableExtensionIds = listAvailableOpenClawExtensionIds(
+      this.engineManager.getStateDir(),
+      existingPlugins,
+      listKnownOpenClawWorkspaceDirs({
+        stateDir: this.engineManager.getStateDir(),
+        mainWorkspaceDir: resolvedWorkspaceDir,
+        agents: this.getAgents?.() ?? [],
+        existingConfig,
+      }),
+    );
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
@@ -1384,6 +1617,7 @@ export class OpenClawConfigSync {
           existingPlugins,
           pluginEntries,
           trustedInstalledExtensionIds,
+          availableExtensionIds,
         );
         return Object.keys(mergedPlugins).length > 0
           ? {
@@ -1715,11 +1949,9 @@ export class OpenClawConfigSync {
   /**
    * Build the `agents.list` config array for openclaw.json.
    *
-   * The main agent uses the user's configured workspace directory (via
-   * `agents.defaults.workspace`).  Non-main agents omit `workspace` so
-   * OpenClaw falls back to its default: `{STATE_DIR}/workspace-{agentId}/`.
-   * This keeps custom agent workspaces under the openclaw state directory
-   * rather than coupling them to the user's working directory.
+   * The main agent uses the user's configured workspace directory through
+   * `agents.defaults.workspace`. Non-main agents omit `workspace`, so current
+   * OpenClaw resolves them under `<defaults.workspace>/<normalizedAgentId>`.
    *
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
@@ -1826,6 +2058,10 @@ export class OpenClawConfigSync {
    */
   private writeMinimalConfig(configPath: string, reason: string): OpenClawConfigSyncResult {
     const coworkConfig = this.getCoworkConfig();
+    const configuredWorkspaceDir = (coworkConfig.workingDirectory || '').trim();
+    const resolvedWorkspaceDir = configuredWorkspaceDir
+      ? path.resolve(configuredWorkspaceDir)
+      : path.join(this.engineManager.getStateDir(), 'workspace');
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
@@ -1957,6 +2193,16 @@ export class OpenClawConfigSync {
             const existingFileTools = isRecord(existingTools.fs) ? existingTools.fs : {};
             const existingExecTools = isRecord(existingTools.exec) ? existingTools.exec : {};
             const existingPlugins = isRecord(existing.plugins) ? existing.plugins : {};
+            const availableExtensionIds = listAvailableOpenClawExtensionIds(
+              this.engineManager.getStateDir(),
+              existingPlugins,
+              listKnownOpenClawWorkspaceDirs({
+                stateDir: this.engineManager.getStateDir(),
+                mainWorkspaceDir: resolvedWorkspaceDir,
+                agents: this.getAgents?.() ?? [],
+                existingConfig: existing,
+              }),
+            );
             const mergedConfig = withDisabledMemorySearch({
               ...existing,
               diagnostics: {
@@ -1993,6 +2239,7 @@ export class OpenClawConfigSync {
                 existingPlugins,
                 bundledExtensionEntries,
                 trustedInstalledExtensionIds,
+                availableExtensionIds,
               ),
               meta: minimalConfig.meta,
             });

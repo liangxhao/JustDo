@@ -7,6 +7,7 @@ import {
   ExecApprovalDecision,
   PERSISTENT_APPROVAL_EXPIRES_AT_MS,
 } from '@shared/openclaw/approvals';
+import { OpenClawExtensionId } from '@shared/openclaw/extensions';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -48,7 +49,7 @@ export const resolveApprovalSummary = (approval: ApprovalRequest): string => {
   const description = approval.request.description.trim();
   const toolName = approval.request.toolName?.trim();
   if (
-    approval.request.pluginId === 'file-permission-policy' &&
+    approval.request.pluginId === OpenClawExtensionId.ACTION_APPROVAL &&
     toolName === 'cron'
   ) {
     return description;
@@ -58,7 +59,7 @@ export const resolveApprovalSummary = (approval: ApprovalRequest): string => {
 
 export const isScheduledTaskApproval = (approval: ApprovalRequest): boolean =>
   approval.kind === ApprovalKind.Plugin &&
-  approval.request.pluginId === 'file-permission-policy' &&
+  approval.request.pluginId === OpenClawExtensionId.ACTION_APPROVAL &&
   approval.request.toolName?.trim() === 'cron';
 
 export const resolveApprovalDeadline = (
@@ -98,7 +99,7 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
   const isScheduledTask = isScheduledTaskApproval(approval);
   const isFileApproval =
     isPluginApproval &&
-    approval.request.pluginId === 'file-permission-policy' &&
+    approval.request.pluginId === OpenClawExtensionId.ACTION_APPROVAL &&
     !isScheduledTask;
   const heading = isScheduledTask
     ? i18nService.t('scheduledTaskApprovalHeading')

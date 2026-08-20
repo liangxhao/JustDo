@@ -30,13 +30,13 @@ describe('OpenClawExtensionImportService', () => {
     });
 
     await expect(
-      service.setEnabled(OpenClawExtensionId.PERMISSION_POLICY, false),
+      service.setEnabled(OpenClawExtensionId.ACTION_APPROVAL, false),
     ).resolves.toMatchObject({ success: false });
-    await expect(service.delete(OpenClawExtensionId.PERMISSION_POLICY)).resolves.toMatchObject({
+    await expect(service.delete(OpenClawExtensionId.ACTION_APPROVAL)).resolves.toMatchObject({
       success: false,
     });
     await expect(
-      service.updateConfiguration(OpenClawExtensionId.PERMISSION_POLICY, { mode: 'full' }),
+      service.updateConfiguration(OpenClawExtensionId.ACTION_APPROVAL, { mode: 'full' }),
     ).resolves.toMatchObject({ success: false });
     expect(runCommand).not.toHaveBeenCalled();
   });

@@ -4,6 +4,7 @@ import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   buildBundledExtensionEntries,
   buildBundledExtensionToolContracts,
+  listRetiredBundledOpenClawExtensionIds,
 } from './openclawExtensionRegistry';
 
 describe('openclawExtensionRegistry', () => {
@@ -27,7 +28,7 @@ describe('openclawExtensionRegistry', () => {
           secret: '${JUSTDO_ASK_USER_SECRET}',
         },
       },
-      [OpenClawExtensionId.PERMISSION_POLICY]: {
+      [OpenClawExtensionId.ACTION_APPROVAL]: {
         enabled: true,
         config: { mode: 'ask', fullAgentIds: ['justdo-scheduler'] },
       },
@@ -44,5 +45,9 @@ describe('openclawExtensionRegistry', () => {
         () => true,
       ),
     ).toEqual([]);
+  });
+
+  it('declares former managed ids for config cleanup', () => {
+    expect(listRetiredBundledOpenClawExtensionIds()).toContain('file-permission-policy');
   });
 });

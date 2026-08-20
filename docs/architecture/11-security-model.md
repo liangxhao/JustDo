@@ -40,12 +40,12 @@ JustDo 提供 `ask`、`auto`、`full` 三档产品预设，提交 npm runtime �
 更新 host policy。写入使用 Gateway 返回的 `baseHash`，JustDo 不直接访问 approvals 文件。
 
 npm OpenClaw v2026.7.1-2 尚无独立文件 mode。JustDo 因此维护
-`file-permission-policy` bundled compatibility extension，通过公开的
+`action-approval` bundled compatibility extension，通过公开的
 `registerTrustedToolPolicy` 接口在已审计的 core 文件修改工具执行前请求 plugin approval。
 该适配器与 `package.json.openclaw.version` 一起版本锁定；升级 OpenClaw 时必须重新审计精确的
 core 工具 ID 和 manifest contract。该适配器是版本锁定的兼容层，不构成 active-policy
 readiness 证明。
-扩展的 `filePermissionPolicy.info` 只证明扩展代码已加载并读到了指定配置，不证明 trusted
+扩展的 `actionApproval.info` 只证明扩展代码已加载并读到了指定配置，不证明 trusted
 policy 已进入 OpenClaw active registry。当前 OpenClaw 没有公开权威 effective permission
 snapshot。产品选择继续使用该版本锁定适配器提供文件审批功能：`ask` 与 `auto` 的文件修改
 进入人工审批，`full` 跳过文件审批。adapter info 的 loaded/version/mode/full-agent 匹配是
@@ -54,6 +54,11 @@ Gateway readiness 的必要但不充分条件；真实 packaged runtime 的副�
 
 当前审批覆盖 host exec、适配器中已审计的文件变更工具，以及普通 Agent 的原生 cron
 add/update/remove/run。Browser、消息、第三方 MCP/插件副作用与 sandbox/tool policy 仍是独立安全层。
+
+OpenClaw 配置同步会根据当前 runtime bundled extensions、JustDo 源码扩展、用户安装目录、
+workspace extensions 和可检查的 `plugins.load.paths` 构建插件清单，并清理 `plugins.entries`、
+allow/deny、旧 installs 及 slots 中已经不存在的插件引用。若 runtime 清单不可读，或自定义加载
+路径无法可靠检查，则跳过自动清理，避免误删仍可用的第三方插件配置。
 
 需要谨慎处理的能力：
 

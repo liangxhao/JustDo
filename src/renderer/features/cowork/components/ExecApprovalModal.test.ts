@@ -73,7 +73,7 @@ describe('resolveApprovalSummary', () => {
       id: 'approval-2',
       kind: ApprovalKind.Plugin,
       request: {
-        pluginId: 'file-permission-policy',
+        pluginId: 'action-approval',
         title: 'Allow file changes?',
         description: 'C:/project/report.md',
         toolName: 'write',
@@ -98,7 +98,7 @@ describe('resolveApprovalSummary', () => {
       id: 'approval-3',
       kind: ApprovalKind.Plugin,
       request: {
-        pluginId: 'file-permission-policy',
+        pluginId: 'action-approval',
         title: 'Allow scheduled task change?',
         description,
         toolName: 'cron',

@@ -65,8 +65,8 @@ const normalizeIdentity = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
 const plugin = {
-  id: 'file-permission-policy',
-  name: 'File Permission Policy',
+  id: 'action-approval',
+  name: 'Action Approval',
   description: 'Requires approval before file and scheduled-task mutations in restricted modes.',
   configSchema: {
     parse(value: unknown): PluginConfig {
@@ -86,7 +86,7 @@ const plugin = {
       }
     >();
     api.registerTrustedToolPolicy({
-      id: 'core-file-mutation',
+      id: 'core-action-approval',
       description: 'Policy for OpenClaw file and scheduled-task mutations.',
       evaluate: async (event, ctx) => {
         if (
@@ -119,7 +119,7 @@ const plugin = {
           }
           return {
             requireApproval: {
-              pluginId: 'file-permission-policy',
+              pluginId: 'action-approval',
               title: 'Allow scheduled task change?',
               description: describeCronMutationSummary(event.params, detailNonce),
               severity: 'warning' as const,
@@ -135,7 +135,7 @@ const plugin = {
         const paths = readTargetPaths(event);
         return {
           requireApproval: {
-            pluginId: 'file-permission-policy',
+            pluginId: 'action-approval',
             title: 'Allow file changes?',
             description: paths.length > 0 ? paths.join(', ').slice(0, 256) : event.toolName,
             severity: 'warning' as const,
@@ -147,7 +147,7 @@ const plugin = {
       },
     });
     api.registerGatewayMethod(
-      'filePermissionPolicy.approvalDetails',
+      'actionApproval.approvalDetails',
       async ({ params, respond }) => {
         const toolCallId =
           params && typeof params === 'object' && !Array.isArray(params)
@@ -179,7 +179,7 @@ const plugin = {
       { scope: 'operator.read' },
     );
     api.registerGatewayMethod(
-      'filePermissionPolicy.info',
+      'actionApproval.info',
       async ({ respond }) => {
         respond(true, {
           loaded: true,
@@ -191,7 +191,7 @@ const plugin = {
       { scope: 'operator.read' },
     );
     api.logger.info(
-      `[file-permission-policy] policy enabled (${config.mode} -> ${effectiveMode}).`,
+      `[action-approval] approval handling enabled (${config.mode} -> ${effectiveMode}).`,
     );
   },
 };

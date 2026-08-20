@@ -31,7 +31,7 @@ const OPENCLAW_UNINSTALL_SUCCESS_PATTERN = /(?:^|\r?\n)Uninstalled plugin\s+['"]
 const OPENCLAW_TOGGLE_SUCCESS_PATTERN =
   /(?:^|\r?\n)(?:Enabled|Disabled) plugin\s+['"][^'"\r\n]+['"]/i;
 const isProtectedExtension = (extensionId: string): boolean =>
-  extensionId === OpenClawExtensionId.PERMISSION_POLICY;
+  extensionId === OpenClawExtensionId.ACTION_APPROVAL;
 
 const isPathWithinDirectory = (rootDirectory: string, candidatePath: string): boolean => {
   const relativePath = path.relative(path.resolve(rootDirectory), path.resolve(candidatePath));

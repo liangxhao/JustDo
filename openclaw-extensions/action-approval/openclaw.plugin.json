@@ -1,9 +1,9 @@
 {
-  "id": "file-permission-policy",
-  "name": "File Permission Policy",
-  "description": "Policy for file and scheduled-task mutation tools.",
+  "id": "action-approval",
+  "name": "Action Approval",
+  "description": "Approval handling for file and scheduled-task mutation tools.",
   "contracts": {
-    "trustedToolPolicies": ["core-file-mutation"]
+    "trustedToolPolicies": ["core-action-approval"]
   },
   "configSchema": {
     "type": "object",

@@ -553,7 +553,7 @@ test('replaces the truncated cron approval summary with complete extension detai
     2,
   );
   const request = vi.fn((method: string) => {
-    if (method === 'filePermissionPolicy.approvalDetails') {
+    if (method === 'actionApproval.approvalDetails') {
       return Promise.resolve({ found: true, description: completeDescription });
     }
     return Promise.resolve({});
@@ -569,7 +569,7 @@ test('replaces the truncated cron approval summary with complete extension detai
     payload: {
       id: 'approval-cron',
       request: {
-        pluginId: 'file-permission-policy',
+        pluginId: 'action-approval',
         title: 'Allow scheduled task change?',
         description:
           'justdo-detail:11111111-1111-4111-8111-111111111111\n{"action":"add"...',
@@ -593,7 +593,7 @@ test('replaces the truncated cron approval summary with complete extension detai
       expiresAtMs: expect.any(Number),
     }),
   );
-  expect(request).toHaveBeenCalledWith('filePermissionPolicy.approvalDetails', {
+  expect(request).toHaveBeenCalledWith('actionApproval.approvalDetails', {
     nonce: '11111111-1111-4111-8111-111111111111',
     toolCallId: 'tool-call-1',
     agentId: 'main',
@@ -617,7 +617,7 @@ test('offers deny only when complete cron approval details are unavailable', asy
     payload: {
       id: 'approval-cron-unavailable',
       request: {
-        pluginId: 'file-permission-policy',
+        pluginId: 'action-approval',
         title: 'Allow scheduled task change?',
         description:
           'justdo-detail:22222222-2222-4222-8222-222222222222\n{"action":"update"...',
