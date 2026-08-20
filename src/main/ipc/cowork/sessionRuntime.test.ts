@@ -9,12 +9,31 @@ import {
 } from './sessionRuntime';
 
 describe('queryGatewaySession', () => {
-  it('uses sessions.describe for exact managed keys instead of a bounded session list', async () => {
-    const request = vi.fn(async (method: string, params: { key?: string }) => {
-      expect(method).toBe('sessions.describe');
-      return params.key === 'agent:main:justdo:session-1'
-        ? { session: { key: params.key, sessionId: 'gateway-1' } }
-        : { session: null };
+  it('combines the exact session row with the active-run registry projection', async () => {
+    const request = vi.fn(async (method: string, params: { key?: string; search?: string }) => {
+      if (method === 'sessions.describe') {
+        return params.key === 'agent:main:justdo:session-1'
+          ? {
+              session: {
+                key: params.key,
+                sessionId: 'gateway-1',
+                totalTokens: 10_000,
+              },
+            }
+          : { session: null };
+      }
+      expect(method).toBe('sessions.list');
+      expect(params.search).toBe('agent:main:justdo:session-1');
+      return {
+        sessions: [
+          {
+            key: 'agent:main:justdo:session-1',
+            sessionId: 'gateway-1',
+            totalTokens: 10_000,
+            hasActiveRun: false,
+          },
+        ],
+      };
     });
     const result = await queryGatewaySession(
       {
@@ -28,8 +47,117 @@ describe('queryGatewaySession', () => {
       'session-1',
     );
 
-    expect(result.session?.sessionId).toBe('gateway-1');
-    expect(request).not.toHaveBeenCalledWith('sessions.list', expect.anything());
+    expect(result.session).toMatchObject({
+      sessionId: 'gateway-1',
+      totalTokens: 10_000,
+      hasActiveRun: false,
+    });
+    expect(request).toHaveBeenCalledWith('sessions.list', {
+      search: 'agent:main:justdo:session-1',
+      limit: 20,
+      agentId: 'main',
+    });
+  });
+
+  it('re-reads exact usage after a run ends between the first two requests', async () => {
+    let describeCalls = 0;
+    const request = vi.fn(async (method: string, params: { key?: string }) => {
+      if (method === 'sessions.describe') {
+        describeCalls += 1;
+        return {
+          session: {
+            key: params.key,
+            sessionId: 'gateway-1',
+            totalTokens: describeCalls === 1 ? 21_000 : 10_000,
+            status: describeCalls === 1 ? 'running' : 'done',
+          },
+        };
+      }
+      return {
+        sessions: [
+          {
+            key: 'agent:main:justdo:session-1',
+            sessionId: 'gateway-1',
+            totalTokens: 10_000,
+            status: 'done',
+            hasActiveRun: false,
+          },
+        ],
+      };
+    });
+    const result = await queryGatewaySession(
+      {
+        getCoworkStore: () => ({ getSession: () => ({ agentId: 'main' }) }) as never,
+        getRuntime: () =>
+          ({
+            getGatewayClient: () => ({ request }),
+            getSessionKeysForSession: () => [],
+          }) as never,
+      },
+      'session-1',
+    );
+
+    expect(result.session).toMatchObject({
+      totalTokens: 10_000,
+      status: 'done',
+      hasActiveRun: false,
+    });
+    expect(describeCalls).toBe(2);
+  });
+
+  it('preserves a newer active signal returned by the second exact read', async () => {
+    let describeCalls = 0;
+    const request = vi.fn(async (method: string, params: { key?: string }) => {
+      if (method === 'sessions.describe') {
+        describeCalls += 1;
+        return {
+          session: {
+            key: params.key,
+            sessionId: 'gateway-1',
+            totalTokens: 21_000,
+            ...(describeCalls === 2 ? { hasActiveRun: true } : {}),
+          },
+        };
+      }
+      return {
+        sessions: [{ key: 'agent:main:justdo:session-1', hasActiveRun: false }],
+      };
+    });
+    const result = await queryGatewaySession(
+      {
+        getCoworkStore: () => ({ getSession: () => ({ agentId: 'main' }) }) as never,
+        getRuntime: () =>
+          ({
+            getGatewayClient: () => ({ request }),
+            getSessionKeysForSession: () => [],
+          }) as never,
+      },
+      'session-1',
+    );
+
+    expect(result.session?.hasActiveRun).toBe(true);
+    expect(describeCalls).toBe(2);
+  });
+
+  it('keeps exact usage available if active-run projection fails', async () => {
+    const request = vi.fn(async (method: string, params: { key?: string }) => {
+      if (method === 'sessions.list') throw new Error('list unavailable');
+      return { session: { key: params.key, sessionId: 'gateway-1' } };
+    });
+    const result = await queryGatewaySession(
+      {
+        getCoworkStore: () => ({ getSession: () => ({ agentId: 'main' }) }) as never,
+        getRuntime: () =>
+          ({
+            getGatewayClient: () => ({ request }),
+            getSessionKeysForSession: () => [],
+          }) as never,
+      },
+      'session-1',
+    );
+
+    expect(result.session).toMatchObject({ sessionId: 'gateway-1' });
+    expect(result.session).not.toHaveProperty('hasActiveRun');
   });
 });
 
@@ -126,6 +254,7 @@ describe('readUsage', () => {
       totalTokens: 18_500,
       contextTokens: 200_000,
       totalTokensFresh: true,
+      usageSource: 'estimate',
       compactionCount: 0,
     });
   });
@@ -160,6 +289,41 @@ describe('readUsage', () => {
     ).toMatchObject({
       totalTokens: 32_500,
       totalTokensFresh: true,
+      hasActiveRun: true,
+    });
+  });
+
+  it('does not present a previous total as finalized while the current run is active', () => {
+    expect(
+      readUsage({
+        totalTokens: 21_000,
+        totalTokensFresh: true,
+        hasActiveRun: true,
+        updatedAt: 300,
+        contextWindow: 200_000,
+      }),
+    ).toMatchObject({
+      totalTokens: 21_000,
+      usageSource: 'reported',
+      usageUpdatedAt: 300,
+      hasActiveRun: true,
+    });
+  });
+
+  it('treats an active status as authoritative over a contradictory idle flag', () => {
+    expect(
+      readUsage({
+        totalTokens: 21_000,
+        totalTokensFresh: true,
+        hasActiveRun: false,
+        status: 'running',
+        contextWindow: 200_000,
+        contextBudgetStatus: { estimatedPromptTokens: 32_500 },
+      }),
+    ).toMatchObject({
+      totalTokens: 32_500,
+      usageSource: 'estimate',
+      hasActiveRun: true,
     });
   });
 
@@ -178,6 +342,60 @@ describe('readUsage', () => {
       compactionCount: 3,
       gatewaySessionId: 'gateway-session-1',
       modelRef: 'openai/gpt-5',
+    });
+  });
+
+  it('uses Gateway checkpoint count when the session row omits compactionCount', () => {
+    expect(
+      readUsage({
+        totalTokens: 9_000,
+        contextWindow: 200_000,
+        compactionCheckpointCount: 2,
+      }),
+    ).toMatchObject({
+      totalTokens: 9_000,
+      usageSource: 'reported',
+      compactionCount: 2,
+    });
+  });
+
+  it('identifies and timestamps live estimates separately from final reported usage', () => {
+    expect(
+      readUsage({
+        totalTokens: 90_362,
+        totalTokensFresh: true,
+        status: 'running',
+        updatedAt: 300,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          estimatedPromptTokens: 147_347,
+          updatedAt: 200,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 147_347,
+      usageSource: 'estimate',
+      usageUpdatedAt: 200,
+    });
+
+    expect(
+      readUsage({
+        totalTokens: 90_362,
+        totalTokensFresh: true,
+        hasActiveRun: false,
+        status: 'done',
+        updatedAt: 300,
+        contextWindow: 200_000,
+        contextBudgetStatus: {
+          estimatedPromptTokens: 147_347,
+          updatedAt: 200,
+        },
+      }),
+    ).toMatchObject({
+      totalTokens: 90_362,
+      usageSource: 'reported',
+      usageUpdatedAt: 300,
+      hasActiveRun: false,
     });
   });
 

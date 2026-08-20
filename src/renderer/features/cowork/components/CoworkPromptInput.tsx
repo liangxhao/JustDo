@@ -22,8 +22,11 @@ import {
 } from '@/features/cowork/components/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/AttachmentCard';
 import {
+  type ContextUsageRunState,
   type ContextUsageSnapshot,
   mergeContextUsageSnapshot,
+  resolveContextUsageDisplay,
+  resolveContextUsageRunState,
   startContextUsageRefresh,
 } from '@/features/cowork/components/contextUsageRefresh';
 import {
@@ -67,7 +70,11 @@ import {
 import { CoworkAttachmentPayload } from '@/features/cowork/coworkTypes';
 import ModelSelector from '@/features/models/ModelSelector';
 import { type Model, setSelectedModel } from '@/features/models/modelSlice';
-import { resolveOpenClawModelRef, toOpenClawModelRef } from '@/features/models/openclawModelRef';
+import {
+  matchesOpenClawModelRef,
+  resolveOpenClawModelRef,
+  toOpenClawModelRef,
+} from '@/features/models/openclawModelRef';
 import { ActiveSkillBadge } from '@/features/plugins/components/skills';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -287,6 +294,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const modelSelectionQueueRef = useRef(new LatestSerialTaskQueue());
     const automaticModelRepairKeyRef = useRef('');
     const effectiveSelectedModel = optimisticSessionModel ?? baseSelectedModel;
+    const contextUsageSelectedModelRef = effectiveSelectedModel
+      ? (toOpenClawModelRef(effectiveSelectedModel) ?? undefined)
+      : undefined;
+    const matchesContextUsageModel = useCallback(
+      (modelRef: string | undefined) =>
+        !modelRef ||
+        !effectiveSelectedModel ||
+        matchesOpenClawModelRef(modelRef, effectiveSelectedModel),
+      [effectiveSelectedModel],
+    );
     const hasNoAvailableModels = !remoteManaged && availableModels.length === 0;
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const [value, setValue] = useState(draftPrompt);
@@ -303,6 +320,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [slashMenuArgItems, setSlashMenuArgItems] = useState<string[]>([]);
     const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
     const [contextUsage, setContextUsage] = useState<ContextUsageSnapshot | null>(null);
+    const contextUsageRef = useRef<ContextUsageSnapshot | null>(null);
+    const [contextUsageRefreshVersion, setContextUsageRefreshVersion] = useState(0);
     const [sessionGoal, setSessionGoal] = useState<SessionGoal | null>(null);
     const [goalExecution, setGoalExecution] = useState<GoalExecutionSnapshot | null>(null);
     const sessionGoalRef = useRef<SessionGoal | null>(null);
@@ -328,9 +347,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const goalClearPendingRef = useRef(false);
     const goalClearTargetIdRef = useRef<string | null>(null);
     const latestValueRef = useRef(value);
-    const contextUsageRunRef = useRef<{ sessionId?: string; active: boolean }>({
+    const contextUsageRunRef = useRef<ContextUsageRunState>({
       sessionId,
       active: isRunActive,
+      pendingFinalization: false,
     });
     const updateCompletionFeedback = useCallback((next: GoalCompletionFeedbackState | null) => {
       completionFeedbackRef.current = next;
@@ -367,6 +387,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setOptimisticSessionModel(null);
       setModelUpdatePending(false);
       setModelUpdateError(null);
+      contextUsageRef.current = null;
       setContextUsage(null);
       setSessionGoal(null);
       sessionGoalRef.current = null;
@@ -1171,9 +1192,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       const contextTokens =
         contextUsage.contextTokens || effectiveSelectedModel?.contextLength || 200_000;
       if (contextTokens <= 0) return null;
-      const usedTokens = Math.max(0, contextUsage.totalTokens);
-      const percentage = Math.round((usedTokens / contextTokens) * 100);
-      return `${formatContextLength(usedTokens)} / ${formatContextLength(contextTokens)} · ${percentage}%`;
+      const { usedTokens, percentage, overflowed } = resolveContextUsageDisplay(
+        contextUsage.totalTokens,
+        contextTokens,
+      );
+      const estimatePrefix = contextUsage.usageSource === 'estimate' ? '~' : '';
+      const overflowSuffix = overflowed ? '+' : '';
+      return `${estimatePrefix}${formatContextLength(usedTokens)}${overflowSuffix} / ${formatContextLength(contextTokens)} · ${percentage}%`;
     }, [contextUsage, effectiveSelectedModel?.contextLength]);
     const contextUsageStatusText = sessionId && contextUsageText ? contextUsageText : null;
     const contextUsageBadge = contextUsageStatusText ? (
@@ -1750,33 +1775,58 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     // During a run, Gateway can expose a live prompt estimate before the final usage lands.
     // Keep the last valid value visible and refresh it without overlapping requests.
     useEffect(() => {
-      const previousRun = contextUsageRunRef.current;
-      const justFinishedRun =
-        previousRun.sessionId === sessionId && previousRun.active && !isRunActive;
-      contextUsageRunRef.current = { sessionId, active: isRunActive };
-      if (!sessionId || sessionId.startsWith('temp-') || (!hasAssistantMessage && !isRunActive)) {
+      const runState = resolveContextUsageRunState(
+        contextUsageRunRef.current,
+        sessionId,
+        isRunActive,
+      );
+      contextUsageRunRef.current = runState;
+      if (
+        !sessionId ||
+        sessionId.startsWith('temp-') ||
+        (!hasAssistantMessage && !isRunActive && !runState.pendingFinalization)
+      ) {
         return;
       }
       return startContextUsageRefresh({
         isRunActive,
-        retryAfterSuccess: justFinishedRun,
+        retryAfterSuccess: runState.pendingFinalization,
         fetchUsage: () => window.electron.cowork.getContextUsage(sessionId),
         onUsage: result => {
-          setContextUsage(previous =>
-            mergeContextUsageSnapshot(previous, {
-              totalTokens: result.totalTokens,
-              contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
-              totalTokensFresh: result.totalTokensFresh ?? true,
-              compactionCount: result.compactionCount ?? previous?.compactionCount ?? 0,
-              generationKey: [
-                result.gatewaySessionId ?? sessionId,
-                result.modelRef ?? effectiveSelectedModel?.id ?? '',
-              ].join(':'),
-            }),
-          );
+          if (!matchesContextUsageModel(result.modelRef)) return false;
+          const previous = contextUsageRef.current;
+          const next: ContextUsageSnapshot = {
+            totalTokens: result.totalTokens,
+            contextTokens: result.contextTokens ?? effectiveSelectedModel?.contextLength ?? 0,
+            totalTokensFresh: result.totalTokensFresh ?? true,
+            usageSource: result.usageSource,
+            usageUpdatedAt: result.usageUpdatedAt,
+            compactionCount: result.compactionCount ?? previous?.compactionCount ?? 0,
+            generationKey: [
+              result.gatewaySessionId ?? sessionId,
+              result.modelRef ?? contextUsageSelectedModelRef ?? effectiveSelectedModel?.id ?? '',
+            ].join(':'),
+          };
+          const merged = mergeContextUsageSnapshot(previous, next);
+          if (merged !== next) return false;
+          contextUsageRef.current = merged;
+          setContextUsage(merged);
+          if (
+            runState.pendingFinalization &&
+            result.usageSource === 'reported' &&
+            result.hasActiveRun === false
+          ) {
+            contextUsageRunRef.current.pendingFinalization = false;
+          }
+          return true;
         },
         schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
         cancelSchedule: handle => window.clearTimeout(handle),
+        onIdleComplete: () => {
+          if (contextUsageRunRef.current === runState) {
+            contextUsageRunRef.current.pendingFinalization = false;
+          }
+        },
       });
     }, [
       sessionId,
@@ -1784,6 +1834,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       hasAssistantMessage,
       effectiveSelectedModel?.contextLength,
       effectiveSelectedModel?.id,
+      contextUsageSelectedModelRef,
+      matchesContextUsageModel,
+      contextUsageRefreshVersion,
     ]);
 
     const runGoalAction = useCallback(
@@ -2227,6 +2280,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                           const selectionContext = modelSelectionContextRef.current;
                           optimisticSessionModelRef.current = nextModel;
                           setOptimisticSessionModel(nextModel);
+                          contextUsageRef.current = null;
+                          setContextUsage(null);
                           setModelUpdatePending(true);
                           setModelUpdateError(null);
                           const { taskId, completion } = modelSelectionQueueRef.current.enqueue(
@@ -2329,12 +2384,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                               dispatch(setSelectedModel(nextModel));
                             }
                             if (!modelSelectionQueueRef.current.isLatest(taskId)) return;
+                            if (sessionId) {
+                              setContextUsageRefreshVersion(version => version + 1);
+                            }
                             setModelUpdatePending(false);
                           } catch (error) {
                             if (!modelSelectionQueueRef.current.isLatest(taskId)) return;
                             const confirmedModel = confirmedSessionModelRef.current;
                             optimisticSessionModelRef.current = confirmedModel;
                             setOptimisticSessionModel(confirmedModel);
+                            if (sessionId) {
+                              setContextUsageRefreshVersion(version => version + 1);
+                            }
                             setModelUpdatePending(false);
                             setModelUpdateError(
                               error instanceof Error ? error.message : String(error),

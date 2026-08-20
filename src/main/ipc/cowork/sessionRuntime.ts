@@ -43,18 +43,31 @@ export const readUsage = (session: Record<string, unknown>) => {
   const reportedTotalTokensFresh =
     typeof session.totalTokensFresh === 'boolean' ? session.totalTokensFresh : true;
   const hasActiveRun =
-    session.hasActiveRun === true || session.status === 'running' || session.runState === 'active';
+    session.hasActiveRun === true || session.status === 'running' || session.runState === 'active'
+      ? true
+      : session.hasActiveRun === false
+        ? false
+        : undefined;
+  const useLiveEstimate =
+    estimatedPromptTokens !== undefined &&
+    (hasActiveRun || !reportedTotalTokensFresh || reportedTotalTokens === undefined);
+  const totalTokens = useLiveEstimate
+    ? estimatedPromptTokens
+    : (reportedTotalTokens ?? estimatedPromptTokens ?? 0);
+  const usageUpdatedAt = useLiveEstimate
+    ? nonNegativeNumber(budget?.updatedAt)
+    : nonNegativeNumber(session.updatedAt);
   const provider = nonEmptyString(budget?.provider) ?? nonEmptyString(session.modelProvider);
   const model = nonEmptyString(budget?.model) ?? nonEmptyString(session.model);
   const gatewaySessionId = [session.sessionId, session.id]
     .map(nonEmptyString)
     .find((value): value is string => value !== undefined);
+  const compactionCount = Math.max(
+    nonNegativeNumber(session.compactionCount) ?? 0,
+    nonNegativeNumber(session.compactionCheckpointCount) ?? 0,
+  );
   return {
-    totalTokens:
-      (hasActiveRun || !reportedTotalTokensFresh ? estimatedPromptTokens : reportedTotalTokens) ??
-      reportedTotalTokens ??
-      estimatedPromptTokens ??
-      0,
+    totalTokens,
     contextTokens:
       nonNegativeNumber(session.contextTokens) ??
       nonNegativeNumber(session.contextWindow) ??
@@ -64,7 +77,10 @@ export const readUsage = (session: Record<string, unknown>) => {
       nonNegativeNumber(budget?.contextTokenBudget) ??
       0,
     totalTokensFresh: reportedTotalTokensFresh || estimatedPromptTokens !== undefined,
-    compactionCount: nonNegativeNumber(session.compactionCount) ?? 0,
+    usageSource: useLiveEstimate ? ('estimate' as const) : ('reported' as const),
+    ...(usageUpdatedAt !== undefined ? { usageUpdatedAt } : {}),
+    ...(hasActiveRun !== undefined ? { hasActiveRun } : {}),
+    compactionCount,
     ...(gatewaySessionId ? { gatewaySessionId } : {}),
     ...(model ? { modelRef: provider ? `${provider}/${model}` : model } : {}),
   };
@@ -81,6 +97,38 @@ export const readGatewaySessionId = (session: Record<string, unknown>): string |
 
 type GatewaySession = { key: string } & Record<string, unknown>;
 type GatewaySessionResult = { session?: GatewaySession; error?: string };
+
+const resolveGatewaySessionWithActiveRunState = async (
+  client: NonNullable<ReturnType<OpenClawRuntimeAdapter['getGatewayClient']>>,
+  session: GatewaySession,
+  agentId: string,
+): Promise<GatewaySession> => {
+  try {
+    // sessions.describe is the authoritative exact row lookup, but OpenClaw
+    // currently projects its active-run registry only on sessions.list.
+    const result = await client.request<{ sessions?: GatewaySession[] }>('sessions.list', {
+      search: session.key,
+      limit: 20,
+      agentId,
+    });
+    const activeRow = result.sessions?.find(row => row.key === session.key);
+    if (activeRow?.hasActiveRun === true) return { ...session, hasActiveRun: true };
+    if (activeRow?.hasActiveRun !== false) return session;
+    // Once the registry reports idle, re-read the exact row. Combining the
+    // later false flag with the earlier describe row could manufacture an
+    // impossible old-usage/idle snapshot when a run ends between the RPCs.
+    const refreshed = await client.request<{ session?: GatewaySession | null }>(
+      'sessions.describe',
+      { key: session.key },
+    );
+    if (!refreshed.session) return session;
+    return refreshed.session.hasActiveRun === true
+      ? refreshed.session
+      : { ...refreshed.session, hasActiveRun: false };
+  } catch {
+    return session;
+  }
+};
 
 export const queryGatewaySession = async (
   dependencies: Pick<Dependencies, 'getCoworkStore' | 'getRuntime'>,
@@ -101,7 +149,11 @@ export const queryGatewaySession = async (
     const result = await client.request<{ session?: GatewaySession | null }>('sessions.describe', {
       key,
     });
-    if (result.session) return { session: result.session };
+    if (result.session) {
+      return {
+        session: await resolveGatewaySessionWithActiveRunState(client, result.session, agentId),
+      };
+    }
   }
   return { error: 'Session not found in gateway' };
 };

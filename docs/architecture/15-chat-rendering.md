@@ -188,7 +188,7 @@ Goal UI 是 React 输入区状态，不进入 Lit message pipeline；命令产�
 
 ## 上下文压缩展示
 
-输入区的上下文用量在运行期间轮询 Gateway 的 pre-prompt estimate，运行结束后切换到持久化 usage。同一 Gateway session、模型和 `compactionCount` 内 UI 对读数做单调合并，避免异步 estimate 或 estimate/final usage 口径差异造成显示回退；Gateway session、模型变化或 `compactionCount` 递增时才接受较低读数。live estimate 写回 session state 时按 `updatedAt` 拒绝乱序的旧状态，相同毫秒内保留较大估算。
+输入区的上下文用量在运行期间轮询 Gateway 的 pre-prompt estimate（以 `~` 标记），运行结束后继续做有界收敛轮询。Main 用 `sessions.describe` 取得精确持久化行，并以带精确 key search 的 `sessions.list` 查询 active-run registry；registry 返回 false 后再次 describe，确保 usage 行晚于 idle 观测，不能把较晚的 active flag 拼到较早的 usage 行上。只有这样取得的 reported usage 与权威的 `hasActiveRun: false` 同时出现才结束收敛，矛盾的 `status: running` 始终按 active 处理。待收敛状态跨 React effect 重跑保留，直到成功、重试耗尽、新 run 开始或 session 切换，不能把本轮运行期间带新 session 时间戳的旧 total 当成最终统计。UI 优先按 usage/status 的 `updatedAt` 合并同一 Gateway session 与模型的读数：压缩、工具结果截断和 estimate → final usage 都可以让较新的读数合理下降，旧轮询结果不能覆盖新状态；`compactionCheckpointCount` 只作为缺少时间戳时的兼容回退，不能假定 checkpoint 保留数量永远递增。模型切换期间清空旧 usage，使用既有 OpenClaw 模型别名规则拒绝旧模型结果，并在 patch 确认后强制刷新。pre-prompt estimate 在恢复动作执行前可能暂时超过模型窗口；输入区把数值和百分比限制在窗口上限，并以 `+` 保留超限语义，恢复完成后采用较新的压缩后估算。live estimate 写回 session state 时按 `updatedAt` 拒绝乱序的旧状态。
 
 - transcript 中的 compaction marker 使用 compaction entry ID；checkpoint 使用独立 UUID。Controller 保留 marker 的 `id`，并把恢复用途的 UUID 写入 `checkpointId`。
 - checkpoint 优先通过 `postCompaction.entryId` 或 `postCompaction.leafId` 与 marker 精确关联。只有缺少 transcript 位置的旧 checkpoint 才允许按时间顺序回退配对。

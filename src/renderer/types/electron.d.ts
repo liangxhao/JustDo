@@ -736,6 +736,9 @@ interface IElectronAPI {
       totalTokens?: number;
       contextTokens?: number;
       totalTokensFresh?: boolean;
+      usageSource?: 'estimate' | 'reported';
+      usageUpdatedAt?: number;
+      hasActiveRun?: boolean;
       compactionCount?: number;
       gatewaySessionId?: string;
       modelRef?: string;
