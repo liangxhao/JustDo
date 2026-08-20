@@ -12,37 +12,47 @@ describe('OpenClawExtensionHostLifecycle pending interaction replay', () => {
       askUserSessionByRequestId: new Map(),
     });
     const controller = lifecycle.getController();
-    vi.spyOn(controller, 'listPendingAskUserRequests').mockReturnValue([{
-      requestId: 'request-1',
-      questions: [{
-        id: 'continue',
-        question: 'Continue?',
-        options: [
-          { id: 'yes', label: 'Yes' },
-          { id: 'no', label: 'No' },
-        ],
-      }],
-    }]);
-
-    expect(lifecycle.listPendingInteractions()).toEqual([{
-      sessionId: '__askuser__',
-      request: {
+    vi.spyOn(controller, 'listPendingAskUserRequests').mockReturnValue([
+      {
         requestId: 'request-1',
-        toolName: 'AskUserQuestion',
-        interactionKind: 'structured-question',
-        toolInput: {
-          questions: [{
+        waitPolicy: { mode: 'required' },
+        questions: [
+          {
             id: 'continue',
             question: 'Continue?',
             options: [
               { id: 'yes', label: 'Yes' },
               { id: 'no', label: 'No' },
             ],
-          }],
-          sessionKey: undefined,
-          sessionId: '__askuser__',
+          },
+        ],
+      },
+    ]);
+
+    expect(lifecycle.listPendingInteractions()).toEqual([
+      {
+        sessionId: '__askuser__',
+        request: {
+          requestId: 'request-1',
+          toolName: 'AskUserQuestion',
+          interactionKind: 'structured-question',
+          toolInput: {
+            questions: [
+              {
+                id: 'continue',
+                question: 'Continue?',
+                options: [
+                  { id: 'yes', label: 'Yes' },
+                  { id: 'no', label: 'No' },
+                ],
+              },
+            ],
+            waitPolicy: { mode: 'required' },
+            sessionKey: undefined,
+            sessionId: '__askuser__',
+          },
         },
       },
-    }]);
+    ]);
   });
 });

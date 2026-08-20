@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+  AskUserTimeoutBehavior,
+  AskUserWaitMode,
+  buildAskUserDefaultAnswers,
   MAX_ASK_USER_QUESTIONS,
   parseAskUserAnswers,
   parseAskUserQuestions,
+  parseAskUserWaitPolicy,
 } from './extensions';
 
 const rawQuestions = [
@@ -97,5 +101,53 @@ describe('ask-user-question runtime validation', () => {
     }, questions)).toEqual({
       deployment: { selected: [], other: 'Ask me later' },
     });
+  });
+
+  test('validates default option ids and builds timeout answers', () => {
+    const questions = parseAskUserQuestions([{
+      ...rawQuestions[0],
+      defaultOptionIds: ['automatic'],
+    }]);
+
+    expect(questions).not.toBeNull();
+    expect(buildAskUserDefaultAnswers(questions!)).toEqual({
+      deployment: { selected: ['automatic'] },
+    });
+    expect(parseAskUserQuestions([{
+      ...rawQuestions[0],
+      defaultOptionIds: ['custom'],
+    }])).toBeNull();
+  });
+
+  test('defaults to required waiting and validates timeout policies', () => {
+    const questions = parseAskUserQuestions(rawQuestions)!;
+
+    expect(parseAskUserWaitPolicy(undefined, questions)).toEqual({
+      mode: AskUserWaitMode.REQUIRED,
+    });
+    expect(parseAskUserWaitPolicy({
+      mode: AskUserWaitMode.TIMEOUT,
+      timeoutMinutes: 10,
+      onTimeout: AskUserTimeoutBehavior.MODEL_DECIDES,
+    }, questions)).toEqual({
+      mode: AskUserWaitMode.TIMEOUT,
+      timeoutMinutes: 10,
+      onTimeout: AskUserTimeoutBehavior.MODEL_DECIDES,
+    });
+    expect(parseAskUserWaitPolicy({
+      mode: AskUserWaitMode.TIMEOUT,
+      timeoutMinutes: 10,
+      onTimeout: AskUserTimeoutBehavior.USE_DEFAULTS,
+    }, questions)).toBeNull();
+
+    const questionsWithDefaults = parseAskUserQuestions([{
+      ...rawQuestions[0],
+      defaultOptionIds: ['automatic'],
+    }])!;
+    expect(parseAskUserWaitPolicy({
+      mode: AskUserWaitMode.TIMEOUT,
+      timeoutMinutes: 10,
+      onTimeout: AskUserTimeoutBehavior.USE_DEFAULTS,
+    }, questionsWithDefaults)?.mode).toBe(AskUserWaitMode.TIMEOUT);
   });
 });

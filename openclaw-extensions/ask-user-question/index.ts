@@ -37,25 +37,40 @@ type Question = {
   header?: string;
   options: QuestionOption[];
   multiSelect?: boolean;
+  defaultOptionIds?: string[];
 };
+
+type WaitPolicy =
+  | { mode: 'required' }
+  | {
+      mode: 'timeout';
+      timeoutMinutes: number;
+      onTimeout: 'use-defaults' | 'model-decides';
+    };
 
 type AskUserInput = {
   questions: Question[];
   sessionKey?: string;
+  waitPolicy: WaitPolicy;
 };
 
 type AskUserResponse = {
-  behavior: 'allow' | 'deny';
-  answers?: Record<string, {
-    selected: string[];
-    optionInputs?: Record<string, string>;
-    other?: string;
-  }>;
+  behavior: 'allow' | 'deny' | 'timeout';
+  answers?: Record<
+    string,
+    {
+      selected: string[];
+      optionInputs?: Record<string, string>;
+      other?: string;
+    }
+  >;
+  timedOut?: boolean;
 };
 
 const LOOPBACK_CALLBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
 export const MAX_ASK_USER_QUESTIONS = 8;
+export const MAX_ASK_USER_TIMEOUT_MINUTES = 24 * 60;
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
 
 type HttpCallbackResult = {
@@ -71,8 +86,8 @@ const isLoopbackCallbackUrl = (value: string): boolean => {
   try {
     const url = new URL(value);
     return (
-      (url.protocol === 'http:' || url.protocol === 'https:')
-      && LOOPBACK_CALLBACK_HOSTS.has(url.hostname.toLowerCase())
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      LOOPBACK_CALLBACK_HOSTS.has(url.hostname.toLowerCase())
     );
   } catch {
     return false;
@@ -169,20 +184,26 @@ const isSafeAskUserId = (value: string): boolean =>
   askUserIdRegex.test(value) && !(value in Object.prototype);
 
 export const parseQuestions = (value: unknown): Question[] | null => {
-  if (!Array.isArray(value)
-    || value.length < 1
-    || value.length > MAX_ASK_USER_QUESTIONS) return null;
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ASK_USER_QUESTIONS)
+    return null;
   const questionIds = new Set<string>();
   const questions: Question[] = [];
   for (const rawQuestion of value) {
     if (!isRecord(rawQuestion)) return null;
     const id = readRequiredString(rawQuestion.id);
     const question = readRequiredString(rawQuestion.question);
-    if (!id || !isSafeAskUserId(id) || !question || questionIds.has(id)
-      || (rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string')
-      || (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean')
-      || !Array.isArray(rawQuestion.options)
-      || rawQuestion.options.length < 2 || rawQuestion.options.length > 4) return null;
+    if (
+      !id ||
+      !isSafeAskUserId(id) ||
+      !question ||
+      questionIds.has(id) ||
+      (rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string') ||
+      (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean') ||
+      !Array.isArray(rawQuestion.options) ||
+      rawQuestion.options.length < 2 ||
+      rawQuestion.options.length > 4
+    )
+      return null;
     const optionIds = new Set<string>();
     const options: QuestionOption[] = [];
     for (const rawOption of rawQuestion.options) {
@@ -201,8 +222,11 @@ export const parseQuestions = (value: unknown): Question[] | null => {
         if (!isRecord(rawOption.input)) return null;
         const inputLabel = readRequiredString(rawOption.input.label);
         if (!inputLabel) return null;
-        if (rawOption.input.placeholder !== undefined
-          && typeof rawOption.input.placeholder !== 'string') return null;
+        if (
+          rawOption.input.placeholder !== undefined &&
+          typeof rawOption.input.placeholder !== 'string'
+        )
+          return null;
         input = {
           label: inputLabel,
           ...(typeof rawOption.input.placeholder === 'string'
@@ -220,15 +244,65 @@ export const parseQuestions = (value: unknown): Question[] | null => {
       });
     }
     questionIds.add(id);
+    let defaultOptionIds: string[] | undefined;
+    if (rawQuestion.defaultOptionIds !== undefined) {
+      if (!Array.isArray(rawQuestion.defaultOptionIds)) return null;
+      const rawDefaultIds = rawQuestion.defaultOptionIds.map(readRequiredString);
+      if (rawDefaultIds.some(defaultId => !defaultId)) return null;
+      defaultOptionIds = rawDefaultIds as string[];
+      const defaultIdSet = new Set(defaultOptionIds);
+      const optionsById = new Map(options.map(option => [option.id, option]));
+      if (
+        defaultOptionIds.length < 1 ||
+        defaultOptionIds.length > options.length ||
+        defaultIdSet.size !== defaultOptionIds.length ||
+        (!rawQuestion.multiSelect && defaultOptionIds.length !== 1) ||
+        defaultOptionIds.some(defaultId => {
+          const option = optionsById.get(defaultId);
+          return !option || Boolean(option.input);
+        })
+      )
+        return null;
+    }
     questions.push({
       id,
       question,
       options,
       ...(typeof rawQuestion.header === 'string' ? { header: rawQuestion.header.trim() } : {}),
       ...(rawQuestion.multiSelect === true ? { multiSelect: true } : {}),
+      ...(defaultOptionIds ? { defaultOptionIds } : {}),
     });
   }
   return questions;
+};
+
+export const parseWaitPolicy = (value: unknown, questions: Question[]): WaitPolicy | null => {
+  if (value === undefined) return { mode: 'required' };
+  if (!isRecord(value)) return null;
+  if (value.mode === 'required') {
+    return value.timeoutMinutes === undefined && value.onTimeout === undefined
+      ? { mode: 'required' }
+      : null;
+  }
+  if (
+    value.mode !== 'timeout' ||
+    typeof value.timeoutMinutes !== 'number' ||
+    !Number.isInteger(value.timeoutMinutes) ||
+    value.timeoutMinutes < 1 ||
+    value.timeoutMinutes > MAX_ASK_USER_TIMEOUT_MINUTES ||
+    (value.onTimeout !== 'use-defaults' && value.onTimeout !== 'model-decides')
+  )
+    return null;
+  if (
+    value.onTimeout === 'use-defaults' &&
+    questions.some(question => !question.defaultOptionIds?.length)
+  )
+    return null;
+  return {
+    mode: 'timeout',
+    timeoutMinutes: value.timeoutMinutes,
+    onTimeout: value.onTimeout,
+  };
 };
 
 const parseAnswers = (value: unknown, questions: Question[]): AskUserResponse['answers'] => {
@@ -241,13 +315,19 @@ const parseAnswers = (value: unknown, questions: Question[]): AskUserResponse['a
     if (selected.some(id => !id)) return undefined;
     const selectedIds = selected as string[];
     const optionsById = new Map(question.options.map(option => [option.id, option]));
-    if (new Set(selectedIds).size !== selectedIds.length
-      || (!question.multiSelect && selectedIds.length > 1)
-      || selectedIds.some(id => !optionsById.has(id))) return undefined;
+    if (
+      new Set(selectedIds).size !== selectedIds.length ||
+      (!question.multiSelect && selectedIds.length > 1) ||
+      selectedIds.some(id => !optionsById.has(id))
+    )
+      return undefined;
     const other = rawAnswer.other === undefined ? undefined : readRequiredString(rawAnswer.other);
-    if ((rawAnswer.other !== undefined && !other)
-      || (!question.multiSelect && selectedIds.length > 0 && other)
-      || (selectedIds.length === 0 && !other)) return undefined;
+    if (
+      (rawAnswer.other !== undefined && !other) ||
+      (!question.multiSelect && selectedIds.length > 0 && other) ||
+      (selectedIds.length === 0 && !other)
+    )
+      return undefined;
     let optionInputs: Record<string, string> | undefined;
     if (rawAnswer.optionInputs !== undefined) {
       if (!isRecord(rawAnswer.optionInputs)) return undefined;
@@ -279,16 +359,24 @@ const QuestionOptionSchema = Type.Object({
   }),
   label: Type.String({ description: 'Option label (1-5 words).' }),
   description: Type.Optional(Type.String({ description: 'Short explanation or tradeoff.' })),
-  input: Type.Optional(Type.Object({
-    label: Type.String({
-      description: 'Label for the required extra information requested after this option is selected.',
-    }),
-    placeholder: Type.Optional(Type.String({
-      description: 'Example or hint shown in the extra-information field.',
-    })),
-  }, {
-    description: 'Required text input shown only when this option is selected.',
-  })),
+  input: Type.Optional(
+    Type.Object(
+      {
+        label: Type.String({
+          description:
+            'Label for the required extra information requested after this option is selected.',
+        }),
+        placeholder: Type.Optional(
+          Type.String({
+            description: 'Example or hint shown in the extra-information field.',
+          }),
+        ),
+      },
+      {
+        description: 'Required text input shown only when this option is selected.',
+      },
+    ),
+  ),
 });
 
 const QuestionSchema = Type.Object({
@@ -306,7 +394,54 @@ const QuestionSchema = Type.Object({
     description: 'Available choices (2-4 options).',
   }),
   multiSelect: Type.Optional(Type.Boolean({ description: 'Allow multiple selections.' })),
+  defaultOptionIds: Type.Optional(
+    Type.Array(
+      Type.String({
+        minLength: 1,
+        maxLength: 64,
+        pattern: ASK_USER_ID_PATTERN,
+      }),
+      {
+        minItems: 1,
+        maxItems: 4,
+        description:
+          'Option ids to select if a timed request uses defaults. Use exactly one for single-select questions. Options requiring input cannot be defaults.',
+      },
+    ),
+  ),
 });
+
+export const AskUserWaitPolicySchema = Type.Union(
+  [
+    Type.Object(
+      {
+        mode: Type.Literal('required', {
+          description: 'Wait indefinitely because an explicit user decision is required.',
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        mode: Type.Literal('timeout'),
+        timeoutMinutes: Type.Integer({
+          minimum: 1,
+          maximum: MAX_ASK_USER_TIMEOUT_MINUTES,
+          description: 'Maximum number of minutes to wait for the user.',
+        }),
+        onTimeout: Type.Union([Type.Literal('use-defaults'), Type.Literal('model-decides')], {
+          description:
+            "Use every question's defaultOptionIds, or return control so the model can decide from context.",
+        }),
+      },
+      { additionalProperties: false },
+    ),
+  ],
+  {
+    description:
+      'Waiting policy. Omit to require an explicit user response. Use a timeout only when the task can safely continue without the user.',
+  },
+);
 
 export const AskUserQuestionSchema = Type.Object({
   questions: Type.Array(QuestionSchema, {
@@ -314,6 +449,7 @@ export const AskUserQuestionSchema = Type.Object({
     maxItems: MAX_ASK_USER_QUESTIONS,
     description: `Questions to show (1-${MAX_ASK_USER_QUESTIONS}).`,
   }),
+  waitPolicy: Type.Optional(AskUserWaitPolicySchema),
 });
 
 async function askUser(
@@ -337,21 +473,67 @@ async function askUser(
     const text = await readCallbackBody(response);
 
     if (!response.ok) {
-      throw new Error(`AskUserQuestion callback HTTP ${response.status}: ${text.trim() || response.statusText}`);
+      throw new Error(
+        `AskUserQuestion callback HTTP ${response.status}: ${text.trim() || response.statusText}`,
+      );
     }
 
     if (!text.trim()) return { behavior: 'deny' };
 
     const parsed = JSON.parse(text);
+    if (parsed?.behavior === 'timeout') return { behavior: 'timeout' };
     if (parsed?.behavior !== 'allow') return { behavior: 'deny' };
     const answers = parseAnswers(parsed.answers, input.questions);
     if (!answers) return { behavior: 'deny' };
-    return { behavior: 'allow', answers };
+    return {
+      behavior: 'allow',
+      answers,
+      ...(parsed.timedOut === true ? { timedOut: true } : {}),
+    };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') return { behavior: 'deny' };
     throw error;
   }
 }
+
+export const formatAskUserToolResponse = (
+  response: AskUserResponse,
+  questions: Question[],
+): string => {
+  if (response.behavior === 'deny') return 'User denied the operation.';
+  if (response.behavior === 'timeout') {
+    return 'Timed out waiting for the user. Choose suitable values yourself based on the context and continue.';
+  }
+
+  const answerLines = response.answers
+    ? Object.entries(response.answers)
+        .map(([questionId, answer]) => {
+          const question = questions.find(item => item.id === questionId);
+          const optionsById = new Map(question?.options.map(option => [option.id, option]) ?? []);
+          const lines = [
+            question?.question ?? questionId,
+            `用户选择：${answer.selected.map(id => optionsById.get(id)?.label ?? id).join(', ') || '无'}`,
+          ];
+          if (answer.optionInputs && Object.keys(answer.optionInputs).length > 0) {
+            lines.push(
+              '补充信息：',
+              ...Object.entries(answer.optionInputs).map(
+                ([optionId, value]) =>
+                  `- ${optionsById.get(optionId)?.label ?? optionId}: ${value}`,
+              ),
+            );
+          }
+          if (answer.other) lines.push(`其他：${answer.other}`);
+          return lines.join('\n');
+        })
+        .join('\n\n')
+    : 'User approved.';
+
+  const prefix = response.timedOut
+    ? 'The user did not respond before the timeout. The configured default choices were selected automatically.\n\n'
+    : '';
+  return `${prefix}${answerLines}`;
+};
 
 const plugin = {
   id: 'ask-user-question',
@@ -371,82 +553,61 @@ const plugin = {
 
     // Use a factory so the tool is only available for JustDo desktop sessions.
     // IM channel sessions (qqbot, dingtalk, weixin, feishu, etc.) get null -> tool hidden.
-    api.registerTool((ctx) => {
-      const sessionKey = ctx.sessionKey ?? '';
-      const isLocalDesktop =
-        sessionKey.startsWith('justdo:')
-        || /^agent:[^:]+:justdo:/.test(sessionKey);
-      if (!isLocalDesktop) {
-        return null;
-      }
-
-      return {
-        name: 'AskUserQuestion',
-        label: 'Ask User Question',
-        description:
-          'Ask the user to choose from 2-4 predefined options and wait for the response. '
-          + 'Set an option input when selecting it requires additional information from the user. '
-          + 'Prefer this tool whenever the user needs to choose, decide, confirm, or select and clear options can be provided.',
-      parameters: AskUserQuestionSchema,
-      async execute(_id: string, params: unknown, signal?: AbortSignal) {
-        const questions = parseQuestions((params as AskUserInput)?.questions);
-        const input: AskUserInput = {
-          questions: questions ?? [],
-          sessionKey,
-        };
-        if (!questions) {
-          return {
-            content: [{ type: 'text', text: 'Invalid questions provided.' }],
-            isError: true,
-          };
+    api.registerTool(
+      ctx => {
+        const sessionKey = ctx.sessionKey ?? '';
+        const isLocalDesktop =
+          sessionKey.startsWith('justdo:') || /^agent:[^:]+:justdo:/.test(sessionKey);
+        if (!isLocalDesktop) {
+          return null;
         }
 
-        try {
-          const response = await askUser(config, input, signal);
-
-          if (response.behavior === 'deny') {
-            return {
-              content: [{ type: 'text', text: 'User denied the operation.' }],
+        return {
+          name: 'AskUserQuestion',
+          label: 'Ask User Question',
+          description:
+            'Ask the user to choose from 2-4 predefined options. ' +
+            'Set an option input when selecting it requires additional information from the user. ' +
+            'Use required waiting when only the user can safely answer, including consequential confirmations. ' +
+            'For non-critical preferences, use a timeout and either mark defaultOptionIds or let the model decide after timeout. ' +
+            'Prefer this tool whenever the user needs to choose, decide, confirm, or select and clear options can be provided.',
+          parameters: AskUserQuestionSchema,
+          async execute(_id: string, params: unknown, signal?: AbortSignal) {
+            const questions = parseQuestions((params as AskUserInput)?.questions);
+            const waitPolicy = questions
+              ? parseWaitPolicy((params as AskUserInput)?.waitPolicy, questions)
+              : null;
+            const input: AskUserInput = {
+              questions: questions ?? [],
+              sessionKey,
+              waitPolicy: waitPolicy ?? { mode: 'required' },
             };
-          }
+            if (!questions || !waitPolicy) {
+              return {
+                content: [{ type: 'text', text: 'Invalid questions or wait policy provided.' }],
+                isError: true,
+              };
+            }
 
-          const answerLines = response.answers
-            ? Object.entries(response.answers)
-                .map(([questionId, answer]) => {
-                  const question = input.questions.find(item => item.id === questionId);
-                  const optionsById = new Map(
-                    question?.options.map(option => [option.id, option]) ?? [],
-                  );
-                  const lines = [
-                    question?.question ?? questionId,
-                    `用户选择：${answer.selected.map(id => optionsById.get(id)?.label ?? id).join(', ') || '无'}`,
-                  ];
-                  if (answer.optionInputs && Object.keys(answer.optionInputs).length > 0) {
-                    lines.push(
-                      '补充信息：',
-                      ...Object.entries(answer.optionInputs).map(([optionId, value]) =>
-                        `- ${optionsById.get(optionId)?.label ?? optionId}: ${value}`),
-                    );
-                  }
-                  if (answer.other) lines.push(`其他：${answer.other}`);
-                  return lines.join('\n');
-                })
-                .join('\n\n')
-            : 'User approved.';
-
-          return {
-            content: [{ type: 'text', text: answerLines }],
-          };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ type: 'text', text: `AskUserQuestion failed: ${message}` }],
-            isError: true,
-          };
-        }
+            try {
+              const response = await askUser(config, input, signal);
+              return {
+                content: [
+                  { type: 'text', text: formatAskUserToolResponse(response, input.questions) },
+                ],
+              };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return {
+                content: [{ type: 'text', text: `AskUserQuestion failed: ${message}` }],
+                isError: true,
+              };
+            }
+          },
+        }; // end of returned tool object
       },
-    };  // end of returned tool object
-    }, { name: 'AskUserQuestion' });  // end of factory function passed to registerTool
+      { name: 'AskUserQuestion' },
+    ); // end of factory function passed to registerTool
 
     api.logger.info('[ask-user-question] registered AskUserQuestion tool factory.');
   },

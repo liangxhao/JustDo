@@ -88,7 +88,9 @@ Extension 的导入、更新、删除、启用和配置更新由 `OpenClawExtens
 
 每个问题和选项都必须声明请求内唯一的稳定 `id`，格式为 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`，且不能使用 `Object.prototype` 保留属性名。问题选项可以声明 `input: { label, placeholder? }`；存在 `input` 时，renderer 仅在该选项被选中后显示必填补充字段。答案以 question id 为键，`selected` 和 `optionInputs` 保存 option id，并可带独立的 `other` 文本；整个链路不使用展示文本或分隔符关联答案。Main process 和 Extension 会在各自的运行时边界校验问题、ID 唯一性和答案完整性，非法响应按拒绝处理。
 
-Ask-user 请求没有自动选择或超时默认值。Broker 和 Extension 会等待用户明确提交或取消；调用方中止运行或 HTTP 断开时只取消对应请求，应用/Extension host 关闭时则把全部待处理请求按 `deny` 结束。Broker 按 request id 保留原始问题，Host 不信任 renderer 回传的问题定义；renderer 初始化或 reload 后通过 IPC 重放仍在等待的交互。Callback server 和 Host controller 的 start/stop 使用串行生命周期队列，避免重启期间旧 server 的关闭回调影响新实例。
+Ask-user 请求通过可选 `waitPolicy` 声明等待语义。省略该字段或设置 `mode: "required"` 时会无限等待用户明确提交或取消，适用于只有用户能够决定或具有实际后果的确认；`mode: "timeout"` 则必须提供 1–1440 的整数 `timeoutMinutes`，并选择 `onTimeout: "use-defaults"` 或 `"model-decides"`。前者要求每个问题通过 `defaultOptionIds` 声明合法默认项，且默认项不能包含必填 `input`；超时后 Broker 生成结构化默认答案。后者超时后向模型返回明确的 timeout 工具结果，由模型根据上下文选择合适值并继续。旧调用未提供策略时仍保持原有无限等待行为。
+
+超时计时由 Main process Broker 持有，不依赖 renderer 生命周期。Broker 在请求中记录 `expiresAt`，renderer 会展示等待策略和默认项；到期后 Broker 原子移除请求、清理 timer、通知 renderer 关闭弹框，再向 Extension 返回默认答案或 timeout 状态。用户响应、调用方中止运行或 HTTP 断开会清除对应 timer；应用/Extension host 关闭时则把全部待处理请求按 `deny` 结束。Broker 按 request id 保留原始问题和等待策略，Host 不信任 renderer 回传的问题定义；renderer 初始化或 reload 后通过 IPC 重放仍在等待的交互。Callback server 和 Host controller 的 start/stop 使用串行生命周期队列，避免重启期间旧 server 的关闭回调影响新实例。
 
 主要 preload API：
 

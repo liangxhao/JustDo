@@ -38,12 +38,37 @@ export type AskUserQuestion = {
   header?: string;
   options: AskUserQuestionOption[];
   multiSelect?: boolean;
+  defaultOptionIds?: string[];
 };
+
+export const AskUserWaitMode = {
+  REQUIRED: 'required',
+  TIMEOUT: 'timeout',
+} as const;
+
+export const AskUserTimeoutBehavior = {
+  USE_DEFAULTS: 'use-defaults',
+  MODEL_DECIDES: 'model-decides',
+} as const;
+
+export const MAX_ASK_USER_TIMEOUT_MINUTES = 24 * 60;
+
+export type AskUserWaitPolicy =
+  | {
+      mode: typeof AskUserWaitMode.REQUIRED;
+    }
+  | {
+      mode: typeof AskUserWaitMode.TIMEOUT;
+      timeoutMinutes: number;
+      onTimeout: (typeof AskUserTimeoutBehavior)[keyof typeof AskUserTimeoutBehavior];
+    };
 
 export type AskUserRequest = {
   requestId: string;
   sessionKey?: string;
   questions: AskUserQuestion[];
+  waitPolicy: AskUserWaitPolicy;
+  expiresAt?: number;
 };
 
 export type AskUserQuestionAnswer = {
@@ -55,8 +80,9 @@ export type AskUserQuestionAnswer = {
 export type AskUserAnswers = Record<string, AskUserQuestionAnswer>;
 
 export type AskUserResponse = {
-  behavior: 'allow' | 'deny';
+  behavior: 'allow' | 'deny' | 'timeout';
   answers?: AskUserAnswers;
+  timedOut?: boolean;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -65,6 +91,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
 export const MAX_ASK_USER_QUESTIONS = 8;
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
+
+export const REQUIRED_ASK_USER_WAIT_POLICY: AskUserWaitPolicy = {
+  mode: AskUserWaitMode.REQUIRED,
+};
 
 const isSafeAskUserId = (value: string): boolean =>
   askUserIdRegex.test(value) && !(value in Object.prototype);
@@ -88,7 +118,9 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
     const question = readRequiredString(rawQuestion.question);
     if (!id || !isSafeAskUserId(id) || !question || questionIds.has(id)) return null;
     if ((rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string')
-      || (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean')) {
+      || (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean')
+      || (rawQuestion.defaultOptionIds !== undefined
+        && !Array.isArray(rawQuestion.defaultOptionIds))) {
       return null;
     }
     if (!Array.isArray(rawQuestion.options)
@@ -134,6 +166,23 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
       });
     }
 
+    let defaultOptionIds: string[] | undefined;
+    if (rawQuestion.defaultOptionIds !== undefined) {
+      const rawDefaultIds = rawQuestion.defaultOptionIds.map(readRequiredString);
+      if (rawDefaultIds.some(id => !id)) return null;
+      defaultOptionIds = rawDefaultIds as string[];
+      const defaultIdSet = new Set(defaultOptionIds);
+      const optionsById = new Map(options.map(option => [option.id, option]));
+      if (defaultOptionIds.length < 1
+        || defaultOptionIds.length > options.length
+        || defaultIdSet.size !== defaultOptionIds.length
+        || (!rawQuestion.multiSelect && defaultOptionIds.length !== 1)
+        || defaultOptionIds.some(optionId => {
+          const option = optionsById.get(optionId);
+          return !option || Boolean(option.input);
+        })) return null;
+    }
+
     questionIds.add(id);
     questions.push({
       id,
@@ -143,9 +192,52 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
         ? { header: rawQuestion.header.trim() }
         : {}),
       ...(rawQuestion.multiSelect === true ? { multiSelect: true } : {}),
+      ...(defaultOptionIds ? { defaultOptionIds } : {}),
     });
   }
   return questions;
+};
+
+export const parseAskUserWaitPolicy = (
+  value: unknown,
+  questions: AskUserQuestion[],
+): AskUserWaitPolicy | null => {
+  if (value === undefined) return REQUIRED_ASK_USER_WAIT_POLICY;
+  if (!isRecord(value)) return null;
+
+  if (value.mode === AskUserWaitMode.REQUIRED) {
+    return value.timeoutMinutes === undefined && value.onTimeout === undefined
+      ? { mode: AskUserWaitMode.REQUIRED }
+      : null;
+  }
+
+  if (value.mode !== AskUserWaitMode.TIMEOUT
+    || !Number.isInteger(value.timeoutMinutes)
+    || typeof value.timeoutMinutes !== 'number'
+    || value.timeoutMinutes < 1
+    || value.timeoutMinutes > MAX_ASK_USER_TIMEOUT_MINUTES
+    || (value.onTimeout !== AskUserTimeoutBehavior.USE_DEFAULTS
+      && value.onTimeout !== AskUserTimeoutBehavior.MODEL_DECIDES)) return null;
+
+  if (value.onTimeout === AskUserTimeoutBehavior.USE_DEFAULTS
+    && questions.some(question => !question.defaultOptionIds?.length)) return null;
+
+  return {
+    mode: AskUserWaitMode.TIMEOUT,
+    timeoutMinutes: value.timeoutMinutes,
+    onTimeout: value.onTimeout,
+  };
+};
+
+export const buildAskUserDefaultAnswers = (
+  questions: AskUserQuestion[],
+): AskUserAnswers | null => {
+  const answers: AskUserAnswers = {};
+  for (const question of questions) {
+    if (!question.defaultOptionIds?.length) return null;
+    answers[question.id] = { selected: [...question.defaultOptionIds] };
+  }
+  return answers;
 };
 
 export const parseAskUserAnswers = (

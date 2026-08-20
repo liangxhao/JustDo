@@ -7,11 +7,8 @@
 import http from 'http';
 import net from 'net';
 
-import type {
-  AskUserRequest,
-  AskUserResponse,
-} from '../../../shared/openclaw/extensions';
-import { parseAskUserQuestions } from '../../../shared/openclaw/extensions';
+import type { AskUserRequest, AskUserResponse } from '../../../shared/openclaw/extensions';
+import { parseAskUserQuestions, parseAskUserWaitPolicy } from '../../../shared/openclaw/extensions';
 import { AskUserRequestBroker } from './askUserRequestBroker';
 
 export type { AskUserRequest, AskUserResponse } from '../../../shared/openclaw/extensions';
@@ -183,7 +180,11 @@ export class OpenClawExtensionCallbackServer {
   private async handleAskUser(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     try {
       const body = await this.readBody(req);
-      const input = JSON.parse(body) as { questions?: unknown[]; sessionKey?: unknown };
+      const input = JSON.parse(body) as {
+        questions?: unknown[];
+        sessionKey?: unknown;
+        waitPolicy?: unknown;
+      };
       log(
         'INFO',
         `AskUser request received, questions=${Array.isArray(input.questions) ? input.questions.length : 0}`,
@@ -195,9 +196,16 @@ export class OpenClawExtensionCallbackServer {
         res.end(JSON.stringify({ error: 'Invalid "questions" field' }));
         return;
       }
+      const waitPolicy = parseAskUserWaitPolicy(input.waitPolicy, questions);
+      if (!waitPolicy) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid "waitPolicy" field' }));
+        return;
+      }
 
       const pending = this.askUserBroker.request(
         questions,
+        waitPolicy,
         typeof input.sessionKey === 'string' ? input.sessionKey : undefined,
       );
       const cancelPending = () => {

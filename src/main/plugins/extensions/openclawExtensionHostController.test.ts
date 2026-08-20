@@ -26,6 +26,7 @@ describe('OpenClawExtensionHostController interaction validation', () => {
     const resolve = vi.spyOn(controller, 'resolveAskUser').mockReturnValue(true);
     vi.spyOn(controller, 'getPendingAskUserRequest').mockReturnValue({
       requestId: 'request-1',
+      waitPolicy: { mode: 'required' },
       questions,
     });
 
@@ -63,6 +64,7 @@ describe('OpenClawExtensionHostController interaction validation', () => {
     const resolve = vi.spyOn(controller, 'resolveAskUser').mockReturnValue(true);
     vi.spyOn(controller, 'getPendingAskUserRequest').mockReturnValue({
       requestId: 'request-2',
+      waitPolicy: { mode: 'required' },
       questions,
     });
 
@@ -86,16 +88,19 @@ describe('OpenClawExtensionHostController interaction validation', () => {
     const resolve = vi.spyOn(controller, 'resolveAskUser').mockReturnValue(true);
     vi.spyOn(controller, 'getPendingAskUserRequest').mockReturnValue({
       requestId: 'request-3',
+      waitPolicy: { mode: 'required' },
       questions,
     });
 
     const result = controller.respondToInteraction('request-3', {
       behavior: 'allow',
       updatedInput: {
-        questions: [{
-          ...questions[0],
-          options: questions[0].options.map(option => ({ ...option, input: undefined })),
-        }],
+        questions: [
+          {
+            ...questions[0],
+            options: questions[0].options.map(option => ({ ...option, input: undefined })),
+          },
+        ],
         answers: { deployment: { selected: ['custom'] } },
       },
     });

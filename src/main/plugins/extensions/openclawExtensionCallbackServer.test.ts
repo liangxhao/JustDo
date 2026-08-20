@@ -20,22 +20,28 @@ const postJson = (
 ): Promise<{ status: number; body: string }> =>
   new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
-    const request = http.request(url, {
-      method: 'POST',
-      agent: false,
-      headers: {
-        'content-type': 'application/json',
-        'content-length': Buffer.byteLength(payload),
-        'x-ask-user-secret': secret,
+    const request = http.request(
+      url,
+      {
+        method: 'POST',
+        agent: false,
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(payload),
+          'x-ask-user-secret': secret,
+        },
       },
-    }, response => {
-      const chunks: Buffer[] = [];
-      response.on('data', (chunk: Buffer) => chunks.push(chunk));
-      response.once('end', () => resolve({
-        status: response.statusCode ?? 0,
-        body: Buffer.concat(chunks).toString('utf8'),
-      }));
-    });
+      response => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.once('end', () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+          }),
+        );
+      },
+    );
     request.once('error', reject);
     request.end(payload);
   });
@@ -80,12 +86,46 @@ describe('OpenClawExtensionCallbackServer', () => {
       ],
     };
 
-    const response = await postJson(server.askUserCallbackUrl!, {
-      questions: [question, question],
-    }, 'test-secret');
+    const response = await postJson(
+      server.askUserCallbackUrl!,
+      {
+        questions: [question, question],
+      },
+      'test-secret',
+    );
 
     expect(response.status).toBe(400);
     expect(response.body).toContain('Invalid');
+  });
+
+  it('rejects default timeout behavior when a question has no default option', async () => {
+    server = new OpenClawExtensionCallbackServer('test-secret');
+    await server.start();
+
+    const response = await postJson(
+      server.askUserCallbackUrl!,
+      {
+        questions: [
+          {
+            id: 'continue',
+            question: 'Continue?',
+            options: [
+              { id: 'yes', label: 'Yes' },
+              { id: 'no', label: 'No' },
+            ],
+          },
+        ],
+        waitPolicy: {
+          mode: 'timeout',
+          timeoutMinutes: 10,
+          onTimeout: 'use-defaults',
+        },
+      },
+      'test-secret',
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body).toContain('waitPolicy');
   });
 
   it('waits without a default answer and denies the request when the host stops', async () => {
@@ -97,16 +137,22 @@ describe('OpenClawExtensionCallbackServer', () => {
     server.onAskUser(() => notifyRequest?.());
     await server.start();
 
-    const pendingResponse = postJson(server.askUserCallbackUrl!, {
-      questions: [{
-        id: 'continue',
-        question: 'Continue?',
-        options: [
-          { id: 'yes', label: 'Yes' },
-          { id: 'no', label: 'No' },
+    const pendingResponse = postJson(
+      server.askUserCallbackUrl!,
+      {
+        questions: [
+          {
+            id: 'continue',
+            question: 'Continue?',
+            options: [
+              { id: 'yes', label: 'Yes' },
+              { id: 'no', label: 'No' },
+            ],
+          },
         ],
-      }],
-    }, 'test-secret');
+      },
+      'test-secret',
+    );
     await requestReceived;
 
     await server.stop();
@@ -132,14 +178,16 @@ describe('OpenClawExtensionCallbackServer', () => {
     await server.start();
 
     const payload = JSON.stringify({
-      questions: [{
-        id: 'continue',
-        question: 'Continue?',
-        options: [
-          { id: 'yes', label: 'Yes' },
-          { id: 'no', label: 'No' },
-        ],
-      }],
+      questions: [
+        {
+          id: 'continue',
+          question: 'Continue?',
+          options: [
+            { id: 'yes', label: 'Yes' },
+            { id: 'no', label: 'No' },
+          ],
+        },
+      ],
     });
     const request = http.request(server.askUserCallbackUrl!, {
       method: 'POST',

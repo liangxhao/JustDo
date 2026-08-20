@@ -22,6 +22,8 @@ export type AskUserInteractionEnvelope = {
     interactionKind: typeof CoworkInteractionKind.STRUCTURED_QUESTION;
     toolInput: {
       questions: AskUserRequest['questions'];
+      waitPolicy: AskUserRequest['waitPolicy'];
+      expiresAt?: number;
       sessionKey?: string;
       sessionId: string;
     };
@@ -72,8 +74,11 @@ export class OpenClawExtensionHostLifecycle {
   }
 
   listPendingInteractions(): AskUserInteractionEnvelope[] {
-    return this.controller?.listPendingAskUserRequests().map(request =>
-      this.toInteractionEnvelope(request)) ?? [];
+    return (
+      this.controller
+        ?.listPendingAskUserRequests()
+        .map(request => this.toInteractionEnvelope(request)) ?? []
+    );
   }
 
   async stop(): Promise<void> {
@@ -99,6 +104,8 @@ export class OpenClawExtensionHostLifecycle {
         interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
         toolInput: {
           questions: request.questions,
+          waitPolicy: request.waitPolicy,
+          ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
           sessionKey: request.sessionKey,
           sessionId,
         },
