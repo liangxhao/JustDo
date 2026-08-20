@@ -17,10 +17,12 @@ export const registerStoreHandlers = ({
     return getStore().get(key);
   });
 
-  ipcMain.handle('store:set', async (_event, key, value) => {
+  ipcMain.handle('store:set', (_event, key, value) => {
     getStore().set(key, value);
     if (key === 'app_config') {
-      await onAppConfigChanged();
+      void onAppConfigChanged().catch(error => {
+        console.error('[StoreIPC] Failed to apply persisted app config:', error);
+      });
     }
   });
 

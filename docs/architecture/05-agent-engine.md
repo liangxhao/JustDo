@@ -89,6 +89,11 @@ JustDo 本地配置包括：
 启用配置优先原地热更新，Gateway 自身配置等不支持热更新的字段由 Gateway watcher
 触发 restart。
 
+设置页写入 `app_config` 时，Main 在 SQLite 持久化完成后立即响应 Renderer，随后在
+Main 后台触发 `OpenClawConfigSyncService`。后台同步仍按服务队列串行执行，并在需要时
+等待热重载或重启 Gateway；这些运行时操作不占用设置页的“保存中”状态，关闭设置窗口
+也不会取消已经开始的同步。意外的后台同步异常记录到 Main 日志。
+
 JustDo 管理的配置默认写入 `tools.experimental.planTool: true`，使支持结构化
 tool calling 的模型可以调用 OpenClaw 原生 `update_plan`。该能力仍由 Gateway
 定义协议和执行语义；JustDo 不注册同名 MCP tool、不增加 provider allowlist，也不
