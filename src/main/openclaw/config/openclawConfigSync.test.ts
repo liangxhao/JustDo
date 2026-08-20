@@ -332,7 +332,6 @@ describe('OpenClaw managed connectivity config', () => {
         },
         deny: [
           'web_search',
-          'skill_workshop',
           'tts',
           'message',
           'nodes',

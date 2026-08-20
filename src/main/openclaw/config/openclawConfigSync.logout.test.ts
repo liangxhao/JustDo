@@ -273,6 +273,24 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
+  test('a second no-model sync removes the retired skill_workshop deny entry', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-tool-deny-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+
+    expect(writeMinimalConfig(configPath, 'startup')).toMatchObject({ ok: true });
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.tools.deny = ['skill_workshop', 'custom-denied-tool'];
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh)).toMatchObject({
+      ok: true,
+    });
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toEqual([
+      'custom-denied-tool',
+    ]);
+  });
+
   test('minimal config explicitly trusts extensions installed in app-managed state', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-plugin-trust-'));
     temporaryDirectories.push(directory);
@@ -331,6 +349,20 @@ describe('OpenClaw auth logout config sync', () => {
       maxEntries: 500,
     });
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
+  });
+
+  test('auth-scoped sync removes the retired skill_workshop deny entry', () => {
+    const configPath = writeExistingBuiltinConfig();
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.tools = { deny: ['skill_workshop', 'custom-denied-tool'] };
+    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout)).toMatchObject({
+      ok: true,
+    });
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toEqual([
+      'custom-denied-tool',
+    ]);
   });
 
   test('keeps the existing preservation behavior for non-logout minimal syncs', () => {

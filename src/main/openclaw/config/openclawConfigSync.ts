@@ -124,6 +124,14 @@ type OpenClawConfigVerification = {
   error?: string;
 };
 
+const removeRetiredManagedToolDenyEntries = (
+  tools: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (!Array.isArray(tools.deny)) return tools;
+  const deny = tools.deny.filter(value => value !== 'skill_workshop');
+  return deny.length === tools.deny.length ? tools : { ...tools, deny };
+};
+
 const containsBuiltinModelRef = (value: unknown): boolean => {
   if (typeof value === 'string') {
     return (
@@ -260,6 +268,7 @@ const buildAuthScopedOpenClawConfig = (
   const managedAgents = isRecord(managedConfig.agents) ? managedConfig.agents : {};
   const existingSession = isRecord(existingConfig.session) ? existingConfig.session : {};
   const managedSession = isRecord(managedConfig.session) ? managedConfig.session : {};
+  const existingTools = isRecord(existingConfig.tools) ? existingConfig.tools : null;
   const existingDefaults = isRecord(existingAgents.defaults)
     ? existingAgents.defaults
     : {};
@@ -364,6 +373,7 @@ const buildAuthScopedOpenClawConfig = (
       ...existingSession,
       ...managedSession,
     },
+    ...(existingTools ? { tools: removeRetiredManagedToolDenyEntries(existingTools) } : {}),
   };
 };
 
@@ -590,7 +600,6 @@ export const buildManagedOpenClawConnectivityConfig = (
     },
     deny: [
       'web_search',
-      'skill_workshop',
       'tts',
       'message',
       'nodes',
@@ -1929,7 +1938,9 @@ export class OpenClawConfigSync {
             const existingDefaults = isRecord(existingAgents.defaults)
               ? existingAgents.defaults
               : {};
-            const existingTools = isRecord(existing.tools) ? existing.tools : {};
+            const existingTools = removeRetiredManagedToolDenyEntries(
+              isRecord(existing.tools) ? existing.tools : {},
+            );
             const existingFileTools = isRecord(existingTools.fs) ? existingTools.fs : {};
             const existingExecTools = isRecord(existingTools.exec) ? existingTools.exec : {};
             const existingPlugins = isRecord(existing.plugins) ? existing.plugins : {};

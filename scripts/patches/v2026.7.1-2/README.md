@@ -179,8 +179,8 @@ flowchart LR
 
 #### `009-selective-tool-schema-catalog.cjs`
 
-- **做什么**：把 `browser`、goal、cron、memory 等明确列出的重型 schema 放入 Tool
-  Search catalog，按需再 hydrate，而不是全部塞进每次初始 prompt。
+- **做什么**：把 `browser`、goal、cron、memory、`skill_workshop` 等明确列出的重型
+  schema 放入 Tool Search catalog，按需再 hydrate，而不是全部塞进每次初始 prompt。
 - **关系与边界**：只改变 schema 暴露时机；工具授权、参数验证、调用和实现仍由上游
   负责，与 `011` goal RPC 或其他具体工具行为无依赖。
 - **当前保留原因**：上游没有 per-tool defer 配置；删除会恢复大 schema 常驻上下文，

@@ -97,12 +97,13 @@ tool calling 的模型可以调用 OpenClaw 原生 `update_plan`。该能力仍�
 
 JustDo 同时启用 OpenClaw 原生 `tools.toolSearch.mode: "directory"`，并通过
 `009-selective-tool-schema-catalog.cjs` 将其 catalog predicate 收窄到显式名单，目前为
-原生 `browser`、`cron`、`get_goal`、`create_goal`、`update_goal`、`memory_search`
-和 `memory_get` tool。其他授权工具仍直接暴露；普通请求只看到精简目录项和 Tool Search
-控制工具，相关请求则由 Gateway 加载对应完整 schema。工具最终仍通过 Gateway 的正常
+原生 `browser`、`cron`、`get_goal`、`create_goal`、`update_goal`、`memory_search`、
+`memory_get` 和 `skill_workshop` tool。其他授权工具仍直接暴露；普通请求只看到精简目录项
+和 Tool Search 控制工具，相关请求则由 Gateway 加载对应完整 schema。工具最终仍通过 Gateway 的正常
 权限、审批、Hook、日志与 telemetry 路径执行，JustDo 不实现绕过 schema 校验的代理
-tool。OpenClaw 提供受支持的 per-tool defer 名单后，应删除此版本级 patch 并改用原生
-配置。
+tool。配置同步会移除旧版本曾管理的 `skill_workshop` deny 项，同时保留其他用户 deny 项；
+沙箱运行仍遵循 OpenClaw 原生限制。OpenClaw 提供受支持的 per-tool defer 名单后，应删除
+此版本级 patch 并改用原生配置。
 
 JustDo 通过 `agents.defaults.compaction.justdoCodexLocal=true` 显式选择版本补丁提供的
 Codex-local 语义；不通过提示词内容猜测运行模式。自动压缩以有效 context window 的 90%
