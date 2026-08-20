@@ -7,6 +7,7 @@ const path = require('path');
 const PATCH_MANIFEST_FILENAME = 'runtime-patch-manifest.json';
 const PATCH_MANIFEST_FORMAT_VERSION = 2;
 const RUNTIME_DEPENDENCY_LOCK_FILENAME = 'npm-shrinkwrap.json';
+const INITIAL_BUNDLE_PENDING_FILENAME = '.initial-bundle-pending';
 const BUILD_RECIPE_FILES = [
   '.nvmrc',
   'package.json',
@@ -15,6 +16,7 @@ const BUILD_RECIPE_FILES = [
   'electron-builder.config.cjs',
   'scripts/electron-builder-hooks.cjs',
   'scripts/install-openclaw-runtime.cjs',
+  'scripts/openclaw-runtime-freeze.cjs',
   'scripts/openclaw-runtime-staging.cjs',
   'scripts/patch-openclaw-runtime.cjs',
   'scripts/verify-openclaw-pristine-contracts.cjs',
@@ -85,6 +87,153 @@ function hashFile(filePath) {
   const hash = crypto.createHash('sha256');
   hash.update(fs.readFileSync(filePath));
   return hash.digest('hex');
+}
+
+function readJsonFile(filePath, label) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    throw new Error(
+      `${label} is missing or invalid: ${filePath}. ` +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+}
+
+function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
+  const buildInfoPath = path.join(runtimeRoot, 'runtime-build-info.json');
+  const buildInfo = readJsonFile(buildInfoPath, 'OpenClaw runtime build info');
+  const problems = [];
+  const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
+  const runtimePackagePath = path.join(runtimeRoot, 'package.json');
+  const runtimePackageLockPath = path.join(runtimeRoot, RUNTIME_DEPENDENCY_LOCK_FILENAME);
+  const requiredFiles = [gatewayAsarPath, runtimePackagePath, runtimePackageLockPath];
+  const isSha256 = value => typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
+
+  try {
+    normalizeOpenClawVersion(buildInfo.openclawVersion);
+  } catch {
+    problems.push('OpenClaw version is invalid');
+  }
+  if (buildInfo.npmPackageVersion !== String(buildInfo.openclawVersion || '').replace(/^v/, '')) {
+    problems.push('npm package version does not match the OpenClaw version');
+  }
+  if (!isCanonicalSha512Integrity(buildInfo.npmIntegrity)) {
+    problems.push('npm package integrity is invalid');
+  }
+  for (const field of [
+    'npmTarballSha256',
+    'patchSetSha256',
+    'buildRecipeSha256',
+    'gatewayAsarSha256',
+    'runtimePackageSha256',
+    'runtimePackageLockSha256',
+  ]) {
+    if (!isSha256(buildInfo[field])) problems.push(`${field} is not a SHA-256 digest`);
+  }
+  if (options.expectedTarget && buildInfo.target !== options.expectedTarget) {
+    problems.push(
+      `runtime target is ${String(buildInfo.target)}, expected ${options.expectedTarget}`,
+    );
+  }
+  if (buildInfo.installMethod !== 'npm-package') {
+    problems.push(`install method is ${String(buildInfo.installMethod)}, expected npm-package`);
+  }
+  if (buildInfo.runtimePackageLockPath !== RUNTIME_DEPENDENCY_LOCK_FILENAME) {
+    problems.push('runtime dependency lock path is invalid');
+  }
+  for (const filePath of requiredFiles) {
+    if (!fs.existsSync(filePath))
+      problems.push(`required artifact is missing: ${path.basename(filePath)}`);
+  }
+  if (problems.length === 0) {
+    if (buildInfo.gatewayAsarSha256 !== hashFile(gatewayAsarPath)) {
+      problems.push('gateway.asar does not match runtime-build-info.json');
+    }
+    if (buildInfo.runtimePackageSha256 !== hashFile(runtimePackagePath)) {
+      problems.push('package.json does not match runtime-build-info.json');
+    }
+    if (buildInfo.runtimePackageLockSha256 !== hashFile(runtimePackageLockPath)) {
+      problems.push(`${RUNTIME_DEPENDENCY_LOCK_FILENAME} does not match runtime-build-info.json`);
+    }
+  }
+
+  let manifest;
+  if (options.requireBundle) {
+    const manifestPath = path.join(runtimeRoot, PATCH_MANIFEST_FILENAME);
+    const bundlePath = path.join(runtimeRoot, 'gateway-bundle.mjs');
+    manifest = readJsonFile(manifestPath, 'OpenClaw runtime patch manifest');
+    if (!fs.existsSync(bundlePath)) {
+      problems.push('gateway-bundle.mjs is missing');
+    } else {
+      const bundleStat = fs.statSync(bundlePath);
+      if (
+        manifest.gatewayBundle?.path !== 'gateway-bundle.mjs' ||
+        manifest.gatewayBundle?.size !== bundleStat.size ||
+        manifest.gatewayBundle?.sha256 !== hashFile(bundlePath)
+      ) {
+        problems.push('gateway-bundle.mjs does not match the frozen patch manifest');
+      }
+    }
+    if (manifest.formatVersion !== PATCH_MANIFEST_FORMAT_VERSION) {
+      problems.push('patch manifest format is invalid');
+    }
+    if (manifest.openclawVersion !== buildInfo.openclawVersion) {
+      problems.push('patch manifest OpenClaw version does not match runtime-build-info.json');
+    }
+    if (manifest.target !== buildInfo.target) {
+      problems.push('patch manifest target does not match runtime-build-info.json');
+    }
+    const expectedSourcePackage = {
+      npmVersion: buildInfo.npmPackageVersion,
+      integrity: buildInfo.npmIntegrity,
+      tarballSha256: buildInfo.npmTarballSha256,
+    };
+    if (JSON.stringify(manifest.sourcePackage) !== JSON.stringify(expectedSourcePackage)) {
+      problems.push('patch manifest source package does not match runtime-build-info.json');
+    }
+    if (
+      manifest.patchSetSha256 !== buildInfo.patchSetSha256 ||
+      manifest.buildRecipeSha256 !== buildInfo.buildRecipeSha256
+    ) {
+      problems.push('patch manifest fingerprints do not match runtime-build-info.json');
+    }
+    const expectedSourceArtifacts = {
+      gatewayAsarSha256: buildInfo.gatewayAsarSha256,
+      runtimePackageSha256: buildInfo.runtimePackageSha256,
+      runtimePackageLockPath: buildInfo.runtimePackageLockPath,
+      runtimePackageLockSha256: buildInfo.runtimePackageLockSha256,
+    };
+    if (JSON.stringify(manifest.sourceArtifacts) !== JSON.stringify(expectedSourceArtifacts)) {
+      problems.push('patch manifest source artifacts do not match runtime-build-info.json');
+    }
+    if (
+      !Array.isArray(manifest.patches) ||
+      manifest.patches.length === 0 ||
+      manifest.patches.some(
+        patch =>
+          !patch ||
+          typeof patch.file !== 'string' ||
+          !patch.file.endsWith('.cjs') ||
+          !isSha256(patch.sha256),
+      )
+    ) {
+      problems.push('patch manifest has no completed patches');
+    }
+    if (
+      !Array.isArray(manifest.patchSupportFiles) ||
+      manifest.patchSupportFiles.some(
+        support => !support || typeof support.file !== 'string' || !isSha256(support.sha256),
+      )
+    ) {
+      problems.push('patch manifest support-file proof is invalid');
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`Frozen OpenClaw runtime verification failed: ${problems.join('; ')}`);
+  }
+  return { buildInfo, manifest };
 }
 
 function isCanonicalSha512Integrity(value) {
@@ -367,6 +516,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  INITIAL_BUNDLE_PENDING_FILENAME,
   PATCH_MANIFEST_FILENAME,
   buildOpenClawBuildRecipeFingerprint,
   buildOpenClawPatchManifest,
@@ -376,6 +526,7 @@ module.exports = {
   listPatchInputFiles,
   normalizeOpenClawVersion,
   readOpenClawSourceLock,
+  verifyFrozenOpenClawRuntime,
   verifyOpenClawPatchManifest,
   writeOpenClawPatchManifest,
 };

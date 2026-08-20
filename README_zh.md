@@ -58,8 +58,9 @@ http://localhost:43127
 npm run electron:dev:openclaw
 ```
 
-OpenClaw runtime 会按版本和目标平台复用已安装的缓存。如果即使匹配版本已经存在，
-仍需要重新下载并安装 runtime，请设置 `OPENCLAW_FORCE_INSTALL=1`：
+已有 OpenClaw runtime 会作为冻结快照复用；即使配置的 OpenClaw 版本、patch
+或 runtime 构建脚本发生变化，也不会自动重新安装或 patch。需要重新下载、安装并
+应用 patch 时，请设置 `OPENCLAW_FORCE_INSTALL=1`：
 
 ```bash
 # macOS / Linux

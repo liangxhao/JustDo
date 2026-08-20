@@ -17,6 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
+const { decideRuntimeInstall } = require('./openclaw-runtime-freeze.cjs');
 const {
   commitStagedRuntime,
   prepareStagedRuntimeForCommit,
@@ -26,7 +27,9 @@ const {
   buildOpenClawBuildRecipeFingerprint,
   buildOpenClawPatchSetFingerprint,
   hashFile,
+  INITIAL_BUNDLE_PENDING_FILENAME,
   readOpenClawSourceLock,
+  verifyFrozenOpenClawRuntime,
 } = require('./verify-openclaw-runtime-patches.cjs');
 
 const RUNTIME_DEPENDENCY_LOCK_FILENAME = 'npm-shrinkwrap.json';
@@ -65,14 +68,6 @@ function runNpm(args, opts = {}) {
   return (result.stdout || '').trim();
 }
 
-function readJsonFile(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch {
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // 1. Parse arguments and read config
 // ---------------------------------------------------------------------------
@@ -92,8 +87,6 @@ if (!openclawVersion) {
 // Strip leading "v" for npm specifier (npm uses "2026.5.22", not "v2026.5.22").
 const npmVersion = openclawVersion.replace(/^v/, '');
 const npmSpec = `openclaw@${npmVersion}`;
-const sourceLock = readOpenClawSourceLock(rootDir, openclawVersion);
-
 const outDir = path.join(rootDir, 'vendor', 'openclaw-runtime', targetId);
 const currentRuntimeDir = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
 
@@ -117,43 +110,35 @@ console.log(
 );
 console.log(`[install-openclaw-runtime] Package: ${npmSpec}`);
 
-const patchSetSha256 = buildOpenClawPatchSetFingerprint(rootDir, openclawVersion);
-const buildRecipeSha256 = buildOpenClawBuildRecipeFingerprint(rootDir, openclawVersion);
-
 // ---------------------------------------------------------------------------
 // 2. Build cache check
 // ---------------------------------------------------------------------------
 
-if (process.env.OPENCLAW_FORCE_INSTALL !== '1') {
-  const buildInfo = readJsonFile(path.join(outDir, 'runtime-build-info.json'));
-  const cachedAsarPath = path.join(outDir, 'gateway.asar');
-  const cachedPackagePath = path.join(outDir, 'package.json');
-  const cachedPackageLockPath = path.join(outDir, RUNTIME_DEPENDENCY_LOCK_FILENAME);
-  if (
-    buildInfo &&
-    buildInfo.openclawVersion === openclawVersion &&
-    buildInfo.target === targetId &&
-    buildInfo.installMethod === 'npm-package' &&
-    buildInfo.npmPackageVersion === sourceLock.version &&
-    buildInfo.npmIntegrity === sourceLock.integrity &&
-    buildInfo.npmTarballSha256 === sourceLock.tarballSha256 &&
-    buildInfo.patchSetSha256 === patchSetSha256 &&
-    buildInfo.buildRecipeSha256 === buildRecipeSha256 &&
-    buildInfo.runtimePackageLockPath === RUNTIME_DEPENDENCY_LOCK_FILENAME &&
-    fs.existsSync(cachedAsarPath) &&
-    fs.existsSync(cachedPackagePath) &&
-    fs.existsSync(cachedPackageLockPath) &&
-    buildInfo.gatewayAsarSha256 === hashFile(cachedAsarPath) &&
-    buildInfo.runtimePackageSha256 === hashFile(cachedPackagePath) &&
-    buildInfo.runtimePackageLockSha256 === hashFile(cachedPackageLockPath)
-  ) {
-    console.log(
-      `[install-openclaw-runtime] Already installed ${openclawVersion} (target=${targetId}), skipping.`,
+const installDecision = decideRuntimeInstall({
+  forceInstall: process.env.OPENCLAW_FORCE_INSTALL === '1',
+  targetExists: fs.existsSync(outDir),
+});
+if (installDecision === 'verify-frozen') {
+  try {
+    verifyFrozenOpenClawRuntime(outDir, { expectedTarget: targetId });
+  } catch (error) {
+    fail(
+      `Existing runtime is incomplete or damaged; refusing to rebuild without ` +
+        `OPENCLAW_FORCE_INSTALL=1. ${error instanceof Error ? error.message : String(error)}`,
     );
-    console.log(`[install-openclaw-runtime] Use OPENCLAW_FORCE_INSTALL=1 to force reinstall.`);
-    process.exit(0);
   }
+  console.log(
+    `[install-openclaw-runtime] Existing runtime is frozen (target=${targetId}), skipping reinstall and patches.`,
+  );
+  console.log(
+    `[install-openclaw-runtime] Use OPENCLAW_FORCE_INSTALL=1 to rebuild from ${openclawVersion}.`,
+  );
+  process.exit(0);
 }
+
+const sourceLock = readOpenClawSourceLock(rootDir, openclawVersion);
+const patchSetSha256 = buildOpenClawPatchSetFingerprint(rootDir, openclawVersion);
+const buildRecipeSha256 = buildOpenClawBuildRecipeFingerprint(rootDir, openclawVersion);
 
 // ---------------------------------------------------------------------------
 // 3. Download npm tarball
@@ -297,6 +282,7 @@ fs.mkdirSync(extractDir, { recursive: true });
       path.join(stagingOutDir, 'runtime-build-info.json'),
       JSON.stringify(buildMeta, null, 2) + '\n',
     );
+    fs.writeFileSync(path.join(stagingOutDir, INITIAL_BUNDLE_PENDING_FILENAME), '', 'utf8');
 
     commitCandidateDir = prepareStagedRuntimeForCommit(stagingOutDir, outDir);
     verifyRuntimeLayout(commitCandidateDir);

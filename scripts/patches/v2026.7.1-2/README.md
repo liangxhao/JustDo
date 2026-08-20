@@ -25,7 +25,8 @@
    pass 分别验证，不能用一个总 marker 代替多个子修改。
 5. manifest format 2 绑定 source lock、目标平台、补丁顺序与哈希、patch helper、
    build recipe、package lock、asar/package/companion 文件及最终 bundle 哈希。
-   任一项变化都必须从原始 npm 包重建，旧 runtime 不能重新贴 manifest 复用。
+   已安装的开发 runtime 是冻结快照，只有 `OPENCLAW_FORCE_INSTALL=1` 才从原始
+   npm 包重建并重新 patch；严格校验仍会拒绝把与当前输入不匹配的旧 runtime 打包。
 
 ## 保留能力清单
 

@@ -41,6 +41,26 @@ test('uses supported npm target options for OpenClaw runtime dependencies', () =
   expect(runtimeInstaller).not.toMatch(/npm_config_(?:target_)?(?:platform|arch)/);
 });
 
+test('keeps an installed OpenClaw runtime frozen unless force install is requested', () => {
+  const runtimeInstaller = fs.readFileSync(
+    path.resolve(__dirname, '../scripts/install-openclaw-runtime.cjs'),
+    'utf8',
+  );
+  const bundleScript = fs.readFileSync(
+    path.resolve(__dirname, '../scripts/bundle-openclaw-gateway.cjs'),
+    'utf8',
+  );
+
+  expect(runtimeInstaller).toContain('decideRuntimeInstall');
+  expect(runtimeInstaller).toContain('Existing runtime is frozen');
+  expect(bundleScript).toContain('decideRuntimeBundle');
+  expect(bundleScript).toContain('Existing runtime bundle is frozen');
+  expect(bundleScript).toContain(
+    'verifyFrozenOpenClawRuntime(runtimeDir, { requireBundle: true })',
+  );
+  expect(bundleScript).toContain('fs.rmSync(initialBundlePendingPath, { force: true })');
+});
+
 test('rewrites and packages the OpenClaw audit writer companion', () => {
   const bundleScript = fs.readFileSync(
     path.resolve(__dirname, '../scripts/bundle-openclaw-gateway.cjs'),

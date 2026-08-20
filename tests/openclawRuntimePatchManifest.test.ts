@@ -11,6 +11,7 @@ const {
   buildOpenClawPatchSetFingerprint,
   normalizeOpenClawVersion,
   readOpenClawSourceLock,
+  verifyFrozenOpenClawRuntime,
   verifyOpenClawPatchManifest,
   writeOpenClawPatchManifest,
 } = require('../scripts/verify-openclaw-runtime-patches.cjs') as {
@@ -22,6 +23,10 @@ const {
     repoRoot: string,
     version: string,
   ) => { version: string; integrity: string; tarballSha256: string };
+  verifyFrozenOpenClawRuntime: (
+    runtimeRoot: string,
+    options?: { expectedTarget?: string; requireBundle?: boolean },
+  ) => { buildInfo: Record<string, unknown> };
   verifyOpenClawPatchManifest: (
     runtimeRoot: string,
     options: {
@@ -109,6 +114,7 @@ function createFixture() {
   for (const scriptName of [
     'electron-builder-hooks.cjs',
     'install-openclaw-runtime.cjs',
+    'openclaw-runtime-freeze.cjs',
     'openclaw-runtime-staging.cjs',
     'patch-openclaw-runtime.cjs',
     'verify-openclaw-pristine-contracts.cjs',
@@ -221,6 +227,72 @@ describe('OpenClaw runtime patch manifest', () => {
     expect(results).toHaveLength(2);
     expect(fs.existsSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME))).toBe(true);
     expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).not.toThrow();
+  });
+
+  test('reuses a complete frozen runtime when only current build inputs changed', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true });
+    fs.appendFileSync(
+      path.join(repoRoot, 'scripts', 'bundle-openclaw-gateway.cjs'),
+      '// changed\n',
+    );
+
+    expect(() =>
+      verifyFrozenOpenClawRuntime(runtimeRoot, {
+        expectedTarget: 'win-x64',
+        requireBundle: true,
+      }),
+    ).not.toThrow();
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
+      /source proof is missing, incomplete, or stale/,
+    );
+  });
+
+  test('rejects a frozen runtime with a missing patch proof or tampered bundle', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+
+    expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(
+      /patch manifest is missing or invalid/,
+    );
+
+    patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true });
+    fs.appendFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), '// tampered\n');
+
+    expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(
+      /does not match the frozen patch manifest/,
+    );
+  });
+
+  test('rejects damaged frozen source artifacts instead of silently rebuilding them', () => {
+    const { runtimeRoot } = createFixture();
+    fs.appendFileSync(path.join(runtimeRoot, 'gateway.asar'), 'tampered\n');
+
+    expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { expectedTarget: 'win-x64' })).toThrow(
+      /gateway\.asar does not match runtime-build-info\.json/,
+    );
+  });
+
+  test('rejects incomplete frozen metadata and mismatched source identity', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true });
+    const buildInfoPath = path.join(runtimeRoot, 'runtime-build-info.json');
+    const buildInfo = JSON.parse(fs.readFileSync(buildInfoPath, 'utf8')) as Record<string, unknown>;
+    delete buildInfo.patchSetSha256;
+    fs.writeFileSync(buildInfoPath, JSON.stringify(buildInfo));
+
+    expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(
+      /patchSetSha256 is not a SHA-256 digest/,
+    );
+
+    writeFixtureBuildInfo(repoRoot, runtimeRoot);
+    const manifestPath = path.join(runtimeRoot, PATCH_MANIFEST_FILENAME);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    manifest.sourcePackage = { npmVersion: 'invalid' };
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(
+      /source package does not match runtime-build-info\.json/,
+    );
   });
 
   test('shares the target-version snapshot index across apply and final verification', () => {

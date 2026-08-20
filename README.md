@@ -61,8 +61,9 @@ To prepare and run with the OpenClaw host runtime:
 npm run electron:dev:openclaw
 ```
 
-OpenClaw runtime installation is cached by version and target platform. Set
-`OPENCLAW_FORCE_INSTALL=1` when you need to download and reinstall the runtime
+An existing OpenClaw runtime is kept as a frozen snapshot, even when the
+configured OpenClaw version, patches, or runtime build scripts change. Set
+`OPENCLAW_FORCE_INSTALL=1` when you need to download, reinstall, and patch it
 even if the matching version is already present:
 
 ```bash

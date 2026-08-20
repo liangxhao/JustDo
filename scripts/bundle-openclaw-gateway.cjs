@@ -16,7 +16,12 @@
 const fs = require('fs');
 const path = require('path');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
-const { verifyOpenClawPatchManifest } = require('./verify-openclaw-runtime-patches.cjs');
+const { decideRuntimeBundle } = require('./openclaw-runtime-freeze.cjs');
+const {
+  INITIAL_BUNDLE_PENDING_FILENAME,
+  verifyFrozenOpenClawRuntime,
+  verifyOpenClawPatchManifest,
+} = require('./verify-openclaw-runtime-patches.cjs');
 const {
   ensureOpenClawGatewayBundleLauncher,
 } = require('../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs');
@@ -27,6 +32,7 @@ const runtimeDir = process.argv[2]
   : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
 
 const bundleOutPath = path.join(runtimeDir, 'gateway-bundle.mjs');
+const initialBundlePendingPath = path.join(runtimeDir, INITIAL_BUNDLE_PENDING_FILENAME);
 const scriptPath = __filename;
 
 function ensureGatewayLauncher() {
@@ -52,6 +58,44 @@ if (!fs.existsSync(entryPath)) {
   console.error(`[bundle-openclaw-gateway] Make sure the openclaw runtime is built first.`);
   process.exit(1);
 }
+
+// An existing runtime is an explicit frozen development artifact. Rebuilding
+// its gateway bundle would run the current patch set against it, so preserve
+// the bundle unless the caller explicitly opted into a runtime reinstall.
+const bundleDecision = decideRuntimeBundle({
+  forceInstall: process.env.OPENCLAW_FORCE_INSTALL === '1',
+  bundleExists: fs.existsSync(bundleOutPath),
+  initialBundlePending: fs.existsSync(initialBundlePendingPath),
+});
+if (bundleDecision === 'verify-frozen') {
+  try {
+    verifyFrozenOpenClawRuntime(runtimeDir, { requireBundle: true });
+  } catch (error) {
+    console.error(
+      `[bundle-openclaw-gateway] Existing runtime bundle is incomplete or damaged; ` +
+        `use OPENCLAW_FORCE_INSTALL=1 to rebuild it. ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  }
+  console.log('[bundle-openclaw-gateway] Existing runtime bundle is frozen, skipping rebuild.');
+  console.log(
+    '[bundle-openclaw-gateway] Use OPENCLAW_FORCE_INSTALL=1 to rebuild and apply patches.',
+  );
+  ensureGatewayLauncher();
+  process.exit(0);
+}
+if (bundleDecision === 'reject') {
+  console.error(
+    '[bundle-openclaw-gateway] Existing runtime has no completed bundle; ' +
+      'use OPENCLAW_FORCE_INSTALL=1 to rebuild it.',
+  );
+  process.exit(1);
+}
+
+// Consume the one-shot marker before starting so an interrupted or failed
+// initial bundle cannot be retried and re-patched without explicit force.
+fs.rmSync(initialBundlePendingPath, { force: true });
 
 // Skip if bundle is already up-to-date (newer than the entry point).
 if (fs.existsSync(bundleOutPath)) {
