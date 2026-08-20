@@ -4,6 +4,7 @@ import { useSelector } from 'react-redux';
 
 import CoworkSearchModal from '@/features/cowork/components/CoworkSearchModal';
 import CoworkSessionList from '@/features/cowork/components/CoworkSessionList';
+import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/filePreviewNavigation';
 import {
   selectCoworkSessions,
   selectCurrentSessionId,
@@ -28,6 +29,7 @@ interface SidebarProps {
   onShowScheduledTasks: () => void;
   onShowPlugins: () => void;
   onNewChat: () => void;
+  onBeforeCoworkNavigation: () => Promise<boolean>;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   developerModeAvailable: boolean;
@@ -40,6 +42,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowScheduledTasks,
   onShowPlugins,
   onNewChat,
+  onBeforeCoworkNavigation,
   isCollapsed,
   onToggleCollapse,
   developerModeAvailable,
@@ -90,12 +93,19 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   const handleSelectSession = async (sessionId: string) => {
-    onShowCowork();
-    await coworkService.loadSession(sessionId);
+    await runGuardedFilePreviewNavigation(onBeforeCoworkNavigation, async () => {
+      onShowCowork();
+      await coworkService.loadSession(sessionId);
+    });
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    await coworkService.deleteSession(sessionId);
+    const deleteSession = () => coworkService.deleteSession(sessionId);
+    if (sessionId === currentSessionId) {
+      await runGuardedFilePreviewNavigation(onBeforeCoworkNavigation, deleteSession);
+      return;
+    }
+    await deleteSession();
   };
 
   const handleRenameSession = async (sessionId: string, title: string) => {
@@ -142,9 +152,16 @@ const Sidebar: React.FC<SidebarProps> = ({
   const handleBatchDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
     const ids = Array.from(selectedIds);
-    await coworkService.deleteSessions(ids);
-    handleExitBatchMode();
-  }, [selectedIds, handleExitBatchMode]);
+    const deleteSessions = async () => {
+      await coworkService.deleteSessions(ids);
+      handleExitBatchMode();
+    };
+    if (currentSessionId && selectedIds.has(currentSessionId)) {
+      await runGuardedFilePreviewNavigation(onBeforeCoworkNavigation, deleteSessions);
+      return;
+    }
+    await deleteSessions();
+  }, [currentSessionId, handleExitBatchMode, onBeforeCoworkNavigation, selectedIds]);
 
   const handleOpenChatWeb = async () => {
     try {

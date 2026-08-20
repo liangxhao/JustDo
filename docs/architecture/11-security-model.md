@@ -63,7 +63,7 @@ allow/deny、旧 installs 及 slots 中已经不存在的插件引用。若 runt
 需要谨慎处理的能力：
 
 - shell open path / external URL
-- 本地文件读取和预览
+- 本地文件读取、预览和用户确认的文本编辑
 - MCP stdio process
 - extension callback
 - command execution
@@ -134,13 +134,17 @@ Renderer install click
 
 文件访问分三类：
 
-| 类型          | 推荐入口                                          | 说明                    |
-| ------------- | ------------------------------------------------- | ----------------------- |
-| 用户选择文件  | `dialog.selectFile/selectFiles`                   | 明确用户授权            |
-| 预览/打开文件 | `shell.readPreviewFile/openPath/showItemInFolder` | Main 检查路径和工作目录 |
-| 渲染本地资源  | `localfile://`                                    | 自定义协议限制读取方式  |
+| 类型               | 推荐入口                                                           | 说明                          |
+| ------------------ | ------------------------------------------------------------------ | ----------------------------- |
+| 用户选择文件       | `dialog.selectFile/selectFiles`                                    | 明确用户授权                  |
+| 预览/编辑/打开文件 | `shell.readPreviewFile/writePreviewFile/openPath/showItemInFolder` | Main 检查路径、类型和内容版本 |
+| 渲染本地资源       | `localfile://`                                                     | 自定义协议限制读取方式        |
 
-新增文件能力时要明确是否允许目录、是否递归、是否读取内容、最大大小，以及错误如何反馈。
+新增文件能力时要明确是否允许目录、是否递归、是否读取内容、最大大小，以及错误如何反馈。侧边栏编辑仅允许写回 `PREVIEWABLE_FILE_EXTENSIONS` 中声明的既有文本、配置、脚本和常见源码文件；当前包括 Markdown、JSON、纯文本、YAML、TOML、INI、XML、CSV、日志、Web 源码、Shell/PowerShell/批处理脚本，以及 Python、Java、Go、Rust、C/C++、C# 和 SQL。读取与编辑使用同一扩展名集合，不跟随符号链接，不提供创建、重命名或另存为，并将读取和写入内容限制为 2 MiB。扩展名检查针对完整文件名，不把 `?` 或 `#` 当作 URL 后缀剥离。
+
+读取成功后，Main 保存一个短期、数量受限且绑定发起 Renderer、规范路径、文件身份和内容版本的不透明令牌。该令牌初始只有预览能力；进入编辑模式时，Main 静默重新检查文件身份和版本后激活写权限。Renderer 保存时不能提交文件路径或强制覆盖标记，只能回传已激活令牌、期望版本和 UTF-8 内容；抽屉关闭或切换文件时会撤销令牌，Main 仍以过期时间和数量上限限制遗漏清理的 grant。
+
+Main 在写入前重新打开并验证文件身份和版本；检测到 Agent 或外部程序的修改时，由 Main 控制的系统对话框让用户选择覆盖、重新加载或取消，Renderer 不能直接提交覆盖决定。确认后仍会再次检查版本，随后把内容写入同目录独占临时文件、同步并以 rename 替换目标；冲突或替换失败时保留原文件和 Renderer 草稿。Node 的跨平台文件 API 不提供 compare-and-swap rename，因此最后一次检查与 rename 之间仍有极小竞态窗口；这里的乐观并发保护用于防止正常的 Agent/编辑器并发修改被静默覆盖，不应被视为对恶意本地进程的强隔离。
 
 ## Command And Tool Safety
 

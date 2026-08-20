@@ -1,1 +1,4 @@
-export { default as CoworkView } from '@/features/cowork/components/CoworkView';
+export {
+  default as CoworkView,
+  type CoworkViewHandle,
+} from '@/features/cowork/components/CoworkView';

@@ -1,7 +1,7 @@
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { SaveTextFileErrorCode } from '@shared/dialogIpc';
 import { isGoalEditCommand } from '@shared/slashCommands';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
@@ -13,7 +13,9 @@ import CoworkPromptInput, {
 import ExportSessionModal from '@/features/cowork/components/ExportSessionModal';
 import FilePreviewDrawer, {
   type FilePreview,
+  type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/FilePreviewDrawer';
+import { isCurrentFilePreviewRequest } from '@/features/cowork/components/filePreviewNavigation';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goalPendingObjective';
 import type { GoalRunProgress } from '@/features/cowork/components/goalRunProgress';
 import JustDoChatWrapper, {
@@ -79,12 +81,12 @@ export interface CoworkViewProps {
   onNewChat?: () => void;
 }
 
-const CoworkView: React.FC<CoworkViewProps> = ({
-  onRequestAppSettings,
-  isSidebarCollapsed,
-  onToggleSidebar,
-  onNewChat,
-}) => {
+export interface CoworkViewHandle {
+  requestFilePreviewTransition: () => Promise<boolean>;
+}
+
+const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) => {
+  const { onRequestAppSettings, isSidebarCollapsed, onToggleSidebar, onNewChat } = props;
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
@@ -106,6 +108,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   }>({ token: 0, direction: 1 });
   const sessionSearchInputRef = useRef<HTMLInputElement>(null);
   const sessionSearchPanelRef = useRef<HTMLDivElement>(null);
+  const filePreviewDrawerRef = useRef<FilePreviewDrawerHandle>(null);
+  const filePreviewRequestIdRef = useRef(0);
   // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
   // Track pending start request so stop can cancel delayed startup.
@@ -125,6 +129,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
+  const currentSessionIdRef = useRef(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
   const isStreaming = useSelector(selectIsStreaming);
   const sessions = useSelector(selectCoworkSessions);
   const sessionRuntimeActivity = useSelector(selectSessionRuntimeActivity);
@@ -387,19 +393,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   }, []);
 
   useEffect(() => {
-    const handleNewSession = () => {
-      coworkService.clearSession();
-      window.dispatchEvent(
-        new CustomEvent('cowork:focus-input', {
-          detail: { clear: true },
-        }),
-      );
-    };
+    const handleNewSession = () => onNewChat?.();
     window.addEventListener('cowork:shortcut:new-session', handleNewSession);
     return () => {
       window.removeEventListener('cowork:shortcut:new-session', handleNewSession);
     };
-  }, [dispatch]);
+  }, [onNewChat]);
 
   useEffect(() => {
     if (!isOpenClawEngine) return;
@@ -497,29 +496,105 @@ const CoworkView: React.FC<CoworkViewProps> = ({
 
   useEffect(() => {
     setSelectedSubagent(null);
-    setFilePreview(null);
     setGoalRunProgress(null);
+    setFilePreview(null);
   }, [currentSession?.id]);
+
+  const requestFilePreviewTransition = useCallback(async (): Promise<boolean> => {
+    const canClose = (await filePreviewDrawerRef.current?.requestTransition()) ?? true;
+    if (canClose) {
+      filePreviewRequestIdRef.current += 1;
+      setFilePreview(null);
+    }
+    return canClose;
+  }, []);
+
+  useImperativeHandle(ref, () => ({ requestFilePreviewTransition }), [
+    requestFilePreviewTransition,
+  ]);
+
+  useEffect(
+    () => () => {
+      filePreviewRequestIdRef.current += 1;
+    },
+    [],
+  );
 
   useEffect(() => {
     const handlePreviewFile = async (event: Event) => {
       const detail = (event as CustomEvent<{ filePath?: string; workingDirectory?: string }>)
         .detail;
       if (!detail?.filePath) return;
-      const result = await window.electron.shell.readPreviewFile(
-        detail.filePath,
-        detail.workingDirectory,
-      );
-      if (result.success && result.content !== undefined && result.filePath) {
+      const sourceSessionId = currentSessionIdRef.current;
+      const activeRequestId = ++filePreviewRequestIdRef.current;
+      const canReplace = (await filePreviewDrawerRef.current?.requestTransition()) ?? true;
+      if (!canReplace) return;
+      if (
+        !isCurrentFilePreviewRequest(
+          activeRequestId,
+          filePreviewRequestIdRef.current,
+          sourceSessionId,
+          currentSessionIdRef.current,
+        )
+      ) {
+        return;
+      }
+      setFilePreview(null);
+      let result: Awaited<ReturnType<typeof window.electron.shell.readPreviewFile>>;
+      try {
+        result = await window.electron.shell.readPreviewFile(
+          detail.filePath,
+          detail.workingDirectory,
+        );
+      } catch {
+        if (
+          isCurrentFilePreviewRequest(
+            activeRequestId,
+            filePreviewRequestIdRef.current,
+            sourceSessionId,
+            currentSessionIdRef.current,
+          )
+        ) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkFilePreviewFailed'),
+            }),
+          );
+        }
+        return;
+      }
+      if (
+        !isCurrentFilePreviewRequest(
+          activeRequestId,
+          filePreviewRequestIdRef.current,
+          sourceSessionId,
+          currentSessionIdRef.current,
+        )
+      ) {
+        if (result.success) {
+          void window.electron.shell
+            .revokePreviewFileEdit(result.editToken)
+            .catch((): undefined => undefined);
+        }
+        return;
+      }
+      if (result.success) {
         setSelectedSubagent(null);
-        setFilePreview({ content: result.content, filePath: result.filePath });
+        setFilePreview({
+          content: result.content,
+          editToken: result.editToken,
+          filePath: result.filePath,
+          version: result.version,
+        });
         return;
       }
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
           detail: result.notFound
             ? i18nService.t('coworkAttachmentNotFound').replace('{filepath}', detail.filePath)
-            : result.error || i18nService.t('coworkFilePreviewFailed'),
+            : result.tooLarge
+              ? i18nService.t('coworkFilePreviewTooLarge')
+              : result.error || i18nService.t('coworkFilePreviewFailed'),
         }),
       );
     };
@@ -968,7 +1043,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             onClose={() => setSelectedSubagent(null)}
           />
           {filePreview && (
-            <FilePreviewDrawer preview={filePreview} onClose={() => setFilePreview(null)} />
+            <FilePreviewDrawer
+              ref={filePreviewDrawerRef}
+              preview={filePreview}
+              onClose={() => setFilePreview(null)}
+            />
           )}
           <ExportSessionModal
             isOpen={isSessionExportOpen}
@@ -1028,6 +1107,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       </div>
     </div>
   );
-};
+});
+
+CoworkView.displayName = 'CoworkView';
 
 export default CoworkView;

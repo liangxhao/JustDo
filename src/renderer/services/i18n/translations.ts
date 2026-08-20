@@ -1030,6 +1030,22 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     copy: '复制',
     coworkFilePreviewFailed: '无法预览此文件',
     coworkFilePreviewResize: '拖动以调整文件预览宽度',
+    coworkFilePreviewModePreview: '预览',
+    coworkFilePreviewModeEdit: '编辑',
+    coworkFilePreviewUnsaved: '有未保存的修改',
+    coworkFilePreviewSaveShortcut: '保存（Ctrl/Cmd+S）',
+    coworkFilePreviewSaved: '文件已保存',
+    coworkFilePreviewSaveFailed: '无法保存此文件',
+    coworkFilePreviewAuthorizationFailed: '无法获得此文件的编辑授权',
+    coworkFilePreviewTooLarge: '文件过大，最多支持 2 MiB',
+    coworkFilePreviewReloaded: '已重新加载磁盘版本',
+    coworkFilePreviewReloadFailed: '无法重新加载此文件',
+    coworkFilePreviewUnsavedTitle: '保存文件修改？',
+    coworkFilePreviewUnsavedDescription: '此文件包含未保存的修改。你可以保存、放弃修改或继续编辑。',
+    coworkFilePreviewDiscard: '放弃修改',
+    coworkFilePreviewInvalidJsonTitle: 'JSON 格式无效',
+    coworkFilePreviewInvalidJsonDescription: '当前内容不是有效的 JSON。仍然要按原始文本保存吗？',
+    coworkFilePreviewSaveAnyway: '仍然保存',
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)
@@ -2159,6 +2175,24 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     copy: 'Copy',
     coworkFilePreviewFailed: 'Unable to preview this file',
     coworkFilePreviewResize: 'Drag to resize the file preview',
+    coworkFilePreviewModePreview: 'Preview',
+    coworkFilePreviewModeEdit: 'Edit',
+    coworkFilePreviewUnsaved: 'Unsaved changes',
+    coworkFilePreviewSaveShortcut: 'Save (Ctrl/Cmd+S)',
+    coworkFilePreviewSaved: 'File saved',
+    coworkFilePreviewSaveFailed: 'Unable to save this file',
+    coworkFilePreviewAuthorizationFailed: 'Unable to authorize editing this file',
+    coworkFilePreviewTooLarge: 'The file is too large. The limit is 2 MiB.',
+    coworkFilePreviewReloaded: 'Reloaded the version on disk',
+    coworkFilePreviewReloadFailed: 'Unable to reload this file',
+    coworkFilePreviewUnsavedTitle: 'Save file changes?',
+    coworkFilePreviewUnsavedDescription:
+      'This file has unsaved changes. You can save them, discard them, or keep editing.',
+    coworkFilePreviewDiscard: 'Discard changes',
+    coworkFilePreviewInvalidJsonTitle: 'Invalid JSON',
+    coworkFilePreviewInvalidJsonDescription:
+      'The current content is not valid JSON. Save it as raw text anyway?',
+    coworkFilePreviewSaveAnyway: 'Save anyway',
 
     // TaskForm unsaved changes confirmation
     // Cron UI (new card-based design)

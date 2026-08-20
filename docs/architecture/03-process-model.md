@@ -60,7 +60,7 @@ flowchart TB
 | `cowork`           | session CRUD、执行、ask-user 响应、流式事件、子任务状态 |
 | `sessionGroup`     | 会话分组 CRUD、排序、移动会话                           |
 | `dialog`           | 文件/目录选择、文本保存、inline file、本地文件 data URL |
-| `shell`            | 打开路径、预览文件、定位文件、外部链接                  |
+| `shell`            | 打开路径、预览/编辑受支持文本文件、定位文件、外部链接   |
 | `autoLaunch`       | 开机启动                                                |
 | `preventSleep`     | 防休眠                                                  |
 | `developerConfig`  | 读取启动时加载的开发者功能可见性配置                    |
@@ -296,7 +296,9 @@ Renderer 不直接读取 `openclaw.json`，不直接管理 stdio process，也�
 
 ### `dialog` / `shell`
 
-`dialog` 用于显式用户选择文件/目录。`shell` 用于打开、定位、预览本地文件和外部 URL。新增文件能力时优先放进这两个 namespace，避免组件直接构造本地路径访问。
+`dialog` 用于显式用户选择文件/目录。`shell` 用于打开、定位、预览本地文件和外部 URL；侧边栏编辑器也通过该 namespace 写回既有的可预览文本文件。读取会返回内容版本和一个短期、路径及 Renderer 绑定的不透明编辑令牌，但该令牌初始没有写权限；用户切换到编辑模式时，Main 静默重新验证文件身份和版本并激活临时写权限。写入只携带令牌、期望版本和 UTF-8 内容，不允许 Renderer 指定目标路径或覆盖标记。Main 在落盘前重新验证文件身份和版本，外部修改由 Main 的系统对话框让用户选择覆盖、重新加载或取消；抽屉卸载时通过窄 IPC 撤销令牌。新增文件能力时优先放进这两个 namespace，避免组件直接构造本地路径访问。
+
+文件抽屉的草稿和脏状态只保存在 Renderer 内存。关闭抽屉、切换文件、切换会话、新建会话或离开 Cowork 主视图前，App/Sidebar 先调用抽屉的异步 transition guard，再执行导航；取消时保持当前视图和草稿。异步读取使用请求代次和来源会话双校验，过期请求不能覆盖较新的预览。
 
 ## Main Handler 注册策略
 

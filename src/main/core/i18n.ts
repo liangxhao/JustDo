@@ -25,6 +25,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     attachmentMenuOpenWithSystem: '使用系统工具打开',
     attachmentMenuShowInFolder: '打开所在的文件夹',
     imageMenuSaveAs: '图片另存为…',
+    filePreviewConflictTitle: '文件已在外部修改',
+    filePreviewConflictMessage: 'Agent 或其他程序在你编辑期间修改了此文件。',
+    filePreviewConflictOverwrite: '覆盖文件',
+    filePreviewConflictReload: '重新加载',
+    filePreviewConflictCancel: '取消',
     askUserSubmittedMessage: '我已提交。',
     askUserCanceledMessage: '我取消了请求。',
     askUserAnswerLabel: '用户选择',
@@ -39,8 +44,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '{resource}：\n{path}\n\n占用程序：\n{processes}\n\n请关闭以上程序后重试。',
     managedDirectoryLockedUnknown:
       '{resource}：\n{path}\n\n该目录仍被其他程序占用，但 Windows 未能识别占用者。\n\n请关闭可能正在查看、编辑或扫描该目录的程序后重试。',
-    managedDirectoryLockedByApp:
-      `{resource}：\n{path}\n\n${PRODUCT_NAME} 仍在使用该目录，暂时无法完成操作。\n\n请稍后重试；若问题持续出现，请重启 ${PRODUCT_NAME}。`,
+    managedDirectoryLockedByApp: `{resource}：\n{path}\n\n${PRODUCT_NAME} 仍在使用该目录，暂时无法完成操作。\n\n请稍后重试；若问题持续出现，请重启 ${PRODUCT_NAME}。`,
     managedDirectoryPermissionDenied:
       '无法访问{resource}：\n{path}\n\n请检查 Windows 所有者和权限后重试。\n\n详细信息：{detail}',
     managedDirectoryRuntimeRecoveryFailed: 'Gateway 恢复失败：{detail}',
@@ -55,6 +59,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     attachmentMenuOpenWithSystem: 'Open with System Tool',
     attachmentMenuShowInFolder: 'Show in Folder',
     imageMenuSaveAs: 'Save Image As…',
+    filePreviewConflictTitle: 'File changed externally',
+    filePreviewConflictMessage:
+      'An agent or another program changed this file while you were editing.',
+    filePreviewConflictOverwrite: 'Overwrite File',
+    filePreviewConflictReload: 'Reload',
+    filePreviewConflictCancel: 'Cancel',
     askUserSubmittedMessage: 'I submitted.',
     askUserCanceledMessage: 'I canceled the request.',
     askUserAnswerLabel: 'User answer',
@@ -71,8 +81,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '{resource}:\n{path}\n\nProcesses using this directory:\n{processes}\n\nClose the programs above and try again.',
     managedDirectoryLockedUnknown:
       '{resource}:\n{path}\n\nThis directory is still in use, but Windows could not identify the process.\n\nClose programs that may be viewing, editing, or scanning it, then try again.',
-    managedDirectoryLockedByApp:
-      `${PRODUCT_NAME} is still using the {resource}:\n{path}\n\nTry again shortly. If the problem continues, restart ${PRODUCT_NAME}.`,
+    managedDirectoryLockedByApp: `${PRODUCT_NAME} is still using the {resource}:\n{path}\n\nTry again shortly. If the problem continues, restart ${PRODUCT_NAME}.`,
     managedDirectoryPermissionDenied:
       'Cannot access the {resource}:\n{path}\n\nCheck its Windows owner and permissions, then try again.\n\nDetails: {detail}',
     managedDirectoryRuntimeRecoveryFailed: 'Gateway recovery failed: {detail}',

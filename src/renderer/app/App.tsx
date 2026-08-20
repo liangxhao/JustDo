@@ -21,11 +21,12 @@ import {
   removePendingApproval,
   upsertPendingApproval,
 } from '@/features/cowork/approvalQueue';
-import { CoworkView } from '@/features/cowork/components';
+import { CoworkView, type CoworkViewHandle } from '@/features/cowork/components';
 import CoworkInteractionModal from '@/features/cowork/components/CoworkInteractionModal';
 import CoworkQuestionWizard from '@/features/cowork/components/CoworkQuestionWizard';
 import EngineStartupStatusBar from '@/features/cowork/components/EngineStartupStatusBar';
 import ExecApprovalModal from '@/features/cowork/components/ExecApprovalModal';
+import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/filePreviewNavigation';
 import {
   selectCurrentSessionId,
   selectFirstPendingInteraction,
@@ -67,6 +68,7 @@ const App: React.FC = () => {
   const resolvedApprovalIdsRef = useRef(new Map<string, number>());
   const dismissedUpdateRevisionRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const coworkViewRef = useRef<CoworkViewHandle>(null);
   const hasInitialized = useRef(false);
   const dispatch = useDispatch();
   const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
@@ -394,30 +396,38 @@ const App: React.FC = () => {
     setMainView('cowork');
   }, []);
 
-  const handleShowScheduledTasks = useCallback(() => {
-    setMainView('scheduledTasks');
+  const requestCoworkNavigation = useCallback(async (): Promise<boolean> => {
+    return (await coworkViewRef.current?.requestFilePreviewTransition()) ?? true;
   }, []);
 
-  const handleShowPlugins = useCallback(() => {
-    setMainView('plugins');
-  }, []);
+  const handleShowScheduledTasks = useCallback(async () => {
+    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () =>
+      setMainView('scheduledTasks'),
+    );
+  }, [requestCoworkNavigation]);
+
+  const handleShowPlugins = useCallback(async () => {
+    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('plugins'));
+  }, [requestCoworkNavigation]);
 
   const handleToggleSidebar = useCallback(() => {
     setIsSidebarCollapsed(prev => !prev);
   }, []);
 
-  const handleNewChat = useCallback(() => {
-    const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
-    coworkService.clearSession();
-    setMainView('cowork');
-    window.setTimeout(() => {
-      window.dispatchEvent(
-        new CustomEvent('cowork:focus-input', {
-          detail: { clear: shouldClearInput },
-        }),
-      );
-    }, 0);
-  }, [mainView, currentSessionId]);
+  const handleNewChat = useCallback(async (): Promise<boolean> => {
+    return runGuardedFilePreviewNavigation(requestCoworkNavigation, () => {
+      const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
+      coworkService.clearSession();
+      setMainView('cowork');
+      window.setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('cowork:focus-input', {
+            detail: { clear: shouldClearInput },
+          }),
+        );
+      }, 0);
+    });
+  }, [mainView, currentSessionId, requestCoworkNavigation]);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -707,6 +717,7 @@ const App: React.FC = () => {
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowPlugins={handleShowPlugins}
           onNewChat={handleNewChat}
+          onBeforeCoworkNavigation={requestCoworkNavigation}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
           developerModeAvailable={developerModeAvailable}
@@ -728,6 +739,7 @@ const App: React.FC = () => {
               />
             ) : (
               <CoworkView
+                ref={coworkViewRef}
                 onRequestAppSettings={handleShowSettings}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}

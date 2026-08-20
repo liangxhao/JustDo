@@ -34,6 +34,13 @@ type BrowserMode = import('../../shared/browser').BrowserMode;
 type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
 type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
 type ApiFetchOptions = import('../../shared/network').ApiFetchOptions;
+type FilePreviewReadResult = import('../../shared/filePreview').FilePreviewReadResult;
+type FilePreviewEditAuthorizationRequest =
+  import('../../shared/filePreview').FilePreviewEditAuthorizationRequest;
+type FilePreviewEditAuthorizationResult =
+  import('../../shared/filePreview').FilePreviewEditAuthorizationResult;
+type FilePreviewWriteRequest = import('../../shared/filePreview').FilePreviewWriteRequest;
+type FilePreviewWriteResult = import('../../shared/filePreview').FilePreviewWriteResult;
 
 interface ApiResponse<T = unknown> {
   ok: boolean;
@@ -879,13 +886,12 @@ interface IElectronAPI {
     readPreviewFile: (
       filePath: string,
       workingDirectory?: string,
-    ) => Promise<{
-      success: boolean;
-      content?: string;
-      filePath?: string;
-      error?: string;
-      notFound?: boolean;
-    }>;
+    ) => Promise<FilePreviewReadResult>;
+    authorizePreviewFileEdit: (
+      request: FilePreviewEditAuthorizationRequest,
+    ) => Promise<FilePreviewEditAuthorizationResult>;
+    revokePreviewFileEdit: (editToken: string) => Promise<void>;
+    writePreviewFile: (request: FilePreviewWriteRequest) => Promise<FilePreviewWriteResult>;
     showItemInFolder: (
       filePath: string,
       workingDirectory?: string,

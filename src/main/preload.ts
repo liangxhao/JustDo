@@ -13,6 +13,13 @@ import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
 import { DeveloperConfigIpc } from '../shared/developerConfig';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
+import {
+  type FilePreviewEditAuthorizationRequest,
+  type FilePreviewEditAuthorizationResult,
+  FilePreviewIpc,
+  type FilePreviewWriteRequest,
+  type FilePreviewWriteResult,
+} from '../shared/filePreview';
 import { LogIpc } from '../shared/logIpc';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
 import {
@@ -500,7 +507,15 @@ contextBridge.exposeInMainWorld('electron', {
     openPath: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke('shell:openPath', filePath, workingDirectory),
     readPreviewFile: (filePath: string, workingDirectory?: string) =>
-      ipcRenderer.invoke('shell:readPreviewFile', filePath, workingDirectory),
+      ipcRenderer.invoke(FilePreviewIpc.Read, filePath, workingDirectory),
+    authorizePreviewFileEdit: (
+      request: FilePreviewEditAuthorizationRequest,
+    ): Promise<FilePreviewEditAuthorizationResult> =>
+      ipcRenderer.invoke(FilePreviewIpc.AuthorizeEdit, request),
+    revokePreviewFileEdit: (editToken: string): Promise<void> =>
+      ipcRenderer.invoke(FilePreviewIpc.RevokeEdit, editToken),
+    writePreviewFile: (request: FilePreviewWriteRequest): Promise<FilePreviewWriteResult> =>
+      ipcRenderer.invoke(FilePreviewIpc.Write, request),
     showItemInFolder: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke('shell:showItemInFolder', filePath, workingDirectory),
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
