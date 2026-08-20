@@ -195,13 +195,6 @@ describe('Windows installer process handling', () => {
       'site-packages',
       'user-package.py',
     );
-    const migratedUserPackagePath = path.join(
-      userDataRoot,
-      'python-user',
-      'Python312',
-      'legacy-site-packages',
-      'user-package.py',
-    );
 
     mkdirSync(path.join(archiveRoot, 'cfmind', 'skills', 'custom-skill'), { recursive: true });
     mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
@@ -235,7 +228,7 @@ describe('Windows installer process handling', () => {
     expect(existsSync(staleBashPath)).toBe(false);
     expect(existsSync(staleSkillPath)).toBe(false);
     expect(existsSync(stalePythonPackagePath)).toBe(false);
-    expect(readFileSync(migratedUserPackagePath, 'utf8')).toBe('user-package');
+    expect(existsSync(legacyUserPackagePath)).toBe(false);
     expect(existsSync(path.join(userDataRoot, 'runtimes', 'python-win'))).toBe(false);
     expect(existsSync(customSkillPath)).toBe(true);
     expect(existsSync(path.join(installResources, '.cfmind-upgrade-backup'))).toBe(false);

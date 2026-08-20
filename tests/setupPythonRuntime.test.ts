@@ -94,7 +94,7 @@ test('bundles sitecustomize support for the persistent per-user package director
   );
 
   expect(siteCustomize).toContain('JUSTDO_PYTHON_USER_SITE');
-  expect(siteCustomize).toContain('JUSTDO_PYTHON_LEGACY_SITE');
+  expect(siteCustomize).not.toContain('JUSTDO_PYTHON_LEGACY_SITE');
   expect(siteCustomize).toContain('if "install" in pip_args and not has_conflicting_option');
   expect(siteCustomize).toContain('os.environ.setdefault("PIP_USER", "true")');
   expect(siteCustomize).toContain('bundled-site-packages');

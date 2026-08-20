@@ -41,6 +41,18 @@ test('uses supported npm target options for OpenClaw runtime dependencies', () =
   expect(runtimeInstaller).not.toMatch(/npm_config_(?:target_)?(?:platform|arch)/);
 });
 
+test('defines the JSON reader used to validate the downloaded OpenClaw package', () => {
+  const runtimeInstaller = fs.readFileSync(
+    path.resolve(__dirname, '../scripts/install-openclaw-runtime.cjs'),
+    'utf8',
+  );
+
+  expect(runtimeInstaller).toMatch(/function readJsonFile\(filePath\)/);
+  expect(runtimeInstaller).toContain(
+    "const extractedPackage = readJsonFile(path.join(pkgDir, 'package.json'))",
+  );
+});
+
 test('keeps an installed OpenClaw runtime frozen unless force install is requested', () => {
   const runtimeInstaller = fs.readFileSync(
     path.resolve(__dirname, '../scripts/install-openclaw-runtime.cjs'),

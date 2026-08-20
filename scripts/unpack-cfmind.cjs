@@ -44,33 +44,12 @@ if (!fs.existsSync(tarPath)) {
   process.exit(1);
 }
 
-function migrateLegacySitePackages(source, destination) {
-  if (!fs.existsSync(source) || fs.existsSync(destination)) return;
-  const stagingPath = `${destination}.migrating`;
-  fs.rmSync(stagingPath, { recursive: true, force: true });
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.cpSync(source, stagingPath, {
-    recursive: true,
-    force: true,
-    errorOnExist: true,
-    dereference: true,
-  });
-  fs.renameSync(stagingPath, destination);
-}
-
 function migrateLegacyPythonRuntime() {
   if (!userDataDir) return;
   const legacyRoot = path.join(userDataDir, 'runtimes', 'python-win');
   if (!fs.existsSync(legacyRoot)) return;
 
-  const legacySitePackages = path.join(
-    userDataDir,
-    'python-user',
-    'Python312',
-    'legacy-site-packages',
-  );
-  activity('Migrating user-installed Python packages...');
-  migrateLegacySitePackages(path.join(legacyRoot, 'Lib', 'site-packages'), legacySitePackages);
+  activity('Removing legacy Python runtime...');
   fs.rmSync(legacyRoot, { recursive: true, force: true });
   try {
     fs.rmdirSync(path.dirname(legacyRoot));

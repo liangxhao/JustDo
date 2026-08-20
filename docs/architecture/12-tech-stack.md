@@ -149,12 +149,14 @@ runtime；Windows 升级安装会整目录替换 `cfmind`，避免旧版默认 s
 Windows 的 CPython 3.12 x64 runtime 由 `scripts/setup-python-runtime.js` 准备。除解释器和 pip
 外，构建会按照 `resources/python-requirements.txt` 将精确锁定且带 wheel 哈希的 `requests`、
 `PyYAML`、`openpyxl`、`pypdf`、`beautifulsoup4` 及其传递依赖安装到独立的
-`Lib/bundled-site-packages`。用户后续通过 pip 安装的包保存在用户数据目录的 `python-user`，并通过
+`Lib/bundled-site-packages`。用户后续通过 pip 安装的包保存在用户数据目录的
+`runtimes/python-user`，并通过
 `sitecustomize` 排在内置包之前，允许显式覆盖内置版本。Windows 主机构建完成后会导入五个顶层包；
 安装、哈希或导入检查失败会终止打包。
 安装后 Python 解释器仅保存在应用安装目录的 `resources/python-win`，运行时直接使用该目录；启动时会
-将用户自行安装的包保存在用户数据目录的 `python-user`，并删除旧版本曾复制到 `runtimes/python-win`
-的冗余解释器。这样升级会完整替换内置 runtime，同时保留用户包，且不会形成第二套 Python。
+将用户自行安装的包保存在用户数据目录的 `runtimes/python-user`，并删除旧版本曾复制到
+`runtimes/python-win` 的冗余解释器。旧完整环境中的 `Lib/site-packages` 不迁移；之后通过 pip 安装的
+用户包会在应用升级时保留，且不会形成第二套 Python。
 
 Windows NSIS 使用 `electron-updater` 从 Generic HTTPS 静态目录更新。feed 固化在
 `scripts/windows-update-config.cjs`，打包过程不访问更新服务器，也不依赖环境变量；安装包

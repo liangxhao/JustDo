@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 const PYTHON_RUNTIME_DIR_NAME = 'python-win';
+const PYTHON_USER_RUNTIME_DIR_NAME = 'runtimes';
 const PYTHON_USER_BASE_DIR_NAME = 'python-user';
 const PYTHON_USER_VERSION_DIR_NAME = 'Python312';
 const SITE_CUSTOMIZE_REL_PATH = path.join('Lib', 'site-packages', 'sitecustomize.py');
@@ -145,45 +146,28 @@ function getLegacyUserPythonRoot(): string {
 function getPythonUserPaths(): {
   base: string;
   sitePackages: string;
-  legacySitePackages: string;
   scripts: string;
 } {
-  const base = path.join(app.getPath('userData'), PYTHON_USER_BASE_DIR_NAME);
+  const base = path.join(
+    app.getPath('userData'),
+    PYTHON_USER_RUNTIME_DIR_NAME,
+    PYTHON_USER_BASE_DIR_NAME,
+  );
   const versionRoot = path.join(base, PYTHON_USER_VERSION_DIR_NAME);
   return {
     base,
     sitePackages: path.join(versionRoot, 'site-packages'),
-    legacySitePackages: path.join(versionRoot, 'legacy-site-packages'),
     scripts: path.join(versionRoot, 'Scripts'),
   };
-}
-
-function migrateLegacySitePackages(source: string, destination: string): void {
-  if (!fs.existsSync(source) || fs.existsSync(destination)) return;
-  const stagingPath = `${destination}.migrating`;
-  fs.rmSync(stagingPath, { recursive: true, force: true });
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.cpSync(source, stagingPath, {
-    recursive: true,
-    force: true,
-    errorOnExist: true,
-    dereference: true,
-  });
-  fs.renameSync(stagingPath, destination);
 }
 
 function removeLegacyUserPythonRuntime(): void {
   const legacyRoot = getLegacyUserPythonRoot();
   if (!fs.existsSync(legacyRoot)) return;
 
-  const userPaths = getPythonUserPaths();
-  migrateLegacySitePackages(
-    path.join(legacyRoot, 'Lib', 'site-packages'),
-    userPaths.legacySitePackages,
-  );
   try {
     fs.rmSync(legacyRoot, { recursive: true, force: true });
-    console.log(`[python-runtime] Migrated and removed legacy userData runtime: ${legacyRoot}`);
+    console.log(`[python-runtime] Removed legacy userData runtime: ${legacyRoot}`);
   } catch (error) {
     console.warn('[python-runtime] Unable to remove the unused legacy runtime:', error);
     return;
@@ -217,7 +201,6 @@ export function appendPythonRuntimeToEnv(
     env.PATH = appendWindowsPath(env.PATH, pathEntries);
     env.JUSTDO_PYTHON_ROOT = pathEntries[0];
     env.JUSTDO_PYTHON_USER_SITE = userPaths.sitePackages;
-    env.JUSTDO_PYTHON_LEGACY_SITE = userPaths.legacySitePackages;
     env.PYTHONUSERBASE = userPaths.base;
   }
 

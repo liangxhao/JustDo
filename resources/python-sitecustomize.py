@@ -7,7 +7,6 @@ import sys
 def _add_justdo_user_sites() -> None:
     user_sites = [
         os.environ.get("JUSTDO_PYTHON_USER_SITE", "").strip(),
-        os.environ.get("JUSTDO_PYTHON_LEGACY_SITE", "").strip(),
     ]
     user_sites = [entry for entry in user_sites if entry]
     if not user_sites:

@@ -68,6 +68,14 @@ function runNpm(args, opts = {}) {
   return (result.stdout || '').trim();
 }
 
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 1. Parse arguments and read config
 // ---------------------------------------------------------------------------

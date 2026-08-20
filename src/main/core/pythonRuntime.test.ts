@@ -74,13 +74,11 @@ describe('packaged Python runtime', () => {
     expect(env.JUSTDO_PYTHON_ROOT).toBe(bundledRoot);
     expect(env.PATH).toContain(bundledRoot);
     expect(env.PATH).not.toContain(legacyRoot);
-    expect(env.PYTHONUSERBASE).toBe(path.join(electronMocks.userData, 'python-user'));
+    expect(env.PYTHONUSERBASE).toBe(path.join(electronMocks.userData, 'runtimes', 'python-user'));
     expect(env.JUSTDO_PYTHON_USER_SITE).toBe(
-      path.join(electronMocks.userData, 'python-user', 'Python312', 'site-packages'),
+      path.join(electronMocks.userData, 'runtimes', 'python-user', 'Python312', 'site-packages'),
     );
-    expect(env.JUSTDO_PYTHON_LEGACY_SITE).toBe(
-      path.join(electronMocks.userData, 'python-user', 'Python312', 'legacy-site-packages'),
-    );
+    expect(env.JUSTDO_PYTHON_LEGACY_SITE).toBeUndefined();
     expect(env.PIP_USER).toBeUndefined();
   });
 
@@ -99,16 +97,7 @@ describe('packaged Python runtime', () => {
     expect(fs.existsSync(legacyRoot)).toBe(false);
     expect(fs.existsSync(path.join(resourcesRoot, 'python-win', 'python.exe'))).toBe(true);
     expect(
-      fs.readFileSync(
-        path.join(
-          electronMocks.userData,
-          'python-user',
-          'Python312',
-          'legacy-site-packages',
-          'user-package.py',
-        ),
-        'utf8',
-      ),
-    ).toBe('user-package');
+      fs.existsSync(path.join(electronMocks.userData, 'runtimes', 'python-user', 'Python312')),
+    ).toBe(false);
   });
 });
