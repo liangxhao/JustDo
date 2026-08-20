@@ -54,6 +54,7 @@ const EXPECTED_PATCH_FILES = [
   '033-tool-error-reasoning-recovery.cjs',
   '034-live-context-budget-publication.cjs',
   '035-codex-local-compaction-semantics.cjs',
+  '036-managed-session-identity-pin.cjs',
 ] as const;
 
 function createPristineFixture(): string {

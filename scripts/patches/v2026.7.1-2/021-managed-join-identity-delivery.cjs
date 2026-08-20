@@ -8,7 +8,12 @@
 
 const fs = require('fs');
 const path = require('path');
-const { findFilesContaining, replaceUnique, writeIfChanged } = require('./_patch-utils.js');
+const {
+  findFilesContaining,
+  replaceUnique,
+  replaceUniquePattern,
+  writeIfChanged,
+} = require('./_patch-utils.js');
 
 function shouldSuppressJustDoManagedJoinAnnounce(entry) {
   const state = entry?.delivery?.justDoManagedJoin?.state;
@@ -80,6 +85,48 @@ async function runSubagentAnnounceFlow(params) {`,
   return updated;
 }
 
+function carryJustDoManagedJoinToReplacement(source, next, previousRunId, now) {
+  const justDoManagedJoin = source?.delivery?.justDoManagedJoin;
+  if (justDoManagedJoin?.state !== 'waiting') return false;
+  next.delivery = {
+    ...next.delivery,
+    justDoManagedJoin: {
+      ...justDoManagedJoin,
+      restartedFromRunId: previousRunId,
+      restartedAt: now,
+    },
+  };
+  next.expectsCompletionMessage = false;
+  next.completion = { ...next.completion, required: false };
+  if (next.cleanup === 'delete') next.cleanup = 'keep';
+  return true;
+}
+
+function transformReplacement(content, filePath) {
+  const hasHelper = content.includes('function carryJustDoManagedJoinToReplacement(');
+  const hasCall = content.includes(
+    'carryJustDoManagedJoinToReplacement(source, next, previousRunId, now);',
+  );
+  if (hasHelper && hasCall) return content;
+  if (hasHelper || hasCall) {
+    throw new Error(`${filePath}: partial managed join steer-restart transfer detected`);
+  }
+  let updated = replaceUnique(
+    content,
+    'function createSubagentRunManager(params) {',
+    `${carryJustDoManagedJoinToReplacement.toString()}
+function createSubagentRunManager(params) {`,
+    `${filePath}: managed join steer-restart helper`,
+  );
+  updated = replaceUniquePattern(
+    updated,
+    /^(?<indent>[ \t]+)clearDeliveryState\(next\);$/m,
+    '$<indent>carryJustDoManagedJoinToReplacement(source, next, previousRunId, now);\n$<indent>clearDeliveryState(next);',
+    `${filePath}: managed join steer-restart ownership transfer`,
+  );
+  return updated;
+}
+
 function locateTargets(runtimeDir) {
   const tools = findFilesContaining(runtimeDir, [
     'function waitForJustDoManagedSubagents(',
@@ -93,12 +140,22 @@ function locateTargets(runtimeDir) {
     'async function runSubagentAnnounceFlow(params)',
     'const completionDirectOrigin = expectsCompletionMessage',
   ]);
+  const replacement = findFilesContaining(runtimeDir, [
+    'const preserveFrozenResultFallback =',
+    'clearDeliveryState(next);',
+    'previousRunId',
+  ]);
   const expected = fs.existsSync(path.join(runtimeDir, 'gateway-bundle.mjs')) ? 2 : 1;
-  if (tools.length !== expected || state.length !== expected || announce.length !== expected)
+  if (
+    tools.length !== expected ||
+    state.length !== expected ||
+    announce.length !== expected ||
+    replacement.length !== expected
+  )
     throw new Error(
-      `managed join identity target counts are tools=${tools.length}, state=${state.length}, announce=${announce.length}; expected ${expected} each`,
+      `managed join identity target counts are tools=${tools.length}, state=${state.length}, announce=${announce.length}, replacement=${replacement.length}; expected ${expected} each`,
     );
-  return { tools, state, announce };
+  return { tools, state, announce, replacement };
 }
 
 function applyPatch(runtimeDir) {
@@ -110,6 +167,8 @@ function applyPatch(runtimeDir) {
     transforms.set(filePath, [...(transforms.get(filePath) ?? []), transformState]);
   for (const filePath of targets.announce)
     transforms.set(filePath, [...(transforms.get(filePath) ?? []), transformAnnounce]);
+  for (const filePath of targets.replacement)
+    transforms.set(filePath, [...(transforms.get(filePath) ?? []), transformReplacement]);
   const staged = [];
   for (const [filePath, fileTransforms] of transforms) {
     const original = fs.readFileSync(filePath, 'utf8');
@@ -154,10 +213,20 @@ function verifyPatch(runtimeDir) {
       if (!content.includes(expected))
         throw new Error(`${filePath}: managed join announce fence is missing ${expected}`);
   }
+  for (const filePath of targets.replacement) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    for (const expected of [
+      'function carryJustDoManagedJoinToReplacement(',
+      'restartedFromRunId: previousRunId',
+      'carryJustDoManagedJoinToReplacement(source, next, previousRunId, now);',
+    ])
+      if (!content.includes(expected))
+        throw new Error(`${filePath}: managed join steer-restart transfer is missing ${expected}`);
+  }
 }
 
 module.exports = {
   applyPatch,
   verifyPatch,
-  __testing: { shouldSuppressJustDoManagedJoinAnnounce },
+  __testing: { shouldSuppressJustDoManagedJoinAnnounce, carryJustDoManagedJoinToReplacement },
 };

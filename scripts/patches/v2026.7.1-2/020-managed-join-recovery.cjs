@@ -36,15 +36,38 @@ function restoreJustDoManagedJoinEntry(entry) {
   return true;
 }
 
+function shouldRestoreJustDoManagedJoinRun(
+  runId,
+  entry,
+  controller,
+  requestedRunIds,
+  requestedChildSessionKeys,
+  onlyCommitted,
+) {
+  const join = entry?.delivery?.justDoManagedJoin;
+  if (!join || join.controllerSessionKey !== controller || join.state === 'consumed') return false;
+  const matchesRunId = requestedRunIds?.has(runId) === true;
+  const matchesWaitingChild =
+    requestedChildSessionKeys?.has(entry.childSessionKey) === true && join.state === 'waiting';
+  if ((requestedRunIds || requestedChildSessionKeys) && !matchesRunId && !matchesWaitingChild)
+    return false;
+  return onlyCommitted !== true || join.state === 'tool_result_committed';
+}
+
 const REGISTRY_HELPERS = `${restoreJustDoManagedJoinEntry.toString()}
+${shouldRestoreJustDoManagedJoinRun.toString()}
 function restoreJustDoManagedJoinDelivery(params) {
 \tconst controller = typeof params?.controllerSessionKey === "string" ? params.controllerSessionKey.trim() : "";
 \tif (!controller) return false;
+\tconst requestedRunIds = Array.isArray(params.runIds)
+\t\t? new Set(params.runIds.filter((runId) => typeof runId === "string" && runId))
+\t\t: null;
+\tconst requestedChildSessionKeys = Array.isArray(params.childSessionKeys)
+\t\t? new Set(params.childSessionKeys.filter((sessionKey) => typeof sessionKey === "string" && sessionKey))
+\t\t: null;
 \tconst restoredRunIds = [];
 \tfor (const [runId, entry] of subagentRuns) {
-\t\tconst join = entry.delivery?.justDoManagedJoin;
-\t\tif (!join || join.controllerSessionKey !== controller || join.state === "consumed") continue;
-\t\tif (params.onlyCommitted === true && join.state !== "tool_result_committed") continue;
+\t\tif (!shouldRestoreJustDoManagedJoinRun(runId, entry, controller, requestedRunIds, requestedChildSessionKeys, params.onlyCommitted)) continue;
 \t\tif (restoreJustDoManagedJoinEntry(entry)) restoredRunIds.push(runId);
 \t}
 \tif (restoredRunIds.length === 0) return false;
@@ -118,7 +141,11 @@ function transformRegistry(content, filePath) {
 }
 
 function transformTools(content, filePath) {
-  if (content.includes('restoreJustDoManagedJoinDelivery({ controllerSessionKey: sessionKey })'))
+  if (
+    content.includes(
+      'restoreJustDoManagedJoinDelivery({ controllerSessionKey: sessionKey, runIds, childSessionKeys })',
+    )
+  )
     return content;
   if (!content.includes('function installJustDoManagedJoinCommitBridge()'))
     throw new Error(`${filePath}: managed join commit bridge prerequisite is missing`);
@@ -134,8 +161,8 @@ function transformTools(content, filePath) {
     `\t\tcommitContinuation(sessionKey) {
 \t\t\ttry { return commitJustDoManagedJoinContinuation(sessionKey); } catch { return false; }
 \t\t},
-\t\trestoreDelivery(sessionKey) {
-\t\t\ttry { return restoreJustDoManagedJoinDelivery({ controllerSessionKey: sessionKey }); } catch { return false; }
+\t\trestoreDelivery(sessionKey, runIds, childSessionKeys) {
+\t\t\ttry { return restoreJustDoManagedJoinDelivery({ controllerSessionKey: sessionKey, runIds, childSessionKeys }); } catch { return false; }
 \t\t}
 \t};`,
     `${filePath}: managed join recovery bridge`,
@@ -250,12 +277,16 @@ function verifyPatch(runtimeDir) {
         'function restoreJustDoManagedJoinDelivery(params)',
         'function recoverJustDoManagedJoinsAfterRestart()',
         'justDoJoinRecovery.consumedDeleteRunIds',
+        'shouldRestoreJustDoManagedJoinRun(runId, entry, controller, requestedRunIds, requestedChildSessionKeys, params.onlyCommitted)',
+        "requestedChildSessionKeys?.has(entry.childSessionKey) === true && join.state === 'waiting'",
       ],
     ],
     [
       'tools',
       targets.tools,
-      ['restoreJustDoManagedJoinDelivery({ controllerSessionKey: sessionKey })'],
+      [
+        'restoreJustDoManagedJoinDelivery({ controllerSessionKey: sessionKey, runIds, childSessionKeys })',
+      ],
     ],
     [
       'transcript',
@@ -278,4 +309,8 @@ function verifyPatch(runtimeDir) {
     }
 }
 
-module.exports = { applyPatch, verifyPatch, __testing: { restoreJustDoManagedJoinEntry } };
+module.exports = {
+  applyPatch,
+  verifyPatch,
+  __testing: { restoreJustDoManagedJoinEntry, shouldRestoreJustDoManagedJoinRun },
+};

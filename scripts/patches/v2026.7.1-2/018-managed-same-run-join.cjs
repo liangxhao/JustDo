@@ -56,11 +56,39 @@ function selectJustDoManagedJoinVisibleRuns(entries) {
   });
 }
 
+function reconcileJustDoManagedJoinRuns(expectedByChildSessionKey, entries) {
+  const currentByRunId = new Map(entries.map(entry => [entry?.runId, entry]));
+  const currentByChildSessionKey = new Map(entries.map(entry => [entry?.childSessionKey, entry]));
+  const currentRuns = [];
+  const replacements = [];
+  const missingRunIds = [];
+  for (const [childSessionKey, expectedRunId] of expectedByChildSessionKey) {
+    const exact = currentByRunId.get(expectedRunId);
+    if (exact) {
+      currentRuns.push(exact);
+      continue;
+    }
+    const replacement = currentByChildSessionKey.get(childSessionKey);
+    if (replacement?.runId && replacement.delivery?.justDoManagedJoin?.state === 'waiting') {
+      currentRuns.push(replacement);
+      replacements.push({
+        childSessionKey,
+        previousRunId: expectedRunId,
+        runId: replacement.runId,
+      });
+      continue;
+    }
+    missingRunIds.push(expectedRunId);
+  }
+  return { currentRuns, replacements, missingRunIds };
+}
+
 const HELPERS = `const JUSTDO_MANAGED_JOIN_GLOBAL = Symbol.for("justdo.openclaw.managed-subagent-join.v2026.7.1-2");
 const justDoManagedJoinWaiters = new Map();
 ${buildJustDoManagedJoinResult.toString()}
 ${partitionJustDoManagedJoinResults.toString()}
 ${selectJustDoManagedJoinVisibleRuns.toString()}
+${reconcileJustDoManagedJoinRuns.toString()}
 function isJustDoManagedJoinPending(entry) {
 \tconst state = entry?.delivery?.justDoManagedJoin?.state;
 \treturn state === "waiting" || state === "presented" || state === "tool_result_committed";
@@ -107,13 +135,44 @@ async function waitForJustDoManagedSubagentsCore(opts, message, toolCallId) {
 \t\tfor (const [runId, snapshot] of snapshots) subagentRuns.set(runId, snapshot);
 \t\treturn jsonResult({ status: "error", error: \`Unable to durably start subagent join: \${error instanceof Error ? error.message : String(error)}\` });
 \t}
-\tconst expectedRunIds = new Set(visibleRuns.map((entry) => entry.runId));
+\tconst expectedByChildSessionKey = new Map(visibleRuns.map((entry) => [entry.childSessionKey, entry.runId]));
+\tconst restoreCurrentJoinDelivery = () => globalThis[JUSTDO_MANAGED_JOIN_GLOBAL]?.restoreDelivery?.(
+\t\tcontrollerSessionKey,
+\t\t[...expectedByChildSessionKey.values()],
+\t\t[...expectedByChildSessionKey.keys()]
+\t) === true;
 \tfor (;;) {
 \t\tif (opts.abortSignal?.aborted) {
-\t\t\tglobalThis[JUSTDO_MANAGED_JOIN_GLOBAL]?.restoreDelivery?.(controllerSessionKey);
-\t\t\treturn jsonResult({ status: "aborted", message: "Subagent join was stopped; completion delivery was restored.", results: [] });
+\t\t\tconst deliveryRestored = restoreCurrentJoinDelivery();
+\t\t\treturn jsonResult({
+\t\t\t\tstatus: "aborted",
+\t\t\t\tmessage: deliveryRestored
+\t\t\t\t\t? "Subagent join was stopped; completion delivery was restored."
+\t\t\t\t\t: "Subagent join was stopped; completion delivery could not be restored and will be retried after Gateway recovery.",
+\t\t\t\tdeliveryRestored,
+\t\t\t\tresults: []
+\t\t\t});
 \t\t}
-\t\tconst currentRuns = listControlledSubagentRuns(controllerSessionKey).filter((entry) => expectedRunIds.has(entry.runId));
+\t\tconst reconciliation = reconcileJustDoManagedJoinRuns(
+\t\t\texpectedByChildSessionKey,
+\t\t\tlistControlledSubagentRuns(controllerSessionKey)
+\t\t);
+\t\tfor (const replacement of reconciliation.replacements) {
+\t\t\texpectedByChildSessionKey.set(replacement.childSessionKey, replacement.runId);
+\t\t}
+\t\tconst { currentRuns, missingRunIds } = reconciliation;
+\t\tif (missingRunIds.length > 0) {
+\t\t\tconst deliveryRestored = restoreCurrentJoinDelivery();
+\t\t\treturn jsonResult({
+\t\t\t\tstatus: "error",
+\t\t\t\terror: deliveryRestored
+\t\t\t\t\t? "Managed subagent state disappeared while waiting; completion delivery was restored."
+\t\t\t\t\t: "Managed subagent state disappeared while waiting; completion delivery could not be restored and will be retried after Gateway recovery.",
+\t\t\t\tmissingRunIds,
+\t\t\t\tdeliveryRestored,
+\t\t\t\tresults: []
+\t\t\t});
+\t\t}
 \t\tconst { completed, pending } = partitionJustDoManagedJoinResults(currentRuns);
 \t\tif (completed.length > 0) {
 \t\t\tconst presentedAt = Date.now();
@@ -122,8 +181,8 @@ async function waitForJustDoManagedSubagentsCore(opts, message, toolCallId) {
 \t\t\t\t\tentry.delivery.justDoManagedJoin = { ...entry.delivery.justDoManagedJoin, state: "presented", presentedAt, toolCallId };
 \t\t\t\t});
 \t\t\t} catch (error) {
-\t\t\t\tglobalThis[JUSTDO_MANAGED_JOIN_GLOBAL]?.restoreDelivery?.(controllerSessionKey);
-\t\t\t\treturn jsonResult({ status: "error", error: \`Unable to durably record subagent results: \${error instanceof Error ? error.message : String(error)}\` });
+\t\t\t\tconst deliveryRestored = restoreCurrentJoinDelivery();
+\t\t\t\treturn jsonResult({ status: "error", error: \`Unable to durably record subagent results: \${error instanceof Error ? error.message : String(error)}\`, deliveryRestored });
 \t\t\t}
 \t\t\treturn jsonResult({ status: pending > 0 ? "partial" : "completed", message, pending, results: completed.map(buildJustDoManagedJoinResult) });
 \t\t}
@@ -210,6 +269,10 @@ function verifyPatch(runtimeDir) {
       'return await waitForJustDoManagedSubagents(opts,',
       'justDoManagedJoinWaiters.has(controllerSessionKey)',
       'selectJustDoManagedJoinVisibleRuns(listControlledSubagentRuns(controllerSessionKey))',
+      'reconcileJustDoManagedJoinRuns(',
+      'restoreDelivery?.(\n\t\tcontrollerSessionKey,',
+      '[...expectedByChildSessionKey.keys()]',
+      'Managed subagent state disappeared while waiting; completion delivery was restored.',
       'state: "waiting"',
       'state: "presented"',
       'persistSubagentRunsToDiskOrThrow(subagentRuns);',
@@ -227,5 +290,6 @@ module.exports = {
     buildJustDoManagedJoinResult,
     partitionJustDoManagedJoinResults,
     selectJustDoManagedJoinVisibleRuns,
+    reconcileJustDoManagedJoinRuns,
   },
 };

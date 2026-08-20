@@ -60,7 +60,8 @@ flowchart LR
   Classify --> Join[018 same-run join]
   Join --> Commit[019 两阶段提交]
   Commit --> Recovery[020 restart/failure recovery]
-  Recovery --> Fence[021 identity/announce fence]
+  Recovery --> Fence[021 delivery ownership/announce fence]
+  Recovery --> Identity[036 managed Gateway identity pin]
   Recovery -->|未消费结果恢复原生投递| Queue[016 requester FIFO]
   Queue --> Promote[015 delivery commit 后提升 canonical branch]
 ```
@@ -289,9 +290,15 @@ flowchart LR
 #### `018-managed-same-run-join.cjs`
 
 - **做什么**：JustDo managed 父会话调用 `sessions_yield` 时不结束当前 turn，而是在原 tool
-  call 中等待并增量返回 child 结果批次，持久化 `waiting/presented` 状态。
+  call 中等待并增量返回 child 结果批次，持久化 `waiting/presented` 状态。若已准入的 run
+  在等待期间从 registry 意外消失，立即恢复其余 child 的原生 completion delivery 并返回
+  可见 Tool Error，不进入无期限空轮询。合法 steer/restart 会把 waiting ownership 原子转移到
+  新 generation，Join 按 child session 继续等待；失败恢复同时按当前 run ID 与稳定的 child
+  session key 限定当前 yield 批次，因此即使 abort 早于下一轮 reconciliation 也能恢复 successor，
+  不回滚之前已提交的增量结果，并显式报告 delivery 是否恢复成功。
 - **关系与边界**：依赖 `017` 的 classifier；`019` 接管结果提交，`020` 接管失败恢复，
-  `021` 接管 identity/announce race。非 JustDo、cron 和 native channel 保持上游 push
+  `021` 接管 delivery ownership/announce race，`036` 固定恢复路径的 Gateway identity。
+  非 JustDo、cron 和 native channel 保持上游 push
   announce 行为。
 - **当前保留原因**：这是 managed subagent join 的核心产品能力。原生 `sessions_yield`
   会结束/暂停父 turn，child 结果只能通过另一个 completion turn 推送，无法在当前 tool call
@@ -457,7 +464,7 @@ flowchart LR
 - **可删除条件**：上游 safeguard/native compact 都能在非用户失败时提交等价 bounded fallback，
   清理状态并继续；用户 abort 仍必须取消。
 
-### 032–035：运行进度、恢复与上下文状态
+### 032–036：运行进度、恢复与上下文状态
 
 #### `032-sanitized-run-progress-events.cjs`
 
@@ -506,6 +513,22 @@ flowchart LR
   仅靠 customInstructions 无法改变历史替换顺序和自动触发状态机。
 - **可删除条件**：上游提供等价的显式本地策略、用户原话+末尾摘要布局、连续压缩状态和失败语义。
 
+#### `036-managed-session-identity-pin.cjs`
+
+- **做什么**：对已有持久化 ID 的精确 `agent:*:justdo:*` 会话，在 command resolver、
+  `chat.send` 的 reply-session 初始化、Gateway agent 初次解析以及持久化前复核四个位置都优先
+  使用 store 中的 ID；过期 client ID、idle/daily freshness、failed transcript 缺失和 terminal
+  transcript 检查都不能触发隐式换号。
+- **关系与边界**：补足 `021` 只保存 identity evidence、未约束 session resolver 的缺口；Gateway
+  RPC 的显式 reset/delete 在 agent resolver 前完成；reply-session 中的 `/new`、`/reset`
+  则由 `!resetTriggered` 明确绕过 identity pin，仍按上游语义创建或删除身份。普通 session key
+  的 rollover 行为逐字保留。
+- **当前保留原因**：目标版会在 Gateway 请求开始和持久化前分别计算 session identity，任一处按
+  freshness/transcript 状态生成 UUID 都会让 Renderer 拒绝 `sessions.changed`，并使恢复回合落入
+  新 transcript。仅记录 join 时的 ID 不能阻止这个回归。
+- **可删除条件**：上游为外部托管会话提供跨 command、Gateway admission、持久化复核和隐式恢复
+  的 immutable identity，同时仍保留显式 reset/delete 语义。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -551,7 +574,7 @@ flowchart LR
 | `020-run-progress-events`                    | 部分保留             | 删除 active-run 改造，`032` 只发布四个安全 stage。                                                                                                                                    |
 | `021-atomic-sessions-spawn-admission`        | 保留并重写           | `013`。                                                                                                                                                                               |
 | `022-subagent-pending-status`                | 保留并重写           | `014`。                                                                                                                                                                               |
-| `023-managed-subagent-join`                  | 拆成五项重写         | `017` classification、`018` same-run join、`019` commits、`020` recovery、`021` identity/delivery。                                                                                   |
+| `023-managed-subagent-join`                  | 拆成六项重写         | `017` classification、`018` same-run join、`019` commits、`020` recovery、`021` delivery ownership、`036` session identity pin。                                                      |
 | `024-silent-goal-clear`                      | 保留并重写           | `011`。                                                                                                                                                                               |
 | `025-subagent-session-title-metadata`        | 部分保留             | 上游持久化 `taskName`；`012` 只补 list projection。                                                                                                                                   |
 
@@ -559,13 +582,14 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、35 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、36 项保留缺口、头注释和大小约束。                                                                      |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                     |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                         |
 | `openclawV202671AtomicSessionsSpawnAdmission.test.ts` | `013` native pristine 并发失败、post-preflight reservation、canonical requester、跨 requester 并行、ACP 不变及 source/bundle 原子幂等。   |
 | `openclawV202671SubagentCapabilityPatches.test.ts`    | `014`。                                                                                                                                   |
-| `openclawV202671ManagedSubagentJoin.test.ts`          | `017`–`021` 的分类、批次、两阶段提交、恢复、identity 与 announce fence。                                                                  |
+| `openclawV202671ManagedSubagentJoin.test.ts`          | `017`–`021` 的分类、批次、两阶段提交、消失 run 终止等待、恢复与 announce fence。                                                          |
+| `openclawV202671ManagedSessionIdentity.test.ts`       | `036` command、reply、agent initial/persisted 四落点 identity pin（含 reply reset 绕过）、普通会话不变、幂等和多目标原子失败。            |
 | `openclawV202671ApprovalLifecycle.test.ts`            | `022`–`025` 的 lifetime、hidden resume、stop/failure 与文件头。                                                                           |
 | `openclawV202671RequestMetadata.test.ts`              | `026`–`028`，含 strict-compatible negative 与 nested parent。                                                                             |
 | `openclawV202671CompactionMetadata.test.ts`           | `029` identity dedupe、逐条 user replay、summary 顺序、20k token、CJK/emoji 边界。                                                        |

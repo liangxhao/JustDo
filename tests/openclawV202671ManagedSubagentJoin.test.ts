@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { describe, expect, test } from 'vitest';
@@ -46,6 +47,14 @@ const sameRunJoinPatch =
         pending: number;
       };
       selectJustDoManagedJoinVisibleRuns: (entries: RunEntry[]) => RunEntry[];
+      reconcileJustDoManagedJoinRuns: (
+        expectedByChildSessionKey: Map<string, string>,
+        entries: RunEntry[],
+      ) => {
+        currentRuns: RunEntry[];
+        replacements: Array<{ childSessionKey: string; previousRunId: string; runId: string }>;
+        missingRunIds: string[];
+      };
     };
   };
 const commitPatch = require('../scripts/patches/v2026.7.1-2/019-managed-join-commits.cjs') as {
@@ -64,11 +73,31 @@ const commitPatch = require('../scripts/patches/v2026.7.1-2/019-managed-join-com
   };
 };
 const recoveryPatch = require('../scripts/patches/v2026.7.1-2/020-managed-join-recovery.cjs') as {
-  __testing: { restoreJustDoManagedJoinEntry: (entry: RunEntry) => boolean };
+  __testing: {
+    restoreJustDoManagedJoinEntry: (entry: RunEntry) => boolean;
+    shouldRestoreJustDoManagedJoinRun: (
+      runId: string,
+      entry: RunEntry,
+      controller: string,
+      requestedRunIds: Set<string> | null,
+      requestedChildSessionKeys?: Set<string> | null,
+      onlyCommitted?: boolean,
+    ) => boolean;
+  };
 };
 const identityDeliveryPatch =
   require('../scripts/patches/v2026.7.1-2/021-managed-join-identity-delivery.cjs') as {
-    __testing: { shouldSuppressJustDoManagedJoinAnnounce: (entry: RunEntry) => boolean };
+    applyPatch: (runtimeDir: string) => string[];
+    verifyPatch: (runtimeDir: string) => void;
+    __testing: {
+      shouldSuppressJustDoManagedJoinAnnounce: (entry: RunEntry) => boolean;
+      carryJustDoManagedJoinToReplacement: (
+        source: RunEntry,
+        next: RunEntry,
+        previousRunId: string,
+        now: number,
+      ) => boolean;
+    };
   };
 
 describe('managed-session-classification capability', () => {
@@ -152,6 +181,34 @@ describe('managed-same-run-join capability', () => {
         },
       ]),
     ).toEqual([completed, missingCapture]);
+  });
+
+  test('follows a durable steer replacement and reports only truly vanished runs', () => {
+    const replacement: RunEntry = {
+      runId: 'run-restarted',
+      childSessionKey: 'child-restarted',
+      delivery: { justDoManagedJoin: { state: 'waiting' } },
+    };
+    expect(
+      sameRunJoinPatch.__testing.reconcileJustDoManagedJoinRuns(
+        new Map([
+          ['child-present', 'run-present'],
+          ['child-restarted', 'run-old'],
+          ['child-vanished', 'run-vanished'],
+        ]),
+        [{ runId: 'run-present', childSessionKey: 'child-present' }, replacement],
+      ),
+    ).toEqual({
+      currentRuns: [{ runId: 'run-present', childSessionKey: 'child-present' }, replacement],
+      replacements: [
+        {
+          childSessionKey: 'child-restarted',
+          previousRunId: 'run-old',
+          runId: 'run-restarted',
+        },
+      ],
+      missingRunIds: ['run-vanished'],
+    });
   });
 });
 
@@ -256,6 +313,94 @@ describe('managed-join-recovery capability', () => {
     expect(recoveryPatch.__testing.restoreJustDoManagedJoinEntry(consumed)).toBe(false);
     expect(consumed.delivery?.justDoManagedJoin?.state).toBe('consumed');
   });
+
+  test('scopes a failed incremental join recovery to the current yield batch', () => {
+    const currentWaiting: RunEntry = {
+      childSessionKey: 'agent:main:subagent:current',
+      delivery: {
+        justDoManagedJoin: {
+          state: 'waiting',
+          controllerSessionKey: 'agent:main:justdo:parent',
+        },
+      },
+    };
+    const priorCommitted: RunEntry = {
+      childSessionKey: 'agent:main:subagent:prior',
+      delivery: {
+        justDoManagedJoin: {
+          state: 'tool_result_committed',
+          controllerSessionKey: 'agent:main:justdo:parent',
+        },
+      },
+    };
+    const shouldRestore = recoveryPatch.__testing.shouldRestoreJustDoManagedJoinRun;
+
+    expect(
+      shouldRestore(
+        'run-current',
+        currentWaiting,
+        'agent:main:justdo:parent',
+        new Set(['run-current']),
+      ),
+    ).toBe(true);
+    expect(
+      shouldRestore(
+        'run-prior',
+        priorCommitted,
+        'agent:main:justdo:parent',
+        new Set(['run-current']),
+      ),
+    ).toBe(false);
+  });
+
+  test('restores a steer successor by stable child identity before the waiter reconciles', () => {
+    const replacement: RunEntry = {
+      childSessionKey: 'agent:main:subagent:current',
+      delivery: {
+        justDoManagedJoin: {
+          state: 'waiting',
+          controllerSessionKey: 'agent:main:justdo:parent',
+        },
+      },
+    };
+    const priorCommitted: RunEntry = {
+      childSessionKey: 'agent:main:subagent:current',
+      delivery: {
+        justDoManagedJoin: {
+          state: 'tool_result_committed',
+          controllerSessionKey: 'agent:main:justdo:parent',
+        },
+      },
+    };
+    const shouldRestore = recoveryPatch.__testing.shouldRestoreJustDoManagedJoinRun;
+    const expectedRunIds = new Set(['run-before-steer']);
+    const expectedChildSessionKeys = new Set(['agent:main:subagent:current']);
+
+    expect(
+      shouldRestore(
+        'run-replacement',
+        replacement,
+        'agent:main:justdo:parent',
+        expectedRunIds,
+        expectedChildSessionKeys,
+      ),
+    ).toBe(true);
+    expect(
+      shouldRestore(
+        'run-prior-committed',
+        priorCommitted,
+        'agent:main:justdo:parent',
+        expectedRunIds,
+        expectedChildSessionKeys,
+      ),
+    ).toBe(false);
+    expect(
+      fs.readFileSync(
+        path.join(process.cwd(), 'scripts/patches/v2026.7.1-2/018-managed-same-run-join.cjs'),
+        'utf8',
+      ),
+    ).toContain('[...expectedByChildSessionKey.keys()]');
+  });
 });
 
 describe('managed-session-identity-and-delivery capability', () => {
@@ -296,6 +441,110 @@ describe('managed-session-identity-and-delivery capability', () => {
     expect(recoveryPatch.__testing.restoreJustDoManagedJoinEntry(entry)).toBe(false);
   });
 
+  test('transfers waiting ownership across a steer restart', () => {
+    const source: RunEntry = {
+      cleanup: 'keep',
+      expectsCompletionMessage: false,
+      delivery: {
+        justDoManagedJoin: {
+          state: 'waiting',
+          controllerSessionKey: 'agent:main:justdo:parent',
+          originalCleanup: 'delete',
+          originalExpectsCompletionMessage: true,
+        },
+      },
+    };
+    const next: RunEntry = {
+      cleanup: 'delete',
+      expectsCompletionMessage: true,
+      completion: { required: true },
+      delivery: { status: 'pending' },
+    };
+
+    expect(
+      identityDeliveryPatch.__testing.carryJustDoManagedJoinToReplacement(
+        source,
+        next,
+        'run-old',
+        123,
+      ),
+    ).toBe(true);
+    expect(next).toMatchObject({
+      cleanup: 'keep',
+      expectsCompletionMessage: false,
+      completion: { required: false },
+      delivery: {
+        justDoManagedJoin: {
+          state: 'waiting',
+          controllerSessionKey: 'agent:main:justdo:parent',
+          restartedFromRunId: 'run-old',
+          restartedAt: 123,
+        },
+      },
+    });
+  });
+
+  test('patches steer ownership in source chunks and a space-indented gateway bundle', () => {
+    const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-managed-join-'));
+    const distDir = path.join(runtimeDir, 'dist');
+    fs.mkdirSync(distDir);
+    const toolsFixture = `function waitForJustDoManagedSubagents() {}
+function createSessionsYieldTool(opts) {
+\treturn {
+\t\t\t\t\tcontrollerSessionKey,
+\t\t\t\t\toriginalCleanup: cleanup
+\t};
+}`;
+    const stateFixture = `function clearDeliveryState(entry) {
+\tentry.delivery = { status: entry.expectsCompletionMessage === false ? "not_required" : "pending" };
+}
+function ensureDeliveryState(entry) { return entry.delivery; }`;
+    const announceFixture = `async function runSubagentAnnounceFlow(params) {
+\t\tconst completionDirectOrigin = expectsCompletionMessage && !requesterIsSubagent ? await resolveSubagentCompletionOrigin({
+\t\t\tsessionKey: params.childSessionKey
+\t\t}) : undefined;
+}`;
+    const replacementFixture = (indent: string) => `const preserveFrozenResultFallback = true;
+function createSubagentRunManager(params) {
+${indent}const previousRunId = params.previousRunId;
+${indent}const source = params.source;
+${indent}const next = params.next;
+${indent}const now = Date.now();
+${indent}clearDeliveryState(next);
+}`;
+
+    try {
+      fs.writeFileSync(path.join(distDir, 'tools.js'), toolsFixture);
+      fs.writeFileSync(path.join(distDir, 'state.js'), stateFixture);
+      fs.writeFileSync(path.join(distDir, 'announce.js'), announceFixture);
+      fs.writeFileSync(path.join(distDir, 'replacement.js'), replacementFixture('\t\t'));
+      fs.writeFileSync(
+        path.join(runtimeDir, 'gateway-bundle.mjs'),
+        [toolsFixture, stateFixture, announceFixture, replacementFixture('    ')].join('\n'),
+      );
+
+      expect(
+        identityDeliveryPatch
+          .applyPatch(runtimeDir)
+          .map(fileName => fileName.replaceAll('\\', '/'))
+          .sort(),
+      ).toEqual([
+        'dist/announce.js',
+        'dist/replacement.js',
+        'dist/state.js',
+        'dist/tools.js',
+        'gateway-bundle.mjs',
+      ]);
+      expect(() => identityDeliveryPatch.verifyPatch(runtimeDir)).not.toThrow();
+      expect(identityDeliveryPatch.applyPatch(runtimeDir)).toEqual([]);
+      expect(fs.readFileSync(path.join(runtimeDir, 'gateway-bundle.mjs'), 'utf8')).toContain(
+        '    carryJustDoManagedJoinToReplacement(source, next, previousRunId, now);',
+      );
+    } finally {
+      fs.rmSync(runtimeDir, { recursive: true, force: true });
+    }
+  });
+
   test('records identity evidence without introducing a session-id reassignment', () => {
     const patchSource = fs.readFileSync(
       path.join(
@@ -333,6 +582,7 @@ describe('managed join patch documentation contracts', () => {
     '019-managed-join-commits.cjs',
     '020-managed-join-recovery.cjs',
     '021-managed-join-identity-delivery.cjs',
+    '036-managed-session-identity-pin.cjs',
   ])('%s declares capability, target, scope, safety and removal condition', fileName => {
     const source = fs.readFileSync(
       path.join(process.cwd(), 'scripts/patches/v2026.7.1-2', fileName),
