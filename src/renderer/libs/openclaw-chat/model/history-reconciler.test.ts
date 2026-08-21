@@ -132,6 +132,74 @@ describe('history reconciliation', () => {
     });
   });
 
+  test('preserves the known prefix when an empty Gateway snapshot races an optimistic turn', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const previous = [
+      { role: 'assistant', content: 'earlier answer', timestamp: 500 },
+      {
+        role: 'user',
+        content: 'stop this run',
+        timestamp: 1000,
+        __justdoOptimisticHistoryTail: true,
+      },
+    ];
+    state.persistedMessages = previous;
+
+    const result = reconcileHistory(state, {
+      request: { sessionKey: 'session-1', sessionId: 'sid-1', historyGeneration: 0 },
+      source: 'gateway',
+      messages: [],
+      requestStartMessages: previous,
+      currentMessages: previous,
+    });
+
+    expect(result).toMatchObject({
+      accepted: true,
+      messages: previous,
+      preservedOptimisticTailCount: 2,
+    });
+  });
+
+  test('restores an optimistic user prompt before its interrupted overlay', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const user = {
+      role: 'user',
+      content: 'stop this run',
+      timestamp: 1000,
+      __justdoOptimisticHistoryTail: true,
+    };
+    const interrupted = {
+      role: 'assistant',
+      content: 'The run was interrupted.',
+      timestamp: 1100,
+      __justdoInterruptedOverlayId: 'session-1:run-1',
+      __justdoOptimisticHistoryTail: true,
+    };
+    state.persistedMessages = [user, interrupted];
+
+    const result = reconcileHistory(state, {
+      request: { sessionKey: 'session-1', sessionId: 'sid-1', historyGeneration: 0 },
+      source: 'gateway',
+      messages: [
+        {
+          ...interrupted,
+          __justdoOptimisticHistoryTail: undefined,
+        },
+      ],
+      requestStartMessages: state.persistedMessages,
+      currentMessages: state.persistedMessages,
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.messages).toEqual([
+      user,
+      expect.objectContaining({
+        role: 'assistant',
+        __justdoInterruptedOverlayId: 'session-1:run-1',
+      }),
+    ]);
+  });
+
   test('rejects a response overtaken by a concurrent visible update and requests catch-up', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const waiting = { role: 'assistant', content: 'waiting', timestamp: 1000 };

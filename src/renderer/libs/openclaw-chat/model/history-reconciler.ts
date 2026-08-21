@@ -187,9 +187,11 @@ function preserveOptimisticTailMessages(
     const optimisticMessages = previousMessages.filter(message =>
       isProtectableOptimisticMessage(message, isVisibleMessage),
     );
-    return optimisticMessages.length === previousMessages.length
-      ? previousMessages
-      : historyMessages;
+    // An empty Gateway snapshot can be observed between chat.send and the
+    // transcript append. Keep the whole locally known prefix when it owns any
+    // optimistic tail; dropping the prefix would also detach that tail from
+    // the conversation it belongs to.
+    return optimisticMessages.length > 0 ? previousMessages : historyMessages;
   }
 
   let sharedPreviousIndex = -1;
@@ -224,6 +226,45 @@ function preserveOptimisticTailMessages(
     optimisticTail.push(message);
   }
   return optimisticTail.length > 0 ? [...historyMessages, ...optimisticTail] : historyMessages;
+}
+
+function restoreMissingOptimisticMessages(
+  historyMessages: unknown[],
+  previousMessages: unknown[],
+  isVisibleMessage: (message: unknown) => boolean,
+): unknown[] {
+  const latestHistoryTimestamp = latestMessageTimestampMs(historyMessages);
+  const missing = previousMessages.flatMap((message, previousIndex) =>
+    isProtectableOptimisticMessage(message, isVisibleMessage) &&
+    isNewerThanHistoryTail(message, latestHistoryTimestamp) &&
+    !historyHasSameOrNewerMessage(historyMessages, message)
+      ? [{ message, previousIndex }]
+      : [],
+  );
+  if (missing.length === 0) return historyMessages;
+
+  const restored = [...historyMessages];
+  for (const { message, previousIndex } of missing) {
+    const nextKnownMessage = previousMessages
+      .slice(previousIndex + 1)
+      .find(candidate => historyHasSameOrNewerMessage(restored, candidate));
+    const nextKnownIndex = nextKnownMessage
+      ? restored.findIndex(candidate => messagesDisplayEquivalent(candidate, nextKnownMessage))
+      : -1;
+    const timestamp = messageTimestampMs(message);
+    const insertAt =
+      nextKnownIndex >= 0
+        ? nextKnownIndex
+        : timestamp == null
+          ? -1
+          : restored.findIndex(candidate => {
+              const candidateTimestamp = messageTimestampMs(candidate);
+              return candidateTimestamp != null && candidateTimestamp > timestamp;
+            });
+    if (insertAt < 0) restored.push(message);
+    else restored.splice(insertAt, 0, message);
+  }
+  return restored;
 }
 
 function collectLateOptimisticTailMessages(
@@ -410,6 +451,11 @@ export function reconcileHistory(
     requestStartMessages,
     isVisibleMessage,
   );
+  // Interrupted overlays can already be present while the immediately
+  // preceding user prompt is still missing from Gateway history. Restore that
+  // protected prompt at its chronological position instead of accepting a
+  // transcript whose assistant result has lost its user turn.
+  messages = restoreMissingOptimisticMessages(messages, requestStartMessages, isVisibleMessage);
   const lateOptimisticTail = collectLateOptimisticTailMessages(
     requestStartMessages,
     currentMessages,

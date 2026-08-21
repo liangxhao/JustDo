@@ -2537,9 +2537,12 @@ export class ChatController {
       ? liveThinkingText
         ? withThinkingContent(payload.message, liveThinkingText)
         : payload.message
-      : liveThinkingText || liveContentText
-        ? buildInterruptedTurnMessage(liveThinkingText, liveContentText, abortedRunId)
-        : null;
+      : buildInterruptedTurnMessage(
+          liveThinkingText,
+          liveContentText,
+          abortedRunId,
+          i18nService.t('coworkRunInterruptedMessage'),
+        );
     const message =
       interruptedMessage && abortedRunId && typeof interruptedMessage === 'object'
         ? { ...(interruptedMessage as Record<string, unknown>), runId: abortedRunId }
@@ -2914,7 +2917,13 @@ export class ChatController {
           : displayMessage,
       timestamp: Date.now(),
     };
-    this.setCurrentSessionMessages([...this.state.chatMessages, userMessage]);
+    // A post-send history refresh can race Gateway transcript persistence,
+    // especially when the run is stopped before the model replies. Protect
+    // the prompt until chat.history contains its authoritative replacement.
+    this.setCurrentSessionMessages([
+      ...this.state.chatMessages,
+      markOptimisticHistoryTail(userMessage),
+    ]);
     beginAssistantTurn(
       this.state.transcript,
       {
@@ -3409,12 +3418,15 @@ function buildInterruptedTurnMessage(
   thinkingText: string | null,
   contentText: string | null,
   runId: string | null,
+  fallbackText = '',
 ): unknown {
   return {
     role: 'assistant',
     content: [
       ...(thinkingText ? [{ type: 'thinking', thinking: thinkingText }] : []),
-      ...(contentText ? [{ type: 'text', text: contentText, interrupted: true }] : []),
+      ...(contentText || (!thinkingText && fallbackText)
+        ? [{ type: 'text', text: contentText || fallbackText, interrupted: true }]
+        : []),
     ],
     timestamp: Date.now(),
     interrupted: true,

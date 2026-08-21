@@ -2567,7 +2567,7 @@ test('keeps streamed assistant text as a truncated message when an aborted run h
   expect(controller.state.chatMessages).toHaveLength(1);
 });
 
-test('accepts a later chat.aborted message after an empty lifecycle abort', () => {
+test('keeps an empty lifecycle abort visible until a richer chat.aborted message arrives', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:session-1';
   controller.state.transcript.sessionKey = controller.state.sessionKey;
@@ -2594,7 +2594,14 @@ test('accepts a later chat.aborted message after an empty lifecycle abort', () =
       data: { phase: 'end', aborted: true },
     },
   });
-  expect(controller.state.chatMessages).toEqual([]);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'assistant',
+      runId: 'run-late-abort',
+      interrupted: true,
+      __justdoOptimisticHistoryTail: true,
+    }),
+  ]);
 
   handleEvent({
     event: 'chat',
@@ -2613,6 +2620,58 @@ test('accepts a later chat.aborted message after an empty lifecycle abort', () =
       content: 'The final partial response.',
     }),
   ]);
+});
+
+test('keeps a stopped prompt and interruption across a stale history refresh', async () => {
+  let storedInterruptedMessages: string | null = null;
+  vi.stubGlobal('localStorage', {
+    getItem: vi.fn(() => storedInterruptedMessages),
+    setItem: vi.fn((_key: string, value: string) => {
+      storedInterruptedMessages = value;
+    }),
+  });
+  const sessionKey = 'agent:main:justdo:session-stopped-before-reply';
+  const request = vi.fn((method: string) => {
+    if (method === 'chat.send') return Promise.resolve({ runId: 'run-stopped' });
+    if (method === 'chat.history') return Promise.resolve({ messages: [] });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+
+  await controller.sendMessage('Please start this work.');
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      runId: 'run-stopped',
+      session: sessionKey,
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'end', aborted: true },
+    },
+  });
+
+  await controller.loadHistory();
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'user',
+      content: 'Please start this work.',
+      __justdoOptimisticHistoryTail: true,
+    }),
+    expect.objectContaining({
+      role: 'assistant',
+      runId: 'run-stopped',
+      interrupted: true,
+    }),
+  ]);
+  expect(storedInterruptedMessages).toContain('run-stopped');
 });
 
 test('replaces a short lifecycle abort projection with a richer chat.aborted message', () => {
