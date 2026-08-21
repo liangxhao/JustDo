@@ -212,7 +212,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserConnectionFailed: 'Chrome 连接测试失败',
     browserExtensionTitle: '通过扩展连接你的 Chrome',
     browserExtensionDescription:
-      '当前版本需要首次手动加载并配对扩展。完成后扩展会自动重连，不再显示阻塞式远程调试授权窗口。',
+      '首次使用时，请手动加载并配对扩展。完成后扩展会自动重连，不再显示阻塞式远程调试授权窗口。',
     browserExtensionScopeNotice:
       '只有浏览器助手标签组中的网页会被共享。将网页移出该标签组，或关闭 Chrome 的调试提示，即可立即停止访问。',
     browserExtensionStepChromeTitle: '1. 安装并启动 Google Chrome',
@@ -266,6 +266,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     appUpdateDownloadProgress: '更新下载进度',
     appUpdateReleaseNotes: '更新说明',
     appearance: '外观',
+    appearanceMode: '外观模式',
     language: '语言',
     light: '浅色',
     dark: '深色',
@@ -867,10 +868,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // 文件操作
     openFolder: '打开文件夹',
 
-    // IM Bot
-    imBot: 'IM 机器人',
-    imComingSoon: 'Coming Soon',
-    imComingSoonDesc: 'IM 机器人功能正在开发中，敬请期待。',
+    // 消息通道
+    imBot: '消息通道',
+    imComingSoon: '即将推出',
+    imComingSoonDesc: '消息通道功能正在开发中，敬请期待。',
 
     // 通用设置
     autoLaunch: '开机自启动',
@@ -1402,7 +1403,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserConnectionFailed: 'Chrome connection test failed',
     browserExtensionTitle: 'Connect your Chrome through the extension',
     browserExtensionDescription:
-      'This version requires you to load and pair the extension once. It reconnects automatically afterward without the blocking remote-debugging prompt.',
+      'When using it for the first time, load and pair the extension manually. It reconnects automatically afterward without the blocking remote-debugging prompt.',
     browserExtensionScopeNotice:
       'Only pages in the browser assistant tab group are shared. Move a page out of the group, or dismiss Chrome’s debugging notice, to revoke access immediately.',
     browserExtensionStepChromeTitle: '1. Install and start Google Chrome',
@@ -1458,6 +1459,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     appUpdateDownloadProgress: 'Update download progress',
     appUpdateReleaseNotes: 'Release Notes',
     appearance: 'Appearance',
+    appearanceMode: 'Appearance Mode',
     language: 'Language',
     light: 'Light',
     dark: 'Dark',
@@ -2080,10 +2082,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     // File operations
     openFolder: 'Open Folder',
 
-    // IM Bot
-    imBot: 'IM Bot',
+    // Messaging Channels
+    imBot: 'Messaging Channels',
     imComingSoon: 'Coming Soon',
-    imComingSoonDesc: 'IM Bot feature is under development. Stay tuned.',
+    imComingSoonDesc: 'Messaging channel integrations are under development. Stay tuned.',
 
     // General Settings
     autoLaunch: 'Launch at Login',

@@ -1,6 +1,7 @@
 import {
   ArrowPathIcon,
   CheckIcon,
+  CubeIcon,
   ExclamationTriangleIcon,
   MagnifyingGlassIcon,
   SignalIcon,
@@ -43,7 +44,7 @@ const formatContextLength = (tokens: number): string => {
 };
 
 const modelToolbarButtonClassName =
-  'inline-flex h-7 items-center justify-center gap-1.5 rounded-lg border border-border bg-transparent px-2.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary-muted/50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-transparent disabled:hover:text-foreground';
+  'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-medium text-secondary shadow-sm transition-all hover:border-primary/30 hover:bg-primary-muted/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-background disabled:hover:text-secondary';
 
 const modelBulkActionButtonClassName =
   'inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] font-medium text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-secondary';
@@ -210,10 +211,13 @@ const ModelSettingsTab: React.FC<Props> = ({
   };
 
   return (
-    <div className="flex min-h-full">
-      <div className="shrink-0 pr-3 space-y-1.5 overflow-y-auto" style={{ width: 260 }}>
+    <div className="flex max-w-[980px] items-start gap-5">
+      <div
+        className="shrink-0 space-y-1.5 overflow-y-auto"
+        style={{ width: 240 }}
+      >
         {/* Heading with import/export */}
-        <div className="flex items-center justify-between mb-2 px-1">
+        <div className="mb-2 flex h-8 items-center justify-between px-1">
           <h3 className="text-sm font-medium text-foreground">{i18nService.t('modelProviders')}</h3>
           <div className="flex items-center space-x-1">
             <input
@@ -227,7 +231,7 @@ const ModelSettingsTab: React.FC<Props> = ({
               type="button"
               onClick={() => importInputRef.current?.click()}
               disabled={isImporting || isExporting || isModelActionBusy}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+              className="inline-flex h-7 items-center rounded-lg px-2 text-xs font-medium text-secondary transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
             >
               {i18nService.t('import')}
             </button>
@@ -235,7 +239,7 @@ const ModelSettingsTab: React.FC<Props> = ({
               type="button"
               onClick={handleExport}
               disabled={isImporting || isExporting || isModelActionBusy}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-border text-foreground hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+              className="inline-flex h-7 items-center rounded-lg px-2 text-xs font-medium text-secondary transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
             >
               {i18nService.t('export')}
             </button>
@@ -245,9 +249,6 @@ const ModelSettingsTab: React.FC<Props> = ({
         {sortedProviders.map(([provider, config]) => {
           const providerKey = provider as ProviderType;
           const isCustom = isCustomProvider(provider);
-          const providerInfo = isCustom
-            ? { label: getCustomProviderDefaultName(provider), icon: <CustomProviderIcon /> }
-            : undefined;
           const readOnlyProviderRow = isProviderReadOnly(providerKey, config);
           const displayLabel =
             providerKey === 'builtin_models'
@@ -258,16 +259,20 @@ const ModelSettingsTab: React.FC<Props> = ({
             <div
               key={provider}
               onClick={() => handleProviderChange(providerKey)}
-              className={`group flex items-center p-2 rounded-xl cursor-pointer transition-colors ${
+              className={`group flex min-h-12 cursor-pointer items-center rounded-xl border p-2 transition-colors ${
                 activeProvider === provider
-                  ? 'bg-primary-muted border border-primary shadow-subtle'
-                  : 'bg-surface hover:bg-surface-raised border border-transparent'
+                  ? 'border-primary/35 bg-primary-muted text-primary'
+                  : 'border-transparent bg-surface hover:bg-surface-raised'
               }`}
             >
               <div className="flex flex-1 items-center min-w-0">
                 <div className="mr-2 flex h-7 w-7 items-center justify-center shrink-0">
                   <span className="text-foreground">
-                    {isCustom ? <CustomProviderIcon /> : providerInfo?.icon}
+                    {isCustom ? (
+                      <CustomProviderIcon />
+                    ) : isBuiltinModelsProvider(providerKey) ? (
+                      <CubeIcon className="h-5 w-5" />
+                    ) : null}
                   </span>
                 </div>
                 <div className="flex flex-col min-w-0">
@@ -281,11 +286,6 @@ const ModelSettingsTab: React.FC<Props> = ({
                   {isCustom && (
                     <span className="text-[9px] leading-tight mt-0.5 text-primary">
                       {i18nService.t('customBadge')}
-                    </span>
-                  )}
-                  {readOnlyProviderRow && (
-                    <span className="text-[9px] leading-tight mt-0.5 text-primary">
-                      {i18nService.t('builtinModelsProvider')}
                     </span>
                   )}
                 </div>
@@ -333,13 +333,13 @@ const ModelSettingsTab: React.FC<Props> = ({
           type="button"
           onClick={handleAddCustomProvider}
           disabled={isModelActionBusy}
-          className="w-full mt-2 px-3 py-2 text-xs font-medium rounded-xl border border-dashed border-border text-secondary hover:text-foreground hover:border-primary hover:bg-primary/5 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-2 h-9 w-full rounded-xl border border-dashed border-border px-3 text-xs font-medium text-secondary transition-all hover:border-primary/50 hover:bg-primary-muted/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
         >
           {i18nService.t('addCustomProvider')}
         </button>
       </div>
 
-      <div className="flex flex-1 min-w-0 flex-col pl-3 border-l border-border">
+      <div className="min-w-0 flex-1">
         <div className="flex flex-col gap-3">
           {!isBuiltinModelsProvider(activeProvider) && (
             <div className="flex items-start gap-3">
@@ -388,7 +388,7 @@ const ModelSettingsTab: React.FC<Props> = ({
           )}
 
           {!isReadOnly && (
-            <div className="rounded-2xl border border-border bg-surface p-2.5">
+            <div className="rounded-xl border border-border bg-surface p-3">
               <div className="mb-2 flex items-center gap-2">
                 <h3 className="shrink-0 text-xs font-semibold text-foreground">
                   {i18nService.t('providerCredentials')}
@@ -451,8 +451,8 @@ const ModelSettingsTab: React.FC<Props> = ({
             </div>
           )}
 
-          <div className="flex min-h-[240px] flex-col rounded-2xl border border-border bg-surface p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="flex min-h-[220px] flex-col rounded-xl border border-border bg-surface p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex shrink-0 items-center gap-2">
                 <h3 className="text-xs font-semibold text-foreground">
                   {i18nService.t('availableModels')}
@@ -549,14 +549,14 @@ const ModelSettingsTab: React.FC<Props> = ({
               </div>
             )}
 
-            <div className="min-h-[120px] flex-1 space-y-1.5 overflow-y-auto">
+            <div className="min-h-[120px] flex-1 space-y-2 overflow-y-auto">
               {(activeConfig.models ?? []).map(model => {
                 const capabilitiesConfirmed = isReadOnly || hasConfirmedModelCapabilities(model);
                 const connectionTestStatus = modelConnectionTestStatuses[model.id];
                 return (
                   <div
                     key={model.id}
-                    className="bg-surface p-2 rounded-xl border-border border transition-colors hover:border-primary"
+                    className="rounded-lg border border-border-subtle bg-background p-2.5 transition-colors hover:border-primary/35"
                   >
                     <div className="flex items-center justify-between gap-2 min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -686,8 +686,11 @@ const ModelSettingsTab: React.FC<Props> = ({
               })}
 
               {(!activeConfig.models || activeConfig.models.length === 0) && (
-                <div className="bg-surface p-2.5 rounded-xl border border-border-subtle text-center">
-                  <p className="text-[11px] text-secondary">{i18nService.t('noModelsAvailable')}</p>
+                <div className="flex min-h-[140px] flex-col items-center justify-center rounded-lg bg-surface-raised/40 p-5 text-center">
+                  <CubeIcon className="mb-2 h-5 w-5 text-muted" />
+                  <p className="text-xs font-medium text-secondary">
+                    {i18nService.t('noModelsAvailable')}
+                  </p>
                   {!isReadOnly && (
                     <p className="mt-1 text-[10px] text-muted">
                       {actionAvailability.credentialsReady

@@ -8,6 +8,7 @@ import {
   CubeIcon,
   ExclamationTriangleIcon,
   GlobeAltIcon,
+  PaintBrushIcon,
   PencilSquareIcon,
   XCircleIcon,
   XMarkIcon,
@@ -86,7 +87,16 @@ import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 import appLogoUrl from '../../../../resources/logo.png';
 
 type TabType =
-  'general' | 'usage' | 'model' | 'runtime' | 'browser' | 'memory' | 'im' | 'shortcuts' | 'help';
+  | 'general'
+  | 'appearance'
+  | 'usage'
+  | 'model'
+  | 'runtime'
+  | 'browser'
+  | 'memory'
+  | 'im'
+  | 'shortcuts'
+  | 'help';
 
 const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
@@ -532,6 +542,7 @@ const Settings: React.FC<SettingsProps> = ({
   // Handle drag start on header
   const handleDragStart = useCallback(
     (e: React.MouseEvent) => {
+      if ((e.target as HTMLElement).closest('button, input, select, textarea, a')) return;
       e.preventDefault();
       setIsDragging(true);
       dragStartRef.current = {
@@ -1895,6 +1906,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <Cog6ToothIcon className="h-5 w-5" />,
     },
     {
+      key: 'appearance',
+      label: i18nService.t('appearance'),
+      icon: <PaintBrushIcon className="h-5 w-5" />,
+    },
+    {
       key: 'model',
       label: i18nService.t('model'),
       icon: <CubeIcon className="h-5 w-5" />,
@@ -1905,14 +1921,14 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CpuChipIcon className="h-5 w-5" />,
     },
     {
-      key: 'browser',
-      label: i18nService.t('browserSettings'),
-      icon: <GlobeAltIcon className="h-5 w-5" />,
-    },
-    {
       key: 'memory',
       label: i18nService.t('memoryTitle'),
       icon: <BookOpenIcon className="h-5 w-5" />,
+    },
+    {
+      key: 'browser',
+      label: i18nService.t('browserSettings'),
+      icon: <GlobeAltIcon className="h-5 w-5" />,
     },
     {
       key: 'usage',
@@ -2417,18 +2433,23 @@ const Settings: React.FC<SettingsProps> = ({
                 </div>
               </>
             )}
+          </div>
+        );
 
+      case 'appearance':
+        return (
+          <div className="space-y-8">
             {/* Appearance Section — mode selector + theme gallery */}
             <div>
               <h4
                 className="text-sm font-medium mb-3"
                 style={{ color: 'var(--justdo-text-primary)' }}
               >
-                {i18nService.t('appearance')}
+                {i18nService.t('appearanceMode')}
               </h4>
 
               {/* Level 1: Mode selector */}
-              <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="mx-auto mb-4 grid max-w-[480px] grid-cols-3 gap-2.5">
                 {(['light', 'dark', 'system'] as const).map(mode => {
                   const isSelected = theme === mode;
                   return (
@@ -2440,7 +2461,7 @@ const Settings: React.FC<SettingsProps> = ({
                         themeService.setTheme(mode);
                         setThemeId(themeService.getThemeId());
                       }}
-                      className="flex flex-col items-center rounded-xl border-2 p-3 transition-colors cursor-pointer"
+                      className="flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer"
                       style={{
                         borderColor: isSelected ? 'var(--justdo-primary)' : 'var(--justdo-border)',
                         backgroundColor: isSelected ? 'var(--justdo-primary-muted)' : undefined,
@@ -2448,7 +2469,7 @@ const Settings: React.FC<SettingsProps> = ({
                     >
                       <svg
                         viewBox="0 0 120 80"
-                        className="w-full h-auto rounded-md mb-2 overflow-hidden"
+                        className="mb-1.5 h-auto w-full overflow-hidden rounded-md"
                         xmlns="http://www.w3.org/2000/svg"
                       >
                         {mode === 'light' && (
@@ -2555,12 +2576,6 @@ const Settings: React.FC<SettingsProps> = ({
               </h4>
               {(() => {
                 const allThemes = themeService.getAllThemes();
-                const classicThemes = allThemes.filter(
-                  t => t.meta.id === 'classic-light' || t.meta.id === 'classic-dark',
-                );
-                const otherThemes = allThemes.filter(
-                  t => t.meta.id !== 'classic-light' && t.meta.id !== 'classic-dark',
-                );
                 const renderTile = (t: import('@/theme').ThemeDefinition) => {
                   const isSelected = themeId === t.meta.id;
                   const [bg, c1, c2, c3] = t.meta.preview;
@@ -2603,14 +2618,7 @@ const Settings: React.FC<SettingsProps> = ({
                     </button>
                   );
                 };
-                return (
-                  <>
-                    <div className="grid grid-cols-2 gap-3 mb-3">
-                      {classicThemes.map(renderTile)}
-                    </div>
-                    <div className="grid grid-cols-4 gap-3">{otherThemes.map(renderTile)}</div>
-                  </>
-                );
+                return <div className="grid grid-cols-4 gap-3">{allThemes.map(renderTile)}</div>;
               })()}
             </div>
           </div>
@@ -2745,7 +2753,7 @@ const Settings: React.FC<SettingsProps> = ({
       overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center"
     >
       <div
-        className="relative flex h-[80vh] rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
+        className="relative flex h-[min(780px,88vh)] min-h-[560px] overflow-hidden rounded-2xl border border-border bg-background shadow-modal modal-content"
         style={{
           width: modalWidth,
           transform: `translate(${modalPosition.x}px, ${modalPosition.y}px)`,
@@ -2772,24 +2780,31 @@ const Settings: React.FC<SettingsProps> = ({
 
         {/* Left sidebar */}
         <div
-          className="shrink-0 flex flex-col bg-surface-raised rounded-l-2xl overflow-y-auto"
+          className="shrink-0 flex flex-col overflow-y-auto bg-surface-raised/60"
           style={{ width: sidebarWidth }}
         >
-          <div className="px-5 pt-5 pb-3 cursor-grab select-none" onMouseDown={handleDragStart}>
-            <h2 className="text-lg font-semibold text-foreground">{i18nService.t('settings')}</h2>
+          <div
+            className="flex h-16 shrink-0 cursor-grab select-none items-center px-5"
+            onMouseDown={handleDragStart}
+          >
+            <h2 className="text-lg font-semibold text-foreground">
+              {i18nService.t('settings')}
+            </h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-4">
             {sidebarTabs.map(tab => (
               <button
                 key={tab.key}
                 onClick={() => handleTabChange(tab.key)}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left ${
+                className={`flex h-9 items-center gap-3 rounded-lg px-3 text-left text-sm font-medium transition-colors ${
                   activeTab === tab.key
                     ? 'bg-primary-muted text-primary'
-                    : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+                    : 'text-secondary hover:bg-surface hover:text-foreground'
                 }`}
               >
-                {tab.icon}
+                <span className="flex h-5 w-5 items-center justify-center [&>svg]:h-[18px] [&>svg]:w-[18px]">
+                  {tab.icon}
+                </span>
                 <span>{tab.label}</span>
               </button>
             ))}
@@ -2797,7 +2812,7 @@ const Settings: React.FC<SettingsProps> = ({
         </div>
 
         <div
-          className="group relative z-10 w-2 shrink-0 cursor-col-resize bg-surface-raised"
+          className="group relative z-10 w-px shrink-0 cursor-col-resize bg-border-subtle after:absolute after:inset-y-0 after:-left-1 after:w-2"
           onMouseDown={event =>
             startHorizontalResize(event, sidebarWidth, setSidebarWidth, 180, 340)
           }
@@ -2806,13 +2821,16 @@ const Settings: React.FC<SettingsProps> = ({
           aria-label={i18nService.t('resizePanels')}
           title={i18nService.t('resizePanels')}
         >
-          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary" />
+          <div className="absolute inset-y-0 left-0 w-px bg-transparent transition-colors group-hover:bg-primary" />
         </div>
 
         {/* Right content */}
-        <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden bg-background rounded-r-2xl">
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
           {/* Content header */}
-          <div className="flex justify-between items-center gap-4 px-6 pt-5 pb-3 shrink-0">
+          <div
+            className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-6"
+            onMouseDown={handleDragStart}
+          >
             <h3 className="text-lg font-semibold text-foreground">{activeTabLabel}</h3>
             <div className="flex min-w-0 items-center gap-2">
               {activeTab === 'runtime' && agentRuntimeSettingsDirty && (
@@ -2836,9 +2854,10 @@ const Settings: React.FC<SettingsProps> = ({
               <button
                 type="button"
                 onClick={handleCloseSettings}
-                className="text-secondary hover:text-foreground p-1.5 hover:bg-surface-raised rounded-lg transition-colors"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                aria-label={i18nService.t('close')}
               >
-                <XMarkIcon className="h-5 w-5" />
+                <XMarkIcon className="h-[18px] w-[18px]" />
               </button>
             </div>
           </div>
@@ -2864,18 +2883,18 @@ const Settings: React.FC<SettingsProps> = ({
               {/* Tab content */}
               <div
                 ref={contentRef}
-                className="px-6 py-4 flex-1 overflow-y-auto"
+                className="flex-1 overflow-y-auto px-6 py-5"
                 style={{ scrollbarGutter: 'stable' }}
               >
                 {renderTabContent()}
               </div>
 
               {/* Footer buttons */}
-              <div className="flex justify-end space-x-4 p-4 border-border border-t bg-background shrink-0">
+              <div className="flex shrink-0 justify-end gap-2 border-t border-border-subtle px-5 py-3">
                 <button
                   type="button"
                   onClick={handleCloseSettings}
-                  className="px-4 py-2 text-foreground hover:bg-surface-raised rounded-xl transition-colors text-sm font-medium border border-border active:scale-[0.98]"
+                  className="h-9 rounded-xl border border-border bg-background px-4 text-sm font-medium text-secondary shadow-sm transition-all hover:bg-surface-raised hover:text-foreground active:scale-[0.98]"
                 >
                   {i18nService.t('cancel')}
                 </button>
@@ -2886,7 +2905,7 @@ const Settings: React.FC<SettingsProps> = ({
                     (activeTab === 'runtime' &&
                       (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings))
                   }
-                  className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                  className="h-9 rounded-xl bg-primary px-5 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-hover hover:shadow-card disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
                 >
                   {isSaving ? i18nService.t('saving') : i18nService.t('save')}
                 </button>
