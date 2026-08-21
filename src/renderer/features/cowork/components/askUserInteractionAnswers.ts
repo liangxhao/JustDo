@@ -1,9 +1,6 @@
 import type { AskUserAnswers, AskUserQuestion } from '@shared/openclaw/extensions';
 
-export const buildSingleOptionAnswers = (
-  questionId: string,
-  optionId: string,
-): AskUserAnswers => ({
+export const buildSingleOptionAnswers = (questionId: string, optionId: string): AskUserAnswers => ({
   [questionId]: { selected: [optionId] },
 });
 
@@ -22,7 +19,7 @@ export const isQuestionAnswerComplete = (
   const hasOther = Boolean(otherActive && otherInput?.trim());
   if (selected.length === 0 && !hasOther) return false;
 
-  return selected.every((id) => {
+  return selected.every(id => {
     const option = question.options.find(candidate => candidate.id === id);
     return !option?.input || Boolean(optionInputs?.[id]?.trim());
   });
@@ -37,3 +34,5 @@ export const resolveWizardAutoAdvanceStep = (
   const nextStep = scheduledStep + 1;
   return nextStep < totalSteps ? nextStep : currentStep;
 };
+
+export const shouldShowQuestionHeader = (questionCount: number): boolean => questionCount > 1;

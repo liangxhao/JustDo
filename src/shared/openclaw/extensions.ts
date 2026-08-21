@@ -118,9 +118,7 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
     const question = readRequiredString(rawQuestion.question);
     if (!id || !isSafeAskUserId(id) || !question || questionIds.has(id)) return null;
     if ((rawQuestion.header !== undefined && typeof rawQuestion.header !== 'string')
-      || (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean')
-      || (rawQuestion.defaultOptionIds !== undefined
-        && !Array.isArray(rawQuestion.defaultOptionIds))) {
+      || (rawQuestion.multiSelect !== undefined && typeof rawQuestion.multiSelect !== 'boolean')) {
       return null;
     }
     if (!Array.isArray(rawQuestion.options)
@@ -168,6 +166,7 @@ export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null 
 
     let defaultOptionIds: string[] | undefined;
     if (rawQuestion.defaultOptionIds !== undefined) {
+      if (!Array.isArray(rawQuestion.defaultOptionIds)) return null;
       const rawDefaultIds = rawQuestion.defaultOptionIds.map(readRequiredString);
       if (rawDefaultIds.some(id => !id)) return null;
       defaultOptionIds = rawDefaultIds as string[];

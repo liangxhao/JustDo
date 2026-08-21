@@ -117,6 +117,10 @@ describe('ask-user-question runtime validation', () => {
       ...rawQuestions[0],
       defaultOptionIds: ['custom'],
     }])).toBeNull();
+    expect(parseAskUserQuestions([{
+      ...rawQuestions[0],
+      defaultOptionIds: 'automatic',
+    }])).toBeNull();
   });
 
   test('defaults to required waiting and validates timeout policies', () => {

@@ -5,6 +5,7 @@ import {
   buildSingleOptionAnswers,
   isQuestionAnswerComplete,
   resolveWizardAutoAdvanceStep,
+  shouldShowQuestionHeader,
 } from './askUserInteractionAnswers';
 
 describe('ask-user interaction answer builders', () => {
@@ -37,8 +38,12 @@ describe('ask-user interaction answer builders', () => {
     };
 
     expect(isQuestionAnswerComplete(question, ['custom'], undefined, false, undefined)).toBe(false);
-    expect(isQuestionAnswerComplete(question, ['custom'], { custom: '  ' }, false, undefined)).toBe(false);
-    expect(isQuestionAnswerComplete(question, ['custom'], { custom: 'staging' }, false, undefined)).toBe(true);
+    expect(isQuestionAnswerComplete(question, ['custom'], { custom: '  ' }, false, undefined)).toBe(
+      false,
+    );
+    expect(
+      isQuestionAnswerComplete(question, ['custom'], { custom: 'staging' }, false, undefined),
+    ).toBe(true);
     expect(isQuestionAnswerComplete(question, [], undefined, true, 'Other environment')).toBe(true);
   });
 
@@ -55,5 +60,15 @@ describe('ask-user interaction answer builders', () => {
 
     expect(isQuestionAnswerComplete(question, ['desktop'], undefined, true, '  ')).toBe(false);
     expect(isQuestionAnswerComplete(question, ['desktop'], undefined, true, 'Tablet')).toBe(true);
+  });
+});
+
+describe('shouldShowQuestionHeader', () => {
+  test('hides step-like headers for a single question', () => {
+    expect(shouldShowQuestionHeader(1)).toBe(false);
+  });
+
+  test('keeps headers when they distinguish multiple questions', () => {
+    expect(shouldShowQuestionHeader(2)).toBe(true);
   });
 });

@@ -17,6 +17,7 @@ import {
   buildOtherAnswers,
   buildSingleOptionAnswers,
   isQuestionAnswerComplete,
+  shouldShowQuestionHeader,
 } from './askUserInteractionAnswers';
 import AskUserWaitPolicyNotice from './AskUserWaitPolicyNotice';
 import { useDialogFocusTrap } from './useDialogFocusTrap';
@@ -389,7 +390,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                   <div key={question.id} className="rounded-xl border border-border p-4 space-y-3">
                     {/* 问题 */}
                     <div className="text-sm font-medium text-foreground">
-                      {question.header && (
+                      {shouldShowQuestionHeader(questions.length) && question.header && (
                         <span className="inline-block text-[11px] uppercase tracking-wide px-2 py-0.5 mr-1.5 rounded-full bg-surface-raised text-secondary align-middle">
                           {question.header}
                         </span>

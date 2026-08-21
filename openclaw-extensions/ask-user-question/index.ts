@@ -48,7 +48,12 @@ type WaitPolicy =
       onTimeout: 'use-defaults' | 'model-decides';
     };
 
-type AskUserInput = {
+type AskUserToolInput = {
+  questions: Question[];
+  timeoutEnabled?: boolean;
+};
+
+type AskUserCallbackInput = {
   questions: Question[];
   sessionKey?: string;
   waitPolicy: WaitPolicy;
@@ -70,7 +75,7 @@ type AskUserResponse = {
 const LOOPBACK_CALLBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
 export const MAX_ASK_USER_QUESTIONS = 8;
-export const MAX_ASK_USER_TIMEOUT_MINUTES = 24 * 60;
+export const ASK_USER_TIMEOUT_MINUTES = 10;
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
 
 type HttpCallbackResult = {
@@ -96,7 +101,7 @@ const isLoopbackCallbackUrl = (value: string): boolean => {
 
 const postLoopbackJson = (
   callbackUrl: string,
-  input: AskUserInput,
+  input: AskUserCallbackInput,
   secret: string,
   signal?: AbortSignal,
 ): Promise<HttpCallbackResult> => {
@@ -276,32 +281,20 @@ export const parseQuestions = (value: unknown): Question[] | null => {
   return questions;
 };
 
-export const parseWaitPolicy = (value: unknown, questions: Question[]): WaitPolicy | null => {
-  if (value === undefined) return { mode: 'required' };
-  if (!isRecord(value)) return null;
-  if (value.mode === 'required') {
-    return value.timeoutMinutes === undefined && value.onTimeout === undefined
-      ? { mode: 'required' }
-      : null;
-  }
-  if (
-    value.mode !== 'timeout' ||
-    typeof value.timeoutMinutes !== 'number' ||
-    !Number.isInteger(value.timeoutMinutes) ||
-    value.timeoutMinutes < 1 ||
-    value.timeoutMinutes > MAX_ASK_USER_TIMEOUT_MINUTES ||
-    (value.onTimeout !== 'use-defaults' && value.onTimeout !== 'model-decides')
-  )
-    return null;
-  if (
-    value.onTimeout === 'use-defaults' &&
-    questions.some(question => !question.defaultOptionIds?.length)
-  )
-    return null;
+export const buildWaitPolicy = (
+  timeoutEnabled: unknown,
+  questions: Question[],
+): WaitPolicy | null => {
+  if (timeoutEnabled === undefined || timeoutEnabled === false) return { mode: 'required' };
+  if (timeoutEnabled !== true) return null;
+
+  const hasDefaultsForEveryQuestion = questions.every(
+    question => question.defaultOptionIds?.length,
+  );
   return {
     mode: 'timeout',
-    timeoutMinutes: value.timeoutMinutes,
-    onTimeout: value.onTimeout,
+    timeoutMinutes: ASK_USER_TIMEOUT_MINUTES,
+    onTimeout: hasDefaultsForEveryQuestion ? 'use-defaults' : 'model-decides',
   };
 };
 
@@ -405,56 +398,32 @@ const QuestionSchema = Type.Object({
         minItems: 1,
         maxItems: 4,
         description:
-          'Option ids to select if a timed request uses defaults. Use exactly one for single-select questions. Options requiring input cannot be defaults.',
+          'Default option ids for this question when top-level timeoutEnabled is true. Define this field on every question to auto-select defaults after timeout. Use exactly one id for single-select questions. Options requiring input cannot be defaults.',
       },
     ),
   ),
 });
 
-export const AskUserWaitPolicySchema = Type.Union(
-  [
-    Type.Object(
-      {
-        mode: Type.Literal('required', {
-          description: 'Wait indefinitely because an explicit user decision is required.',
-        }),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        mode: Type.Literal('timeout'),
-        timeoutMinutes: Type.Integer({
-          minimum: 1,
-          maximum: MAX_ASK_USER_TIMEOUT_MINUTES,
-          description: 'Maximum number of minutes to wait for the user.',
-        }),
-        onTimeout: Type.Union([Type.Literal('use-defaults'), Type.Literal('model-decides')], {
-          description:
-            "Use every question's defaultOptionIds, or return control so the model can decide from context.",
-        }),
-      },
-      { additionalProperties: false },
-    ),
-  ],
+export const AskUserQuestionSchema = Type.Object(
   {
-    description:
-      'Waiting policy. Omit to require an explicit user response. Use a timeout only when the task can safely continue without the user.',
+    questions: Type.Array(QuestionSchema, {
+      minItems: 1,
+      maxItems: MAX_ASK_USER_QUESTIONS,
+      description: `Questions to show (1-${MAX_ASK_USER_QUESTIONS}).`,
+    }),
+    timeoutEnabled: Type.Optional(
+      Type.Boolean({
+        description:
+          'Set true to enable a fixed ten-minute timeout. Omit or set false when an explicit user answer is required. After timeout, defaults are selected automatically only when every question defines defaultOptionIds; otherwise control returns to the model to decide from context.',
+      }),
+    ),
   },
+  { additionalProperties: false },
 );
-
-export const AskUserQuestionSchema = Type.Object({
-  questions: Type.Array(QuestionSchema, {
-    minItems: 1,
-    maxItems: MAX_ASK_USER_QUESTIONS,
-    description: `Questions to show (1-${MAX_ASK_USER_QUESTIONS}).`,
-  }),
-  waitPolicy: Type.Optional(AskUserWaitPolicySchema),
-});
 
 async function askUser(
   config: PluginConfig,
-  input: AskUserInput,
+  input: AskUserCallbackInput,
   signal?: AbortSignal,
 ): Promise<AskUserResponse> {
   try {
@@ -568,23 +537,26 @@ const plugin = {
           description:
             'Ask the user to choose from 2-4 predefined options. ' +
             'Set an option input when selecting it requires additional information from the user. ' +
-            'Use required waiting when only the user can safely answer, including consequential confirmations. ' +
-            'For non-critical preferences, use a timeout and either mark defaultOptionIds or let the model decide after timeout. ' +
+            'Omit timeoutEnabled when only the user can safely answer, including consequential confirmations. ' +
+            'For non-critical preferences, set timeoutEnabled to true for a fixed ten-minute wait. To auto-select on timeout, set defaultOptionIds inside every question; otherwise the model resumes and decides from context. ' +
             'Prefer this tool whenever the user needs to choose, decide, confirm, or select and clear options can be provided.',
           parameters: AskUserQuestionSchema,
           async execute(_id: string, params: unknown, signal?: AbortSignal) {
-            const questions = parseQuestions((params as AskUserInput)?.questions);
+            const toolInput = params as AskUserToolInput;
+            const questions = parseQuestions(toolInput?.questions);
             const waitPolicy = questions
-              ? parseWaitPolicy((params as AskUserInput)?.waitPolicy, questions)
+              ? buildWaitPolicy(toolInput?.timeoutEnabled, questions)
               : null;
-            const input: AskUserInput = {
+            const input: AskUserCallbackInput = {
               questions: questions ?? [],
               sessionKey,
               waitPolicy: waitPolicy ?? { mode: 'required' },
             };
             if (!questions || !waitPolicy) {
               return {
-                content: [{ type: 'text', text: 'Invalid questions or wait policy provided.' }],
+                content: [
+                  { type: 'text', text: 'Invalid questions or timeoutEnabled flag provided.' },
+                ],
                 isError: true,
               };
             }

@@ -16,6 +16,7 @@ import { i18nService } from '@/services/i18n';
 import {
   isQuestionAnswerComplete,
   resolveWizardAutoAdvanceStep,
+  shouldShowQuestionHeader,
 } from './askUserInteractionAnswers';
 import AskUserWaitPolicyNotice from './AskUserWaitPolicyNotice';
 import { useDialogFocusTrap } from './useDialogFocusTrap';
@@ -302,7 +303,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
             {/* Question header and navigation */}
             <div className="flex flex-col items-start gap-4 mb-4 sm:flex-row sm:justify-between">
               <div className="flex-1">
-                {currentQuestion.header && (
+                {shouldShowQuestionHeader(totalSteps) && currentQuestion.header && (
                   <span className="inline-block text-[11px] uppercase tracking-wide px-2 py-1 rounded-full bg-surface-raised text-secondary mb-3">
                     {currentQuestion.header}
                   </span>

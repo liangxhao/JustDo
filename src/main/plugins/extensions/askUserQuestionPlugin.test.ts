@@ -2,13 +2,12 @@ import { Value } from 'typebox/value';
 import { describe, expect, test } from 'vitest';
 
 import {
+  ASK_USER_TIMEOUT_MINUTES,
   AskUserQuestionSchema,
-  AskUserWaitPolicySchema,
+  buildWaitPolicy,
   formatAskUserToolResponse,
   MAX_ASK_USER_QUESTIONS,
-  MAX_ASK_USER_TIMEOUT_MINUTES,
   parseQuestions,
-  parseWaitPolicy,
 } from '../../../../openclaw-extensions/ask-user-question/index';
 
 const makeQuestion = (index: number) => ({
@@ -34,47 +33,44 @@ describe('ask-user-question plugin limits', () => {
   test('advertises the same question limit in the tool schema', () => {
     expect(AskUserQuestionSchema.properties.questions.maxItems).toBe(MAX_ASK_USER_QUESTIONS);
     expect(AskUserQuestionSchema.properties.questions.description).toBe('Questions to show (1-8).');
-    expect(AskUserQuestionSchema.properties.waitPolicy).toMatchObject(AskUserWaitPolicySchema);
+    expect(AskUserQuestionSchema.properties.timeoutEnabled.type).toBe('boolean');
   });
 
-  test('keeps the JSON schema aligned with the discriminated wait policy contract', () => {
+  test('exposes a flat timeout contract without a wait-policy union', () => {
     const questions = [{ ...makeQuestion(0), defaultOptionIds: ['no'] }];
 
+    expect(AskUserQuestionSchema).not.toHaveProperty('anyOf');
+    expect(AskUserQuestionSchema.properties).not.toHaveProperty('waitPolicy');
+    expect(AskUserQuestionSchema.additionalProperties).toBe(false);
     expect(
       Value.Check(AskUserQuestionSchema, {
         questions,
-        waitPolicy: { mode: 'required' },
       }),
     ).toBe(true);
+    expect(
+      Value.Check(AskUserQuestionSchema, {
+        questions,
+        timeoutEnabled: true,
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(AskUserQuestionSchema, {
+        questions,
+        timeoutEnabled: 'yes',
+      }),
+    ).toBe(false);
     expect(
       Value.Check(AskUserQuestionSchema, {
         questions,
         waitPolicy: {
           mode: 'timeout',
-          timeoutMinutes: 10,
-          onTimeout: 'use-defaults',
-        },
-      }),
-    ).toBe(true);
-    expect(
-      Value.Check(AskUserQuestionSchema, {
-        questions,
-        waitPolicy: { mode: 'timeout' },
-      }),
-    ).toBe(false);
-    expect(
-      Value.Check(AskUserQuestionSchema, {
-        questions,
-        waitPolicy: {
-          mode: 'required',
-          timeoutMinutes: 10,
-          onTimeout: 'model-decides',
+          timeoutMinutes: ASK_USER_TIMEOUT_MINUTES,
         },
       }),
     ).toBe(false);
   });
 
-  test('supports required waits and bounded timeout behavior', () => {
+  test('derives required waits and bounded timeout behavior', () => {
     const questions = parseQuestions([
       {
         ...makeQuestion(0),
@@ -82,46 +78,24 @@ describe('ask-user-question plugin limits', () => {
       },
     ])!;
 
-    expect(parseWaitPolicy(undefined, questions)).toEqual({ mode: 'required' });
-    expect(
-      parseWaitPolicy(
-        {
-          mode: 'timeout',
-          timeoutMinutes: 10,
-          onTimeout: 'use-defaults',
-        },
-        questions,
-      ),
-    ).toEqual({
+    expect(buildWaitPolicy(undefined, questions)).toEqual({ mode: 'required' });
+    expect(buildWaitPolicy(true, questions)).toEqual({
       mode: 'timeout',
-      timeoutMinutes: 10,
+      timeoutMinutes: ASK_USER_TIMEOUT_MINUTES,
       onTimeout: 'use-defaults',
     });
-    expect(
-      parseWaitPolicy(
-        {
-          mode: 'timeout',
-          timeoutMinutes: MAX_ASK_USER_TIMEOUT_MINUTES + 1,
-          onTimeout: 'model-decides',
-        },
-        questions,
-      ),
-    ).toBeNull();
+    expect(buildWaitPolicy(false, questions)).toEqual({ mode: 'required' });
+    expect(buildWaitPolicy('yes', questions)).toBeNull();
   });
 
-  test('requires valid defaults when timeout should auto-select', () => {
+  test('lets the model decide after timeout when any question has no default', () => {
     const questions = parseQuestions([makeQuestion(0)])!;
 
-    expect(
-      parseWaitPolicy(
-        {
-          mode: 'timeout',
-          timeoutMinutes: 10,
-          onTimeout: 'use-defaults',
-        },
-        questions,
-      ),
-    ).toBeNull();
+    expect(buildWaitPolicy(true, questions)).toEqual({
+      mode: 'timeout',
+      timeoutMinutes: ASK_USER_TIMEOUT_MINUTES,
+      onTimeout: 'model-decides',
+    });
     expect(
       parseQuestions([
         {
