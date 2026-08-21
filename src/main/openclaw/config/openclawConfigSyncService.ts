@@ -598,6 +598,8 @@ export class OpenClawConfigSyncService {
       this.configSync = new OpenClawConfigSync({
         engineManager: this.deps.getOpenClawEngineManager(),
         getCoworkConfig: () => this.deps.getCoworkStore().getConfig(),
+        getAgentRuntimeSettings: () =>
+          this.deps.getCoworkStore().getAgentRuntimeSettings(),
         getAskUserExtensionConfig: this.deps.getAskUserExtensionConfig,
         getMcpServers: () => this.deps.getMcpStore().listServers(),
         getHooks: () => this.deps.getHookStore().listHooks(),

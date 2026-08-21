@@ -26,6 +26,8 @@ type ApprovalKind = import('../../shared/openclaw/approvals').ApprovalKind;
 type ApprovalRequest = import('../../shared/openclaw/approvals').ApprovalRequest;
 type ApprovalResolved = import('../../shared/openclaw/approvals').ApprovalResolved;
 type ApprovalDecision = import('../../shared/openclaw/approvals').ApprovalDecision;
+type AgentRuntimeSettings =
+  import('../../shared/openclaw/agentRuntimeSettings').AgentRuntimeSettings;
 type AppUpdateActionResult = import('../../shared/appUpdate').AppUpdateActionResult;
 type AppUpdateState = import('../../shared/appUpdate').AppUpdateState;
 type BrowserActionResult = import('../../shared/browser').BrowserActionResult;
@@ -768,6 +770,18 @@ interface IElectronAPI {
     setConfig: (
       config: CoworkConfigUpdate,
     ) => Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }>;
+    getAgentRuntimeSettings: () => Promise<{
+      success: boolean;
+      settings?: AgentRuntimeSettings;
+      error?: string;
+    }>;
+    setAgentRuntimeSettings: (settings: AgentRuntimeSettings) => Promise<{
+      success: boolean;
+      changed?: boolean;
+      settings?: AgentRuntimeSettings;
+      error?: string;
+      engineStatus?: OpenClawEngineStatus;
+    }>;
     setDefaultModel: (options: {
       modelId: string;
       providerKey?: string;

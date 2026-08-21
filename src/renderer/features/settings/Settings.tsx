@@ -4,6 +4,7 @@ import {
   ChartBarIcon,
   CheckCircleIcon,
   Cog6ToothIcon,
+  CpuChipIcon,
   CubeIcon,
   ExclamationTriangleIcon,
   GlobeAltIcon,
@@ -12,6 +13,10 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
+import {
+  type AgentRuntimeSettings,
+  createDefaultAgentRuntimeSettings,
+} from '@shared/openclaw/agentRuntimeSettings';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '@shared/openclaw/constants';
 import {
   GatewayPortSetErrorCode,
@@ -52,6 +57,8 @@ import {
   getEnabledProviderModels,
 } from '@/features/models/modelConfig';
 import { setAvailableModels } from '@/features/models/modelSlice';
+import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
+import AgentRuntimeSettingsTab from '@/features/settings/components/AgentRuntimeSettingsTab';
 import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
 import BrowserSettingsTab from '@/features/settings/components/BrowserSettingsTab';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
@@ -78,7 +85,8 @@ import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import appLogoUrl from '../../../../resources/logo.png';
 
-type TabType = 'general' | 'usage' | 'model' | 'browser' | 'memory' | 'im' | 'shortcuts' | 'help';
+type TabType =
+  'general' | 'usage' | 'model' | 'runtime' | 'browser' | 'memory' | 'im' | 'shortcuts' | 'help';
 
 const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
@@ -377,10 +385,48 @@ const Settings: React.FC<SettingsProps> = ({
   const [activeProvider, setActiveProvider] = useState<ProviderType>(getDefaultActiveProvider());
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
+  const [agentRuntimeSettings, setAgentRuntimeSettings] = useState<AgentRuntimeSettings>(() =>
+    createDefaultAgentRuntimeSettings(),
+  );
+  const [initialAgentRuntimeSettings, setInitialAgentRuntimeSettings] =
+    useState<AgentRuntimeSettings | null>(null);
+  const [agentRuntimeSettingsLoading, setAgentRuntimeSettingsLoading] = useState(true);
+  const [agentRuntimeSettingsLoadError, setAgentRuntimeSettingsLoadError] = useState<string | null>(
+    null,
+  );
   const [isRefreshingBuiltinModels, setIsRefreshingBuiltinModels] = useState(false);
   const [isDetectingModels, setIsDetectingModels] = useState(false);
   const [modelDiscoveryMessage, setModelDiscoveryMessage] = useState<string | null>(null);
   const modelDiscoveryGenerationRef = useRef(0);
+
+  const loadAgentRuntimeSettings = useCallback(async () => {
+    setAgentRuntimeSettingsLoading(true);
+    setAgentRuntimeSettingsLoadError(null);
+    try {
+      const result = await window.electron.cowork.getAgentRuntimeSettings();
+      if (!result.success || !result.settings) {
+        throw new Error(result.error || i18nService.t('agentRuntimeLoadFailed'));
+      }
+      setAgentRuntimeSettings(result.settings);
+      setInitialAgentRuntimeSettings(result.settings);
+    } catch (error) {
+      setAgentRuntimeSettingsLoadError(
+        error instanceof Error ? error.message : i18nService.t('agentRuntimeLoadFailed'),
+      );
+    } finally {
+      setAgentRuntimeSettingsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAgentRuntimeSettings();
+  }, [loadAgentRuntimeSettings]);
+
+  const agentRuntimeModels = useMemo(() => getEnabledProviderModels(providers), [providers]);
+  const agentRuntimeSettingsDirty = Boolean(
+    initialAgentRuntimeSettings &&
+    JSON.stringify(initialAgentRuntimeSettings) !== JSON.stringify(agentRuntimeSettings),
+  );
 
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1206,6 +1252,38 @@ const Settings: React.FC<SettingsProps> = ({
         shortcuts,
       });
 
+      if (initialAgentRuntimeSettings) {
+        const availableRuntimeModelRefs = new Set(
+          getEnabledProviderModels(normalizedProviders).map(toOpenClawModelRef),
+        );
+        const runtimeSettingsToSave: AgentRuntimeSettings = {
+          ...agentRuntimeSettings,
+          subagents: {
+            ...agentRuntimeSettings.subagents,
+            model:
+              agentRuntimeSettings.subagents.model &&
+              availableRuntimeModelRefs.has(agentRuntimeSettings.subagents.model)
+                ? agentRuntimeSettings.subagents.model
+                : null,
+          },
+        };
+        if (JSON.stringify(runtimeSettingsToSave) !== JSON.stringify(initialAgentRuntimeSettings)) {
+          const runtimeResult =
+            await window.electron.cowork.setAgentRuntimeSettings(runtimeSettingsToSave);
+          if (!runtimeResult.success) {
+            setActiveTab('runtime');
+            throw new Error(
+              `${i18nService.t('agentRuntimeSaveFailed')}${
+                runtimeResult.error ? ` ${runtimeResult.error}` : ''
+              }`,
+            );
+          }
+          const savedRuntimeSettings = runtimeResult.settings ?? runtimeSettingsToSave;
+          setAgentRuntimeSettings(savedRuntimeSettings);
+          setInitialAgentRuntimeSettings(savedRuntimeSettings);
+        }
+      }
+
       // 应用主题
       themeService.setTheme(theme);
 
@@ -1820,6 +1898,11 @@ const Settings: React.FC<SettingsProps> = ({
       key: 'model',
       label: i18nService.t('model'),
       icon: <CubeIcon className="h-5 w-5" />,
+    },
+    {
+      key: 'runtime',
+      label: i18nService.t('agentRuntimeTab'),
+      icon: <CpuChipIcon className="h-5 w-5" />,
     },
     {
       key: 'browser',
@@ -2570,6 +2653,18 @@ const Settings: React.FC<SettingsProps> = ({
       case 'usage':
         return <UsageStatsTab />;
 
+      case 'runtime':
+        return (
+          <AgentRuntimeSettingsTab
+            settings={agentRuntimeSettings}
+            models={agentRuntimeModels}
+            isLoading={agentRuntimeSettingsLoading}
+            loadError={agentRuntimeSettingsLoadError}
+            onChange={setAgentRuntimeSettings}
+            onRetry={() => void loadAgentRuntimeSettings()}
+          />
+        );
+
       case 'browser':
         return <BrowserSettingsTab />;
 
@@ -2717,14 +2812,35 @@ const Settings: React.FC<SettingsProps> = ({
         {/* Right content */}
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden bg-background rounded-r-2xl">
           {/* Content header */}
-          <div className="flex justify-between items-center px-6 pt-5 pb-3 shrink-0">
+          <div className="flex justify-between items-center gap-4 px-6 pt-5 pb-3 shrink-0">
             <h3 className="text-lg font-semibold text-foreground">{activeTabLabel}</h3>
-            <button
-              onClick={handleCloseSettings}
-              className="text-secondary hover:text-foreground p-1.5 hover:bg-surface-raised rounded-lg transition-colors"
-            >
-              <XMarkIcon className="h-5 w-5" />
-            </button>
+            <div className="flex min-w-0 items-center gap-2">
+              {activeTab === 'runtime' && agentRuntimeSettingsDirty && (
+                <div className="mr-1 hidden items-center gap-2 sm:flex">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  <span className="text-xs font-medium text-secondary">
+                    {i18nService.t('agentRuntimeUnsaved')}
+                  </span>
+                </div>
+              )}
+              {activeTab === 'runtime' && (
+                <button
+                  type="button"
+                  onClick={() => setAgentRuntimeSettings(createDefaultAgentRuntimeSettings())}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-raised hover:text-primary active:scale-[0.98]"
+                >
+                  <ArrowPathIcon className="h-3.5 w-3.5" />
+                  {i18nService.t('agentRuntimeRestoreDefaults')}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleCloseSettings}
+                className="text-secondary hover:text-foreground p-1.5 hover:bg-surface-raised rounded-lg transition-colors"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           {noticeMessage && (
@@ -2765,7 +2881,11 @@ const Settings: React.FC<SettingsProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSaving}
+                  disabled={
+                    isSaving ||
+                    (activeTab === 'runtime' &&
+                      (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings))
+                  }
                   className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
                 >
                   {isSaving ? i18nService.t('saving') : i18nService.t('save')}

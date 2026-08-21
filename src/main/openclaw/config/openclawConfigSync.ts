@@ -5,6 +5,11 @@ import path from 'path';
 
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+import {
+  type AgentRuntimeSettings,
+  createDefaultAgentRuntimeSettings,
+  DEFAULT_AGENT_RUNTIME_SETTINGS,
+} from '../../../shared/openclaw/agentRuntimeSettings';
 import { PermissionMode, type PermissionMode as PermissionModeValue } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
@@ -705,10 +710,13 @@ export const OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES = 0;
 // Keep model execution bounded while allowing a small per-parent backlog.
 // These values are written to OpenClaw config so a future settings surface can
 // replace the defaults without changing runtime admission behavior.
-export const OPENCLAW_SUBAGENT_MAX_CONCURRENT = 3;
-export const OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT = 5;
+export const OPENCLAW_SUBAGENT_MAX_CONCURRENT =
+  DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.maxConcurrent;
+export const OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT =
+  DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.maxChildrenPerAgent;
 // Allow substantial work while still terminating runaway subagent runs.
-export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS = 2 * 60 * 60;
+export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS =
+  DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.runTimeoutSeconds;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
 export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 50_000;
@@ -727,12 +735,17 @@ export const buildManagedOpenClawSessionConfig = () => ({
   },
 });
 
-export const buildManagedOpenClawSubagentConfig = () => ({
-  maxSpawnDepth: 1,
-  maxChildrenPerAgent: OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
-  maxConcurrent: OPENCLAW_SUBAGENT_MAX_CONCURRENT,
-  runTimeoutSeconds: OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS,
+export const buildManagedOpenClawSubagentConfig = (
+  settings: AgentRuntimeSettings = createDefaultAgentRuntimeSettings(),
+) => ({
+  delegationMode: settings.subagents.delegationMode,
+  maxSpawnDepth: settings.subagents.maxSpawnDepth,
+  maxChildrenPerAgent: settings.subagents.maxChildrenPerAgent,
+  maxConcurrent: settings.subagents.maxConcurrent,
+  runTimeoutSeconds: settings.subagents.runTimeoutSeconds,
   archiveAfterMinutes: OPENCLAW_SUBAGENT_ARCHIVE_AFTER_MINUTES,
+  ...(settings.subagents.model ? { model: settings.subagents.model } : {}),
+  ...(settings.subagents.thinking ? { thinking: settings.subagents.thinking } : {}),
 });
 
 export const buildManagedOpenClawHeartbeatConfig = () => ({
@@ -1303,6 +1316,7 @@ const buildVerifiedConfigSyncResult = (
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
+  getAgentRuntimeSettings?: () => AgentRuntimeSettings;
   getAskUserExtensionConfig?: () => AskUserExtensionConfig | null;
   getMcpServers?: () => McpServerRecord[];
   getHooks?: () => OpenClawHookRecord[];
@@ -1313,6 +1327,7 @@ type OpenClawConfigSyncDeps = {
 export class OpenClawConfigSync {
   private readonly engineManager: OpenClawEngineManager;
   private readonly getCoworkConfig: () => CoworkConfig;
+  private readonly getAgentRuntimeSettings: () => AgentRuntimeSettings;
   private readonly getAskUserExtensionConfig?: () => AskUserExtensionConfig | null;
   private readonly getMcpServers?: () => McpServerRecord[];
   private readonly getHooks?: () => OpenClawHookRecord[];
@@ -1322,6 +1337,8 @@ export class OpenClawConfigSync {
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
     this.getCoworkConfig = deps.getCoworkConfig;
+    this.getAgentRuntimeSettings =
+      deps.getAgentRuntimeSettings ?? createDefaultAgentRuntimeSettings;
     this.getAskUserExtensionConfig = deps.getAskUserExtensionConfig;
     this.getMcpServers = deps.getMcpServers;
     this.getHooks = deps.getHooks;
@@ -1542,7 +1559,7 @@ export class OpenClawConfigSync {
           heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           workspace: resolvedWorkspaceDir,
-          subagents: buildManagedOpenClawSubagentConfig(),
+          subagents: buildManagedOpenClawSubagentConfig(this.getAgentRuntimeSettings()),
         },
         ...this.buildAgentsList(primaryModel, availableModelRefs, resolvedWorkspaceDir),
       },
@@ -2100,6 +2117,7 @@ export class OpenClawConfigSync {
         defaults: {
           heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
+          subagents: buildManagedOpenClawSubagentConfig(this.getAgentRuntimeSettings()),
         },
       },
       session: buildManagedOpenClawSessionConfig(),

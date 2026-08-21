@@ -20,6 +20,7 @@ vi.mock('electron', () => ({
 // ---------------------------------------------------------------------------
 import BetterSqlite3 from 'better-sqlite3';
 
+import { createDefaultAgentRuntimeSettings } from '../../shared/openclaw/agentRuntimeSettings';
 import { CoworkStore } from './coworkStore';
 
 // ---------------------------------------------------------------------------
@@ -303,4 +304,27 @@ test('backfillEmptyAgentModels assigns the current default model to empty agents
     ['stockexpert', 'qwen3.5-plus'],
     ['writer', 'deepseek-v3.2'],
   ]);
+});
+
+test('persists versioned Agent runtime settings and recovers from corrupt data', () => {
+  const defaults = createDefaultAgentRuntimeSettings();
+  expect(store.getAgentRuntimeSettings()).toEqual(defaults);
+
+  const configured = {
+    ...defaults,
+    subagents: {
+      ...defaults.subagents,
+      delegationMode: 'prefer' as const,
+      maxConcurrent: 6,
+      runTimeoutSeconds: 1800,
+      maxSpawnDepth: 2,
+    },
+  };
+  store.setAgentRuntimeSettings(configured);
+  expect(store.getAgentRuntimeSettings()).toEqual(configured);
+
+  db.prepare("UPDATE cowork_config SET value = 'not-json' WHERE key = ?").run(
+    'agentRuntimeSettings:v1',
+  );
+  expect(store.getAgentRuntimeSettings()).toEqual(defaults);
 });

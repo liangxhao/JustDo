@@ -23,6 +23,10 @@ import {
 import { LogIpc } from '../shared/logIpc';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
 import {
+  type AgentRuntimeSettings,
+  AgentRuntimeSettingsIpc,
+} from '../shared/openclaw/agentRuntimeSettings';
+import {
   type ApprovalDecision,
   type ApprovalKind,
   type ApprovalRequest,
@@ -361,6 +365,9 @@ contextBridge.exposeInMainWorld('electron', {
       executionMode?: 'auto' | 'local' | 'sandbox';
       agentEngine?: 'openclaw';
     }) => ipcRenderer.invoke('cowork:config:set', config),
+    getAgentRuntimeSettings: () => ipcRenderer.invoke(AgentRuntimeSettingsIpc.Get),
+    setAgentRuntimeSettings: (settings: AgentRuntimeSettings) =>
+      ipcRenderer.invoke(AgentRuntimeSettingsIpc.Set, settings),
     setDefaultModel: (options: { modelId: string; providerKey?: string; agentId?: string }) =>
       ipcRenderer.invoke('config:setDefaultModel', options),
     // Stream event listeners

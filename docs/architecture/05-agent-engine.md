@@ -419,6 +419,26 @@ embedding 模型，则显式设置 `memorySearch.enabled: false`，避免 OpenCl
 [`docs/features/authentication-builtin-model-lifecycle.md`](../features/authentication-builtin-model-lifecycle.md)，
 认证模块应只依赖其中定义的 Main 进程生命周期入口。
 
+## Agent Runtime Settings Flow
+
+设置页中的 Subagent 调度参数由应用拥有，不直接编辑 Gateway 配置文件：
+
+```mermaid
+flowchart LR
+  UI["Agent Runtime settings"] --> IPC["Validated IPC update queue"]
+  IPC --> DB["cowork_config\nagentRuntimeSettings:v1"]
+  DB --> Sync["OpenClawConfigSyncService"]
+  Sync --> Config["agents.defaults.subagents"]
+  Config --> Gateway["Gateway config reload"]
+  Sync -->|failure| Rollback["Restore previous SQLite value"]
+  Rollback --> Sync
+```
+
+第一版开放委派倾向、默认模型、默认 thinking、全局 Subagent 并发、每父 Agent child 上限、
+单 child 运行时限，以及高级区中的一层嵌套。完整配置和无模型的最小配置都从同一份版本化
+contract 生成。设置只影响后续创建的 child；已经运行或排队的 child 保留创建时快照。
+自动归档仍固定关闭，跨 Agent allowlist、工具策略和完成通知 timeout 暂不开放。
+
 ## Startup And Recovery
 
 启动时的恢复动作包括：

@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
 import { BrowserMode } from '../../../shared/browser';
+import {
+  AgentRuntimeDelegationMode,
+  createDefaultAgentRuntimeSettings,
+} from '../../../shared/openclaw/agentRuntimeSettings';
 import { PermissionMode } from '../../../shared/openclaw/approvals';
 import {
   OpenClawApi,
@@ -412,6 +416,31 @@ describe('OpenClaw managed subagent config', () => {
       OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
     );
     expect(OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT).toBeLessThanOrEqual(20);
+  });
+
+  test('maps user-selected runtime defaults without enabling automatic archive', () => {
+    const settings = createDefaultAgentRuntimeSettings();
+    settings.subagents = {
+      ...settings.subagents,
+      delegationMode: AgentRuntimeDelegationMode.Prefer,
+      model: 'provider/worker-model',
+      thinking: 'high',
+      maxConcurrent: 7,
+      maxChildrenPerAgent: 9,
+      runTimeoutSeconds: 1800,
+      maxSpawnDepth: 2,
+    };
+
+    expect(buildManagedOpenClawSubagentConfig(settings)).toEqual({
+      delegationMode: 'prefer',
+      maxSpawnDepth: 2,
+      maxChildrenPerAgent: 9,
+      maxConcurrent: 7,
+      runTimeoutSeconds: 1800,
+      archiveAfterMinutes: 0,
+      model: 'provider/worker-model',
+      thinking: 'high',
+    });
   });
 });
 

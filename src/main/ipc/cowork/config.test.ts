@@ -10,6 +10,11 @@ vi.mock('electron', () => ({
   },
 }));
 
+import {
+  type AgentRuntimeSettings,
+  AgentRuntimeSettingsIpc,
+  createDefaultAgentRuntimeSettings,
+} from '../../../shared/openclaw/agentRuntimeSettings';
 import type { CoworkConfig } from '../../data/coworkStore';
 import { registerCoworkConfigHandlers, waitForCoworkConfigUpdates } from './config';
 
@@ -24,7 +29,9 @@ describe('cowork config IPC', () => {
   const syncOpenClawConfig = vi.fn();
   const handleEngineConfigChanged = vi.fn();
   const setConfig = vi.fn();
+  const setAgentRuntimeSettings = vi.fn();
   let currentConfig: CoworkConfig;
+  let currentAgentRuntimeSettings: AgentRuntimeSettings;
 
   beforeEach(() => {
     handlers.clear();
@@ -32,18 +39,25 @@ describe('cowork config IPC', () => {
     syncOpenClawConfig.mockResolvedValue({ success: true, changed: true });
     handleEngineConfigChanged.mockReset();
     setConfig.mockReset();
+    setAgentRuntimeSettings.mockReset();
     currentConfig = { ...baseConfig };
+    currentAgentRuntimeSettings = createDefaultAgentRuntimeSettings();
     setConfig.mockImplementation((update: Partial<CoworkConfig>) => {
       currentConfig = {
         ...currentConfig,
         ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined)),
       };
     });
+    setAgentRuntimeSettings.mockImplementation((settings: AgentRuntimeSettings) => {
+      currentAgentRuntimeSettings = settings;
+    });
     registerCoworkConfigHandlers({
       getCoworkStore: () =>
         ({
           getConfig: () => currentConfig,
           setConfig,
+          getAgentRuntimeSettings: () => currentAgentRuntimeSettings,
+          setAgentRuntimeSettings,
         }) as never,
       getCoworkEngineRouter: () => ({ handleEngineConfigChanged }) as never,
       getEngineManager: () => ({ getStatus: () => ({ state: 'running' }) }) as never,
@@ -185,5 +199,58 @@ describe('cowork config IPC', () => {
 
     expect(result).toEqual({ success: true });
     expect(syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'cowork-config-change' });
+  });
+
+  it('returns the persisted Agent runtime settings', async () => {
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Get)?.({});
+
+    expect(result).toEqual({ success: true, settings: currentAgentRuntimeSettings });
+  });
+
+  it('validates and synchronizes Agent runtime settings', async () => {
+    const next = createDefaultAgentRuntimeSettings();
+    next.subagents.maxConcurrent = 6;
+    next.subagents.delegationMode = 'prefer';
+
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Set)?.({}, next);
+
+    expect(result).toMatchObject({ success: true, changed: true, settings: next });
+    expect(setAgentRuntimeSettings).toHaveBeenCalledWith(next);
+    expect(syncOpenClawConfig).toHaveBeenCalledWith({
+      reason: 'agent-runtime-settings-change',
+    });
+  });
+
+  it('rejects invalid Agent runtime settings before persistence', async () => {
+    const invalid = createDefaultAgentRuntimeSettings();
+    invalid.subagents.maxConcurrent = 0;
+
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Set)?.({}, invalid);
+
+    expect(result).toMatchObject({ success: false });
+    expect(setAgentRuntimeSettings).not.toHaveBeenCalled();
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+  });
+
+  it('rolls Agent runtime settings back when generated config cannot be applied', async () => {
+    const previous = currentAgentRuntimeSettings;
+    const next = createDefaultAgentRuntimeSettings();
+    next.subagents.runTimeoutSeconds = 1800;
+    syncOpenClawConfig
+      .mockResolvedValueOnce({ success: false, changed: true, error: 'reload failed' })
+      .mockResolvedValueOnce({ success: true, changed: true });
+
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Set)?.({}, next);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining('rolled back'),
+    });
+    expect(setAgentRuntimeSettings).toHaveBeenNthCalledWith(1, next);
+    expect(setAgentRuntimeSettings).toHaveBeenNthCalledWith(2, previous);
+    expect(currentAgentRuntimeSettings).toEqual(previous);
+    expect(syncOpenClawConfig).toHaveBeenNthCalledWith(2, {
+      reason: 'agent-runtime-settings-change-rollback',
+    });
   });
 });

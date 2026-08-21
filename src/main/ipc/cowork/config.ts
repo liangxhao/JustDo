@@ -1,5 +1,9 @@
 import { ipcMain } from 'electron';
 
+import {
+  AgentRuntimeSettingsIpc,
+  validateAgentRuntimeSettings,
+} from '../../../shared/openclaw/agentRuntimeSettings';
 import { isPermissionMode, type PermissionMode } from '../../../shared/openclaw/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
@@ -59,6 +63,90 @@ export const registerCoworkConfigHandlers = ({
       };
     }
   });
+
+  ipcMain.handle(AgentRuntimeSettingsIpc.Get, async () => {
+    try {
+      return { success: true, settings: getCoworkStore().getAgentRuntimeSettings() };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get Agent runtime settings',
+      };
+    }
+  });
+
+  ipcMain.handle(AgentRuntimeSettingsIpc.Set, (_event, input: unknown) =>
+    enqueueCoworkConfigUpdate(async () => {
+      const validation = validateAgentRuntimeSettings(input);
+      if (validation.ok === false) {
+        return { success: false, error: validation.error };
+      }
+
+      const store = getCoworkStore();
+      const previous = store.getAgentRuntimeSettings();
+      const next = validation.settings;
+      if (JSON.stringify(previous) === JSON.stringify(next)) {
+        return { success: true, changed: false, settings: next };
+      }
+
+      const rollback = async (syncError: string) => {
+        try {
+          store.setAgentRuntimeSettings(previous);
+          const rollbackResult = await syncOpenClawConfig({
+            reason: 'agent-runtime-settings-change-rollback',
+          });
+          return {
+            success: false,
+            error: rollbackResult.success
+              ? `The Agent runtime preference was rolled back. ${syncError}`
+              : `The Agent runtime preference rollback could not be confirmed. ${
+                  rollbackResult.error || syncError
+                }`,
+            engineStatus: getEngineManager().getStatus(),
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: `The Agent runtime preference rollback could not be confirmed. ${
+              error instanceof Error ? error.message : syncError
+            }`,
+            engineStatus: getEngineManager().getStatus(),
+          };
+        }
+      };
+
+      try {
+        store.setAgentRuntimeSettings(next);
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to set Agent runtime settings',
+        };
+      }
+
+      let syncResult: SyncResult;
+      try {
+        syncResult = await syncOpenClawConfig({
+          reason: 'agent-runtime-settings-change',
+        });
+      } catch (error) {
+        return rollback(
+          error instanceof Error ? error.message : 'Runtime configuration synchronization failed.',
+        );
+      }
+
+      if (syncResult.success) {
+        return {
+          success: true,
+          changed: true,
+          settings: next,
+          engineStatus: syncResult.status,
+        };
+      }
+
+      return rollback(syncResult.error || 'Runtime configuration synchronization failed.');
+    }),
+  );
 
   ipcMain.handle(
     'cowork:config:set',

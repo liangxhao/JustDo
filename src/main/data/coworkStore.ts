@@ -4,6 +4,11 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
+  type AgentRuntimeSettings,
+  parseAgentRuntimeSettings,
+  validateAgentRuntimeSettings,
+} from '../../shared/openclaw/agentRuntimeSettings';
+import {
   DEFAULT_PERMISSION_MODE,
   isPermissionMode,
   type PermissionMode,
@@ -19,6 +24,7 @@ const getDefaultWorkingDirectory = (): string => {
 
 const TASK_WORKSPACE_CONTAINER_DIR = '.justdo-tasks';
 const GOAL_EXECUTION_CONFIG_PREFIX = 'goalExecution:';
+const AGENT_RUNTIME_SETTINGS_CONFIG_KEY = 'agentRuntimeSettings:v1';
 
 const normalizeRecentWorkspacePath = (cwd: string): string => {
   const resolved = path.resolve(cwd);
@@ -981,6 +987,40 @@ export class CoworkStore {
         )
         .run(config.permissionMode, now);
     }
+  }
+
+  getAgentRuntimeSettings(): AgentRuntimeSettings {
+    const row = this.getOne<{ value: string }>('SELECT value FROM cowork_config WHERE key = ?', [
+      AGENT_RUNTIME_SETTINGS_CONFIG_KEY,
+    ]);
+    if (!row?.value) {
+      return parseAgentRuntimeSettings(null);
+    }
+
+    try {
+      return parseAgentRuntimeSettings(JSON.parse(row.value));
+    } catch {
+      return parseAgentRuntimeSettings(null);
+    }
+  }
+
+  setAgentRuntimeSettings(settings: AgentRuntimeSettings): void {
+    const validation = validateAgentRuntimeSettings(settings);
+    if (validation.ok === false) {
+      throw new Error(validation.error);
+    }
+
+    this.db
+      .prepare(
+        `
+        INSERT INTO cowork_config (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run(AGENT_RUNTIME_SETTINGS_CONFIG_KEY, JSON.stringify(validation.settings), Date.now());
   }
 
   getAppLanguage(): 'zh' | 'en' {
