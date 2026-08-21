@@ -294,8 +294,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             onClick={onNewChat}
             className={`relative w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               activeView === 'cowork'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+                ? 'bg-primary-muted text-primary hover:bg-primary/15'
+                : 'text-secondary hover:text-foreground hover:bg-surface'
             }`}
           >
             <ComposeIcon className="h-4 w-4" />
@@ -314,8 +314,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             }`}
             className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               activeView === 'scheduledTasks'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+                ? 'bg-primary-muted text-primary hover:bg-primary/15'
+                : 'text-secondary hover:text-foreground hover:bg-surface'
             }`}
           >
             <ClockIcon className="h-4 w-4" />
@@ -334,8 +334,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             }}
             className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
               activeView === 'plugins'
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+                ? 'bg-primary-muted text-primary hover:bg-primary/15'
+                : 'text-secondary hover:text-foreground hover:bg-surface'
             }`}
           >
             <PuzzleIcon className="h-4 w-4" />
@@ -402,11 +402,11 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       ) : (
-        <div className="px-3 pb-3 pt-1 flex items-center justify-center gap-1">
+        <div className="mx-3 border-t border-border-subtle pb-3 pt-2 flex items-center justify-center gap-1">
           <button
             type="button"
             onClick={() => onShowSettings()}
-            className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface transition-colors"
             aria-label={i18nService.t('settings')}
           >
             <svg

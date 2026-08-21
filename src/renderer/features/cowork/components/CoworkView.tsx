@@ -1063,7 +1063,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   // Home view - no current session
   return (
-    <div className="flex-1 flex flex-col bg-background h-full">
+    <div className="cowork-home flex-1 flex flex-col h-full">
       {/* Header */}
       {homeHeader}
 

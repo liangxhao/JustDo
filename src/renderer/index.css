@@ -94,6 +94,13 @@ body {
   min-height: 100vh;
 }
 
+.cowork-home {
+  background:
+    radial-gradient(circle at 50% 38%, var(--justdo-gradient-1) 0, transparent 34%),
+    radial-gradient(circle at 76% 78%, var(--justdo-gradient-2) 0, transparent 30%),
+    var(--justdo-background);
+}
+
 #root {
   height: 100vh;
 }

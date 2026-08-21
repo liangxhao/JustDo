@@ -13,7 +13,7 @@ export default {
         elevated: '0 4px 12px rgba(0,0,0,0.1), 0 1px 3px rgba(0,0,0,0.04)',
         modal: '0 8px 30px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.08)',
         popover: '0 4px 20px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.05)',
-        'glow-accent': '0 0 20px rgba(59,130,246,0.15)',
+        'glow-accent': '0 8px 28px rgba(45,55,80,0.08), 0 1px 4px rgba(33,40,56,0.05)',
       },
       keyframes: {
         'fade-in': {
