@@ -166,6 +166,7 @@ export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'btw',
   'acp',
   'diagnostics',
+  'login',
   'export-session',
   'export-trajectory',
   'tts',
