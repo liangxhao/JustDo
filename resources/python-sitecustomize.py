@@ -1,7 +1,34 @@
-"""Add JustDo's persistent per-user package directory to embedded Python."""
+"""Configure import paths for JustDo's embedded Python runtime."""
 
 import os
 import sys
+
+
+def _add_pythonpath() -> None:
+    """Restore PYTHONPATH semantics disabled by the embedded runtime's ._pth file."""
+    raw_pythonpath = os.environ.get("PYTHONPATH", "")
+    if not raw_pythonpath:
+        return
+
+    pythonpath_entries = []
+    seen = set()
+    for entry in raw_pythonpath.split(os.pathsep):
+        # CPython treats an empty PYTHONPATH component as the current directory.
+        absolute_entry = os.path.abspath(entry or os.curdir)
+        normalized_entry = os.path.normcase(absolute_entry)
+        if normalized_entry in seen:
+            continue
+        seen.add(normalized_entry)
+        pythonpath_entries.append(absolute_entry)
+
+    normalized_pythonpath = {
+        os.path.normcase(os.path.abspath(entry)) for entry in pythonpath_entries
+    }
+    sys.path[:] = pythonpath_entries + [
+        entry
+        for entry in sys.path
+        if os.path.normcase(os.path.abspath(entry)) not in normalized_pythonpath
+    ]
 
 
 def _add_justdo_user_sites() -> None:
@@ -44,4 +71,5 @@ def _add_justdo_user_sites() -> None:
         os.environ.setdefault("PIP_USER", "true")
 
 
+_add_pythonpath()
 _add_justdo_user_sites()

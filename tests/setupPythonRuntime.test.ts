@@ -83,7 +83,7 @@ test('setup replaces the managed package directory instead of retaining stale fi
   );
 });
 
-test('bundles sitecustomize support for the persistent per-user package directory', () => {
+test('bundles sitecustomize support for skill PYTHONPATH and persistent user packages', () => {
   const siteCustomize = fs.readFileSync(
     path.resolve(__dirname, '../resources/python-sitecustomize.py'),
     'utf8',
@@ -93,6 +93,12 @@ test('bundles sitecustomize support for the persistent per-user package director
     'utf8',
   );
 
+  expect(siteCustomize).toContain('os.environ.get("PYTHONPATH", "")');
+  expect(siteCustomize).toContain('raw_pythonpath.split(os.pathsep)');
+  expect(siteCustomize).toContain('sys.path[:] = pythonpath_entries + [');
+  expect(siteCustomize.lastIndexOf('_add_pythonpath()')).toBeLessThan(
+    siteCustomize.lastIndexOf('_add_justdo_user_sites()'),
+  );
   expect(siteCustomize).toContain('JUSTDO_PYTHON_USER_SITE');
   expect(siteCustomize).not.toContain('JUSTDO_PYTHON_LEGACY_SITE');
   expect(siteCustomize).toContain('if "install" in pip_args and not has_conflicting_option');

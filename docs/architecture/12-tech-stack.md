@@ -153,6 +153,9 @@ Windows 的 CPython 3.12 x64 runtime 由 `scripts/setup-python-runtime.js` 准�
 `runtimes/python-user`，并通过
 `sitecustomize` 排在内置包之前，允许显式覆盖内置版本。Windows 主机构建完成后会导入五个顶层包；
 安装、哈希或导入检查失败会终止打包。
+嵌入式发行版保留 `python312._pth` 以固定基础搜索路径，因此 CPython 本身不会处理
+`PYTHONPATH`；`sitecustomize` 会显式读取该变量并将其中的目录置于 `sys.path` 前部，供 skill
+脚本加载自身或共享 Python 模块。路径按 Windows 的 `;` 分隔，重复项会被移除，空项按当前目录处理。
 安装后 Python 解释器仅保存在应用安装目录的 `resources/python-win`，运行时直接使用该目录；启动时会
 将用户自行安装的包保存在用户数据目录的 `runtimes/python-user`，并删除旧版本曾复制到
 `runtimes/python-win` 的冗余解释器。旧完整环境中的 `Lib/site-packages` 不迁移；之后通过 pip 安装的
