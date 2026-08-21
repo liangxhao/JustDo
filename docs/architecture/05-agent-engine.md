@@ -114,6 +114,8 @@ JustDo 通过 `agents.defaults.compaction.justdoCodexLocal=true` 显式选择版
 Codex-local 语义；不通过提示词内容猜测运行模式。自动压缩以有效 context window 的 90%
 为阈值，优先采用 provider usage；pre-turn 检查既有上下文，mid-turn 只在新增工具结果后、
 下一次模型采样前检查。`reserveTokens` 只作为摘要请求预算，不再提前移动自动阈值。
+压缩 safety timeout 显式配置为 30 分钟，与长上下文 provider 上限一致，避免 SSE 已成功
+建立后仍被 OpenClaw 的 180 秒默认值提前中止。
 内置 agent auto-compaction 仍由 safeguard guard 关闭，避免和外层 preflight/mid-turn 状态机
 重复触发。
 
@@ -136,7 +138,8 @@ Codex-local 摘要遇到缺模型、认证、超时或普通 provider 失败时�
 允许对没有新增 transcript 的最新 checkpoint 再压缩，并在后续 pass 将 checkpoint 目标依次
 收紧到窗口的 50%/25%（同时要求相对当前已安装上下文继续下降），逐级缩小 retained-user
 archive 和 summary。每次成功 checkpoint 后从当前 transcript 自动续跑；被取消但仍有剩余
-pass 的压缩也回到恢复状态机，而不是把 `prompt too large` 作为本轮终态。mid-turn/provider
+pass 的压缩也回到恢复状态机，而不是把 `prompt too large` 作为本轮终态；`ok: false` 的
+超时/provider 失败不会被误当作取消而连续重试。mid-turn/provider
 overflow 的临时 assistant error 不发布 terminal lifecycle，最终由成功的续跑 attempt 收口。
 只有三次收敛仍失败（例如 system prompt/tool schema 本身已超过真实模型窗口）才报告不可约
 overflow；显式取消仍保持 cancel，非 Codex 模式保持 OpenClaw 原行为。
@@ -165,6 +168,20 @@ reviewer prompt。原生 `compact()` 会复用普通 agent stream；补丁会保
 `spawnedBy` 解析并回填，因此父会话后续 rotation 不会改变已有子会话的归属。
 因此手动、threshold、overflow、mid-turn 压缩以及模型安全审查都能在 LiteLLM 中与
 原会话关联并按用途统计。
+
+timeout/overflow recovery 直接调用 `contextEngine.compact()`，不会经过上游常规
+`AgentSession` compaction subscriber。`039-recovery-compaction-progress.cjs` 因此在这两个
+入口发布 session-scoped `start/update/end/failed`；`028` 包装的摘要 EventStream 只观察
+`text_delta`，按节流后的累计文本更新 UI，不改变结果消费、请求 payload 或 reasoning 流。
+首个文本增量到达前，`039` 每五秒发布只包含经过时间的 `update` 心跳，使前端可区分仍在
+等待压缩模型的请求与已经失联的运行；心跳不冒充模型 token，也不延长任何 timeout。
+
+本地 precheck 的 `Context overflow ... (precheck)` 只用于进入恢复流程，不是 provider
+错误。`040-compaction-error-attribution.cjs` 记录最后一次压缩失败并在终态优先发布其真实
+reason；timeout、认证、网络、取消/no-op 均不得被原始 precheck 文案覆盖。压缩成功但本地
+估算仍无法降到安全预算时，终态明确说明是 local prompt safety budget。只有最后一次真实
+provider prompt 或 assistant error 被 OpenClaw 分类为 context overflow 时，才保留上游
+overflow 恢复提示；hook、compaction 等非 provider 来源保留自身原始错误。
 
 当前能力审计、删除理由、补丁与测试映射以
 `scripts/patches/v2026.7.1-2/README.md` 为准。旧 `v2026.6.11` 目录只作历史资料，loader

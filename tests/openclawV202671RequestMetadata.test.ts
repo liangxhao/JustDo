@@ -118,7 +118,7 @@ function ensureCustomApiRegistered() {}
   return { helper, registered };
 }
 
-function compactionMetadataWrapper() {
+function compactionMetadataWrapper(createStream?: () => unknown) {
   const transformed = purposePatch.patchNativeCompaction(
     `import { i as streamSimple } from "./stream-fixture.js";
 /** Converts agent-core Result values back to the legacy session compaction API shape. */
@@ -154,7 +154,7 @@ var AgentSession = class {
     ) => {
       const payload = { metadata: { user_initiated: true } };
       patchPayload(payload);
-      return payload;
+      return createStream?.() ?? payload;
     },
   ) as (
     stream: () => unknown,
@@ -164,6 +164,32 @@ var AgentSession = class {
 }
 
 describe('OpenClaw v2026.7.1-2 request metadata isolation', () => {
+  test('forwards compaction text deltas only to the matching recovery listener', () => {
+    const listener = vi.fn();
+    const listenerSymbol = Symbol.for('justdo.compaction-stream-listeners');
+    (globalThis as Record<PropertyKey, unknown>)[listenerSymbol] = new Map([
+      ['session-1', listener],
+    ]);
+    const originalPush = vi.fn();
+    const wrap = compactionMetadataWrapper(() => ({ push: originalPush, result: vi.fn() }));
+
+    try {
+      const stream = wrap(
+        vi.fn(),
+        { provider: 'builtin_models', api: 'openai-completions' },
+        'session-1',
+      )() as { push(event: Record<string, unknown>): void };
+      stream.push({ type: 'text_delta', delta: 'first ' });
+      stream.push({ type: 'thinking_delta', delta: 'private' });
+      stream.push({ type: 'text_delta', delta: 'second' });
+
+      expect(listener.mock.calls).toEqual([['first '], ['second']]);
+      expect(originalPush).toHaveBeenCalledTimes(3);
+    } finally {
+      delete (globalThis as Record<PropertyKey, unknown>)[listenerSymbol];
+    }
+  });
+
   test('agent metadata is LiteLLM-only and consumes rejected one-shot bookkeeping', () => {
     const wrap = agentMetadataWrapper();
     const original = vi.fn();

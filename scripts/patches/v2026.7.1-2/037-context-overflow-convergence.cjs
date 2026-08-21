@@ -41,6 +41,7 @@ function transformAttemptLoop(content, filePath) {
     `$1
               const justDoRetryCancelledCodexCompaction =
                 params.config?.agents?.defaults?.compaction?.justdoCodexLocal === true &&
+                compactResult.ok === true &&
                 !params.abortSignal?.aborted &&
                 overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS;
               if (justDoRetryCancelledCodexCompaction) {

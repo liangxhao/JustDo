@@ -703,6 +703,10 @@ export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
 // Provider idle timeout for slow long-context model calls. This must be lower
 // than the agent ceiling but higher than OpenClaw's default 120s.
 export const OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS = 30 * 60;
+// Context compaction has its own OpenClaw safety timeout. Keep it aligned with
+// the provider ceiling so a healthy long-context SSE response is not aborted
+// by the much shorter upstream default (180s).
+export const OPENCLAW_COMPACTION_TIMEOUT_SECONDS = OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS;
 export const OPENCLAW_STUCK_SESSION_WARN_MS = 10 * 60 * 1000;
 export const OPENCLAW_STUCK_SESSION_ABORT_MS = 40 * 60 * 1000;
 // OpenClaw treats zero as "never archive" for completed run-mode subagents.
@@ -780,6 +784,7 @@ export const applyManagedOpenClawHeartbeatConfig = (
  */
 export const buildManagedOpenClawCompactionConfig = () => ({
   mode: 'safeguard',
+  timeoutSeconds: OPENCLAW_COMPACTION_TIMEOUT_SECONDS,
   // Versioned runtime patches use this explicit switch for Codex-local
   // checkpoint layout and trigger semantics. Do not infer the mode from the
   // prompt text: custom instructions are user-facing data, not a capability

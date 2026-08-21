@@ -36,6 +36,7 @@ function patchNativeCompaction(content, filePath) {
       `${COMPACTION_HELPER}(streamFn, model, justDoSessionId)`,
       `${COMPACTION_HELPER}(this.agent.streamFn, this.model, this.sessionManager.getSessionId())`,
       'session_id: sessionId',
+      'wrapJustDoCompactionTextStream',
     ]) {
       if (!content.includes(contract)) {
         throw new Error(`${filePath}: partial native compaction metadata patch (${contract})`);
@@ -54,15 +55,45 @@ function patchNativeCompaction(content, filePath) {
     /(\/\*\* Converts agent-core Result values back to the legacy session compaction API shape\. \*\/)/,
     `const justDoLiteLLMCompactionProviders = new Set(${PROVIDERS});
 const justDoLiteLLMCompactionApis = new Set(${APIS});
+const justDoCompactionStreamListenerSymbol = Symbol.for("justdo.compaction-stream-listeners");
+function wrapJustDoCompactionTextStream(stream, sessionId) {
+\tif (!stream) return stream;
+\tconst observeEvent = (event) => {
+\t\tif (event?.type !== "text_delta" || typeof event.delta !== "string" || !event.delta) return;
+\t\tconst listeners = globalThis[justDoCompactionStreamListenerSymbol];
+\t\tconst listener = listeners instanceof Map ? listeners.get(sessionId) : void 0;
+\t\tif (typeof listener === "function") listener(event.delta);
+\t};
+\tif (typeof stream.push === "function") {
+\t\tconst originalPush = stream.push.bind(stream);
+\t\ttry {
+\t\t\tstream.push = (event) => {
+\t\t\t\tobserveEvent(event);
+\t\t\t\treturn originalPush(event);
+\t\t\t};
+\t\t} catch {}
+\t\treturn stream;
+\t}
+\tif (typeof stream[Symbol.asyncIterator] !== "function") return stream;
+\tconst originalIterator = stream[Symbol.asyncIterator].bind(stream);
+\tconst observedIterator = async function* () {
+\t\tfor await (const event of { [Symbol.asyncIterator]: originalIterator }) {
+\t\t\tobserveEvent(event);
+\t\t\tyield event;
+\t\t}
+\t};
+\ttry { stream[Symbol.asyncIterator] = observedIterator; } catch { return stream; }
+\treturn stream;
+}
 // justdo-compaction-request-metadata: shared native/safeguard egress wrapper.
 function ${COMPACTION_HELPER}(streamFn, model, sessionId) {
 \tif (!sessionId || !justDoLiteLLMCompactionProviders.has(model?.provider) || !justDoLiteLLMCompactionApis.has(model?.api)) return streamFn;
 \tconst baseStreamFn = streamFn ?? streamSimple;
-\treturn (runtimeModel, context, options) => streamWithPayloadPatch(baseStreamFn, runtimeModel, context, options, (payload) => {
+\treturn (runtimeModel, context, options) => wrapJustDoCompactionTextStream(streamWithPayloadPatch(baseStreamFn, runtimeModel, context, options, (payload) => {
 \t\tconst metadata = payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata) ? payload.metadata : {};
 \t\tpayload.metadata = { ...metadata, session_id: sessionId, request_purpose: "context_compaction" };
 \t\tdelete payload.metadata.user_initiated;
-\t});
+\t}), sessionId);
 }
 $1`,
     `${filePath}: compaction metadata helper`,
@@ -386,6 +417,7 @@ function verifyPatch(runtimeDir) {
         'session_id: sessionId',
         'request_purpose: "context_compaction"',
         'this.sessionManager.getSessionId()',
+        'wrapJustDoCompactionTextStream',
       ],
     ],
     [

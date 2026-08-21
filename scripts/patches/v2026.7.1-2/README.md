@@ -79,7 +79,9 @@ flowchart LR
   compaction/reviewer purpose。
 - Compaction：`029` 管原始用户消息的结构化保存与 replay；`030` 管 continuation
   wording；`031` 管模型压缩失败后的本地 handoff。`030` 与 `029` 没有隐含顺序，
-  `031` 只读取 `029` 的公开 details 字段，并兼容字段缺失的 legacy transcript。
+  `031` 只读取 `029` 的公开 details 字段，并兼容字段缺失的 legacy transcript；`039`
+  复用 `028` 的压缩流边界，为 direct recovery 补可见 lifecycle、等待心跳和摘要增量；
+  `040` 防止本地 precheck 文案覆盖真实的压缩终态错误。
 
 ### 001–004：环境、Thinking 与历史
 
@@ -557,6 +559,33 @@ flowchart LR
 - **可删除条件**：上游允许大小写混合的 `taskName`，并以与 resolver 一致的方式拒绝所有
   保留字大小写变体。
 
+#### `039-recovery-compaction-progress.cjs`
+
+- **做什么**：为 timeout/context-overflow 恢复分支直接调用的 context engine 压缩补齐
+  `start/update/end/failed` 事件；等待首个 token 时每五秒发布经过时间心跳，LiteLLM 压缩摘要
+  的文本 delta 会按会话节流发布，完成事件同时携带最终摘要和 token 变化。
+- **关系与边界**：复用 `028` 的压缩请求 stream wrapper 和稳定 session ID，覆盖上游
+  `AgentSession` 事件无法观察到的 direct recovery 调用。只发布压缩模型的文本摘要，不把
+  reasoning、凭据或请求 payload 混入普通 assistant 流。
+- **当前保留原因**：目标版的常规自动压缩会发布 lifecycle，但 overflow/timeout recovery
+  直接调用 `contextEngine.compact()`；UI 因而仍停留在“等待模型回复”，也无法展示摘要进度。
+- **可删除条件**：上游所有 context-engine 压缩入口统一发布可关联 session 的完整生命周期
+  和安全摘要增量。
+
+#### `040-compaction-error-attribution.cjs`
+
+- **做什么**：记录 overflow 恢复中最后一次压缩失败；终态 payload、可见文本和
+  `meta.error` 优先使用 timeout/auth/network/no-op 等真实 reason。本地 precheck 在多次成功
+  压缩后仍无法满足安全预算时，显示 local prompt safety budget，而不是伪装成 provider overflow。
+- **关系与边界**：在 `037` 的有界恢复和 `039` 的进度事件之后执行，只修改 embedded-agent
+  最终归因；provider prompt/assistant error 明确返回、且被 OpenClaw 分类为 context overflow
+  时仍沿用上游提示，hook/compaction 等来源不得借用该文案。任一恢复入口成功压缩或裁剪后都
+  清除旧失败，避免历史 timeout/no-op 污染后续 attempt。
+- **当前保留原因**：目标版以本地 `PREEMPTIVE_OVERFLOW_ERROR_TEXT` 进入恢复，压缩失败后却
+  无条件复用通用 overflow 文案，导致 180 秒 safety timeout 被错误报告成模型拒绝上下文。
+- **可删除条件**：上游将 precheck trigger 与 provider error 分型，并把最后一次 recovery
+  failure 原样传播到最终 payload、lifecycle 和错误 metadata。
+
 ## 已删除或由上游/App 承担的能力
 
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
@@ -610,7 +639,7 @@ flowchart LR
 
 | 测试                                                  | 主要覆盖                                                                                                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、38 项保留缺口、头注释和大小约束。                                                                      |
+| `openclawPristineContracts.test.ts`                   | 锁定原始 npm 包、8 项上游能力证据、39 项保留缺口、头注释和大小约束。                                                                      |
 | `openclawV202671ReasoningStream.test.ts`              | `002` callback gate 的原始失败与改写后事件/回调行为。                                                                                     |
 | `openclawV202671PatchSafety.test.ts`                  | `001`、`004`、`007`、`034` 的安全边界和真实 fixture 幂等。                                                                                |
 | `openclawV202671CompletionDelivery.test.ts`           | H07 上游语义、managed yield 非对外交付、subagent `NO_REPLY` 非成功，以及 `015`、`016` 的 FIFO、硬期限和恢复边界。                         |
@@ -625,6 +654,8 @@ flowchart LR
 | `openclawV202671CodexLocalCompaction.test.ts`         | `035` 显式配置、90% pre/mid-turn 阈值、结构绕过、metadata 与 overflow 单次恢复。                                                          |
 | `openclawV202671ContextOverflowConvergence.test.ts`   | `037` 三次有界收敛、无新增 transcript 再压缩、Unicode-safe archive、summary 上限和临时 lifecycle 围栏。                                   |
 | `openclawV202671SubagentTaskNameCase.test.ts`         | `038` 大小写保留、保留字大小写折叠、原有 identifier 边界、提示同步、source/bundle 幂等及歧义 anchor 拒绝。                                |
+| `openclawV202671RecoveryCompactionProgress.test.ts`   | `039` timeout/overflow direct compaction 的 lifecycle、等待心跳、摘要流、清理、幂等和歧义 anchor 拒绝。                                  |
+| `openclawV202671CompactionErrorAttribution.test.ts`   | `040` timeout/no-op/local precheck/provider overflow 的终态归因、metadata、幂等、partial 与歧义拒绝。                                    |
 | `openclawRunProgressEventsPatch.test.ts`              | `032` pristine callback gap、JustDo root/nested ancestry、native/cron/missing/conflict/cycle fail-closed、CLI/embedded allow-list event。 |
 | `openclawV202671CapabilityPatches.test.ts`            | `010`、`022`、`027`、`031`、`033` 及歧义 anchor 原子失败。                                                                                |
 | `openclawRuntimePatchManifest.test.ts`                | source lock、patch/build recipe fingerprint、cache、manifest/tamper fence。                                                               |

@@ -22,6 +22,7 @@ test('keeps normal Codex compaction and adds three bounded overflow recovery pas
 
   expect(transformed).toContain('justdoCodexLocal === true ? 3 : 3');
   expect(transformed).toContain('const justDoRetryCancelledCodexCompaction =');
+  expect(transformed).toContain('compactResult.ok === true');
   expect(transformed).toContain('!params.abortSignal?.aborted');
   expect(transformed).toContain('overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS');
   expect(transformed).toContain('continueFromCurrentTranscript()');

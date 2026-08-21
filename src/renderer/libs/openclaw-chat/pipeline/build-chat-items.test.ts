@@ -208,6 +208,36 @@ test('builds an English in-progress divider for local compaction status', () => 
       key: 'divider:compaction-status:local-compact-1',
       label: 'Compacting...',
       expandable: false,
+      inProgress: true,
+    }),
+  );
+});
+
+test('makes a streamed in-progress compaction summary expandable', () => {
+  const items = build({
+    messages: [
+      {
+        role: 'system',
+        timestamp: 1,
+        __openclaw: {
+          kind: 'compaction-status',
+          id: 'local-compact-streaming',
+          phase: 'in-progress',
+          summary: 'Preserved decisions and current implementation state.',
+        },
+      },
+    ],
+  });
+  const divider = items.find(
+    (item): item is Extract<ChatItem, { kind: 'divider' }> => item.kind === 'divider',
+  );
+
+  expect(divider).toEqual(
+    expect.objectContaining({
+      label: 'Compacting...',
+      summary: 'Preserved decisions and current implementation state.',
+      expandable: true,
+      inProgress: true,
     }),
   );
 });

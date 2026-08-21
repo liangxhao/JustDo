@@ -152,6 +152,7 @@ type LocalCompactionStatus = {
       kind: 'compaction-status';
       id: string;
       phase: 'in-progress' | 'completed';
+      summary?: string;
       tokensBefore?: number;
       tokensAfter?: number;
     };
@@ -861,6 +862,31 @@ export class ChatController {
     return status;
   }
 
+  private updateLocalCompactionSummary(
+    sessionKey: string,
+    status: LocalCompactionStatus,
+    data: Record<string, unknown>,
+  ): void {
+    const currentSummary = status.message.__openclaw.summary ?? '';
+    const accumulated =
+      typeof data.text === 'string'
+        ? data.text
+        : typeof data.summary === 'string'
+          ? data.summary
+          : undefined;
+    const delta = typeof data.delta === 'string' ? data.delta : '';
+    const summary = accumulated ?? `${currentSummary}${delta}`;
+    if (!summary || summary === currentSummary) return;
+    status.message = {
+      ...status.message,
+      __openclaw: {
+        ...status.message.__openclaw,
+        summary,
+      },
+    };
+    this.updateLocalCompactionMessage(sessionKey, status.id, status.message);
+  }
+
   private clearLocalCompactionStatus(sessionKey: string): void {
     const status = this.localCompactionStatusBySession.get(sessionKey);
     if (!status) return;
@@ -1080,11 +1106,17 @@ export class ChatController {
     this.notifyStream();
   }
 
-  private handleCompactionPhase(phase: string, sessionKey = this.state.sessionKey): void {
+  private handleCompactionPhase(
+    phase: string,
+    sessionKey = this.state.sessionKey,
+    data: Record<string, unknown> = {},
+  ): void {
     const isCurrentSession = sessionKey === this.state.sessionKey;
-    if (phase === 'start') {
+    if (phase === 'start' || phase === 'update') {
       const status = this.beginLocalCompactionStatus(sessionKey);
-      if (status.message.__openclaw.phase === 'completed' || !isCurrentSession) return;
+      if (status.message.__openclaw.phase === 'completed') return;
+      this.updateLocalCompactionSummary(sessionKey, status, data);
+      if (!isCurrentSession) return;
       this.state.compactionInFlight = true;
       this.clearLifecycleEndFallback();
       this.notifyStream();
@@ -1095,6 +1127,7 @@ export class ChatController {
       this.clearLocalCompactionStatus(sessionKey);
       if (!isCurrentSession) return;
       this.state.compactionInFlight = false;
+      if (this.terminalLifecycleSeen) this.scheduleChatLifecycleEndFallback();
       this.notifyStream();
       this.notify();
       return;
@@ -1103,7 +1136,12 @@ export class ChatController {
     const wasInProgress =
       this.localCompactionStatusBySession.get(sessionKey)?.message.__openclaw.phase ===
       'in-progress';
-    const status = this.completeLocalCompactionStatus(sessionKey);
+    const inProgressStatus = this.localCompactionStatusBySession.get(sessionKey);
+    if (inProgressStatus) this.updateLocalCompactionSummary(sessionKey, inProgressStatus, data);
+    const status = this.completeLocalCompactionStatus(sessionKey, {
+      before: typeof data.tokensBefore === 'number' ? data.tokensBefore : undefined,
+      after: typeof data.tokensAfter === 'number' ? data.tokensAfter : undefined,
+    });
     if (!isCurrentSession) return;
     this.state.compactionInFlight = false;
     if (this.terminalLifecycleSeen) this.scheduleChatLifecycleEndFallback();
@@ -1722,7 +1760,7 @@ export class ChatController {
         return;
       }
       const phase = typeof payload.phase === 'string' ? payload.phase : '';
-      this.handleCompactionPhase(phase, sessionKey);
+      this.handleCompactionPhase(phase, sessionKey, payload);
     }
   }
 
@@ -2823,7 +2861,7 @@ export class ChatController {
 
     if (stream === 'compaction') {
       const phase = typeof data.phase === 'string' ? data.phase : '';
-      this.handleCompactionPhase(phase);
+      this.handleCompactionPhase(phase, this.state.sessionKey, data);
       return;
     }
 

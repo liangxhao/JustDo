@@ -986,6 +986,7 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
       const tokensBefore =
         typeof marker.tokensBefore === 'number' ? marker.tokensBefore : undefined;
       const tokensAfter = typeof marker.tokensAfter === 'number' ? marker.tokensAfter : undefined;
+      const summary = typeof marker.summary === 'string' ? marker.summary.trim() : '';
       const completed = marker.phase === 'completed';
       items.push({
         kind: 'divider',
@@ -997,7 +998,9 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
           completed && tokensBefore !== undefined && tokensAfter !== undefined
             ? `${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens`
             : i18nService.t(completed ? 'coworkCompacted' : 'coworkCompactionInProgress'),
-        expandable: false,
+        summary: summary || undefined,
+        expandable: summary.length > 0,
+        inProgress: !completed,
         timestamp: normalized.timestamp ?? Date.now(),
       });
       continue;

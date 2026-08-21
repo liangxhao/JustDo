@@ -2324,7 +2324,9 @@ export class JustDoChatElement extends LitElement {
   }
 
   private syncActiveTurnClock(): void {
-    const isRunning = this._controller?.getCurrentTurnTiming()?.status === 'running';
+    const isRunning =
+      this._controller?.getCurrentTurnTiming()?.status === 'running' ||
+      this._controller?.state.compactionInFlight === true;
     if (isRunning && this.activeTurnClockTimer === null) {
       this.activeTurnClockTimer = setInterval(() => this.requestUpdate(), 1_000);
       return;
@@ -2950,11 +2952,14 @@ export class JustDoChatElement extends LitElement {
         });
       }
       if (item.kind === 'divider') {
+        const label = item.inProgress
+          ? `${item.label} · ${formatActiveTurnDuration(Date.now() - item.timestamp)}`
+          : item.label;
         if (item.expandable === false) {
           return html`
             <div class="chat-divider">
-              <span class="chat-divider__summary" title=${item.description ?? item.label}>
-                ${item.label}
+              <span class="chat-divider__summary" title=${item.description ?? label}>
+                ${label}
               </span>
             </div>
           `;
@@ -2964,7 +2969,7 @@ export class JustDoChatElement extends LitElement {
           <div class="chat-divider">
             <details class="chat-divider__details">
               <summary class="chat-divider__summary" title=${i18nService.t('coworkCompactDetails')}>
-                ${item.label}
+                ${label}
               </summary>
               <div class="chat-divider__content">${summary}</div>
             </details>

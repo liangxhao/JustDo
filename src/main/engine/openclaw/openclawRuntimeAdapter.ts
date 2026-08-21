@@ -55,7 +55,10 @@ import type {
   CoworkSessionStatus,
   CoworkStore,
 } from '../../data/coworkStore';
-import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
+import {
+  OPENCLAW_AGENT_TIMEOUT_SECONDS,
+  OPENCLAW_COMPACTION_TIMEOUT_SECONDS,
+} from '../../openclaw/config/openclawConfigSync';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import {
   buildSessionExecApprovalFingerprint,
@@ -130,7 +133,7 @@ const TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS = 30_000;
 const TITLE_SESSION_ID_POLL_INTERVAL_MS = 100;
 const TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS = 2_000;
 const LIFECYCLE_END_FALLBACK_MS = 1_500;
-const COMPACTION_IN_FLIGHT_TIMEOUT_MS = 10 * 60 * 1_000;
+const COMPACTION_IN_FLIGHT_TIMEOUT_MS = OPENCLAW_COMPACTION_TIMEOUT_SECONDS * 1_000 + 60_000;
 const ERROR_TERMINAL_SESSION_STATUSES = new Set([
   'aborted',
   'cancelled',
@@ -241,6 +244,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly manuallyStoppedSessions = new Set<string>();
   private readonly visibleRunStreams = new Map<string, VisibleRunStreamState>();
   private readonly terminalLifecycleSessionIds = new Set<string>();
+  private readonly terminalLifecycleErrorSessionIds = new Set<string>();
   private readonly recentTerminalRunIds = new Map<string, number>();
   private readonly compactionInFlightSessionIds = new Set<string>();
   private readonly compactionInFlightTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -478,6 +482,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     this.stoppedSessions.set(sessionId, Date.now());
     this.terminalLifecycleSessionIds.delete(sessionId);
+    this.terminalLifecycleErrorSessionIds.delete(sessionId);
     this.cleanupSessionTurn(sessionId);
     this.store.updateSession(sessionId, { status: 'idle' });
     this.emit('sessionStopped', sessionId);
@@ -1271,6 +1276,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.cleanupSessionTurn(sessionId!);
       this.store.updateSession(sessionId!, { status: sessionStatus });
       this.terminalLifecycleSessionIds.add(sessionId!);
+      if (sessionStatus === 'error') {
+        this.terminalLifecycleErrorSessionIds.add(sessionId!);
+      } else {
+        this.terminalLifecycleErrorSessionIds.delete(sessionId!);
+      }
       this.resolveTurn(sessionId!);
       this.replayDeferredSessionMessageReload(sessionId!);
       // Notify renderer of turn completion
@@ -1648,7 +1658,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (phase === 'end' || phase === 'error') {
         this.terminalLifecycleSessionIds.add(sessionId);
       }
-      if (phase === 'end') {
+      if (phase === 'error') {
+        this.terminalLifecycleErrorSessionIds.add(sessionId);
+        this.scheduleLifecycleEndFallback(sessionId, turn);
+      } else if (phase === 'end') {
+        this.terminalLifecycleErrorSessionIds.delete(sessionId);
         this.scheduleLifecycleEndFallback(sessionId, turn);
       }
       return;
@@ -2015,7 +2029,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     if (phase !== 'end' && phase !== 'error' && phase !== 'failed') return;
     this.clearCompactionInFlight(sessionId);
-    if (phase === 'end' && turn && this.terminalLifecycleSessionIds.has(sessionId)) {
+    if (turn && this.terminalLifecycleSessionIds.has(sessionId)) {
       this.scheduleLifecycleEndFallback(sessionId, turn);
     }
   }
@@ -2851,11 +2865,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const timer = setTimeout(() => {
       this.lifecycleEndFallbackTimers.delete(sessionId);
       if (this.activeTurns.get(sessionId) !== turn) return;
+      const terminalStatus = this.terminalLifecycleErrorSessionIds.has(sessionId)
+        ? 'error'
+        : 'idle';
       this.cleanupSessionTurn(sessionId);
-      this.store.updateSession(sessionId, { status: 'idle' });
+      this.store.updateSession(sessionId, { status: terminalStatus });
       this.resolveTurn(sessionId);
       this.replayDeferredSessionMessageReload(sessionId);
-      this.emit('complete', sessionId, 'idle');
+      this.emit('complete', sessionId, terminalStatus);
     }, LIFECYCLE_END_FALLBACK_MS);
     this.lifecycleEndFallbackTimers.set(sessionId, timer);
   }
@@ -2867,6 +2884,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.manuallyStoppedSessions.delete(sessionId);
     }
     this.terminalLifecycleSessionIds.delete(sessionId);
+    this.terminalLifecycleErrorSessionIds.delete(sessionId);
     this.clearCompactionInFlight(sessionId);
 
     const turnRunId = runId || randomUUID();
@@ -2957,6 +2975,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.cleanupSessionTurn(sessionId);
     this.store.updateSession(sessionId, { status: 'idle' });
     this.terminalLifecycleSessionIds.add(sessionId);
+    this.terminalLifecycleErrorSessionIds.delete(sessionId);
     this.resolveTurn(sessionId);
   }
 
@@ -3683,6 +3702,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.manuallyStoppedSessions.delete(sessionId);
     this.goalsAwaitingResumeInput.delete(sessionId);
     this.terminalLifecycleSessionIds.delete(sessionId);
+    this.terminalLifecycleErrorSessionIds.delete(sessionId);
     this.channelSessionSync?.onSessionDeleted(sessionId);
 
     // Delete remote sessions

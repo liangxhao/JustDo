@@ -3971,6 +3971,104 @@ test('does not apply the lifecycle end fallback while compaction is in flight', 
   ]);
 });
 
+test('streams automatic compaction output into the local progress marker', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  const handleAgentEvent = (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent.bind(controller);
+
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: controller.state.sessionKey,
+    data: { phase: 'start' },
+  });
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: controller.state.sessionKey,
+    data: { phase: 'update', text: 'Current progress and decisions' },
+  });
+
+  expect(controller.state.compactionInFlight).toBe(true);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({
+        kind: 'compaction-status',
+        phase: 'in-progress',
+        summary: 'Current progress and decisions',
+      }),
+    }),
+  ]);
+
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: controller.state.sessionKey,
+    data: {
+      phase: 'end',
+      text: 'Current progress and decisions\nNext steps',
+      tokensBefore: 120_000,
+      tokensAfter: 18_000,
+    },
+  });
+
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      __openclaw: expect.objectContaining({
+        phase: 'completed',
+        summary: 'Current progress and decisions\nNext steps',
+        tokensBefore: 120_000,
+        tokensAfter: 18_000,
+      }),
+    }),
+  ]);
+});
+
+test('resumes the lifecycle end fallback when automatic compaction fails', async () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-1';
+  const handleAgentEvent = (
+    controller as unknown as {
+      handleAgentEvent(payload: Record<string, unknown>): void;
+    }
+  ).handleAgentEvent.bind(controller);
+
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'lifecycle',
+    session: controller.state.sessionKey,
+    data: { phase: 'end' },
+  });
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: controller.state.sessionKey,
+    data: { phase: 'start' },
+  });
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(controller.state.chatSending).toBe(true);
+
+  handleAgentEvent({
+    runId: 'run-1',
+    stream: 'compaction',
+    session: controller.state.sessionKey,
+    data: { phase: 'failed', error: 'Compaction timed out' },
+  });
+  await vi.advanceTimersByTimeAsync(1600);
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.compactionInFlight).toBe(false);
+});
+
 test('ignores a duplicate compaction start that arrives after completion', () => {
   vi.useFakeTimers();
   const controller = new ChatController();

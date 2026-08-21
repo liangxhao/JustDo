@@ -25,8 +25,11 @@ import {
   ExecApprovalDecision,
   OpenClawApprovalIpc,
 } from '../../../shared/openclaw/approvals';
+import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../openclaw/config/openclawConfigSync';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { ensureSlashCommandSession, OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
+
+const COMPACTION_WATCHDOG_MS = OPENCLAW_COMPACTION_TIMEOUT_SECONDS * 1_000 + 60_000;
 
 function createEmptyStore() {
   const session = {
@@ -2030,7 +2033,7 @@ test('expires manual context compaction when its terminal event is lost', async 
       event: 'session.operation',
       payload: { operation: 'compact', phase: 'start', sessionKey },
     });
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+    await vi.advanceTimersByTimeAsync(COMPACTION_WATCHDOG_MS);
 
     await expect(
       adapter.getSessionRuntimeStatus('session-1', { forceRefresh: true }),
@@ -2964,6 +2967,61 @@ test('compaction pauses and then resumes the lifecycle end fallback', () => {
   }
 });
 
+test('lifecycle error converges the session to error after compaction fails', () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createEmptyStore();
+    session.status = 'running';
+    store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => {
+      Object.assign(session, updates);
+    };
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const complete = vi.fn();
+    adapter.on('complete', complete);
+    adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+    adapter.ensureActiveTurn('session-1', 'agent:main:justdo:session-1', 'run-1');
+
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'compaction',
+        data: { phase: 'start' },
+      },
+    });
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'lifecycle',
+        data: { phase: 'error', error: 'Compaction timed out' },
+      },
+    });
+    vi.advanceTimersByTime(2000);
+    expect(adapter.isSessionActive('session-1')).toBe(true);
+
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'compaction',
+        data: { phase: 'failed', error: 'Compaction timed out' },
+      },
+    });
+    vi.advanceTimersByTime(1500);
+
+    expect(adapter.isSessionActive('session-1')).toBe(false);
+    expect(session.status).toBe('error');
+    expect(complete).toHaveBeenCalledWith('session-1', 'error');
+  } finally {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  }
+});
+
 test('compaction timeout resumes the lifecycle end fallback when its end event is lost', () => {
   vi.useFakeTimers();
   try {
@@ -2995,7 +3053,7 @@ test('compaction timeout resumes the lifecycle end fallback when its end event i
       },
     });
 
-    vi.advanceTimersByTime(10 * 60 * 1_000);
+    vi.advanceTimersByTime(COMPACTION_WATCHDOG_MS);
     expect(adapter.isSessionActive('session-1')).toBe(true);
     vi.advanceTimersByTime(1500);
     expect(adapter.isSessionActive('session-1')).toBe(false);

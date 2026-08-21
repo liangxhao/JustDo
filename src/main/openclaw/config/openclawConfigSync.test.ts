@@ -249,6 +249,7 @@ describe('OpenClaw managed compaction config', () => {
     expect(compaction).toMatchObject({
       mode: 'safeguard',
       justdoCodexLocal: true,
+      timeoutSeconds: 30 * 60,
       recentTurnsPreserve: 0,
       identifierPolicy: 'off',
       memoryFlush: {

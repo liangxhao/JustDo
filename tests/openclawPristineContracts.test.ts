@@ -57,6 +57,8 @@ const EXPECTED_PATCH_FILES = [
   '036-managed-session-identity-pin.cjs',
   '037-context-overflow-convergence.cjs',
   '038-case-insensitive-subagent-task-names.cjs',
+  '039-recovery-compaction-progress.cjs',
+  '040-compaction-error-attribution.cjs',
 ] as const;
 
 function createPristineFixture(): string {
