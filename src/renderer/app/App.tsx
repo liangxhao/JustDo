@@ -620,7 +620,7 @@ const App: React.FC = () => {
   }, [pendingInteraction, handleInteractionResponse]);
 
   const activeApproval = pendingApprovals[0] ?? null;
-  const isOverlayActive = showSettings || pendingInteraction !== null || activeApproval !== null;
+  const isOverlayActive = pendingInteraction !== null || activeApproval !== null;
 
   const resolveExecApproval = useCallback(
     async (decision: ApprovalDecision) => {
@@ -670,29 +670,32 @@ const App: React.FC = () => {
   if (initError) {
     return (
       <div className="h-screen overflow-hidden flex flex-col">
-        {windowsStandaloneTitleBar}
-        <div className="flex-1 flex flex-col items-center justify-center bg-background">
-          <div className="flex flex-col items-center space-y-6 max-w-md px-6">
-            <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg">
-              <ChatBubbleLeftRightIcon className="h-8 w-8 text-white" />
-            </div>
-            <div className="text-foreground text-xl font-medium text-center">{initError}</div>
-            <button
-              onClick={() => handleShowSettings()}
-              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl shadow-md transition-colors text-sm font-medium"
-            >
-              {i18nService.t('openSettings')}
-            </button>
-          </div>
-          {showSettings && (
+        {!showSettings && windowsStandaloneTitleBar}
+        {showSettings ? (
+          <div className="min-h-0 flex-1 bg-background">
             <Settings
               onClose={handleCloseSettings}
               developerModeAvailable={developerModeAvailable}
               initialTab={settingsOptions.initialTab}
               notice={settingsOptions.notice}
             />
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center bg-background">
+            <div className="flex flex-col items-center space-y-6 max-w-md px-6">
+              <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg">
+                <ChatBubbleLeftRightIcon className="h-8 w-8 text-white" />
+              </div>
+              <div className="text-foreground text-xl font-medium text-center">{initError}</div>
+              <button
+                onClick={() => handleShowSettings()}
+                className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl shadow-md transition-colors text-sm font-medium"
+              >
+                {i18nService.t('openSettings')}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -710,55 +713,60 @@ const App: React.FC = () => {
         />
       )}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <Sidebar
-          onShowSettings={handleShowSettings}
-          activeView={mainView}
-          onShowCowork={handleShowCowork}
-          onShowScheduledTasks={handleShowScheduledTasks}
-          onShowPlugins={handleShowPlugins}
-          onNewChat={handleNewChat}
-          onBeforeCoworkNavigation={requestCoworkNavigation}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={handleToggleSidebar}
-          developerModeAvailable={developerModeAvailable}
-        />
-        <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
-          <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
-            <EngineStartupStatusBar />
-            {mainView === 'scheduledTasks' ? (
-              <CronView
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
+        {showSettings ? (
+          <div className="flex-1 min-w-0 p-1.5">
+            <div className="relative h-full min-h-0 overflow-hidden rounded-xl bg-background">
+              <Settings
+                onClose={handleCloseSettings}
+                developerModeAvailable={developerModeAvailable}
+                initialTab={settingsOptions.initialTab}
+                notice={settingsOptions.notice}
               />
-            ) : mainView === 'plugins' ? (
-              <PluginsView
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-              />
-            ) : (
-              <CoworkView
-                ref={coworkViewRef}
-                onRequestAppSettings={handleShowSettings}
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-              />
-            )}
+            </div>
           </div>
-        </div>
+        ) : (
+          <>
+            <Sidebar
+              onShowSettings={handleShowSettings}
+              activeView={mainView}
+              onShowCowork={handleShowCowork}
+              onShowScheduledTasks={handleShowScheduledTasks}
+              onShowPlugins={handleShowPlugins}
+              onNewChat={handleNewChat}
+              onBeforeCoworkNavigation={requestCoworkNavigation}
+              isCollapsed={isSidebarCollapsed}
+              onToggleCollapse={handleToggleSidebar}
+              developerModeAvailable={developerModeAvailable}
+            />
+            <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
+              <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
+                <EngineStartupStatusBar />
+                {mainView === 'scheduledTasks' ? (
+                  <CronView
+                    isSidebarCollapsed={isSidebarCollapsed}
+                    onToggleSidebar={handleToggleSidebar}
+                    onNewChat={handleNewChat}
+                  />
+                ) : mainView === 'plugins' ? (
+                  <PluginsView
+                    isSidebarCollapsed={isSidebarCollapsed}
+                    onToggleSidebar={handleToggleSidebar}
+                    onNewChat={handleNewChat}
+                  />
+                ) : (
+                  <CoworkView
+                    ref={coworkViewRef}
+                    onRequestAppSettings={handleShowSettings}
+                    isSidebarCollapsed={isSidebarCollapsed}
+                    onToggleSidebar={handleToggleSidebar}
+                    onNewChat={handleNewChat}
+                  />
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
-
-      {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
-      {showSettings && (
-        <Settings
-          onClose={handleCloseSettings}
-          developerModeAvailable={developerModeAvailable}
-          initialTab={settingsOptions.initialTab}
-          notice={settingsOptions.notice}
-        />
-      )}
       {interactionModal}
       {activeApproval && (
         <ExecApprovalModal

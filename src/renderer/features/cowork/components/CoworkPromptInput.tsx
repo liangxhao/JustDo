@@ -1,5 +1,10 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import { FolderIcon, PaperAirplaneIcon, StopIcon } from '@heroicons/react/24/solid';
+import {
+  FolderIcon,
+  PaperAirplaneIcon,
+  PauseIcon,
+  StopIcon,
+} from '@heroicons/react/24/solid';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
@@ -333,6 +338,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     initialGoalObjectiveRef.current = initialGoalObjective;
     const isRunActive = isCoworkRunActive(isStreaming, goalRunProgress);
     const canStopRun = canStopCoworkRun(isStreaming, goalRunProgress);
+    const isCompacting = goalRunProgress?.phase === 'compacting';
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const slashMenuRef = useRef<HTMLDivElement>(null);
@@ -2500,7 +2506,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 </div>
                 <div className="flex items-center gap-2">
                   {isRunActive && <InProgressBadge />}
-                  {canStopRun ? (
+                  {isCompacting ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="p-2 rounded-xl bg-surface-raised text-muted cursor-not-allowed shadow-subtle"
+                      aria-label={i18nService.t('coworkCompactionInProgress')}
+                      title={i18nService.t('coworkCompactionInProgress')}
+                    >
+                      <PauseIcon className="h-5 w-5" />
+                    </button>
+                  ) : canStopRun ? (
                     <button
                       type="button"
                       onClick={handleStopClick}
@@ -2567,7 +2583,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               )}
 
               {isRunActive && <InProgressBadge />}
-              {canStopRun ? (
+              {isCompacting ? (
+                <button
+                  type="button"
+                  disabled
+                  className="flex-shrink-0 p-2 rounded-lg bg-surface-raised text-muted cursor-not-allowed shadow-subtle"
+                  aria-label={i18nService.t('coworkCompactionInProgress')}
+                  title={i18nService.t('coworkCompactionInProgress')}
+                >
+                  <PauseIcon className="h-4 w-4" />
+                </button>
+              ) : canStopRun ? (
                 <button
                   type="button"
                   onClick={handleStopClick}

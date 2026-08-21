@@ -1,4 +1,5 @@
 import {
+  ArrowLeftIcon,
   ArrowPathIcon,
   BookOpenIcon,
   ChartBarIcon,
@@ -52,6 +53,7 @@ import {
   validateDisplayName,
 } from '@/app/config';
 import { APP_NAME } from '@/app/constants/app';
+import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import MemoryView from '@/features/memory/MemoryView';
 import {
   BUILTIN_MODELS_UPDATED_EVENT,
@@ -80,7 +82,6 @@ import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettings
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
-import Modal from '@/shared/components/common/Modal';
 import ErrorMessage from '@/shared/components/ErrorMessage';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
@@ -332,6 +333,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMac = window.electron.platform === 'darwin';
   const buildNoticeMessage = useCallback((): string | null => {
     if (noticeI18nKey) {
       const base = i18nService.t(noticeI18nKey);
@@ -493,93 +495,6 @@ const Settings: React.FC<SettingsProps> = ({
 
   // State for displayName validation
   const [displayNameError, setDisplayNameError] = useState<string | null>(null);
-
-  // Drag to reposition state
-  const [modalPosition, setModalPosition] = useState({ x: 0, y: 0 });
-  const [modalWidth, setModalWidth] = useState(() => Math.min(1100, window.innerWidth - 48));
-  const [isDragging, setIsDragging] = useState(false);
-  const [isResizingModal, setIsResizingModal] = useState(false);
-  const dragStartRef = useRef({ mouseX: 0, mouseY: 0, modalX: 0, modalY: 0 });
-
-  const handleModalResizeStart = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>, edge: 'left' | 'right') => {
-      const startX = event.clientX;
-      const startWidth = modalWidth;
-      const startPositionX = modalPosition.x;
-      const maxWidth = Math.max(720, window.innerWidth - 32);
-      event.preventDefault();
-      event.stopPropagation();
-      setIsResizingModal(true);
-
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const deltaX = moveEvent.clientX - startX;
-        const requestedWidth = edge === 'right' ? startWidth + deltaX : startWidth - deltaX;
-        const nextWidth = Math.min(maxWidth, Math.max(720, requestedWidth));
-        const widthDelta = nextWidth - startWidth;
-
-        setModalWidth(nextWidth);
-        setModalPosition(position => ({
-          ...position,
-          x: startPositionX + (edge === 'right' ? widthDelta / 2 : -widthDelta / 2),
-        }));
-      };
-      const handleMouseUp = () => {
-        setIsResizingModal(false);
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-      };
-
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    },
-    [modalPosition.x, modalWidth],
-  );
-
-  // Handle drag start on header
-  const handleDragStart = useCallback(
-    (e: React.MouseEvent) => {
-      if ((e.target as HTMLElement).closest('button, input, select, textarea, a')) return;
-      e.preventDefault();
-      setIsDragging(true);
-      dragStartRef.current = {
-        mouseX: e.clientX,
-        mouseY: e.clientY,
-        modalX: modalPosition.x,
-        modalY: modalPosition.y,
-      };
-    },
-    [modalPosition],
-  );
-
-  // Handle mouse move and mouse up for dragging
-  useEffect(() => {
-    if (!isDragging) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaX = e.clientX - dragStartRef.current.mouseX;
-      const deltaY = e.clientY - dragStartRef.current.mouseY;
-      setModalPosition({
-        x: dragStartRef.current.modalX + deltaX,
-        y: dragStartRef.current.modalY + deltaY,
-      });
-    };
-
-    const handleMouseUp = () => {
-      setIsDragging(false);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging]);
   const [openClawGatewayPort, setOpenClawGatewayPort] = useState<number>(
     DEFAULT_OPENCLAW_GATEWAY_PORT,
   );
@@ -1379,11 +1294,6 @@ const Settings: React.FC<SettingsProps> = ({
     }));
   };
 
-  // 阻止点击设置窗口时事件传播到背景
-  const handleSettingsClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-  };
-
   // Handlers for model operations
   const handleAddModel = () => {
     if (isProviderReadOnly(activeProvider, providers[activeProvider])) {
@@ -2001,6 +1911,20 @@ const Settings: React.FC<SettingsProps> = ({
   ];
 
   const activeTabLabel = sidebarTabs.find(t => t.key === activeTab)?.label ?? '';
+  const activeTabContentWidth = (() => {
+    switch (activeTab) {
+      case 'appearance':
+      case 'model':
+      case 'browser':
+      case 'im':
+        return 'max-w-[1440px]';
+      case 'usage':
+      case 'runtime':
+        return 'max-w-7xl';
+      default:
+        return 'max-w-4xl';
+    }
+  })();
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -2618,7 +2542,11 @@ const Settings: React.FC<SettingsProps> = ({
                     </button>
                   );
                 };
-                return <div className="grid grid-cols-4 gap-3">{allThemes.map(renderTile)}</div>;
+                return (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
+                    {allThemes.map(renderTile)}
+                  </div>
+                );
               })()}
             </div>
           </div>
@@ -2748,48 +2676,28 @@ const Settings: React.FC<SettingsProps> = ({
   };
 
   return (
-    <Modal
-      onClose={handleCloseSettings}
-      overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center"
-    >
-      <div
-        className="relative flex h-[min(780px,88vh)] min-h-[560px] overflow-hidden rounded-2xl border border-border bg-background shadow-modal modal-content"
-        style={{
-          width: modalWidth,
-          transform: `translate(${modalPosition.x}px, ${modalPosition.y}px)`,
-          transition: isDragging || isResizingModal ? 'none' : 'transform 0.1s ease-out',
-        }}
-        onClick={handleSettingsClick}
-      >
-        <div
-          className="absolute inset-y-0 left-0 z-40 w-2 cursor-col-resize transition-colors hover:bg-primary/20"
-          onMouseDown={event => handleModalResizeStart(event, 'left')}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={i18nService.t('resizeSettingsWindow')}
-          title={i18nService.t('resizeSettingsWindow')}
-        />
-        <div
-          className="absolute inset-y-0 right-0 z-40 w-2 cursor-col-resize transition-colors hover:bg-primary/20"
-          onMouseDown={event => handleModalResizeStart(event, 'right')}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={i18nService.t('resizeSettingsWindow')}
-          title={i18nService.t('resizeSettingsWindow')}
-        />
-
+    <div className="h-full min-h-0 w-full bg-background">
+      <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-background">
         {/* Left sidebar */}
         <div
           className="shrink-0 flex flex-col overflow-y-auto bg-surface-raised/60"
           style={{ width: sidebarWidth }}
         >
           <div
-            className="flex h-16 shrink-0 cursor-grab select-none items-center px-5"
-            onMouseDown={handleDragStart}
+            className={`draggable flex h-16 shrink-0 select-none items-center gap-2 pr-4 ${
+              isMac ? 'pl-[76px]' : 'pl-4'
+            }`}
           >
-            <h2 className="text-lg font-semibold text-foreground">
-              {i18nService.t('settings')}
-            </h2>
+            <button
+              type="button"
+              onClick={handleCloseSettings}
+              className="non-draggable flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface hover:text-foreground"
+              aria-label={i18nService.t('back')}
+              title={i18nService.t('back')}
+            >
+              <ArrowLeftIcon className="h-[18px] w-[18px]" />
+            </button>
+            <h2 className="text-lg font-semibold text-foreground">{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-4">
             {sidebarTabs.map(tab => (
@@ -2827,10 +2735,7 @@ const Settings: React.FC<SettingsProps> = ({
         {/* Right content */}
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
           {/* Content header */}
-          <div
-            className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-6"
-            onMouseDown={handleDragStart}
-          >
+          <div className="draggable flex h-16 shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-6">
             <h3 className="text-lg font-semibold text-foreground">{activeTabLabel}</h3>
             <div className="flex min-w-0 items-center gap-2">
               {activeTab === 'runtime' && agentRuntimeSettingsDirty && (
@@ -2845,20 +2750,13 @@ const Settings: React.FC<SettingsProps> = ({
                 <button
                   type="button"
                   onClick={() => setAgentRuntimeSettings(createDefaultAgentRuntimeSettings())}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-raised hover:text-primary active:scale-[0.98]"
+                  className="non-draggable inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-raised hover:text-primary active:scale-[0.98]"
                 >
                   <ArrowPathIcon className="h-3.5 w-3.5" />
                   {i18nService.t('agentRuntimeRestoreDefaults')}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={handleCloseSettings}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-                aria-label={i18nService.t('close')}
-              >
-                <XMarkIcon className="h-[18px] w-[18px]" />
-              </button>
+              <WindowTitleBar inline />
             </div>
           </div>
 
@@ -2886,7 +2784,9 @@ const Settings: React.FC<SettingsProps> = ({
                 className="flex-1 overflow-y-auto px-6 py-5"
                 style={{ scrollbarGutter: 'stable' }}
               >
-                {renderTabContent()}
+                <div className={`mx-auto w-full ${activeTabContentWidth}`}>
+                  {renderTabContent()}
+                </div>
               </div>
 
               {/* Footer buttons */}
@@ -3297,7 +3197,7 @@ const Settings: React.FC<SettingsProps> = ({
           </div>
         )}
       </div>
-    </Modal>
+    </div>
   );
 };
 

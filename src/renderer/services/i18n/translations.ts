@@ -72,6 +72,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // 设置
     settings: '设置',
+    back: '返回',
     resizePanels: '拖动调整左右区域大小',
     resizeSettingsWindow: '拖动调整设置窗口宽度',
     general: '通用',
@@ -94,7 +95,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeLoadFailed: '无法加载 Agent 运行设置',
     agentRuntimeRetry: '重新加载',
     agentRuntimeUnsaved: '有未保存更改',
-    agentRuntimeRestoreDefaults: '恢复产品默认值',
+    agentRuntimeRestoreDefaults: '恢复默认值',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription: '主 Agent 的任务规划与委派行为。',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
@@ -1251,6 +1252,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // Settings
     settings: 'Settings',
+    back: 'Back',
     resizePanels: 'Drag to resize panels',
     resizeSettingsWindow: 'Drag to resize the settings window',
     general: 'General',
@@ -1273,7 +1275,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeLoadFailed: 'Could not load Agent runtime settings',
     agentRuntimeRetry: 'Reload',
     agentRuntimeUnsaved: 'Unsaved changes',
-    agentRuntimeRestoreDefaults: 'Restore product defaults',
+    agentRuntimeRestoreDefaults: 'Restore defaults',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription:
       'Task planning and delegation behavior for the main Agent.',
