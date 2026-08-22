@@ -1,5 +1,6 @@
 import { ProxyMode, ProxyProtocol } from '@shared/proxy';
 
+import { normalizeAppearanceConfig } from '@/app/appearance';
 import {
   AppConfig,
   CONFIG_KEYS,
@@ -90,7 +91,7 @@ const migrateCustomProviders = (config: AppConfig): AppConfig => {
   return config;
 };
 
-class ConfigService {
+export class ConfigService {
   private config: AppConfig = defaultConfig;
 
   async init() {
@@ -145,6 +146,7 @@ class ConfigService {
             ...storedConfig.app,
           },
           proxy: normalizeProxyConfig(storedConfig.proxy),
+          appearance: normalizeAppearanceConfig(storedConfig.appearance),
           shortcuts: {
             ...defaultConfig.shortcuts!,
             ...(storedConfig.shortcuts ?? {}),
@@ -184,6 +186,7 @@ class ConfigService {
         ...storedConfig.app,
       },
       proxy: normalizeProxyConfig(storedConfig.proxy),
+      appearance: normalizeAppearanceConfig(storedConfig.appearance),
       shortcuts: {
         ...this.config.shortcuts,
         ...(storedConfig.shortcuts ?? {}),
@@ -202,6 +205,9 @@ class ConfigService {
       ...this.config,
       ...newConfig,
       ...(newConfig.proxy ? { proxy: normalizeProxyConfig(newConfig.proxy) } : {}),
+      ...(newConfig.appearance
+        ? { appearance: normalizeAppearanceConfig(newConfig.appearance) }
+        : {}),
       ...(normalizedProviders ? { providers: normalizedProviders } : {}),
     };
     await localStore.setItem(CONFIG_KEYS.APP_CONFIG, this.config);

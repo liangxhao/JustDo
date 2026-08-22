@@ -1029,10 +1029,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           />
           {/* Input */}
           <div className="shrink-0 pb-4 pt-2">
-            <div
-              className="mx-auto min-w-0 space-y-1.5"
-              style={{ width: 'clamp(320px, 92%, 1440px)', maxWidth: 'calc(100% - 32px)' }}
-            >
+            <div className="cowork-content-width mx-auto min-w-0 space-y-1.5">
               <div className="shadow-glow-accent rounded-2xl">
                 <CoworkPromptInput
                   onSubmit={handleSendMessage}

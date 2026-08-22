@@ -9,6 +9,7 @@ import { CoworkInteractionKind } from '@shared/openclaw/extensions';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { applyAppearanceConfig } from '@/app/appearance';
 import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import Sidebar from '@/app/shell/Sidebar';
 import Toast from '@/app/shell/Toast';
@@ -137,6 +138,7 @@ const App: React.FC = () => {
         // 初始化配置
         console.info('[App] initializeApp: configService.init');
         await waitWithTimeout(configService.init(), 5000, 'configService.init');
+        applyAppearanceConfig(configService.getConfig().appearance);
 
         try {
           const developerConfig = await waitWithTimeout(

@@ -2,6 +2,8 @@ import { BrowserMode, type BrowserMode as BrowserModeValue } from '@shared/brows
 import { ProviderRegistry } from '@shared/providers';
 import { defaultProxySettings, type ProxySettings } from '@shared/proxy';
 
+import { type AppearanceConfig, defaultAppearanceConfig } from '@/app/appearance';
+
 const BUILTIN_MODELS_PROVIDER_KEY = 'builtin_models';
 
 // 配置类型定义
@@ -50,6 +52,8 @@ export interface AppConfig {
   };
   // 主题配置
   theme: 'light' | 'dark' | 'system';
+  // 界面与消息阅读体验配置
+  appearance: AppearanceConfig;
   // 语言配置
   language: 'zh' | 'en';
   // 是否使用系统代理
@@ -124,6 +128,7 @@ export const defaultConfig: AppConfig = {
   },
   providers: buildDefaultProviders(),
   theme: 'light',
+  appearance: defaultAppearanceConfig,
   language: 'zh',
   useSystemProxy: false,
   proxy: defaultProxySettings,

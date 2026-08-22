@@ -42,6 +42,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch } from 'react-redux';
 
 import {
+  type AppearanceConfig,
+  applyAppearanceConfig,
+  normalizeAppearanceConfig,
+} from '@/app/appearance';
+import {
   type AppConfig,
   defaultConfig,
   getCustomProviderDefaultName,
@@ -62,6 +67,7 @@ import {
 import { setAvailableModels } from '@/features/models/modelSlice';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import AgentRuntimeSettingsTab from '@/features/settings/components/AgentRuntimeSettingsTab';
+import AppearanceSettingsTab from '@/features/settings/components/AppearanceSettingsTab';
 import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
 import BrowserSettingsTab from '@/features/settings/components/BrowserSettingsTab';
 import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
@@ -79,6 +85,8 @@ import {
 } from '@/features/settings/modelConnectionTest';
 import { validateModelForm } from '@/features/settings/modelFormValidation';
 import { mergeRefreshedBuiltinProvider } from '@/features/settings/modelSettingsRefresh';
+import { persistSettingsInOrder } from '@/features/settings/settingsPersistence';
+import { createSettingsPreviewRestore } from '@/features/settings/settingsPreviewRestore';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
@@ -152,6 +160,10 @@ const resolveBaseUrl = (provider: ProviderType, baseUrl: string): string => {
 };
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
 const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const APPEARANCE_PREVIEW_CARD_CLASS_NAME =
+  'flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer';
+const APPEARANCE_PREVIEW_CLASS_NAME = 'mb-1.5 h-auto w-full overflow-hidden rounded-md';
+const APPEARANCE_PREVIEW_LABEL_CLASS_NAME = 'w-full truncate text-center text-xs font-medium';
 const buildModelDiscoveryHeaders = (apiKey: string): Record<string, string> =>
   apiKey.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {};
 
@@ -323,6 +335,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [activeTab, setActiveTab] = useState<TabType>(getEnabledSettingsTab(initialTab));
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('light');
   const [themeId, setThemeId] = useState<string>(themeService.getThemeId());
+  const [appearance, setAppearance] = useState<AppearanceConfig>(() =>
+    normalizeAppearanceConfig(configService.getConfig().appearance),
+  );
   const [language, setLanguage] = useState<LanguageType>('zh');
   const [autoLaunch, setAutoLaunchState] = useState(false);
   const [proxyMode, setProxyMode] = useState<ProxyMode>(ProxyMode.DIRECT);
@@ -354,8 +369,8 @@ const Settings: React.FC<SettingsProps> = ({
   const [appVersion, setAppVersion] = useState<string>('unknown');
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
+  const initialAppearanceRef = useRef<AppearanceConfig>(appearance);
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
-  const didSaveRef = useRef(false);
   const connectionTestRef = useRef({ generation: 0, requestId: null as string | null });
 
   const cancelConnectionTest = useCallback((updateState = true) => {
@@ -632,8 +647,10 @@ const Settings: React.FC<SettingsProps> = ({
 
       // Set general settings
       initialThemeRef.current = config.theme;
+      initialAppearanceRef.current = normalizeAppearanceConfig(config.appearance);
       initialLanguageRef.current = config.language;
       setTheme(config.theme);
+      setAppearance(initialAppearanceRef.current);
       setLanguage(config.language);
       setProxyMode(
         config.proxy?.mode === ProxyMode.CUSTOM
@@ -732,17 +749,25 @@ const Settings: React.FC<SettingsProps> = ({
   }, []);
 
   useEffect(() => {
-    const initialThemeId = initialThemeIdRef.current;
-    const initialTheme = initialThemeRef.current;
-    const initialLanguage = initialLanguageRef.current;
-    return () => {
-      if (didSaveRef.current) {
-        return;
-      }
-      themeService.restoreTheme(initialThemeId, initialTheme);
-      i18nService.setLanguage(initialLanguage, { persist: false });
-    };
+    return createSettingsPreviewRestore(
+      {
+        themeId: initialThemeIdRef,
+        theme: initialThemeRef,
+        appearance: initialAppearanceRef,
+        language: initialLanguageRef,
+      },
+      {
+        restoreTheme: (themeId, themeMode) => themeService.restoreTheme(themeId, themeMode),
+        restoreAppearance: applyAppearanceConfig,
+        restoreLanguage: initialLanguage =>
+          i18nService.setLanguage(initialLanguage, { persist: false }),
+      },
+    );
   }, []);
+
+  useEffect(() => {
+    applyAppearanceConfig(appearance);
+  }, [appearance]);
 
   // 监听标签页切换，确保内容区域滚动到顶部
   useEffect(() => {
@@ -1164,36 +1189,30 @@ const Settings: React.FC<SettingsProps> = ({
         },
       };
 
-      await configService.updateConfig({
-        api: {
-          key: primaryProvider.apiKey,
-          baseUrl: primaryProvider.baseUrl,
-        },
-        providers: normalizedProviders, // Save all providers configuration
-        theme,
-        language,
-        useSystemProxy: proxyMode === ProxyMode.SYSTEM,
-        proxy: normalizedProxy,
-        developerMode,
-        shortcuts,
-      });
+      await persistSettingsInOrder({
+        saveRuntimeSettings: async () => {
+          if (!initialAgentRuntimeSettings) return;
 
-      if (initialAgentRuntimeSettings) {
-        const availableRuntimeModelRefs = new Set(
-          getEnabledProviderModels(normalizedProviders).map(toOpenClawModelRef),
-        );
-        const runtimeSettingsToSave: AgentRuntimeSettings = {
-          ...agentRuntimeSettings,
-          subagents: {
-            ...agentRuntimeSettings.subagents,
-            model:
-              agentRuntimeSettings.subagents.model &&
-              availableRuntimeModelRefs.has(agentRuntimeSettings.subagents.model)
-                ? agentRuntimeSettings.subagents.model
-                : null,
-          },
-        };
-        if (JSON.stringify(runtimeSettingsToSave) !== JSON.stringify(initialAgentRuntimeSettings)) {
+          const availableRuntimeModelRefs = new Set(
+            getEnabledProviderModels(normalizedProviders).map(toOpenClawModelRef),
+          );
+          const runtimeSettingsToSave: AgentRuntimeSettings = {
+            ...agentRuntimeSettings,
+            subagents: {
+              ...agentRuntimeSettings.subagents,
+              model:
+                agentRuntimeSettings.subagents.model &&
+                availableRuntimeModelRefs.has(agentRuntimeSettings.subagents.model)
+                  ? agentRuntimeSettings.subagents.model
+                  : null,
+            },
+          };
+          if (
+            JSON.stringify(runtimeSettingsToSave) === JSON.stringify(initialAgentRuntimeSettings)
+          ) {
+            return;
+          }
+
           const runtimeResult =
             await window.electron.cowork.setAgentRuntimeSettings(runtimeSettingsToSave);
           if (!runtimeResult.success) {
@@ -1207,8 +1226,29 @@ const Settings: React.FC<SettingsProps> = ({
           const savedRuntimeSettings = runtimeResult.settings ?? runtimeSettingsToSave;
           setAgentRuntimeSettings(savedRuntimeSettings);
           setInitialAgentRuntimeSettings(savedRuntimeSettings);
-        }
-      }
+        },
+        saveAppConfig: () =>
+          configService.updateConfig({
+            api: {
+              key: primaryProvider.apiKey,
+              baseUrl: primaryProvider.baseUrl,
+            },
+            providers: normalizedProviders,
+            theme,
+            appearance,
+            language,
+            useSystemProxy: proxyMode === ProxyMode.SYSTEM,
+            proxy: normalizedProxy,
+            developerMode,
+            shortcuts,
+          }),
+        onAppConfigCommitted: () => {
+          initialThemeRef.current = theme;
+          initialThemeIdRef.current = themeService.getThemeId();
+          initialAppearanceRef.current = appearance;
+          initialLanguageRef.current = language;
+        },
+      });
 
       // 应用主题
       themeService.setTheme(theme);
@@ -1246,7 +1286,6 @@ const Settings: React.FC<SettingsProps> = ({
       });
       dispatch(setAvailableModels(allModels));
 
-      didSaveRef.current = true;
       handleCloseSettings();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to save settings');
@@ -2363,6 +2402,8 @@ const Settings: React.FC<SettingsProps> = ({
       case 'appearance':
         return (
           <div className="space-y-8">
+            <AppearanceSettingsTab value={appearance} onChange={setAppearance} />
+
             {/* Appearance Section — mode selector + theme gallery */}
             <div>
               <h4
@@ -2385,7 +2426,7 @@ const Settings: React.FC<SettingsProps> = ({
                         themeService.setTheme(mode);
                         setThemeId(themeService.getThemeId());
                       }}
-                      className="flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer"
+                      className={APPEARANCE_PREVIEW_CARD_CLASS_NAME}
                       style={{
                         borderColor: isSelected ? 'var(--justdo-primary)' : 'var(--justdo-border)',
                         backgroundColor: isSelected ? 'var(--justdo-primary-muted)' : undefined,
@@ -2393,7 +2434,7 @@ const Settings: React.FC<SettingsProps> = ({
                     >
                       <svg
                         viewBox="0 0 120 80"
-                        className="mb-1.5 h-auto w-full overflow-hidden rounded-md"
+                        className={APPEARANCE_PREVIEW_CLASS_NAME}
                         xmlns="http://www.w3.org/2000/svg"
                       >
                         {mode === 'light' && (
@@ -2477,7 +2518,7 @@ const Settings: React.FC<SettingsProps> = ({
                         )}
                       </svg>
                       <span
-                        className="text-xs font-medium"
+                        className={APPEARANCE_PREVIEW_LABEL_CLASS_NAME}
                         style={{
                           color: isSelected
                             ? 'var(--justdo-primary)'
@@ -2512,25 +2553,25 @@ const Settings: React.FC<SettingsProps> = ({
                         setThemeId(t.meta.id);
                         setTheme(t.meta.appearance as 'light' | 'dark');
                       }}
-                      className="flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer"
+                      className={`${APPEARANCE_PREVIEW_CARD_CLASS_NAME} w-[calc(160px_-_0.416667rem)] max-w-[calc(33.333333%_-_0.416667rem)] min-w-0 shrink-0`}
                       style={{
                         borderColor: isSelected ? 'var(--justdo-primary)' : 'var(--justdo-border)',
                         backgroundColor: isSelected ? 'var(--justdo-primary-muted)' : undefined,
                       }}
                     >
                       <svg
-                        viewBox="0 0 80 48"
-                        className="w-full h-auto rounded-md mb-1.5 overflow-hidden"
+                        viewBox="0 0 120 80"
+                        className={APPEARANCE_PREVIEW_CLASS_NAME}
                         xmlns="http://www.w3.org/2000/svg"
                       >
-                        <rect width="80" height="48" fill={bg} />
-                        <rect x="4" y="6" width="20" height="36" rx="3" fill={c1} opacity="0.7" />
-                        <rect x="28" y="6" width="48" height="36" rx="3" fill={c2} opacity="0.5" />
-                        <circle cx="52" cy="24" r="8" fill={c3} opacity="0.8" />
-                        <rect x="32" y="34" width="40" height="4" rx="2" fill={c1} opacity="0.6" />
+                        <rect width="120" height="80" fill={bg} />
+                        <rect x="6" y="10" width="30" height="60" rx="4" fill={c1} opacity="0.7" />
+                        <rect x="42" y="10" width="72" height="60" rx="4" fill={c2} opacity="0.5" />
+                        <circle cx="78" cy="40" r="12" fill={c3} opacity="0.8" />
+                        <rect x="48" y="56" width="60" height="6" rx="3" fill={c1} opacity="0.6" />
                       </svg>
                       <span
-                        className="text-[10px] font-medium truncate w-full text-center"
+                        className={APPEARANCE_PREVIEW_LABEL_CLASS_NAME}
                         style={{
                           color: isSelected
                             ? 'var(--justdo-primary)'
@@ -2543,7 +2584,7 @@ const Settings: React.FC<SettingsProps> = ({
                   );
                 };
                 return (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
+                  <div className="flex flex-wrap justify-center gap-2.5">
                     {allThemes.map(renderTile)}
                   </div>
                 );

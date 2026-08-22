@@ -189,9 +189,17 @@ export class JustDoChatElement extends LitElement {
     css`
       :host {
         display: block;
-        font-family:
-          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-        font-size: 14px;
+        font-family: var(
+          --justdo-font-family,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          'Helvetica Neue',
+          Arial,
+          sans-serif
+        );
+        font-size: var(--justdo-chat-font-size, 14px);
         line-height: 1.6;
         color: var(--justdo-chat-text, #1a1a1a);
         background: var(--justdo-chat-bg, transparent);
@@ -226,8 +234,10 @@ export class JustDoChatElement extends LitElement {
       }
 
       .chat-container {
-        width: clamp(320px, 92%, 1440px);
+        width: var(--justdo-chat-content-width, 70%);
+        /* Match the composer: adapt to the viewport without a fixed pixel cap. */
         max-width: calc(100% - 32px);
+        min-width: min(320px, calc(100% - 32px));
         box-sizing: border-box;
         margin: 0 auto;
         padding: 16px 0;
@@ -407,11 +417,15 @@ export class JustDoChatElement extends LitElement {
       }
 
       .chat-group--content + .chat-group--content {
-        margin-top: 8px;
+        margin-top: var(--justdo-message-gap, 8px);
+      }
+
+      .chat-container > .chat-group--timeline + .chat-group--timeline {
+        margin-top: var(--justdo-timeline-gap, 4px);
       }
 
       .chat-group--content .chat-bubble + .chat-bubble {
-        margin-top: 8px;
+        margin-top: var(--justdo-message-gap, 8px);
       }
 
       .chat-group--user {
@@ -828,8 +842,8 @@ export class JustDoChatElement extends LitElement {
         box-sizing: border-box;
         overflow-x: auto;
         overflow-y: hidden;
-        white-space: pre;
-        overflow-wrap: normal;
+        white-space: var(--justdo-code-white-space, pre);
+        overflow-wrap: var(--justdo-code-overflow-wrap, normal);
         word-break: normal;
         font-size: 13px;
         line-height: 1.5;
@@ -882,9 +896,16 @@ export class JustDoChatElement extends LitElement {
 
       .code-block-wrapper pre > code {
         display: block;
-        width: max-content;
+        width: var(--justdo-code-width, max-content);
         min-width: 100%;
         box-sizing: border-box;
+      }
+
+      .markdown-content pre.markdown-box-drawing-code,
+      .markdown-content pre.markdown-box-drawing-code > code {
+        width: max-content;
+        white-space: pre;
+        overflow-wrap: normal;
       }
 
       .code-block-lang {
@@ -1494,7 +1515,7 @@ export class JustDoChatElement extends LitElement {
       }
       .active-turn-timeline {
         display: grid;
-        gap: 4px;
+        gap: var(--justdo-timeline-gap, 4px);
       }
       .chat-group--timeline {
         padding-block: 0;

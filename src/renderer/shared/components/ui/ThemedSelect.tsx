@@ -41,6 +41,7 @@ interface ThemedSelectProps {
   options: { value: string; label: string }[];
   className?: string;
   label?: string;
+  ariaLabel?: string;
 }
 
 const ThemedSelect: React.FC<ThemedSelectProps> = ({
@@ -50,6 +51,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   options,
   className = '',
   label,
+  ariaLabel,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -209,6 +211,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
             onBlur={() => closeDropdown()}
             className={`flex items-center justify-between w-full rounded-lg bg-surface border-border border focus:border-primary focus:ring-1 focus:ring-primary/40 text-foreground px-4 py-2.5 text-sm ${className}`}
             aria-haspopup="listbox"
+            aria-label={ariaLabel}
             aria-expanded={isOpen}
             aria-controls={`${id}-listbox`}
             aria-activedescendant={

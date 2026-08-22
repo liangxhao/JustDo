@@ -66,9 +66,17 @@ blockquote {
 }
 
 :root {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, 'Segoe UI', Roboto,
-    sans-serif;
+  font-family: var(
+    --justdo-font-family,
+    -apple-system,
+    BlinkMacSystemFont,
+    'SF Pro Text',
+    'Inter',
+    system-ui,
+    'Segoe UI',
+    Roboto,
+    sans-serif
+  );
   line-height: 1.6;
   font-weight: 400;
 
@@ -76,6 +84,13 @@ blockquote {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.cowork-content-width {
+  width: var(--justdo-chat-content-width, 70%);
+  /* The viewport is the only cap so every slider step remains visible. */
+  max-width: calc(100% - 32px);
+  min-width: min(320px, calc(100% - 32px));
 }
 
 /* Theme colors are driven by CSS variables from themes.css.
