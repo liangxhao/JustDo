@@ -80,7 +80,6 @@ import {
   projectGatewayHistoryForDisplay,
   shouldHideMessage,
   stripAssistantSilentReplySuffix,
-  stripSilentReplySuffixFromText,
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
@@ -94,6 +93,8 @@ export interface ChatState {
   sessionKey: string;
   /** Backing OpenClaw session id returned by chat.startup/chat.history. */
   currentSessionId: string | null;
+  /** True after the selected session's first subscribed history snapshot settles. */
+  initialHistoryReady: boolean;
   chatLoading: boolean;
   historyLoadingOlder: boolean;
   historyHasMore: boolean;
@@ -126,6 +127,15 @@ export interface ChatState {
 export type ChatStateListener = (state: ChatState) => void;
 export type ChatStreamUpdateKind = 'stream' | 'tool-partial' | 'terminal';
 export type ChatStreamListener = (kind: ChatStreamUpdateKind) => void;
+
+export interface ChatControllerOptions {
+  /** Subagent transcripts are expected to contain their originating user/task turn. */
+  expectInitialHistory?: boolean;
+  /** Maximum time to hold the first history snapshot behind message subscription setup. */
+  initialMessageSubscriptionBarrierTimeoutMs?: number;
+  /** Test seam and bounded persistence catch-up policy. */
+  initialHistoryRetryDelaysMs?: readonly number[];
+}
 
 type CompactionTranscriptReference = {
   leafId?: string;
@@ -214,6 +224,8 @@ const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const POST_FINAL_HISTORY_RELOAD_DELAY_MS = 1500;
 const DEFERRED_HISTORY_RELOAD_DELAY_MS = 1200;
 const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
+const DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS = 3000;
+const DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS = [100, 300, 900] as const;
 const DEBUG_CHAT_CONTROLLER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_CONTROLLER === 'true';
 
@@ -235,6 +247,28 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function isSubagentTaskHistoryMessage(message: unknown): boolean {
+  const record = asRecord(message);
+  if (String(record?.role ?? '').toLowerCase() !== 'user') return false;
+  const text = extractSnapshotText(message);
+  return (
+    typeof text === 'string' &&
+    text.trimStart().startsWith('[Subagent Context] You are running as a subagent (depth ') &&
+    /(?:^|\r?\n)\[Subagent Task\](?:\r?\n|$)/.test(text)
+  );
+}
+
+function sliceActiveSubagentHistoryPrefix(messages: unknown[]): unknown[] {
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (String(asRecord(messages[index])?.role ?? '').toLowerCase() === 'user') {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  return lastUserIndex >= 0 ? messages.slice(0, lastUserIndex + 1) : messages;
 }
 
 function hasOpenClawHistoryTruncationMarker(message: unknown): boolean {
@@ -337,7 +371,9 @@ export class ChatController {
   private localCompactionStatusBySession = new Map<string, LocalCompactionStatus>();
   private assistantSnapshotRunId: string | null = null;
   private ignoredDeltaAfterAssistantSnapshotCount = 0;
+  private pendingAnnounceEvents = new Map<string, NormalizedAgentEvent[]>();
   private historyLoadSeq = 0;
+  private connectionInitializationSeq = 0;
   private subscribedMessageSessionKey: string | null = null;
   private messageSubscriptionSeq = 0;
   private suspendedRunId: string | null = null;
@@ -345,6 +381,9 @@ export class ChatController {
   private runProbeToken: symbol | null = null;
   private terminalLifecycleSeen = false;
   private transcriptIdSequence = 0;
+  private readonly expectInitialHistory: boolean;
+  private readonly initialMessageSubscriptionBarrierTimeoutMs: number;
+  private readonly initialHistoryRetryDelaysMs: readonly number[];
   private readonly transcriptDependencies: TranscriptReducerDependencies = {
     now: () => Date.now(),
     createId: prefix => `${prefix}-${++this.transcriptIdSequence}`,
@@ -361,6 +400,7 @@ export class ChatController {
       hasPending: !!this.state.pendingUserMessage,
       pendingReload: this.pendingHistoryReload,
       chatLoading: this.state.chatLoading,
+      initialHistoryReady: this.state.initialHistoryReady,
       connected: this.state.connected,
       msgRoles: (this.state.chatMessages as Array<Record<string, unknown>>)
         .slice(-5)
@@ -372,13 +412,22 @@ export class ChatController {
     };
   }
 
-  constructor() {
+  constructor(options: ChatControllerOptions = {}) {
+    this.expectInitialHistory = options.expectInitialHistory === true;
+    this.initialMessageSubscriptionBarrierTimeoutMs = Math.max(
+      0,
+      options.initialMessageSubscriptionBarrierTimeoutMs ??
+        DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS,
+    );
+    this.initialHistoryRetryDelaysMs =
+      options.initialHistoryRetryDelaysMs ?? DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS;
     this.state = {
       client: null,
       connected: false,
       transportStatus: 'disconnected',
       sessionKey: '',
       currentSessionId: null,
+      initialHistoryReady: false,
       chatLoading: false,
       historyLoadingOlder: false,
       historyHasMore: false,
@@ -653,6 +702,7 @@ export class ChatController {
     sessionId: string | null,
     preserveTiming = true,
   ): void {
+    this.pendingAnnounceEvents.clear();
     if (preserveTiming) {
       this.cacheCurrentTurnTiming();
     } else {
@@ -734,7 +784,25 @@ export class ChatController {
     };
   }
 
-  private setCurrentSessionMessages(messages: unknown[]): void {
+  private setCurrentSessionMessages(
+    messages: unknown[],
+    options: { resetLoadedHistory?: boolean } = {},
+  ): void {
+    if (options.resetLoadedHistory) {
+      this.currentMessageHistory.reset(messages);
+      const nextWindow = latestHistoryWindow(messages.length);
+      this.state.chatMessages = messages;
+      this.state.loadedMessageCount = messages.length;
+      this.state.historyWindowStart = nextWindow.start;
+      this.state.historyWindowEnd = nextWindow.end;
+      this.state.visibleChatMessages = this.currentMessageHistory.slice(
+        nextWindow.start,
+        nextWindow.end,
+      );
+      this.state.transcript.persistedMessages = messages;
+      this.cacheSessionMessages(this.state.sessionKey);
+      return;
+    }
     const previousMessages = this.state.chatMessages;
     if (this.currentMessageHistory.recentMessages !== previousMessages) {
       this.currentMessageHistory.reset(previousMessages);
@@ -1009,12 +1077,12 @@ export class ChatController {
     this.state.transcript.persistedMessages = this.state.chatMessages;
   }
 
-  private async syncMessageSessionSubscription(sessionKey: string): Promise<void> {
+  private async syncMessageSessionSubscription(sessionKey: string): Promise<boolean> {
     const client = this.state.client;
-    if (!client || !this.state.connected || !sessionKey) return;
+    if (!client || !this.state.connected || !sessionKey) return false;
 
     const previousSessionKey = this.subscribedMessageSessionKey;
-    if (previousSessionKey === sessionKey) return;
+    if (previousSessionKey === sessionKey) return true;
     const subscriptionSeq = ++this.messageSubscriptionSeq;
 
     if (previousSessionKey) {
@@ -1027,7 +1095,7 @@ export class ChatController {
       !this.state.connected ||
       subscriptionSeq !== this.messageSubscriptionSeq
     ) {
-      return;
+      return false;
     }
     try {
       await client.request('sessions.messages.subscribe', { key: sessionKey });
@@ -1037,16 +1105,155 @@ export class ChatController {
         subscriptionSeq === this.messageSubscriptionSeq
       ) {
         this.subscribedMessageSessionKey = sessionKey;
+        return true;
       } else {
         // OpenClaw subscriptions are many-to-many. A stale subscribe can
         // succeed after a newer session transition, so undo it explicitly.
         await client.request('sessions.messages.unsubscribe', { key: sessionKey }).catch(() => {});
+        return false;
       }
     } catch {
       if (subscriptionSeq === this.messageSubscriptionSeq) {
         this.subscribedMessageSessionKey = null;
       }
+      return false;
     }
+  }
+
+  private isConnectionInitializationCurrent(params: {
+    client: GatewayClient;
+    sessionKey: string;
+    initializationSeq: number;
+  }): boolean {
+    return (
+      this.state.client === params.client &&
+      this.state.connected &&
+      this.state.sessionKey === params.sessionKey &&
+      this.connectionInitializationSeq === params.initializationSeq
+    );
+  }
+
+  private async waitForInitialHistoryRetry(
+    delayMs: number,
+    params: { client: GatewayClient; sessionKey: string; initializationSeq: number },
+  ): Promise<boolean> {
+    if (delayMs > 0) {
+      await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+    } else {
+      await Promise.resolve();
+    }
+    return this.isConnectionInitializationCurrent(params);
+  }
+
+  private async loadInitialHistory(params: {
+    client: GatewayClient;
+    sessionKey: string;
+    initializationSeq: number;
+  }): Promise<void> {
+    let initialHistoryError: string | null = null;
+    try {
+      const initialLoadSucceeded = await this.loadHistory(false, { preferStartup: true });
+      if (!initialLoadSucceeded) initialHistoryError = this.state.lastError;
+      if (this.hasExpectedInitialHistory()) return;
+
+      for (const delayMs of this.initialHistoryRetryDelaysMs) {
+        if (!(await this.waitForInitialHistoryRetry(delayMs, params))) return;
+        const retrySucceeded = await this.loadHistory(false);
+        if (retrySucceeded) {
+          if (initialHistoryError !== null && this.state.lastError === initialHistoryError) {
+            this.state.lastError = null;
+          }
+          initialHistoryError = null;
+        } else {
+          initialHistoryError = this.state.lastError;
+        }
+        if (this.hasExpectedInitialHistory()) return;
+      }
+    } finally {
+      if (this.isConnectionInitializationCurrent(params)) {
+        this.state.initialHistoryReady = true;
+        this.notify();
+      }
+    }
+  }
+
+  private hasExpectedInitialHistory(): boolean {
+    if (!this.expectInitialHistory) return true;
+    return this.findSubagentTaskHistoryIndex(this.state.chatMessages) >= 0;
+  }
+
+  private findSubagentTaskHistoryIndex(messages: readonly unknown[]): number {
+    return messages.findIndex(isSubagentTaskHistoryMessage);
+  }
+
+  private admitSubagentTaskMessage(message: unknown): boolean {
+    if (
+      !this.expectInitialHistory ||
+      this.hasExpectedInitialHistory() ||
+      !isSubagentTaskHistoryMessage(message)
+    ) {
+      return false;
+    }
+    const projected = projectGatewayHistoryForDisplay([message]);
+    if (projected.length !== 1 || !isSubagentTaskHistoryMessage(projected[0])) return false;
+
+    // session.message is emitted after OpenClaw appends the transcript row and
+    // carries that authoritative row. Admit the task immediately instead of
+    // waiting for a second history read, which can still observe an older
+    // paged snapshot. Forked parent context and assistant-only in-flight tails
+    // are intentionally excluded from the subagent's own visible timeline.
+    this.state.transcript.historySource = 'gateway';
+    this.pendingHistoryReload = true;
+    this.setCurrentSessionMessages(projected, { resetLoadedHistory: true });
+    this.state.lastError = null;
+    this.notify();
+    return true;
+  }
+
+  private async initializeConnectedSession(params: {
+    client: GatewayClient;
+    sessionKey: string;
+    initializationSeq: number;
+    resumedTransport: boolean;
+  }): Promise<void> {
+    // Establish the durable notification edge before taking the snapshot. Any
+    // write racing the snapshot then either appears in history or queues a
+    // session.message catch-up reload.
+    const subscription = this.syncMessageSessionSubscription(params.sessionKey);
+    let barrierTimer: ReturnType<typeof setTimeout> | null = null;
+    const barrierTimedOut = Symbol('message-subscription-barrier-timeout');
+    const subscriptionResult = await Promise.race([
+      subscription,
+      new Promise<typeof barrierTimedOut>(resolve => {
+        barrierTimer = setTimeout(
+          () => resolve(barrierTimedOut),
+          this.initialMessageSubscriptionBarrierTimeoutMs,
+        );
+      }),
+    ]);
+    if (barrierTimer !== null) clearTimeout(barrierTimer);
+    if (subscriptionResult === barrierTimedOut) {
+      // A local Gateway should normally acknowledge immediately. Do not leave
+      // the drawer blank for the client's full RPC timeout if it does not;
+      // once the late subscription succeeds, force a catch-up snapshot to
+      // close the temporary notification gap.
+      void subscription.then(subscribed => {
+        if (subscribed && this.isConnectionInitializationCurrent(params)) {
+          void this.loadHistory(true);
+        }
+      });
+    }
+    if (!this.isConnectionInitializationCurrent(params)) return;
+
+    if (params.resumedTransport && this.suspendedRunId) {
+      await this.reconcileSuspendedRun();
+      if (!this.state.initialHistoryReady && this.isConnectionInitializationCurrent(params)) {
+        this.state.initialHistoryReady = true;
+        this.notify();
+      }
+      return;
+    }
+    await this.loadInitialHistory(params);
   }
 
   private acceptRunId(runId: string | undefined | null, allowProvisionalBinding = true): boolean {
@@ -1231,7 +1438,14 @@ export class ChatController {
         });
         return;
       }
-      if (this.state.chatSending || this.historyLoadsInFlight.has(sessionKey)) {
+      // A subagent's originating task can be persisted after its live stream
+      // has already started. Admit that missing history prefix without waiting
+      // for the whole run to finish; ordinary active-run refreshes stay gated.
+      const canCatchUpMissingInitialHistory = !this.hasExpectedInitialHistory();
+      if (
+        (this.state.chatSending && !canCatchUpMissingInitialHistory) ||
+        this.historyLoadsInFlight.has(sessionKey)
+      ) {
         debugLog('[ChatCtrl] deferred history reload waiting', {
           sessionKey,
           reason,
@@ -1300,11 +1514,13 @@ export class ChatController {
     // Stop existing client
     this.state.client?.stop();
     this.messageSubscriptionSeq += 1;
+    this.connectionInitializationSeq += 1;
     this.subscribedMessageSessionKey = null;
     this.clearOlderHistoryContinuation();
 
     this.state.sessionKey = sessionKey;
     this.state.currentSessionId = null;
+    this.state.initialHistoryReady = false;
     this.state.historyLoadingOlder = false;
     this.state.historyHasMore = false;
     this.state.historyNextCursor = null;
@@ -1364,6 +1580,7 @@ export class ChatController {
     });
     this.state.sessionKey = sessionKey;
     this.state.currentSessionId = null;
+    this.state.initialHistoryReady = false;
     this.state.historyLoadingOlder = false;
     this.state.historyHasMore = false;
     this.state.historyNextCursor = null;
@@ -1414,9 +1631,15 @@ export class ChatController {
     this.resetAssistantSnapshotSource();
     this.notify();
 
-    if (this.state.connected) {
-      await this.syncMessageSessionSubscription(sessionKey);
-      await this.loadHistory(false, { preferStartup: true });
+    const client = this.state.client;
+    if (client && this.state.connected) {
+      const initializationSeq = ++this.connectionInitializationSeq;
+      await this.initializeConnectedSession({
+        client,
+        sessionKey,
+        initializationSeq,
+        resumedTransport: false,
+      });
     }
   }
 
@@ -1438,6 +1661,8 @@ export class ChatController {
     this.state.compactionInFlight = false;
     this.terminalLifecycleSeen = false;
     this.suspendedRunId = null;
+    this.pendingAnnounceEvents.clear();
+    this.connectionInitializationSeq += 1;
     this.messageSubscriptionSeq += 1;
     this.subscribedMessageSessionKey = null;
     this.notify();
@@ -1458,15 +1683,16 @@ export class ChatController {
 
     // Subscribe to session events (matches webchat: subscribeSessions + syncSelectedSessionMessageSubscription)
     this.state.client?.request('sessions.subscribe', {}).catch(() => {});
-    void this.syncMessageSessionSubscription(this.state.sessionKey);
-
-    // Load startup metadata once after connection. Later history refreshes use
-    // chat.history so post-run reconciliation does not touch startup surfaces.
-    if (resumedTransport && this.suspendedRunId) {
-      void this.reconcileSuspendedRun();
-    } else {
-      void this.loadHistory(false, { preferStartup: true });
-    }
+    const client = this.state.client;
+    if (!client) return;
+    const sessionKey = this.state.sessionKey;
+    const initializationSeq = ++this.connectionInitializationSeq;
+    void this.initializeConnectedSession({
+      client,
+      sessionKey,
+      initializationSeq,
+      resumedTransport,
+    });
   }
 
   private handleClose(): void {
@@ -1566,6 +1792,26 @@ export class ChatController {
           return;
         }
         if (
+          matchesSelectedSession &&
+          payload.runId &&
+          isDormantAnnounceRun(payload.runId, this.state.transcript.activeTurn)
+        ) {
+          if (payload.state === 'delta') {
+            const snapshotText = extractSnapshotText(payload.message) ?? payload.deltaText ?? '';
+            if (!snapshotText || isHiddenOrPendingControlReplyText(snapshotText)) return;
+            this.flushPendingAnnounceEvents(payload.runId);
+          } else if (payload.state === 'final') {
+            const message = stripAssistantSilentReplySuffix(payload.message);
+            if (!message || shouldHideMessage(message)) {
+              this.pendingAnnounceEvents.delete(payload.runId);
+              return;
+            }
+            this.flushPendingAnnounceEvents(payload.runId);
+          } else {
+            this.pendingAnnounceEvents.delete(payload.runId);
+          }
+        }
+        if (
           payload.state === 'delta' &&
           this.assistantSnapshotRunId &&
           (!payload.runId || payload.runId === this.assistantSnapshotRunId)
@@ -1644,6 +1890,12 @@ export class ChatController {
         typeof normalized.event.data.text === 'string' &&
         isHiddenOrPendingControlReplyText(normalized.event.data.text)
       ) {
+        if (
+          isDormantAnnounceRun(normalized.event.runId, this.state.transcript.activeTurn) &&
+          SILENT_REPLY_PATTERN.test(normalized.event.data.text.trim())
+        ) {
+          this.pendingAnnounceEvents.delete(normalized.event.runId);
+        }
         debugLog('[ChatCtrl] hidden assistant snapshot ignored', {
           runId: normalized.event.runId,
           agentSeq: normalized.event.agentSeq,
@@ -1651,28 +1903,30 @@ export class ChatController {
         return;
       }
       if (isDormantAnnounceControlEvent(normalized.event, this.state.transcript.activeTurn)) {
-        debugLog('[ChatCtrl] dormant announce control event ignored', {
+        const phase =
+          normalized.event.stream === 'lifecycle' && typeof normalized.event.data.phase === 'string'
+            ? normalized.event.data.phase
+            : '';
+        if (phase === 'end' && normalized.event.data.aborted !== true) {
+          this.pendingAnnounceEvents.delete(normalized.event.runId);
+        } else if (phase === 'error' || normalized.event.data.aborted === true) {
+          this.flushPendingAnnounceEvents(normalized.event.runId);
+          this.applyNormalizedAgentEvent(normalized.event);
+        } else {
+          this.bufferPendingAnnounceEvent(normalized.event);
+        }
+        debugLog('[ChatCtrl] dormant announce control event deferred', {
           runId: normalized.event.runId,
           agentSeq: normalized.event.agentSeq,
           stream: normalized.event.stream,
+          phase,
         });
         return;
       }
-      const reduceResult = reduceAgentEvent(
-        this.state.transcript,
-        normalized.event,
-        this.transcriptDependencies,
-      );
-      if (reduceResult === 'applied') {
-        this.handleAgentEvent(normalized.event);
-      } else {
-        debugLog('[ChatCtrl] Agent event ignored by ordered reducer', {
-          runId: normalized.event.runId.slice(0, 12),
-          agentSeq: normalized.event.agentSeq,
-          stream: normalized.event.stream,
-          result: reduceResult,
-        });
+      if (isDormantAnnounceRun(normalized.event.runId, this.state.transcript.activeTurn)) {
+        this.flushPendingAnnounceEvents(normalized.event.runId);
       }
+      this.applyNormalizedAgentEvent(normalized.event);
       return;
     }
 
@@ -1727,6 +1981,7 @@ export class ChatController {
       ) {
         return;
       }
+      if (this.admitSubagentTaskMessage(payload?.message)) return;
       if (this.state.chatSending || this.pendingHistoryReload) {
         debugLog('[ChatCtrl] session.message DEFERRED:', this.state.sessionKey, {
           eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
@@ -1735,6 +1990,9 @@ export class ChatController {
           ...this._snap(),
         });
         this.pendingHistoryReload = true;
+        if (!this.hasExpectedInitialHistory()) {
+          this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
+        }
       } else {
         debugLog('[ChatCtrl] session.message → loadHistory:', this.state.sessionKey, {
           eventKeys: Object.keys((event.payload as Record<string, unknown> | undefined) ?? {}),
@@ -1762,6 +2020,47 @@ export class ChatController {
       const phase = typeof payload.phase === 'string' ? payload.phase : '';
       this.handleCompactionPhase(phase, sessionKey, payload);
     }
+  }
+
+  private bufferPendingAnnounceEvent(event: NormalizedAgentEvent): void {
+    let events = this.pendingAnnounceEvents.get(event.runId);
+    if (!events) {
+      if (this.pendingAnnounceEvents.size >= 8) {
+        const oldestRunId = this.pendingAnnounceEvents.keys().next().value;
+        if (typeof oldestRunId === 'string') this.pendingAnnounceEvents.delete(oldestRunId);
+      }
+      events = [];
+      this.pendingAnnounceEvents.set(event.runId, events);
+    }
+    events.push(event);
+    if (events.length > 100) events.splice(0, events.length - 100);
+  }
+
+  private flushPendingAnnounceEvents(runId: string): void {
+    const events = this.pendingAnnounceEvents.get(runId);
+    if (!events?.length) return;
+    this.pendingAnnounceEvents.delete(runId);
+    for (const event of [...events].sort((left, right) => left.agentSeq - right.agentSeq)) {
+      this.applyNormalizedAgentEvent(event);
+    }
+  }
+
+  private applyNormalizedAgentEvent(event: NormalizedAgentEvent): void {
+    const reduceResult = reduceAgentEvent(
+      this.state.transcript,
+      event,
+      this.transcriptDependencies,
+    );
+    if (reduceResult === 'applied') {
+      this.handleAgentEvent(event);
+      return;
+    }
+    debugLog('[ChatCtrl] Agent event ignored by ordered reducer', {
+      runId: event.runId.slice(0, 12),
+      agentSeq: event.agentSeq,
+      stream: event.stream,
+      result: reduceResult,
+    });
   }
 
   private pendingHistoryReload = false;
@@ -2089,6 +2388,21 @@ export class ChatController {
         ) {
           return false;
         }
+        const subagentTaskPageIndex = this.findSubagentTaskHistoryIndex(normalized);
+        if (this.expectInitialHistory && subagentTaskPageIndex >= 0) {
+          const taskBoundedPage = normalized.slice(subagentTaskPageIndex);
+          const boundedHistory = [...taskBoundedPage, ...this.currentMessageHistory.recentMessages];
+          const messages = this.state.chatSending
+            ? sliceActiveSubagentHistoryPrefix(boundedHistory)
+            : boundedHistory;
+          this.state.transcript.historySource = 'gateway';
+          this.state.historyHasMore = false;
+          this.state.historyNextCursor = null;
+          this.setCurrentSessionMessages(messages, { resetLoadedHistory: true });
+          this.state.transcript.revision += 1;
+          this.notify();
+          return true;
+        }
         const addedCount = this.currentMessageHistory.prepend(normalized);
         const changed = addedCount > 0;
         const repeatedCursor: boolean =
@@ -2261,7 +2575,7 @@ export class ChatController {
         this.state.transcript.historyGeneration === transcriptHistoryGeneration &&
         this.state.transcript.sessionId === requestedSessionId;
 
-      const pagedHistory = await this.loadPagedHistoryFromRest(sessionKey).catch(error => {
+      let pagedHistory = await this.loadPagedHistoryFromRest(sessionKey).catch(error => {
         debugLog('[ChatCtrl] paged history unavailable, using RPC history', {
           seq: loadSeq,
           sessionKey,
@@ -2276,7 +2590,20 @@ export class ChatController {
         });
         return false;
       }
-      const rawMessages = pagedHistory?.messages ?? result?.messages ?? [];
+      let rawMessages = pagedHistory?.messages ?? result?.messages ?? [];
+      if (
+        this.expectInitialHistory &&
+        pagedHistory &&
+        this.findSubagentTaskHistoryIndex(rawMessages) < 0 &&
+        Array.isArray(result?.messages) &&
+        this.findSubagentTaskHistoryIndex(result.messages) >= 0
+      ) {
+        // The recent paged window can omit the first subagent turn while the
+        // wider RPC snapshot still contains it. Prefer the source that proves
+        // the task boundary, then trim inherited fork context below.
+        rawMessages = result.messages;
+        pagedHistory = null;
+      }
       debugLog('[ChatCtrl] loadHistory AFTER-AWAIT', {
         seq: loadSeq,
         sessionKey,
@@ -2341,6 +2668,36 @@ export class ChatController {
         normalizedSummary: summarizeHistoryForDebug(messages),
       });
 
+      // During a live subagent run, history can already contain assistant/tool
+      // artifacts from the same turn by the time its delayed first user turn
+      // becomes readable. Only admit the authoritative prefix through that
+      // user turn; the active transcript remains the sole owner of live output.
+      const subagentTaskHistoryIndex = this.findSubagentTaskHistoryIndex(messages);
+      const previousHasSubagentTask = this.findSubagentTaskHistoryIndex(previousMessages) >= 0;
+      const currentHasSubagentTask =
+        this.findSubagentTaskHistoryIndex(this.state.chatMessages) >= 0;
+      if (currentHasSubagentTask && subagentTaskHistoryIndex < 0) {
+        debugLog('[ChatCtrl] rejected history snapshot older than live subagent task event', {
+          seq: loadSeq,
+          sessionKey,
+          ...this._snap(),
+        });
+        this.state.chatLoading = false;
+        this.notify();
+        return false;
+      }
+      if (this.expectInitialHistory && subagentTaskHistoryIndex > 0) {
+        messages = messages.slice(subagentTaskHistoryIndex);
+      }
+      const catchesUpMissingInitialHistory =
+        this.expectInitialHistory &&
+        this.state.chatSending &&
+        !previousHasSubagentTask &&
+        subagentTaskHistoryIndex >= 0;
+      if (catchesUpMissingInitialHistory) {
+        messages = sliceActiveSubagentHistoryPrefix(messages);
+      }
+
       // Only clear pendingUserMessage if the user message is actually in the
       // loaded history.  For brand-new sessions the gateway may not have
       // persisted it yet — keep showing the optimistic bubble.
@@ -2374,7 +2731,8 @@ export class ChatController {
         messages,
         requestStartMessages: previousMessages,
         currentMessages: this.state.chatMessages,
-        activeRun: this.state.chatSending && !options.reconcileSuspended,
+        activeRun:
+          this.state.chatSending && !options.reconcileSuspended && !catchesUpMissingInitialHistory,
         isVisibleMessage: message => !shouldHideMessage(message),
       });
       if (!reconciliation.accepted) {
@@ -2407,7 +2765,12 @@ export class ChatController {
         activeTurnTakeover: reconciliation.activeTurnTakeover,
       });
       this.state.chatLoading = false;
-      this.state.historyHasMore = pagedHistory ? pagedHistory.hasMore : previousHistoryHasMore;
+      this.state.historyHasMore =
+        this.expectInitialHistory && subagentTaskHistoryIndex >= 0
+          ? false
+          : pagedHistory
+            ? pagedHistory.hasMore
+            : previousHistoryHasMore;
       this.state.historyNextCursor = this.state.historyHasMore
         ? (pagedHistory?.nextCursor ?? previousHistoryNextCursor)
         : null;
@@ -2419,7 +2782,9 @@ export class ChatController {
         });
         this.state.pendingUserMessage = null;
       }
-      this.setCurrentSessionMessages(messages);
+      this.setCurrentSessionMessages(messages, {
+        resetLoadedHistory: this.expectInitialHistory && subagentTaskHistoryIndex >= 0,
+      });
       const pendingCompaction = this.localCompactionStatusBySession.get(sessionKey);
       if (pendingCompaction?.message.__openclaw.phase === 'completed') {
         this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
@@ -2531,11 +2896,23 @@ export class ChatController {
       ...this._snap(),
     });
     if (willAppend) {
+      const runScopedMessage =
+        payload.runId && message && typeof message === 'object' && !Array.isArray(message)
+          ? { ...(message as Record<string, unknown>), runId: payload.runId }
+          : message;
       const terminalMessage = markOptimisticHistoryTail(
-        liveThinkingText ? withThinkingContent(message, liveThinkingText) : message,
+        liveThinkingText
+          ? withThinkingContent(runScopedMessage, liveThinkingText)
+          : runScopedMessage,
       );
       this.setCurrentSessionMessages(
-        appendTerminalMessage(this.state.chatMessages, terminalMessage),
+        appendTerminalMessage(
+          this.state.chatMessages,
+          terminalMessage,
+          this.state.transcript.activeTurn?.runId === payload.runId
+            ? this.state.transcript.activeTurn.startedAt
+            : null,
+        ),
       );
       debugLog('[ChatCtrl] ▶ chat.final appended terminal', {
         terminalMessage: summarizeMessageForDebug(terminalMessage),
@@ -2677,6 +3054,9 @@ export class ChatController {
         this.state.chatSending = true;
         this.state.chatRunId = runId;
       }
+      if (!wasSending && !this.hasExpectedInitialHistory()) {
+        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
+      }
       this.updateRunActivity(runId, 'thinking', { modelActivity: true });
       debugLog('[ChatCtrl] ▶ thinking', {
         sourceEvent,
@@ -2698,6 +3078,9 @@ export class ChatController {
       if (!this.state.chatSending) {
         this.state.chatSending = true;
         this.state.chatRunId = runId;
+      }
+      if (!wasSending && !this.hasExpectedInitialHistory()) {
+        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
       }
 
       this.assistantSnapshotRunId = runId ?? this.state.chatRunId;
@@ -2735,6 +3118,7 @@ export class ChatController {
         pendingReload: this.pendingHistoryReload,
       });
       if (phase === 'start') {
+        const wasSending = this.state.chatSending;
         this.terminalLifecycleSeen = false;
         this.clearLifecycleEndFallback();
         if (!this.state.chatSending) {
@@ -2742,6 +3126,9 @@ export class ChatController {
         }
         if (runId && !this.state.chatRunId) {
           this.state.chatRunId = runId;
+        }
+        if (!wasSending && !this.hasExpectedInitialHistory()) {
+          this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
         }
         this.updateRunActivity(runId, 'starting', { at: payload.timestamp });
         this.notifyStream();
@@ -3566,10 +3953,21 @@ function isDormantAnnounceControlEvent(
 ): boolean {
   if (!event.runId.startsWith('announce:v1:')) return false;
   if (activeTurn?.runId === event.runId) return false;
-  return event.stream === 'lifecycle' || event.stream === 'thinking';
+  // A lifecycle-only announce can still resolve to NO_REPLY, so keep its
+  // empty shell dormant. Thinking is user-visible output and must start the
+  // same incremental rendering path as an ordinary run immediately.
+  return event.stream === 'lifecycle';
 }
 
-function appendTerminalMessage(messages: unknown[], terminal: unknown): unknown[] {
+function isDormantAnnounceRun(runId: string, activeTurn: AssistantTurn | null): boolean {
+  return runId.startsWith('announce:v1:') && activeTurn?.runId !== runId;
+}
+
+function appendTerminalMessage(
+  messages: unknown[],
+  terminal: unknown,
+  activeRunStartedAt: number | null = null,
+): unknown[] {
   // Find and replace any stream-fallback message that matches
   const terminalText = extractSnapshotText(terminal);
   const result: unknown[] = [];
@@ -3586,15 +3984,8 @@ function appendTerminalMessage(messages: unknown[], terminal: unknown): unknown[
     result.push(msg);
   }
 
-  const terminalDisplay = messageRoleAndText(terminal);
   const last = result[result.length - 1];
-  const lastDisplay = messageRoleAndText(last);
-  if (
-    terminalDisplay &&
-    lastDisplay &&
-    terminalDisplay.role === lastDisplay.role &&
-    hasSimilarDisplayText(terminalDisplay.text, lastDisplay.text)
-  ) {
+  if (hasSameTerminalIdentity(last, terminal, activeRunStartedAt)) {
     return [...result.slice(0, -1), terminal];
   }
 
@@ -3630,37 +4021,47 @@ function messageDisplaySignature(message: unknown): string | null {
   }
 }
 
-function messageRoleAndText(message: unknown): { role: string; text: string } | null {
+function messageRunId(message: unknown): string | null {
   if (!message || typeof message !== 'object') return null;
   const record = message as Record<string, unknown>;
-  const role = typeof record.role === 'string' ? record.role : '';
-  if (!role) return null;
-  const text = extractSnapshotText(message)?.trim();
-  return text ? { role, text } : null;
-}
-
-function normalizeComparableText(text: string): string {
-  return stripSilentReplySuffixFromText(text).replace(/\s+/g, ' ').trim();
-}
-
-function hasSimilarDisplayText(left: string, right: string): boolean {
-  const normalizedLeft = normalizeComparableText(left);
-  const normalizedRight = normalizeComparableText(right);
-  if (!normalizedLeft || !normalizedRight) return false;
-  if (normalizedLeft === normalizedRight) return true;
-  if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) {
-    return true;
+  for (const value of [
+    record.runId,
+    record.run_id,
+    asRecord(record.metadata)?.runId,
+    asRecord(record.metadata)?.run_id,
+  ]) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
   }
-  const shorterLength = Math.min(normalizedLeft.length, normalizedRight.length);
-  if (shorterLength < 60) return false;
-  const commonPrefixLength = [...normalizedLeft].findIndex(
-    (char, index) => normalizedRight[index] !== char,
+  return null;
+}
+
+function hasSameTerminalIdentity(
+  left: unknown,
+  right: unknown,
+  activeRunStartedAt: number | null,
+): boolean {
+  const leftIdentity = readTranscriptIdentity(left);
+  const rightIdentity = readTranscriptIdentity(right);
+  if (leftIdentity && rightIdentity && leftIdentity.kind === rightIdentity.kind) {
+    return leftIdentity.value === rightIdentity.value;
+  }
+  if (leftIdentity && rightIdentity) return false;
+  const leftRunId = messageRunId(left);
+  const rightRunId = messageRunId(right);
+  if (leftRunId && rightRunId) return leftRunId === rightRunId;
+  const leftTimestamp = messageTimestampMs(left);
+  const rightTimestamp = messageTimestampMs(right);
+  const leftSignature = messageDisplaySignature(left);
+  const rightSignature = messageDisplaySignature(right);
+  const sameDisplaySignature =
+    leftSignature !== null && rightSignature !== null && leftSignature === rightSignature;
+  return (
+    sameDisplaySignature &&
+    ((leftTimestamp !== null && rightTimestamp !== null && leftTimestamp === rightTimestamp) ||
+      (activeRunStartedAt !== null &&
+        leftTimestamp !== null &&
+        leftTimestamp >= activeRunStartedAt))
   );
-  const prefixLength =
-    commonPrefixLength >= 0
-      ? commonPrefixLength
-      : Math.min(normalizedLeft.length, normalizedRight.length);
-  return prefixLength / shorterLength >= 0.8 || prefixLength >= 160;
 }
 
 function isTerminalToolPhase(phase: string): boolean {

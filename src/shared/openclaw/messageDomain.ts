@@ -49,9 +49,16 @@ export function classifyAgentEvent(params: {
   const { activeRun, event } = params;
   if (!messageSessionMatches(params.selected, event)) return 'ignored-session';
   if (params.terminalRun) return 'ignored-terminal';
-  if (!activeRun) return event.spawnedBy ? 'ignored-run' : 'start-run';
+  const hasSelectedSessionIdentity = Boolean(
+    event.sessionKey ||
+      (event.sessionId &&
+        params.selected.sessionId &&
+        event.sessionId === params.selected.sessionId),
+  );
+  const canStartSelectedRun = !event.spawnedBy || hasSelectedSessionIdentity;
+  if (!activeRun) return canStartSelectedRun ? 'start-run' : 'ignored-run';
   if (activeRun.runId !== event.runId) {
-    if (activeRun.status !== 'running') return event.spawnedBy ? 'ignored-run' : 'start-run';
+    if (activeRun.status !== 'running') return canStartSelectedRun ? 'start-run' : 'ignored-run';
     return activeRun.runId.startsWith('justdo-') ? 'bind-provisional-run' : 'ignored-run';
   }
   if (activeRun.sessionId && event.sessionId && activeRun.sessionId !== event.sessionId) {

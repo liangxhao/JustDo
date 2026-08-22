@@ -108,6 +108,89 @@ describe('agent event reducer', () => {
     ]);
   });
 
+  test('keeps cumulative chat snapshots from duplicating content across a tool boundary', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Before tool call' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', { phase: 'start', toolCallId: 'call-1', name: 'read' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(3, 'tool', { phase: 'result', toolCallId: 'call-1', result: 'ok' }),
+      dependencies,
+    );
+    reduceAgentEvent(state, agent(4, 'assistant', { text: 'After tool call' }), dependencies);
+
+    expect(
+      reduceChatEvent(
+        state,
+        chat('delta', {
+          message: { role: 'assistant', content: 'Before tool call\nAfter tool call' },
+          deltaText: '\nAfter tool call',
+        }),
+        dependencies,
+      ),
+    ).toBe('applied');
+    expect(
+      reduceChatEvent(
+        state,
+        chat('final', {
+          message: { role: 'assistant', content: 'Before tool call\nAfter tool call' },
+        }),
+        dependencies,
+      ),
+    ).toBe('applied');
+
+    expect(
+      state.activeTurn?.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['Before tool call', 'After tool call']);
+  });
+
+  test('does not truncate a repeated content segment after a tool boundary', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Repeat' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', { phase: 'result', toolCallId: 'call-1', result: 'ok' }),
+      dependencies,
+    );
+    reduceAgentEvent(state, agent(3, 'assistant', { text: 'Repeat' }), dependencies);
+    reduceChatEvent(
+      state,
+      chat('final', { message: { role: 'assistant', content: 'Repeat' } }),
+      dependencies,
+    );
+
+    expect(
+      state.activeTurn?.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['Repeat', 'Repeat']);
+  });
+
+  test('keeps a current-only final when it extends the prior segment prefix', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Plan' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', { phase: 'result', toolCallId: 'call-1', result: 'ok' }),
+      dependencies,
+    );
+    reduceAgentEvent(state, agent(3, 'assistant', { text: 'Plan B' }), dependencies);
+    reduceChatEvent(
+      state,
+      chat('final', { message: { role: 'assistant', content: 'Plan B' } }),
+      dependencies,
+    );
+
+    expect(
+      state.activeTurn?.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['Plan', 'Plan B']);
+  });
+
   test('deduplicates alternate delivery and never lets older snapshots shorten content', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     reduceAgentEvent(state, agent(1, 'assistant', { text: 'complete' }), dependencies);
@@ -253,6 +336,53 @@ describe('agent event reducer', () => {
       sessionId: 'sid-1',
       lifecycleGeneration: 'life-1',
     });
+  });
+
+  test('admits matching subagent events when the selected transcript has no active run', () => {
+    const state = createChatTranscriptState('agent:main:subagent:child-run', 'sid-child');
+
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(
+          1,
+          'thinking',
+          { text: 'child thinking' },
+          {
+            sessionKey: 'agent:main:subagent:child-run',
+            sessionId: 'sid-child',
+            spawnedBy: 'agent:main:justdo:session-1',
+          },
+        ),
+        dependencies,
+      ),
+    ).toBe('applied');
+    expect(state.activeTurn).toMatchObject({
+      runId: 'run-1',
+      items: [expect.objectContaining({ type: 'thinking', text: 'child thinking' })],
+    });
+  });
+
+  test('keeps unscoped spawned events from starting the selected transcript', () => {
+    const state = createChatTranscriptState('agent:main:subagent:child-run', 'sid-child');
+
+    expect(
+      reduceAgentEvent(
+        state,
+        agent(
+          1,
+          'thinking',
+          { text: 'unscoped child thinking' },
+          {
+            sessionKey: null,
+            sessionId: null,
+            spawnedBy: 'agent:main:justdo:session-1',
+          },
+        ),
+        dependencies,
+      ),
+    ).toBe('ignored-run');
+    expect(state.activeTurn).toBeNull();
   });
 
   test('admits a new operator run after an interrupted run is tombstoned', () => {

@@ -131,11 +131,6 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
   beginRuntimePatchPhase(runtimeDir, snapshot);
   try {
     const upstream = {
-      '002-reasoning-default': findFileWithAll(
-        files,
-        ['resolvedReasoningLevel: params.resolvedReasoningLevel', 'buildStatusReply({'],
-        'announce/status execution inherits resolved reasoning',
-      ),
       '009-reply-conflict-retry': findFileWithAll(
         files,
         [

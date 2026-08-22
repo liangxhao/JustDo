@@ -224,6 +224,52 @@ describe('shared OpenClaw message-domain corpus', () => {
       }),
     ).toBe('ignored-run');
   });
+
+  test('starts a spawned subagent run when the event explicitly identifies the selected session', () => {
+    const selected = {
+      sessionKey: 'agent:researcher:subagent:child-1',
+      sessionId: 'child-session-id',
+    };
+    const event: NormalizedAgentEvent = {
+      runId: 'child-run-1',
+      sessionKey: selected.sessionKey,
+      sessionId: selected.sessionId,
+      lifecycleGeneration: null,
+      agentId: 'researcher',
+      spawnedBy: 'agent:main:justdo:parent-1',
+      agentSeq: 1,
+      frameSeq: 1,
+      deliveryEvent: 'agent',
+      stream: 'thinking',
+      timestamp: 1,
+      data: { text: 'Inspecting the repository' },
+    };
+
+    expect(classifyAgentEvent({ selected, activeRun: null, event })).toBe('start-run');
+  });
+
+  test('keeps parent-delivered spawned events dormant without selected-session identity', () => {
+    const selected = {
+      sessionKey: 'agent:main:justdo:parent-1',
+      sessionId: 'parent-session-id',
+    };
+    const event: NormalizedAgentEvent = {
+      runId: 'child-run-1',
+      sessionKey: null,
+      sessionId: null,
+      lifecycleGeneration: null,
+      agentId: 'researcher',
+      spawnedBy: selected.sessionKey,
+      agentSeq: 1,
+      frameSeq: 1,
+      deliveryEvent: 'agent',
+      stream: 'thinking',
+      timestamp: 1,
+      data: { text: 'Inspecting the repository' },
+    };
+
+    expect(classifyAgentEvent({ selected, activeRun: null, event })).toBe('ignored-run');
+  });
 });
 
 describe('normalizeToolEvent terminal phases', () => {

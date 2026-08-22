@@ -90,6 +90,10 @@ Renderer 不再维护 `chatThinkingMessages`、`chatToolMessages`、`chatStreamS
 或独立 stream/thinking 字段；Goal、Lit timeline 与 final Thinking preservation
 都读取 `transcript.activeTurn`。managed session alias 只允许显式
 `justdo:<id>` / `agent:<agent-id>:justdo:<id>` 归一化，不允许任意 suffix 匹配。
+Tool 会结束当前 Content segment；新版 Gateway 的 Agent assistant snapshot 可以只包含
+Tool 后的当前 segment，而 `chat.delta.message` 和 final message 可以包含整轮累计文本。
+Reducer 在更新当前 segment 前必须按顺序剥离已经完成的 Content，不能让累计快照把
+Tool 前的文字复制到 Tool 后。纯 `deltaText` 仍只追加到当前 segment。
 短暂 WebSocket 断开只把 transport 标为 `reconnecting`，保留 active turn 且不创建
 run tombstone。重连后先用 Gateway history 接管已完成 turn，再以 `sessions.list`
 的 `hasActiveRun` 确认无活动 run 后才生成一次 interruption。
@@ -280,6 +284,14 @@ Redux 在一次 reducer 更新中同时刷新输入框“进行中”、会话�
 
 状态协调必须遵守以下约束：
 
+- 初次连接或切换 session 时先完成目标 session 的 message subscription，再读取 startup/history
+  快照，关闭“快照已读但订阅尚未建立”的丢事件窗口。subagent drawer 在这一首屏 barrier
+  完成前保持 loading；预期已有 transcript 却读到空快照，或只有 assistant 尾巴而缺少
+  原始 user/task 时，执行三次有界补拉，避免先显示空白或不完整的 live/final tail。订阅
+  RPC 若未及时应答，barrier 会有界放行首个快照；迟到订阅成功后必须再补拉一次，以关闭
+  临时通知缺口，而不能让 drawer 一直等待 Gateway 的完整 RPC timeout。drawer 自身等待
+  超时时，已有 history 或 active Thinking/Tool/Content 必须继续显示，只有完全没有可见
+  transcript 时才显示加载失败。
 - 切换 session 时先取消上一 session 的 message subscription，再订阅目标 session。
 - subscribe 异步完成时若 session 已再次切换，必须显式反订阅刚刚成功的陈旧 key；
   本地 sequence guard 本身不能撤销 Gateway 的 many-to-many subscription。
@@ -302,14 +314,23 @@ Redux 在一次 reducer 更新中同时刷新输入框“进行中”、会话�
   值冲突时拒绝。Renderer 正确性不得依赖该字段存在；服务端 stale-lifecycle
   suppression 仍由 OpenClaw 负责。
 - `announce:v1:` 子代理完成通知复用父 session key，但不是新的用户回合。空闲状态下
-  的 announce lifecycle/thinking 不能单独创建 active turn；只有可见 assistant 或
-  Tool 内容才接管展示。流式 `NO_REPLY` 的中间前缀也必须在 reducer 前过滤，避免
-  `NO_RE` 短暂闪现并把已完成会话反复置为运行中。
+  只暂存尚无可见输出的 lifecycle shell；首个 Thinking、assistant、Tool 或 chat 内容
+  会按 Agent sequence 先回放 lifecycle，再立即进入与普通 run 完全相同的增量渲染。
+  静默结束或最终 `NO_REPLY` 会丢弃仍未激活的 lifecycle；流式 `NO_REPLY` 的中间前缀
+  也必须在 reducer 前过滤，避免 `NO_RE` 短暂闪现并把已完成会话反复置为运行中。
+  切换会话、session identity 轮换或断开时清空缓冲。
+- `spawnedBy` 只表明 run 来源，不能覆盖已经匹配的选中 session 身份。subagent drawer
+  选中子会话后，带匹配 `sessionKey`（或匹配的已知 `sessionId`）的首个 Thinking、Tool
+  或 lifecycle 事件可以启动该 transcript；缺少 session 身份的 spawned event 仍拒绝。
 - `sessions.changed` 报告选中 key 的 `sessionId` 轮换时立即递增 history generation；
   paged history、compaction enrichment 和 Tool input hydration 每个 await 后都要复核
   generation/session identity。
 - persisted message key 优先使用 `__openclaw.id`，其次使用 `__openclaw.seq`，再回退到
   provider 顶层 durable ID；加载更旧页面或同一 transcript entry 文本更新不得改变 key。
+- live final 只按 transcript identity、相同 run ID、相同 timestamp 与完整 display
+  signature，或“落盘尾部时间属于当前 active run 且完整 display signature 相同”替换已有
+  终态。不能仅凭 role/text、包含关系或公共前缀去重，否则两个相邻 announce/异步 run
+  （包括内容恰好相同的消息）会被错误合并成一条消息。
 - 只有当前 history generation 的成功 Gateway 响应有权证明持久化覆盖；SQLite/optimistic projection 不能清除 live tail。
 - history 的附件合并先于异步图片解析，异步结果只允许提交到发起时的 session 和消息版本。
 - `chat.send` ack 前使用本地临时 runId；首个同 session Gateway event 可以将其绑定为真实 runId。

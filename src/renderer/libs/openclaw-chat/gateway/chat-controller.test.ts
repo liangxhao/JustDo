@@ -1098,6 +1098,529 @@ test('moves the message subscription when switching connected sessions', async (
   });
 });
 
+test('subscribes to session messages before taking the initial history snapshot', async () => {
+  let resolveMessageSubscription: (() => void) | undefined;
+  const subscriptionGate = new Promise<void>(resolve => {
+    resolveMessageSubscription = resolve;
+  });
+  const historyMessage = { role: 'user', content: 'persisted task' };
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'sessions.messages.subscribe') return subscriptionGate;
+    if (method === 'chat.startup') return Promise.resolve({ messages: [historyMessage] });
+    return Promise.resolve({});
+  });
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: {
+        getPagedHistory: vi.fn().mockResolvedValue({
+          success: true,
+          messages: [historyMessage],
+          hasMore: false,
+        }),
+      },
+    },
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = 'agent:main:subagent:child-1';
+
+  (
+    controller as unknown as {
+      handleHello(hello: Record<string, unknown>): void;
+    }
+  ).handleHello({});
+  await Promise.resolve();
+
+  expect(request).toHaveBeenCalledWith('sessions.messages.subscribe', {
+    key: 'agent:main:subagent:child-1',
+  });
+  expect(request).not.toHaveBeenCalledWith('chat.startup', expect.anything());
+  expect(controller.state.initialHistoryReady).toBe(false);
+
+  resolveMessageSubscription?.();
+  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+
+  const methods = request.mock.calls.map(([method]) => method);
+  expect(methods.indexOf('sessions.messages.subscribe')).toBeLessThan(
+    methods.indexOf('chat.startup'),
+  );
+  expect(controller.state.chatMessages).toEqual([historyMessage]);
+});
+
+test('bounds a stalled initial message subscription and catches up after it resolves', async () => {
+  vi.useFakeTimers();
+  let resolveMessageSubscription: (() => void) | undefined;
+  const subscriptionGate = new Promise<void>(resolve => {
+    resolveMessageSubscription = resolve;
+  });
+  const initialHistory = [{ role: 'user', content: 'persisted task' }];
+  const caughtUpHistory = [...initialHistory, { role: 'assistant', content: 'persisted result' }];
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'sessions.messages.subscribe') return subscriptionGate;
+    if (method === 'chat.startup') return Promise.resolve({ messages: initialHistory });
+    if (method === 'chat.history') return Promise.resolve({ messages: caughtUpHistory });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({
+    initialMessageSubscriptionBarrierTimeoutMs: 10,
+  });
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = 'agent:main:subagent:child-1';
+
+  (
+    controller as unknown as {
+      handleHello(hello: Record<string, unknown>): void;
+    }
+  ).handleHello({});
+  await vi.advanceTimersByTimeAsync(10);
+  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+
+  expect(controller.state.chatMessages).toEqual(initialHistory);
+  resolveMessageSubscription?.();
+  await vi.waitFor(() =>
+    expect(request).toHaveBeenCalledWith('chat.history', {
+      sessionKey: 'agent:main:subagent:child-1',
+      limit: 1000,
+    }),
+  );
+  await vi.waitFor(() => expect(controller.state.chatMessages).toEqual(caughtUpHistory));
+});
+
+test('clears a transient initial history error after a successful empty retry', async () => {
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.startup') return Promise.reject(new Error('temporary history failure'));
+    if (method === 'chat.history') return Promise.resolve({ messages: [] });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({
+    expectInitialHistory: true,
+    initialHistoryRetryDelaysMs: [0],
+  });
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = 'agent:main:subagent:child-1';
+
+  (
+    controller as unknown as {
+      handleHello(hello: Record<string, unknown>): void;
+    }
+  ).handleHello({});
+
+  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+  expect(controller.state.chatMessages).toEqual([]);
+  expect(controller.state.lastError).toBeNull();
+  expect(consoleError).toHaveBeenCalledWith(
+    '[ChatCtrl] loadHistory FAILED:',
+    'temporary history failure',
+  );
+});
+
+test('retries an unexpectedly empty initial subagent history before revealing the transcript', async () => {
+  const historyMessage = { role: 'user', content: 'persisted subagent task' };
+  const getPagedHistory = vi
+    .fn()
+    .mockResolvedValueOnce({ success: true, messages: [], hasMore: false })
+    .mockResolvedValueOnce({ success: true, messages: [historyMessage], hasMore: false });
+  vi.stubGlobal('electron', { openclaw: { history: { getPagedHistory } } });
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.startup') return Promise.resolve({ messages: [] });
+    if (method === 'chat.history') return Promise.resolve({ messages: [historyMessage] });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({
+    expectInitialHistory: true,
+    initialHistoryRetryDelaysMs: [0],
+  });
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = 'agent:main:subagent:child-1';
+
+  (
+    controller as unknown as {
+      handleHello(hello: Record<string, unknown>): void;
+    }
+  ).handleHello({});
+
+  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+  expect(getPagedHistory).toHaveBeenCalledTimes(2);
+  expect(request).toHaveBeenCalledWith('chat.startup', {
+    sessionKey: 'agent:main:subagent:child-1',
+    limit: 1000,
+  });
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey: 'agent:main:subagent:child-1',
+    limit: 1000,
+  });
+  expect(controller.state.chatMessages).toEqual([historyMessage]);
+});
+
+test('retries an assistant-only subagent tail until the originating task is present', async () => {
+  const assistantTail = { role: 'assistant', content: 'completed result' };
+  const completeHistory = [{ role: 'user', content: 'persisted subagent task' }, assistantTail];
+  const getPagedHistory = vi
+    .fn()
+    .mockResolvedValueOnce({ success: true, messages: [assistantTail], hasMore: false })
+    .mockResolvedValueOnce({ success: true, messages: completeHistory, hasMore: false });
+  vi.stubGlobal('electron', { openclaw: { history: { getPagedHistory } } });
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.startup') return Promise.resolve({ messages: [assistantTail] });
+    if (method === 'chat.history') return Promise.resolve({ messages: completeHistory });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({
+    expectInitialHistory: true,
+    initialHistoryRetryDelaysMs: [0],
+  });
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = 'agent:main:subagent:child-1';
+
+  (
+    controller as unknown as {
+      handleHello(hello: Record<string, unknown>): void;
+    }
+  ).handleHello({});
+
+  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+  expect(getPagedHistory).toHaveBeenCalledTimes(2);
+  expect(controller.state.chatMessages).toEqual(completeHistory);
+});
+
+test('catches up a missing subagent task during an active streamed turn', async () => {
+  vi.useFakeTimers();
+  const sessionKey = 'agent:main:subagent:child-1';
+  const taskMessage = {
+    role: 'user',
+    content:
+      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect the stream.',
+  };
+  const persistedInFlightAssistant = {
+    role: 'assistant',
+    content: 'A persisted snapshot from the active turn.',
+  };
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({ messages: [taskMessage, persistedInFlightAssistant] });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({ expectInitialHistory: true });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.chatSending = true;
+  const activeTurn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 1000, createId: prefix => `${prefix}-1` },
+  );
+  activeTurn.items.push({
+    id: 'thinking-1',
+    runId: 'run-1',
+    firstSeq: 1,
+    lastSeq: 1,
+    startedAt: 1000,
+    updatedAt: 1000,
+    type: 'thinking',
+    status: 'running',
+    text: 'Inspecting the stream.',
+  });
+  activeTurn.items.push({
+    id: 'content-1',
+    runId: 'run-1',
+    firstSeq: 2,
+    lastSeq: 2,
+    startedAt: 1000,
+    updatedAt: 1000,
+    type: 'content',
+    status: 'streaming',
+    sourceMode: 'snapshot',
+    text: 'A persisted snapshot from the active turn.',
+  });
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: { sessionKey },
+  });
+
+  await vi.advanceTimersByTimeAsync(1200);
+  await vi.waitFor(() => expect(controller.state.chatMessages).toEqual([taskMessage]));
+
+  expect(request).toHaveBeenCalledWith('chat.history', { sessionKey, limit: 1000 });
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.transcript.activeTurn).toBe(activeTurn);
+  expect(controller.state.transcript.activeTurn?.items).toEqual([
+    expect.objectContaining({ type: 'thinking', text: 'Inspecting the stream.' }),
+    expect.objectContaining({
+      type: 'content',
+      text: 'A persisted snapshot from the active turn.',
+    }),
+  ]);
+});
+
+test('replaces an assistant-only persisted tail when the subagent task catches up', async () => {
+  vi.useFakeTimers();
+  const sessionKey = 'agent:main:subagent:child-1';
+  const assistantTail = { role: 'assistant', content: 'premature persisted tail' };
+  const taskMessage = {
+    role: 'user',
+    content:
+      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect the stream.',
+  };
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({ messages: [taskMessage, assistantTail] });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({ expectInitialHistory: true });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.chatMessages = [assistantTail];
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.persistedMessages = [assistantTail];
+  controller.state.chatSending = true;
+  const activeTurn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 1000, createId: prefix => `${prefix}-1` },
+  );
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: { sessionKey },
+  });
+
+  await vi.advanceTimersByTimeAsync(1200);
+  await vi.waitFor(() => expect(controller.state.chatMessages).toEqual([taskMessage]));
+
+  expect(controller.state.transcript.activeTurn).toBe(activeTurn);
+  expect(controller.state.chatSending).toBe(true);
+});
+
+test('preserves completed persistent-session turns while excluding the active assistant tail', async () => {
+  const sessionKey = 'agent:main:subagent:child-1';
+  const taskMessage = {
+    role: 'user',
+    content:
+      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInitial task.',
+  };
+  const initialReply = { role: 'assistant', content: 'Initial task complete.' };
+  const followUp = { role: 'user', content: 'Do the follow-up.' };
+  const completedReply = { role: 'assistant', content: 'Follow-up complete.' };
+  const activePrompt = { role: 'user', content: 'Now do one more thing.' };
+  const activeTail = { role: 'assistant', content: 'In-flight assistant snapshot.' };
+  const history = [taskMessage, initialReply, followUp, completedReply, activePrompt, activeTail];
+  const request = vi
+    .fn()
+    .mockImplementation((method: string) =>
+      method === 'chat.history' ? Promise.resolve({ messages: history }) : Promise.resolve({}),
+    );
+  const controller = new ChatController({ expectInitialHistory: true });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.chatMessages = [followUp, completedReply, activePrompt];
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.persistedMessages = controller.state.chatMessages;
+  controller.state.chatSending = true;
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-2' },
+    { now: () => 1000, createId: prefix => `${prefix}-1` },
+  );
+
+  await expect(controller.loadHistory()).resolves.toBe(true);
+
+  expect(controller.state.chatMessages).toEqual([
+    taskMessage,
+    initialReply,
+    followUp,
+    completedReply,
+    activePrompt,
+  ]);
+  expect(controller.state.transcript.activeTurn?.runId).toBe('run-2');
+});
+
+test('starts forked subagent display at its task instead of an inherited user turn', async () => {
+  vi.useFakeTimers();
+  const sessionKey = 'agent:main:subagent:child-1';
+  const inheritedUser = {
+    role: 'user',
+    content: 'Parent discussion quoting a marker:\n[Subagent Task]\nThis is not a child envelope.',
+  };
+  const inheritedAssistant = { role: 'assistant', content: 'parent conversation reply' };
+  const taskMessage = {
+    role: 'user',
+    content:
+      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect the stream.',
+  };
+  const persistedInFlightAssistant = { role: 'assistant', content: 'in-flight reply' };
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({
+        messages: [inheritedUser, inheritedAssistant, taskMessage, persistedInFlightAssistant],
+      });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({ expectInitialHistory: true });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.chatMessages = [inheritedUser, inheritedAssistant];
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.persistedMessages = [inheritedUser, inheritedAssistant];
+  controller.state.chatSending = true;
+  const activeTurn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-1' },
+    { now: () => 1000, createId: prefix => `${prefix}-1` },
+  );
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: { sessionKey },
+  });
+
+  await vi.advanceTimersByTimeAsync(1200);
+  await vi.waitFor(() => expect(controller.state.chatMessages).toEqual([taskMessage]));
+
+  expect(controller.state.transcript.activeTurn).toBe(activeTurn);
+  expect(controller.state.historyHasMore).toBe(false);
+});
+
+test('prefers an RPC subagent task over a paged assistant-only recent window', async () => {
+  const sessionKey = 'agent:main:subagent:child-1';
+  const taskMessage = {
+    role: 'user',
+    content:
+      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect the stream.',
+  };
+  const persistedAssistant = { role: 'assistant', content: 'persisted reply' };
+  vi.stubGlobal('electron', {
+    openclaw: {
+      history: {
+        getPagedHistory: vi.fn().mockResolvedValue({
+          success: true,
+          messages: [persistedAssistant],
+          hasMore: true,
+          nextCursor: 'older-page',
+        }),
+      },
+    },
+  });
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') {
+      return Promise.resolve({ messages: [taskMessage, persistedAssistant] });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({ expectInitialHistory: true });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+
+  await expect(controller.loadHistory()).resolves.toBe(true);
+
+  expect(controller.state.chatMessages).toEqual([taskMessage, persistedAssistant]);
+  expect(controller.state.historyHasMore).toBe(false);
+  expect(controller.state.historyNextCursor).toBeNull();
+});
+
+test('admits a live subagent task event immediately and rejects an older in-flight snapshot', async () => {
+  let resolveHistory: ((value: { messages: unknown[] }) => void) | undefined;
+  const historyGate = new Promise<{ messages: unknown[] }>(resolve => {
+    resolveHistory = resolve;
+  });
+  const sessionKey = 'agent:main:subagent:child-1';
+  const staleAssistant = { role: 'assistant', content: 'stale tail' };
+  const taskMessage = {
+    role: 'user',
+    content:
+      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect the stream.',
+  };
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') return historyGate;
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({ expectInitialHistory: true });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.chatSending = true;
+
+  const historyLoad = controller.loadHistory();
+  await Promise.resolve();
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: { sessionKey, message: taskMessage },
+  });
+
+  expect(controller.state.chatMessages).toEqual([taskMessage]);
+  resolveHistory?.({ messages: [staleAssistant] });
+  await expect(historyLoad).resolves.toBe(false);
+  expect(controller.state.chatMessages).toEqual([taskMessage]);
+});
+
+test('catches up subagent task history when its session.message event was dropped', async () => {
+  vi.useFakeTimers();
+  const sessionKey = 'agent:main:subagent:child-1';
+  const taskMessage = {
+    role: 'user',
+    content:
+      '[Subagent Context] You are running as a subagent (depth 1/1). Results auto-announce to your requester; do not busy-poll for status.\n\n[Subagent Task]\n\nInspect the stream.',
+  };
+  const request = vi.fn().mockImplementation((method: string) => {
+    if (method === 'chat.history') return Promise.resolve({ messages: [taskMessage] });
+    return Promise.resolve({});
+  });
+  const controller = new ChatController({ expectInitialHistory: true });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-1',
+      seq: 1,
+      stream: 'thinking',
+      data: { text: 'Inspecting the stream.' },
+    },
+  });
+
+  await vi.advanceTimersByTimeAsync(1200);
+  await vi.waitFor(() => expect(controller.state.chatMessages).toEqual([taskMessage]));
+  expect(controller.state.transcript.activeTurn?.items).toEqual([
+    expect.objectContaining({ type: 'thinking', text: 'Inspecting the stream.' }),
+  ]);
+});
+
 test('cleans up a stale subscription that resolves after a newer session subscribe', async () => {
   let resolveFirstSubscribe: (() => void) | undefined;
   const request = vi.fn().mockImplementation((method: string, params: { key?: string }) => {
@@ -3241,7 +3764,121 @@ test('starts a dormant subagent announce when it produces visible content', () =
     runId,
     items: [expect.objectContaining({ type: 'content', text: '子代理结果已经汇总完成。' })],
   });
-  expect(streamListener).toHaveBeenCalledTimes(1);
+  expect(streamListener).toHaveBeenCalledTimes(2);
+});
+
+test('streams dormant announce thinking before its first visible content', () => {
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const runId = 'announce:v1:agent:main:subagent:child-run';
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 2,
+      stream: 'thinking',
+      data: { text: '正在整理子代理结果。' },
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe(runId);
+  expect(controller.state.transcript.activeTurn).toMatchObject({
+    runId,
+    items: [expect.objectContaining({ type: 'thinking', text: '正在整理子代理结果。' })],
+  });
+  expect(streamListener).toHaveBeenCalledTimes(2);
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 3,
+      stream: 'assistant',
+      data: { text: '子代理结果已经汇总完成。' },
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe(runId);
+  expect(controller.state.transcript.activeTurn).toMatchObject({
+    runId,
+    items: [
+      expect.objectContaining({ type: 'thinking', text: '正在整理子代理结果。' }),
+      expect.objectContaining({ type: 'content', text: '子代理结果已经汇总完成。' }),
+    ],
+  });
+  expect(streamListener).toHaveBeenCalledTimes(3);
+});
+
+test('keeps streamed dormant announce thinking when a tool follows', () => {
+  const controller = new ChatController();
+  const streamListener = vi.fn();
+  controller.onStream(streamListener);
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload?: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const runId = 'announce:v1:agent:main:subagent:child-run';
+
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 2,
+      stream: 'thinking',
+      data: { text: '准备读取结果文件。' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'justdo:session-1',
+      runId,
+      seq: 3,
+      stream: 'tool',
+      data: { phase: 'start', toolCallId: 'call-1', name: 'read' },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'thinking', status: 'completed', text: '准备读取结果文件。' },
+    { type: 'tool', status: 'running', toolCallId: 'call-1', name: 'read' },
+  ]);
+  expect(streamListener).toHaveBeenCalledTimes(3);
 });
 
 test('does not create visible state from Agent events without a canonical sequence', () => {
@@ -3484,6 +4121,80 @@ test('appends a selected-session external final once when no run is active', () 
 
   expect(controller.state.chatMessages).toHaveLength(1);
   expect(controller.state.chatMessages[0]).toMatchObject({ content: 'injected answer' });
+});
+
+test('keeps similar adjacent external finals from different runs as separate messages', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'external-run-1',
+      state: 'final',
+      message: { role: 'assistant', content: '第一条异步消息。' },
+    },
+  });
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'external-run-2',
+      state: 'final',
+      message: { role: 'assistant', content: '第一条异步消息。第二条消息新增了细节。' },
+    },
+  });
+
+  expect(controller.state.chatMessages).toHaveLength(2);
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ runId: 'external-run-1', content: '第一条异步消息。' }),
+    expect.objectContaining({
+      runId: 'external-run-2',
+      content: '第一条异步消息。第二条消息新增了细节。',
+    }),
+  ]);
+});
+
+test('keeps identical adjacent external finals without identities as separate messages', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.transcript.sessionKey = controller.state.sessionKey;
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const event = {
+    event: 'chat',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      state: 'final',
+      message: { role: 'assistant', content: '相同内容也可能是两条独立消息。' },
+    },
+  };
+
+  handleEvent(event);
+  handleEvent(event);
+
+  expect(controller.state.chatMessages).toEqual([
+    {
+      role: 'assistant',
+      content: '相同内容也可能是两条独立消息。',
+      __justdoOptimisticHistoryTail: true,
+    },
+    {
+      role: 'assistant',
+      content: '相同内容也可能是两条独立消息。',
+      __justdoOptimisticHistoryTail: true,
+    },
+  ]);
 });
 
 test('drops stale optimistic wait messages once persisted history has advanced past them', async () => {

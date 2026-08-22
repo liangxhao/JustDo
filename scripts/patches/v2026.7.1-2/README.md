@@ -100,14 +100,17 @@ flowchart LR
 #### `002-live-thinking-stream.cjs`
 
 - **做什么**：模型产生 reasoning 时，即使运行路径没有安装可选 callback，也继续向
-  Gateway/JustDo 发布实时 Thinking 流。
+  Gateway/JustDo 发布实时 Thinking 流；同时让 direct Gateway agent（包括 completion
+  announce）继承 session/agent 已配置的 `reasoningLevel`。
 - **关系与边界**：`003` 负责产生某类 reasoning delta，`002` 负责让实时事件不被
-  callback eligibility 错误拦截；`004` 负责历史重放。`002` 不强制开启 reasoning，
-  原生 mode/thinking gate 和 callback 调用保护均保留。
-- **当前保留原因**：JustDo 使用的事件路径可能没有该可选 callback。原始版本会因此
-  把 `streamReasoning` 判为 false，模型明明在输出 Thinking，UI 却收不到实时流。
-- **可删除条件**：上游 reasoning 事件发布不再依赖 callback 是否存在，并通过无 callback
-  的流式行为测试。
+  callback eligibility 错误拦截；`004` 负责历史重放。`002` 不改变模型 thinking effort，
+  只沿用既有 session/agent reasoning preference；原生 mode/thinking gate 和 callback
+  调用保护均保留。
+- **当前保留原因**：JustDo 使用的事件路径可能没有该可选 callback；此外目标版 direct
+  agent-command 只传 `thinkLevel`，没有把 `reasoningLevel` 交给 embedded runner，导致
+  announce 在部分 provider 上只能等最终快照或完全没有 Thinking。
+- **可删除条件**：上游 direct agent 原生解析并传递 `reasoningLevel`，且 reasoning 事件
+  发布不再依赖 callback，并通过无 callback 的 announce 流式行为测试。
 
 #### `003-openai-think-tag-reasoning.cjs`
 
@@ -591,7 +594,7 @@ flowchart LR
 | 能力                                            | v2026.7.1-2 证据与决定                                                                                                                                                                                                                                                 |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 80 字符 thinking preview                        | 不属于 OpenClaw runtime patch；`src/main/openclaw/runtime/gatewayLogFilter.ts` 已由 JustDo App 实现。                                                                                                                                                                  |
-| announce reasoning default                      | 原生 `resolvedReasoningLevel` 已传入 announce execution，删除旧 `002`。                                                                                                                                                                                                |
+| announce reasoning default                      | 目标版只在 reply/status 路径解析该字段；direct Gateway agent（包括 completion announce）仍会丢失 reasoning preference，现由 `002` 以最小传参补齐。                                                                                                                     |
 | 可见 stop 不因 usage=0 重试                     | 原生 empty-response classifier 先按 assistant payload/text 排除，不读取 usage；pristine H04 contract 覆盖，删除旧覆盖逻辑。                                                                                                                                            |
 | subagent completion 的 `NO_REPLY` 静默成功      | 已删除目标版实验补丁 `subagent-completion-response-policy`。managed join 成功路径不创建 completion announce；join 失败恢复原生投递时必须产生可见结果，不能用 `NO_REPLY` 把未展示的 child 结果标成 delivered。普通非 subagent 的 intentional silence 继续使用上游语义。 |
 | `sessions_yield` delivery evidence/CLI gap-fill | 已删除目标版实验补丁 `yielded-transcript-handling`。managed `sessions_yield` 返回当前 tool call 的内部 child result，不是 committed outbound delivery；原生 CLI transcript 保持上游行为。                                                                              |
@@ -610,7 +613,7 @@ flowchart LR
 | 旧文件                                       | 决定                 | v2026.7.1-2 结果                                                                                                                                                                      |
 | -------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `001-thinking-stream`                        | 拆分                 | “让 JustDo 实时接收 Thinking 流”的核心能力从新控制流重写为 `002`；80 字符日志 preview 由 App 维护。                                                                                   |
-| `002-agent-announce-reasoning-stream`        | 删除                 | 上游已有 resolved reasoning 传递。                                                                                                                                                    |
+| `002-agent-announce-reasoning-stream`        | 合并并重写           | 并入新 `002`：保留 callback-independent publication，并补 direct agent execution 的 resolved reasoning 传递。                                                                         |
 | `003-openai-content-reasoning-tags`          | 保留并重写           | `003`。                                                                                                                                                                               |
 | `004-windows-mcp-package-runner`             | 拆分并重写           | `006` 通用 runner、`007` Chrome 启动诊断、`008` 空页面恢复。                                                                                                                          |
 | `005-history-thinking-and-subagent-yield`    | 审计后部分保留       | 保留 `004` history、`015` branch promotion、`016` FIFO/recovery；删除与 managed join 新语义冲突的 silent completion 和 yield evidence/CLI gap-fill；usage=0 visible-stop 由上游承担。 |
@@ -654,8 +657,8 @@ flowchart LR
 | `openclawV202671CodexLocalCompaction.test.ts`         | `035` 显式配置、90% pre/mid-turn 阈值、结构绕过、metadata 与 overflow 单次恢复。                                                          |
 | `openclawV202671ContextOverflowConvergence.test.ts`   | `037` 三次有界收敛、无新增 transcript 再压缩、Unicode-safe archive、summary 上限和临时 lifecycle 围栏。                                   |
 | `openclawV202671SubagentTaskNameCase.test.ts`         | `038` 大小写保留、保留字大小写折叠、原有 identifier 边界、提示同步、source/bundle 幂等及歧义 anchor 拒绝。                                |
-| `openclawV202671RecoveryCompactionProgress.test.ts`   | `039` timeout/overflow direct compaction 的 lifecycle、等待心跳、摘要流、清理、幂等和歧义 anchor 拒绝。                                  |
-| `openclawV202671CompactionErrorAttribution.test.ts`   | `040` timeout/no-op/local precheck/provider overflow 的终态归因、metadata、幂等、partial 与歧义拒绝。                                    |
+| `openclawV202671RecoveryCompactionProgress.test.ts`   | `039` timeout/overflow direct compaction 的 lifecycle、等待心跳、摘要流、清理、幂等和歧义 anchor 拒绝。                                   |
+| `openclawV202671CompactionErrorAttribution.test.ts`   | `040` timeout/no-op/local precheck/provider overflow 的终态归因、metadata、幂等、partial 与歧义拒绝。                                     |
 | `openclawRunProgressEventsPatch.test.ts`              | `032` pristine callback gap、JustDo root/nested ancestry、native/cron/missing/conflict/cycle fail-closed、CLI/embedded allow-list event。 |
 | `openclawV202671CapabilityPatches.test.ts`            | `010`、`022`、`027`、`031`、`033` 及歧义 anchor 原子失败。                                                                                |
 | `openclawRuntimePatchManifest.test.ts`                | source lock、patch/build recipe fingerprint、cache、manifest/tamper fence。                                                               |

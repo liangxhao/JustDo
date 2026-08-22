@@ -361,7 +361,6 @@ describe('OpenClaw pristine artifact contracts', () => {
 
     expect(result.version).toBe('2026.7.1-2');
     expect(Object.keys(result.upstream)).toEqual([
-      '002-reasoning-default',
       '009-reply-conflict-retry',
       '014-context-budget-native-state',
       '020-active-run-native-state',

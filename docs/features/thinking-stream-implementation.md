@@ -13,6 +13,7 @@ Thinking/reasoning stream display uses native OpenClaw `v2026.7.1-2` event deliv
 
 ## Related Files
 
+- `scripts/patches/v2026.7.1-2/002-live-thinking-stream.cjs`
 - `scripts/patches/v2026.7.1-2/003-openai-think-tag-reasoning.cjs`
 - `scripts/patches/v2026.7.1-2/004-history-display-projection.cjs`
 - `scripts/patches/v2026.7.1-2/README.md`
@@ -61,10 +62,13 @@ Gateway history wins when available; cache is fallback.
 
 ## Patch Dependency
 
-Live reasoning delivery and announce reasoning defaults are native in `v2026.7.1-2`.
-The two remaining patches cover OpenAI-compatible `<think>` content and history
-projection only. If either fails to apply, symptoms may include:
+Native reasoning deltas are published in `v2026.7.1-2`, while patch `002`
+preserves callback-independent publication and forwards the configured reasoning
+preference through direct Gateway agent runs such as completion announces. The
+other targeted patches cover OpenAI-compatible `<think>` content and history
+projection. If they fail to apply, symptoms may include:
 
+- announce Thinking missing or arriving only with the final snapshot.
 - thinking lost after reopening history.
 - reasoning tags displayed as normal answer text.
 

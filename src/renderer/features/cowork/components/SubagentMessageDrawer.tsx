@@ -13,6 +13,7 @@ import { reconcileSubagentLabel } from './subagentLabel';
 const DRAWER_DEFAULT_WIDTH = 672;
 const DRAWER_MIN_WIDTH = 360;
 const DRAWER_WINDOW_MARGIN = 16;
+const SUBAGENT_INITIAL_HISTORY_TIMEOUT_MS = 15_000;
 
 interface SubagentMessageDrawerProps {
   parentSessionId: string;
@@ -33,6 +34,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const [controller, setController] = useState<ChatController | null>(null);
   const [displaySubagent, setDisplaySubagent] = useState<Subagent | null>(subagent);
   const [isLoading, setIsLoading] = useState(false);
+  const [isEmpty, setIsEmpty] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
@@ -49,12 +51,40 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       return;
     }
 
-    const nextController = new ChatController();
+    const nextController = new ChatController({ expectInitialHistory: true });
     nextController.state.sessionKey = subagentSessionKey;
     let cancelled = false;
+    let initialHistoryTimedOut = false;
+    const unsubscribe = nextController.subscribe(state => {
+      if (cancelled) return;
+      const hasVisibleTranscript =
+        state.chatMessages.length > 0 || state.transcript.activeTurn !== null;
+      if (!state.initialHistoryReady) {
+        setIsLoading(!initialHistoryTimedOut);
+        if (initialHistoryTimedOut) {
+          setHasError(!hasVisibleTranscript);
+          setIsEmpty(false);
+        }
+        return;
+      }
+      setIsLoading(false);
+      setHasError(!hasVisibleTranscript && Boolean(state.lastError));
+      setIsEmpty(!hasVisibleTranscript && !state.lastError);
+    });
+    const initialHistoryTimeout = window.setTimeout(() => {
+      if (cancelled || nextController.state.initialHistoryReady) return;
+      initialHistoryTimedOut = true;
+      const hasVisibleTranscript =
+        nextController.state.chatMessages.length > 0 ||
+        nextController.state.transcript.activeTurn !== null;
+      setIsLoading(false);
+      setHasError(!hasVisibleTranscript);
+      setIsEmpty(false);
+    }, SUBAGENT_INITIAL_HISTORY_TIMEOUT_MS);
 
     setController(nextController);
     setIsLoading(true);
+    setIsEmpty(false);
     setHasError(false);
     connectToGateway(nextController)
       .then(success => {
@@ -62,21 +92,22 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
           nextController.disconnect();
           return;
         }
-        setHasError(!success);
-      })
-      .catch(() => {
-        if (!cancelled) {
+        if (!success) {
+          setIsLoading(false);
           setHasError(true);
         }
       })
-      .finally(() => {
+      .catch(() => {
         if (!cancelled) {
           setIsLoading(false);
+          setHasError(true);
         }
       });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(initialHistoryTimeout);
+      unsubscribe();
       nextController.disconnect();
       setController(current => (current === nextController ? null : current));
     };
@@ -247,7 +278,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
           </div>
         </div>
         <div className="flex min-h-0 flex-1 bg-background">
-          {hasError || (isLoading && !controller) ? (
+          {hasError || isLoading || isEmpty ? (
             <div className="flex flex-1 items-center justify-center px-3 text-center text-sm text-secondary">
               {emptyText}
             </div>

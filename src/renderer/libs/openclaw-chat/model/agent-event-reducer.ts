@@ -76,6 +76,39 @@ function updateSnapshot(previous: string, next: string, replace: boolean): strin
   return next;
 }
 
+function snapshotDistanceFromCurrent(candidate: string, current: string): number {
+  const normalizedCandidate = candidate.trimStart();
+  const normalizedCurrent = current.trimStart();
+  if (normalizedCandidate === normalizedCurrent) return 0;
+  if (normalizedCandidate.startsWith(normalizedCurrent)) {
+    return normalizedCandidate.length - normalizedCurrent.length;
+  }
+  if (normalizedCurrent.startsWith(normalizedCandidate)) {
+    return normalizedCurrent.length - normalizedCandidate.length;
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
+function stripCompletedContentSegments(turn: AssistantTurn, snapshot: string): string {
+  let text = snapshot;
+  for (const item of turn.items) {
+    if (item.type !== 'content' || item.status === 'streaming') continue;
+    const committed = item.text.trim();
+    if (!committed) continue;
+    const trimmed = text.trimStart();
+    if (trimmed.startsWith(committed)) {
+      text = trimmed.slice(committed.length).trimStart();
+    }
+  }
+  const tail = turn.items[turn.items.length - 1];
+  if (tail?.type === 'content') {
+    const rawDistance = snapshotDistanceFromCurrent(snapshot, tail.text);
+    const strippedDistance = snapshotDistanceFromCurrent(text, tail.text);
+    if (rawDistance <= strippedDistance) return snapshot;
+  }
+  return text;
+}
+
 function reduceThinking(
   turn: AssistantTurn,
   event: NormalizedAgentEvent,
@@ -110,6 +143,8 @@ function reduceContent(
 ): void {
   const snapshot = stringValue(event.data.text);
   const delta = stringValue(event.data.delta);
+  // Native agent assistant snapshots are scoped to the current model message.
+  // Only chat snapshots/finals can represent the cumulative visible turn.
   const text = snapshot ?? delta;
   if (text === null) return;
   completeRunningThinking(turn, event.agentSeq, event.timestamp);
@@ -354,6 +389,7 @@ export function reduceChatEvent(
   }
 
   if (event.state === 'delta') {
+    const messageText = event.message !== undefined ? extractMessageText(event.message) : null;
     const synthetic: NormalizedAgentEvent = {
       runId: turn.runId,
       sessionKey: state.sessionKey,
@@ -368,7 +404,7 @@ export function reduceChatEvent(
       timestamp: dependencies.now(),
       data: {
         ...(event.deltaText !== undefined ? { delta: event.deltaText } : {}),
-        ...(event.message !== undefined ? { text: extractMessageText(event.message) } : {}),
+        ...(messageText !== null ? { text: stripCompletedContentSegments(turn, messageText) } : {}),
         replace: event.replace,
       },
     };
@@ -380,11 +416,12 @@ export function reduceChatEvent(
   const now = dependencies.now();
   const finalText = extractMessageText(event.message);
   if (finalText && event.state === 'final') {
+    const currentSegmentText = stripCompletedContentSegments(turn, finalText);
     const tail = turn.items[turn.items.length - 1];
-    if (tail?.type === 'content') {
-      tail.text = updateSnapshot(tail.text, finalText, true);
+    if (tail?.type === 'content' && currentSegmentText) {
+      tail.text = updateSnapshot(tail.text, currentSegmentText, true);
       tail.updatedAt = now;
-    } else {
+    } else if (currentSegmentText) {
       turn.items.push({
         id: dependencies.createId('content'),
         runId: turn.runId,
@@ -394,7 +431,7 @@ export function reduceChatEvent(
         updatedAt: now,
         type: 'content',
         status: 'completed',
-        text: finalText,
+        text: currentSegmentText,
         sourceMode: 'replaceable',
       });
     }
