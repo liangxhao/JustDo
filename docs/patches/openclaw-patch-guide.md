@@ -172,7 +172,7 @@ Patch 修改至少执行：
 1. 对锁定 pristine runtime 的首次应用；
 2. 对已 patch runtime 的第二次应用，确认零字节变化；
 3. `npm run openclaw:patches:verify`；
-4. 对应 `tests/openclawV202671*.test.ts` focused tests；
+4. 对应 `tests/openclaw/patches/v2026.7.1-2/` focused tests；
 5. 受影响 Main Adapter/Renderer tests；
 6. 真实 runtime smoke；
 7. 若涉及平台兼容，至少目标平台的打包/启动 smoke；

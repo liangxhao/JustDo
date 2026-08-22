@@ -13,7 +13,7 @@ on:
       - 'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs'
       - 'scripts/**openclaw*'
       - 'scripts/patches/**'
-      - 'tests/openclaw*'
+      - 'tests/openclaw/**'
   pull_request:
     paths:
       - 'package.json'
@@ -26,7 +26,7 @@ on:
       - 'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs'
       - 'scripts/**openclaw*'
       - 'scripts/patches/**'
-      - 'tests/openclaw*'
+      - 'tests/openclaw/**'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -177,7 +177,7 @@ jobs:
           test "$BEFORE" = "$AFTER" || { echo "❌ Second patch pass changed bundle bytes"; exit 1; }
 
       - name: Run OpenClaw capability contracts
-        run: npx vitest run tests/openclawV202671*.test.ts tests/openclawPristineContracts.test.ts tests/openclawRuntimePatchManifest.test.ts
+        run: npx vitest run tests/openclaw/patches/v2026.7.1-2 tests/openclaw/runtime/pristine-contracts.test.ts tests/openclaw/runtime/runtime-patch-manifest.test.ts
 
       - name: Smoke-test the gateway bundle under Electron Node
         if: ${{ matrix.electron_smoke }}

@@ -137,7 +137,7 @@ Exec 和 plugin approval API 分开，pending list 在连接后恢复。session 
 
 ## 15. Runtime patches
 
-当前补丁目录为 `scripts/patches/v2026.7.1-2/`。能力涉及 approval lifecycle、atomic subagent admission、managed join、thinking/reasoning、session yield、compaction、completion delivery、selected tool search、Windows MCP/Python 等。详表以该目录 README、patch manifest 和 `tests/openclawV202671*.test.ts` 为准。
+当前补丁目录为 `scripts/patches/v2026.7.1-2/`。能力涉及 approval lifecycle、atomic subagent admission、managed join、thinking/reasoning、session yield、compaction、completion delivery、selected tool search、Windows MCP/Python 等。详表以该目录 README、patch manifest 和 `tests/openclaw/patches/v2026.7.1-2/` 下的 focused tests 为准。
 
 补丁不是传统数据库 migration：每次 runtime 安装在目标上游 bundle 应用并验证；历史 `v2026.6.11` 只作追溯，不参与当前流水线。
 

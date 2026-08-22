@@ -90,7 +90,7 @@ npm run format:check
 6. precompile extensions；
 7. prune development/unneeded files。
 
-Host 开发使用 `openclaw-runtime-host.cjs`。`verify-openclaw-runtime-patches.cjs` 检查 patch 能在固定 upstream 上应用；`tests/openclawRuntime*.test.ts` 验证 staging/freeze/prune，patch manifest/tests验证能力标记。
+Host 开发使用 `openclaw-runtime-host.cjs`。`verify-openclaw-runtime-patches.cjs` 检查 patch 能在固定 upstream 上应用；`tests/openclaw/runtime/` 验证 staging/freeze/prune，patch manifest/tests 验证能力标记。
 
 ## 8. Windows 资源
 
@@ -242,7 +242,7 @@ MinGit 是 Windows 打包资源，不应在运行时静默回退到任意用户 
 | Windows packaging      | `dist:win` 或等价验证                       | MinGit/Python、exe/blockmap/latest.yml    |
 | Builder metadata       | product metadata validation + pack          | appId/protocol/install/update 路径        |
 
-Workflow 是实际 CI 权威。修改 script 名称、依赖顺序或 artifact path 时必须同步 `.github/workflows/` 和 `tests/packageScripts.test.ts`，不能只更新本文命令块。
+Workflow 是实际 CI 权威。修改 script 名称、依赖顺序或 artifact path 时必须同步 `.github/workflows/` 和 `tests/build/package-scripts.test.ts`，不能只更新本文命令块。
 
 ## 22. 发布故障定位
 
