@@ -52,6 +52,7 @@ import { repairOpenClawWorkspaceState } from './workspaceStateRepair';
 export type AskUserExtensionConfig = {
   askUserCallbackUrl: string;
   secret: string;
+  timeoutMinutes?: number;
 };
 
 export const buildOpenClawMcpServers = (
@@ -1489,7 +1490,14 @@ export class OpenClawConfigSync {
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(id =>
       isBundledPluginAvailable(id),
     );
-    const askUserConfig = this.getAskUserExtensionConfig?.() ?? null;
+    const askUserHostConfig = this.getAskUserExtensionConfig?.() ?? null;
+    const agentRuntimeSettings = this.getAgentRuntimeSettings();
+    const askUserConfig = askUserHostConfig
+      ? {
+          ...askUserHostConfig,
+          timeoutMinutes: agentRuntimeSettings.askUserQuestion.timeoutMinutes,
+        }
+      : null;
     const bundledExtensionEntries = {
       [OpenClawExtensionId.BROWSER]: { enabled: true },
       ...buildBundledExtensionEntries(
@@ -1568,7 +1576,7 @@ export class OpenClawConfigSync {
           heartbeat: buildDisabledOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           workspace: resolvedWorkspaceDir,
-          subagents: buildManagedOpenClawSubagentConfig(this.getAgentRuntimeSettings()),
+          subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
         },
         ...this.buildAgentsList(primaryModel, availableModelRefs, resolvedWorkspaceDir),
       },
@@ -2094,11 +2102,18 @@ export class OpenClawConfigSync {
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(this.getBrowserMode?.());
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
+    const askUserHostConfig = this.getAskUserExtensionConfig?.() ?? null;
+    const askUserConfig = askUserHostConfig
+      ? {
+          ...askUserHostConfig,
+          timeoutMinutes: this.getAgentRuntimeSettings().askUserQuestion.timeoutMinutes,
+        }
+      : null;
     const bundledExtensionEntries = {
       [OpenClawExtensionId.BROWSER]: { enabled: true },
       ...buildBundledExtensionEntries(
         {
-          askUser: this.getAskUserExtensionConfig?.() ?? null,
+          askUser: askUserConfig,
           permissionMode: coworkConfig.permissionMode,
         },
         isBundledPluginAvailable,

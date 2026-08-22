@@ -111,9 +111,9 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 ## 8. `cowork_config`
 
-结构同 KV：key/value/updated_at，但 owner 是 Cowork/runtime domain。`CoworkStore.getConfig/setConfig` 对 execution mode、working directory、permission mode 等做默认与 normalize；Agent runtime settings也通过专用 key 保存。
+结构同 KV：key/value/updated_at，但 owner 是 Cowork/runtime domain。`CoworkStore.getConfig/setConfig` 对 execution mode、working directory、permission mode 等做默认与 normalize；版本化 Agent runtime settings 通过 `agentRuntimeSettings:v1` 保存。旧记录缺少 AskUserQuestion 配置时补入默认 10 分钟，损坏或越界值按 shared contract 回退。
 
-修改配置的 IPC 使用 promise queue 串行，并在成功写入后同步 OpenClaw。数据库保存成功不自动证明 Gateway config active。
+修改配置的 IPC 使用 promise queue 串行，并在成功写入后同步 OpenClaw。Subagent 设置生成 `agents.defaults.subagents`；AskUserQuestion 等待时限生成 `plugins.entries.ask-user-question.config.timeoutMinutes`。同步失败会恢复上一份数据库值；数据库保存成功不自动证明 Gateway config active。
 
 ## 9. `agents`
 

@@ -19,6 +19,7 @@ import { Type } from 'typebox';
 type PluginConfig = {
   callbackUrl: string;
   secret: string;
+  timeoutMinutes: number;
 };
 
 type QuestionOption = {
@@ -67,6 +68,7 @@ type AskUserResponse = {
       selected: string[];
       optionInputs?: Record<string, string>;
       other?: string;
+      skipped?: true;
     }
   >;
   timedOut?: boolean;
@@ -76,6 +78,7 @@ const LOOPBACK_CALLBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]
 const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
 export const MAX_ASK_USER_QUESTIONS = 8;
 export const ASK_USER_TIMEOUT_MINUTES = 10;
+const MAX_ASK_USER_TIMEOUT_MINUTES = 24 * 60;
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
 
 type HttpCallbackResult = {
@@ -173,9 +176,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
 
 const parsePluginConfig = (value: unknown): PluginConfig => {
   const raw = isRecord(value) ? value : {};
+  const timeoutMinutes = raw.timeoutMinutes;
   return {
     callbackUrl: typeof raw.callbackUrl === 'string' ? raw.callbackUrl.trim() : '',
     secret: typeof raw.secret === 'string' ? raw.secret.trim() : '',
+    timeoutMinutes:
+      typeof timeoutMinutes === 'number' &&
+      Number.isInteger(timeoutMinutes) &&
+      timeoutMinutes >= 1 &&
+      timeoutMinutes <= MAX_ASK_USER_TIMEOUT_MINUTES
+        ? timeoutMinutes
+        : ASK_USER_TIMEOUT_MINUTES,
   };
 };
 
@@ -284,6 +295,7 @@ export const parseQuestions = (value: unknown): Question[] | null => {
 export const buildWaitPolicy = (
   timeoutEnabled: unknown,
   questions: Question[],
+  timeoutMinutes = ASK_USER_TIMEOUT_MINUTES,
 ): WaitPolicy | null => {
   if (timeoutEnabled === undefined || timeoutEnabled === false) return { mode: 'required' };
   if (timeoutEnabled !== true) return null;
@@ -293,7 +305,7 @@ export const buildWaitPolicy = (
   );
   return {
     mode: 'timeout',
-    timeoutMinutes: ASK_USER_TIMEOUT_MINUTES,
+    timeoutMinutes,
     onTimeout: hasDefaultsForEveryQuestion ? 'use-defaults' : 'model-decides',
   };
 };
@@ -314,6 +326,19 @@ const parseAnswers = (value: unknown, questions: Question[]): AskUserResponse['a
       selectedIds.some(id => !optionsById.has(id))
     )
       return undefined;
+    const skipped = rawAnswer.skipped === true;
+    if (rawAnswer.skipped !== undefined && !skipped) return undefined;
+    if (skipped) {
+      if (
+        selectedIds.length > 0 ||
+        rawAnswer.optionInputs !== undefined ||
+        rawAnswer.other !== undefined
+      ) {
+        return undefined;
+      }
+      answers[question.id] = { selected: [], skipped: true };
+      continue;
+    }
     const other = rawAnswer.other === undefined ? undefined : readRequiredString(rawAnswer.other);
     if (
       (rawAnswer.other !== undefined && !other) ||
@@ -414,7 +439,7 @@ export const AskUserQuestionSchema = Type.Object(
     timeoutEnabled: Type.Optional(
       Type.Boolean({
         description:
-          'Set true to enable a fixed ten-minute timeout. Omit or set false when an explicit user answer is required. After timeout, defaults are selected automatically only when every question defines defaultOptionIds; otherwise control returns to the model to decide from context.',
+          'Set true to enable the user-configured timeout. Omit or set false when an explicit user answer is required. After timeout, defaults are selected automatically only when every question defines defaultOptionIds; otherwise control returns to the model to decide from context.',
       }),
     ),
   },
@@ -479,6 +504,9 @@ export const formatAskUserToolResponse = (
         .map(([questionId, answer]) => {
           const question = questions.find(item => item.id === questionId);
           const optionsById = new Map(question?.options.map(option => [option.id, option]) ?? []);
+          if (answer.skipped) {
+            return `${question?.question ?? questionId}\nUser skipped this question.`;
+          }
           const lines = [
             question?.question ?? questionId,
             `用户选择：${answer.selected.map(id => optionsById.get(id)?.label ?? id).join(', ') || '无'}`,
@@ -538,14 +566,14 @@ const plugin = {
             'Ask the user to choose from 2-4 predefined options. ' +
             'Set an option input when selecting it requires additional information from the user. ' +
             'Omit timeoutEnabled when only the user can safely answer, including consequential confirmations. ' +
-            'For non-critical preferences, set timeoutEnabled to true for a fixed ten-minute wait. To auto-select on timeout, set defaultOptionIds inside every question; otherwise the model resumes and decides from context. ' +
+            'For non-critical preferences, set timeoutEnabled to true to use the user-configured wait time. To auto-select on timeout, set defaultOptionIds inside every question; otherwise the model resumes and decides from context. ' +
             'Prefer this tool whenever the user needs to choose, decide, confirm, or select and clear options can be provided.',
           parameters: AskUserQuestionSchema,
           async execute(_id: string, params: unknown, signal?: AbortSignal) {
             const toolInput = params as AskUserToolInput;
             const questions = parseQuestions(toolInput?.questions);
             const waitPolicy = questions
-              ? buildWaitPolicy(toolInput?.timeoutEnabled, questions)
+              ? buildWaitPolicy(toolInput?.timeoutEnabled, questions, config.timeoutMinutes)
               : null;
             const input: AskUserCallbackInput = {
               questions: questions ?? [],

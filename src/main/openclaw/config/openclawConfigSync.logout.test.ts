@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
 import { setStoreGetter } from '../../cowork/providerApiConfig';
 import {
   OpenClawConfigSync,
@@ -163,6 +164,45 @@ const writeMinimalConfig = (
 };
 
 describe('OpenClaw auth logout config sync', () => {
+  test('writes the configured AskUserQuestion timeout before model setup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-ask-user-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const runtimeSettings = createDefaultAgentRuntimeSettings();
+    runtimeSettings.askUserQuestion.timeoutMinutes = 45;
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getDesiredVersion: () => '2026.6.11',
+        getStateDir: () => directory,
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'ask',
+      }),
+      getAgentRuntimeSettings: () => runtimeSettings,
+      getAskUserExtensionConfig: () => ({
+        askUserCallbackUrl: 'http://127.0.0.1:43127/askuser',
+        secret: 'runtime-secret',
+      }),
+    } as never);
+
+    const result = (
+      sync as unknown as {
+        writeMinimalConfig: (path: string, reason: string) => OpenClawConfigSyncResult;
+      }
+    ).writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh);
+
+    expect(result.ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['ask-user-question'].config).toEqual({
+      callbackUrl: 'http://127.0.0.1:43127/askuser',
+      secret: '${JUSTDO_ASK_USER_SECRET}',
+      timeoutMinutes: 45,
+    });
+  });
+
   test('writes the managed safeguard compaction policy before model setup', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-compaction-config-'));
     temporaryDirectories.push(directory);

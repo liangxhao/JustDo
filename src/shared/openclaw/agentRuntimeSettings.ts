@@ -26,6 +26,7 @@ export type AgentRuntimeThinkingLevelValue =
 export const AGENT_RUNTIME_THINKING_LEVELS = Object.values(AgentRuntimeThinkingLevel);
 
 export const AGENT_RUNTIME_LIMITS = {
+  askUserQuestionTimeoutMinutes: { min: 1, max: 24 * 60 },
   maxConcurrent: { min: 1, max: 16 },
   maxChildrenPerAgent: { min: 1, max: 20 },
   maxSpawnDepth: { min: 1, max: 2 },
@@ -35,6 +36,9 @@ export const AGENT_RUNTIME_LIMITS = {
 
 export interface AgentRuntimeSettings {
   version: typeof AGENT_RUNTIME_SETTINGS_VERSION;
+  askUserQuestion: {
+    timeoutMinutes: number;
+  };
   subagents: {
     delegationMode: AgentRuntimeDelegationModeValue;
     model: string | null;
@@ -48,6 +52,9 @@ export interface AgentRuntimeSettings {
 
 export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Object.freeze({
   version: AGENT_RUNTIME_SETTINGS_VERSION,
+  askUserQuestion: Object.freeze({
+    timeoutMinutes: 10,
+  }),
   subagents: Object.freeze({
     delegationMode: AgentRuntimeDelegationMode.Suggest,
     model: null,
@@ -61,6 +68,7 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
 
 export const createDefaultAgentRuntimeSettings = (): AgentRuntimeSettings => ({
   version: DEFAULT_AGENT_RUNTIME_SETTINGS.version,
+  askUserQuestion: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion },
   subagents: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.subagents },
 });
 
@@ -86,6 +94,22 @@ export const validateAgentRuntimeSettings = (
   }
   if (!isRecord(value.subagents)) {
     return { ok: false, error: 'Invalid Subagent settings.' };
+  }
+
+  // Version 1 predates AskUserQuestion preferences. Preserve stored Subagent
+  // choices while filling the new setting with its managed default.
+  const askUserQuestion = isRecord(value.askUserQuestion)
+    ? value.askUserQuestion
+    : DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion;
+  const askUserQuestionTimeoutMinutes = askUserQuestion.timeoutMinutes;
+  if (
+    !isIntegerInRange(
+      askUserQuestionTimeoutMinutes,
+      AGENT_RUNTIME_LIMITS.askUserQuestionTimeoutMinutes.min,
+      AGENT_RUNTIME_LIMITS.askUserQuestionTimeoutMinutes.max,
+    )
+  ) {
+    return { ok: false, error: 'AskUserQuestion timeout is outside the supported range.' };
   }
 
   const subagents = value.subagents;
@@ -165,6 +189,9 @@ export const validateAgentRuntimeSettings = (
     ok: true,
     settings: {
       version: AGENT_RUNTIME_SETTINGS_VERSION,
+      askUserQuestion: {
+        timeoutMinutes: askUserQuestionTimeoutMinutes,
+      },
       subagents: {
         delegationMode,
         model: typeof model === 'string' ? model.trim() : null,

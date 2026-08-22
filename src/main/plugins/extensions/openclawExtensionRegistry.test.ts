@@ -15,6 +15,7 @@ describe('openclawExtensionRegistry', () => {
         askUser: {
           askUserCallbackUrl: 'http://127.0.0.1:1234/askuser',
           secret: 'runtime-secret',
+          timeoutMinutes: 45,
         },
       },
       () => true,
@@ -26,6 +27,7 @@ describe('openclawExtensionRegistry', () => {
         config: {
           callbackUrl: 'http://127.0.0.1:1234/askuser',
           secret: '${JUSTDO_ASK_USER_SECRET}',
+          timeoutMinutes: 45,
         },
       },
       [OpenClawExtensionId.ACTION_APPROVAL]: {

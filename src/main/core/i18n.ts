@@ -33,6 +33,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     askUserSubmittedMessage: '我已提交。',
     askUserCanceledMessage: '我取消了请求。',
     askUserAnswerLabel: '用户选择',
+    askUserSkippedAnswer: '已跳过',
     skillInvalidName:
       'SKILL.md 的“name”必须为 1–64 个字符，可包含英文字母、数字、空格、连字符、下划线、圆括号和句点；不能以空格或句点开头或结尾。',
     skillWindowsReservedName: 'SKILL.md 的“name”不能使用 Windows 保留目录名“{name}”。',
@@ -68,6 +69,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     askUserSubmittedMessage: 'I submitted.',
     askUserCanceledMessage: 'I canceled the request.',
     askUserAnswerLabel: 'User answer',
+    askUserSkippedAnswer: 'Skipped',
     skillInvalidName:
       'SKILL.md "name" must be 1-64 characters and may contain letters, numbers, spaces, hyphens, underscores, parentheses, and periods; it cannot start or end with a space or period.',
     skillWindowsReservedName:

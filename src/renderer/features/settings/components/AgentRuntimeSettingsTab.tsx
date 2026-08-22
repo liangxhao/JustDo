@@ -125,6 +125,11 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   const [agentOpen, setAgentOpen] = useState(true);
   const [subagentOpen, setSubagentOpen] = useState(true);
   const subagents = settings.subagents;
+  const updateAskUserQuestion = (update: Partial<AgentRuntimeSettings['askUserQuestion']>) =>
+    onChange({
+      ...settings,
+      askUserQuestion: { ...settings.askUserQuestion, ...update },
+    });
   const updateSubagents = (update: Partial<AgentRuntimeSettings['subagents']>) =>
     onChange({ ...settings, subagents: { ...subagents, ...update } });
 
@@ -255,6 +260,37 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
               </button>
             ))}
           </div>
+        </SettingRow>
+        <SettingRow
+          label={i18nService.t('agentRuntimeAskUserTimeoutTitle')}
+          description={i18nService.t('agentRuntimeAskUserTimeoutDescription')}
+        >
+          <label className="ml-auto flex h-9 w-32 items-center overflow-hidden rounded-lg border border-border bg-surface-inset">
+            <input
+              id="agent-runtime-ask-user-timeout"
+              type="number"
+              min={AGENT_RUNTIME_LIMITS.askUserQuestionTimeoutMinutes.min}
+              max={AGENT_RUNTIME_LIMITS.askUserQuestionTimeoutMinutes.max}
+              step={1}
+              value={settings.askUserQuestion.timeoutMinutes}
+              onChange={event => {
+                const minutes = Math.min(
+                  AGENT_RUNTIME_LIMITS.askUserQuestionTimeoutMinutes.max,
+                  Math.max(
+                    AGENT_RUNTIME_LIMITS.askUserQuestionTimeoutMinutes.min,
+                    Number(event.target.value) ||
+                      AGENT_RUNTIME_LIMITS.askUserQuestionTimeoutMinutes.min,
+                  ),
+                );
+                updateAskUserQuestion({ timeoutMinutes: Math.round(minutes) });
+              }}
+              className="h-full min-w-0 flex-1 bg-transparent px-2 text-right text-sm font-medium tabular-nums text-foreground outline-none"
+              aria-label={i18nService.t('agentRuntimeAskUserTimeoutTitle')}
+            />
+            <span className="border-l border-border px-2 text-[11px] text-secondary">
+              {i18nService.t('agentRuntimeMinutes')}
+            </span>
+          </label>
         </SettingRow>
       </CollapsibleSection>
 

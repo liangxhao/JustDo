@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { Value } from 'typebox/value';
 import { describe, expect, test } from 'vitest';
 
@@ -20,6 +23,33 @@ const makeQuestion = (index: number) => ({
 });
 
 describe('ask-user-question plugin limits', () => {
+  test('declares the managed timeout in the plugin manifest schema', () => {
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          process.cwd(),
+          'openclaw-extensions',
+          'ask-user-question',
+          'openclaw.plugin.json',
+        ),
+        'utf8',
+      ),
+    ) as {
+      configSchema: {
+        additionalProperties: boolean;
+        properties: Record<string, Record<string, unknown>>;
+      };
+    };
+
+    expect(manifest.configSchema.additionalProperties).toBe(false);
+    expect(manifest.configSchema.properties.timeoutMinutes).toMatchObject({
+      type: 'integer',
+      minimum: 1,
+      maximum: 1440,
+      default: ASK_USER_TIMEOUT_MINUTES,
+    });
+  });
+
   test('accepts up to eight questions and rejects more', () => {
     expect(MAX_ASK_USER_QUESTIONS).toBe(8);
     const questions = Array.from({ length: MAX_ASK_USER_QUESTIONS }, (_, index) =>
@@ -86,6 +116,11 @@ describe('ask-user-question plugin limits', () => {
     });
     expect(buildWaitPolicy(false, questions)).toEqual({ mode: 'required' });
     expect(buildWaitPolicy('yes', questions)).toBeNull();
+    expect(buildWaitPolicy(true, questions, 45)).toEqual({
+      mode: 'timeout',
+      timeoutMinutes: 45,
+      onTimeout: 'use-defaults',
+    });
   });
 
   test('lets the model decide after timeout when any question has no default', () => {
@@ -131,5 +166,14 @@ describe('ask-user-question plugin limits', () => {
         questions,
       ),
     ).toContain('configured default choices were selected automatically');
+    expect(
+      formatAskUserToolResponse(
+        {
+          behavior: 'allow',
+          answers: { question_1: { selected: [], skipped: true } },
+        },
+        questions,
+      ),
+    ).toContain('User skipped this question.');
   });
 });

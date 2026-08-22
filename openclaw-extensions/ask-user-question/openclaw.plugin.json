@@ -3,9 +3,7 @@
   "name": "AskUserQuestion",
   "description": "Structured choice and confirmation tool for the desktop application.",
   "contracts": {
-    "tools": [
-      "AskUserQuestion"
-    ]
+    "tools": ["AskUserQuestion"]
   },
   "configSchema": {
     "type": "object",
@@ -18,6 +16,13 @@
       "secret": {
         "type": "string",
         "description": "Shared secret for callback authentication"
+      },
+      "timeoutMinutes": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1440,
+        "default": 10,
+        "description": "User-configured timeout in minutes for questions with timeoutEnabled"
       }
     }
   }

@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_RUNTIME_SETTINGS } from '../../../shared/openclaw/agentRuntimeSettings';
 import type { PermissionMode } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
@@ -27,6 +28,9 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
             config: {
               callbackUrl: askUser.askUserCallbackUrl,
               secret: SECRET_PLACEHOLDER,
+              timeoutMinutes:
+                askUser.timeoutMinutes ??
+                DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion.timeoutMinutes,
             },
           }
         : {}),

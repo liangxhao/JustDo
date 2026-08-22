@@ -134,7 +134,7 @@ Extension 使用 `openclaw.plugin.json`，由 OpenClaw CLI/registry 进行最终
 
 `OpenClawExtensionHostLifecycle` 管理本地 callback server、host controller 和 MCP transports。它必须在首次 config sync 前启动，因为 callback port 是动态值。
 
-Ask-user contract 最多 8 个问题；question id 满足 `[A-Za-z][A-Za-z0-9_-]{0,63}`。shared parser验证类型、选项、默认值、required 和 timeout，timeout 最大 24 小时。Broker 保存 pending request，interaction router 按 request/session 关联并支持重放；回答只接受原问题中的 id/选项。
+Ask-user contract 最多 8 个问题；question id 满足 `[A-Za-z][A-Za-z0-9_-]{0,63}`。shared parser 验证类型、选项、默认值、required 和 timeout，timeout 最大 24 小时。模型用顶层 `timeoutEnabled` 选择是否启用等待时限，实际分钟数来自“设置 → 配置”，默认 10 分钟，并通过插件 config 的 `timeoutMinutes` 下发。Broker 保存 pending request，interaction router 按 request/session 关联并支持重放；回答只接受原问题中的 id/选项。多问题请求允许用户用 `skipped: true` 明确跳过单题，renderer、Host 和 Extension 都会校验并把该状态明确返回模型。
 
 Action approval extension 补充文件写/cron 等产品 policy，但不重复 Gateway 原生 exec approval。adapter diagnostics 不能被解释为“可信 policy 已激活”；真正 admission 仍要由 config sync 的 active policy verification 证明。
 

@@ -1,9 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
-import type {
-  AskUserQuestion,
-  AskUserQuestionAnswer,
-} from '../../../shared/openclaw/extensions';
+import type { AskUserQuestion, AskUserQuestionAnswer } from '../../../shared/openclaw/extensions';
 import { CoworkInteractionIpc } from '../../../shared/openclaw/extensions';
 import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -31,9 +28,10 @@ type CoworkInteractionResult =
       toolUseID?: string;
     };
 
-const formatAnswer = (answer: AskUserQuestionAnswer, question?: AskUserQuestion): string => {
+export const formatAnswer = (answer: AskUserQuestionAnswer, question?: AskUserQuestion): string => {
+  if (answer.skipped) return t('askUserSkippedAnswer');
   const optionsById = new Map(question?.options.map(option => [option.id, option]) ?? []);
-  const parts = answer.selected.map((optionId) => {
+  const parts = answer.selected.map(optionId => {
     const label = optionsById.get(optionId)?.label ?? optionId;
     const input = answer.optionInputs?.[optionId];
     return input ? `${label}: ${input}` : label;
@@ -85,12 +83,10 @@ export const registerCoworkInteractionHandlers = ({
               response.answers &&
               Object.keys(response.answers).length > 0
                 ? Object.entries(response.answers)
-                    .map(
-                      ([questionId, answer]) => {
-                        const question = questionsById.get(questionId);
-                        return `${question?.question ?? questionId}\n${t('askUserAnswerLabel')}：${formatAnswer(answer, question)}`;
-                      },
-                    )
+                    .map(([questionId, answer]) => {
+                      const question = questionsById.get(questionId);
+                      return `${question?.question ?? questionId}\n${t('askUserAnswerLabel')}：${formatAnswer(answer, question)}`;
+                    })
                     .join('\n\n')
                 : t(
                     response.behavior === 'allow'

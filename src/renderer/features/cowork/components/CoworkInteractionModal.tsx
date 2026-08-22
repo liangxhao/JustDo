@@ -68,6 +68,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   const [optionInputs, setOptionInputs] = useState<Record<string, Record<string, string>>>({});
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({});
   const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
+  const [skippedQuestions, setSkippedQuestions] = useState<Record<string, boolean>>({});
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -78,6 +79,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
     setOtherInputs({});
     setOtherActive({});
     setOptionInputs({});
+    setSkippedQuestions({});
   }, [isQuestionTool, interaction.requestId, toolInput]);
 
   const formatToolInput = (input: Record<string, unknown>): string => {
@@ -127,6 +129,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   };
 
   const handleSelectOption = (question: AskUserQuestion, optionId: string) => {
+    setSkippedQuestions(prev => ({ ...prev, [question.id]: false }));
     setAnswers(prev => {
       if (!question.multiSelect) {
         return { ...prev, [question.id]: [optionId] };
@@ -161,6 +164,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   };
 
   const handleToggleOther = (question: AskUserQuestion) => {
+    setSkippedQuestions(prev => ({ ...prev, [question.id]: false }));
     setOtherActive(prev => ({
       ...prev,
       [question.id]: !prev[question.id],
@@ -175,6 +179,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   };
 
   const handleOtherInputChange = (question: AskUserQuestion, value: string) => {
+    setSkippedQuestions(prev => ({ ...prev, [question.id]: false }));
     setOtherInputs(prev => ({ ...prev, [question.id]: value }));
     setOtherActive(prev => ({ ...prev, [question.id]: true }));
     if (!question.multiSelect) {
@@ -200,9 +205,33 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
     }));
   };
 
+  const handleSkipQuestion = (questionId: string) => {
+    setSkippedQuestions(prev => ({ ...prev, [questionId]: true }));
+    setAnswers(prev => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+    setOptionInputs(prev => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+    setOtherInputs(prev => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+    setOtherActive(prev => ({ ...prev, [questionId]: false }));
+  };
+
   const buildFinalAnswers = (): AskUserAnswers => {
     const finalAnswers: AskUserAnswers = {};
     questions.forEach(question => {
+      if (skippedQuestions[question.id]) {
+        finalAnswers[question.id] = { selected: [], skipped: true };
+        return;
+      }
       const selected = getSelectedValues(question);
       const otherValue = otherInputs[question.id]?.trim();
       const selectedOptionInputs = Object.fromEntries(
@@ -222,12 +251,15 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   };
 
   const isQuestionComplete = (question: AskUserQuestion): boolean => {
-    return isQuestionAnswerComplete(
-      question,
-      getSelectedValues(question),
-      optionInputs[question.id],
-      Boolean(otherActive[question.id]),
-      otherInputs[question.id],
+    return (
+      Boolean(skippedQuestions[question.id]) ||
+      isQuestionAnswerComplete(
+        question,
+        getSelectedValues(question),
+        optionInputs[question.id],
+        Boolean(otherActive[question.id]),
+        otherInputs[question.id],
+      )
     );
   };
 
@@ -404,6 +436,26 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
                         )}
                       </span>
                     </div>
+                    {questions.length > 1 && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleSkipQuestion(question.id)}
+                          aria-pressed={Boolean(skippedQuestions[question.id])}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                            skippedQuestions[question.id]
+                              ? 'bg-primary/10 text-primary'
+                              : 'text-secondary hover:bg-surface-raised'
+                          }`}
+                        >
+                          {i18nService.t(
+                            skippedQuestions[question.id]
+                              ? 'coworkQuestionWizardSkipped'
+                              : 'coworkQuestionWizardSkip',
+                          )}
+                        </button>
+                      </div>
+                    )}
                     {/* 命令详情 */}
                     {requestedCommand && (
                       <div>

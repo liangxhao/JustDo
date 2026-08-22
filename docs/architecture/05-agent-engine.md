@@ -49,13 +49,15 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 - provider models、base URL、API format、auth 与 capability；
 - agents 的 identity、system prompt、qualified model 和 skills；
 - 全局/会话权限 policy 与审批模式；
-- Agent runtime/subagent settings；
+- Agent runtime settings，包括 AskUserQuestion 等待时限与 subagent 调度参数；
 - MCP servers、Hooks、Extensions 与 ask-user 动态 callback；
 - browser mode；
 - system prompt replacement rules；
 - scheduler 隔离 agent 与其他 JustDo 管理项。
 
 同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension、permission 同时覆盖文件。写入后必须验证 active Gateway permission policy。若 Gateway 正在运行且变化需要 restart，流程是断开 adapter -> restart -> reconnect；有 active workloads 时 service 应遵守安全策略，不盲目重启。
+
+版本化的 `agentRuntimeSettings:v1` 同时生成 `agents.defaults.subagents`，并把 AskUserQuestion 等待时限写入 `plugins.entries.ask-user-question.config.timeoutMinutes`。旧数据缺少该字段时使用 10 分钟默认值；配置同步失败会恢复上一份数据库值。
 
 ## 5. Fail-closed admission
 

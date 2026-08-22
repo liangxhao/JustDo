@@ -97,7 +97,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeUnsaved: '有未保存更改',
     agentRuntimeRestoreDefaults: '恢复默认值',
     agentRuntimeAgentSectionTitle: 'Agent',
-    agentRuntimeAgentSectionDescription: '主 Agent 的任务规划与委派行为。',
+    agentRuntimeAgentSectionDescription: '主 Agent 的任务规划、用户交互与委派行为。',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription: 'SubAgent 的模型、容量和任务执行参数。',
     agentRuntimeDelegationTitle: '委派策略',
@@ -107,6 +107,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeDelegationPrefer: '优先委派',
     agentRuntimeDelegationPreferDescription:
       '更积极地让主 Agent 负责协调，将可拆分工作交给 Subagent。',
+    agentRuntimeAskUserTimeoutTitle: '提问等待时限',
+    agentRuntimeAskUserTimeoutDescription:
+      'AskUserQuestion 启用超时后等待用户回答的分钟数，范围 1–1440 分钟。',
     agentRuntimeModelTitle: '模型与思考强度',
     agentRuntimeModelDescription: '为新建的 Subagent 设定默认能力；单次任务仍可使用明确覆盖。',
     agentRuntimeDefaultModel: '默认模型',
@@ -565,7 +568,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuestionTimeoutCountdown: '剩余 {countdown}',
     coworkQuestionDefaultChoice: '默认',
     coworkQuestionWizardTitle: '需要回应',
-    coworkQuestionWizardSkip: '稍后回答',
+    coworkQuestionWizardSkip: '跳过',
+    coworkQuestionWizardSkipped: '已跳过',
     coworkQuestionWizardPrevious: '上一个',
     coworkQuestionWizardNext: '下一个',
     coworkQuestionWizardSubmit: '提交',
@@ -1301,7 +1305,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeRestoreDefaults: 'Restore defaults',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription:
-      'Task planning and delegation behavior for the main Agent.',
+      'Task planning, user interaction, and delegation behavior for the main Agent.',
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription:
       'Model, capacity, and task execution settings for SubAgents.',
@@ -1313,6 +1317,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeDelegationPrefer: 'Prefer delegation',
     agentRuntimeDelegationPreferDescription:
       'Encourage the main Agent to coordinate and hand off work that can run independently.',
+    agentRuntimeAskUserTimeoutTitle: 'Question response timeout',
+    agentRuntimeAskUserTimeoutDescription:
+      'How many minutes AskUserQuestion waits for an answer when timeout is enabled. Range: 1–1440 minutes.',
     agentRuntimeModelTitle: 'Model and thinking effort',
     agentRuntimeModelDescription:
       'Set defaults for newly created Subagents. An individual task can still provide an explicit override.',
@@ -1795,7 +1802,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuestionTimeoutCountdown: '{countdown} remaining',
     coworkQuestionDefaultChoice: 'Default',
     coworkQuestionWizardTitle: 'Response Needed',
-    coworkQuestionWizardSkip: 'Answer later',
+    coworkQuestionWizardSkip: 'Skip',
+    coworkQuestionWizardSkipped: 'Skipped',
     coworkQuestionWizardPrevious: 'Previous',
     coworkQuestionWizardNext: 'Next',
     coworkQuestionWizardSubmit: 'Submit',

@@ -75,6 +75,7 @@ export type AskUserQuestionAnswer = {
   selected: string[];
   optionInputs?: Record<string, string>;
   other?: string;
+  skipped?: true;
 };
 
 export type AskUserAnswers = Record<string, AskUserQuestionAnswer>;
@@ -254,6 +255,20 @@ export const parseAskUserAnswers = (
     const selectedIds = selected as string[];
     if (new Set(selectedIds).size !== selectedIds.length) return null;
     if (!question.multiSelect && selectedIds.length > 1) return null;
+
+    const skipped = rawAnswer.skipped === true;
+    if (rawAnswer.skipped !== undefined && !skipped) return null;
+    if (skipped) {
+      if (
+        selectedIds.length > 0 ||
+        rawAnswer.optionInputs !== undefined ||
+        rawAnswer.other !== undefined
+      ) {
+        return null;
+      }
+      answers[question.id] = { selected: [], skipped: true };
+      continue;
+    }
 
     const optionsById = new Map(question.options.map(option => [option.id, option]));
     if (selectedIds.some(id => !optionsById.has(id))) return null;

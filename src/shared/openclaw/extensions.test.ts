@@ -103,6 +103,27 @@ describe('ask-user-question runtime validation', () => {
     });
   });
 
+  test('accepts an explicit skipped answer and rejects mixed skipped content', () => {
+    const questions = parseAskUserQuestions(rawQuestions)!;
+
+    expect(
+      parseAskUserAnswers(
+        {
+          deployment: { selected: [], skipped: true },
+        },
+        questions,
+      ),
+    ).toEqual({ deployment: { selected: [], skipped: true } });
+    expect(
+      parseAskUserAnswers(
+        {
+          deployment: { selected: ['automatic'], skipped: true },
+        },
+        questions,
+      ),
+    ).toBeNull();
+  });
+
   test('validates default option ids and builds timeout answers', () => {
     const questions = parseAskUserQuestions([{
       ...rawQuestions[0],

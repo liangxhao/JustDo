@@ -80,6 +80,37 @@ describe('OpenClawExtensionHostController interaction validation', () => {
     expect(result).toEqual({ handled: true, behavior: 'deny', questions });
   });
 
+  test('allows an explicit skipped answer', () => {
+    const controller = new OpenClawExtensionHostController({
+      onAskUser: vi.fn(),
+      onAskUserDismiss: vi.fn(),
+    });
+    const resolve = vi.spyOn(controller, 'resolveAskUser').mockReturnValue(true);
+    vi.spyOn(controller, 'getPendingAskUserRequest').mockReturnValue({
+      requestId: 'request-skipped',
+      waitPolicy: { mode: 'required' },
+      questions,
+    });
+
+    const result = controller.respondToInteraction('request-skipped', {
+      behavior: 'allow',
+      updatedInput: {
+        answers: { deployment: { selected: [], skipped: true } },
+      },
+    });
+
+    expect(resolve).toHaveBeenCalledWith('request-skipped', {
+      behavior: 'allow',
+      answers: { deployment: { selected: [], skipped: true } },
+    });
+    expect(result).toEqual({
+      handled: true,
+      behavior: 'allow',
+      answers: { deployment: { selected: [], skipped: true } },
+      questions,
+    });
+  });
+
   test('validates answers against the original pending questions', () => {
     const controller = new OpenClawExtensionHostController({
       onAskUser: vi.fn(),

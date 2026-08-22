@@ -40,6 +40,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
   const [optionInputs, setOptionInputs] = useState<Record<string, Record<string, string>>>({});
   const [otherInputs, setOtherInputs] = useState<Record<string, string>>({});
   const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
+  const [skippedQuestions, setSkippedQuestions] = useState<Record<string, boolean>>({});
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -54,6 +55,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
     setOptionInputs({});
     setOtherInputs({});
     setOtherActive({});
+    setSkippedQuestions({});
     return () => {
       if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
       advanceTimerRef.current = null;
@@ -81,6 +83,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
 
   const handleSelectOption = (question: AskUserQuestion, optionId: string) => {
     clearAutoAdvance();
+    setSkippedQuestions(prev => ({ ...prev, [question.id]: false }));
     if (!question.multiSelect) {
       setAnswers(prev => ({
         ...prev,
@@ -156,6 +159,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
 
   const handleOtherInputChange = (value: string) => {
     clearAutoAdvance();
+    setSkippedQuestions(prev => ({ ...prev, [currentQuestion.id]: false }));
     setOtherInputs(prev => ({
       ...prev,
       [currentQuestion.id]: value,
@@ -175,6 +179,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
 
   const handleToggleOther = () => {
     clearAutoAdvance();
+    setSkippedQuestions(prev => ({ ...prev, [currentQuestion.id]: false }));
     setOtherActive(prev => {
       const nextActive = !prev[currentQuestion.id];
       return {
@@ -205,6 +210,29 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
     }
   };
 
+  const handleSkip = () => {
+    clearAutoAdvance();
+    const questionId = currentQuestion.id;
+    setSkippedQuestions(prev => ({ ...prev, [questionId]: true }));
+    setAnswers(prev => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+    setOptionInputs(prev => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+    setOtherInputs(prev => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+    setOtherActive(prev => ({ ...prev, [questionId]: false }));
+    if (!isLastStep) setCurrentStep(prev => prev + 1);
+  };
+
   const handleStepSelect = (step: number) => {
     clearAutoAdvance();
     setCurrentStep(step);
@@ -213,6 +241,10 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
   const handleSubmit = () => {
     const finalAnswers: AskUserAnswers = {};
     questions.forEach(question => {
+      if (skippedQuestions[question.id]) {
+        finalAnswers[question.id] = { selected: [], skipped: true };
+        return;
+      }
       const selected = getSelectedValues(question);
       const selectedOptionInputs = Object.fromEntries(
         selected
@@ -247,7 +279,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
 
   const selectedValues = getSelectedValues(currentQuestion);
 
-  const isQuestionComplete = (question: AskUserQuestion): boolean =>
+  const isQuestionAnswered = (question: AskUserQuestion): boolean =>
     isQuestionAnswerComplete(
       question,
       getSelectedValues(question),
@@ -255,6 +287,9 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
       Boolean(otherActive[question.id]),
       otherInputs[question.id],
     );
+
+  const isQuestionComplete = (question: AskUserQuestion): boolean =>
+    Boolean(skippedQuestions[question.id]) || isQuestionAnswered(question);
 
   const allAnswered = questions.every(isQuestionComplete);
 
@@ -338,7 +373,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
                 <div className="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-1.5 sm:flex-none sm:flex-nowrap">
                   {questions.map((question, index) => {
                     const isActive = index === activeStep;
-                    const isAnswered = isQuestionComplete(question);
+                    const isAnswered = isQuestionAnswered(question);
 
                     return (
                       <button
@@ -529,13 +564,22 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({ interaction
                   autoFocus
                 />
               )}
-              {!isLastStep && !isQuestionComplete(currentQuestion) && (
+              {questions.length > 1 && (
                 <button
                   type="button"
-                  onClick={handleNext}
-                  className="ml-auto px-4 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors whitespace-nowrap"
+                  onClick={handleSkip}
+                  aria-pressed={Boolean(skippedQuestions[currentQuestion.id])}
+                  className={`ml-auto px-4 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
+                    skippedQuestions[currentQuestion.id]
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-secondary hover:bg-surface-raised'
+                  }`}
                 >
-                  {i18nService.t('coworkQuestionWizardSkip')}
+                  {i18nService.t(
+                    skippedQuestions[currentQuestion.id]
+                      ? 'coworkQuestionWizardSkipped'
+                      : 'coworkQuestionWizardSkip',
+                  )}
                 </button>
               )}
             </div>
