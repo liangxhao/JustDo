@@ -2,12 +2,17 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatScrollController } from './chat-scroll-controller';
 
-function host() {
+function host(options: { asyncSmooth?: boolean } = {}) {
   const listeners = new Map<string, EventListener>();
-  return {
+  const target = {
     scrollHeight: 1000,
     scrollTop: 700,
     clientHeight: 300,
+    scrollTo: vi.fn(({ top, behavior }: ScrollToOptions) => {
+      if (typeof top === 'number' && !(options.asyncSmooth && behavior === 'smooth')) {
+        target.scrollTop = top;
+      }
+    }),
     addEventListener: vi.fn((name: string, listener: EventListener) =>
       listeners.set(name, listener),
     ),
@@ -15,7 +20,11 @@ function host() {
     emitScroll() {
       listeners.get('scroll')?.(new Event('scroll'));
     },
+    emitScrollEnd() {
+      listeners.get('scrollend')?.(new Event('scrollend'));
+    },
   };
+  return target;
 }
 
 describe('ChatScrollController', () => {
@@ -41,6 +50,60 @@ describe('ChatScrollController', () => {
 
     expect(controller.state).toEqual({ mode: 'follow', unseenRevisions: 0 });
     expect(target.scrollTop).toBe(1000);
+  });
+
+  test('does not restore stale anchors while smooth minimap navigation is in flight', async () => {
+    const target = host({ asyncSmooth: true }) as ReturnType<typeof host> & {
+      shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+      getBoundingClientRect: () => { top: number };
+    };
+    let anchorTop = 100;
+    const anchor = {
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: anchorTop, bottom: anchorTop + 40 }),
+    };
+    target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [anchor] };
+    target.getBoundingClientRect = () => ({ top: 0 });
+    const onStateChange = vi.fn();
+    const controller = new ChatScrollController(onStateChange);
+    controller.connect(target as unknown as HTMLElement);
+    controller.afterRender(1);
+    await Promise.resolve();
+    target.scrollTop = 700;
+
+    controller.navigateTo(240, 'smooth');
+    controller.beforeRender();
+    anchorTop = 80;
+    controller.afterRender(1);
+
+    expect(controller.state.mode).toBe('paused');
+    expect(target.scrollTo).toHaveBeenCalledWith({ top: 240, behavior: 'smooth' });
+    expect(target.scrollTop).toBe(700);
+    expect(onStateChange).toHaveBeenCalledOnce();
+
+    target.scrollTop = 240;
+    target.emitScroll();
+    controller.beforeRender();
+    anchorTop = 100;
+    controller.afterRender(1);
+
+    expect(target.scrollTop).toBe(260);
+  });
+
+  test('ends smooth minimap navigation when scrolling is interrupted', () => {
+    const target = host({ asyncSmooth: true });
+    const loadOlder = vi.fn();
+    const controller = new ChatScrollController(vi.fn(), loadOlder);
+    controller.connect(target as unknown as HTMLElement);
+
+    controller.navigateTo(240, 'smooth');
+    target.scrollTop = 400;
+    target.emitScrollEnd();
+    target.scrollTop = 120;
+    target.emitScroll();
+
+    expect(controller.state.mode).toBe('paused');
+    expect(loadOlder).toHaveBeenCalledOnce();
   });
 
   test('keeps a clicked disclosure fixed instead of following the expanded content', () => {

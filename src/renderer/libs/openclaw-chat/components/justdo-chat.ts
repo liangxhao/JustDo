@@ -2950,7 +2950,7 @@ export class JustDoChatElement extends LitElement {
     const nextScrollTop = Math.max(0, this.scrollTop + targetTop - hostTop - 16);
     this.currentMinimapKey = entry.key;
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-    this.scrollTo({ top: nextScrollTop, behavior: reduceMotion ? 'auto' : 'smooth' });
+    this.chatScrollController.navigateTo(nextScrollTop, reduceMotion ? 'auto' : 'smooth');
   }
 
   private readonly handleMinimapScroll = (): void => {

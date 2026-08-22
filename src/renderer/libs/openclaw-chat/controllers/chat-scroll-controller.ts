@@ -12,6 +12,7 @@ export class ChatScrollController {
   private observedContent: Element | null = null;
   private pausedAnchors: Array<{ element: HTMLElement; offset: number }> = [];
   private interactionAnchor: { element: HTMLElement; offset: number } | null = null;
+  private navigationTargetTop: number | null = null;
 
   constructor(
     private readonly onStateChange: () => void,
@@ -29,6 +30,7 @@ export class ChatScrollController {
     this.host = host;
     this.mode = 'follow';
     host.addEventListener('scroll', this.handleScroll, { passive: true });
+    host.addEventListener('scrollend', this.handleScrollEnd, { passive: true });
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.handleResize());
       this.resizeObserver.observe(host);
@@ -38,7 +40,9 @@ export class ChatScrollController {
   beforeRender(): void {
     if (!this.host) return;
     this.previousScrollTop = this.host.scrollTop;
-    if (!this.interactionAnchor) {
+    if (this.navigationTargetTop !== null) {
+      this.pausedAnchors = [];
+    } else if (!this.interactionAnchor) {
       this.pausedAnchors = this.mode === 'paused' ? this.captureVisibleAnchors(this.host) : [];
     }
   }
@@ -53,22 +57,25 @@ export class ChatScrollController {
       this.observeContent();
       return;
     }
-    const survivingAnchor =
-      this.interactionAnchor?.element.isConnected === true
-        ? this.interactionAnchor
-        : this.pausedAnchors.find(anchor => anchor.element.isConnected);
-    if (survivingAnchor) {
-      const nextOffset = survivingAnchor.element.getBoundingClientRect().top;
-      this.setScrollTop(
-        Math.max(0, this.previousScrollTop + (nextOffset - survivingAnchor.offset)),
-      );
+    const navigating = this.navigationTargetTop !== null;
+    if (!navigating) {
+      const survivingAnchor =
+        this.interactionAnchor?.element.isConnected === true
+          ? this.interactionAnchor
+          : this.pausedAnchors.find(anchor => anchor.element.isConnected);
+      if (survivingAnchor) {
+        const nextOffset = survivingAnchor.element.getBoundingClientRect().top;
+        this.setScrollTop(
+          Math.max(0, this.previousScrollTop + (nextOffset - survivingAnchor.offset)),
+        );
+      }
     }
     this.interactionAnchor = null;
     if (changed) {
       this.unseenRevisions += 1;
       this.onStateChange();
     }
-    this.pausedAnchors = this.captureVisibleAnchors(host);
+    this.pausedAnchors = navigating ? [] : this.captureVisibleAnchors(host);
     this.observeContent();
   }
 
@@ -76,12 +83,27 @@ export class ChatScrollController {
     this.mode = 'follow';
     this.unseenRevisions = 0;
     this.interactionAnchor = null;
+    this.finishNavigation();
     this.scrollToBottom();
     this.onStateChange();
   }
 
+  navigateTo(top: number, behavior: ScrollBehavior): void {
+    const host = this.host;
+    if (!host) return;
+    const modeChanged = this.mode !== 'paused';
+    this.mode = 'paused';
+    this.interactionAnchor = null;
+    this.pausedAnchors = [];
+    this.navigationTargetTop = Math.max(0, top);
+    host.scrollTo({ top: this.navigationTargetTop, behavior });
+    if (this.isNavigationAtTarget(host)) this.finishNavigation();
+    if (modeChanged) this.onStateChange();
+  }
+
   preserveAnchorForInteraction(element: HTMLElement): void {
     if (!this.host || !element.isConnected) return;
+    this.finishNavigation();
     const modeChanged = this.mode !== 'paused';
     this.mode = 'paused';
     this.interactionAnchor = {
@@ -97,21 +119,28 @@ export class ChatScrollController {
     this.unseenRevisions = 0;
     this.previousRevision = -1;
     this.interactionAnchor = null;
+    this.finishNavigation();
     this.onStateChange();
   }
 
   disconnect(): void {
     this.host?.removeEventListener('scroll', this.handleScroll);
+    this.host?.removeEventListener('scrollend', this.handleScrollEnd);
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.observedContent = null;
     this.host = null;
     this.interactionAnchor = null;
+    this.navigationTargetTop = null;
   }
 
   private readonly handleScroll = (): void => {
     const host = this.host;
     if (!host || this.programmatic) return;
+    if (this.navigationTargetTop !== null) {
+      if (!this.isNavigationAtTarget(host)) return;
+      this.finishNavigation();
+    }
     const distance = host.scrollHeight - host.scrollTop - host.clientHeight;
     if (distance <= ChatScrollController.LOAD_OLDER_THRESHOLD_PX && this.onNearBottom?.()) {
       this.mode = 'paused';
@@ -130,9 +159,16 @@ export class ChatScrollController {
     }
   };
 
+  private readonly handleScrollEnd = (): void => {
+    if (this.navigationTargetTop === null) return;
+    this.finishNavigation();
+    this.handleScroll();
+  };
+
   private handleResize(): void {
     const host = this.host;
     if (!host) return;
+    if (this.navigationTargetTop !== null) return;
     if (this.mode === 'follow') {
       this.scrollToBottom();
       return;
@@ -143,6 +179,18 @@ export class ChatScrollController {
       if (Math.abs(delta) > 0.5) this.setScrollTop(Math.max(0, host.scrollTop + delta));
     }
     this.pausedAnchors = this.captureVisibleAnchors(host);
+  }
+
+  private finishNavigation(): void {
+    if (this.navigationTargetTop === null) return;
+    this.navigationTargetTop = null;
+    this.pausedAnchors = this.host ? this.captureVisibleAnchors(this.host) : [];
+  }
+
+  private isNavigationAtTarget(host: HTMLElement): boolean {
+    if (this.navigationTargetTop === null) return false;
+    const maxScrollTop = Math.max(0, host.scrollHeight - host.clientHeight);
+    return Math.abs(host.scrollTop - Math.min(this.navigationTargetTop, maxScrollTop)) <= 0.5;
   }
 
   private observeContent(): void {
