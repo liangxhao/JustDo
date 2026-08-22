@@ -1,6 +1,6 @@
 import {
   ArrowPathIcon,
-  CalendarIcon,
+  CalendarDaysIcon,
   ChatBubbleLeftRightIcon,
   CheckCircleIcon,
   ChevronDownIcon,
@@ -303,12 +303,15 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
   const lastStatus = job.state.lastStatus;
   const lastError = job.state.lastError;
   const nextRunMs = job.state.nextRunAtMs;
+  const scheduleLabel = formatScheduleLabel(job.schedule);
+  const nextRunLabel =
+    nextRunMs && isEnabled ? `${t('cronCardNext')}: ${formatDateTime(new Date(nextRunMs))}` : null;
 
   return (
     <div
       data-testid={'cron-job-card-' + job.id}
       className={
-        'group relative flex h-full min-h-[190px] cursor-pointer flex-col overflow-hidden rounded-[18px] border bg-surface shadow-subtle transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card ' +
+        'group relative flex h-full min-h-[154px] cursor-pointer flex-col overflow-hidden rounded-2xl border bg-surface shadow-subtle transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card ' +
         (isEnabled
           ? 'border-border-subtle hover:border-primary/25'
           : 'border-border-subtle opacity-75 hover:border-border hover:opacity-100')
@@ -322,35 +325,13 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
         }
       />
 
-      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          <div
-            className={
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ' +
-              (isEnabled ? 'bg-primary/10 text-primary' : 'bg-surface-raised text-secondary')
-            }
-          >
-            <ClockIcon className="h-4 w-4" />
-          </div>
-          <h3 className="min-w-0 truncate text-[15px] font-semibold leading-5 text-foreground">
-            {job.name}
-          </h3>
-          <span
-            className={
-              'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ' +
-              (isEnabled
-                ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                : 'bg-surface-raised text-secondary')
-            }
-          >
-            <span
-              className={
-                'h-1.5 w-1.5 rounded-full ' + (isEnabled ? 'bg-green-500' : 'bg-secondary')
-              }
-            />
-            {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
-          </span>
-        </div>
+      <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-3">
+        <h3
+          className="min-w-0 flex-1 truncate text-sm font-semibold leading-5 text-foreground"
+          title={job.name}
+        >
+          {job.name}
+        </h3>
 
         <div className="shrink-0" onClick={e => e.stopPropagation()}>
           <button
@@ -363,68 +344,77 @@ function CronJobCard({ job, onToggle, onEdit, onDelete, onTrigger, onHistory }: 
               onToggle(!job.enabled);
             }}
             className={
-              'relative h-5 w-9 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ' +
-              (isEnabled ? 'bg-primary' : 'bg-border')
+              'inline-flex items-center gap-2 rounded-lg py-1 pl-2 transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ' +
+              (isEnabled ? 'text-green-600 dark:text-green-400' : 'text-secondary')
             }
           >
+            <span className="text-[10px] font-medium">
+              {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
+            </span>
             <span
               className={
-                'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm ' +
-                (isEnabled ? 'translate-x-4' : 'translate-x-0')
+                'relative h-5 w-9 shrink-0 rounded-full transition-colors ' +
+                (isEnabled ? 'bg-primary' : 'bg-border')
               }
-            />
+            >
+              <span
+                className={
+                  'absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ' +
+                  (isEnabled ? 'translate-x-4' : 'translate-x-0')
+                }
+              />
+            </span>
           </button>
         </div>
       </div>
 
-      <div className="grid min-w-0 grid-cols-[16px_minmax(0,1fr)] gap-x-2.5 gap-y-2.5 px-5 pb-3 text-xs text-secondary">
-        <ClockIcon className="h-4 w-4" />
-        <p className="min-w-0 truncate font-medium leading-4">
-          {formatScheduleLabel(job.schedule)}
+      <div className="grid min-w-0 grid-cols-[14px_minmax(0,1fr)] gap-x-2 gap-y-1.5 px-4 pb-2 text-xs text-secondary">
+        <CalendarDaysIcon className="h-3.5 w-3.5" />
+        <p
+          className="flex min-w-0 items-center gap-1.5 font-medium leading-4"
+          title={[scheduleLabel, nextRunLabel].filter(Boolean).join(' · ')}
+        >
+          <span className={nextRunLabel ? 'max-w-[55%] shrink-0 truncate' : 'truncate'}>
+            {scheduleLabel}
+          </span>
+          {nextRunLabel && (
+            <>
+              <span className="shrink-0 text-border" aria-hidden="true">
+                ·
+              </span>
+              <span className="min-w-0 truncate font-normal">{nextRunLabel}</span>
+            </>
+          )}
         </p>
 
-        <ChatBubbleLeftRightIcon className="mt-0.5 h-4 w-4" />
-        <p className="line-clamp-2 min-w-0 break-all text-[13px] leading-5 text-foreground/80">
+        <ChatBubbleLeftRightIcon className="h-3.5 w-3.5" />
+        <p className="min-w-0 truncate leading-4 text-foreground/80" title={promptText}>
           {promptText}
         </p>
 
         {hasLastRun && (
           <>
-            <ClockIcon className="h-4 w-4" />
-            <span className="flex min-w-0 items-center gap-1.5 leading-4">
-              <span className="truncate">
-                {t('cronCardLast')}: {formatDateTime(new Date(job.state.lastRunAtMs!))}
-              </span>
-              {lastStatus === 'success' ? (
-                <CheckCircleIcon className="h-3.5 w-3.5 shrink-0 text-green-500" />
-              ) : lastStatus === 'error' ? (
-                <XCircleIcon className="h-3.5 w-3.5 shrink-0 text-red-500" />
-              ) : null}
-              {lastError && lastStatus === 'error' && (
-                <span
-                  className="ml-auto inline-flex shrink-0 cursor-help text-red-500"
-                  title={lastError}
-                  aria-label={lastError}
-                >
-                  <ExclamationTriangleIcon className="h-4 w-4" strokeWidth={2.25} />
-                </span>
-              )}
-            </span>
-          </>
-        )}
-
-        {nextRunMs && isEnabled && (
-          <>
-            <CalendarIcon className="h-4 w-4" />
-            <span className="truncate leading-4">
-              {t('cronCardNext')}: {formatDateTime(new Date(nextRunMs))}
+            {lastStatus === 'success' ? (
+              <CheckCircleIcon className="h-3.5 w-3.5 text-green-500" />
+            ) : lastStatus === 'error' ? (
+              <XCircleIcon className="h-3.5 w-3.5 text-red-500" />
+            ) : lastStatus === 'running' ? (
+              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin text-primary" />
+            ) : (
+              <ClockIcon className="h-3.5 w-3.5" />
+            )}
+            <span
+              className={'min-w-0 truncate leading-4 ' + (lastError ? 'cursor-help' : '')}
+              title={lastError ?? undefined}
+            >
+              {t('cronCardLast')}: {formatDateTime(new Date(job.state.lastRunAtMs!))}
             </span>
           </>
         )}
       </div>
 
       <div
-        className="mt-auto flex items-center gap-1 border-t border-border-subtle px-3 py-2"
+        className="mt-auto flex items-center gap-0.5 border-t border-border-subtle px-2.5 py-1.5"
         onClick={e => e.stopPropagation()}
       >
         <button
@@ -1281,7 +1271,7 @@ export const CronView: React.FC<CronViewProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {tasks.map(job => (
                     <CronJobCard
                       key={job.id}
